@@ -24,8 +24,6 @@ interface OpenDoc {
   blocks: HTMLElement[];
 }
 
-function smHide<T extends HTMLElement>(el: T): T { el.classList.add('sm-hide'); return el; }
-
 interface SearchHit { bookId: string; label: string; before: string; match: string; after: string; range: Range }
 
 export function readerView(ids: string[]): HTMLElement {
@@ -56,6 +54,8 @@ export function readerView(ids: string[]): HTMLElement {
 async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void): Promise<void> {
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
+  const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
+  queueMicrotask(syncComfort);
   const flow = h('div', { class: 'reader-flow' });
   const scroll = h('div', { class: 'reader-scroll', tabindex: '0' }, flow);
   const footerBar = h('i');
@@ -68,15 +68,20 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), () => navigate('/')),
     title,
-    iconButton('search', t('searchInBook'), () => openSearch()),
+    iconButton('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
+  );
+  // M3 Expressive floating toolbar carries the reading actions.
+  const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') },
     iconButton('toc', t('contents'), () => openContents('toc')),
-    smHide(iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark())),
-    smHide(iconButton('images', t('images'), () => showGallery())),
-    smHide(iconButton('type', t('visualOptions'), () => openOptions())),
+    iconButton('search', t('searchInBook'), () => openSearch()),
+    iconButton('images', t('images'), () => showGallery()),
+    iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark()),
+    h('span', { class: 'sep' }),
+    iconButton('type', t('visualOptions'), () => openOptions()),
     iconButton('more', t('more'), () => openMore()),
   );
   reader.append(scroll);
-  root.append(topbar, reader, footer);
+  root.append(topbar, reader, footer, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
 
   const docs: OpenDoc[] = [];
@@ -236,7 +241,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => { window.clearTimeout(saveTimer); void saveProgress(); docs.forEach((d) => d.render?.dispose()); });
 
   /* ---------- settings ---------- */
-  onDispose(onSettingsChange((s) => { applySettings(reader, s); updateChrome(); }));
+  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncComfort(); updateChrome(); }));
   root.addEventListener('kr-rerender', async () => {
     const cur = currentLocator();
     for (const doc of docs) await renderDoc(doc);
@@ -569,11 +574,11 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     title,
     iconButton('search', t('searchInBook'), () => openSearch()),
     iconButton('toc', t('contents'), () => openContents('toc')),
-    smHide(iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark())),
-    smHide(iconButton('type', t('visualOptions'), () => openPdfOptions())),
     iconButton('more', t('more'), () => openMore()),
   );
-  root.append(topbar, reader, bar, h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
+  const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
+  queueMicrotask(syncComfort);
+  root.append(topbar, reader, bar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
 
   const openPdfOptions = () => panel.open(t('visualOptions'), [{ id: 'o', label: t('visualOptions'), render: (b) => renderOptions(b, { pdf: true }) }]);
   let saveTimer: number | undefined;
@@ -593,7 +598,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   void touchBook(book.id);
   if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
   onDispose(() => viewer.destroy());
-  onDispose(onSettingsChange((s) => { applySettings(reader, s); viewer.setInvert(s.pdfInvert); }));
+  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   onDispose(attachSelectionToolbar(reader, {
     search: (text) => openSearch(text),
     highlight: () => toast(t('fmtPdf')),

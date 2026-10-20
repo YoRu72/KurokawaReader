@@ -40,18 +40,10 @@ def epub(path, title, author, lang, chapters, img_color):
     z.writestr('OEBPS/content.opf', f'<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:{title}</dc:identifier><dc:title>{title}</dc:title><dc:creator>{author}</dc:creator><dc:language>{lang}</dc:language></metadata><manifest>{"".join(manifest)}</manifest><spine>{"".join(spine)}</spine></package>')
     z.close()
 
-lorem = 'Reading is to the mind what exercise is to the body. ' * 12
-epub(f'{OUT}/english.epub', 'The River of Ink', 'A. Author', 'en', [
-    ('Chapter One: Dawn', [lorem, 'Kurokawa means black river. ' + lorem]),
-    ('Chapter Two: Noon', [lorem, lorem]),
-    ('Chapter Three: Dusk', [lorem]),
-], (40, 70, 110))
-
-ar = 'العلمُ نورٌ والجهلُ ظلامٌ، ومن طلب العُلا سهر الليالي. ' * 10
-epub(f'{OUT}/arabic.epub', 'نهر الحبر', 'مؤلّف عربي', 'ar', [
-    ('الباب الأوّل: الفجر', [ar, 'كوروكاوا تعني النهر الأسود. ' + ar]),
-    ('الباب الثاني: الظهيرة', [ar, ar]),
-], (110, 60, 40))
+# Real books: the bundled starter EPUBs (public domain) replace any invented fixtures.
+import shutil, glob
+for f in glob.glob(os.path.join(os.path.dirname(__file__), '..', 'public', 'samples', '*.epub')):
+    shutil.copy(f, OUT)
 
 # PDF
 c = canvas.Canvas(f'{OUT}/sample.pdf', pagesize=A5)

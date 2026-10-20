@@ -32,6 +32,8 @@ export function settingsView(): HTMLElement {
   const storageP = h('p', null, t('storageUnknown'));
   navigator.storage?.estimate?.().then((e) => { if (e.usage != null && e.quota != null) storageP.textContent = t('storageUsed', { used: formatBytes(e.usage), quota: formatBytes(e.quota) }); }).catch(() => undefined);
   if (navigator.storage?.persist) navigator.storage.persisted().then((p) => { if (!p) void navigator.storage.persist(); }).catch(() => undefined);
+  body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),
+    h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: a.length })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));
   body.append(h('section', { class: 'card' }, h('h3', null, t('storage')), storageP,
     h('div', null, h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: (await db.allBooks()).length }))) { await db.clearAll(); toast(t('done')); } } }, icon('trash'), t('clearLibrary')))));
 

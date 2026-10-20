@@ -35,7 +35,7 @@ const server = http.createServer((req, res) => {
 
   const files = fs.readdirSync(FIX).map((f) => path.join(FIX, f));
   await page.setInputFiles('input[type=file]', files);
-  await page.waitForFunction(() => document.querySelectorAll('.book-card').length >= 9, null, { timeout: 60000 });
+  await page.waitForFunction(() => document.querySelectorAll('.book-card').length >= 8, null, { timeout: 60000 });
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${SHOTS}/${lang}-02-library.png` });
 
@@ -45,7 +45,7 @@ const server = http.createServer((req, res) => {
   // Multi-book: select both EPUBs and read together.
   const selectBtn = await page.$('.topbar button[aria-pressed]');
   await selectBtn.click();
-  for (const t of ['The River of Ink', 'نهر الحبر']) await page.click(`.book-card:has-text("${t}")`);
+  for (const t of ['Alice', 'مقامات']) await page.click(`.book-card:has-text("${t}")`);
   await page.click('.selection-bar .primary');
   await page.waitForSelector('.kr-doc .kr-content', { timeout: 30000 });
   await page.waitForFunction(() => document.querySelectorAll('.kr-doc .kr-content').length === 2, null, { timeout: 30000 });
@@ -60,14 +60,14 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: `${SHOTS}/${lang}-04-epub-multi-arabic.png` });
   console.log('footer:', await page.textContent('.read-footer'));
   // TOC panel
-  await page.click('.topbar [aria-label="' + (lang === 'ar' ? 'الفهرس' : 'Contents') + '"]');
+  await page.click('[aria-label="' + (lang === 'ar' ? 'الفهرس' : 'Contents') + '"]');
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${SHOTS}/${lang}-05-toc.png` });
   console.log('toc entries:', await page.$$eval('.toc-list li', (l) => l.length));
   await page.keyboard.press('Escape');
   // Search
   await page.keyboard.press('/');
-  await page.fill('.panel input[type=search]', lang === 'ar' ? 'النهر' : 'black river');
+  await page.fill('.panel input[type=search]', lang === 'ar' ? 'الحارث' : 'white rabbit');
   await page.waitForTimeout(600);
   console.log('search:', await page.textContent('.panel-body div'));
   await page.screenshot({ path: `${SHOTS}/${lang}-06-search.png` });
@@ -127,7 +127,7 @@ const server = http.createServer((req, res) => {
   console.log('pdf search:', await page.textContent('.panel-body div'));
   await page.screenshot({ path: `${SHOTS}/${lang}-11-pdf-search.png` });
   await page.keyboard.press('Escape');
-  await page.click('.topbar [aria-label="' + (lang === 'ar' ? 'الفهرس' : 'Contents') + '"]');
+  await page.click('[aria-label="' + (lang === 'ar' ? 'الفهرس' : 'Contents') + '"]');
   await page.waitForTimeout(500);
   console.log('pdf outline:', await page.$$eval('.toc-list li', (l) => l.length));
   await page.keyboard.press('Escape');
@@ -156,11 +156,11 @@ const server = http.createServer((req, res) => {
   await mp.evaluate((l) => localStorage.setItem('kr.lang', l), lang);
   await mp.reload();
   await mp.waitForSelector('.library-view');
-  await mp.setInputFiles('input[type=file]', [path.join(FIX, 'arabic.epub'), path.join(FIX, 'english.epub')]);
+  await mp.setInputFiles('input[type=file]', [path.join(FIX, 'maqamat-al-hariri.epub'), path.join(FIX, 'alice-in-wonderland.epub')]);
   await mp.waitForFunction(() => document.querySelectorAll('.book-card').length >= 2, null, { timeout: 60000 });
   await mp.waitForTimeout(500);
   await mp.screenshot({ path: `${SHOTS}/${lang}-m1-library.png` });
-  await mp.click('.book-card:has-text("نهر الحبر")');
+  await mp.click('.book-card:has-text("مقامات")');
   await mp.waitForSelector('.kr-content');
   await mp.waitForTimeout(800);
   await mp.screenshot({ path: `${SHOTS}/${lang}-m2-arabic-epub.png` });

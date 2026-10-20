@@ -10,10 +10,28 @@
 .reader[data-theme='sepia'] { --r-bg: #f3e8d2; --r-fg: #3b2f21; --r-dim: #7a6a55; --r-link: #8a5a1e; --r-rule: #d9c9a8; --r-img-filter: none; }
 .reader[data-theme='paper'] { --r-bg: #ebe5da; --r-fg: #27221d; --r-dim: #6e665b; --r-link: #7a4e12; --r-rule: #cfc6b7; --r-img-filter: none; }
 .reader[data-theme='light'] { --r-bg: #fbfaf7; --r-fg: #1d1a16; --r-dim: #6a635a; --r-link: #8a5a1e; --r-rule: #e2ddd3; --r-img-filter: none; }
+.reader[data-theme='custom'] { --r-bg: var(--r-custom-bg, #14110f); --r-fg: var(--r-custom-fg, #e6dcc8); --r-dim: color-mix(in srgb, var(--r-fg) 65%, var(--r-bg)); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg)); --r-link: color-mix(in srgb, var(--r-fg) 80%, #d8b36a); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
 
+/* Background systems: texture, picture, warmth and brightness overlays — all
+   sit under the text so selection and reading are unaffected. */
+.reader-scroll { background: var(--r-bg); }
+.reader-scroll::before, .reader-scroll::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.reader-scroll::before {
+  background-image: var(--r-bg-image, none); background-size: cover; background-position: center;
+  opacity: var(--r-bg-image-opacity, 0); filter: blur(var(--r-bg-blur, 0px)); transform: scale(1.04);
+}
+.reader[data-texture='paper'] .reader-scroll::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--r-texture-opacity, .5); mix-blend-mode: overlay; }
+.reader[data-texture='linen'] .reader-scroll::after { background-image: repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0 1px, transparent 1px 3px), repeating-linear-gradient(90deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px); opacity: var(--r-texture-opacity, .6); }
+.reader[data-texture='parchment'] .reader-scroll::after { background: radial-gradient(ellipse at 20% 10%, rgba(255,210,140,.14), transparent 50%), radial-gradient(ellipse at 80% 90%, rgba(120,70,20,.18), transparent 55%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .6 0 0 0 0 .45 0 0 0 0 .25 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--r-texture-opacity, .55); mix-blend-mode: multiply; }
+.reader[data-texture='dots'] .reader-scroll::after { background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1.5px); background-size: 14px 14px; opacity: var(--r-texture-opacity, .5); }
+.reader-flow { position: relative; z-index: 1; }
+/* Comfort filters applied to the whole reading area */
+.reader-comfort { position: fixed; inset: 0; pointer-events: none; z-index: 34; mix-blend-mode: multiply; background: rgb(255 170 60 / var(--r-warmth, 0)); }
+.reader-comfort::after { content: ''; position: absolute; inset: 0; background: rgb(0 0 0 / var(--r-dim-overlay, 0)); mix-blend-mode: normal; }
+
 .reader-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scroll-behavior: auto; overscroll-behavior: contain; position: relative; }
-.reader-flow { max-width: var(--r-width); margin: 0 auto; padding: 24px var(--r-margin) 40vh; }
+.reader-flow { max-width: var(--r-width); margin: 0 auto; padding: 28px var(--r-margin) 40vh; }
 
 /* One block per opened file */
 .kr-doc { position: relative; }
@@ -35,7 +53,14 @@
 }
 .kr-content[dir='rtl'], .kr-content [dir='rtl'], .kr-content :lang(ar), .kr-content :lang(fa), .kr-content :lang(ur) {
   font-family: var(--r-font-rtl); line-height: calc(var(--r-lh) * 1.12);
+  /* Letter-spacing breaks Arabic joining and the lam-alef ligature (لا → ل‌ا); never apply it to RTL text. */
+  letter-spacing: normal !important;
+  font-variant-ligatures: common-ligatures contextual;
+  font-feature-settings: 'rlig' 1, 'liga' 1, 'calt' 1, 'ccmp' 1, 'mark' 1, 'mkmk' 1, 'curs' 1;
+  text-justify: inter-word;
+  hyphens: manual;
 }
+.kr-content { font-feature-settings: 'rlig' 1, 'liga' 1, 'calt' 1, 'ccmp' 1, 'kern' 1; font-variant-ligatures: common-ligatures contextual; }
 .kr-content p, .kr-content li, .kr-content blockquote, .kr-content dd { margin: 0 0 var(--r-para); }
 .kr-content p:empty { display: none; }
 .kr-content h1, .kr-content h2, .kr-content h3, .kr-content h4, .kr-content h5, .kr-content h6 {
@@ -45,6 +70,8 @@
 .kr-content a { color: var(--r-link); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--r-link) 40%, transparent); }
 .kr-content img, .kr-content svg, .kr-content video { max-width: 100%; height: auto; filter: var(--r-img-filter); border-radius: 3px; }
 .kr-content img { display: block; margin: 1em auto; }
+/* Black-on-transparent line art (engravings, diagrams) is invisible on dark pages; flip it. */
+.reader[data-theme='dark'] .kr-content img.kr-lineart, .reader[data-theme='black'] .kr-content img.kr-lineart, .reader[data-theme='custom'][data-dark='true'] .kr-content img.kr-lineart { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
 .kr-content img.inline, .kr-content p img:not(:only-child) { display: inline; margin: 0; vertical-align: middle; }
 .kr-content figure { margin: 1.2em 0; text-align: center; }
 .kr-content figcaption { font-size: .85em; color: var(--r-dim); }
@@ -126,22 +153,49 @@ html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
 .pdf-bar input[type='number'] { width: 64px; padding: 6px 8px; text-align: center; }
 .pdf-loading { position: absolute; inset: 0; display: grid; place-items: center; }
 
-/* Progress strip */
+/* Progress strip — a thin expressive progress line under the top bar */
 .read-footer {
-  display: flex; align-items: center; gap: 12px; padding: 6px 14px; padding-bottom: calc(6px + var(--safe-bottom));
-  font-family: var(--font-ui); font-size: 12px; color: var(--text-dim); border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  position: absolute; left: 0; right: 0; top: calc(var(--topbar-h) + var(--safe-top)); z-index: 19;
+  display: flex; align-items: center; gap: 10px; padding: 0 16px 6px; font-family: var(--font-ui); font-size: 12px; color: var(--md-on-surface-dim);
+  background: color-mix(in srgb, var(--md-surface) 86%, transparent); backdrop-filter: blur(18px); pointer-events: none; height: 24px;
+  transition: opacity var(--dur-med), transform var(--dur-med) var(--ease-emph);
 }
-.read-footer .bar { flex: 1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
-.read-footer .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
-.read-footer .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50vw; }
-.read-footer .pct { font-variant-numeric: tabular-nums; }
+.read-footer .bar { flex: 1; height: 5px; background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); border-radius: var(--sh-full); overflow: hidden; }
+.read-footer .bar i { display: block; height: 100%; background: var(--md-primary); width: 0; border-radius: var(--sh-full); transition: width .25s var(--ease-emph); }
+.read-footer .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48vw; }
+.read-footer .pct { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* PDF floating bar */
+.pdf-bar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + var(--safe-bottom)); z-index: 32;
+  display: flex; align-items: center; gap: 4px; padding: 6px 8px; width: min(820px, calc(100vw - 24px));
+  background: var(--md-surface-container-high); border-radius: var(--sh-full); box-shadow: var(--el-3); font-family: var(--font-ui);
+  transition: transform var(--dur-long) var(--ease-spring), opacity var(--dur-med);
+}
+.pdf-bar input[type='range'] { flex: 1; direction: ltr; min-width: 80px; height: 40px; }
+.pdf-bar input[type='range']::-webkit-slider-runnable-track { height: 12px; }
+.pdf-bar input[type='range']::-webkit-slider-thumb { height: 28px; margin-top: -8px; box-shadow: 0 0 0 4px var(--md-surface-container-high); }
+html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
+.pdf-bar .pcount { font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--md-on-surface-variant); min-width: 84px; text-align: center; }
+.pdf-bar input[type='number'] { width: 64px; height: 40px; padding: 0 8px; text-align: center; -moz-appearance: textfield; }
+.pdf-bar input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; }
+.pdf-bar form button { height: 40px; }
+.pdf-bar .icon-btn { width: 40px; height: 40px; }
+.reader-view.immersive .pdf-bar { transform: translateX(-50%) translateY(140%); opacity: 0; pointer-events: none; }
+.pdf-loading { position: absolute; inset: 0; display: grid; place-items: center; }
+.pdf-scroll { padding-bottom: 120px; }
 
 /* Autoscroll HUD */
-.autoscroll-hud { position: fixed; bottom: calc(70px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0f0d0b; border: 1px solid var(--line); border-radius: 999px; box-shadow: var(--shadow); font-size: 13px; }
-.autoscroll-hud input { width: 120px; }
+.autoscroll-hud { position: fixed; bottom: calc(90px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 16px; background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); border-radius: var(--sh-full); box-shadow: var(--el-3); font-size: 13px; font-weight: 600; animation: pop var(--dur-med) var(--ease-spring); }
+.autoscroll-hud input { width: 140px; height: 36px; }
+.autoscroll-hud .icon-btn { color: inherit; width: 40px; height: 40px; }
+.autoscroll-hud svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }
 
 /* Immersive mode hides chrome */
-.reader-view.immersive .topbar, .reader-view.immersive .read-footer, .reader-view.immersive .pdf-bar { display: none; }
+.reader-view .topbar { position: absolute; left: 0; right: 0; transition: transform var(--dur-med) var(--ease-emph), opacity var(--dur-med); }
+.reader-view .reader { padding-top: calc(var(--topbar-h) + 24px + var(--safe-top)); }
+.reader-view.immersive .topbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+.reader-view.immersive .read-footer { opacity: 0; }
+.reader-view.immersive .reader { padding-top: 0; }
 .reader-view { position: relative; }
 .reader-view .tap-zones { position: absolute; inset: var(--topbar-h) 0 60px; pointer-events: none; }

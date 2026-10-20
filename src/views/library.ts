@@ -23,7 +23,10 @@ export function libraryView(): HTMLElement {
   sortSel.value = sort;
 
   const grid = h('div', { class: 'book-grid', role: 'list' });
+  const heroSub = h('div', { class: 'sub' });
+  const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub);
   const body = h('div', { class: 'library-body' },
+    hero,
     h('div', { class: 'library-tools' }, search, sortSel),
     grid);
 
@@ -31,12 +34,12 @@ export function libraryView(): HTMLElement {
   const topbar = h('header', { class: 'topbar' },
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
     selectBtn,
-    iconButton('import', t('importBooks'), () => input.click(), { text: true }),
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );
+  const fab = h('button', { class: 'fab', type: 'button', onclick: () => input.click() }, icon('import'), h('span', null, t('importBooks')));
 
   const selBar = h('div', { class: 'selection-bar', hidden: true });
-  const root = h('div', { class: 'view library-view' }, topbar, body, selBar, input);
+  const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
 
   function setSelecting(v: boolean) {
     selecting = v;
@@ -136,13 +139,30 @@ export function libraryView(): HTMLElement {
     clear(grid);
     renderSelBar();
     const list = sorted();
+    heroSub.textContent = books.length ? `${books.length} · ${t('tagline')}` : t('tagline');
+    fab.hidden = selecting;
     if (!books.length) {
-      grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, icon('empty'), h('h2', null, t('emptyLibraryTitle')), h('p', null, t('emptyLibraryBody')),
-        h('button', { class: 'btn primary', onclick: () => input.click() }, icon('import'), t('importBooks'))));
+      grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('div', { class: 'glyph' }, icon('empty')), h('h2', null, t('emptyLibraryTitle')), h('p', null, t('emptyLibraryBody')),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn primary large', onclick: () => input.click() }, icon('import'), t('importBooks')),
+          h('button', { class: 'btn tonal large', onclick: () => void addSamples() }, icon('books'), t('sampleBooks'))),
+        h('p', { style: { fontSize: '13px' } }, t('sampleBooksBody'))));
       return;
     }
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, t('noResults')))); return; }
     list.forEach((b) => grid.appendChild(card(b)));
+  }
+
+  async function addSamples() {
+    toast(t('addingSamples'), 'info', 60000);
+    try {
+      const { importSamples } = await import('../samples');
+      const added = await importSamples();
+      toast(t('imported', { n: added.length }));
+      await refresh();
+    } catch (err) {
+      toast(t('importFailed', { name: 'samples', error: String((err as Error)?.message ?? err) }), 'error', 5000);
+    }
   }
 
   async function refresh() {

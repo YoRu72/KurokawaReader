@@ -6,6 +6,7 @@ import { onRoute, parseRoute, type Route } from './router';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
 import { settingsView } from './views/settings';
+import { applyChrome, onSettingsChange } from './settings';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
@@ -28,6 +29,8 @@ function mount(route: Route): void {
 }
 
 applyDocumentLang();
+applyChrome();
+onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());

@@ -20,6 +20,7 @@ export class SidePanel {
     this.tabsEl = h('div', { class: 'panel-tabs', role: 'tablist' });
     this.scrim = h('div', { class: 'scrim', hidden: true, onclick: () => this.close() });
     this.el = h('aside', { class: 'panel', role: 'dialog' },
+      h('div', { class: 'handle' }),
       h('div', { class: 'panel-head' }, this.titleEl, iconButton('close', t('close'), () => this.close())),
       this.tabsEl, this.body);
     host.append(this.scrim, this.el);

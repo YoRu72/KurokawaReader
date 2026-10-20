@@ -125,6 +125,9 @@ export const db = {
   async getFile(id: string): Promise<Blob | undefined> {
     return tx<Blob | undefined>('files', 'readonly', (s) => s.get(id));
   },
+  async deleteFile(id: string): Promise<void> {
+    await tx('files', 'readwrite', (s) => s.delete(id));
+  },
   async clearAll(): Promise<void> {
     await tx('books', 'readwrite', (s) => s.clear());
     await tx('files', 'readwrite', (s) => s.clear());

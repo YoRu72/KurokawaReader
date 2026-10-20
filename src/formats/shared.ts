@@ -95,6 +95,26 @@ export function markDirections(root: Element): boolean {
   return rtl;
 }
 
+/** Detect dark line-art on a transparent background (so dark themes can invert it). */
+export function tagLineArt(img: HTMLImageElement): void {
+  const check = () => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = 24; c.height = 24;
+      const ctx = c.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(img, 0, 0, 24, 24);
+      const d = ctx.getImageData(0, 0, 24, 24).data;
+      let transparent = 0, lum = 0, opaque = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 40) { transparent++; continue; }
+        opaque++; lum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      }
+      if (opaque && transparent > 24 * 24 * 0.08 && lum / opaque < 0.4) img.classList.add('kr-lineart');
+    } catch { /* cross-origin or decode failure: leave as is */ }
+  };
+  if (img.complete && img.naturalWidth) check(); else img.addEventListener('load', check, { once: true });
+}
+
 /** Collect images with stable ids for the gallery. */
 export function collectImages(root: Element, ctx: RenderContext, prefix: string): ImageRef[] {
   const out: ImageRef[] = [];
@@ -104,6 +124,7 @@ export function collectImages(root: Element, ctx: RenderContext, prefix: string)
     i++;
     img.loading = 'lazy';
     img.decoding = 'async';
+    tagLineArt(img);
     out.push({ src: img.src || img.getAttribute('src')!, alt: img.alt || undefined, anchor: img.id, bookId: ctx.bookId, bookTitle: ctx.bookTitle });
   });
   return out;
