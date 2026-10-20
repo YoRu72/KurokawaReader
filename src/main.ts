@@ -7,6 +7,8 @@ import { libraryView } from './views/library';
 import { readerView } from './views/reader';
 import { settingsView } from './views/settings';
 import { applyChrome, onSettingsChange } from './settings';
+import { loadFonts } from './fonts';
+import { initNativeBridges, isNative } from './native';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
@@ -30,13 +32,15 @@ function mount(route: Route): void {
 
 applyDocumentLang();
 applyChrome();
+void loadFonts();
+initNativeBridges();
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());
 
 // Offline support.
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => undefined); });
 }
 

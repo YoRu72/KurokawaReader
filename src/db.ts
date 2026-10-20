@@ -34,13 +34,20 @@ export interface Highlight {
   text: string;
   /** Anchor of the chapter / block the highlight lives in. */
   anchor?: string;
-  color: 'amber' | 'rose' | 'mint' | 'sky';
+  color: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
   note?: string;
   createdAt: number;
 }
 
+export interface ReadingDay { ms: number; pct: number; words: number }
+export interface ReadingStats { ms: number; words: number; days: Record<string, ReadingDay>; bookWords?: number; bookChars?: number }
+
+export interface Folder { id: string; name: string; createdAt: number }
+
 export interface Book {
   id: string;
+  folderId?: string;
+  stats?: ReadingStats;
   title: string;
   author?: string;
   language?: string;
@@ -60,7 +67,7 @@ export interface Book {
 }
 
 const DB_NAME = 'kurokawa-reader';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -76,6 +83,7 @@ function openDb(): Promise<IDBDatabase> {
         books.createIndex('lastOpenedAt', 'lastOpenedAt');
       }
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files');
+      if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -127,6 +135,12 @@ export const db = {
   },
   async deleteFile(id: string): Promise<void> {
     await tx('files', 'readwrite', (s) => s.delete(id));
+  },
+  async getMeta<T>(key: string): Promise<T | undefined> {
+    return tx<T | undefined>('meta', 'readonly', (s) => s.get(key));
+  },
+  async setMeta<T>(key: string, value: T): Promise<void> {
+    await tx('meta', 'readwrite', (s) => s.put(value, key));
   },
   async clearAll(): Promise<void> {
     await tx('books', 'readwrite', (s) => s.clear());

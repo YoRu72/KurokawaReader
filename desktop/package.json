@@ -1,0 +1,40 @@
+{
+  "name": "kurokawa-reader-desktop",
+  "version": "0.2.0",
+  "description": "KurokawaReader for Windows, macOS and Linux",
+  "main": "main.cjs",
+  "private": true,
+  "author": "KurokawaReader",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "app.kurokawa.reader",
+    "productName": "KurokawaReader",
+    "artifactName": "KurokawaReader-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "out" },
+    "files": ["main.cjs", "preload.cjs", "icon.png", "icon.ico", { "from": "../dist", "to": "dist" }],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }], "icon": "icon.ico" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false },
+    "mac": { "target": ["dmg"], "icon": "icon.png", "category": "public.app-category.books" },
+    "linux": { "target": ["AppImage"], "icon": "icon.png", "category": "Office" },
+    "fileAssociations": [
+      { "ext": "epub", "name": "EPUB book", "mimeType": "application/epub+zip", "role": "Viewer" },
+      { "ext": "pdf", "name": "PDF document", "mimeType": "application/pdf", "role": "Viewer" },
+      { "ext": "docx", "name": "Word document", "role": "Viewer" },
+      { "ext": "xlsx", "name": "Excel workbook", "role": "Viewer" },
+      { "ext": "pptx", "name": "PowerPoint presentation", "role": "Viewer" },
+      { "ext": "txt", "name": "Text", "role": "Viewer" },
+      { "ext": "md", "name": "Markdown", "role": "Viewer" },
+      { "ext": "fb2", "name": "FictionBook", "role": "Viewer" },
+      { "ext": "cbz", "name": "Comic archive", "role": "Viewer" }
+    ]
+  }
+}

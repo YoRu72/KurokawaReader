@@ -1,0 +1,11 @@
+{
+  "appId": "app.kurokawa.reader",
+  "appName": "قارئ كروكاوا",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false, "backgroundColor": "#121314" },
+  "ios": { "contentInset": "automatic", "backgroundColor": "#121314", "preferredContentMode": "mobile" },
+  "server": { "androidScheme": "https" },
+  "plugins": {
+    "SplashScreen": { "launchShowDuration": 0, "backgroundColor": "#121314" }
+  }
+}

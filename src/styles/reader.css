@@ -1,12 +1,12 @@
 /* Reader surface. Everything typographic is driven by CSS variables that the
    Visual Options panel writes onto .reader, so changes apply instantly. */
 .reader {
-  --r-bg: #14110f; --r-fg: #e6dcc8; --r-dim: #9c907c; --r-link: #d8b36a; --r-rule: #3a322a; --r-img-filter: brightness(.85) contrast(1.02);
+  --r-bg: #141414; --r-fg: #cfcbc4; --r-dim: #8d8a84; --r-link: #8ec8e8; --r-rule: #2f2f2f; --r-img-filter: brightness(.85) contrast(1.02);
   --r-size: 19px; --r-lh: 1.7; --r-para: 0.9em; --r-width: 720px; --r-margin: 22px; --r-align: start; --r-word: normal; --r-letter: normal; --r-hyphens: manual;
   --r-font: var(--font-read); --r-font-rtl: var(--font-read-rtl);
   flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--r-bg); color: var(--r-fg);
 }
-.reader[data-theme='black'] { --r-bg: #000; --r-fg: #d9d2c4; --r-dim: #8a8070; --r-rule: #2a2622; }
+.reader[data-theme='black'] { --r-bg: #000; --r-fg: #c9c9c9; --r-dim: #858585; --r-rule: #262626; --r-link: #8ec8e8; }
 .reader[data-theme='sepia'] { --r-bg: #f3e8d2; --r-fg: #3b2f21; --r-dim: #7a6a55; --r-link: #8a5a1e; --r-rule: #d9c9a8; --r-img-filter: none; }
 .reader[data-theme='paper'] { --r-bg: #ebe5da; --r-fg: #27221d; --r-dim: #6e665b; --r-link: #7a4e12; --r-rule: #cfc6b7; --r-img-filter: none; }
 .reader[data-theme='light'] { --r-bg: #fbfaf7; --r-fg: #1d1a16; --r-dim: #6a635a; --r-link: #8a5a1e; --r-rule: #e2ddd3; --r-img-filter: none; }
@@ -90,6 +90,9 @@
 .kr-content mark.kr-hl[data-color='rose'] { background: color-mix(in srgb, #e58a8a 45%, transparent); }
 .kr-content mark.kr-hl[data-color='mint'] { background: color-mix(in srgb, #7fcfa5 45%, transparent); }
 .kr-content mark.kr-hl[data-color='sky'] { background: color-mix(in srgb, #7fb4e5 45%, transparent); }
+.kr-content mark.kr-hl[data-color='violet'] { background: color-mix(in srgb, #b9a3e8 45%, transparent); }
+.kr-content mark.kr-hl.has-note { border-bottom: 2px dotted var(--r-link); cursor: pointer; }
+.kr-content mark.kr-hl { cursor: pointer; }
 .kr-content .kr-flash { animation: flash 1.6s ease-out; }
 ::highlight(kr-search) { background: color-mix(in srgb, #e5c56b 40%, transparent); color: inherit; }
 ::highlight(kr-search-current) { background: #e5a53b; color: #1a1408; }
@@ -98,10 +101,16 @@
 /* Printed page markers (EPUB pagebreak spans) become quiet centred separators */
 .kr-content span.pb, .kr-content [epub\:type~='pagebreak'] { display: block; text-align: center; font-family: var(--font-ui); font-size: .62em; color: var(--r-dim); opacity: .8; margin: .6em 0; letter-spacing: .04em; }
 .kr-content .basmala { text-align: center; font-size: 1.25em; margin: .4em 0 1em; }
-.kr-content .verse { display: flex; gap: 1.5em; justify-content: space-between; margin: .2em 1.2em; text-align: start; }
-.kr-content .verse span { flex: 1; }
+.kr-content .poem { margin: 1em auto; max-width: 36em; padding: .6em 1em; border-inline-start: 2px solid var(--r-rule); }
+.kr-content .verse { display: flex; gap: 2.2em; justify-content: space-between; margin: .1em 0; text-align: start; line-height: calc(var(--r-lh) * 1.05); }
+.kr-content .verse span { flex: 1 1 0; min-width: 0; }
 .kr-content .verse .h2 { text-align: end; }
-@media (max-width: 640px) { .kr-content .verse { flex-direction: column; gap: 0; margin-block: .5em; } .kr-content .verse .h1 { text-align: start; } .kr-content .verse .h2 { text-align: end; padding-inline-start: 2.5em; } }
+@media (max-width: 640px) {
+  .kr-content .poem { padding: .4em .6em; }
+  .kr-content .verse { flex-direction: column; gap: 0; margin-block: .45em; }
+  .kr-content .verse .h1 { text-align: start; }
+  .kr-content .verse .h2 { text-align: end; padding-inline-start: 2.5em; }
+}
 .kr-content .footnotes { font-size: .85em; color: var(--r-dim); }
 .kr-content .kr-md { }
 

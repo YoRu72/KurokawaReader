@@ -9,13 +9,20 @@ import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
 import { BLOCK_SELECTOR } from '../formats/shared';
 import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
-import { applySettings, getSettings, onSettingsChange } from '../settings';
+import { applySettings, getSettings, onSettingsChange, updateSettings } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
-import { attachSelectionToolbar, wrapRange, findTextRange } from '../ui/selection';
+import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
 import { openGallery } from './gallery';
 import { touchBook, coverUrl } from '../library';
 import { navigate } from '../router';
+import { ReadingTracker, countWords } from '../stats';
+import { showBookInfo } from '../ui/bookinfo';
+import { renderTextCard } from '../ui/textcard';
+import { shareFile, canvasToBlob, downloadBlob } from '../ui/share';
+import { applyOrientation } from '../settings';
+import type { HighlightColor } from '../ui/selection';
+import { openSheet } from '../ui/dom';
 
 interface OpenDoc {
   book: Book;
@@ -125,6 +132,31 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   root.querySelector('#kr-loading')?.remove();
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   books.forEach((b) => void touchBook(b.id));
+  void applyOrientation();
+  // Reading statistics: words per block, tracked as the reader scrolls past them.
+  const blockWords = new Map<OpenDoc, number[]>();
+  const trackers = new Map<OpenDoc, ReadingTracker>();
+  for (const doc of docs) {
+    const words = doc.blocks.map((b) => (b.tagName === 'IMG' ? 0 : countWords(b.textContent ?? '')));
+    blockWords.set(doc, words);
+    const total = words.reduce((a, b) => a + b, 0);
+    const chars = (doc.render?.element.textContent ?? '').replace(/\s+/g, '').length;
+    const tr = new ReadingTracker(doc.book, () => currentLocator()?.doc === doc, total, chars);
+    tr.start();
+    trackers.set(doc, tr);
+  }
+  let lastTracked: { doc: OpenDoc; block: number } | null = null;
+  const trackProgress = () => {
+    const cur = currentLocator();
+    if (!cur) return;
+    const tr = trackers.get(cur.doc); const words = blockWords.get(cur.doc) ?? [];
+    const block = cur.loc.block ?? 0;
+    let passed = 0;
+    if (lastTracked && lastTracked.doc === cur.doc && block > lastTracked.block && block - lastTracked.block < 60) for (let i = lastTracked.block; i < block; i++) passed += words[i] ?? 0;
+    tr?.advance(passed, cur.loc.pct);
+    lastTracked = { doc: cur.doc, block };
+  };
+  onDispose(() => { trackers.forEach((tr) => void tr.stop()); });
   if (books.length > 1) toast(t('openedTogether', { n: books.length }));
   restore();
   // Images loading above the saved position shift the layout; settle a few times.
@@ -236,7 +268,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     for (const d of docs) if (d !== cur.doc && docs.indexOf(d) < docs.indexOf(cur.doc) && (d.book.progress?.pct ?? 0) < 1) { d.book.progress = { bookId: d.book.id, pct: 1 }; await db.updateBook(d.book.id, (b) => { b.progress = d.book.progress; }); }
   }
 
-  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); }, { passive: true });
+  const trackThrottled = throttle(trackProgress, 400);
+  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); }, { passive: true });
   updateChrome();
   onDispose(() => { window.clearTimeout(saveTimer); void saveProgress(); docs.forEach((d) => d.render?.dispose()); });
 
@@ -263,9 +296,29 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /* ---------- selection tools ---------- */
   onDispose(attachSelectionToolbar(scroll, {
     search: (text) => openSearch(text),
-    highlight: (range, text) => addHighlight(range, text),
+    highlight: (range, text, color) => addHighlight(range, text, color),
+    note: (range, text) => addNote(range, text),
     speak: (text) => speak([text]),
+    textImage: (text) => void textImage(text),
   }));
+
+  async function textImage(text: string): Promise<void> {
+    const cur = currentLocator();
+    const book = cur?.doc.book ?? docs[0].book;
+    try {
+      const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') });
+      await shareFile(blob, `${book.title.slice(0, 40)}.png`, book.title);
+    } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
+  }
+
+  function addNote(range: Range, text: string): void {
+    const sheet = openSheet(t('addNote'), t('close'));
+    sheet.body.style.fontFamily = 'var(--font-ui)';
+    const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '4', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
+    sheet.body.append(h('p', { class: 'src', dir: 'auto' }, text.length > 160 ? text.slice(0, 160) + '…' : text), ta);
+    sheet.actions.append(h('button', { class: 'btn primary small', onclick: async () => { await addHighlight(range, text, getSettings().highlightColor, ta.value.trim() || undefined); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+    setTimeout(() => ta.focus(), 100);
+  }
 
   function docForNode(node: Node): OpenDoc | undefined {
     const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
@@ -273,23 +326,45 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     return docs.find((d) => d.wrapper === wrapper);
   }
 
-  async function addHighlight(range: Range, text: string): Promise<void> {
+  async function addHighlight(range: Range, text: string, color: HighlightColor, note?: string): Promise<void> {
     const doc = docForNode(range.commonAncestorContainer);
     if (!doc) return;
     const chapter = (range.startContainer.parentElement?.closest('.kr-chapter, .kr-slide, section, .kr-content') as HTMLElement | null);
-    const hl: Highlight = { id: uid(), text, anchor: chapter?.id || undefined, color: 'amber', createdAt: Date.now() };
-    wrapRange(range, 'kr-hl', hl.color, hl.id);
+    const hl: Highlight = { id: uid(), text, anchor: chapter?.id || undefined, color, note, createdAt: Date.now() };
+    const marks = wrapRange(range, 'kr-hl', hl.color, hl.id);
+    if (note) marks.forEach((m) => { m.title = note; m.classList.add('has-note'); });
     doc.book.highlights = [...(doc.book.highlights ?? []), hl];
     await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; });
-    toast(t('highlight'));
+    updateSettings({ highlightColor: color });
+    if (!note) toast(t('highlight'));
   }
+
+  // Tapping a highlight: change colour, edit note, or remove.
+  flow.addEventListener('click', (e) => {
+    const mark = (e.target as HTMLElement).closest('mark.kr-hl') as HTMLElement | null;
+    if (!mark || document.getSelection()?.isCollapsed === false) return;
+    const doc = docForNode(mark); const id = mark.dataset.hl;
+    const hl = doc?.book.highlights.find((x) => x.id === id);
+    if (!doc || !hl) return;
+    e.stopPropagation();
+    const sheet = openSheet(t('highlight'), t('close'));
+    sheet.body.style.fontFamily = 'var(--font-ui)';
+    const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '3', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
+    ta.value = hl.note ?? '';
+    sheet.body.append(h('p', { class: 'src', dir: 'auto' }, hl.text.length > 200 ? hl.text.slice(0, 200) + '…' : hl.text),
+      h('div', { class: 'sel-colors', style: { justifyContent: 'flex-start', border: '0', padding: '0 0 10px' } }, ...HIGHLIGHT_COLORS.map(([cid, hex]) => h('button', { type: 'button', class: 'dot', style: { background: hex, width: '44px', height: '22px', borderRadius: '999px', outline: hl.color === cid ? '3px solid var(--md-primary)' : 'none' }, onclick: async () => { hl.color = cid; doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => ((m as HTMLElement).dataset.color = cid)); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); sheet.close(); } }))),
+      ta);
+    sheet.actions.append(
+      h('button', { class: 'btn danger small', onclick: async () => { await removeHighlight(doc, hl.id); sheet.close(); } }, icon('trash'), t('removeHighlight')),
+      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+  }, true);
 
   function applyHighlights(doc: OpenDoc): void {
     for (const hl of doc.book.highlights ?? []) {
       const scope = (hl.anchor && document.getElementById(hl.anchor)) || doc.render?.element;
       if (!scope) continue;
       const range = findTextRange(scope, hl.text);
-      if (range) wrapRange(range, 'kr-hl', hl.color, hl.id);
+      if (range) { const marks = wrapRange(range, 'kr-hl', hl.color, hl.id); if (hl.note) marks.forEach((m) => { m.title = hl.note!; m.classList.add('has-note'); }); }
     }
   }
 
@@ -425,6 +500,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     void searchHighlight;
   }
 
+  function showInfo(): void {
+    const cur = currentLocator();
+    const doc = cur?.doc ?? docs[0];
+    const tr = trackers.get(doc);
+    const words = blockWords.get(doc) ?? [];
+    const block = cur?.loc.block ?? 0;
+    const toc = doc.render?.toc ?? [];
+    const label = labelFor(doc, block);
+    const idx = toc.findIndex((x) => x.label === label);
+    // words left in the current chapter: until the next TOC anchor
+    let wordsLeftInChapter: number | undefined;
+    if (toc.length && idx >= 0 && toc[idx + 1]) {
+      const nextEl = document.getElementById(toc[idx + 1].anchor);
+      const nextBlock = nextEl ? doc.blocks.findIndex((b) => b === nextEl || (nextEl.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) : -1;
+      if (nextBlock > block) wordsLeftInChapter = words.slice(block, nextBlock).reduce((a, b) => a + b, 0);
+    }
+    const wordsLeftInBook = words.slice(block).reduce((a, b) => a + b, 0);
+    showBookInfo({ book: doc.book, stats: tr?.current ?? { ms: 0, words: 0, days: {} }, speed: tr?.speed() ?? null, chapters: toc.length || undefined, currentChapter: label !== doc.book.title ? label : undefined, currentChapterIndex: idx >= 0 ? idx : undefined, pct: cur?.loc.pct ?? 0, wordsLeftInChapter, wordsLeftInBook });
+  }
+
   /* ---------- gallery ---------- */
   function showGallery(startAt?: number): void {
     const close = openGallery(allImages, (anchor) => scrollToAnchor(anchor));
@@ -495,6 +590,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
       const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
       body.append(h('ul', { class: 'plain-list' },
+        item('info', t('bookInfo'), () => showInfo()),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('images', t('images'), () => showGallery()),
         item('type', t('visualOptions'), openOptions),
@@ -574,6 +670,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     title,
     iconButton('search', t('searchInBook'), () => openSearch()),
     iconButton('toc', t('contents'), () => openContents('toc')),
+    iconButton('grid', t('pagesGrid'), () => showPagesGrid()),
     iconButton('more', t('more'), () => openMore()),
   );
   const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
@@ -602,8 +699,63 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   onDispose(attachSelectionToolbar(reader, {
     search: (text) => openSearch(text),
     highlight: () => toast(t('fmtPdf')),
+    note: () => toast(t('fmtPdf')),
     speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; speechSynthesis.speak(u); } },
+    textImage: async (text) => { try { const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') }); await shareFile(blob, `${book.title.slice(0, 40)}.png`, book.title); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
+  void applyOrientation();
+
+  // Reading statistics for PDFs: words per page counted as pages are reached.
+  const tracker = new ReadingTracker(book, () => true);
+  tracker.start();
+  let lastPageTracked = viewer.current;
+  const pageWordCache = new Map<number, number>();
+  const trackPage = async () => {
+    const n = viewer.current;
+    if (n === lastPageTracked) return;
+    let passed = 0;
+    if (n > lastPageTracked && n - lastPageTracked < 6) for (let i = lastPageTracked; i < n; i++) { if (!pageWordCache.has(i)) pageWordCache.set(i, countWords(await viewer.pageText(i))); passed += pageWordCache.get(i)!; }
+    lastPageTracked = n;
+    tracker.advance(passed, n / viewer.total);
+  };
+  viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
+  onDispose(() => void tracker.stop());
+
+  async function savePage(share: boolean): Promise<void> {
+    try {
+      const blob = await viewer.pageToBlob(viewer.current);
+      const name = `${book.title.slice(0, 40)} - p${viewer.current}.png`;
+      if (share) await shareFile(blob, name, book.title); else { downloadBlob(blob, name); toast(t('pageSaved')); }
+    } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
+  }
+
+  function showPagesGrid(): void {
+    const grid = h('div', { class: 'pages-grid' });
+    const close = () => { overlay.remove(); window.removeEventListener('keydown', onKey); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    const overlay = h('div', { class: 'view', style: { position: 'fixed', inset: '0', zIndex: '45', background: 'var(--md-surface)' }, role: 'dialog' },
+      h('header', { class: 'topbar' }, iconButton('back', t('back'), close), h('div', { class: 'title' }, t('pagesGrid'), h('small', null, t('pageOf', { n: viewer.current, total: viewer.total })))),
+      h('div', { class: 'gallery-body' }, grid));
+    const io = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        const cell = en.target as HTMLElement; io.unobserve(cell);
+        const n = Number(cell.dataset.page);
+        void viewer.thumbnail(n).then((url) => { const img = cell.querySelector('img'); if (img) img.src = url; });
+      }
+    }, { root: overlay.querySelector('.gallery-body'), rootMargin: '400px 0px' });
+    for (let n = 1; n <= viewer.total; n++) {
+      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { viewer.goTo(n); close(); } }, h('img', { alt: String(n) }), h('span', null, String(n)));
+      grid.append(cell); io.observe(cell);
+    }
+    window.addEventListener('keydown', onKey);
+    document.body.append(overlay);
+    setTimeout(() => overlay.querySelector('.page-cell.current')?.scrollIntoView({ block: 'center' }), 50);
+  }
+
+  function showInfo(): void {
+    showBookInfo({ book, stats: tracker.current, speed: tracker.speed(), pages: viewer.total, currentPage: viewer.current, pct: viewer.current / viewer.total });
+  }
   reader.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('.textLayer span, a, button, input')) return; if (document.getSelection()?.isCollapsed === false) return; root.classList.toggle('immersive'); });
 
   let outline: TocItem[] | null = null;
@@ -667,6 +819,10 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
       const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
       body.append(h('ul', { class: 'plain-list' },
+        item('info', t('bookInfo'), showInfo),
+        item('grid', t('pagesGrid'), showPagesGrid),
+        item('camera', t('savePageImage'), () => void savePage(false)),
+        item('external', t('sharePage'), () => void savePage(true)),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('type', t('visualOptions'), openPdfOptions),
         item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),

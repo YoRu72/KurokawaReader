@@ -281,6 +281,28 @@ export class PdfViewer {
     tryMark(0);
   }
 
+  /** Render one page to a PNG blob at the given width (for saving / sharing). */
+  async pageToBlob(n: number, width = 1600): Promise<Blob> {
+    const page = await this.doc.getPage(n);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: width / base.width });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
+    return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/png'));
+  }
+
+  /** Small thumbnail (data URL) for the pages grid. */
+  async thumbnail(n: number, width = 180): Promise<string> {
+    const page = await this.doc.getPage(n);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: width / base.width });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
+    return canvas.toDataURL('image/jpeg', 0.7);
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.observer?.disconnect();

@@ -4,3 +4,7 @@ tests/fixtures/
 tests/shots/
 .DS_Store
 *.log
+android/
+ios/
+desktop/node_modules/
+desktop/out/

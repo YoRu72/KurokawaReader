@@ -3,6 +3,7 @@
 import { h, clear, icon, toast } from './dom';
 import { t } from '../i18n';
 import { getSettings, updateSettings, resetSettings, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont } from '../settings';
+import { fontsSync } from '../fonts';
 
 type Section = 'theme' | 'background' | 'comfort' | 'type' | 'layout' | 'behaviour';
 
@@ -75,8 +76,10 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 
   /* ----- Type ----- */
   grid.append(head('type', t('typeSection')));
-  const latin: [LatinFont, string][] = [['lora', 'Lora'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ['publisher', t('fontPublisher')]];
-  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ['publisher', t('fontPublisher')]];
+  const customLatin = fontsSync().filter((f) => f.script === 'latin').map((f): [LatinFont, string] => [`custom:${f.id}`, f.name]);
+  const customArabic = fontsSync().filter((f) => f.script === 'arabic').map((f): [ArabicFont, string] => [`custom:${f.id}`, f.name]);
+  const latin: [LatinFont, string][] = [['lora', 'Lora'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ['publisher', t('fontPublisher')]];
+  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ['publisher', t('fontPublisher')]];
   grid.append(section(t('latinFont'), segmented(latin, s.latinFont, (v) => { updateSettings({ latinFont: v }); rerender(); })));
   grid.append(section(t('arabicFont'), segmented(arabic, s.arabicFont, (v) => { updateSettings({ arabicFont: v }); rerender(); }, true)));
   grid.append(stepper(t('fontSize'), s.fontSize, 12, 40, 1, (v) => updateSettings({ fontSize: v }), (v) => `${v}`));
@@ -115,7 +118,12 @@ function colorInput(value: string, onChange: (v: string) => void): HTMLElement {
 }
 
 function segmented<T extends string>(items: [T, string][], value: T, onPick: (v: T) => void, arabicFont = false): HTMLElement {
-  return h('div', { class: 'segmented' }, ...items.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(value === id), onclick: () => onPick(id), style: arabicFont && id !== 'publisher' ? { fontFamily: id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : "'Noto Naskh Arabic'", fontSize: '16px' } : id === 'lora' ? { fontFamily: "'Lora'" } : undefined }, label)));
+  const fam = (id: string): string | undefined => {
+    if (id.startsWith('custom:')) { const f = fontsSync().find((x) => x.id === id.slice(7)); return f ? `'${f.family}'` : undefined; }
+    if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : undefined;
+    return id === 'lora' ? "'Lora'" : undefined;
+  };
+  return h('div', { class: 'segmented' }, ...items.map(([id, label]) => { const f = fam(id); return h('button', { type: 'button', 'aria-pressed': String(value === id), onclick: () => onPick(id), style: f ? { fontFamily: f, fontSize: arabicFont ? '16px' : undefined } : undefined }, label); }));
 }
 
 function stepper(label: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, fmt: (v: number) => string): HTMLElement {

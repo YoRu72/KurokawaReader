@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "KurokawaReader — an offline reader for EPUB, PDF, DOCX, XLSX, PPTX, TXT and more, with first-class Arabic typography (Lora · Uthman TN1 · Sultan).",
   "private": true,
   "type": "module",
@@ -10,17 +10,26 @@
     "typecheck": "tsc --noEmit",
     "preview": "node scripts/build.mjs --serve",
     "test": "node tests/smoke.cjs en && node tests/smoke.cjs ar",
-    "fixtures": "python3 scripts/make-fixtures.py"
+    "fixtures": "python3 scripts/make-fixtures.py",
+    "android:prepare": "npx cap add android && node native/android/overlay.mjs && npx cap sync android",
+    "ios:prepare": "npx cap add ios && node native/ios/overlay.mjs && npx cap sync ios"
   },
   "dependencies": {
     "dompurify": "^3.2.0",
     "jszip": "^3.10.1",
     "marked": ">=15.0.0",
-    "pdfjs-dist": "^6.0.0"
+    "pdfjs-dist": "^6.0.0",
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/filesystem": "^6.0.0",
+    "@capacitor/screen-orientation": "^6.0.0"
   },
   "devDependencies": {
     "esbuild": ">=0.25.0",
-    "typescript": ">=5.6.0"
+    "typescript": ">=5.6.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/ios": "^6.1.0"
   },
   "license": "MIT"
 }

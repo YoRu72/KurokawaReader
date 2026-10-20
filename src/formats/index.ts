@@ -35,7 +35,7 @@ export function detectFormat(fileName: string, mime?: string): Format {
 
 /** Sniff the first bytes when the extension is missing or lying. */
 export async function sniffFormat(file: Blob, fileName: string): Promise<Format> {
-  const byName = detectFormat(fileName, file.type);
+  const byName = detectFormat(fileName.replace(/\.bin$/i, ''), file.type);
   if (byName !== 'unknown' && byName !== 'txt') return byName;
   const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   const ascii = String.fromCharCode(...head);

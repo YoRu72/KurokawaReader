@@ -91,7 +91,7 @@ const server = http.createServer((req, res) => {
   await page.waitForTimeout(500);
   console.log('selection toolbar buttons:', await page.$$eval('.sel-toolbar button', (b) => b.map((x) => x.textContent).join(',')));
   await page.screenshot({ path: `${SHOTS}/${lang}-09-selection.png` });
-  await page.click('.sel-toolbar button:has-text("' + (lang === 'ar' ? 'تمييز' : 'Highlight') + '")');
+  await page.click('.sel-toolbar .sel-colors .dot >> nth=1');
   await page.waitForTimeout(300);
   console.log('highlights:', await page.$$eval('mark.kr-hl', (m) => m.length));
   // Bookmark

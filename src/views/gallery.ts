@@ -2,6 +2,7 @@
 import { h, icon, iconButton, clear } from '../ui/dom';
 import { t } from '../i18n';
 import type { ImageRef } from '../formats/types';
+import { shareFile, fetchAsBlob } from '../ui/share';
 
 export function openGallery(images: ImageRef[], onJump: (anchor: string) => void): () => void {
   const grid = h('div', { class: 'gallery-grid' });
@@ -32,7 +33,8 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
           iconButton('chevronLeft', t('previousPage'), () => { current = (current - 1 + images.length) % images.length; render(); }),
           h('span', { class: 'cap', dir: 'auto' }, `${current + 1} / ${images.length} · ${im.alt || t('imageFrom', { title: im.bookTitle })}`),
           iconButton('target', t('jumpToImage'), () => { lb?.remove(); lb = null; close(); onJump(im.anchor); }),
-          h('a', { class: 'icon-btn', href: im.src, download: `image-${current + 1}`, title: t('saveImage'), 'aria-label': t('saveImage') }, icon('download')),
+          h('a', { class: 'icon-btn', href: im.src, download: `image-${current + 1}.${im.src.startsWith('data:image/') ? im.src.slice(11, im.src.indexOf(';')) : 'png'}`, title: t('saveImage'), 'aria-label': t('saveImage') }, icon('download')),
+          iconButton('external', t('shareImage'), async () => { try { const blob = await fetchAsBlob(im.src); const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg'); await shareFile(blob, `image-${current + 1}.${ext}`, im.bookTitle); } catch { /* ignore */ } }),
           iconButton('chevronRight', t('nextPage'), () => { current = (current + 1) % images.length; render(); }),
           iconButton('close', t('close'), () => { lb?.remove(); lb = null; }),
         ));

@@ -59,7 +59,18 @@ def render_body(text, sub_titles, seen, chapter_title=''):
             out.append(f'<div class="verse"><span class="h1">{html.escape(a.strip())}</span><span class="h2">{html.escape(b.strip())}</span></div>')
         else:
             out.append(f'<p>{html.escape(line)}</p>')
-    return '\n'.join(out)
+    # wrap runs of verses in a poem block so they can be centred as a unit
+    merged, i = [], 0
+    while i < len(out):
+        if out[i].startswith('<div class="verse">'):
+            j = i
+            while j < len(out) and out[j].startswith('<div class="verse">'):
+                j += 1
+            merged.append('<div class="poem">' + '\n'.join(out[i:j]) + '</div>')
+            i = j
+        else:
+            merged.append(out[i]); i += 1
+    return '\n'.join(merged)
 
 def footnotes(text):
     text = re.sub(r'<[^>]+>', '', text or '').strip()
@@ -78,9 +89,6 @@ for i, (start, title) in enumerate(TOC):
         pg = pages.get(pid)
         if not pg:
             continue
-        printed = pg.get('printed_page')
-        if printed and printed != 'None':
-            parts.append(f'<span class="pb" id="p{pid}" epub:type="pagebreak" title="{html.escape(str(printed))}" aria-label="ص {to_arabic_digits(str(printed))}">[ص {to_arabic_digits(str(printed))}]</span>')
         parts.append(render_body(pg['body'], subs, seen, title))
         fn = footnotes(pg.get('foot'))
         if fn:
@@ -96,10 +104,10 @@ h2 { text-align: center; font-size: 1.5em; margin: 1.2em 0 .8em; }
 h3 { text-align: center; font-size: 1.15em; margin: 1.4em 0 .6em; color: #6b4a1a; }
 p { margin: 0 0 .7em; text-align: justify; }
 p.basmala { text-align: center; font-size: 1.4em; margin: 0 0 1em; }
-.verse { display: flex; gap: 1.5em; justify-content: space-between; margin: .25em 1.5em; text-align: start; }
+.poem { margin: .9em auto; max-width: 34em; }
+.verse { display: flex; gap: 2em; justify-content: space-between; margin: .15em 0; text-align: start; }
 .verse span { flex: 1; }
 .verse .h2 { text-align: end; }
-.pb { font-size: .7em; color: #999; vertical-align: super; margin: 0 .3em; }
 .footnotes { font-size: .85em; color: #666; margin-top: 1.5em; }
 .footnotes hr { width: 30%; margin: 0 0 .6em; border: 0; border-top: 1px solid #bbb; }
 """

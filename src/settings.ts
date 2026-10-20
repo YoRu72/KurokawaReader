@@ -1,10 +1,14 @@
+import { familyFor } from './fonts';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
 export type Theme = 'dark' | 'black' | 'sepia' | 'paper' | 'light' | 'custom';
 export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots';
-export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher';
-export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher';
+export type UiMode = 'system' | 'light' | 'dark' | 'page';
+export type Accent = 'aqua' | 'gold' | 'rose' | 'mint' | 'violet' | 'mono' | 'custom';
+export type Orientation = 'auto' | 'portrait' | 'landscape';
+export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
+export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher' | (string & {});
 
 export interface VisualSettings {
   theme: Theme;
@@ -34,6 +38,12 @@ export interface VisualSettings {
   /* Comfort */
   warmth: number;          // 0–0.6 amber overlay
   dimOverlay: number;      // 0–0.7 darkening overlay
+  /* Interface */
+  uiMode: UiMode;
+  accent: Accent;
+  accentCustom: string;    // hex, used when accent === 'custom'
+  orientation: Orientation;
+  highlightColor: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -62,6 +72,11 @@ export const DEFAULTS: VisualSettings = {
   bgBlur: 0,
   warmth: 0,
   dimOverlay: 0,
+  uiMode: 'system',
+  accent: 'aqua',
+  accentCustom: '#7fb8ff',
+  orientation: 'auto',
+  highlightColor: 'amber',
 };
 
 const KEY = 'kr.visual';
@@ -97,14 +112,14 @@ export function onSettingsChange(fn: (s: VisualSettings) => void): () => void {
   return () => listeners.delete(fn);
 }
 
-const LATIN: Record<LatinFont, string> = {
+const LATIN: Record<string, string> = {
   lora: "'Lora'",
   inter: "'Inter'",
   serif: 'Georgia, "Times New Roman", serif',
   sans: 'system-ui, -apple-system, "Segoe UI", sans-serif',
   publisher: 'inherit',
 };
-const ARABIC: Record<ArabicFont, string> = {
+const ARABIC: Record<string, string> = {
   uthman: "'Uthman TN1'",
   sultan: "'Sultan'",
   naskh: "'Noto Naskh Arabic'",
@@ -137,12 +152,64 @@ export function isLightColor(hex: string): boolean {
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.55;
 }
 
-/** The interface chrome follows the page: light reading themes get light chrome. */
+/** Which chrome the page would call for (light reading themes → light chrome). */
+export function pageIsLight(s: VisualSettings = current): boolean {
+  return s.theme === 'sepia' || s.theme === 'paper' || s.theme === 'light' || (s.theme === 'custom' && isLightColor(s.customBg));
+}
+
+const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
+mql?.addEventListener?.('change', () => applyChrome());
+
+/** Interface mode (system / light / dark / follow the page) and accent colour. */
 export function applyChrome(s: VisualSettings = current): void {
-  const lightTheme = s.theme === 'sepia' || s.theme === 'paper' || s.theme === 'light' || (s.theme === 'custom' && isLightColor(s.customBg));
-  document.documentElement.dataset.ui = lightTheme ? 'light' : 'dark';
+  const light = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : s.uiMode === 'page' ? pageIsLight(s) : !!mql?.matches;
+  const html = document.documentElement;
+  html.dataset.ui = light ? 'light' : 'dark';
+  html.dataset.accent = s.accent;
+  if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light);
+  else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', lightTheme ? '#fbf6ef' : '#141110');
+  if (meta) meta.setAttribute('content', light ? '#f7f8fa' : '#121314');
+}
+
+function hexToHsl(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const n = m ? parseInt(m[1], 16) : 0x7fb8ff;
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0; const l = (max + min) / 2; const d = max - min;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  if (d) { if (max === r) h = ((g - b) / d) % 6; else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4; h *= 60; if (h < 0) h += 360; }
+  return [h, sat * 100, l * 100];
+}
+
+/** Derive the M3 colour roles from one accent hue. */
+function applyCustomAccent(html: HTMLElement, hex: string, light: boolean): void {
+  const [h, sRaw] = hexToHsl(hex);
+  const s = Math.min(90, Math.max(25, sRaw));
+  const set = (k: string, v: string) => html.style.setProperty(k, v);
+  if (light) {
+    set('--md-primary', `hsl(${h} ${s}% 34%)`); set('--md-on-primary', '#fff');
+    set('--md-primary-container', `hsl(${h} ${s}% 88%)`); set('--md-on-primary-container', `hsl(${h} ${s}% 12%)`);
+    set('--md-secondary-container', `hsl(${h} ${Math.round(s * .5)}% 90%)`); set('--md-on-secondary-container', `hsl(${h} ${Math.round(s * .5)}% 15%)`);
+    set('--md-tertiary-container', `hsl(${(h + 60) % 360} ${Math.round(s * .6)}% 86%)`); set('--md-on-tertiary-container', `hsl(${(h + 60) % 360} ${Math.round(s * .6)}% 14%)`);
+  } else {
+    set('--md-primary', `hsl(${h} ${s}% 74%)`); set('--md-on-primary', `hsl(${h} ${s}% 14%)`);
+    set('--md-primary-container', `hsl(${h} ${Math.round(s * .7)}% 28%)`); set('--md-on-primary-container', `hsl(${h} ${s}% 90%)`);
+    set('--md-secondary-container', `hsl(${h} ${Math.round(s * .35)}% 24%)`); set('--md-on-secondary-container', `hsl(${h} ${Math.round(s * .4)}% 88%)`);
+    set('--md-tertiary-container', `hsl(${(h + 60) % 360} ${Math.round(s * .4)}% 26%)`); set('--md-on-tertiary-container', `hsl(${(h + 60) % 360} ${Math.round(s * .5)}% 88%)`);
+  }
+}
+
+/** Lock or release the screen orientation (Capacitor plugin when present, Web API otherwise). */
+export async function applyOrientation(s: VisualSettings = current): Promise<void> {
+  const cap = (window as unknown as { Capacitor?: { Plugins?: { ScreenOrientation?: { lock(o: { orientation: string }): Promise<void>; unlock(): Promise<void> } } } }).Capacitor;
+  const plugin = cap?.Plugins?.ScreenOrientation;
+  try {
+    if (plugin) { if (s.orientation === 'auto') await plugin.unlock(); else await plugin.lock({ orientation: s.orientation }); return; }
+    const so = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void>; unlock?: () => void };
+    if (s.orientation === 'auto') so.unlock?.(); else await so.lock?.(s.orientation);
+  } catch { /* not permitted outside fullscreen / unsupported — silently ignore */ }
 }
 
 /** Write the settings onto a reader root element as CSS variables. */
@@ -161,8 +228,8 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   if (s.bgImage) void loadBgImage().then((u) => root.style.setProperty('--r-bg-image', u ? `url("${u}")` : 'none'));
   else root.style.setProperty('--r-bg-image', 'none');
   applyChrome(s);
-  const latin = LATIN[s.latinFont];
-  const arabic = ARABIC[s.arabicFont];
+  const latin = familyFor(s.latinFont, LATIN);
+  const arabic = familyFor(s.arabicFont, ARABIC);
   const fallback = "'Noto Naskh Arabic', Georgia, serif";
   root.style.setProperty('--r-font', s.latinFont === 'publisher' ? 'inherit' : `${latin}, ${arabic}, ${fallback}`);
   root.style.setProperty('--r-font-rtl', s.arabicFont === 'publisher' ? 'inherit' : `${arabic}, ${latin}, ${fallback}`);

@@ -1,7 +1,7 @@
 import { h, icon, iconButton, toast, clear, coverColors } from '../ui/dom';
 import { t, formatBytes, formatDate } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
-import type { Book } from '../db';
+import { db, uid, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats';
 import { navigate } from '../router';
 
@@ -11,6 +11,8 @@ export function libraryView(): HTMLElement {
   let books: Book[] = [];
   let query = '';
   let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'recent';
+  let folders: Folder[] = [];
+  let activeFolder: string | null = localStorage.getItem('kr.folder') || null;
   let selecting = false;
   const selected = new Set<string>();
 
@@ -23,11 +25,13 @@ export function libraryView(): HTMLElement {
   sortSel.value = sort;
 
   const grid = h('div', { class: 'book-grid', role: 'list' });
+  const chips = h('div', { class: 'folder-chips', role: 'tablist' });
   const heroSub = h('div', { class: 'sub' });
   const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub);
   const body = h('div', { class: 'library-body' },
     hero,
     h('div', { class: 'library-tools' }, search, sortSel),
+    chips,
     grid);
 
   const selectBtn = iconButton('check', t('select'), () => setSelecting(!selecting), { pressed: false });
@@ -57,6 +61,7 @@ export function libraryView(): HTMLElement {
       h('span', null, t('selectedCount', { n })),
       h('button', { class: 'btn small', onclick: () => { books.forEach((b) => selected.add(b.id)); renderGrid(); } }, t('selectAll')),
       h('span', { class: 'spacer' }),
+      h('button', { class: 'btn small', disabled: n === 0, onclick: () => moveSheet([...selected]) }, icon('folder'), t('moveToFolder')),
       h('button', { class: 'btn small danger', disabled: n === 0, onclick: async () => {
         if (!confirm(t('deleteConfirm', { n }))) return;
         await removeBooks([...selected]);
@@ -72,7 +77,7 @@ export function libraryView(): HTMLElement {
   }
 
   function sorted(): Book[] {
-    const list = books.filter((b) => !query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query));
+    const list = books.filter((b) => (!activeFolder || b.folderId === activeFolder) && (!query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query)));
     const by: Record<Sort, (a: Book, b: Book) => number> = {
       recent: (a, b) => (b.lastOpenedAt ?? b.addedAt) - (a.lastOpenedAt ?? a.addedAt),
       added: (a, b) => b.addedAt - a.addedAt,
@@ -98,6 +103,9 @@ export function libraryView(): HTMLElement {
       cover,
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size)))),
     );
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData('text/kr-book', selecting && selected.has(book.id) ? [...selected].join(',') : book.id); e.dataTransfer!.effectAllowed = 'move'; root.classList.add('dragging-book'); });
+    el.addEventListener('dragend', () => root.classList.remove('dragging-book'));
     let pressTimer: number | undefined;
     el.addEventListener('pointerdown', () => { pressTimer = window.setTimeout(() => { if (!selecting) { setSelecting(true); selected.add(book.id); renderGrid(); } }, 520); });
     const cancel = () => window.clearTimeout(pressTimer);
@@ -129,15 +137,74 @@ export function libraryView(): HTMLElement {
       if (book.pageCount) rows.push([t('pages'), String(book.pageCount)]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
       s.actions.append(
+        h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
     });
   }
 
+  function renderChips() {
+    clear(chips);
+    if (!books.length) return;
+    const chip = (label: string, id: string | null, iconName?: string) => {
+      const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); } }, iconName ? icon(iconName) : null, h('span', null, label));
+      // Drop target for dragged books
+      c.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('text/kr-book')) { e.preventDefault(); c.classList.add('drop'); } });
+      c.addEventListener('dragleave', () => c.classList.remove('drop'));
+      c.addEventListener('drop', async (e) => { e.preventDefault(); c.classList.remove('drop'); const ids = (e.dataTransfer?.getData('text/kr-book') ?? '').split(',').filter(Boolean); await moveBooks(ids, id); });
+      if (id) { let pt: number | undefined; c.addEventListener('contextmenu', (e) => { e.preventDefault(); folderSheet(id); }); c.addEventListener('pointerdown', () => { pt = window.setTimeout(() => folderSheet(id), 560); }); const cancel = () => window.clearTimeout(pt); c.addEventListener('pointerup', cancel); c.addEventListener('pointerleave', cancel); }
+      return c;
+    };
+    chips.append(chip(t('allBooks'), null, 'library'));
+    for (const f of folders) chips.append(chip(f.name, f.id, 'folder'));
+    chips.append(h('button', { type: 'button', class: 'chip add', onclick: () => void newFolder() }, icon('folderPlus'), h('span', null, t('newFolder'))));
+  }
+
+  async function newFolder(): Promise<string | null> {
+    const name = prompt(t('folderName'))?.trim();
+    if (!name) return null;
+    const f: Folder = { id: uid(), name, createdAt: Date.now() };
+    folders = [...folders, f];
+    await db.setMeta('folders', folders);
+    renderChips();
+    return f.id;
+  }
+
+  async function moveBooks(ids: string[], folderId: string | null): Promise<void> {
+    for (const id of ids) { await db.updateBook(id, (b) => { if (folderId) b.folderId = folderId; else delete b.folderId; }); const bk = books.find((b) => b.id === id); if (bk) { if (folderId) bk.folderId = folderId; else delete bk.folderId; } }
+    setSelecting(false);
+    renderGrid();
+  }
+
+  function moveSheet(ids: string[]) {
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(t('moveToFolder'), t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      const item = (name: string, iconName: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); await fn(); } }, icon(iconName), name));
+      s.body.append(h('ul', { class: 'plain-list' },
+        ...folders.map((f) => item(f.name, 'folder', () => moveBooks(ids, f.id))),
+        item(t('newFolder'), 'folderPlus', async () => { const id = await newFolder(); if (id) await moveBooks(ids, id); }),
+        item(t('noFolder'), 'close', () => moveBooks(ids, null))));
+    });
+  }
+
+  function folderSheet(id: string) {
+    const f = folders.find((x) => x.id === id);
+    if (!f) return;
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(f.name, t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      s.body.append(h('ul', { class: 'plain-list' },
+        h('li', null, h('button', { type: 'button', onclick: async () => { const name = prompt(t('renameFolder'), f.name)?.trim(); if (name) { f.name = name; await db.setMeta('folders', folders); renderChips(); } s.close(); } }, icon('type'), t('renameFolder'))),
+        h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = folders.filter((x) => x.id !== id); await db.setMeta('folders', folders); for (const b of books) if (b.folderId === id) { delete b.folderId; await db.updateBook(b.id, (bb) => { delete bb.folderId; }); } if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
+    });
+  }
+
   function renderGrid() {
     clear(grid);
     renderSelBar();
+    renderChips();
     const list = sorted();
     heroSub.textContent = books.length ? `${books.length} · ${t('tagline')}` : t('tagline');
     fab.hidden = selecting;
@@ -149,7 +216,7 @@ export function libraryView(): HTMLElement {
         h('p', { style: { fontSize: '13px' } }, t('sampleBooksBody'))));
       return;
     }
-    if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, t('noResults')))); return; }
+    if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, activeFolder && !query ? t('emptyFolder') : t('noResults')), activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
     list.forEach((b) => grid.appendChild(card(b)));
   }
 
@@ -167,6 +234,8 @@ export function libraryView(): HTMLElement {
 
   async function refresh() {
     books = await listBooks();
+    folders = (await db.getMeta<Folder[]>('folders')) ?? [];
+    if (activeFolder && !folders.some((f) => f.id === activeFolder)) activeFolder = null;
     renderGrid();
   }
 
@@ -174,8 +243,9 @@ export function libraryView(): HTMLElement {
     const n = files.length;
     toast(t('importing', { n }), 'info', 60000);
     let ok = 0;
+    const target = activeFolder;
     await importFiles(files, (book, file, err) => {
-      if (book) ok++; else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
+      if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
     });
     if (ok) toast(t('imported', { n: ok }));
     await refresh();
