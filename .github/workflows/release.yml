@@ -1,7 +1,10 @@
 name: Release
 
+# Every push to main builds all platforms and publishes (or refreshes) the
+# GitHub Release named after package.json's version, e.g. v0.2.0.
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -9,8 +12,19 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      v: ${{ steps.v.outputs.v }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "v=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
   web:
     name: Web build & tests
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +39,7 @@ jobs:
         with: { name: web, path: KurokawaReader-web.zip }
 
   android:
+    needs: version
     name: Android APKs
     runs-on: ubuntu-latest
     steps:
@@ -60,7 +75,7 @@ jobs:
       - name: Collect APKs
         run: |
           mkdir -p out
-          V=${GITHUB_REF_NAME#v}
+          V=${{ needs.version.outputs.v }}
           for f in android/app/build/outputs/apk/release/*.apk; do
             base=$(basename "$f")
             abi=$(echo "$base" | sed -E 's/app-(.*)-release.*\.apk/\1/')
@@ -71,6 +86,7 @@ jobs:
         with: { name: android, path: out/*.apk }
 
   ios:
+    needs: version
     name: iOS IPA (unsigned, for AltStore / SideStore)
     runs-on: macos-14
     steps:
@@ -91,7 +107,7 @@ jobs:
           test -d $RUNNER_TEMP/App.xcarchive/Products/Applications/App.app
       - name: Package IPA
         run: |
-          V=${GITHUB_REF_NAME#v}
+          V=${{ needs.version.outputs.v }}
           mkdir -p Payload out
           cp -R $RUNNER_TEMP/App.xcarchive/Products/Applications/App.app Payload/
           zip -qry "out/KurokawaReader-$V-ios-unsigned.ipa" Payload
@@ -100,6 +116,7 @@ jobs:
         with: { name: ios, path: out/*.ipa }
 
   windows:
+    needs: version
     name: Windows EXE
     runs-on: windows-latest
     steps:
@@ -112,7 +129,7 @@ jobs:
         shell: bash
         run: |
           cd desktop
-          V=${GITHUB_REF_NAME#v}
+          V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
           npm install
           npx electron-builder --win nsis portable --publish never
@@ -122,9 +139,8 @@ jobs:
 
   release:
     name: Publish release
-    needs: [web, android, ios, windows]
+    needs: [version, web, android, ios, windows]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -132,7 +148,7 @@ jobs:
       - name: Release notes
         run: |
           {
-            echo "## KurokawaReader ${GITHUB_REF_NAME}"
+            echo "## KurokawaReader v${{ needs.version.outputs.v }}"
             echo
             echo "| Platform | File |"
             echo "|---|---|"
@@ -148,7 +164,11 @@ jobs:
           } > notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.version.outputs.v }}
+          name: KurokawaReader v${{ needs.version.outputs.v }}
+          target_commitish: ${{ github.sha }}
           body_path: notes.md
+          make_latest: true
           files: |
             artifacts/web/*
             artifacts/android/*
