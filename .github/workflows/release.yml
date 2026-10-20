@@ -48,11 +48,15 @@ jobs:
         with: { node-version: 22 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
-      - uses: android-actions/setup-android@v3
       - run: npm install
       - run: npm run build
+      - name: Accept Android SDK licences (SDK is preinstalled on the runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Create Android project
-        run: npx cap add android && node native/android/overlay.mjs && npx cap sync android
+        shell: bash
+        run: |
+          set -o pipefail
+          { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/android-prepare.log
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -71,7 +75,16 @@ jobs:
           fi
           echo "KR_KEYSTORE=$RUNNER_TEMP/kr.keystore" >> $GITHUB_ENV
       - name: Build release APKs
-        run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+        shell: bash
+        run: |
+          set -o pipefail
+          cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/android-build.log | grep -vE "^\s*$" | tail -n 400
+      - name: Report failure
+        if: failure()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Android job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/android-prepare.log $RUNNER_TEMP/android-build.log 2>/dev/null | tail -c 60000; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - name: Collect APKs
         run: |
           mkdir -p out
@@ -96,15 +109,26 @@ jobs:
       - run: npm install
       - run: npm run build
       - name: Create iOS project
-        run: npx cap add ios && node native/ios/overlay.mjs && npx cap sync ios
-      - name: Archive without signing
+        shell: bash
         run: |
+          set -o pipefail
+          { npx cap add ios && node native/ios/overlay.mjs && npx cap sync ios; } 2>&1 | tee $RUNNER_TEMP/ios-prepare.log
+      - name: Archive without signing
+        shell: bash
+        run: |
+          set -o pipefail
           cd ios/App
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos \
             -archivePath $RUNNER_TEMP/App.xcarchive archive \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-            PRODUCT_BUNDLE_IDENTIFIER=app.kurokawa.reader | xcpretty || true
+            PRODUCT_BUNDLE_IDENTIFIER=app.kurokawa.reader 2>&1 | tee $RUNNER_TEMP/ios-build.log | grep -E "error|warning: .*fail|BUILD|ARCHIVE" || true
           test -d $RUNNER_TEMP/App.xcarchive/Products/Applications/App.app
+      - name: Report failure
+        if: failure()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### iOS job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/ios-prepare.log 2>/dev/null; grep -E "error:" $RUNNER_TEMP/ios-build.log 2>/dev/null | head -n 60; tail -n 40 $RUNNER_TEMP/ios-build.log 2>/dev/null; echo '```'; } | tail -c 60000 > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - name: Package IPA
         run: |
           V=${{ needs.version.outputs.v }}
@@ -132,8 +156,15 @@ jobs:
           V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
           npm install
-          npx electron-builder --win nsis portable --publish never
+          npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
           ls -la out
+      - name: Report failure
+        if: failure()
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Windows job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/win-build.log 2>/dev/null; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: desktop/out/*.exe }
 
