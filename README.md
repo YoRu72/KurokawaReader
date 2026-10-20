@@ -5,8 +5,13 @@
 KurokawaReader opens EPUB, PDF, DOCX, XLSX/CSV, PPTX, TXT, Markdown, HTML, FB2, ODT, CBZ and images, keeps them in a local library, and lets you read **several books in one continuous scroll**. It is a progressive web app: install it once and it works with no connection at all. Nothing you import ever leaves your device.
 
 <p align="center">
-  <img src="docs/screenshots/reading-together.png" width="48%" alt="Two EPUBs opened together, English then Arabic" />
-  <img src="docs/screenshots/library-arabic.png" width="48%" alt="The library with the Arabic interface" />
+  <img src="docs/screenshots/library-m3.png" width="48%" alt="The library — Material 3 Expressive" />
+  <img src="docs/screenshots/manuscript-preset.png" width="48%" alt="Alice with the Manuscript preset (parchment texture, light chrome)" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/maqamat-verse.png" width="31%" alt="Maqāmāt al-Ḥarīrī on a phone, verse in two hemistichs, Uthman TN1" />
+  <img src="docs/screenshots/mobile-arabic.png" width="31%" alt="Arabic interface on a phone" />
+  <img src="docs/screenshots/library-arabic.png" width="31%" alt="The library with the Arabic interface" />
 </p>
 
 ## Features
@@ -85,7 +90,10 @@ src/
   i18n/            en.ts, ar.ts
   styles/          fonts.css, base.css, reader.css
 tests/smoke.cjs    headless end-to-end run over generated fixtures (needs playwright)
-scripts/make-fixtures.py  builds sample EPUB/PDF/DOCX/XLSX/PPTX/TXT/MD/CSV files
+scripts/make-fixtures.py  builds test fixtures (PDF/DOCX/XLSX/PPTX/TXT/MD/CSV) and copies the starter EPUBs
+scripts/build-maqamat-epub.py  rebuilds public/samples/maqamat-al-hariri.epub from Shamela page dumps
+scripts/build-alice-epub.py    rebuilds the Alice EPUB from the Standard Ebooks source
+public/samples/    the two bundled starter books
 ```
 
 ## Keyboard

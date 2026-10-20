@@ -87,7 +87,7 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: `${SHOTS}/${lang}-08-gallery.png` });
   await page.keyboard.press('Escape');
   // Selection toolbar
-  await page.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const ps = [...document.querySelectorAll('.kr-content p')]; const top = sc.getBoundingClientRect().top; const p = ps.find((x) => x.getBoundingClientRect().top > top + 20 && x.getBoundingClientRect().bottom < top + sc.clientHeight - 20) || ps[0]; const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
+  await page.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const ps = [...document.querySelectorAll('.kr-content p')]; const top = sc.getBoundingClientRect().top; let p = ps.find((x) => x.textContent.trim().length > 40 && x.getBoundingClientRect().top > top + 20 && x.getBoundingClientRect().bottom < top + sc.clientHeight - 20); if (!p) { p = ps.find((x) => x.textContent.trim().length > 40 && x.getBoundingClientRect().top > top) || ps[0]; p.scrollIntoView({ block: 'center' }); } const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
   await page.waitForTimeout(500);
   console.log('selection toolbar buttons:', await page.$$eval('.sel-toolbar button', (b) => b.map((x) => x.textContent).join(',')));
   await page.screenshot({ path: `${SHOTS}/${lang}-09-selection.png` });

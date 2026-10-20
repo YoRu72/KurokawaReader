@@ -95,6 +95,14 @@
 ::highlight(kr-search-current) { background: #e5a53b; color: #1a1408; }
 @keyframes flash { 0% { background: color-mix(in srgb, var(--r-link) 45%, transparent); } 100% { background: transparent; } }
 .kr-content .kr-txt { white-space: pre-wrap; }
+/* Printed page markers (EPUB pagebreak spans) become quiet centred separators */
+.kr-content span.pb, .kr-content [epub\:type~='pagebreak'] { display: block; text-align: center; font-family: var(--font-ui); font-size: .62em; color: var(--r-dim); opacity: .8; margin: .6em 0; letter-spacing: .04em; }
+.kr-content .basmala { text-align: center; font-size: 1.25em; margin: .4em 0 1em; }
+.kr-content .verse { display: flex; gap: 1.5em; justify-content: space-between; margin: .2em 1.2em; text-align: start; }
+.kr-content .verse span { flex: 1; }
+.kr-content .verse .h2 { text-align: end; }
+@media (max-width: 640px) { .kr-content .verse { flex-direction: column; gap: 0; margin-block: .5em; } .kr-content .verse .h1 { text-align: start; } .kr-content .verse .h2 { text-align: end; padding-inline-start: 2.5em; } }
+.kr-content .footnotes { font-size: .85em; color: var(--r-dim); }
 .kr-content .kr-md { }
 
 /* Spreadsheet view */
