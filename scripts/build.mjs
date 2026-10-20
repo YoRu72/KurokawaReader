@@ -92,8 +92,8 @@ if (watch || serve) {
   else await ctx.rebuild();
   await writeServiceWorker();
   if (serve) {
-    const { host, port } = await ctx.serve({ servedir: dist, port: 5173 });
-    console.log(`KurokawaReader → http://${host}:${port}`);
+    const { hosts, port } = await ctx.serve({ servedir: dist, port: 5173 });
+    console.log(`KurokawaReader → http://${hosts?.[0] ?? '127.0.0.1'}:${port}`);
   }
 } else {
   await esbuild.build(buildOptions);
