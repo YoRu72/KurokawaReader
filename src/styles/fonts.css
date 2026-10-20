@@ -1,0 +1,53 @@
+/* Reading fonts */
+@font-face {
+  font-family: 'Lora';
+  src: url('../assets/fonts/Lora-Variable.ttf') format('truetype');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lora';
+  src: url('../assets/fonts/Lora-Italic-Variable.ttf') format('truetype');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Uthman TN1';
+  src: url('../assets/fonts/UthmanTN1.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Noto Naskh Arabic';
+  src: url('../assets/fonts/NotoNaskhArabic-Variable.ttf') format('truetype');
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+/* Interface fonts */
+@font-face {
+  font-family: 'Inter';
+  src: url('../assets/fonts/Inter-Variable.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sultan';
+  src: url('../assets/fonts/Sultan-Medium.ttf') format('truetype');
+  font-weight: 400 600;
+  font-display: swap;
+}
+
+:root {
+  /* Latin first, Arabic second: browsers fall through per glyph, so Arabic letters
+     inside an English interface still land on Sultan, and vice versa. */
+  --font-ui: 'Inter', 'Sultan', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-ui-ar: 'Sultan', 'Inter', 'Noto Naskh Arabic', system-ui, sans-serif;
+  --font-read-latin: 'Lora';
+  --font-read-arabic: 'Uthman TN1';
+  --font-read: var(--font-read-latin), var(--font-read-arabic), 'Noto Naskh Arabic', Georgia, serif;
+  --font-read-rtl: var(--font-read-arabic), var(--font-read-latin), 'Noto Naskh Arabic', serif;
+}
+html[dir='rtl'] { --font-ui: var(--font-ui-ar); }

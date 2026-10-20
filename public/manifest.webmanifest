@@ -1,0 +1,35 @@
+{
+  "name": "KurokawaReader",
+  "short_name": "Kurokawa",
+  "description": "Offline reader for EPUB, PDF, DOCX, XLSX, PPTX, TXT and more — with Arabic typography at its heart.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#14110f",
+  "theme_color": "#14110f",
+  "lang": "en",
+  "dir": "auto",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/epub+zip": [".epub"],
+        "application/pdf": [".pdf"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+        "text/plain": [".txt"],
+        "text/markdown": [".md"],
+        "text/csv": [".csv"],
+        "application/vnd.comicbook+zip": [".cbz"]
+      }
+    }
+  ]
+}

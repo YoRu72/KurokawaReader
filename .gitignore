@@ -1,0 +1,6 @@
+node_modules/
+dist/
+tests/fixtures/
+tests/shots/
+.DS_Store
+*.log

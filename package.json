@@ -1,0 +1,26 @@
+{
+  "name": "kurokawa-reader",
+  "version": "0.1.0",
+  "description": "KurokawaReader — an offline reader for EPUB, PDF, DOCX, XLSX, PPTX, TXT and more, with first-class Arabic typography (Lora · Uthman TN1 · Sultan).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch --serve",
+    "typecheck": "tsc --noEmit",
+    "preview": "node scripts/build.mjs --serve",
+    "test": "node tests/smoke.cjs en && node tests/smoke.cjs ar",
+    "fixtures": "python3 scripts/make-fixtures.py"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.0",
+    "jszip": "^3.10.1",
+    "marked": ">=15.0.0",
+    "pdfjs-dist": "^6.0.0"
+  },
+  "devDependencies": {
+    "esbuild": ">=0.25.0",
+    "typescript": ">=5.6.0"
+  },
+  "license": "MIT"
+}
