@@ -85,6 +85,7 @@ export interface VisualSettings {
   speechEngine: 'system' | 'ai';
   readerToolbar: string[];    // ids of the floating toolbar buttons, in order
   systemFonts: string[];      // system font families picked on desktop
+  highlightPalette: Record<'amber' | 'rose' | 'mint' | 'sky' | 'violet', string>;
   volumeKeys: boolean;        // page turning with volume keys (Android)
 }
 
@@ -156,6 +157,7 @@ export const DEFAULTS: VisualSettings = {
   speechEngine: 'system',
   readerToolbar: ['toc', 'search', 'images', 'bookmark', 'sep', 'type', 'more'],
   systemFonts: [],
+  highlightPalette: { amber: '#e5c56b', rose: '#e58a8a', mint: '#7fcfa5', sky: '#7fb4e5', violet: '#b9a3e8' },
   volumeKeys: false,
 };
 
@@ -248,6 +250,7 @@ export function applyChrome(s: VisualSettings = current): void {
   const html = document.documentElement;
   html.dataset.ui = light ? 'light' : 'dark';
   html.dataset.accent = s.accent;
+  for (const [k, v] of Object.entries(s.highlightPalette ?? {})) html.style.setProperty(`--hl-${k}`, v);
   html.style.setProperty('--cover-min', s.coverSize === 'small' ? '104px' : s.coverSize === 'large' ? '176px' : '136px');
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light);
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));

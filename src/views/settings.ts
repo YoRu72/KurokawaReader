@@ -3,6 +3,7 @@ import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTou
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
+import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
@@ -34,7 +35,7 @@ export function settingsView(): HTMLElement {
     const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('uiMode')), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('accent')), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
-      cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), (() => { const c = h('input', { type: 'color', value: cur.accentCustom, oninput: () => updateSettings({ accentCustom: c.value }) }) as HTMLInputElement; return c; })()) : null,
+      cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), colorField(cur.accentCustom, (v) => updateSettings({ accentCustom: v }), t('accentCustom'))) : null,
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('orientation')), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('libraryView')), h('div', { class: 'segmented' }, ...([['cards', t('viewCards')], ['chips', t('viewChips')]] as ['cards' | 'chips', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.libraryView === id), onclick: () => { updateSettings({ libraryView: id }); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('importButtonPlace')), h('div', { class: 'segmented' }, ...([['top', t('importTop')], ['fab', t('importFab')]] as ['top' | 'fab', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.importButton === id), onclick: () => { updateSettings({ importButton: id }); renderAppearance(); } }, label)))),
@@ -57,10 +58,11 @@ export function settingsView(): HTMLElement {
     void renderFonts();
   });
   const renderFonts = async () => {
-    clear(fontsCard);
+    Array.from(fontsCard.children).forEach((c) => { if (!c.matches('h3.card-title')) c.remove(); });
     const fonts = await listFonts();
     const url = h('input', { type: 'text', placeholder: t('fontUrlPlaceholder'), style: { flex: '1' }, dir: 'ltr' }) as HTMLInputElement;
-    fontsCard.append(h('h3', null, t('fonts')), h('p', null, t('fontsBody')),
+    if (!fontsCard.querySelector('h3.card-title')) fontsCard.prepend(h('h3', null, t('fonts')));
+    fontsCard.append(h('p', null, t('fontsBody')),
       h('p', { class: 'sample' }, 'The quick brown fox jumps over the lazy dog — Lora carries the Latin text.'),
       h('p', { class: 'sample ar' }, 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — خطُّ عثمان طه للنصِّ العربيِّ، وسلطانُ للواجهة.'),
       h('h3', null, t('customFonts')), h('p', null, t('customFontsBody')),
@@ -165,5 +167,56 @@ export function settingsView(): HTMLElement {
     ...(isTouchDevice() ? [] : [h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody'))])));
 
   void s;
+
+  // ---- Sections, collapsing and search ----
+  const cards = Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'));
+  // the fonts card fills in asynchronously; give it its title now so it collapses and appears in the nav
+  if (!fontsCard.querySelector('h3')) fontsCard.prepend(h('h3', null, t('fonts')));
+  const nav = h('div', { class: 'folder-chips settings-nav', role: 'tablist' });
+  const search = h('input', { type: 'search', class: 'settings-search', placeholder: t('searchSettings'), 'aria-label': t('searchSettings') }) as HTMLInputElement;
+  const head = h('div', { class: 'settings-head' }, search, nav);
+  body.prepend(head);
+  cards.forEach((card, i) => {
+    const title = card.querySelector('h3');
+    if (!title) return;
+    card.id = `s-${i}`;
+    title.classList.add('card-title');
+    title.setAttribute('role', 'button'); title.setAttribute('tabindex', '0');
+    title.prepend(icon('chevronDown'));
+    const toggleCard = () => card.classList.toggle('collapsed');
+    title.addEventListener('click', toggleCard);
+    title.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } });
+    nav.append(h('button', { type: 'button', class: 'chip small', onclick: () => { card.classList.remove('collapsed'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
+  });
+  const applySearch = () => {
+    const q = search.value.trim().toLowerCase();
+    for (const card of cards) {
+      if (!q) { card.hidden = false; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
+      card.classList.remove('collapsed');
+      let any = false;
+      // rows under the card title: show those whose text (or a nested label) mentions the query
+      for (const row of Array.from(card.children) as HTMLElement[]) {
+        if (row.matches('h3')) continue;
+        const hit = (row.textContent ?? '').toLowerCase().includes(q);
+        // inside the reader options grid, filter control by control; a section heading stays if any control under it matches
+        const grid = row.querySelector<HTMLElement>('.options-grid');
+        if (grid) {
+          let sub = false; let heading: HTMLElement | null = null; let headingHit = false;
+          const kids = Array.from(grid.children) as HTMLElement[];
+          const flush = () => { if (heading) { heading.hidden = !headingHit; heading.setAttribute('data-sq', '1'); } };
+          for (const k of kids) {
+            if (k.tagName === 'H4') { flush(); heading = k; headingHit = false; continue; }
+            const ok = (k.textContent ?? '').toLowerCase().includes(q) || Array.from(k.querySelectorAll('[title],[aria-label]')).some((e) => ((e.getAttribute('title') ?? '') + (e.getAttribute('aria-label') ?? '')).toLowerCase().includes(q));
+            k.hidden = !ok; k.setAttribute('data-sq', '1'); if (ok) { sub = true; headingHit = true; }
+          }
+          flush();
+          row.hidden = !sub; row.setAttribute('data-sq', '1'); if (sub) any = true; continue;
+        }
+        row.hidden = !hit; row.setAttribute('data-sq', '1'); if (hit) any = true;
+      }
+      card.hidden = !any;
+    }
+  };
+  search.addEventListener('input', applySearch);
   return root;
 }

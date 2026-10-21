@@ -1,6 +1,7 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
 import { h, clear, icon, toast, pickButton } from './dom';
+import { colorField } from './colorpicker';
 import { isTouchDevice, t } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
@@ -37,6 +38,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
       h('div', { class: 'row' }, h('span', { class: 'label' }, t('pageColorOverride')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.bgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ bgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(bgNow), (v) => updateSettings({ bgOverride: v })))),
     );
   }
+
+  // Highlight colours (also used by notes and PDF pins)
+  grid.append(section(t('highlightColors'), h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, ...(Object.keys(s.highlightPalette) as (keyof typeof s.highlightPalette)[]).map((k) => colorField(s.highlightPalette[k], (v) => updateSettings({ highlightPalette: { ...getSettings().highlightPalette, [k]: v } }), k)))));
 
   // Presets: one-tap comfortable combinations.
   const presets: [string, Partial<VisualSettings>][] = [
@@ -183,10 +187,7 @@ function toHex(c: string): string {
 }
 function round2(v: number): number { return Math.round(v * 100) / 100; }
 
-function colorInput(value: string, onChange: (v: string) => void): HTMLElement {
-  const inp = h('input', { type: 'color', value, oninput: () => onChange(inp.value) }) as HTMLInputElement;
-  return inp;
-}
+function colorInput(value: string, onChange: (v: string) => void): HTMLElement { return colorField(value, onChange); }
 
 function segmented<T extends string>(items: [T, string][], value: T, onPick: (v: T) => void, arabicFont = false): HTMLElement {
   const fam = (id: string): string | undefined => {

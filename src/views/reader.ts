@@ -1001,6 +1001,43 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
 
+  /** Export several pages as PNGs (zipped when more than one), chosen by range or list. */
+  function savePagesSheet(): void {
+    const sheet = openSheet(t('savePagesRange'), t('close'));
+    sheet.body.style.fontFamily = 'var(--font-ui)';
+    const input = h('input', { type: 'text', dir: 'ltr', placeholder: `1-5, 8, 12-${viewer.total}`, value: String(viewer.current), style: { width: '100%' } }) as HTMLInputElement;
+    const parse = (): number[] => { const out = new Set<number>(); for (const part of input.value.split(/[,\s]+/).filter(Boolean)) { const m = /^(\d+)(?:-(\d+))?$/.exec(part.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))); if (!m) continue; const a = Math.max(1, Math.min(viewer.total, +m[1])), b = m[2] ? Math.max(1, Math.min(viewer.total, +m[2])) : a; for (let i = Math.min(a, b); i <= Math.max(a, b); i++) out.add(i); } return [...out].sort((x, y) => x - y); };
+    const count = h('p', { class: 'src' });
+    const refresh = () => { const n = parse().length; count.textContent = t('pagesSelected', { n }); go.disabled = !n; };
+    input.addEventListener('input', refresh);
+    const quick = (label: string, v: string) => h('button', { type: 'button', class: 'chip small', onclick: () => { input.value = v; refresh(); } }, h('span', null, label));
+    const c = viewer.current;
+    sheet.body.append(
+      h('p', { class: 'src' }, t('savePagesBody')),
+      h('div', { class: 'chip-row wrap', style: { marginBottom: '10px' } },
+        quick(t('thisPage'), String(c)), quick(`${c}–${Math.min(viewer.total, c + 4)}`, `${c}-${Math.min(viewer.total, c + 4)}`), quick(`${c}–${Math.min(viewer.total, c + 9)}`, `${c}-${Math.min(viewer.total, c + 9)}`), quick(t('allPages'), `1-${viewer.total}`)),
+      input, count);
+    const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
+    sheet.body.append(bar);
+    const go = h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+      const pages = parse(); if (!pages.length) return;
+      go.disabled = true; bar.hidden = false;
+      try {
+        const base = book.title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 40);
+        if (pages.length === 1) { const blob = await viewer.pageToBlob(pages[0]); await saveImage(blob, `${base} - p${pages[0]}.png`); }
+        else {
+          const JSZip = (await import('jszip')).default; const zip = new JSZip();
+          for (let i = 0; i < pages.length; i++) { zip.file(`${base} - p${String(pages[i]).padStart(String(viewer.total).length, '0')}.png`, await viewer.pageToBlob(pages[i])); (bar.firstElementChild as HTMLElement).style.width = `${Math.round(((i + 1) / pages.length) * 100)}%`; }
+          const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+          await shareFile(blob, `${base} - ${t('pagesFile', { n: pages.length })}.zip`, book.title);
+        }
+        sheet.close();
+      } catch (err) { toast(String((err as Error).message ?? err), 'error'); go.disabled = false; }
+    } }, icon('download'), t('savePagesRange')) as HTMLButtonElement;
+    sheet.actions.append(go);
+    refresh();
+  }
+
   async function savePage(mode: boolean | 'copy'): Promise<void> {
     try {
       const blob = await viewer.pageToBlob(viewer.current);
@@ -1159,6 +1196,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('camera', t('savePageImage'), () => void savePage(false)),
         item('external', t('sharePage'), () => void savePage(true)),
         item('copy', t('copyPageImage'), () => void savePage('copy')),
+        item('images', t('savePagesRange'), () => savePagesSheet()),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('type', t('visualOptions'), openPdfOptions),
         item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),

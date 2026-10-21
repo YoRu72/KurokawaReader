@@ -14,7 +14,7 @@ export interface SelectionActions {
 }
 
 export type HighlightColor = 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
-export const HIGHLIGHT_COLORS: [HighlightColor, string][] = [['amber', '#e5c56b'], ['rose', '#e58a8a'], ['mint', '#7fcfa5'], ['sky', '#7fb4e5'], ['violet', '#b9a3e8']];
+export const HIGHLIGHT_COLORS: [HighlightColor, string][] = [['amber', 'var(--hl-amber, #e5c56b)'], ['rose', 'var(--hl-rose, #e58a8a)'], ['mint', 'var(--hl-mint, #7fcfa5)'], ['sky', 'var(--hl-sky, #7fb4e5)'], ['violet', 'var(--hl-violet, #b9a3e8)']];
 
 export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionActions): () => void {
   let bar: HTMLElement | null = null;

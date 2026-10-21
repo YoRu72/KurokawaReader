@@ -3,7 +3,7 @@
 import { h, icon, openSheet, pickButton } from './dom';
 import { t } from '../i18n';
 import { getSettings, updateSettings, type VisualSettings } from '../settings';
-import { PROVIDERS, providerInfo, effectiveModel, defaultPrompt, langName, type AiProvider } from '../ai';
+import { PROVIDERS, providerInfo, effectiveModel, defaultPrompt, langName, AI_VOICES, type AiProvider } from '../ai';
 
 const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh-CN', 'ru'];
 
@@ -33,6 +33,14 @@ export function aiSettingsSheet(onDone?: () => void): void {
   const promptField = field(t('aiPrompt'), prompt, t('aiPromptHint'));
   langField.hidden = s.aiTask !== 'translate'; promptField.hidden = s.aiTask !== 'translate';
 
+  // Read-aloud engine and AI voice live here too (same key / provider).
+  const engine = pickButton<VisualSettings['speechEngine']>(t('speechEngine'), [['system', t('speechSystem'), 'speak'], ['ai', t('speechAi'), 'translate']], s.speechEngine, (v) => { updateSettings({ speechEngine: v }); voiceField.hidden = v !== 'ai'; ttsField.hidden = v !== 'ai'; }, t('close'));
+  const voicesOf = () => AI_VOICES[s.aiProvider === 'openrouter' || s.aiProvider === 'custom' ? 'openai' : getSettings().aiProvider] ?? AI_VOICES.openai;
+  const voice = pickButton(t('aiVoice'), voicesOf().map((v): [string, string] => [v, v]), s.aiVoice || voicesOf()[0], (v) => updateSettings({ aiVoice: v }), t('close'));
+  const tts = h('input', { type: 'text', value: s.aiTtsModel, dir: 'ltr', spellcheck: 'false', placeholder: s.aiProvider === 'gemini' ? 'gemini-2.5-flash-preview-tts' : 'gpt-4o-mini-tts', onchange: () => updateSettings({ aiTtsModel: tts.value.trim() }) }) as HTMLInputElement;
+  const voiceField = field(t('aiVoice'), voice); const ttsField = field(t('aiTtsModel'), tts);
+  voiceField.hidden = s.speechEngine !== 'ai'; ttsField.hidden = s.speechEngine !== 'ai';
+
   sh.body.append(
     h('p', { class: 'src' }, t('aiTranslateBody')),
     field(t('aiTask'), task),
@@ -43,6 +51,10 @@ export function aiSettingsSheet(onDone?: () => void): void {
     langField,
     promptField,
     modelLine,
+    h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('readAloud')),
+    field(t('speechEngine'), engine),
+    voiceField,
+    ttsField,
   );
   sh.actions.append(
     h('button', { class: 'btn small', type: 'button', onclick: () => { prompt.value = ''; updateSettings({ aiPrompt: '' }); prompt.placeholder = defaultPrompt(getSettings().aiTarget); } }, t('resetPrompt')),

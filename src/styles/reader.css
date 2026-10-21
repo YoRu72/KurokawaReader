@@ -102,11 +102,11 @@
 .kr-content .kr-chapter { position: relative; }
 .kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
 .kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
-.kr-content mark.kr-hl { background: color-mix(in srgb, #e5c56b 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
-.kr-content mark.kr-hl[data-color='rose'] { background: color-mix(in srgb, #e58a8a 45%, transparent); }
-.kr-content mark.kr-hl[data-color='mint'] { background: color-mix(in srgb, #7fcfa5 45%, transparent); }
-.kr-content mark.kr-hl[data-color='sky'] { background: color-mix(in srgb, #7fb4e5 45%, transparent); }
-.kr-content mark.kr-hl[data-color='violet'] { background: color-mix(in srgb, #b9a3e8 45%, transparent); }
+.kr-content mark.kr-hl { background: color-mix(in srgb, var(--hl-amber, #e5c56b) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+.kr-content mark.kr-hl[data-color='rose'] { background: color-mix(in srgb, var(--hl-rose, #e58a8a) 45%, transparent); }
+.kr-content mark.kr-hl[data-color='mint'] { background: color-mix(in srgb, var(--hl-mint, #7fcfa5) 45%, transparent); }
+.kr-content mark.kr-hl[data-color='sky'] { background: color-mix(in srgb, var(--hl-sky, #7fb4e5) 45%, transparent); }
+.kr-content mark.kr-hl[data-color='violet'] { background: color-mix(in srgb, var(--hl-violet, #b9a3e8) 45%, transparent); }
 .kr-content mark.kr-hl.has-note { border-bottom: 2px dotted var(--r-link); cursor: pointer; }
 .kr-content mark.kr-hl { cursor: pointer; }
 .kr-content .kr-flash { animation: flash 1.6s ease-out; }
@@ -273,7 +273,8 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .kr-note-badge.static { font-size: 12px; min-width: 22px; height: 22px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); vertical-align: baseline; cursor: default; }
 /* PDF pinned notes */
 .pdf-pin { position: absolute; transform: translate(-50%, -50%); z-index: 4; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 999px; background: #e5c56b; color: #1a1a1a; font: 700 12px var(--font-ui); box-shadow: 0 2px 8px rgba(0,0,0,.35); cursor: pointer; }
-.pdf-pin[data-color='rose'] { background: #e58a8a; } .pdf-pin[data-color='mint'] { background: #7fcfa5; } .pdf-pin[data-color='sky'] { background: #7fb4e5; } .pdf-pin[data-color='violet'] { background: #b9a3e8; }
+.pdf-pin { background: var(--hl-amber, #e5c56b); }
+.pdf-pin[data-color='rose'] { background: var(--hl-rose, #e58a8a); } .pdf-pin[data-color='mint'] { background: var(--hl-mint, #7fcfa5); } .pdf-pin[data-color='sky'] { background: var(--hl-sky, #7fb4e5); } .pdf-pin[data-color='violet'] { background: var(--hl-violet, #b9a3e8); }
 .pdf-pin svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; }
 .pdf-view[data-pin-style='dot'] .pdf-pin { min-width: 12px; height: 12px; padding: 0; }
 .pdf-view[data-pin-style='pin'] .pdf-pin { border-radius: 50% 50% 50% 0; transform: translate(-50%, -100%) rotate(-45deg); }
