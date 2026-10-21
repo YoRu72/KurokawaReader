@@ -357,7 +357,6 @@ export function libraryView(): HTMLElement {
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, activeFolder && !query ? t('emptyFolder') : t('noResults')), activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
     if (getSettings().libraryView === 'cards' && !activeFolder && !query) folders.forEach((f) => grid.appendChild(folderCard(f)));
     list.forEach((b) => grid.appendChild(card(b)));
-    if (getSettings().libraryView === 'cards' && !activeFolder && !query) grid.appendChild(h('button', { class: 'book-card folder-card add', type: 'button', onclick: () => void newFolder() }, h('div', { class: 'cover folder' }, icon('folderPlus')), h('div', { class: 'book-meta' }, h('div', { class: 'bt' }, t('newFolder')))));
   }
 
   async function addSamples() {

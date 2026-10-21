@@ -730,6 +730,20 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function stopSpeaking(): void { speaking = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
   onDispose(stopSpeaking);
 
+  // Sleep timer: stops read-aloud and auto-scroll after N minutes.
+  let sleepTimer = 0;
+  function sleepTimerSheet(): void {
+    if (sleepTimer) { window.clearTimeout(sleepTimer); sleepTimer = 0; toast(t('sleepTimerOff')); return; }
+    const sh = openSheet(t('sleepTimer'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    sh.body.append(h('div', { class: 'segmented' }, ...[15, 30, 45, 60].map((m) => h('button', { type: 'button', onclick: () => {
+      sh.close();
+      sleepTimer = window.setTimeout(() => { sleepTimer = 0; stopSpeaking(); if (autoScrollRaf) stopAutoScroll(); toast(t('sleepTimerDone')); }, m * 60000);
+      toast(t('sleepTimerSet', { n: m }));
+    } }, t('minutes', { n: m })))));
+  }
+  onDispose(() => { if (sleepTimer) window.clearTimeout(sleepTimer); });
+
   function openMore(): void {
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
       const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
@@ -743,6 +757,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
+        item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
         item('highlight', t('highlights'), () => openContents('highlights')),
         docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
       ));

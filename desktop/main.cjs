@@ -1,7 +1,7 @@
 // Electron shell: serves the built web app from an app:// origin (so IndexedDB,
 // fonts and absolute paths behave exactly as on the web) and forwards files the
 // OS asks us to open (double-click, "Open with", drag onto the icon).
-const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -160,4 +160,5 @@ ipcMain.handle('kr:scan-device', async (_e, exts) => {
   if (queue.length) truncated = true;
   return { root: roots.join(' · '), files, truncated };
 });
+ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });

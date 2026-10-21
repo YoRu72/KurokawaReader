@@ -279,7 +279,8 @@ public class KurokawaPlugin extends Plugin {
             try (FileOutputStream out = new FileOutputStream(f)) { out.write(Base64.decode(data, Base64.DEFAULT)); }
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
             ClipboardManager cm = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-            ClipData clip = ClipData.newUri(getContext().getContentResolver(), "image", uri);
+            ClipData clip = new ClipData(new android.content.ClipDescription("image", new String[]{ "image/png" }), new ClipData.Item(uri));
+            // The clipboard service grants the pasting app read access to the URI when it pastes.
             cm.setPrimaryClip(clip);
             call.resolve();
         } catch (Exception e) { call.reject("copy failed: " + e.getMessage(), e); }

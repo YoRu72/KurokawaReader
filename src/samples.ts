@@ -18,3 +18,27 @@ export async function importSamples(): Promise<Book[]> {
   }
   return importFiles(files);
 }
+
+/** One-off: give an already-imported Maqāmāt its new cover (and file) without touching notes or progress. */
+export async function refreshSampleCovers(): Promise<void> {
+  const { db } = await import('./db');
+  const KEY = 'samples.cover.v2';
+  if (await db.getMeta<boolean>(KEY)) return;
+  const books = await db.allBooks();
+  const old = books.find((b) => b.fileName === 'maqamat-al-hariri.epub');
+  if (old) {
+    try {
+      const r = await fetch('/samples/maqamat-al-hariri.epub');
+      if (r.ok) {
+        const blob = await r.blob();
+        const { readMeta } = await import('./formats');
+        const meta = await readMeta(blob, old.fileName, 'epub');
+        await db.putFile(old.id, blob);
+        await db.updateBook(old.id, (b) => { b.cover = meta.cover; b.size = blob.size; });
+        const { forgetCover } = await import('./library');
+        forgetCover(old.id);
+      }
+    } catch { /* offline or missing — try again next start */ return; }
+  }
+  await db.setMeta(KEY, true);
+}

@@ -99,17 +99,23 @@ export async function fetchAsBlob(url: string): Promise<Blob> {
   return r.blob();
 }
 
-/** Copy an image to the clipboard: async clipboard API, else the Android plugin. */
+/** Copy an image to the clipboard. Native routes first (they are the ones that
+ *  actually reach the system clipboard on Android/iOS/Electron); the async
+ *  clipboard API is the web fallback. */
 export async function copyImage(blob: Blob): Promise<boolean> {
   const c = cap();
+  const kr = c?.Plugins?.Kurokawa as (KrPlugin & { copyImage?(o: { data: string }): Promise<void> }) | undefined;
+  if ((platform() === 'android' || platform() === 'ios') && kr) {
+    try { await kr.copyImage!({ data: await blobToBase64(blob) }); return true; } catch (e) { console.warn('[kurokawa] native copy failed', e); }
+  }
+  const desk = (window as unknown as { kurokawaDesktop?: { copyImage?(data: string): Promise<boolean> } }).kurokawaDesktop;
+  if (desk?.copyImage) {
+    try { if (await desk.copyImage(await blobToBase64(blob))) return true; } catch (e) { console.warn('[kurokawa] desktop copy failed', e); }
+  }
   try {
     const CI = (window as unknown as { ClipboardItem?: new (d: Record<string, Blob>) => ClipboardItem }).ClipboardItem;
-    if (CI && navigator.clipboard?.write) { await navigator.clipboard.write([new CI({ [blob.type || 'image/png']: blob })]); return true; }
+    if (CI && navigator.clipboard?.write) { await navigator.clipboard.write([new CI({ 'image/png': blob })]); return true; }
   } catch (e) { console.warn('[kurokawa] clipboard image failed', e); }
-  const kr = c?.Plugins?.Kurokawa as (KrPlugin & { copyImage?(o: { data: string }): Promise<void> }) | undefined;
-  if ((platform() === 'android' || platform() === 'ios') && kr?.copyImage) {
-    try { await kr.copyImage({ data: await blobToBase64(blob) }); return true; } catch (e) { console.warn('[kurokawa] native copy failed', e); }
-  }
   toast(t('copyFailed'), 'error');
   return false;
 }

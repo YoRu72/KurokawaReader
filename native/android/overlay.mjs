@@ -87,11 +87,22 @@ await fs.mkdir(pkgDir, { recursive: true });
 await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.join(pkgDir, 'KurokawaPlugin.java'));
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
 await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));
-// Swap Capacitor's WebView for ours (suppresses the system selection menu).
-const layoutPath = path.join(app, 'src/main/res/layout/activity_main.xml');
-let layout = await fs.readFile(layoutPath, 'utf8');
-layout = layout.replace(/<WebView\b/g, '<app.kurokawa.reader.KrWebView').replace(/<\/WebView>/g, '</app.kurokawa.reader.KrWebView>');
-await fs.writeFile(layoutPath, layout);
+// Swap Capacitor's WebView for ours (suppresses the system selection menu). BridgeActivity
+// inflates the library's bridge_layout_main; an app resource of the same name overrides it.
+await fs.writeFile(path.join(app, 'src/main/res/layout/bridge_layout_main.xml'), `<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="com.getcapacitor.BridgeActivity">
+
+    <app.kurokawa.reader.KrWebView
+        android:id="@+id/webview"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
+`);
 
 // ABI splits + signing config read from environment variables set by CI.
 const gradlePath = path.join(app, 'build.gradle');
