@@ -2,7 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
-import { t, isRtlText, isTouchDevice } from '../i18n';
+import { t, isRtlText, isTouchDevice, getLang } from '../i18n';
 import { db, uid, type Book, type Locator, type Bookmark, type Highlight } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -18,8 +18,8 @@ import { touchBook, coverUrl } from '../library';
 import { navigate } from '../router';
 import { ReadingTracker, countWords } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
-import { renderTextCard } from '../ui/textcard';
-import { shareFile, canvasToBlob, downloadBlob } from '../ui/share';
+import { renderTextCard, showSnapshot } from '../ui/textcard';
+import { shareFile, canvasToBlob, saveImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive } from '../native';
 import type { HighlightColor } from '../ui/selection';
@@ -79,7 +79,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const statusBatt = h('span', { class: 'batt' });
   const statusPct = h('span', { class: 'pct' });
   const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusClock, statusBatt, statusPct);
-  const tickClock = () => { statusClock.textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date()); };
+  const tickClock = () => {
+    const d = new Date();
+    if (getLang() === 'ar') { const h = d.getHours(); statusClock.textContent = `${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')} ${h >= 12 ? 'مساءً' : 'صباحًا'}`; }
+    else statusClock.textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
+  };
+  statusBar.hidden = !getSettings().showStatusLine;
   tickClock(); const clockTimer = window.setInterval(tickClock, 15000); onDispose(() => window.clearInterval(clockTimer));
   (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.().then((b) => { const paint = () => { statusBatt.textContent = `${Math.round(b.level * 100)}%`; }; paint(); b.addEventListener('levelchange', paint); }).catch(() => undefined);
   const title = h('div', { class: 'title' });
@@ -389,7 +394,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => { window.clearTimeout(saveTimer); void saveProgress(); docs.forEach((d) => d.render?.dispose()); });
 
   /* ---------- settings ---------- */
-  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncComfort(); updateChrome(); }));
+  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome(); }));
   root.addEventListener('kr-rerender', async () => {
     const cur = currentLocator();
     for (const doc of docs) await renderDoc(doc);
@@ -431,7 +436,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const book = cur?.doc.book ?? docs[0].book;
     try {
       const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') });
-      await shareFile(blob, `${book.title.slice(0, 40)}.png`, book.title);
+      showSnapshot(blob, snapName(book.title), book.title);
+      document.addEventListener('kr:resnap', () => void textImage(text), { once: true });
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 
@@ -769,6 +775,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 /* PDF reader                                                          */
 /* ------------------------------------------------------------------ */
 
+function snapName(title: string): string {
+  const d = new Date(); const p = (n: number) => String(n).padStart(2, '0');
+  return `${title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 40)} ${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
+}
+
 async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void): Promise<void> {
   const file = await db.getFile(book.id);
   if (!file) { navigate('/', true); return; }
@@ -827,7 +838,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     highlight: () => toast(t('fmtPdf')),
     note: () => toast(t('fmtPdf')),
     speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; speechSynthesis.speak(u); } },
-    textImage: async (text) => { try { const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') }); await shareFile(blob, `${book.title.slice(0, 40)}.png`, book.title); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
+    textImage: async (text) => { try { const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') }); showSnapshot(blob, snapName(book.title), book.title); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
@@ -853,7 +864,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     try {
       const blob = await viewer.pageToBlob(viewer.current);
       const name = `${book.title.slice(0, 40)} - p${viewer.current}.png`;
-      if (share) await shareFile(blob, name, book.title); else { downloadBlob(blob, name); toast(t('pageSaved')); }
+      if (share) await shareFile(blob, name, book.title); else await saveImage(blob, name);
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 

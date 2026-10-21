@@ -4,7 +4,8 @@ import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../l
 import { db, uid, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats';
 import { navigate } from '../router';
-import { getSettings } from '../settings';
+import { getSettings, updateSettings, onSettingsChange } from '../settings';
+import { openScanSheet, FORMAT_GROUPS, groupOf, canScan, type Destination } from '../ui/scan';
 
 type Sort = 'title' | 'recent' | 'added' | 'author' | 'size';
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -28,21 +29,52 @@ export function libraryView(): HTMLElement {
 
   const grid = h('div', { class: 'book-grid', role: 'list' });
   const chips = h('div', { class: 'folder-chips', role: 'tablist' });
+  const fmtChips = h('div', { class: 'format-chips', role: 'group', 'aria-label': t('filterFormats') });
   const heroSub = h('div', { class: 'sub' });
   const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub);
   const body = h('div', { class: 'library-body' },
     hero,
     h('div', { class: 'library-tools' }, search, sortSel),
     chips,
+    fmtChips,
     grid);
 
   const selectBtn = iconButton('check', t('select'), () => setSelecting(!selecting), { pressed: false });
+  const importTopBtn = iconButton('import', t('importBooks'), () => importMenu());
   const topbar = h('header', { class: 'topbar' },
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
+    importTopBtn,
     selectBtn,
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );
-  const fab = h('button', { class: 'fab', type: 'button', onclick: () => input.click() }, icon('import'), h('span', null, t('importBooks')));
+  const fab = h('button', { class: 'fab', type: 'button', onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks')));
+  const applyImportPlace = () => { const top = getSettings().importButton === 'top'; importTopBtn.hidden = !top; fab.hidden = selecting || top; };
+  onSettingsChange(() => { applyImportPlace(); renderChips(); });
+
+  /** Pick files, or scan a folder on the device. */
+  function importMenu() {
+    if (!canScan()) { input.click(); return; }
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(t('importBooks'), t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      s.body.append(h('ul', { class: 'plain-list' },
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); input.click(); } }, icon('import'), t('importBooks'))),
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice')))));
+    });
+  }
+  function openScan() {
+    openScanSheet({
+      folders, activeFolder,
+      existing: new Set(books.map((b) => `${b.fileName}:${b.size}`)),
+      fallbackPick: () => input.click(),
+      onImport: async (files, dest) => {
+        let target: string | null = null;
+        if (dest.kind === 'folder') target = dest.id;
+        else if (dest.kind === 'new') target = await newFolder();
+        await doImport(files, target);
+      },
+    });
+  }
 
   const selBar = h('div', { class: 'selection-bar', hidden: true });
   const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
@@ -80,7 +112,9 @@ export function libraryView(): HTMLElement {
 
   function sorted(): Book[] {
     const cards = getSettings().libraryView === 'cards';
+    const fmt = new Set(getSettings().formatFilter);
     const list = books.filter((b) => {
+      if (fmt.size && !fmt.has(groupOf(b.format))) return false;
       const inFolder = activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
       return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query));
     });
@@ -166,9 +200,21 @@ export function libraryView(): HTMLElement {
     });
   }
 
+  function renderFormatChips() {
+    clear(fmtChips);
+    const present = new Set(books.map((b) => groupOf(b.format)));
+    const groups = FORMAT_GROUPS.filter((g) => present.has(g.id));
+    fmtChips.hidden = groups.length < 2;
+    if (fmtChips.hidden) return;
+    const active = new Set(getSettings().formatFilter);
+    const toggle = (id: string) => { const next = new Set(active); if (next.has(id)) next.delete(id); else next.add(id); updateSettings({ formatFilter: [...next] }); renderGrid(); };
+    for (const g of groups) fmtChips.append(h('button', { type: 'button', class: 'chip small' + (active.has(g.id) ? ' on' : ''), 'aria-pressed': String(active.has(g.id)), onclick: () => toggle(g.id) }, active.has(g.id) ? icon('check') : null, h('span', { lang: g.id === 'image' ? undefined : 'en', dir: 'ltr' }, g.label)));
+    if (active.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
+  }
+
   function renderChips() {
     clear(chips);
-    chips.hidden = getSettings().libraryView === 'cards' && !activeFolder;
+    chips.hidden = false;
     if (!books.length) return;
     const chip = (label: string, id: string | null, iconName?: string) => {
       const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); } }, iconName ? icon(iconName) : null, h('span', null, label));
@@ -243,9 +289,10 @@ export function libraryView(): HTMLElement {
     clear(grid);
     renderSelBar();
     renderChips();
+    renderFormatChips();
     const list = sorted();
     heroSub.textContent = books.length ? `${countBooks(books.length)} · ${t('tagline')}` : t('tagline');
-    fab.hidden = selecting;
+    applyImportPlace();
     if (!books.length) {
       grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('div', { class: 'glyph' }, icon('empty')), h('h2', null, t('emptyLibraryTitle')), h('p', null, t('emptyLibraryBody')),
         h('div', { class: 'actions' },
@@ -279,11 +326,11 @@ export function libraryView(): HTMLElement {
     renderGrid();
   }
 
-  async function doImport(files: FileList | File[]) {
+  async function doImport(files: FileList | File[], folderId: string | null = activeFolder) {
     const n = files.length;
     toast(t('importing', { n }), 'info', 60000);
     let ok = 0;
-    const target = activeFolder;
+    const target = folderId;
     await importFiles(files, (book, file, err) => {
       if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
     });

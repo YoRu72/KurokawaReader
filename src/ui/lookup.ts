@@ -3,6 +3,8 @@
 // there is none.
 import { h, icon, openSheet } from './dom';
 import { t, getLang, isRtlText } from '../i18n';
+import { getSettings } from '../settings';
+import { hasSystemText, translateWithSystem } from './share';
 
 const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh-CN', 'ru'] as const;
 const NAMES: Record<string, string> = { ar: 'العربية', en: 'English', fr: 'Français', tr: 'Türkçe', ur: 'اردو', fa: 'فارسی', de: 'Deutsch', es: 'Español', id: 'Bahasa Indonesia', ja: '日本語', 'zh-CN': '中文', ru: 'Русский' };
@@ -74,6 +76,8 @@ async function defineArabic(word: string): Promise<string | null> {
 }
 
 export function showTranslation(text: string): void {
+  // The reader can hand the passage to a translator app instead of its own (slow) lookup.
+  if (getSettings().translator === 'system' && hasSystemText()) { void translateWithSystem(text); return; }
   const sourceIsArabic = isRtlText(text);
   let target = localStorage.getItem('kr.translateTo') || (sourceIsArabic ? 'en' : getLang() === 'ar' ? 'ar' : 'en');
   if (sourceIsArabic && target === 'ar') target = 'en';
@@ -85,6 +89,7 @@ export function showTranslation(text: string): void {
   s.actions.append(h('label', { class: 'field', style: { flexDirection: 'row', alignItems: 'center', gap: '8px' } }, h('span', { class: 'label' }, t('translateTo')), sel));
   const link = h('a', { class: 'btn small', href: '#', target: '_blank', rel: 'noopener' }, icon('external'), t('openInTranslator')) as HTMLAnchorElement;
   s.actions.append(link);
+  if (hasSystemText()) s.actions.append(h('button', { class: 'btn small', onclick: () => { s.close(); void translateWithSystem(text); } }, icon('translate'), t('translatorSystem')));
 
   async function run() {
     link.href = `https://translate.google.com/?sl=auto&tl=${encodeURIComponent(target)}&text=${encodeURIComponent(text.slice(0, 2000))}&op=translate`;

@@ -2,6 +2,12 @@ package app.kurokawa.reader;
 
 import android.content.Intent;
 import android.net.Uri;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import android.os.Environment;
+import android.media.MediaScannerConnection;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import android.os.Build;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.JSArray;
@@ -22,6 +28,15 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
+import android.app.Activity;
+import android.database.Cursor;
+import android.provider.DocumentsContract;
+import androidx.activity.result.ActivityResult;
+import com.getcapacitor.annotation.ActivityCallback;
 
 /**
  * Native helpers for the reader:
@@ -75,6 +90,132 @@ public class KurokawaPlugin extends Plugin {
             call.resolve();
         } catch (Exception e) {
             call.reject("Cannot start installer: " + e.getMessage(), e);
+        }
+    }
+
+    /* ---------- Scanning the device for readable files (Storage Access Framework) ---------- */
+
+    /** Lets the user pick a folder (or the whole storage); the grant is persisted. */
+    @PluginMethod
+    public void pickTree(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(call, intent, "treeResult");
+    }
+
+    @ActivityCallback
+    private void treeResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) { call.reject("cancelled"); return; }
+        Uri tree = result.getData().getData();
+        try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {}
+        JSObject ret = new JSObject();
+        ret.put("uri", tree.toString());
+        String name = tree.getLastPathSegment();
+        ret.put("name", name == null ? "" : name.replaceFirst("^primary:", "").replaceFirst("^[^:]*:$", "Storage"));
+        call.resolve(ret);
+    }
+
+    /** Walks a picked tree and lists files whose extension is in `exts` (lower-case, no dot). */
+    @PluginMethod
+    public void listTree(PluginCall call) {
+        String treeStr = call.getString("uri");
+        JSArray extsArr = call.getArray("exts");
+        if (treeStr == null) { call.reject("uri required"); return; }
+        List<String> exts = new ArrayList<>();
+        try { if (extsArr != null) for (int i = 0; i < extsArr.length(); i++) exts.add(extsArr.getString(i).toLowerCase()); } catch (Exception ignored) {}
+        Uri tree = Uri.parse(treeStr);
+        String rootDoc;
+        try { rootDoc = DocumentsContract.getTreeDocumentId(tree); } catch (Exception e) { call.reject("bad tree uri"); return; }
+        JSArray out = new JSArray();
+        ArrayDeque<String[]> queue = new ArrayDeque<>();
+        queue.add(new String[]{ rootDoc, "" });
+        int visited = 0;
+        while (!queue.isEmpty() && visited < 4000 && out.length() < 5000) {
+            String[] cur = queue.poll();
+            visited++;
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, cur[0]);
+            try (Cursor c = getContext().getContentResolver().query(children, new String[]{
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED }, null, null, null)) {
+                if (c == null) continue;
+                while (c.moveToNext()) {
+                    String id = c.getString(0), name = c.getString(1), mime = c.getString(2);
+                    if (name == null) continue;
+                    if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                        if (!name.startsWith(".") && !name.equals("Android")) queue.add(new String[]{ id, cur[1] + name + "/" });
+                        continue;
+                    }
+                    int dot = name.lastIndexOf('.');
+                    String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase() : "";
+                    if (!exts.isEmpty() && !exts.contains(ext)) continue;
+                    JSObject f = new JSObject();
+                    f.put("uri", DocumentsContract.buildDocumentUriUsingTree(tree, id).toString());
+                    f.put("name", name);
+                    f.put("path", cur[1] + name);
+                    f.put("mime", mime == null ? "" : mime);
+                    f.put("size", c.isNull(3) ? 0 : c.getLong(3));
+                    f.put("modified", c.isNull(4) ? 0 : c.getLong(4));
+                    out.put(f);
+                }
+            } catch (Exception ignored) {}
+        }
+        JSObject ret = new JSObject();
+        ret.put("files", out);
+        ret.put("truncated", !queue.isEmpty() || out.length() >= 5000);
+        call.resolve(ret);
+    }
+
+    /** Reads one document as base64 so the web side can import it. */
+    @PluginMethod
+    public void readDocument(PluginCall call) {
+        String uriStr = call.getString("uri");
+        if (uriStr == null) { call.reject("uri required"); return; }
+        try (InputStream in = getContext().getContentResolver().openInputStream(Uri.parse(uriStr))) {
+            if (in == null) { call.reject("cannot open"); return; }
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[1 << 16]; int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            JSObject ret = new JSObject();
+            ret.put("data", Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP));
+            call.resolve(ret);
+        } catch (Exception e) { call.reject("read failed: " + e.getMessage(), e); }
+    }
+
+    /** Saves a PNG/JPEG (base64) into the device gallery under Pictures/<folder>. */
+    @PluginMethod
+    public void saveToGallery(PluginCall call) {
+        String data = call.getString("data", "");
+        String name = call.getString("name", "snapshot.png");
+        String folder = call.getString("folder", "Screenshots");
+        String mime = name.toLowerCase().endsWith(".jpg") || name.toLowerCase().endsWith(".jpeg") ? "image/jpeg" : "image/png";
+        try {
+            byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+            String shown;
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+                v.put(MediaStore.Images.Media.MIME_TYPE, mime);
+                v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folder);
+                v.put(MediaStore.Images.Media.IS_PENDING, 1);
+                Uri uri = getContext().getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) { call.reject("MediaStore insert failed"); return; }
+                try (OutputStream out = getContext().getContentResolver().openOutputStream(uri)) { out.write(bytes); }
+                v.clear(); v.put(MediaStore.Images.Media.IS_PENDING, 0);
+                getContext().getContentResolver().update(uri, v, null, null);
+                shown = Environment.DIRECTORY_PICTURES + "/" + folder + "/" + name;
+            } else {
+                File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), folder);
+                dir.mkdirs();
+                File f = new File(dir, name);
+                try (FileOutputStream out = new FileOutputStream(f)) { out.write(bytes); }
+                MediaScannerConnection.scanFile(getContext(), new String[]{ f.getAbsolutePath() }, new String[]{ mime }, null);
+                shown = f.getAbsolutePath();
+            }
+            JSObject ret = new JSObject(); ret.put("path", shown); call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Save failed: " + e.getMessage(), e);
         }
     }
 

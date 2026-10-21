@@ -95,33 +95,40 @@ export class PdfViewer {
     this.doc = opened.doc;
     this.closeDoc = opened.close;
     this.total = this.doc.numPages;
-    // Prefer the platform renderer on Android; pdf.js stays in charge of text, search and outline.
-    const nat = nativePdf();
-    if (nat && cacheKey) {
-      try {
-        const path = `kr-pdf/${cacheKey}.pdf`;
-        let uri: string;
-        try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
-        catch { uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri; }
-        const info = await nat.pdf.pdfOpen({ path: uri });
-        if (info.pageCount === this.total) this.native = nat.pdf;
-      } catch (e) { console.warn('[kurokawa] native PDF renderer unavailable', e); this.native = null; }
-    }
-    for (let i = 1; i <= this.total; i++) {
-      const page = await this.doc.getPage(i).catch(() => null);
-      const vp = page?.getViewport({ scale: 1 });
-      this.baseWidths.push(vp?.width ?? 612);
-      this.baseHeights.push(vp?.height ?? 792);
-      if (i === 1 || i === this.total) continue;
-    }
+    // Size every page from page 1 straight away (like Drive's viewer) so the
+    // document appears at once; real page sizes are filled in behind the scenes.
+    let first: PDFPageProxy | null = null;
+    try { first = await this.doc.getPage(1); } catch { /* fall back to Letter */ }
+    const vp1 = first?.getViewport({ scale: 1 });
+    const w1 = vp1?.width ?? 612, h1 = vp1?.height ?? 792;
+    this.baseWidths = new Array<number>(this.total).fill(w1);
+    this.baseHeights = new Array<number>(this.total).fill(h1);
     this.scale = this.computeFitScale();
     this.pages = [];
+    const frag = document.createDocumentFragment();
     for (let i = 1; i <= this.total; i++) {
       const el = h('div', { class: 'pdf-page', dataset: { page: String(i) } }, h('span', { class: 'pnum' }, String(i)));
       this.sizePage(el, i);
       this.pages.push(el);
-      this.scroll.appendChild(el);
+      frag.appendChild(el);
     }
+    this.scroll.appendChild(frag);
+    // Prefer the platform renderer on Android; pdf.js stays in charge of text, search
+    // and outline. Opening it is not awaited: pdf.js draws the first screens meanwhile.
+    const nat = nativePdf();
+    if (nat && cacheKey) {
+      void (async () => {
+        try {
+          const path = `kr-pdf/${cacheKey}.pdf`;
+          let uri: string;
+          try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
+          catch { uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri; }
+          const info = await nat.pdf.pdfOpen({ path: uri });
+          if (!this.destroyed && info.pageCount === this.total) this.native = nat.pdf;
+        } catch (e) { console.warn('[kurokawa] native PDF renderer unavailable', e); this.native = null; }
+      })();
+    }
+    void this.measurePages();
     this.observer = new IntersectionObserver((entries) => {
       for (const e of entries) {
         const n = Number((e.target as HTMLElement).dataset.page);
@@ -135,6 +142,24 @@ export class PdfViewer {
     this.resizeObs.observe(this.scroll);
     this.opts.onPageChange(this.current, this.total);
     this.updateCurrent();
+  }
+
+  /** Fetch real page sizes in the background and correct the placeholders. */
+  private async measurePages(): Promise<void> {
+    for (let i = 2; i <= this.total; i++) {
+      if (this.destroyed) return;
+      const page = await this.doc.getPage(i).catch(() => null);
+      if (this.destroyed || !page) continue;
+      const vp = page.getViewport({ scale: 1 });
+      if (Math.abs(vp.width - this.baseWidths[i - 1]) < 0.5 && Math.abs(vp.height - this.baseHeights[i - 1]) < 0.5) continue;
+      const before = this.pages[i - 1].offsetHeight;
+      this.baseWidths[i - 1] = vp.width; this.baseHeights[i - 1] = vp.height;
+      this.sizePage(this.pages[i - 1], i);
+      // Keep what the reader is looking at where it is when an earlier page grows.
+      if (i < this.current) this.scroll.scrollTop += this.pages[i - 1].offsetHeight - before;
+      if (this.rendered.has(i)) { this.releasePage(i); void this.renderPage(i); }
+      if (i % 25 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   private computeFitScale(): number {

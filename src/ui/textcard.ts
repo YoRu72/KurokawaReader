@@ -1,10 +1,11 @@
 // "Text as image": renders a selected passage as a quote card — the book's
 // title and author, the text in the reading font on the current page colours.
-import { getSettings } from '../settings';
-import { isRtlText } from '../i18n';
-import { canvasToBlob } from './share';
+import { getSettings, updateSettings } from '../settings';
+import { isRtlText, t } from '../i18n';
+import { canvasToBlob, saveImage, shareFile } from './share';
+import { h, openSheet } from './dom';
 
-export interface TextCardOptions { text: string; title: string; author?: string; appName: string }
+export interface TextCardOptions { text: string; title: string; author?: string; appName: string; style?: 'plain' | 'card' }
 
 function readerColors(): { bg: string; fg: string; dim: string; rule: string } {
   const el = document.querySelector('.reader') as HTMLElement | null;
@@ -46,6 +47,22 @@ export async function renderTextCard(o: TextCardOptions): Promise<Blob> {
   const maxLines = 40;
   const shown = lines.slice(0, maxLines);
   if (lines.length > maxLines) shown[maxLines - 1] += ' …';
+  const plain = (o.style ?? s.snapStyle) === 'plain';
+  if (plain) {
+    // A plain snap: just the passage on the page colour, as if screenshotted.
+    const H = pad * 2 + shown.length * lh - (lh - fontSize);
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = colors.fg; ctx.font = `${fontSize}px ${family}`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.direction = rtl ? 'rtl' : 'ltr';
+    ctx.textAlign = rtl ? 'right' : 'left';
+    let y = pad + fontSize;
+    for (const line of shown) { ctx.fillText(line, rtl ? W - pad : pad, y); y += lh; }
+    return canvasToBlob(c, 'image/png');
+  }
   const H = pad * 2 + 110 + shown.length * lh + 120;
 
   const c = document.createElement('canvas');
@@ -73,6 +90,23 @@ export async function renderTextCard(o: TextCardOptions): Promise<Blob> {
   ctx.direction = 'ltr'; ctx.textAlign = isRtlText(o.title) ? 'left' : 'right';
   ctx.font = `24px Inter, system-ui, sans-serif`;
   ctx.fillText(o.appName, isRtlText(o.title) ? pad : W - pad, H - pad - 10);
-  void s;
   return canvasToBlob(c, 'image/png');
+}
+
+/** Preview a rendered snapshot with Save / Share buttons. */
+export function showSnapshot(blob: Blob, filename: string, title: string): void {
+  const sheet = openSheet(t('textAsImage'), t('close'));
+  sheet.body.style.fontFamily = 'var(--font-ui)';
+  const url = URL.createObjectURL(blob);
+  const img = h('img', { class: 'snap-preview', alt: title });
+  img.src = url;
+  sheet.body.appendChild(img);
+  const styleBtn = h('button', { class: 'btn small' }, t(getSettings().snapStyle === 'plain' ? 'snapCard' : 'snapPlain'));
+  const save = h('button', { class: 'btn small primary' }, t('saveImage'));
+  const share = h('button', { class: 'btn small' }, t('shareText'));
+  save.addEventListener('click', () => { void saveImage(blob, filename); sheet.close(); });
+  share.addEventListener('click', () => { void shareFile(blob, filename, title); sheet.close(); });
+  styleBtn.addEventListener('click', () => { updateSettings({ snapStyle: getSettings().snapStyle === 'plain' ? 'card' : 'plain' }); sheet.close(); document.dispatchEvent(new CustomEvent('kr:resnap')); });
+  sheet.actions.append(styleBtn, share, save);
+  sheet.el.addEventListener('transitionend', () => { if (!sheet.el.isConnected) URL.revokeObjectURL(url); });
 }

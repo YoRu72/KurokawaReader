@@ -2,7 +2,7 @@ import { familyFor } from './fonts';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
-export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'custom';
+export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'custom';
 export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots';
 export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'mono' | 'custom';
@@ -54,6 +54,12 @@ export interface VisualSettings {
   libraryView: 'cards' | 'chips';
   autoUpdateCheck: boolean;
   tapToTurn: boolean;
+  showStatusLine: boolean;
+  importButton: 'top' | 'fab';
+  translator: 'builtin' | 'system';
+  snapStyle: 'plain' | 'card';
+  snapFolder: string;
+  formatFilter: string[];
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -71,7 +77,7 @@ export const DEFAULTS: VisualSettings = {
   hyphenate: false,
   wordSpacing: 0,
   letterSpacing: 0,
-  pdfInvert: true,
+  pdfInvert: false,
   autoScrollSpeed: 40,
   customBg: '#1b2430',
   customFg: '#e4e9f0',
@@ -94,6 +100,12 @@ export const DEFAULTS: VisualSettings = {
   libraryView: 'cards',
   autoUpdateCheck: true,
   tapToTurn: true,
+  showStatusLine: false,
+  importButton: 'top',
+  translator: 'builtin',
+  snapStyle: 'plain',
+  snapFolder: 'Screenshots',
+  formatFilter: [],
 };
 
 const KEY = 'kr.visual';
@@ -170,7 +182,7 @@ export function isLightColor(hex: string): boolean {
 }
 
 /** Which chrome the page would call for (light reading themes → light chrome). */
-const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper'];
+const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand'];
 export function pageIsLight(s: VisualSettings = current): boolean {
   if (s.bgOverride) return isLightColor(s.bgOverride);
   return LIGHT_THEMES.includes(s.theme) || (s.theme === 'custom' && isLightColor(s.customBg));
