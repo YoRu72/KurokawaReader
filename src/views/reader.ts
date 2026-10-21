@@ -18,10 +18,10 @@ import { touchBook, coverUrl } from '../library';
 import { navigate } from '../router';
 import { ReadingTracker, countWords } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
-import { renderTextCard, showSnapshot } from '../ui/textcard';
-import { shareFile, canvasToBlob, saveImage } from '../ui/share';
+import { renderTextCanvas, showSnapshot } from '../ui/textcard';
+import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
-import { setImmersive } from '../native';
+import { setImmersive, keepAwake } from '../native';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet } from '../ui/dom';
 
@@ -162,7 +162,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   books.forEach((b) => void touchBook(b.id));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
-  onDispose(() => void setImmersive(false));
+  keepAwake(getSettings().keepAwake);
+  onDispose(() => { void setImmersive(false); keepAwake(false); });
   // Reading statistics: words per block, tracked as the reader scrolls past them.
   const wordsOf = new WeakMap<HTMLElement, number>();
   const wordCount = (b: HTMLElement): number => { let w = wordsOf.get(b); if (w === undefined) { w = b.tagName === 'IMG' ? 0 : countWords(b.textContent ?? ''); wordsOf.set(b, w); } return w; };
@@ -422,6 +423,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     root.classList.toggle('immersive');
   });
 
+  // Volume keys (Android) turn screens when enabled.
+  const onVolume = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; scroll.scrollBy({ top: dir * scroll.clientHeight * 0.88, behavior: 'smooth' }); };
+  document.addEventListener('kr:volume', onVolume);
+  onDispose(() => document.removeEventListener('kr:volume', onVolume));
+
   /* ---------- selection tools ---------- */
   onDispose(attachSelectionToolbar(scroll, {
     search: (text) => openSearch(text),
@@ -435,9 +441,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const cur = currentLocator();
     const book = cur?.doc.book ?? docs[0].book;
     try {
-      const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') });
-      showSnapshot(blob, snapName(book.title), book.title);
-      document.addEventListener('kr:resnap', () => void textImage(text), { once: true });
+      const opts = { text, title: book.title, author: book.author, appName: t('appName') };
+      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style }));
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 
@@ -838,11 +843,15 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     highlight: () => toast(t('fmtPdf')),
     note: () => toast(t('fmtPdf')),
     speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; speechSynthesis.speak(u); } },
-    textImage: async (text) => { try { const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') }); showSnapshot(blob, snapName(book.title), book.title); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
+    textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: t('appName') }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
-  onDispose(() => void setImmersive(false));
+  keepAwake(getSettings().keepAwake);
+  onDispose(() => { void setImmersive(false); keepAwake(false); });
+  const onVolumePdf = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; viewer.scroll.scrollBy({ top: dir * viewer.scroll.clientHeight * 0.9, behavior: 'smooth' }); };
+  document.addEventListener('kr:volume', onVolumePdf);
+  onDispose(() => document.removeEventListener('kr:volume', onVolumePdf));
 
   // Reading statistics for PDFs: words per page counted as pages are reached.
   const tracker = new ReadingTracker(book, () => true);
@@ -860,11 +869,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
 
-  async function savePage(share: boolean): Promise<void> {
+  async function savePage(mode: boolean | 'copy'): Promise<void> {
     try {
       const blob = await viewer.pageToBlob(viewer.current);
       const name = `${book.title.slice(0, 40)} - p${viewer.current}.png`;
-      if (share) await shareFile(blob, name, book.title); else await saveImage(blob, name);
+      if (mode === 'copy') { if (await copyImage(blob)) toast(t('copied')); }
+      else if (mode) await shareFile(blob, name, book.title); else await saveImage(blob, name);
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 
@@ -962,6 +972,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('grid', t('pagesGrid'), showPagesGrid),
         item('camera', t('savePageImage'), () => void savePage(false)),
         item('external', t('sharePage'), () => void savePage(true)),
+        item('copy', t('copyPageImage'), () => void savePage('copy')),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('type', t('visualOptions'), openPdfOptions),
         item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),

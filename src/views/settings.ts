@@ -29,7 +29,7 @@ export function settingsView(): HTMLElement {
     clear(appearance);
     const cur = getSettings();
     const modes: [UiMode, string][] = [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')], ['page', t('uiPage')]];
-    const accents: [Accent, string, string][] = [['graphite', t('accentGraphite'), '#c9ccd2'], ['aqua', t('accentAqua'), '#8fd0f0'], ['teal', t('accentTeal'), '#86d6cf'], ['gold', t('accentGold'), '#ebc47e'], ['coral', t('accentCoral'), '#ffb59f'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
+    const accents: [Accent, string, string][] = [['graphite', t('accentGraphite'), '#c9ccd2'], ['aqua', t('accentAqua'), '#8fd0f0'], ['teal', t('accentTeal'), '#86d6cf'], ['gold', t('accentGold'), '#ebc47e'], ['coral', t('accentCoral'), '#ffb59f'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['olive', t('accentOlive'), '#c3cf9a'], ['sand', t('accentSand'), '#e3c9a3'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
     const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('uiMode')), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),

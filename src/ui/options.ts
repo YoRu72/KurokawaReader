@@ -2,6 +2,7 @@
 // picture), comfort filters (warmth, dimming), type and layout.
 import { h, clear, icon, toast } from './dom';
 import { t } from '../i18n';
+import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { getSettings, updateSettings, resetSettings, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont } from '../settings';
 import { fontsSync } from '../fonts';
 
@@ -18,7 +19,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const themes: [Theme, string, string, string][] = [
     ['grey', t('themeGrey'), '#1b1b1b', '#d2d2d2'], ['dark', t('themeDark'), '#141414', '#cfcbc4'], ['black', t('themeBlack'), '#000', '#c9c9c9'], ['slate', t('themeSlate'), '#1e2228', '#d3d8de'], ['night', t('themeNight'), '#0f1626', '#cfd8e8'],
     ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'], ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['mintpaper', t('themeMintPaper'), '#e6efe6', '#1f2a22'], ['rosepaper', t('themeRosePaper'), '#f3e6e6', '#2c1e20'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['sand', t('themeSand'), '#efe4cf', '#3a3024'],
-    ['olive', t('themeOlive'), '#1d2017', '#d6d8c6'], ['amber', t('themeAmber'), '#1f1a12', '#e3cfa8'], ['forest', t('themeForest'), '#10201a', '#cbd9cf'], ['plum', t('themePlum'), '#1e1520', '#ddd0dc'], ['ink', t('themeInk'), '#0b1120', '#dfe6f3'], ['custom', t('themeCustom'), s.customBg, s.customFg],
+    ['olive', t('themeOlive'), '#1d2017', '#d6d8c6'], ['amber', t('themeAmber'), '#1f1a12', '#e3cfa8'], ['forest', t('themeForest'), '#10201a', '#cbd9cf'], ['plum', t('themePlum'), '#1e1520', '#ddd0dc'], ['ink', t('themeInk'), '#0b1120', '#dfe6f3'], ['coffee', t('themeCoffee'), '#1c1512', '#d9c9b8'], ['lavender', t('themeLavender'), '#efeaf6', '#2b2436'], ['sky', t('themeSky'), '#e9f1f7', '#1f2a33'], ['custom', t('themeCustom'), s.customBg, s.customFg],
   ];
   grid.append(head('theme', t('theme')), h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
     h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
@@ -113,6 +114,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle(t('hideSystemBars'), s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
   grid.append(toggle(t('tapToTurn'), s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
   grid.append(toggle(t('showStatusLine'), s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
+  grid.append(toggle(t('keepAwake'), s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
+  if (nativePlatform() === 'android') grid.append(toggle(t('volumeKeys'), s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section(t('translatorChoice'), segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));

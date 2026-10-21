@@ -18,25 +18,25 @@ Downloads for **Android (APK)**, **Windows (EXE)** and **iOS (IPA for AltStore/S
 
 **Library**
 - Import anything readable; drag files in, pick them, or open them from another app — the reader appears in Android's and iOS's "Open with" sheets and registers the file types on Windows.
-- **Scan the device**: pick a folder (or the whole storage) and every readable file in it is listed with type filters (EPUB, PDF, Word, …); import a selection or all of them into the library, an existing folder or a new one.
-- **Folders**: create folders, drag books onto them, or select several and *Move to folder*. Importing while inside a folder files the books there. Folder chips and **format filters** (several at once) sit above the shelf.
+- **Scan the device**: scan the **whole device** (Android asks once for *All files access*; the desktop app walks your home folder and drives) or pick a folder — every readable file is listed with type filters (EPUB, PDF, Word, …); import a selection or all of them into the library, an existing folder or a new folder you name on the spot. The ordinary file picker asks the same question.
+- **Folders**: create folders, drag books onto them, or select several and *Move to folder*. Importing while inside a folder files the books there. Folder chips, **format filters** and **status filters** (unread / in progress / finished — several at once) sit above the shelf.
 - Covers, progress bars, long-press selection, sort by last opened / added / title / author, search.
 - Two starter books so the shelf is never empty (below).
 
 **Reading**
 - **Read together** — open several books in one continuous scroll; book 1 flows into book 2, each with its own contents, images, bookmarks and progress.
 - Own EPUB engine: nested contents, internal links, footnotes, SVG, publisher fonts; publisher styles are optional.
-- **Themes**: Grey (default), Dark, Black, Slate, Night, Olive, Amber, Forest, Plum, Ink, Sepia, Paper, Sand, Mint paper, Rose paper, Light, and **Custom** with your own page and text colours. One-tap presets: Night, Candlelight, Manuscript, Daylight, E-ink.
+- **Themes**: Grey (default), Dark, Black, Slate, Night, Olive, Amber, Forest, Plum, Ink, Sepia, Paper, Sand, Mint paper, Rose paper, Light, Lavender, Sky, Coffee, and **Custom** with your own page and text colours. One-tap presets: Night, Candlelight, Manuscript, Daylight, E-ink.
 - **Backgrounds**: paper / linen / parchment / dots textures with a strength control; your own background picture with opacity and blur.
 - **Comfort**: warmth (night) filter and page dimming, independent of the theme.
 - **Type & layout**: Lora / Inter / system or **your own fonts** (add TTF/OTF/WOFF files from the device or fetch one from a URL; assign them to Latin or Arabic), Uthman TN1 / Sultan / Naskh for Arabic, size, line height, paragraph spacing, text width, margins, alignment, word and letter spacing, hyphenation.
-- Contents, bookmarks, highlights in five colours with notes, in-book search that ignores Arabic diacritics and letter variants, auto-scroll, read-aloud, immersive mode, full screen, screen-orientation lock.
+- Contents, bookmarks, highlights in five colours with notes, in-book search that ignores Arabic diacritics and letter variants, auto-scroll, read-aloud, immersive mode, full screen, screen-orientation lock, keep-screen-on, volume-key page turning (Android).
 - **Book information**: file facts, chapter and position, reading time, reading speed, a per-day history, word and character counts, and minutes left in the chapter and the book.
 - **Images**: a gallery of every picture in the open books with a lightbox, *show in text*, save and share. Black-on-transparent line art is inverted on dark pages.
 
-**Selection tools** — select text to get a colour row for highlighting plus *Copy · Search · Define · Translate · Note · Text as image (صوِّر النص) · More*. Text snapshots are plain by default — the passage on the page colour, like a screenshot — or a card with title and author; they save to *Pictures/Screenshots* (folder adjustable) or go straight to the share sheet. Translation can use the built-in service or a translator app on the device (a setting). "More" offers *Translate with…* (hands the text to Google Translate or any other app on the device), share, read aloud, web search and Wikipedia. Define and Translate use the web when it is available and say so when it isn't.
+**Selection tools** — select text to get a colour row for highlighting plus *Copy · Search · Define · Translate · Note · Text as image (صوِّر النص) · More*. Text snapshots are plain by default — the passage on the page colour, like a screenshot — or a card with title and author; they copy the reader's own look (font, size, page colour, background picture, texture, warmth) and can be saved to *Pictures/Screenshots* (folder adjustable), shared, or copied to the clipboard. Translation can use the built-in service or a translator app on the device (a setting). "More" offers *Translate with…* (hands the text to Google Translate or any other app on the device), share, read aloud, web search and Wikipedia. Define and Translate use the web when it is available and say so when it isn't.
 
-**PDF** — lazily rendered pages with selectable text, a **page slider**, **go to page**, zoom and fit-width, outline, full-text search with highlighting, a **pages grid** (thumbnails you tap to jump), **save page as PNG** or share it, optional dark rendering, bookmarks. Documents open instantly: pages are laid out from the first page's size and corrected in the background.
+**PDF** — lazily rendered pages with selectable text, a **page slider**, **go to page**, zoom and fit-width, outline, full-text search with highlighting, a **pages grid** (thumbnails you tap to jump), **save page as PNG**, share it or copy it to the clipboard, optional dark rendering, bookmarks. Documents open instantly: pages are laid out from the first page's size and corrected in the background.
 
 **Office & text** — DOCX (headings, lists, tables, images, footnotes), XLSX (sheets, dates, formulas) and CSV, PPTX (titles, bullets, pictures, notes), TXT with legacy Arabic/Latin encoding detection, Markdown, HTML, FB2, ODT, CBZ, images.
 

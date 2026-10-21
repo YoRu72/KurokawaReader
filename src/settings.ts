@@ -2,10 +2,10 @@ import { familyFor } from './fonts';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
-export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'custom';
+export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'coffee' | 'lavender' | 'sky' | 'custom';
 export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots';
 export type UiMode = 'system' | 'light' | 'dark' | 'page';
-export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'mono' | 'custom';
+export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher' | (string & {});
@@ -60,6 +60,9 @@ export interface VisualSettings {
   snapStyle: 'plain' | 'card';
   snapFolder: string;
   formatFilter: string[];
+  statusFilter: string[];     // 'unread' | 'reading' | 'finished'
+  keepAwake: boolean;         // screen wake lock while reading
+  volumeKeys: boolean;        // page turning with volume keys (Android)
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -106,6 +109,9 @@ export const DEFAULTS: VisualSettings = {
   snapStyle: 'plain',
   snapFolder: 'Screenshots',
   formatFilter: [],
+  statusFilter: [],
+  keepAwake: true,
+  volumeKeys: false,
 };
 
 const KEY = 'kr.visual';
@@ -182,7 +188,7 @@ export function isLightColor(hex: string): boolean {
 }
 
 /** Which chrome the page would call for (light reading themes → light chrome). */
-const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand'];
+const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky'];
 export function pageIsLight(s: VisualSettings = current): boolean {
   if (s.bgOverride) return isLightColor(s.bgOverride);
   return LIGHT_THEMES.includes(s.theme) || (s.theme === 'custom' && isLightColor(s.customBg));

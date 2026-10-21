@@ -5,7 +5,8 @@ import { db, uid, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats';
 import { navigate } from '../router';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
-import { openScanSheet, FORMAT_GROUPS, groupOf, canScan, type Destination } from '../ui/scan';
+import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
+import { pickDestination, type Destination } from '../ui/destination';
 
 type Sort = 'title' | 'recent' | 'added' | 'author' | 'size';
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -20,7 +21,23 @@ export function libraryView(): HTMLElement {
   const selected = new Set<string>();
 
   const input = h('input', { type: 'file', multiple: true, accept: SUPPORTED_ACCEPT, hidden: true }) as HTMLInputElement;
-  input.addEventListener('change', () => { if (input.files?.length) void doImport(input.files); input.value = ''; });
+  input.addEventListener('change', async () => {
+    const files = input.files ? Array.from(input.files) : [];
+    input.value = '';
+    if (!files.length) return;
+    // Ask where the books go (library / a folder / a new folder) whenever folders are in use.
+    if (folders.length || books.length) {
+      const d = await pickDestination(folders, activeFolder ? { kind: 'folder', id: activeFolder } : { kind: 'library' }, t('importBooks'));
+      if (!d) return;
+      await doImport(files, await resolveDestination(d));
+    } else await doImport(files, null);
+  });
+
+  async function resolveDestination(d: Destination): Promise<string | null> {
+    if (d.kind === 'folder') return d.id;
+    if (d.kind === 'new') return createFolder(d.name);
+    return null;
+  }
 
   const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); renderGrid(); } }) as HTMLInputElement;
   const sortSel = h('select', { 'aria-label': t('sortBy'), onchange: () => { sort = sortSel.value as Sort; localStorage.setItem('kr.sort', sort); renderGrid(); } },
@@ -67,12 +84,7 @@ export function libraryView(): HTMLElement {
       folders, activeFolder,
       existing: new Set(books.map((b) => `${b.fileName}:${b.size}`)),
       fallbackPick: () => input.click(),
-      onImport: async (files, dest) => {
-        let target: string | null = null;
-        if (dest.kind === 'folder') target = dest.id;
-        else if (dest.kind === 'new') target = await newFolder();
-        await doImport(files, target);
-      },
+      onImport: async (files, dest) => { await doImport(files, await resolveDestination(dest)); },
     });
   }
 
@@ -113,8 +125,10 @@ export function libraryView(): HTMLElement {
   function sorted(): Book[] {
     const cards = getSettings().libraryView === 'cards';
     const fmt = new Set(getSettings().formatFilter);
+    const st = new Set(getSettings().statusFilter);
     const list = books.filter((b) => {
       if (fmt.size && !fmt.has(groupOf(b.format))) return false;
+      if (st.size && !st.has(statusOf(b))) return false;
       const inFolder = activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
       return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query));
     });
@@ -204,12 +218,23 @@ export function libraryView(): HTMLElement {
     clear(fmtChips);
     const present = new Set(books.map((b) => groupOf(b.format)));
     const groups = FORMAT_GROUPS.filter((g) => present.has(g.id));
-    fmtChips.hidden = groups.length < 2;
+    fmtChips.hidden = books.length < 2;
     if (fmtChips.hidden) return;
     const active = new Set(getSettings().formatFilter);
     const toggle = (id: string) => { const next = new Set(active); if (next.has(id)) next.delete(id); else next.add(id); updateSettings({ formatFilter: [...next] }); renderGrid(); };
     for (const g of groups) fmtChips.append(h('button', { type: 'button', class: 'chip small' + (active.has(g.id) ? ' on' : ''), 'aria-pressed': String(active.has(g.id)), onclick: () => toggle(g.id) }, active.has(g.id) ? icon('check') : null, h('span', { lang: g.id === 'image' ? undefined : 'en', dir: 'ltr' }, g.label)));
-    if (active.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
+    // Reading status
+    const st = new Set(getSettings().statusFilter);
+    const states: [string, string, string][] = [['unread', t('statusUnread'), 'library'], ['reading', t('statusReading'), 'play'], ['finished', t('statusFinished'), 'check']];
+    fmtChips.append(h('span', { class: 'chip-sep' }));
+    for (const [id, label, ic] of states) fmtChips.append(h('button', { type: 'button', class: 'chip small' + (st.has(id) ? ' on' : ''), 'aria-pressed': String(st.has(id)), onclick: () => { const next = new Set(st); if (next.has(id)) next.delete(id); else next.add(id); updateSettings({ statusFilter: [...next] }); renderGrid(); } }, icon(st.has(id) ? 'check' : ic), h('span', null, label)));
+    if (active.size || st.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
+  }
+
+  function statusOf(b: Book): string {
+    const pct = b.progress?.pct ?? 0;
+    if (pct >= 0.98) return 'finished';
+    return b.lastOpenedAt || pct > 0 ? 'reading' : 'unread';
   }
 
   function renderChips() {
@@ -248,6 +273,10 @@ export function libraryView(): HTMLElement {
   async function newFolder(): Promise<string | null> {
     const name = await askName(t('newFolder'));
     if (!name) return null;
+    return createFolder(name);
+  }
+
+  async function createFolder(name: string): Promise<string> {
     const f: Folder = { id: uid(), name, createdAt: Date.now() };
     folders = [...folders, f];
     await db.setMeta('folders', folders);

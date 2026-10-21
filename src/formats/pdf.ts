@@ -124,7 +124,11 @@ export class PdfViewer {
           try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
           catch { uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri; }
           const info = await nat.pdf.pdfOpen({ path: uri });
-          if (!this.destroyed && info.pageCount === this.total) this.native = nat.pdf;
+          if (!this.destroyed && info.pageCount === this.total) {
+            this.native = nat.pdf;
+            // Redraw what pdf.js already painted so non-embedded Arabic fonts shape correctly.
+            for (const n of [...this.rendered.keys()]) { this.releasePage(n); void this.renderPage(n); }
+          }
         } catch (e) { console.warn('[kurokawa] native PDF renderer unavailable', e); this.native = null; }
       })();
     }

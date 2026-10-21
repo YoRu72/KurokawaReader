@@ -65,3 +65,27 @@ export async function setImmersive(on: boolean): Promise<void> {
     if (plugins?.StatusBar) { if (on) await plugins.StatusBar.hide(); else await plugins.StatusBar.show(); }
   } catch { /* ignore */ }
 }
+
+// Screen wake lock while reading (Web API; works in Android WebView, desktop Chromium, Safari 16.4+).
+let wakeLock: { release(): Promise<void>; addEventListener?: (t: string, f: () => void) => void } | null = null;
+let wakeWanted = false;
+async function acquireWake(): Promise<void> {
+  if (!wakeWanted || wakeLock || document.visibilityState !== 'visible') return;
+  try {
+    const nav = navigator as Navigator & { wakeLock?: { request(type: 'screen'): Promise<{ release(): Promise<void>; addEventListener?: (t: string, f: () => void) => void }> } };
+    wakeLock = (await nav.wakeLock?.request('screen')) ?? null;
+    wakeLock?.addEventListener?.('release', () => { wakeLock = null; });
+  } catch { wakeLock = null; }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void acquireWake(); });
+export function keepAwake(on: boolean): void {
+  wakeWanted = on;
+  if (on) void acquireWake();
+  else if (wakeLock) { void wakeLock.release().catch(() => undefined); wakeLock = null; }
+}
+
+/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). */
+export async function setVolumeKeys(on: boolean): Promise<void> {
+  const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
+  try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
+}

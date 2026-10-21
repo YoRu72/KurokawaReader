@@ -37,6 +37,14 @@ import android.database.Cursor;
 import android.provider.DocumentsContract;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.annotation.ActivityCallback;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.PermissionState;
+import android.Manifest;
+import android.content.Context;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.provider.Settings;
 
 /**
  * Native helpers for the reader:
@@ -45,7 +53,7 @@ import com.getcapacitor.annotation.ActivityCallback;
  *  - pdfOpen / pdfRender / pdfClose: render PDF pages with Android's own renderer, which
  *    substitutes system fonts for non-embedded fonts (pdf.js cannot shape Arabic in that case).
  */
-@CapacitorPlugin(name = "Kurokawa")
+@CapacitorPlugin(name = "Kurokawa", permissions = { @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }) })
 public class KurokawaPlugin extends Plugin {
     private PdfRenderer renderer;
     private ParcelFileDescriptor pfd;
@@ -167,6 +175,116 @@ public class KurokawaPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /* ---------- Scanning the whole device ---------- */
+
+    private boolean allFilesAccess() {
+        if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
+        return getPermissionState("storage") == PermissionState.GRANTED;
+    }
+
+    /** { granted: boolean, needsSettings: boolean } — on Android 11+ the grant lives in system settings. */
+    @PluginMethod
+    public void storageAccess(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", allFilesAccess());
+        ret.put("needsSettings", Build.VERSION.SDK_INT >= 30);
+        call.resolve(ret);
+    }
+
+    /** Asks for whole-device read access: the runtime permission below Android 11, the "All files access" settings page from Android 11. */
+    @PluginMethod
+    public void requestStorageAccess(PluginCall call) {
+        if (allFilesAccess()) { JSObject r = new JSObject(); r.put("granted", true); call.resolve(r); return; }
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getContext().getPackageName()));
+                startActivityForResult(call, i, "storageSettingsResult");
+            } catch (Exception e) {
+                Intent i = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                startActivityForResult(call, i, "storageSettingsResult");
+            }
+        } else {
+            requestPermissionForAlias("storage", call, "storagePermResult");
+        }
+    }
+
+    @ActivityCallback
+    private void storageSettingsResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject(); r.put("granted", allFilesAccess()); call.resolve(r);
+    }
+
+    @PermissionCallback
+    private void storagePermResult(PluginCall call) {
+        JSObject r = new JSObject(); r.put("granted", allFilesAccess()); call.resolve(r);
+    }
+
+    /** Walks the shared storage (and any mounted SD card) for files with the given extensions. */
+    @PluginMethod
+    public void scanDevice(PluginCall call) {
+        if (!allFilesAccess()) { call.reject("no storage access", "NO_ACCESS"); return; }
+        JSArray extsArr = call.getArray("exts");
+        List<String> exts = new ArrayList<>();
+        try { if (extsArr != null) for (int i = 0; i < extsArr.length(); i++) exts.add(extsArr.getString(i).toLowerCase()); } catch (Exception ignored) {}
+        List<File> roots = new ArrayList<>();
+        roots.add(Environment.getExternalStorageDirectory());
+        for (File f : getContext().getExternalFilesDirs(null)) {
+            // /storage/XXXX-XXXX/Android/data/<pkg>/files → /storage/XXXX-XXXX
+            if (f == null) continue;
+            File p = f;
+            for (int i = 0; i < 4 && p != null; i++) p = p.getParentFile();
+            if (p != null && !roots.contains(p) && p.canRead()) roots.add(p);
+        }
+        JSArray out = new JSArray();
+        ArrayDeque<File> queue = new ArrayDeque<>(roots);
+        int visited = 0;
+        while (!queue.isEmpty() && visited < 20000 && out.length() < 8000) {
+            File dir = queue.poll();
+            visited++;
+            File[] kids = dir.listFiles();
+            if (kids == null) continue;
+            for (File k : kids) {
+                String name = k.getName();
+                if (k.isDirectory()) {
+                    if (!name.startsWith(".") && !name.equals("Android") && !name.equalsIgnoreCase("LOST.DIR")) queue.add(k);
+                    continue;
+                }
+                int dot = name.lastIndexOf('.');
+                String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase() : "";
+                if (!exts.isEmpty() && !exts.contains(ext)) continue;
+                JSObject f = new JSObject();
+                f.put("uri", Uri.fromFile(k).toString());
+                f.put("name", name);
+                f.put("path", k.getAbsolutePath());
+                f.put("mime", "");
+                f.put("size", k.length());
+                f.put("modified", k.lastModified());
+                out.put(f);
+            }
+        }
+        JSObject ret = new JSObject();
+        ret.put("files", out);
+        ret.put("truncated", !queue.isEmpty() || out.length() >= 8000);
+        call.resolve(ret);
+    }
+
+    /** Puts a PNG (base64) on the clipboard as an image. */
+    @PluginMethod
+    public void copyImage(PluginCall call) {
+        String data = call.getString("data", "");
+        try {
+            File dir = new File(getContext().getCacheDir(), "kr-share");
+            dir.mkdirs();
+            File f = new File(dir, "clip-" + System.currentTimeMillis() + ".png");
+            try (FileOutputStream out = new FileOutputStream(f)) { out.write(Base64.decode(data, Base64.DEFAULT)); }
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+            ClipboardManager cm = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = ClipData.newUri(getContext().getContentResolver(), "image", uri);
+            cm.setPrimaryClip(clip);
+            call.resolve();
+        } catch (Exception e) { call.reject("copy failed: " + e.getMessage(), e); }
+    }
+
     /** Reads one document as base64 so the web side can import it. */
     @PluginMethod
     public void readDocument(PluginCall call) {
@@ -217,6 +335,15 @@ public class KurokawaPlugin extends Plugin {
         } catch (Exception e) {
             call.reject("Save failed: " + e.getMessage(), e);
         }
+    }
+
+    /** Volume keys turn pages when the reader asks for it (MainActivity consults this flag). */
+    public static volatile boolean volumeKeys = false;
+
+    @PluginMethod
+    public void setVolumeKeys(PluginCall call) {
+        volumeKeys = call.getBoolean("on", false);
+        call.resolve();
     }
 
     @PluginMethod

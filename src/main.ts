@@ -6,9 +6,10 @@ import { onRoute, parseRoute, type Route } from './router';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
 import { settingsView } from './views/settings';
-import { applyChrome, onSettingsChange } from './settings';
+import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { loadFonts } from './fonts';
-import { initNativeBridges, isNative } from './native';
+import { initNativeBridges, isNative, setVolumeKeys } from './native';
+import { registerNativePlugins } from './capacitor';
 import { scheduleAutoCheck } from './updates';
 
 const app = document.getElementById('app')!;
@@ -31,10 +32,12 @@ function mount(route: Route): void {
   window.scrollTo(0, 0);
 }
 
+registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 void loadFonts();
 initNativeBridges();
+void setVolumeKeys(getSettings().volumeKeys);
 scheduleAutoCheck();
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });

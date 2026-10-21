@@ -128,6 +128,10 @@ html[data-accent='rose'][data-ui='light'] { --md-primary: #8c3b58; --md-on-prima
 html[data-accent='mint'] { --md-primary: #a6d3c4; --md-on-primary: #0c372e; --md-primary-container: #274e44; --md-on-primary-container: #c2f0df; --md-secondary-container: #344743; --md-on-secondary-container: #d2e8e2; --md-tertiary-container: #2f4258; --md-on-tertiary-container: #cfe3f7; }
 html[data-accent='mint'][data-ui='light'] { --md-primary: #2a6a5c; --md-on-primary: #fff; --md-primary-container: #c2f0df; --md-on-primary-container: #00201a; --md-secondary-container: #d5e8e2; --md-on-secondary-container: #0f1f1b; --md-tertiary-container: #d4e4f5; --md-on-tertiary-container: #0c1a28; }
 html[data-accent='violet'] { --md-primary: #cdbdff; --md-on-primary: #2f1e63; --md-primary-container: #46337a; --md-on-primary-container: #e8ddff; --md-secondary-container: #3e3a4f; --md-on-secondary-container: #e0dcea; --md-tertiary-container: #4d3a4a; --md-on-tertiary-container: #f0d9ea; }
+html[data-accent='olive'] { --md-primary: #c3cf9a; --md-on-primary: #2d3511; --md-primary-container: #434c26; --md-on-primary-container: #dfebb4; --md-secondary-container: #454a3a; --md-on-secondary-container: #e2e5d4; --md-tertiary-container: #3f4a46; --md-on-tertiary-container: #dbe7e1; }
+html[data-accent='olive'][data-ui='light'] { --md-primary: #5a6430; --md-on-primary: #fff; --md-primary-container: #dfebb4; --md-on-primary-container: #181e00; --md-secondary-container: #e3e6d3; --md-on-secondary-container: #1b1d13; --md-tertiary-container: #dcebe5; --md-on-tertiary-container: #15201d; }
+html[data-accent='sand'] { --md-primary: #e3c9a3; --md-on-primary: #41301a; --md-primary-container: #5a472e; --md-on-primary-container: #ffe6c3; --md-secondary-container: #4e463c; --md-on-secondary-container: #ebe2d6; --md-tertiary-container: #45413a; --md-on-tertiary-container: #e5dfd4; }
+html[data-accent='sand'][data-ui='light'] { --md-primary: #725b3a; --md-on-primary: #fff; --md-primary-container: #ffe6c3; --md-on-primary-container: #281900; --md-secondary-container: #ebe2d6; --md-on-secondary-container: #211b14; --md-tertiary-container: #e8e2d6; --md-on-tertiary-container: #1f1b14; }
 html[data-accent='violet'][data-ui='light'] { --md-primary: #5b43a6; --md-on-primary: #fff; --md-primary-container: #e8ddff; --md-on-primary-container: #1a0d40; --md-secondary-container: #e4e0ee; --md-on-secondary-container: #1c1a26; --md-tertiary-container: #f3dcec; --md-on-tertiary-container: #27141f; }
 html[data-accent='mono'] { --md-primary: #e2e2e2; --md-on-primary: #1b1b1b; --md-primary-container: #3b3b3b; --md-on-primary-container: #f0f0f0; --md-secondary-container: #333; --md-on-secondary-container: #e6e6e6; --md-tertiary-container: #2e2e2e; --md-on-tertiary-container: #ddd; }
 html[data-accent='mono'][data-ui='light'] { --md-primary: #2b2b2b; --md-on-primary: #fff; --md-primary-container: #e2e2e2; --md-on-primary-container: #111; --md-secondary-container: #ececec; --md-on-secondary-container: #161616; --md-tertiary-container: #e6e6e6; --md-on-tertiary-container: #111; }
@@ -549,3 +553,13 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .scan-row .meta { color: var(--md-on-surface-variant); font-size: 12px; white-space: nowrap; }
 .scan-row.dup { opacity: .6; }
 .scan-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--md-primary); }
+
+/* Destination picker */
+.dest-list { display: flex; flex-direction: column; gap: 4px; }
+.dest-row { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; cursor: pointer; font-size: 15px; }
+.dest-row.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.dest-row svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.dest-row input[type=radio] { accent-color: var(--md-primary); width: 18px; height: 18px; }
+.dest-row input[type=text] { grid-column: 2 / -1; }
+.actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.chip-sep { width: 1px; align-self: stretch; margin: 6px 4px; background: var(--md-outline-variant); flex: 0 0 auto; }

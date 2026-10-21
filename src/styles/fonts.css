@@ -33,14 +33,15 @@
   font-weight: 100 900;
   font-display: swap;
 }
-/* Sultan draws ( ) as the ornate Qur'anic ayah brackets ﴿ ﴾; leave the parentheses
-   out of its range so they fall through to Inter. */
+/* Sultan draws ( ) as the ornate Qur'anic ayah brackets ﴿ ﴾ and ASCII digits as
+   Arabic-Indic ones; leave both out of its range so they fall through to Inter
+   (Arabic digits are produced explicitly with localDigits()). */
 @font-face {
   font-family: 'Sultan';
   src: url('../assets/fonts/Sultan-Medium.ttf') format('truetype');
   font-weight: 400 600;
   font-display: swap;
-  unicode-range: U+0000-0027, U+002A-10FFFF;
+  unicode-range: U+0000-0027, U+002A-002F, U+003A-10FFFF;
 }
 
 :root {

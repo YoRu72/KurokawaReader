@@ -17,6 +17,9 @@
 .reader[data-theme='plum'] { --r-bg: #1e1520; --r-fg: #ddd0dc; --r-dim: #9c8c9b; --r-rule: #352838; --r-link: #d3a3dc; }
 .reader[data-theme='ink'] { --r-bg: #0b1120; --r-fg: #dfe6f3; --r-dim: #8894ab; --r-rule: #1c2740; --r-link: #93c3ff; }
 .reader[data-theme='sand'] { --r-bg: #efe4cf; --r-fg: #3a3024; --r-dim: #7d6f5d; --r-rule: #d8c9ad; --r-link: #8a5a1e; --r-img-filter: none; }
+.reader[data-theme='coffee'] { --r-bg: #1c1512; --r-fg: #d9c9b8; --r-dim: #9a8a7a; --r-rule: #342923; --r-link: #d8a872; }
+.reader[data-theme='lavender'] { --r-bg: #efeaf6; --r-fg: #2b2436; --r-dim: #6f6480; --r-rule: #d8cfe6; --r-link: #6b4fa0; --r-img-filter: none; }
+.reader[data-theme='sky'] { --r-bg: #e9f1f7; --r-fg: #1f2a33; --r-dim: #5f7180; --r-rule: #cbdbe7; --r-link: #1f5f8a; --r-img-filter: none; }
 .reader.has-fg-override { --r-fg: var(--r-fg-override); --r-dim: color-mix(in srgb, var(--r-fg-override) 65%, var(--r-bg)); }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-theme='black'] { --r-bg: #000; --r-fg: #c9c9c9; --r-dim: #858585; --r-rule: #262626; --r-link: #8ec8e8; }

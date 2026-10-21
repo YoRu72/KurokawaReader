@@ -98,3 +98,18 @@ export async function fetchAsBlob(url: string): Promise<Blob> {
   const r = await fetch(url);
   return r.blob();
 }
+
+/** Copy an image to the clipboard: async clipboard API, else the Android plugin. */
+export async function copyImage(blob: Blob): Promise<boolean> {
+  const c = cap();
+  try {
+    const CI = (window as unknown as { ClipboardItem?: new (d: Record<string, Blob>) => ClipboardItem }).ClipboardItem;
+    if (CI && navigator.clipboard?.write) { await navigator.clipboard.write([new CI({ [blob.type || 'image/png']: blob })]); return true; }
+  } catch (e) { console.warn('[kurokawa] clipboard image failed', e); }
+  const kr = c?.Plugins?.Kurokawa as (KrPlugin & { copyImage?(o: { data: string }): Promise<void> }) | undefined;
+  if (platform() === 'android' && kr?.copyImage) {
+    try { await kr.copyImage({ data: await blobToBase64(blob) }); return true; } catch (e) { console.warn('[kurokawa] native copy failed', e); }
+  }
+  toast(t('copyFailed'), 'error');
+  return false;
+}

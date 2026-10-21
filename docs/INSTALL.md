@@ -4,6 +4,8 @@
 1. Download the APK that matches your phone — `arm64-v8a` fits almost every phone made since 2016; `armeabi-v7a` is for older 32‑bit devices; `universal` works everywhere but is larger.
 2. Open the file. If Android asks, allow installing from this source (Settings → Apps → Special access → Install unknown apps).
 3. After installing, EPUB/PDF/DOCX/… files offer **قارئ كروكاوا** in the "Open with" sheet (WhatsApp, Files, browsers).
+4. **Updating over an installed build** needs every release signed with the *same* key. Set four repository secrets once (Settings → Secrets and variables → Actions): `ANDROID_KEYSTORE_BASE64` (the keystore file, base64-encoded), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Without them each build is signed with a throw-away key and Android refuses to install the new APK over the old one (uninstall first, or set the secrets).
+5. *Scan the whole device* asks for **All files access** on Android 11+; you can decline and pick a folder instead.
 
 ### Windows
 Run `KurokawaReader-<version>-win-x64.exe` to install (it registers the file types so double-clicking an EPUB or PDF opens the reader), or use the portable `.exe` with no installation. SmartScreen may warn because the build is not code‑signed — choose *More info → Run anyway*.

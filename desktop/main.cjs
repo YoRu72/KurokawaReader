@@ -89,3 +89,35 @@ ipcMain.handle('kr:install-update', async (e, url) => {
   return file;
 });
 ipcMain.handle('kr:is-portable', () => !!process.env.PORTABLE_EXECUTABLE_DIR);
+
+// Whole-device scan: the user's home folder (Documents, Downloads, Desktop, …) plus any
+// other drives on Windows, limited in depth so it stays quick.
+ipcMain.handle('kr:scan-device', async (_e, exts) => {
+  const os = require('os');
+  const fsp = require('fs/promises');
+  const wanted = new Set((exts || []).map((x) => String(x).toLowerCase()));
+  const roots = [os.homedir()];
+  if (process.platform === 'win32') {
+    for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') { const d = `${letter}:\\`; try { await fsp.access(d); roots.push(d); } catch { /* no such drive */ } }
+  }
+  const skip = new Set(['node_modules', 'AppData', 'Library', '.git', 'Windows', 'Program Files', 'Program Files (x86)', '$RECYCLE.BIN', 'System Volume Information']);
+  const files = []; let visited = 0; let truncated = false;
+  const queue = roots.map((r) => ({ dir: r, depth: 0 }));
+  while (queue.length && files.length < 8000) {
+    const { dir, depth } = queue.shift();
+    if (++visited > 20000) { truncated = true; break; }
+    let entries = [];
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { if (depth < 7 && !e.name.startsWith('.') && !skip.has(e.name)) queue.push({ dir: full, depth: depth + 1 }); continue; }
+      if (!e.isFile()) continue;
+      const ext = path.extname(e.name).slice(1).toLowerCase();
+      if (wanted.size && !wanted.has(ext)) continue;
+      try { const st = await fsp.stat(full); files.push({ path: full, name: e.name, size: st.size }); } catch { /* skip */ }
+    }
+  }
+  if (queue.length) truncated = true;
+  return { root: roots.join(' · '), files, truncated };
+});
+ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });

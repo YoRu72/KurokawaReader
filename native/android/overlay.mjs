@@ -45,7 +45,13 @@ if (!manifest.includes('android.intent.action.VIEW')) {
   manifest = manifest.replace(/(<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>)/, `$1\n${intentFilters}`);
 }
 if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
-  manifest = manifest.replace('<application', '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n    <application');
+  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Scanning the whole device for books: legacy read permission up to Android 12, "All files access" from Android 11. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+    <application`);
+  if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 }
 if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
   manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.PROCESS_TEXT" />\n      <data android:mimeType="text/plain" />\n    </intent>\n  </queries>\n</manifest>`);
@@ -80,10 +86,20 @@ try {
 await fs.mkdir(pkgDir, { recursive: true });
 await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.join(pkgDir, 'KurokawaPlugin.java'));
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
+await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));
+// Swap Capacitor's WebView for ours (suppresses the system selection menu).
+const layoutPath = path.join(app, 'src/main/res/layout/activity_main.xml');
+let layout = await fs.readFile(layoutPath, 'utf8');
+layout = layout.replace(/<WebView\b/g, '<app.kurokawa.reader.KrWebView').replace(/<\/WebView>/g, '</app.kurokawa.reader.KrWebView>');
+await fs.writeFile(layoutPath, layout);
 
 // ABI splits + signing config read from environment variables set by CI.
 const gradlePath = path.join(app, 'build.gradle');
 let gradle = await fs.readFile(gradlePath, 'utf8');
+// versionCode / versionName follow package.json so each release installs over the last.
+const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+const [maj, min, pat] = pkg.version.split('.').map((n) => parseInt(n, 10) || 0);
+gradle = gradle.replace(/versionCode \d+/, `versionCode ${maj * 10000 + min * 100 + pat}`).replace(/versionName "[^"]*"/, `versionName "${pkg.version}"`);
 if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/android \{/, `android {
     splits {
