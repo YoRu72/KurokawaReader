@@ -19,8 +19,32 @@ export const HIGHLIGHT_COLORS: [HighlightColor, string][] = [['amber', '#e5c56b'
 export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionActions): () => void {
   let bar: HTMLElement | null = null;
   let timer: number | undefined;
+  let touching = false;
+  const touch = matchMedia('(pointer: coarse)').matches;
+  // The current selection, refreshed every time it changes while the bar is up — so a
+  // selection the reader extends with the handles is what the buttons act on.
+  const state = { text: '', range: null as Range | null };
 
   const hide = () => { bar?.remove(); bar = null; };
+
+  const build = () => {
+    const act = (fn: () => void) => (e: Event) => { e.preventDefault(); e.stopPropagation(); fn(); };
+    const cur = () => ({ text: state.text, range: state.range?.cloneRange() ?? document.createRange() });
+    const btn = (name: string, label: string, fn: () => void) => h('button', { type: 'button', onclick: act(fn) }, icon(name), h('span', null, label));
+    const colors = h('div', { class: 'sel-colors' }, ...HIGHLIGHT_COLORS.map(([id, hex]) => h('button', { type: 'button', class: 'dot', title: t('highlight'), 'aria-label': `${t('highlight')} ${id}`, style: { background: hex }, onclick: act(() => { const c = cur(); actions.highlight(c.range, c.text, id); document.getSelection()?.removeAllRanges(); hide(); }) })));
+    const row = h('div', { class: 'sel-row' },
+      btn('copy', t('copySelected'), async () => { const { text } = cur(); try { await navigator.clipboard.writeText(text); toast(t('copied')); } catch { document.execCommand('copy'); toast(t('copied')); } hide(); }),
+      btn('search', t('searchSelected'), () => { actions.search(cur().text); hide(); }),
+      btn('define', t('defineSelected'), () => { showDefinition(cur().text); hide(); }),
+      btn('translate', t('translateSelected'), () => { showTranslation(cur().text); hide(); }),
+      btn('note', t('note'), () => { const c = cur(); actions.note(c.range, c.text); document.getSelection()?.removeAllRanges(); hide(); }),
+      btn('images', t('textAsImage'), () => { actions.textImage(cur().text); hide(); }),
+      btn('more', t('more'), () => { moreSheet(cur().text, actions); hide(); }),
+    );
+    const el = h('div', { class: 'sel-toolbar', role: 'toolbar' }, colors, row);
+    el.addEventListener('mousedown', (e) => e.preventDefault());
+    return el;
+  };
 
   const show = () => {
     const sel = document.getSelection();
@@ -32,44 +56,38 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) { hide(); return; }
     if (rect.bottom < 0 || rect.top > window.innerHeight) { hide(); return; }
-    if (!bar) {
-      // Capture the range now: on touch devices the selection is often gone by the time the tap lands.
-      const captured = range.cloneRange();
-      const act = (fn: () => void) => (e: Event) => { e.preventDefault(); e.stopPropagation(); fn(); };
-      const btn = (name: string, label: string, fn: () => void) => h('button', { type: 'button', onclick: act(fn) }, icon(name), h('span', null, label));
-      const colors = h('div', { class: 'sel-colors' }, ...HIGHLIGHT_COLORS.map(([id, hex]) => h('button', { type: 'button', class: 'dot', title: t('highlight'), 'aria-label': `${t('highlight')} ${id}`, style: { background: hex }, onclick: act(() => { actions.highlight(captured.cloneRange(), text, id); document.getSelection()?.removeAllRanges(); hide(); }) })));
-      const row = h('div', { class: 'sel-row' },
-        btn('copy', t('copySelected'), async () => { try { await navigator.clipboard.writeText(text); toast(t('copied')); } catch { document.execCommand('copy'); toast(t('copied')); } hide(); }),
-        btn('search', t('searchSelected'), () => { actions.search(text); hide(); }),
-        btn('define', t('defineSelected'), () => { showDefinition(text); hide(); }),
-        btn('translate', t('translateSelected'), () => { showTranslation(text); hide(); }),
-        btn('note', t('note'), () => { actions.note(captured.cloneRange(), text); document.getSelection()?.removeAllRanges(); hide(); }),
-        btn('images', t('textAsImage'), () => { actions.textImage(text); hide(); }),
-        btn('more', t('more'), () => { moreSheet(text, actions); hide(); }),
-      );
-      bar = h('div', { class: 'sel-toolbar', role: 'toolbar' }, colors, row);
-      // Keep the selection when clicking toolbar buttons with a mouse (touch taps use the captured range).
-      bar.addEventListener('mousedown', (e) => e.preventDefault());
-      document.body.appendChild(bar);
-    }
+    state.text = text; state.range = range.cloneRange();
+    if (!bar) { bar = build(); document.body.appendChild(bar); }
     const bw = bar.offsetWidth, bh = bar.offsetHeight;
     let x = rect.left + rect.width / 2;
     x = Math.max(bw / 2 + 8, Math.min(window.innerWidth - bw / 2 - 8, x));
-    // Below the selection on touch devices (the OS puts its own handles and menu above it), above on desktop.
-    const touch = matchMedia('(pointer: coarse)').matches;
-    let y = touch ? rect.bottom + 14 : rect.top - bh - 10;
-    if (!touch && y < 64) y = rect.bottom + 10;
-    if (touch && y + bh > window.innerHeight - 20) y = rect.top - bh - 14;
+    // Above the selection (clear of the handles); below it only when there is no room above.
+    let y = rect.top - bh - (touch ? 28 : 10);
+    if (y < 64) y = rect.bottom + (touch ? 28 : 10);
     y = Math.max(64, Math.min(window.innerHeight - bh - 20, y));
     bar.style.left = `${x}px`;
     bar.style.top = `${y}px`;
   };
 
-  const onChange = () => { window.clearTimeout(timer); timer = window.setTimeout(show, 180); };
-  document.addEventListener('selectionchange', onChange);
+  // On touch screens wait until the finger lifts and the selection stops changing,
+  // so the toolbar appears once, over the final selection, instead of jumping around.
+  const shown = () => { show(); if (bar) bar.style.opacity = ''; };
+  const schedule = () => { window.clearTimeout(timer); if (touch && touching) return; timer = window.setTimeout(shown, touch ? 450 : 180); };
+  const onChange = () => { if (touch && bar) { const sel = document.getSelection(); if (sel && !sel.isCollapsed) bar.style.opacity = '0'; } schedule(); };
+  const onTouchStart = () => { touching = true; window.clearTimeout(timer); };
+  const onTouchEnd = () => { touching = false; schedule(); };
   const onScroll = () => { if (bar) show(); };
+  document.addEventListener('selectionchange', onChange);
+  document.addEventListener('touchstart', onTouchStart, { passive: true });
+  document.addEventListener('touchend', onTouchEnd, { passive: true });
+  document.addEventListener('touchcancel', onTouchEnd, { passive: true });
   scope.addEventListener('scroll', onScroll, { passive: true, capture: true });
-  return () => { document.removeEventListener('selectionchange', onChange); scope.removeEventListener('scroll', onScroll, true); hide(); };
+  return () => {
+    document.removeEventListener('selectionchange', onChange);
+    document.removeEventListener('touchstart', onTouchStart);
+    document.removeEventListener('touchend', onTouchEnd); document.removeEventListener('touchcancel', onTouchEnd);
+    scope.removeEventListener('scroll', onScroll, true); hide();
+  };
 }
 
 function moreSheet(text: string, actions: SelectionActions): void {

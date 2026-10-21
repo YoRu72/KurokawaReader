@@ -423,6 +423,8 @@ export const en = {
   sleepTimerSet: 'Stops in {n} min',
   sleepTimerDone: 'Sleep timer: stopped',
   minutes: '{n} min',
+  pdfPinchZoom: 'PDF: pinch to zoom',
+  pdfPageNumbers: 'PDF: show page numbers on pages',
   clearFilters: 'Clear filters',
   filterFormats: 'Formats',
   scanDevice: 'Scan a folder on this device',

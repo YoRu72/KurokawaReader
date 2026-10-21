@@ -428,6 +428,8 @@ export const ar: Strings = {
   sleepTimerSet: 'يتوقّف بعد {n} دقيقة',
   sleepTimerDone: 'مؤقّت النوم: توقّف',
   minutes: '{n} د',
+  pdfPinchZoom: 'PDF: التكبير بقرص الأصابع',
+  pdfPageNumbers: 'PDF: إظهار رقم الصفحة عليها',
   clearFilters: 'إلغاء التصفية',
   filterFormats: 'الصيغ',
   scanDevice: 'فحص مجلّدٍ في الجهاز',

@@ -860,6 +860,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     },
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
+  viewer.pinchZoom = getSettings().pdfPinchZoom;
+  viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
+  onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); }));
   await viewer.load(file, book.id);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);

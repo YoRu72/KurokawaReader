@@ -26,6 +26,8 @@ export interface VisualSettings {
   wordSpacing: number;    // em
   letterSpacing: number;  // em
   pdfInvert: boolean;
+  pdfPinchZoom: boolean;    // two-finger zoom in PDFs (off by default)
+  pdfPageNumbers: boolean;  // page number badge on each PDF page
   autoScrollSpeed: number; // px per second
   /* Background systems */
   customBg: string;        // hex, used by theme 'custom'
@@ -87,6 +89,8 @@ export const DEFAULTS: VisualSettings = {
   wordSpacing: 0,
   letterSpacing: 0,
   pdfInvert: false,
+  pdfPinchZoom: false,
+  pdfPageNumbers: true,
   autoScrollSpeed: 40,
   customBg: '#1b2430',
   customFg: '#e4e9f0',

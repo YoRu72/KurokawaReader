@@ -123,6 +123,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if (isTouchDevice()) grid.append(toggle(t('pinchText'), s.pinchText, (v) => updateSettings({ pinchText: v })));
   grid.append(toggle(t('keepAwake'), s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
   if (nativePlatform() === 'android') grid.append(toggle(t('volumeKeys'), s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
+  grid.append(toggle(t('pdfPinchZoom'), s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
+  grid.append(toggle(t('pdfPageNumbers'), s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section(t('translatorChoice'), segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));

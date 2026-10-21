@@ -79,6 +79,8 @@ export class PdfViewer {
   private baseWidths: number[] = [];
   private baseHeights: number[] = [];
   readonly scroll: HTMLElement;
+  private inner: HTMLElement;
+  pinchZoom = false;
   readonly root: HTMLElement;
   current = 1;
   total = 0;
@@ -90,7 +92,9 @@ export class PdfViewer {
   private native: NativePdf | null = null;
 
   constructor(private opts: PdfViewerOptions) {
-    this.scroll = h('div', { class: 'pdf-scroll' });
+    this.inner = h('div', { class: 'pdf-inner' });
+    this.scroll = h('div', { class: 'pdf-scroll' }, this.inner);
+    this.attachPinch();
     this.root = h('div', { class: 'pdf-view' }, this.scroll);
     this.root.dataset.invert = String(opts.invert);
     opts.container.appendChild(this.root);
@@ -118,7 +122,7 @@ export class PdfViewer {
       this.pages.push(el);
       frag.appendChild(el);
     }
-    this.scroll.appendChild(frag);
+    this.inner.appendChild(frag);
     // Prefer the platform renderer on Android; pdf.js stays in charge of text, search
     // and outline. Opening it is not awaited: pdf.js draws the first screens meanwhile.
     const nat = nativePdf();
@@ -196,10 +200,11 @@ export class PdfViewer {
     try { page = await this.doc.getPage(n); } catch { return; }
     if (this.destroyed || !this.rendered.has(n)) return;
     const viewport = page.getViewport({ scale: this.scale });
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Sharp text on dense screens: up to 3× device pixels, capped so a page stays under ~4K wide.
+    const dpr = Math.min(window.devicePixelRatio || 1, 3, 4096 / Math.max(1, viewport.width));
     if (this.native) {
       try {
-        const res = await this.native.pdfRender({ page: n, width: Math.round(viewport.width * dpr), quality: 85 });
+        const res = await this.native.pdfRender({ page: n, width: Math.round(viewport.width * dpr), quality: 92 });
         if (this.destroyed || !this.rendered.has(n)) return;
         const img = document.createElement('img');
         img.className = 'native-page'; img.decoding = 'async'; img.alt = String(n);
@@ -253,6 +258,36 @@ export class PdfViewer {
     const el = this.pages[n - 1];
     if (!el) return 0;
     return Math.max(0, (this.scroll.scrollTop - el.offsetTop) / Math.max(1, el.offsetHeight));
+  }
+
+  /** Two-finger pinch: live CSS preview, then a real re-render at the new scale. */
+  private attachPinch(): void {
+    let startDist = 0, startScale = 1, factor = 1, anchorPage = 1, anchorRel = 0;
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    this.scroll.addEventListener('touchstart', (e) => {
+      if (!this.pinchZoom || e.touches.length !== 2) { startDist = 0; return; }
+      startDist = dist(e.touches); startScale = this.scale; factor = 1;
+      anchorPage = this.current; anchorRel = this.relativeOffset(anchorPage);
+      const r = this.scroll.getBoundingClientRect();
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top + this.scroll.scrollTop;
+      this.inner.style.transformOrigin = `${cx}px ${cy}px`;
+    }, { passive: true });
+    this.scroll.addEventListener('touchmove', (e) => {
+      if (!startDist || e.touches.length !== 2) return;
+      e.preventDefault();
+      factor = Math.min(4 / startScale, Math.max(0.4 / startScale, dist(e.touches) / startDist));
+      this.inner.style.transform = `scale(${factor})`;
+    }, { passive: false });
+    const end = () => {
+      if (!startDist) return;
+      startDist = 0;
+      this.inner.style.transform = '';
+      this.fitWidth = false;
+      const target = Math.min(4, Math.max(0.4, startScale * factor));
+      this.rescale(target);
+      this.goTo(anchorPage, anchorRel);
+    };
+    this.scroll.addEventListener('touchend', end); this.scroll.addEventListener('touchcancel', end);
   }
 
   zoom(delta: number): void {

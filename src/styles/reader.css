@@ -155,7 +155,9 @@ html[dir='rtl'] .kr-slide .kr-slide-n { text-transform: none; letter-spacing: 0;
 
 /* PDF */
 .pdf-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--r-bg); }
-.pdf-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; padding: 12px 0 40vh; }
+.pdf-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; padding: 12px 0 40vh; touch-action: pan-x pan-y; }
+.pdf-inner { display: block; will-change: transform; }
+.pdf-view[data-pagenums='false'] .pdf-page .pnum { display: none; }
 .pdf-page { position: relative; margin: 0 auto 14px; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.45); overflow: hidden; }
 .pdf-page canvas, .pdf-page img.native-page { display: block; width: 100%; height: 100%; }
 .pdf-view[data-invert='true'] .pdf-page img.native-page { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
