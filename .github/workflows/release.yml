@@ -67,9 +67,10 @@ jobs:
             echo "KR_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> $GITHUB_ENV
             echo "KR_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> $GITHUB_ENV
           else
-            # No keystore secret: use the project's own key (native/android/kurokawa.keystore,
-            # committed at the owner's request) so every release installs over the previous one.
-            cp native/android/kurokawa.keystore $RUNNER_TEMP/kr.keystore
+            # No keystore secret: sign with a throw-away key. Set the ANDROID_KEYSTORE_* secrets
+            # (docs/INSTALL.md) so releases share one private signature and update over each other.
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret missing — APKs signed with a one-off key; they will not install over an earlier release."
+            keytool -genkeypair -v -keystore $RUNNER_TEMP/kr.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 10000 -storepass kurokawa -keypass kurokawa -dname "CN=KurokawaReader, O=Kurokawa, C=SA"
             echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV
             echo "KR_KEY_ALIAS=kurokawa" >> $GITHUB_ENV
             echo "KR_KEY_PASSWORD=kurokawa" >> $GITHUB_ENV

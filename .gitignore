@@ -8,3 +8,4 @@ tests/shots/
 /ios/
 desktop/node_modules/
 desktop/out/
+native/android/*.keystore
