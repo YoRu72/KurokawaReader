@@ -653,3 +653,6 @@ html[dir='rtl'] .card.collapsed .card-title svg { transform: rotate(90deg); }
 .dest-row:has(.key-cap) { grid-template-columns: auto 1fr auto; }
 .sync-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; background: var(--md-surface-container); margin-bottom: 10px; }
 .sync-uri { display: block; padding: 8px 10px; border-radius: 10px; background: var(--md-surface-container-highest); font: 12.5px ui-monospace, Menlo, monospace; word-break: break-all; user-select: all; -webkit-user-select: all; }
+.library-tools .tool-btn { width: 52px; height: 52px; border-radius: var(--sh-lg); background: var(--md-surface-container-high); flex: 0 0 auto; }
+.library-tools .tool-btn[aria-pressed='true'] { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.chip.sync-chip { padding: 0 12px; }

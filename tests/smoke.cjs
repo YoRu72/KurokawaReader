@@ -43,7 +43,7 @@ const server = http.createServer((req, res) => {
   console.log('library:', titles.join(' | '));
 
   // Multi-book: select both EPUBs and read together.
-  const selectBtn = await page.$('.topbar button[aria-pressed]');
+  const selectBtn = await page.$('.library-tools button[aria-pressed]');
   await selectBtn.click();
   for (const t of ['Alice', 'مقامات']) await page.click(`.book-card:has-text("${t}")`);
   await page.click('.selection-bar .primary');

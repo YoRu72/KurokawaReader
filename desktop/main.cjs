@@ -118,7 +118,7 @@ ipcMain.handle('kr:install-update', async (e, url) => {
   if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
   const total = Number(res.headers.get('content-length') || 0);
   const ext = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage';
-  const file = path.join(process.platform === 'linux' ? app.getPath('downloads') : app.getPath('temp'), 'KurokawaReader-update' + ext);
+  const file = path.join(app.getPath('temp'), `KurokawaReader-update-${Date.now()}` + ext);
   const out = fs.createWriteStream(file);
   const reader = res.body.getReader();
   let got = 0; let lastT = Date.now(); let lastGot = 0; let speed = 0;
@@ -132,7 +132,34 @@ ipcMain.handle('kr:install-update', async (e, url) => {
     e.sender.send('kr:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed });
   }
   await new Promise((r) => out.end(r));
-  if (process.platform === 'linux') { fs.chmodSync(file, 0o755); shell.showItemInFolder(file); return file; }
+  const { spawn } = require('child_process');
+  const portableFile = process.env.PORTABLE_EXECUTABLE_FILE;
+  if (process.platform === 'win32' && portableFile) {
+    // Portable build: swap the running .exe for the new one once we have exited, then start it.
+    const script = path.join(app.getPath('temp'), 'kr-update.cmd');
+    fs.writeFileSync(script, [
+      '@echo off', 'timeout /t 2 /nobreak >nul',
+      ':retry', `move /y "${file}" "${portableFile}" >nul 2>&1 || (timeout /t 1 /nobreak >nul & goto retry)`,
+      `start "" "${portableFile}"`, 'del "%~f0"',
+    ].join('\r\n'));
+    spawn('cmd.exe', ['/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    setTimeout(() => app.quit(), 500);
+    return file;
+  }
+  if (process.platform === 'linux') {
+    const current = process.env.APPIMAGE;
+    fs.chmodSync(file, 0o755);
+    if (current) {
+      // Replace the running AppImage in place and relaunch it.
+      const script = path.join(app.getPath('temp'), 'kr-update.sh');
+      fs.writeFileSync(script, `#!/bin/sh\nsleep 2\nmv -f "${file}" "${current}" && chmod +x "${current}" && ("${current}" >/dev/null 2>&1 &)\nrm -f "$0"\n`, { mode: 0o755 });
+      spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
+      setTimeout(() => app.quit(), 500);
+      return current;
+    }
+    shell.showItemInFolder(file); return file;
+  }
+  // Windows installer / macOS disk image: open it and get out of the way.
   const err = await shell.openPath(file);
   if (err) throw new Error(err);
   setTimeout(() => app.quit(), 1500);

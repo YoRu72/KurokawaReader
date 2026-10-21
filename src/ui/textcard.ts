@@ -52,6 +52,7 @@ async function paintBackground(ctx: CanvasRenderingContext2D, W: number, H: numb
         const w = img.width * scale, hh = img.height * scale;
         ctx.save(); ctx.globalAlpha = s.bgImageOpacity; if (s.bgBlur) ctx.filter = `blur(${s.bgBlur * (W / 480)}px)`;
         ctx.drawImage(img, (W - w) / 2, (H - hh) / 2, w, hh); ctx.restore();
+        if (s.bgShade) { ctx.save(); ctx.globalAlpha = s.bgImageOpacity * s.bgShade; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); ctx.restore(); }
       }
     } catch { /* picture is optional */ }
   }

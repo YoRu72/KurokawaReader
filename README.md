@@ -1,38 +1,26 @@
 # قارئ كروكاوا · KurokawaReader
 
-**A reader for everything readable.** EPUB, PDF, Word, Excel, PowerPoint, text, Markdown, HTML, FictionBook, OpenDocument, comics and images.
+**A reader for everything readable** — EPUB, PDF, Word, Excel, PowerPoint, text, Markdown, HTML, FictionBook, OpenDocument, comics and images, in one offline library.
 
-**Downloads** — Android APK, Windows EXE, macOS DMG, Linux AppImage, iOS IPA (AltStore / SideStore / Sideloadly / TrollStore): [Releases](../../releases) · [install notes](docs/INSTALL.md).
+**Downloads:** Android · Windows · macOS · Linux · iOS (AltStore / SideStore / Sideloadly / TrollStore) → [Releases](../../releases) · [install notes](docs/INSTALL.md)
 
 <p align="center">
   <img src="docs/screenshots/library-m3.png" width="48%" alt="Library" />
-  <img src="docs/screenshots/manuscript-preset.png" width="48%" alt="Manuscript preset" />
+  <img src="docs/screenshots/manuscript-preset.png" width="48%" alt="Reading" />
 </p>
 
-## What it does
+- **Library** — import, drag in, open from other apps, or scan the device; folders, filters, search, continue-reading card.
+- **Reading** — chapters or continuous, several books in one flow, bookmarks, highlights with numbered notes, PDF pinned notes, a notes page across all books, search, furigana, read-aloud, gestures, rebindable shortcuts, immersive mode.
+- **Look** — presets, 19 themes, custom colours with a wheel picker, textures and background pictures, your own fonts.
+- **Tools** — snapshots of selected text, translation (built-in, device apps, or AI chapter translation with your own key), AI voices, export pages as PNG.
+- **Sync & backup** — progress and notes synced through your Dropbox / WebDAV / a Drive folder; portable backups (JSON or ZIP with books) that restore on any platform.
+- **Updates** — checked at launch; downloaded and installed in-app on every platform.
 
-- **Library** — import files, drag them in, open them from other apps, or **scan the whole device** / a folder with type filters (Android, iOS Files, desktop); folders, format and status filters, search, natural sort, a *continue reading* card.
-- **Reading** — chapter-by-chapter or continuous; several books in one flow; contents, bookmarks, highlights with numbered notes, a *Bookmarks & notes* page across all books, search that ignores diacritics, furigana for Japanese books, read-aloud (speed, voice, sleep timer), auto-scroll, tap / volume-key / edge-swipe / pinch gestures, rebindable keyboard shortcuts, immersive mode, keep-screen-on, a toolbar you arrange yourself.
-- **Look** — ten one-tap presets, 19 themes plus custom colours (hue-ring / triangle picker with hex, including the highlight palette), textures, your own background picture, warmth and dimming; your own fonts (files, ZIPs, or fonts installed on the computer); size, spacing, width, alignment, hyphenation.
-- **Selection tools** — copy, search, define, translate (built-in or any translator app), note, share, read aloud, and **text snapshots** that copy the page's look and save to *Pictures/Screenshots*, share or copy.
-- **PDF** — instant open, the system renderer on Android for non-embedded fonts, page slider, search, outline, thumbnails grid, pinned notes (long-press / right-click), save / share / copy a page as PNG, or export any range of pages as PNGs.
-- **Interface** — Material 3 Expressive, searchable settings in collapsible sections, light / dark / follow-the-page, accent colours, English and Arabic (RTL); the app name follows the system language.
-- **AI** — translate the chapter you are reading with Gemini, OpenAI, Claude, OpenRouter or any OpenAI-compatible server (your key, your prompt; cached per book, switch on/off instantly), and read aloud with AI voices.
-- **Sync** — keep progress, bookmarks, highlights, notes and folders the same on every device through your own Dropbox, any WebDAV server, or (on the desktop) a Drive / OneDrive / Dropbox folder; automatic at launch, when back online and after reading, or on request.
-- **Backup** — settings, folders, bookmarks, highlights and progress as a small JSON file, or a full ZIP with the books; restore merges into the library.
-- **Updates** — checks GitHub Releases at launch and shows what's new; downloads the right file for the device (or one you pick) with speed and progress, and installs it on Android, Windows, macOS and Linux.
-
-## Starter books
-
-**مقامات الحريري** — the fifty *maqāmāt* of al-Ḥarīrī — and **Alice's Adventures in Wonderland** (Standard Ebooks, with Tenniel's illustrations).
-
-## Run from source
+Starter books: **مقامات الحريري** and **Alice's Adventures in Wonderland**.
 
 ```bash
-npm install && npm run build          # dist/ with the offline service worker
-npm run android:prepare               # then ./gradlew assembleRelease in android/
-npm run ios:prepare                   # then open ios/App in Xcode
-cd desktop && npm install && npm run dist:win
+npm install && npm run build   # web → dist/
+npm run android:prepare        # Android project · npm run ios:prepare for Xcode
+cd desktop && npm install && npm run dist:win   # desktop builds (win / mac / linux)
 ```
-
-Every push to `main` builds all platforms and publishes release `v<package.json version>`.
+Every push to `main` builds all platforms and publishes a release.

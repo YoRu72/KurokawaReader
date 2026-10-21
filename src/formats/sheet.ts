@@ -6,7 +6,7 @@ import { titleFromFileName } from './types';
 import { decodeText, el, parseXml, resolveZipPath, zipFile } from './shared';
 import { t } from '../i18n';
 
-interface Cell { v: string; num: boolean; bold?: boolean }
+interface Cell { v: string; num: boolean; bold?: boolean; colspan?: number; rowspan?: number; skip?: boolean }
 interface Sheet { name: string; rows: Cell[][]; cols: number }
 
 const ROWS_PER_CHUNK = 500;
@@ -57,7 +57,8 @@ async function parseXlsx(file: Blob): Promise<Sheet[]> {
     sd.documentElement.childNodes.forEach((si) => {
       if (si.nodeType !== 1 || (si as Element).localName !== 'si') return;
       let s = '';
-      (si as Element).querySelectorAll('t').forEach((tn) => (s += tn.textContent ?? ''));
+      // plain text and rich runs, but not the phonetic (furigana) runs in <rPh>
+      (si as Element).querySelectorAll('t').forEach((tn) => { if (!tn.parentElement?.closest('rPh')) s += tn.textContent ?? ''; });
       shared.push(s);
     });
   }
@@ -83,6 +84,7 @@ async function parseXlsx(file: Blob): Promise<Sheet[]> {
 
   const sheets: Sheet[] = [];
   for (const s of wb.querySelectorAll('sheets > sheet')) {
+    if (s.getAttribute('state') === 'hidden' || s.getAttribute('state') === 'veryHidden') continue;
     const rid = s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') ?? s.getAttribute('r:id') ?? '';
     const path = rels.get(rid);
     const f = path ? zipFile(zip, path) : null;
@@ -119,6 +121,15 @@ async function parseXlsx(file: Blob): Promise<Sheet[]> {
         row[ci] = { v, num, bold: boldXf[styleIdx] };
         if (ci + 1 > cols) cols = ci + 1;
       });
+    });
+    // Merged ranges become colspan/rowspan on the first cell.
+    sd.querySelectorAll('mergeCells > mergeCell').forEach((m) => {
+      const ref = m.getAttribute('ref') ?? ''; const [a, b] = ref.split(':'); if (!a || !b) return;
+      const c1 = colIndex(a), c2 = colIndex(b), r1 = Number(a.replace(/[A-Z]+/i, '')) - 1, r2 = Number(b.replace(/[A-Z]+/i, '')) - 1;
+      while (rows.length <= r2) rows.push([]);
+      for (let r = r1; r <= r2; r++) { while (rows[r].length <= c2) rows[r].push({ v: '', num: false }); for (let c = c1; c <= c2; c++) if (r !== r1 || c !== c1) rows[r][c] = { ...rows[r][c], skip: true }; }
+      rows[r1][c1] = { ...rows[r1][c1], colspan: c2 - c1 + 1, rowspan: r2 - r1 + 1 };
+      if (c2 + 1 > cols) cols = c2 + 1;
     });
     // Drop trailing empty rows.
     while (rows.length && rows[rows.length - 1].every((c) => !c.v)) rows.pop();
@@ -169,8 +180,11 @@ function renderSheet(sheet: Sheet, container: HTMLElement): void {
       const row = sheet.rows[r];
       for (let c = 0; c < sheet.cols; c++) {
         const cell = row[c];
+        if (cell?.skip) continue;
         const td = el('td', cell?.num ? 'num' : undefined, cell?.v ?? '');
         if (cell?.bold) td.classList.add('kr-bold');
+        if (cell?.colspan && cell.colspan > 1) td.colSpan = cell.colspan;
+        if (cell?.rowspan && cell.rowspan > 1) td.rowSpan = cell.rowspan;
         if (cell?.v) td.setAttribute('dir', 'auto');
         tr.appendChild(td);
       }

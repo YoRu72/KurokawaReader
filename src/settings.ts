@@ -38,6 +38,10 @@ export interface VisualSettings {
   bgImage: boolean;        // a picture is stored in IndexedDB under 'bg-image'
   bgImageOpacity: number;  // 0–1
   bgBlur: number;          // px
+  bgShade: number;         // 0–0.8 dark veil over the picture
+  bgSaturate: number;      // 0–2 colour saturation of the picture
+  bgPosition: 'center' | 'top' | 'bottom';
+  bgFit: 'cover' | 'contain' | 'tile';
   /* Comfort */
   warmth: number;          // 0–0.6 amber overlay
   dimOverlay: number;      // 0–0.7 darkening overlay
@@ -127,6 +131,10 @@ export const DEFAULTS: VisualSettings = {
   bgImage: false,
   bgImageOpacity: 0.35,
   bgBlur: 0,
+  bgShade: 0,
+  bgSaturate: 1,
+  bgPosition: 'center',
+  bgFit: 'cover',
   warmth: 0,
   dimOverlay: 0,
   uiMode: 'page',
@@ -335,6 +343,11 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.style.setProperty('--r-texture-opacity', String(s.textureOpacity));
   root.style.setProperty('--r-bg-image-opacity', String(s.bgImage ? s.bgImageOpacity : 0));
   root.style.setProperty('--r-bg-blur', `${s.bgBlur}px`);
+  root.style.setProperty('--r-bg-shade', String(s.bgShade));
+  root.style.setProperty('--r-bg-sat', String(s.bgSaturate));
+  root.style.setProperty('--r-bg-pos', s.bgPosition);
+  root.style.setProperty('--r-bg-size', s.bgFit === 'tile' ? 'auto' : s.bgFit);
+  root.style.setProperty('--r-bg-repeat', s.bgFit === 'tile' ? 'repeat' : 'no-repeat');
   root.style.setProperty('--r-warmth', String(s.warmth));
   root.style.setProperty('--r-dim-overlay', String(s.dimOverlay));
   if (s.bgImage) void loadBgImage().then((u) => root.style.setProperty('--r-bg-image', u ? `url("${u}")` : 'none'));

@@ -87,6 +87,12 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if (s.bgImage) {
     grid.append(stepper(t('imageOpacity'), s.bgImageOpacity, 0.05, 1, 0.05, (v) => updateSettings({ bgImageOpacity: round2(v) }), pct));
     grid.append(stepper(t('imageBlur'), s.bgBlur, 0, 30, 1, (v) => updateSettings({ bgBlur: v }), (v) => `${v}`));
+    grid.append(stepper(t('imageShade'), s.bgShade, 0, 0.8, 0.05, (v) => updateSettings({ bgShade: round2(v) }), pct));
+    grid.append(stepper(t('imageSaturation'), s.bgSaturate, 0, 2, 0.1, (v) => updateSettings({ bgSaturate: round2(v) }), pct));
+    const fits: [VisualSettings['bgFit'], string][] = [['cover', t('fitCover')], ['contain', t('fitContain')], ['tile', t('fitTile')]];
+    grid.append(section(t('imageFit'), segmented(fits, s.bgFit, (v) => { updateSettings({ bgFit: v }); rerender(); })));
+    const poss: [VisualSettings['bgPosition'], string][] = [['top', t('posTop')], ['center', t('posCenter')], ['bottom', t('posBottom')]];
+    grid.append(section(t('imagePosition'), segmented(poss, s.bgPosition, (v) => { updateSettings({ bgPosition: v }); rerender(); })));
   }
 
   /* ----- Comfort ----- */

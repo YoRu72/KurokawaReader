@@ -44,6 +44,8 @@ export function libraryView(): HTMLElement {
   const sortLabel = h('span', null, SORTS.find((x) => x[0] === sort)?.[1] ?? '');
   const sortSel = h('button', { type: 'button', class: 'sort-btn', 'aria-label': t('sortBy'), onclick: () => pickSheet(t('sortBy'), SORTS, sort, (v) => { sort = v; localStorage.setItem('kr.sort', sort); sortLabel.textContent = SORTS.find((x) => x[0] === sort)?.[1] ?? ''; renderGrid(); }, t('close')) }, icon('sort'), sortLabel, icon('chevronDown'));
 
+  const selectBtn = iconButton('check', t('select'), () => setSelecting(!selecting), { pressed: false });
+  selectBtn.classList.add('tool-btn');
   const grid = h('div', { class: 'book-grid', role: 'list' });
   const resume = h('div', { class: 'resume-card', hidden: true });
   const chips = h('div', { class: 'folder-chips', role: 'tablist' });
@@ -52,20 +54,17 @@ export function libraryView(): HTMLElement {
   const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub);
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel),
+    h('div', { class: 'library-tools' }, search, sortSel, selectBtn),
     chips,
     fmtChips,
     resume,
     grid);
 
-  const selectBtn = iconButton('check', t('select'), () => setSelecting(!selecting), { pressed: false });
   const importTopBtn = iconButton('import', t('importBooks'), () => importMenu());
   const topbar = h('header', { class: 'topbar' },
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
     importTopBtn,
     iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
-    iconButton('cloud', t('sync'), () => void import('../ui/syncsheet').then((m) => m.syncSheet())),
-    selectBtn,
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );
   const fab = h('button', { class: 'fab', type: 'button', onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks')));
@@ -246,7 +245,8 @@ export function libraryView(): HTMLElement {
   function renderChips() {
     clear(chips);
     chips.hidden = false;
-    if (!books.length) return;
+    const syncChip = h('button', { type: 'button', class: 'chip add sync-chip', 'aria-label': t('sync'), title: t('sync'), onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'));
+    if (!books.length) { chips.append(syncChip); return; }
     const chip = (label: string, id: string | null, iconName?: string) => {
       const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); } }, iconName ? icon(iconName) : null, h('span', null, label));
       // Drop target for dragged books
@@ -259,6 +259,7 @@ export function libraryView(): HTMLElement {
     chips.append(chip(t('allBooks'), null, 'library'));
     for (const f of folders) chips.append(chip(f.name, f.id, 'folder'));
     chips.append(h('button', { type: 'button', class: 'chip add', onclick: () => void newFolder() }, icon('folderPlus'), h('span', null, t('newFolder'))));
+    chips.append(syncChip);
   }
 
   function askName(title: string, initial = ''): Promise<string | null> {

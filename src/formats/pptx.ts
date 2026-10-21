@@ -141,8 +141,12 @@ export const pptxHandler: FlowHandler = {
               for (const tr of tbl.getElementsByTagNameNS(A, 'tr')) {
                 const row = el('tr');
                 for (const tc of tr.getElementsByTagNameNS(A, 'tc')) {
+                  if (tc.getAttribute('hMerge') === '1' || tc.getAttribute('vMerge') === '1') continue; // covered by a span
                   const cell = el('td');
-                  cell.textContent = [...tc.getElementsByTagNameNS(A, 't')].map((x) => x.textContent).join('');
+                  const gs = Number(tc.getAttribute('gridSpan') ?? 1), rs = Number(tc.getAttribute('rowSpan') ?? 1);
+                  if (gs > 1) cell.colSpan = gs; if (rs > 1) cell.rowSpan = rs;
+                  cell.textContent = [...tc.getElementsByTagNameNS(A, 'p')].map((pEl) => [...pEl.getElementsByTagNameNS(A, 't')].map((x) => x.textContent).join('')).join('\n');
+                  cell.setAttribute('dir', 'auto');
                   row.appendChild(cell);
                 }
                 table.appendChild(row);

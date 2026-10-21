@@ -53,6 +53,14 @@ async function importBooks(files: File[]): Promise<void> {
 /** A file handed to the app by the OS. Fonts are added as fonts; a ZIP asks whether it is fonts or a comic. */
 export async function openIncoming(file: File): Promise<void> {
   if (FONT_EXT.test(file.name)) { await addFonts([file]); return; }
+  // A KurokawaReader backup (JSON, or a ZIP carrying kurokawa-backup.json) restores wherever it was made.
+  if (/\.json$/i.test(file.name)) {
+    const head = await file.slice(0, 200).text();
+    if (head.includes('KurokawaReader')) { await restoreFromFile(file); return; }
+  }
+  if (/\.zip$/i.test(file.name) || file.type === 'application/zip') {
+    try { const JSZip = (await import('jszip')).default; const z = await JSZip.loadAsync(file); if (z.file('kurokawa-backup.json')) { await restoreFromFile(file); return; } } catch { /* not a backup */ }
+  }
   if (/\.zip$/i.test(file.name) || file.type === 'application/zip') {
     const fonts = await fontsInZip(file).catch(() => [] as File[]);
     if (!fonts.length) { await importBooks([new File([file], file.name.replace(/\.zip$/i, '.cbz'))]); return; }
@@ -166,4 +174,17 @@ export async function toggleFullscreen(): Promise<void> {
   const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;
   if (desk?.setFullscreen) { try { await desk.setFullscreen('toggle'); } catch { /* ignore */ } return; }
   if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen?.();
+}
+
+async function restoreFromFile(file: File): Promise<void> {
+  const { openSheet, h: hh, icon } = await import('./ui/dom');
+  const sh = openSheet(t('restore'), t('close'));
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  const status = hh('p', { class: 'src' }, file.name);
+  sh.body.append(hh('p', null, t('restoreConfirm')), status);
+  sh.actions.append(hh('button', { class: 'btn small primary', type: 'button', onclick: async (e: Event) => {
+    (e.currentTarget as HTMLButtonElement).disabled = true;
+    try { const { restoreBackup } = await import('./backup'); const n = await restoreBackup(file, (m) => { status.textContent = m; }); sh.close(); toast(t('restored', { n })); navigate('/'); }
+    catch (err) { status.textContent = `${t('restoreFailed')} — ${String((err as Error).message ?? err)}`; }
+  } }, icon('import'), t('restore')));
 }

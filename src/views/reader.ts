@@ -223,6 +223,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     lastTracked = { doc: cur.doc, block };
   };
   onDispose(() => { trackers.forEach((tr) => void tr.stop()); });
+  // Mobile systems may kill the app without warning: flush position and statistics when the page hides.
+  const flushAll = () => { hooks.save(); trackers.forEach((tr) => void tr.save()); };
+  window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
+  onDispose(() => window.removeEventListener('pagehide', flushAll));
   if (books.length > 1) toast(t('openedTogether', { n: books.length }));
   restore();
   // Images loading above the saved position shift the layout; settle a few times.
@@ -1023,6 +1027,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   };
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
+  const flushPdf = () => { void tracker.save(); const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); };
+  window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPdf(); });
+  onDispose(() => window.removeEventListener('pagehide', flushPdf));
 
   /** Export several pages as PNGs (zipped when more than one), chosen by range or list. */
   function savePagesSheet(): void {

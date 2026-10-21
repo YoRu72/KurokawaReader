@@ -196,16 +196,24 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
 
   const renderTable = (tbl: Element, target: HTMLElement) => {
     const table = el('table');
+    // Vertically merged cells: the first ("restart") cell grows a rowspan; continuation cells are dropped.
+    const open = new Map<number, HTMLTableCellElement>();
     for (const tr of tbl.children) {
       if (tr.localName !== 'tr') continue;
       const row = el('tr');
+      let col = 0;
       for (const tc of tr.children) {
         if (tc.localName !== 'tc') continue;
-        const cell = el('td');
-        const span = attr(child(child(tc, W, 'tcPr'), W, 'gridSpan'), W, 'val');
-        if (span) cell.colSpan = Number(span);
+        const pr = child(tc, W, 'tcPr');
+        const span = Number(attr(child(pr, W, 'gridSpan'), W, 'val') ?? 1);
+        const vm = child(pr, W, 'vMerge');
+        if (vm && (attr(vm, W, 'val') ?? 'continue') !== 'restart') { const above = open.get(col); if (above) above.rowSpan += 1; col += span; continue; }
+        const cell = el('td') as HTMLTableCellElement;
+        if (span > 1) cell.colSpan = span;
         renderBlocks(tc, cell);
         row.appendChild(cell);
+        if (vm) open.set(col, cell); else open.delete(col);
+        col += span;
       }
       table.appendChild(row);
     }
