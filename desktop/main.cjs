@@ -12,7 +12,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: t
 
 let win = null;
 const pending = [];
-const DOC_EXT = /\.(epub|pdf|docx|xlsx|pptx|txt|md|markdown|html?|fb2|odt|cbz|csv|tsv|jpe?g|png|gif|webp)$/i;
+const DOC_EXT = /\.(epub|pdf|docx|xlsx|pptx|txt|md|markdown|html?|fb2|odt|cbz|csv|tsv|jpe?g|png|gif|webp|ttf|otf|woff2?|zip)$/i;
 
 function queueFile(p) {
   if (!p || !DOC_EXT.test(p) || !fs.existsSync(p)) return;
@@ -96,6 +96,10 @@ else {
       return net.fetch('file://' + file).then((res) => new Response(res.body, { headers: { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' } }));
     });
     buildMenu();
+    // Let the page list fonts installed on this computer (Local Font Access API).
+    const { session } = require('electron');
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(['local-fonts', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen'].includes(permission)));
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => ['local-fonts', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen'].includes(permission));
     createWindow();
     process.argv.slice(app.isPackaged ? 1 : 2).forEach(queueFile);
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -160,5 +164,6 @@ ipcMain.handle('kr:scan-device', async (_e, exts) => {
   if (queue.length) truncated = true;
   return { root: roots.join(' · '), files, truncated };
 });
+ipcMain.handle('kr:immersive', (_e, on) => { if (win) win.setFullScreen(!!on); return true; });
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });

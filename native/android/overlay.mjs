@@ -15,8 +15,9 @@ const MIMES = [
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.oasis.opendocument.text', 'application/x-fictionbook+xml', 'application/vnd.comicbook+zip', 'application/x-cbz',
   'text/plain', 'text/markdown', 'text/html', 'text/csv', 'text/comma-separated-values',
+  'font/ttf', 'font/otf', 'font/woff', 'font/woff2', 'application/x-font-ttf', 'application/x-font-opentype', 'application/font-sfnt', 'application/vnd.ms-opentype', 'application/font-woff', 'application/zip', 'application/x-zip-compressed',
 ];
-const EXTS = ['epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'csv'];
+const EXTS = ['epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'csv', 'ttf', 'otf', 'woff', 'woff2', 'zip'];
 
 const data = (attrs) => `        <data ${attrs} />`;
 const intentFilters = `

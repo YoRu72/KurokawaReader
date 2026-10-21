@@ -11,7 +11,7 @@ const types = [
   ['EPUB', ['org.idpf.epub-container']], ['PDF', ['com.adobe.pdf']], ['Word document', ['org.openxmlformats.wordprocessingml.document']],
   ['Excel workbook', ['org.openxmlformats.spreadsheetml.sheet']], ['PowerPoint', ['org.openxmlformats.presentationml.presentation']],
   ['Text', ['public.plain-text', 'net.daringfireball.markdown', 'public.html', 'public.comma-separated-values-text']],
-  ['Comic archive', ['public.zip-archive']], ['Image', ['public.image']],
+  ['Comic archive', ['public.zip-archive']], ['Image', ['public.image']], ['Font', ['public.font', 'public.truetype-ttf-font', 'public.opentype-font']],
 ];
 const docTypes = `  <key>CFBundleDocumentTypes</key>
   <array>

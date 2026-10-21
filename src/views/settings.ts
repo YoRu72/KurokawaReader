@@ -1,10 +1,10 @@
-import { h, icon, iconButton, toast, clear } from '../ui/dom';
+import { h, icon, iconButton, toast, clear, openSheet } from '../ui/dom';
 import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
 import { getSettings, updateSettings, applyOrientation, type UiMode, type Accent, type Orientation } from '../settings';
-import { listFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
+import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
@@ -65,7 +65,9 @@ export function settingsView(): HTMLElement {
       h('p', { class: 'sample ar' }, 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — خطُّ عثمان طه للنصِّ العربيِّ، وسلطانُ للواجهة.'),
       h('h3', null, t('customFonts')), h('p', null, t('customFontsBody')),
       h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-        h('button', { class: 'btn small', onclick: () => fileInput.click() }, icon('import'), t('addFontFile')), fileInput),
+        h('button', { class: 'btn small', onclick: () => fileInput.click() }, icon('import'), t('addFontFile')), fileInput,
+        h('button', { class: 'btn small', onclick: () => fontSitesSheet() }, icon('external'), t('browseFonts')),
+        canListSystemFonts() ? h('button', { class: 'btn small', onclick: () => void systemFontsSheet() }, icon('type'), t('systemFontsPick')) : null),
       h('form', { style: { display: 'flex', gap: '8px' }, onsubmit: async (e: Event) => { e.preventDefault(); if (!url.value.trim()) return; try { const font = await addFontFromUrl(url.value.trim()); toast(t('fontAdded', { name: font.name })); url.value = ''; void renderFonts(); } catch (err) { toast(navigator.onLine ? String((err as Error).message ?? err) : t('offlineService'), 'error', 4000); } } }, url, h('button', { class: 'btn small tonal', type: 'submit' }, icon('download'), t('addFontUrl'))),
       fonts.length ? h('ul', { class: 'plain-list' }, ...fonts.map((f) => h('li', null,
         h('span', { style: { flex: '1', fontFamily: `'${f.family}'`, fontSize: '18px', padding: '8px 10px' }, dir: 'auto' }, f.name, h('span', { class: 'meta' }, formatBytes(f.size))),
@@ -75,6 +77,39 @@ export function settingsView(): HTMLElement {
   void renderFonts();
   body.append(fontsCard);
 
+  function fontSitesSheet() {
+    const sh = openSheet(t('browseFonts'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    sh.body.append(h('p', { class: 'src' }, t('browseFontsBody')));
+    const site = (name: string, url: string) => h('li', null, h('a', { class: 'plain-link', href: url, target: '_blank', rel: 'noopener' }, icon('external'), name));
+    sh.body.append(h('ul', { class: 'plain-list' },
+      site('Google Fonts — Arabic', 'https://fonts.google.com/?subset=arabic'),
+      site('Google Fonts', 'https://fonts.google.com/'),
+      site('Font Squirrel', 'https://www.fontsquirrel.com/'),
+      site('Fontsource', 'https://fontsource.org/'),
+      site('Amiri · Scheherazade · Noto Naskh (GitHub)', 'https://github.com/aliftype/amiri/releases')));
+  }
+
+  async function systemFontsSheet() {
+    const sh = openSheet(t('systemFontsPick'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    sh.body.append(h('p', { class: 'src' }, t('systemFontsBody')));
+    const list = h('div', { class: 'dest-list', style: { maxHeight: '50vh', overflowY: 'auto' } });
+    const search = h('input', { type: 'search', placeholder: t('searchLibrary'), style: { width: '100%', marginBottom: '8px' } }) as HTMLInputElement;
+    sh.body.append(search, list);
+    const fonts = await listSystemFonts();
+    if (!fonts.length) { list.append(h('p', { class: 'src' }, t('notSupportedHere'))); return; }
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      const chosen = new Set(getSettings().systemFonts);
+      list.replaceChildren(...fonts.filter((f) => !q || f.family.toLowerCase().includes(q)).slice(0, 400).map((f) => h('label', { class: 'dest-row' + (chosen.has(f.family) ? ' on' : '') },
+        h('input', { type: 'checkbox', checked: chosen.has(f.family), onchange: (e: Event) => { const on = (e.target as HTMLInputElement).checked; const next = new Set(getSettings().systemFonts); if (on) next.add(f.family); else next.delete(f.family); updateSettings({ systemFonts: [...next] }); render(); } }),
+        icon('type'), h('span', { class: 'name', style: { fontFamily: `'${f.family}'`, fontSize: '17px' } }, f.family))));
+    };
+    search.addEventListener('input', render);
+    render();
+  }
+
   // Reader options (shared with the reader panel)
   const opts = h('div');
   renderOptions(opts);
@@ -83,6 +118,11 @@ export function settingsView(): HTMLElement {
   // Starter books
   body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: a.length })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));
+
+  // AI (translation & voices)
+  body.append(h('section', { class: 'card' }, h('h3', null, t('aiSection')), h('p', null, t('aiTranslateBody')),
+    h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+      h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup')))));
 
   // Backup & restore
   const restoreInput = h('input', { type: 'file', accept: '.json,.zip,application/json,application/zip', hidden: true }) as HTMLInputElement;

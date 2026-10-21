@@ -2,9 +2,11 @@
 import { h, icon, iconButton, clear } from '../ui/dom';
 import { t } from '../i18n';
 import type { ImageRef } from '../formats/types';
-import { shareFile, fetchAsBlob } from '../ui/share';
+import { shareFile, fetchAsBlob, saveImage, copyImage } from '../ui/share';
+import { toast } from '../ui/dom';
 
-export function openGallery(images: ImageRef[], onJump: (anchor: string) => void): () => void {
+/** `startAt` opens straight into the lightbox; with `lightboxOnly` the grid never shows and closing the picture closes everything. */
+export function openGallery(images: ImageRef[], onJump: (anchor: string) => void, opts: { startAt?: number; lightboxOnly?: boolean } = {}): () => void {
   const grid = h('div', { class: 'gallery-grid' });
   const body = h('div', { class: 'gallery-body' }, grid);
   const close = () => { root.remove(); window.removeEventListener('keydown', onKey); };
@@ -21,6 +23,8 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
 
   let lb: HTMLElement | null = null;
   let current = 0;
+  const closeLb = () => { lb?.remove(); lb = null; if (opts.lightboxOnly) close(); };
+  const blobOf = async (src: string) => { const blob = await fetchAsBlob(src); const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg'); return { blob, ext }; };
   function lightbox(i: number) {
     current = i;
     const img = images[i];
@@ -28,15 +32,16 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
       const im = images[current];
       clear(lb!);
       lb!.append(
-        h('div', { class: 'lb-img', onclick: () => { lb?.remove(); lb = null; } }, h('img', { src: im.src, alt: im.alt ?? '' })),
+        h('div', { class: 'lb-img', onclick: closeLb }, h('img', { src: im.src, alt: im.alt ?? '' })),
         h('div', { class: 'lb-bar' },
           iconButton('chevronLeft', t('previousPage'), () => { current = (current - 1 + images.length) % images.length; render(); }),
           h('span', { class: 'cap', dir: 'auto' }, `${current + 1} / ${images.length} · ${im.alt || t('imageFrom', { title: im.bookTitle })}`),
-          iconButton('target', t('jumpToImage'), () => { lb?.remove(); lb = null; close(); onJump(im.anchor); }),
-          h('a', { class: 'icon-btn', href: im.src, download: `image-${current + 1}.${im.src.startsWith('data:image/') ? im.src.slice(11, im.src.indexOf(';')) : 'png'}`, title: t('saveImage'), 'aria-label': t('saveImage') }, icon('download')),
-          iconButton('external', t('shareImage'), async () => { try { const blob = await fetchAsBlob(im.src); const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg'); await shareFile(blob, `image-${current + 1}.${ext}`, im.bookTitle); } catch { /* ignore */ } }),
+          opts.lightboxOnly ? null : iconButton('target', t('jumpToImage'), () => { lb?.remove(); lb = null; close(); onJump(im.anchor); }),
+          iconButton('download', t('saveImage'), async () => { try { const { blob, ext } = await blobOf(im.src); await saveImage(blob, `${(im.bookTitle || 'image').slice(0, 30)}-${current + 1}.${ext}`); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
+          iconButton('copy', t('copyImage'), async () => { try { const { blob } = await blobOf(im.src); if (await copyImage(blob)) toast(t('copied')); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
+          iconButton('external', t('shareImage'), async () => { try { const { blob, ext } = await blobOf(im.src); await shareFile(blob, `image-${current + 1}.${ext}`, im.bookTitle); } catch { /* ignore */ } }),
           iconButton('chevronRight', t('nextPage'), () => { current = (current + 1) % images.length; render(); }),
-          iconButton('close', t('close'), () => { lb?.remove(); lb = null; }),
+          (() => { const b = iconButton('close', t('close'), closeLb); b.classList.add('lb-close'); return b; })(),
         ));
     };
     lb = h('div', { class: 'lightbox', role: 'dialog' });
@@ -45,10 +50,12 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
     void img;
   }
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { if (lb) { lb.remove(); lb = null; } else close(); }
+    if (e.key === 'Escape') { if (lb) closeLb(); else close(); }
     else if (lb && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { current = (current + (e.key === 'ArrowRight' ? 1 : -1) + images.length) % images.length; lightbox(current); lb?.previousElementSibling?.remove(); document.querySelectorAll('.lightbox').forEach((x, j, all) => { if (j < all.length - 1) x.remove(); }); }
   };
   window.addEventListener('keydown', onKey);
+  if (opts.lightboxOnly) root.style.display = 'none';
   document.body.append(root);
+  if (opts.startAt !== undefined && images[opts.startAt]) lightbox(opts.startAt);
   return close;
 }

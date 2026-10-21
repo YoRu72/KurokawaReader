@@ -1,4 +1,4 @@
-import { h, icon, iconButton, toast, clear, coverColors } from '../ui/dom';
+import { h, icon, iconButton, toast, clear, coverColors, pickSheet } from '../ui/dom';
 import { t, formatBytes, formatDate, countBooks, localDigits } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
 import { db, uid, type Book, type Folder } from '../db';
@@ -40,9 +40,9 @@ export function libraryView(): HTMLElement {
   }
 
   const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); renderGrid(); } }) as HTMLInputElement;
-  const sortSel = h('select', { 'aria-label': t('sortBy'), onchange: () => { sort = sortSel.value as Sort; localStorage.setItem('kr.sort', sort); renderGrid(); } },
-    h('option', { value: 'title' }, t('sortTitleNum')), h('option', { value: 'recent' }, t('sortRecent')), h('option', { value: 'added' }, t('sortAdded')), h('option', { value: 'author' }, t('sortAuthor')), h('option', { value: 'size' }, t('sortSize'))) as HTMLSelectElement;
-  sortSel.value = sort;
+  const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['size', t('sortSize'), 'books']];
+  const sortLabel = h('span', null, SORTS.find((x) => x[0] === sort)?.[1] ?? '');
+  const sortSel = h('button', { type: 'button', class: 'sort-btn', 'aria-label': t('sortBy'), onclick: () => pickSheet(t('sortBy'), SORTS, sort, (v) => { sort = v; localStorage.setItem('kr.sort', sort); sortLabel.textContent = SORTS.find((x) => x[0] === sort)?.[1] ?? ''; renderGrid(); }, t('close')) }, icon('sort'), sortLabel, icon('chevronDown'));
 
   const grid = h('div', { class: 'book-grid', role: 'list' });
   const resume = h('div', { class: 'resume-card', hidden: true });

@@ -1,7 +1,7 @@
 // App updates: checks the GitHub release feed, and installs in-app where the
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
-import { h, icon, openSheet, append } from './ui/dom';
+import { h, icon, openSheet, toast, append } from './ui/dom';
 import { t, getLang } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
@@ -30,9 +30,11 @@ export async function fetchLatest(): Promise<ReleaseInfo> {
 export function lastChecked(): number { return Number(localStorage.getItem('kr.update.lastCheck') ?? 0); }
 
 /** Returns the release when it is newer than the running build. */
-export async function checkForUpdate(): Promise<ReleaseInfo | null> {
+export async function checkForUpdate(ignoreSkipped = false): Promise<ReleaseInfo | null> {
   const rel = await fetchLatest();
-  return cmp(rel.version, APP_VERSION) > 0 ? rel : null;
+  if (cmp(rel.version, APP_VERSION) <= 0) return null;
+  if (!ignoreSkipped && localStorage.getItem('kr.update.skip') === rel.version) return null;
+  return rel;
 }
 
 /** Start-up check (respects the setting, the interval and connectivity). */
@@ -104,12 +106,15 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   append(s.body, [h('p', { class: 'src' }, `${APP_VERSION} → ${rel.version}`), notes ? h('details', null, h('summary', null, t('whatsNew')), h('pre', { style: { whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: '13px', color: 'var(--md-on-surface-variant)' } }, notes)) : null]);
   const platform = nativePlatform();
   const status = h('p', { class: 'src', style: { marginTop: '10px' } });
-  s.body.append(status);
+  const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
+  const barFill = bar.firstElementChild as HTMLElement;
+  s.body.append(status, bar);
   const link = h('a', { class: 'btn small outlined', href: rel.url, target: '_blank', rel: 'noopener' }, icon('external'), t('openReleasePage'));
   const run = (fn: (rel: ReleaseInfo, p: (n: number) => void) => Promise<void>) => async (ev: Event) => {
     const btn = ev.currentTarget as HTMLButtonElement; btn.disabled = true;
-    try { await fn(rel, (p) => { status.textContent = t('downloading', { p }); }); status.textContent = t('installStarted'); }
-    catch (err) { status.textContent = `${t('updateFailed')} — ${String((err as Error).message ?? err)}`; btn.disabled = false; }
+    bar.hidden = false; barFill.style.width = '0%';
+    try { await fn(rel, (p) => { status.textContent = t('downloading', { p }); barFill.style.width = `${p}%`; }); barFill.style.width = '100%'; status.textContent = t('installStarted'); }
+    catch (err) { bar.hidden = true; status.textContent = `${t('updateFailed')} — ${String((err as Error).message ?? err)}`; btn.disabled = false; }
   };
   if (platform === 'android') s.actions.append(h('button', { class: 'btn small primary', onclick: run(installAndroid) }, icon('download'), t('downloadInstall')), link);
   else if (platform === 'desktop') {
@@ -126,6 +131,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   } else {
     s.actions.append(h('button', { class: 'btn small primary', onclick: async () => { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); location.reload(); } }, icon('rotate'), t('reloadToUpdate')), link);
   }
+  s.actions.append(h('button', { class: 'btn small', type: 'button', onclick: () => { localStorage.setItem('kr.update.skip', rel.version); s.close(); toast(t('versionSkipped', { v: rel.version })); } }, t('skipVersion')));
   void getLang;
 }
 
@@ -136,7 +142,7 @@ export function renderUpdateCard(container: HTMLElement): void {
   cb.checked = getSettings().autoUpdateCheck;
   const btn = h('button', { class: 'btn small tonal', onclick: async () => {
     btn.disabled = true; status.textContent = t('checking');
-    try { const rel = await checkForUpdate(); if (rel) { status.textContent = t('updateAvailable', { v: rel.version }); showUpdateSheet(rel); } else status.textContent = t('upToDate'); }
+    try { const rel = await checkForUpdate(true); if (rel) { status.textContent = t('updateAvailable', { v: rel.version }); showUpdateSheet(rel); } else status.textContent = t('upToDate'); }
     catch { status.textContent = navigator.onLine ? t('updateFailed') : t('offlineService'); }
     btn.disabled = false;
   } }, icon('rotate'), t('checkUpdates'));

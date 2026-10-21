@@ -20,7 +20,9 @@ async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () =
   const data = new Uint8Array(await file.arrayBuffer());
   const task = pdfjs.getDocument({
     data,
-    useSystemFonts: true,
+    // Android draws pages with its own renderer; elsewhere the bundled standard fonts keep
+    // metrics consistent (system-font substitution misplaces glyphs for many PDFs).
+    useSystemFonts: (window as unknown as { Capacitor?: { getPlatform?(): string } }).Capacitor?.getPlatform?.() === 'android',
     cMapUrl: `${RES}cmaps/`, cMapPacked: true,
     standardFontDataUrl: `${RES}standard_fonts/`,
     wasmUrl: `${RES}wasm/`,

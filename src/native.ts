@@ -24,9 +24,46 @@ function base64ToBlob(b64: string): Blob {
   return new Blob([arr]);
 }
 
-async function openIncoming(file: File): Promise<void> {
-  const added = await importFiles([file], (book, f, err) => { if (!book) toast(t('importFailed', { name: f.name, error: String((err as Error)?.message ?? err) }), 'error', 5000); });
+const FONT_EXT = /\.(ttf|otf|woff2?)$/i;
+
+async function addFonts(files: File[]): Promise<void> {
+  const { addFontFromFile } = await import('./fonts');
+  let n = 0;
+  for (const f of files) { try { await addFontFromFile(f); n++; } catch (err) { toast(t('importFailed', { name: f.name, error: String((err as Error)?.message ?? err) }), 'error', 4000); } }
+  if (n) { toast(t('fontsAdded', { n })); navigate('/settings'); }
+}
+
+async function fontsInZip(file: File): Promise<File[]> {
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(file);
+  const out: File[] = [];
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir || !FONT_EXT.test(entry.name) || /__MACOSX/.test(entry.name)) continue;
+    out.push(new File([await entry.async('blob')], entry.name.split('/').pop()!));
+  }
+  return out;
+}
+
+async function importBooks(files: File[]): Promise<void> {
+  const added = await importFiles(files, (book, f, err) => { if (!book) toast(t('importFailed', { name: f.name, error: String((err as Error)?.message ?? err) }), 'error', 5000); });
   if (added.length) navigate(`/read/${added.map((b) => b.id).join(',')}`);
+}
+
+/** A file handed to the app by the OS. Fonts are added as fonts; a ZIP asks whether it is fonts or a comic. */
+export async function openIncoming(file: File): Promise<void> {
+  if (FONT_EXT.test(file.name)) { await addFonts([file]); return; }
+  if (/\.zip$/i.test(file.name) || file.type === 'application/zip') {
+    const fonts = await fontsInZip(file).catch(() => [] as File[]);
+    if (!fonts.length) { await importBooks([new File([file], file.name.replace(/\.zip$/i, '.cbz'))]); return; }
+    const { openSheet, h: hh, icon } = await import('./ui/dom');
+    const sh = openSheet(t('openAs'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    sh.body.append(hh('ul', { class: 'plain-list' },
+      hh('li', null, hh('button', { type: 'button', onclick: () => { sh.close(); void addFonts(fonts); } }, icon('type'), `${t('openAsFontsZip')} (${fonts.length})`)),
+      hh('li', null, hh('button', { type: 'button', onclick: () => { sh.close(); void importBooks([new File([file], file.name.replace(/\.zip$/i, '.cbz'))]); } }, icon('books'), t('openAsBook')))));
+    return;
+  }
+  await importBooks([file]);
 }
 
 async function handleUrl(url: string): Promise<void> {
@@ -45,6 +82,16 @@ async function handleUrl(url: string): Promise<void> {
 }
 
 export function initNativeBridges(): void {
+  // Keyboard shortcuts that work everywhere (the desktop menu sends the same commands).
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const k = e.key.toLowerCase();
+    const cmd = k === 'o' && e.shiftKey ? 'scan' : k === 'o' ? 'import' : k === 'l' ? 'library' : k === ',' ? 'settings' : k === 'f' ? 'search' : (k === 'v' && e.shiftKey) ? 'options' : '';
+    if (!cmd) return;
+    e.preventDefault();
+    if (cmd === 'library') navigate('/'); else if (cmd === 'settings') navigate('/settings');
+    else document.dispatchEvent(new CustomEvent('kr:command', { detail: cmd }));
+  });
   const cap = window.Capacitor;
   if (cap?.isNativePlatform?.() && cap.Plugins?.App) {
     void cap.Plugins.App.addListener('appUrlOpen', (d) => void handleUrl(d.url));
@@ -57,7 +104,7 @@ export function initNativeBridges(): void {
       if (panelClose) { panelClose.click(); return; }
       // Full-screen overlays (gallery, pages grid, lightbox) carry a dialog role and a back/close button in their top bar.
       const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && (d as HTMLElement).offsetParent !== null);
-      const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
+      const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
       if (overlayBtn) { overlayBtn.click(); return; }
       if (location.hash && location.hash !== '#/' && location.hash !== '#') { navigate('/'); return; }
       void cap.Plugins?.App?.minimizeApp?.();
@@ -79,6 +126,8 @@ interface ImmersivePlugin { setImmersive(o: { on: boolean }): Promise<void> }
 interface StatusBarPlugin { hide(): Promise<void>; show(): Promise<void> }
 /** Hide / show the system bars while reading (Android via our plugin, iOS via StatusBar). */
 export async function setImmersive(on: boolean): Promise<void> {
+  const desk = window.kurokawaDesktop as (DesktopBridge & { setImmersive?(on: boolean): Promise<boolean> }) | undefined;
+  if (desk?.setImmersive) { try { await desk.setImmersive(on); } catch { /* ignore */ } return; }
   const plugins = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: ImmersivePlugin; StatusBar?: StatusBarPlugin } }) | undefined)?.Plugins;
   try {
     if (nativePlatform() === 'android' && plugins?.Kurokawa?.setImmersive) { await plugins.Kurokawa.setImmersive({ on }); return; }

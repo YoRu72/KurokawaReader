@@ -21,6 +21,9 @@ import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot } from '../ui/textcard';
 import { exportNotes } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
+import { attachTranslator } from '../ui/translator';
+import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
+import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake } from '../native';
@@ -98,15 +101,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     iconButton('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
   );
   // M3 Expressive floating toolbar carries the reading actions.
-  const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') },
-    iconButton('toc', t('contents'), () => openContents('toc')),
-    iconButton('search', t('searchInBook'), () => openSearch()),
-    iconButton('images', t('images'), () => showGallery()),
-    iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark()),
-    h('span', { class: 'sep' }),
-    iconButton('type', t('visualOptions'), () => openOptions()),
-    iconButton('more', t('more'), () => openMore()),
-  );
+  const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') });
+  const TOOLBAR_ITEMS: Record<string, () => HTMLElement> = {
+    toc: () => iconButton('toc', t('contents'), () => openContents('toc')),
+    search: () => iconButton('search', t('searchInBook'), () => openSearch()),
+    images: () => iconButton('images', t('images'), () => showGallery()),
+    bookmark: () => iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark()),
+    bookmarks: () => iconButton('bookmark', t('bookmarks'), () => openContents('bookmarks')),
+    sep: () => h('span', { class: 'sep' }),
+    type: () => iconButton('type', t('visualOptions'), () => openOptions()),
+    translate: () => iconButton('translate', t('aiTranslate'), () => translator.toggleUi()),
+    speak: () => iconButton('speak', t('readAloud'), () => { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); }),
+    scroll: () => iconButton('scroll', t('autoScroll'), () => toggleAutoScroll()),
+    info: () => iconButton('info', t('bookInfo'), () => showInfo()),
+    snapshot: () => iconButton('camera', t('textAsImage'), () => toast(t('selectTextFirst'))),
+    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
+    more: () => iconButton('more', t('more'), () => openMore()),
+  };
+  const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => TOOLBAR_ITEMS[id]())); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(TOOLBAR_ITEMS.more()); };
+  renderToolbar();
+  onDispose(onSettingsChange(() => renderToolbar()));
   reader.append(scroll);
   const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
   root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
@@ -117,6 +131,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   let lastTracked: { doc: OpenDoc; block: number } | null = null;
   // Late-bound hooks so chapter navigation can run before the chrome helpers are defined.
   const hooks = { update: () => undefined as void, save: () => undefined as void };
+  const chapterListeners: (() => void)[] = [];
+  const translator = attachTranslator({
+    root, scroll,
+    blocks: () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks.map((el) => ({ el, bookId: d.book.id }))),
+    onChapterChange: (fn) => chapterListeners.push(fn),
+  });
+  onDispose(() => translator.dispose());
   const settings = getSettings();
   let allImages: ImageRef[] = [];
   let saveTimer: number | undefined;
@@ -244,6 +265,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     scroll.scrollTop = atEnd ? scroll.scrollHeight : 0;
     lastTracked = null;
     hooks.update(); hooks.save();
+    chapterListeners.forEach((fn) => fn());
   }
   /** Make sure the element's chapter is on screen (chapter mode) before scrolling to it. */
   function revealElement(el: Element): void {
@@ -427,6 +449,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   onDispose(attachEdgeBrightness(scroll));
   onDispose(attachPinchText(scroll));
+  // Ctrl + mouse wheel changes the text size (desktop).
+  scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); const d = e.deltaY < 0 ? 1 : -1; updateSettings({ fontSize: Math.min(40, Math.max(12, getSettings().fontSize + d)) }); }, { passive: false });
   const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (c === 'search') openSearch(); else if (c === 'options') openOptions(); };
   document.addEventListener('kr:command', onCommand);
   onDispose(() => document.removeEventListener('kr:command', onCommand));
@@ -664,8 +688,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   /* ---------- gallery ---------- */
   function showGallery(startAt?: number): void {
-    const close = openGallery(allImages, (anchor) => scrollToAnchor(anchor));
-    if (startAt !== undefined) (document.querySelectorAll('.gallery-grid button')[startAt] as HTMLElement | undefined)?.click();
+    // Tapping a picture in the text opens just that picture; the grid is for the toolbar button.
+    const close = openGallery(allImages, (anchor) => scrollToAnchor(anchor), { startAt, lightboxOnly: startAt !== undefined });
     onDispose(close);
   }
 
@@ -716,6 +740,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (text === undefined) { stopSpeaking(); return; }
       i++;
       if (!text) { next(); return; }
+      if (getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady()) {
+        // AI voice: fetch this passage (prefetched when possible), play it, prefetch the next one.
+        const play = async () => {
+          try {
+            const blob = aiQueue.get(text) ?? await aiSpeak(text);
+            aiQueue.delete(text);
+            if (!speaking) return;
+            const nextText = chunks[i] ?? (startBlock ? (startBlock.doc.blocks[startBlock.index + i]?.textContent ?? '').trim() : '');
+            if (nextText && !aiQueue.has(nextText)) aiSpeak(nextText).then((b) => aiQueue.set(nextText, b)).catch(() => undefined);
+            const url = URL.createObjectURL(blob);
+            aiAudio = new Audio(url);
+            aiAudio.playbackRate = getSettings().speechRate;
+            aiAudio.onended = () => { URL.revokeObjectURL(url); aiAudio = null; next(); };
+            aiAudio.onerror = () => { URL.revokeObjectURL(url); stopSpeaking(); };
+            await aiAudio.play();
+          } catch (err) { toast(String((err as Error).message ?? err), 'error', 4000); stopSpeaking(); }
+        };
+        void play();
+        return;
+      }
       const u = new SpeechSynthesisUtterance(text);
       u.lang = isRtlText(text) ? 'ar-SA' : 'en-US';
       u.rate = getSettings().speechRate;
@@ -727,7 +771,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     };
     next();
   }
-  function stopSpeaking(): void { speaking = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+  let aiAudio: HTMLAudioElement | null = null;
+  const aiQueue = new Map<string, Blob>();
+  function stopSpeaking(): void { speaking = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
   onDispose(stopSpeaking);
 
   // Sleep timer: stops read-aloud and auto-scroll after N minutes.
@@ -758,6 +804,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
         item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
+        item('translate', t('aiTranslate'), () => translator.toggleUi()),
+        item('settings', t('toolbarButtons'), () => toolbarSheet()),
         item('highlight', t('highlights'), () => openContents('highlights')),
         docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
       ));
@@ -881,6 +929,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   keepAwake(getSettings().keepAwake);
   onDispose(() => { void setImmersive(false); keepAwake(false); });
   onDispose(attachEdgeBrightness(viewer.scroll));
+  viewer.scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); viewer.zoom(e.deltaY < 0 ? 0.1 : -0.1); }, { passive: false });
   const onVolumePdf = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; viewer.scroll.scrollBy({ top: dir * viewer.scroll.clientHeight * 0.9, behavior: 'smooth' }); };
   document.addEventListener('kr:volume', onVolumePdf);
   onDispose(() => document.removeEventListener('kr:volume', onVolumePdf));

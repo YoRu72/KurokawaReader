@@ -366,8 +366,8 @@ html[dir='rtl'] .panel-head { padding: 12px 22px 8px 10px; }
 }
 
 .toc-list, .plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.toc-list li button, .plain-list li button { width: 100%; text-align: start; padding: 11px 14px; border-radius: var(--sh-md); color: var(--md-on-surface); line-height: 1.35; display: flex; gap: 10px; align-items: baseline; transition: background var(--dur-short), border-radius var(--dur-med) var(--ease-spring); }
-.toc-list li button:hover, .plain-list li button:hover { background: var(--md-surface-container-high); }
+.toc-list li button, .plain-list li button, .plain-list li .plain-link { width: 100%; text-align: start; padding: 11px 14px; border-radius: var(--sh-md); color: var(--md-on-surface); line-height: 1.35; display: flex; gap: 10px; align-items: baseline; transition: background var(--dur-short), border-radius var(--dur-med) var(--ease-spring); }
+.toc-list li button:hover, .plain-list li button:hover, .plain-list li .plain-link:hover { background: var(--md-surface-container-high); }
 .toc-list li button:active, .plain-list li button:active { border-radius: var(--sh-full); }
 .toc-list li button.current { color: var(--md-on-primary-container); background: var(--md-primary-container); border-radius: var(--sh-full); }
 .toc-list .depth-1 button { padding-inline-start: 28px; font-size: 14px; color: var(--md-on-surface-variant); }
@@ -577,3 +577,24 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .resume-card .bar span { display: block; height: 100%; background: var(--md-primary); border-radius: 2px; }
 .resume-meta { min-width: 0; }
 @media (max-width: 480px) { .resume-card { grid-template-columns: 48px 1fr; } .resume-card > .btn { grid-column: 1 / -1; justify-self: end; } }
+
+/* AI translation pill — floats above the toolbar, hidden with the rest of the chrome in immersive mode */
+.tr-pill { position: fixed; left: 50%; bottom: calc(34px + var(--safe-bottom) + 72px); transform: translateX(-50%); z-index: 41; display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-radius: var(--sh-full); background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); max-width: calc(100vw - 24px); font: 500 13px var(--font-ui); animation: pop2 var(--dur-med) var(--ease-spring); }
+.tr-pill button { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: inherit; background: transparent; }
+.tr-pill button:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.tr-pill button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.tr-pill .tr-toggle { background: var(--md-surface-container-highest); }
+.tr-pill .tr-toggle.on { background: var(--md-primary); color: var(--md-on-primary); }
+.tr-pill .tr-status { padding: 0 10px; white-space: nowrap; color: var(--md-on-surface-variant); }
+.reader-view.immersive .tr-pill { transform: translateX(-50%) translateY(200%); opacity: 0; pointer-events: none; }
+.kr-translated { position: relative; }
+.row-actions { display: inline-flex; gap: 2px; justify-self: end; }
+.row-actions .icon-btn { width: 32px; height: 32px; }
+.dest-row { grid-template-columns: auto auto 1fr auto; }
+.plain-list li .plain-link { text-decoration: none; align-items: center; }
+.plain-list li .plain-link svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.sort-btn { display: inline-flex; align-items: center; gap: 8px; height: 52px; padding: 0 16px 0 18px; border-radius: var(--sh-lg); background: var(--md-surface-container-high); color: var(--md-on-surface); font: 500 14px var(--font-ui); white-space: nowrap; }
+.sort-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.sort-btn:hover { background: var(--md-surface-container-highest); }
+.progress-bar { height: 6px; border-radius: 3px; background: var(--md-surface-container-highest); overflow: hidden; margin: 8px 0; }
+.progress-bar span { display: block; height: 100%; width: 0; background: var(--md-primary); border-radius: 3px; transition: width .3s; }

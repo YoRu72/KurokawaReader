@@ -70,6 +70,18 @@ export interface VisualSettings {
   speechVoice: string;        // voice name, '' = system default for the language
   openLastOnLaunch: boolean;  // reopen the last book when the app starts
   coverSize: 'small' | 'medium' | 'large';
+  // AI (chapter translation, AI voices)
+  aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+  aiKey: string;
+  aiModel: string;
+  aiBaseUrl: string;
+  aiPrompt: string;
+  aiTarget: string;           // target language code
+  aiTtsModel: string;
+  aiVoice: string;
+  speechEngine: 'system' | 'ai';
+  readerToolbar: string[];    // ids of the floating toolbar buttons, in order
+  systemFonts: string[];      // system font families picked on desktop
   volumeKeys: boolean;        // page turning with volume keys (Android)
 }
 
@@ -127,6 +139,17 @@ export const DEFAULTS: VisualSettings = {
   speechVoice: '',
   openLastOnLaunch: false,
   coverSize: 'medium',
+  aiProvider: 'gemini',
+  aiKey: '',
+  aiModel: '',
+  aiBaseUrl: '',
+  aiPrompt: '',
+  aiTarget: 'ar',
+  aiTtsModel: '',
+  aiVoice: '',
+  speechEngine: 'system',
+  readerToolbar: ['toc', 'search', 'images', 'bookmark', 'sep', 'type', 'more'],
+  systemFonts: [],
   volumeKeys: false,
 };
 

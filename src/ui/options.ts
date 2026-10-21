@@ -3,6 +3,7 @@
 import { h, clear, icon, toast } from './dom';
 import { isTouchDevice, t } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
+import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont } from '../settings';
 import { fontsSync } from '../fonts';
 
@@ -94,8 +95,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(head('type', t('typeSection')));
   const customLatin = fontsSync().filter((f) => f.script === 'latin').map((f): [LatinFont, string] => [`custom:${f.id}`, f.name]);
   const customArabic = fontsSync().filter((f) => f.script === 'arabic').map((f): [ArabicFont, string] => [`custom:${f.id}`, f.name]);
-  const latin: [LatinFont, string][] = [['lora', 'Lora'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ['publisher', t('fontPublisher')]];
-  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ['publisher', t('fontPublisher')]];
+  const sys = s.systemFonts.map((f): [string, string] => [`system:${f}`, f]);
+  const latin: [LatinFont, string][] = [['lora', 'Lora'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
+  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
   grid.append(section(t('latinFont'), segmented(latin, s.latinFont, (v) => { updateSettings({ latinFont: v }); rerender(); })));
   grid.append(section(t('arabicFont'), segmented(arabic, s.arabicFont, (v) => { updateSettings({ arabicFont: v }); rerender(); }, true)));
   grid.append(stepper(t('fontSize'), s.fontSize, 12, 40, 1, (v) => updateSettings({ fontSize: v }), (v) => `${v}`));
@@ -133,8 +135,24 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if ('speechSynthesis' in window) {
     grid.append(head('behaviour', t('readAloud')));
     grid.append(stepper(t('speechRate'), s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
+    const engines: [VisualSettings['speechEngine'], string][] = [['system', t('speechSystem')], ['ai', t('speechAi')]];
+    grid.append(section(t('speechEngine'), segmented(engines, s.speechEngine, (v) => { updateSettings({ speechEngine: v }); rerender(); })));
+    if (s.speechEngine === 'ai') {
+      const list = AI_VOICES[s.aiProvider === 'openrouter' || s.aiProvider === 'custom' ? 'openai' : s.aiProvider] ?? [];
+      if (list.length) {
+        const vsel = h('select', { onchange: () => updateSettings({ aiVoice: vsel.value }) }, ...list.map((v) => h('option', { value: v }, v))) as HTMLSelectElement;
+        vsel.value = s.aiVoice || list[0];
+        grid.append(section(t('aiVoice'), vsel));
+      } else {
+        const vin = h('input', { type: 'text', value: s.aiVoice, dir: 'ltr', placeholder: 'alloy', onchange: () => updateSettings({ aiVoice: vin.value.trim() }) }) as HTMLInputElement;
+        grid.append(section(t('aiVoice'), vin));
+      }
+      const tm = h('input', { type: 'text', value: s.aiTtsModel, dir: 'ltr', placeholder: s.aiProvider === 'gemini' ? 'gemini-2.5-flash-preview-tts' : 'gpt-4o-mini-tts', onchange: () => updateSettings({ aiTtsModel: tm.value.trim() }) }) as HTMLInputElement;
+      grid.append(section(t('aiTtsModel'), tm));
+      if (!aiReady()) grid.append(h('p', { class: 'src' }, t('aiNeedsKey')));
+    }
     const voices = speechSynthesis.getVoices();
-    if (voices.length) {
+    if (voices.length && s.speechEngine === 'system') {
       const sel = h('select', { onchange: () => updateSettings({ speechVoice: sel.value }) }, h('option', { value: '' }, t('voiceDefault')), ...voices.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`))) as HTMLSelectElement;
       sel.value = s.speechVoice;
       grid.append(section(t('speechVoice'), sel));

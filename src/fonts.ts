@@ -75,9 +75,23 @@ export async function setFontScript(id: string, script: FontScript): Promise<voi
 
 /** CSS family for a font setting value: built-ins or `custom:<id>`. */
 export function familyFor(value: string, builtins: Record<string, string>): string {
+  if (value.startsWith('system:')) return `'${value.slice(7).replace(/'/g, '')}'`;
   if (value.startsWith('custom:')) {
     const f = fontsSync().find((x) => x.id === value.slice(7));
     return f ? `'${f.family}'` : 'inherit';
   }
   return builtins[value] ?? 'inherit';
 }
+
+/** Fonts installed on this computer (Local Font Access API: Chromium / Electron). Returns [] elsewhere. */
+export async function listSystemFonts(): Promise<{ family: string; fullName: string }[]> {
+  const q = (window as unknown as { queryLocalFonts?: () => Promise<{ family: string; fullName: string }[]> }).queryLocalFonts;
+  if (!q) return [];
+  try {
+    const all = await q();
+    const seen = new Map<string, string>();
+    for (const f of all) if (!seen.has(f.family)) seen.set(f.family, f.fullName);
+    return [...seen].map(([family, fullName]) => ({ family, fullName })).sort((a, b) => a.family.localeCompare(b.family));
+  } catch { return []; }
+}
+export function canListSystemFonts(): boolean { return 'queryLocalFonts' in window; }

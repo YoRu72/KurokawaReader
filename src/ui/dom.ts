@@ -51,6 +51,7 @@ const PATHS: Record<string, string> = {
   type: '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
   share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  sort: '<path d="M11 5h10"/><path d="M11 9h7"/><path d="M11 13h4"/><path d="m3 17 3 3 3-3"/><path d="M6 18V4"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   define: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6"/><path d="M9 11h6"/>',
   translate: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
@@ -63,6 +64,8 @@ const PATHS: Record<string, string> = {
   more: '<circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
+  chevronUp: '<polyline points="18 15 12 9 6 15"/>',
+  chevronDown: '<polyline points="6 9 12 15 18 9"/>',
   chevronLeft: '<path d="m15 18-6-6 6-6"/>',
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
   zoomIn: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>',
@@ -149,4 +152,13 @@ export function coverColors(seed: string): [string, string] {
   for (const ch of seed) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0;
   const hue = hsh % 360;
   return [`hsl(${hue} 28% 30%)`, `hsl(${(hue + 40) % 360} 32% 18%)`];
+}
+
+/** An M3 choice sheet (radio list) used in place of native <select> menus. */
+export function pickSheet<T extends string>(title: string, options: [T, string, string?][], value: T, onPick: (v: T) => void, closeLabel = 'Close'): void {
+  const sh = openSheet(title, closeLabel);
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  sh.body.append(h('div', { class: 'dest-list' }, ...options.map(([id, label, ic]) => h('label', { class: 'dest-row' + (id === value ? ' on' : '') },
+    h('input', { type: 'radio', name: 'kr-pick', checked: id === value, onchange: () => { sh.close(); onPick(id); } }),
+    ic ? icon(ic) : h('span'), h('span', { class: 'name', dir: 'auto' }, label)))));
 }
