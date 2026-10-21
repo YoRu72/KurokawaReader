@@ -3,9 +3,7 @@
 ### Android
 1. Download the APK that matches your phone — `arm64-v8a` fits almost every phone made since 2016; `armeabi-v7a` is for older 32‑bit devices; `universal` works everywhere but is larger.
 2. Open the file. If Android asks, allow installing from this source (Settings → Apps → Special access → Install unknown apps).
-3. After installing, EPUB/PDF/DOCX/… files offer **قارئ كروكاوا** in the "Open with" sheet (WhatsApp, Files, browsers).
-4. Releases are signed with the maintainer's private key, kept only in the repository's Actions secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`), so a newer APK installs over the old one and keeps your library. The key is never committed. Builds before 0.6.2 used other keys: uninstall those once first.
-5. *Scan the whole device* asks for **All files access** on Android 11+; you can decline and pick a folder instead.
+3. Updates install over the previous version and keep your library; the app offers them itself (*Settings → App updates*).
 
 ### macOS
 Open the `.dmg` and drag KurokawaReader to Applications. The build is not notarized, so the first launch needs **right-click → Open** (or *System Settings → Privacy & Security → Open Anyway*).

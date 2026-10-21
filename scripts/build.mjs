@@ -82,6 +82,8 @@ const buildOptions = {
   target: ['es2022', 'chrome100', 'safari16', 'firefox110'],
   outdir: path.join(dist, 'assets'),
   entryNames: 'app',
+  splitting: true,
+  chunkNames: 'chunk-[name]-[hash]',
   assetNames: 'fonts/[name]-[hash]',
   minify: !watch,
   sourcemap: true,

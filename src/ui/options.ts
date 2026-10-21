@@ -115,11 +115,24 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle(t('tapToTurn'), s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
   grid.append(toggle(t('showStatusLine'), s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
   if (isTouchDevice()) grid.append(toggle(t('edgeBrightness'), s.edgeBrightness, (v) => updateSettings({ edgeBrightness: v })));
+  if (isTouchDevice()) grid.append(toggle(t('pinchText'), s.pinchText, (v) => updateSettings({ pinchText: v })));
   grid.append(toggle(t('keepAwake'), s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
   if (nativePlatform() === 'android') grid.append(toggle(t('volumeKeys'), s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section(t('translatorChoice'), segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
+
+  /* ----- Read aloud ----- */
+  if ('speechSynthesis' in window) {
+    grid.append(head('behaviour', t('readAloud')));
+    grid.append(stepper(t('speechRate'), s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
+    const voices = speechSynthesis.getVoices();
+    if (voices.length) {
+      const sel = h('select', { onchange: () => updateSettings({ speechVoice: sel.value }) }, h('option', { value: '' }, t('voiceDefault')), ...voices.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`))) as HTMLSelectElement;
+      sel.value = s.speechVoice;
+      grid.append(section(t('speechVoice'), sel));
+    }
+  }
 
   /* ----- Snapshots ----- */
   grid.append(head('behaviour', t('snapshot')));

@@ -38,6 +38,8 @@ export function settingsView(): HTMLElement {
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('orientation')), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('libraryView')), h('div', { class: 'segmented' }, ...([['cards', t('viewCards')], ['chips', t('viewChips')]] as ['cards' | 'chips', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.libraryView === id), onclick: () => { updateSettings({ libraryView: id }); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('importButtonPlace')), h('div', { class: 'segmented' }, ...([['top', t('importTop')], ['fab', t('importFab')]] as ['top' | 'fab', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.importButton === id), onclick: () => { updateSettings({ importButton: id }); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('coverSize')), h('div', { class: 'segmented' }, ...([['small', t('coverSmall')], ['medium', t('coverMedium')], ['large', t('coverLarge')]] as ['small' | 'medium' | 'large', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.coverSize === id), onclick: () => { updateSettings({ coverSize: id }); renderAppearance(); } }, label)))),
+      h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('openLastOnLaunch')), (() => { const c = h('input', { type: 'checkbox', checked: cur.openLastOnLaunch, onchange: () => updateSettings({ openLastOnLaunch: c.checked }) }) as HTMLInputElement; return c; })()),
     ];
     appearance.append(...parts.filter((x): x is HTMLElement => x !== null));
   };
@@ -81,6 +83,22 @@ export function settingsView(): HTMLElement {
   // Starter books
   body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: a.length })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));
+
+  // Backup & restore
+  const restoreInput = h('input', { type: 'file', accept: '.json,.zip,application/json,application/zip', hidden: true }) as HTMLInputElement;
+  const bkStatus = h('p', { class: 'src' });
+  restoreInput.addEventListener('change', async () => {
+    const f = restoreInput.files?.[0]; restoreInput.value = ''; if (!f) return;
+    bkStatus.textContent = t('importing', { n: 1 });
+    try { const { restoreBackup } = await import('../backup'); const n = await restoreBackup(f, (title) => { bkStatus.textContent = title; }); bkStatus.textContent = t('restored', { n }); toast(t('restored', { n })); }
+    catch (err) { bkStatus.textContent = `${t('restoreFailed')} — ${String((err as Error).message ?? err)}`; }
+  });
+  body.append(h('section', { class: 'card' }, h('h3', null, t('backup')), h('p', null, t('backupBody')),
+    h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+      h('button', { class: 'btn tonal small', onclick: async () => { const { backupNotes } = await import('../backup'); await backupNotes(); } }, icon('download'), t('backupNotes')),
+      h('button', { class: 'btn small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { backupFull } = await import('../backup'); await backupFull((d, n) => { bkStatus.textContent = `${d}/${n}`; }); bkStatus.textContent = ''; } finally { b.disabled = false; } } }, icon('books'), t('backupFull')),
+      h('button', { class: 'btn small outlined', onclick: () => restoreInput.click() }, icon('import'), t('restore')), restoreInput),
+    bkStatus));
 
   // Updates
   const upd = h('section', { class: 'card' }, h('h3', null, t('updates')));

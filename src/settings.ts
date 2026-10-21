@@ -63,6 +63,11 @@ export interface VisualSettings {
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   keepAwake: boolean;         // screen wake lock while reading
   edgeBrightness: boolean;    // left-edge swipe adjusts dimming
+  pinchText: boolean;         // two-finger pinch changes the text size
+  speechRate: number;         // read-aloud speed, 0.5–2
+  speechVoice: string;        // voice name, '' = system default for the language
+  openLastOnLaunch: boolean;  // reopen the last book when the app starts
+  coverSize: 'small' | 'medium' | 'large';
   volumeKeys: boolean;        // page turning with volume keys (Android)
 }
 
@@ -113,6 +118,11 @@ export const DEFAULTS: VisualSettings = {
   statusFilter: [],
   keepAwake: true,
   edgeBrightness: true,
+  pinchText: true,
+  speechRate: 1,
+  speechVoice: '',
+  openLastOnLaunch: false,
+  coverSize: 'medium',
   volumeKeys: false,
 };
 
@@ -205,6 +215,7 @@ export function applyChrome(s: VisualSettings = current): void {
   const html = document.documentElement;
   html.dataset.ui = light ? 'light' : 'dark';
   html.dataset.accent = s.accent;
+  html.style.setProperty('--cover-min', s.coverSize === 'small' ? '104px' : s.coverSize === 'large' ? '176px' : '136px');
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light);
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');

@@ -2,7 +2,7 @@ import './styles/fonts.css';
 import './styles/base.css';
 import './styles/reader.css';
 import { applyDocumentLang, onLangChange } from './i18n';
-import { onRoute, parseRoute, type Route } from './router';
+import { onRoute, parseRoute, navigate, type Route } from './router';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
 import { settingsView } from './views/settings';
@@ -43,6 +43,13 @@ onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());
+// Optionally resume the last book on a cold start.
+if (getSettings().openLastOnLaunch && (location.hash === '' || location.hash === '#/' || location.hash === '#')) {
+  void import('./db').then(({ db }) => db.allBooks()).then((books) => {
+    const last = books.filter((b) => b.lastOpenedAt).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
+    if (last) navigate(`/read/${last.id}`);
+  });
+}
 
 // Offline support.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {

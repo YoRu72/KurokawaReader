@@ -20,7 +20,7 @@ import { ReadingTracker, countWords } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot } from '../ui/textcard';
 import { exportNotes } from '../ui/exportnotes';
-import { attachEdgeBrightness } from '../ui/brightness';
+import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake } from '../native';
@@ -426,6 +426,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   });
 
   onDispose(attachEdgeBrightness(scroll));
+  onDispose(attachPinchText(scroll));
   const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (c === 'search') openSearch(); else if (c === 'options') openOptions(); };
   document.addEventListener('kr:command', onCommand);
   onDispose(() => document.removeEventListener('kr:command', onCommand));
@@ -717,7 +718,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (!text) { next(); return; }
       const u = new SpeechSynthesisUtterance(text);
       u.lang = isRtlText(text) ? 'ar-SA' : 'en-US';
-      u.rate = 1;
+      u.rate = getSettings().speechRate;
+      const vname = getSettings().speechVoice; const voice = vname ? speechSynthesis.getVoices().find((v) => v.name === vname) : undefined;
+      if (voice) u.voice = voice;
       u.onend = next;
       u.onerror = () => stopSpeaking();
       speechSynthesis.speak(u);
@@ -762,6 +765,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       case 'Home': scroll.scrollTop = 0; break;
       case 'End': scroll.scrollTop = scroll.scrollHeight; break;
       case '/': e.preventDefault(); openSearch(); break;
+      case '+': case '=': updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); break;
+      case '-': case '_': updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) }); break;
+      case '0': updateSettings({ fontSize: 19 }); break;
       case 'b': void addBookmark(); break;
       case 'g': showGallery(); break;
       case 'v': openOptions(); break;
@@ -849,7 +855,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     search: (text) => openSearch(text),
     highlight: () => toast(t('fmtPdf')),
     note: () => toast(t('fmtPdf')),
-    speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; speechSynthesis.speak(u); } },
+    speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; u.rate = getSettings().speechRate; speechSynthesis.speak(u); } },
     textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: t('appName') }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();
@@ -1001,6 +1007,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       case 'Home': viewer.goTo(1); break;
       case 'End': viewer.goTo(viewer.total); break;
       case '/': e.preventDefault(); openSearch(); break;
+      case '+': case '=': updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); break;
+      case '-': case '_': updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) }); break;
+      case '0': updateSettings({ fontSize: 19 }); break;
       case 'b': void addBookmark(); break;
       case 'c': openContents('toc'); break;
       case 'g': pageInput.focus(); break;

@@ -1,16 +1,22 @@
 // PDF viewing on top of pdf.js: lazily rendered pages with a selectable text
 // layer, a page slider, go-to, outline and full-text search.
-import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
 import { h } from '../ui/dom';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL('./pdf.worker.min.mjs', import.meta.url).href;
+// pdf.js (≈450 KB) is loaded on first use, not at start-up.
+type PdfJs = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+let pdfjsPromise: Promise<PdfJs> | null = null;
+export function loadPdfjs(): Promise<PdfJs> {
+  pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs').then((m) => { m.GlobalWorkerOptions.workerSrc = new URL('./pdf.worker.min.mjs', import.meta.url).href; return m; });
+  return pdfjsPromise;
+}
 
 const RES = new URL('./pdfjs/', import.meta.url).href;
 
 async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () => void }> {
+  const pdfjs = await loadPdfjs();
   const data = new Uint8Array(await file.arrayBuffer());
   const task = pdfjs.getDocument({
     data,
@@ -67,7 +73,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];
-  private rendered = new Map<number, { task?: pdfjs.RenderTask; canvas?: HTMLCanvasElement; text?: pdfjs.TextLayer }>();
+  private rendered = new Map<number, { task?: RenderTask; canvas?: HTMLCanvasElement; text?: TextLayer }>();
   private observer!: IntersectionObserver;
   private scale = 1;
   private baseWidths: number[] = [];
@@ -183,7 +189,7 @@ export class PdfViewer {
 
   private async renderPage(n: number): Promise<void> {
     if (this.destroyed || this.rendered.has(n)) return;
-    const entry: { task?: pdfjs.RenderTask; canvas?: HTMLCanvasElement; text?: pdfjs.TextLayer } = {};
+    const entry: { task?: RenderTask; canvas?: HTMLCanvasElement; text?: TextLayer } = {};
     this.rendered.set(n, entry);
     const el = this.pages[n - 1];
     let page: PDFPageProxy;
@@ -215,7 +221,7 @@ export class PdfViewer {
     const textDiv = h('div', { class: 'textLayer' });
     el.appendChild(textDiv);
     try {
-      const text = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textDiv, viewport });
+      const text = new (await loadPdfjs()).TextLayer({ textContentSource: page.streamTextContent(), container: textDiv, viewport });
       entry.text = text;
       await text.render();
       textDiv.appendChild(h('div', { class: 'endOfContent' }));

@@ -39,3 +39,22 @@ export function attachEdgeBrightness(area: HTMLElement): () => void {
   area.addEventListener('pointerup', up); area.addEventListener('pointercancel', up);
   return () => { area.removeEventListener('pointerdown', down); area.removeEventListener('pointermove', move); area.removeEventListener('pointerup', up); area.removeEventListener('pointercancel', up); hud?.remove(); };
 }
+
+/** Two-finger pinch on the page changes the text size (touch screens). */
+export function attachPinchText(area: HTMLElement): () => void {
+  if (!isTouchDevice()) return () => undefined;
+  let startDist = 0, startSize = 0, last = 0;
+  const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const start = (e: TouchEvent) => { if (e.touches.length === 2 && getSettings().pinchText) { startDist = dist(e.touches); startSize = getSettings().fontSize; last = startSize; } else startDist = 0; };
+  const move = (e: TouchEvent) => {
+    if (!startDist || e.touches.length !== 2) return;
+    e.preventDefault();
+    const size = Math.round(Math.min(40, Math.max(12, startSize * (dist(e.touches) / startDist))));
+    if (size !== last) { last = size; updateSettings({ fontSize: size }); }
+  };
+  const end = () => { startDist = 0; };
+  area.addEventListener('touchstart', start, { passive: true });
+  area.addEventListener('touchmove', move, { passive: false });
+  area.addEventListener('touchend', end); area.addEventListener('touchcancel', end);
+  return () => { area.removeEventListener('touchstart', start); area.removeEventListener('touchmove', move); area.removeEventListener('touchend', end); area.removeEventListener('touchcancel', end); };
+}

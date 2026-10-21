@@ -7,7 +7,7 @@ import { navigate } from './router';
 import { toast } from './ui/dom';
 import { t } from './i18n';
 
-interface CapApp { addListener(ev: 'appUrlOpen', fn: (d: { url: string }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null> }
+interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton', fn: (d: { url: string; canGoBack?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
 interface CapFs { readFile(o: { path: string }): Promise<{ data: string | Blob }> }
 interface CapGlobal { isNativePlatform?(): boolean; getPlatform?(): string; Plugins?: { App?: CapApp; Filesystem?: CapFs } }
 interface DesktopBridge { onOpenFile(cb: (p: { name: string; data: ArrayBuffer }) => void): void; platform: string }
@@ -49,6 +49,19 @@ export function initNativeBridges(): void {
   if (cap?.isNativePlatform?.() && cap.Plugins?.App) {
     void cap.Plugins.App.addListener('appUrlOpen', (d) => void handleUrl(d.url));
     void cap.Plugins.App.getLaunchUrl().then((d) => { if (d?.url) void handleUrl(d.url); }).catch(() => undefined);
+    // Android back: close whatever is open first (sheet, side panel, lightbox), then go back a view, then minimise.
+    void cap.Plugins.App.addListener('backButton', () => {
+      const sheet = document.querySelector('.sheet .sheet-head button') as HTMLButtonElement | null;
+      if (sheet) { sheet.click(); return; }
+      const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
+      if (panelClose) { panelClose.click(); return; }
+      // Full-screen overlays (gallery, pages grid, lightbox) carry a dialog role and a back/close button in their top bar.
+      const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && (d as HTMLElement).offsetParent !== null);
+      const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
+      if (overlayBtn) { overlayBtn.click(); return; }
+      if (location.hash && location.hash !== '#/' && location.hash !== '#') { navigate('/'); return; }
+      void cap.Plugins?.App?.minimizeApp?.();
+    });
   }
   if (window.kurokawaDesktop) {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
