@@ -61,14 +61,16 @@ export function libraryView(): HTMLElement {
     grid);
 
   const importTopBtn = iconButton('import', t('importBooks'), () => importMenu());
+  const syncTopBtn = iconButton('cloud', t('sync'), () => void import('../ui/syncsheet').then((m) => m.syncSheet()));
   const topbar = h('header', { class: 'topbar' },
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
     importTopBtn,
+    syncTopBtn,
     iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );
   const fab = h('button', { class: 'fab', type: 'button', onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks')));
-  const applyImportPlace = () => { const top = getSettings().importButton === 'top'; importTopBtn.hidden = !top; fab.hidden = selecting || top; };
+  const applyImportPlace = () => { const place = getSettings().importButton; importTopBtn.hidden = place !== 'top'; fab.hidden = selecting || place !== 'fab'; };
   onSettingsChange(() => { applyImportPlace(); renderChips(); });
 
   /** Pick files, or scan a folder on the device. */
@@ -245,8 +247,8 @@ export function libraryView(): HTMLElement {
   function renderChips() {
     clear(chips);
     chips.hidden = false;
-    const syncChip = h('button', { type: 'button', class: 'chip add sync-chip', 'aria-label': t('sync'), title: t('sync'), onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'));
-    if (!books.length) { chips.append(syncChip); return; }
+    const importChip = getSettings().importButton === 'chips' ? h('button', { type: 'button', class: 'chip add import-chip', 'aria-label': t('importBooks'), title: t('importBooks'), onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks'))) : null;
+    if (!books.length) { if (importChip) chips.append(importChip); else chips.hidden = true; return; }
     const chip = (label: string, id: string | null, iconName?: string) => {
       const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); } }, iconName ? icon(iconName) : null, h('span', null, label));
       // Drop target for dragged books
@@ -259,7 +261,7 @@ export function libraryView(): HTMLElement {
     chips.append(chip(t('allBooks'), null, 'library'));
     for (const f of folders) chips.append(chip(f.name, f.id, 'folder'));
     chips.append(h('button', { type: 'button', class: 'chip add', onclick: () => void newFolder() }, icon('folderPlus'), h('span', null, t('newFolder'))));
-    chips.append(syncChip);
+    if (importChip) chips.append(importChip);
   }
 
   function askName(title: string, initial = ''): Promise<string | null> {

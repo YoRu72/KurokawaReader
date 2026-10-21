@@ -19,6 +19,19 @@ interface Package {
   ncxItem?: ManifestItem;
 }
 
+// The unzipped package of the last few opened books, so coming back to a book
+// (or re-rendering it after a settings change) skips the zip directory parse.
+const pkgCache = new Map<string, { size: number; pkg: Promise<Package> }>();
+function cachedPackage(file: Blob, bookId: string): Promise<Package> {
+  const hit = pkgCache.get(bookId);
+  if (hit && hit.size === file.size) return hit.pkg;
+  const pkg = loadPackage(file);
+  pkg.catch(() => pkgCache.delete(bookId));
+  pkgCache.set(bookId, { size: file.size, pkg });
+  while (pkgCache.size > 3) pkgCache.delete(pkgCache.keys().next().value!);
+  return pkg;
+}
+
 async function loadPackage(file: Blob): Promise<Package> {
   const zip = await JSZip.loadAsync(file);
   const container = zipFile(zip, 'META-INF/container.xml');
@@ -260,7 +273,7 @@ export const epubHandler: FlowHandler = {
   },
 
   async render(file, ctx): Promise<FlowRender> {
-    const pkg = await loadPackage(file);
+    const pkg = await cachedPackage(file, ctx.bookId);
     const pool = new UrlPool();
     const idMap = new Map<string, string>();
     const root = document.createElement('div');

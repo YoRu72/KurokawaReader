@@ -2,7 +2,7 @@ import { familyFor } from './fonts';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
-export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'coffee' | 'lavender' | 'sky' | 'custom';
+export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'coffee' | 'lavender' | 'sky' | 'charcoal' | 'nord' | 'dracula' | 'solardark' | 'gruvbox' | 'solarlight' | 'cream' | 'peach' | 'custom';
 export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots';
 export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
@@ -62,9 +62,10 @@ export interface VisualSettings {
   autoUpdateCheck: boolean;
   tapToTurn: boolean;
   showStatusLine: boolean;
-  importButton: 'top' | 'fab';
+  importButton: 'chips' | 'top' | 'fab';
   translator: 'builtin' | 'system';
   snapStyle: 'plain' | 'card';
+  snapWatermark: boolean;
   snapFolder: string;
   formatFilter: string[];
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
@@ -150,9 +151,10 @@ export const DEFAULTS: VisualSettings = {
   autoUpdateCheck: true,
   tapToTurn: true,
   showStatusLine: false,
-  importButton: 'top',
+  importButton: 'chips',
   translator: 'builtin',
   snapStyle: 'plain',
+  snapWatermark: false,
   snapFolder: 'Screenshots',
   formatFilter: [],
   statusFilter: [],
@@ -197,7 +199,10 @@ let current: VisualSettings = load();
 function load(): VisualSettings {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    const s: VisualSettings = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
+    if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
+    return s;
   } catch {
     return { ...DEFAULTS };
   }
@@ -216,6 +221,17 @@ export function updateSettings(patch: Partial<VisualSettings>): VisualSettings {
 
 export function resetSettings(): VisualSettings {
   return updateSettings({ ...DEFAULTS });
+}
+
+/** The factory value of one setting. */
+export function defaultOf<K extends keyof VisualSettings>(key: K): VisualSettings[K] { return DEFAULTS[key]; }
+/** True when the setting still has its factory value. */
+export function isDefault(key: keyof VisualSettings, s: VisualSettings = current): boolean { return JSON.stringify(s[key]) === JSON.stringify(DEFAULTS[key]); }
+/** Put one setting back to its factory value. */
+export function resetSetting(...keys: (keyof VisualSettings)[]): VisualSettings {
+  const patch: Partial<VisualSettings> = {};
+  for (const k of keys) (patch as Record<string, unknown>)[k] = DEFAULTS[k];
+  return updateSettings(patch);
 }
 
 export function onSettingsChange(fn: (s: VisualSettings) => void): () => void {
@@ -264,7 +280,7 @@ export function isLightColor(hex: string): boolean {
 }
 
 /** Which chrome the page would call for (light reading themes → light chrome). */
-const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky'];
+const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'];
 export function pageIsLight(s: VisualSettings = current): boolean {
   if (s.bgOverride) return isLightColor(s.bgOverride);
   return LIGHT_THEMES.includes(s.theme) || (s.theme === 'custom' && isLightColor(s.customBg));

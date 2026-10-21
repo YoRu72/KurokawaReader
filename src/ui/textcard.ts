@@ -136,8 +136,7 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
     ctx.fillStyle = L.dim; ctx.font = `26px ${titleRtl ? L.fontRtl : L.font}`;
     if (o.author) ctx.fillText(o.author, tx, H - pad + 2);
     ctx.direction = 'ltr'; ctx.textAlign = titleRtl ? 'left' : 'right';
-    ctx.font = `24px Inter, system-ui, sans-serif`;
-    ctx.fillText(o.appName, titleRtl ? pad : W - pad, H - pad - 10);
+    if (o.appName) { ctx.font = `24px Inter, system-ui, sans-serif`; ctx.fillText(o.appName, titleRtl ? pad : W - pad, H - pad - 10); }
   }
   return c;
 }

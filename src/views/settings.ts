@@ -4,7 +4,7 @@ import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
 import { colorField } from '../ui/colorpicker';
-import { getSettings, updateSettings, applyOrientation, type UiMode, type Accent, type Orientation } from '../settings';
+import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting, type VisualSettings, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
@@ -34,13 +34,13 @@ export function settingsView(): HTMLElement {
     const accents: [Accent, string, string][] = [['graphite', t('accentGraphite'), '#c9ccd2'], ['aqua', t('accentAqua'), '#8fd0f0'], ['teal', t('accentTeal'), '#86d6cf'], ['gold', t('accentGold'), '#ebc47e'], ['coral', t('accentCoral'), '#ffb59f'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['olive', t('accentOlive'), '#c3cf9a'], ['sand', t('accentSand'), '#e3c9a3'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
     const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('uiMode')), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('accent')), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
+      h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
       cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), colorField(cur.accentCustom, (v) => updateSettings({ accentCustom: v }), t('accentCustom'))) : null,
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('orientation')), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('libraryView')), h('div', { class: 'segmented' }, ...([['cards', t('viewCards')], ['chips', t('viewChips')]] as ['cards' | 'chips', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.libraryView === id), onclick: () => { updateSettings({ libraryView: id }); renderAppearance(); } }, label)))),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('importButtonPlace')), h('div', { class: 'segmented' }, ...([['top', t('importTop')], ['fab', t('importFab')]] as ['top' | 'fab', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.importButton === id), onclick: () => { updateSettings({ importButton: id }); renderAppearance(); } }, label)))),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('coverSize')), h('div', { class: 'segmented' }, ...([['small', t('coverSmall')], ['medium', t('coverMedium')], ['large', t('coverLarge')]] as ['small' | 'medium' | 'large', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.coverSize === id), onclick: () => { updateSettings({ coverSize: id }); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, resettable(t('orientation'), 'orientation', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, resettable(t('libraryView'), 'libraryView', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...([['cards', t('viewCards')], ['chips', t('viewChips')]] as ['cards' | 'chips', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.libraryView === id), onclick: () => { updateSettings({ libraryView: id }); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, resettable(t('importButtonPlace'), 'importButton', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...([['chips', t('importChips')], ['top', t('importTop')], ['fab', t('importFab')]] as ['chips' | 'top' | 'fab', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.importButton === id), onclick: () => { updateSettings({ importButton: id }); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, resettable(t('coverSize'), 'coverSize', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...([['small', t('coverSmall')], ['medium', t('coverMedium')], ['large', t('coverLarge')]] as ['small' | 'medium' | 'large', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.coverSize === id), onclick: () => { updateSettings({ coverSize: id }); renderAppearance(); } }, label)))),
       h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('openLastOnLaunch')), (() => { const c = h('input', { type: 'checkbox', checked: cur.openLastOnLaunch, onchange: () => updateSettings({ openLastOnLaunch: c.checked }) }) as HTMLInputElement; return c; })()),
     ];
     appearance.append(...parts.filter((x): x is HTMLElement => x !== null));
@@ -250,4 +250,11 @@ export function settingsView(): HTMLElement {
   };
   search.addEventListener('input', applySearch);
   return root;
+}
+
+/** Field label with a "back to default" button once the setting has been changed. */
+function resettable(text: string, key: keyof VisualSettings, after: () => void): HTMLElement {
+  const span = h('span', { class: 'label' }, text);
+  if (!isDefault(key)) span.append(h('button', { type: 'button', class: 'reset-one', title: t('resetThis'), 'aria-label': t('resetThis'), onclick: () => { resetSetting(key); after(); } }, icon('undo')));
+  return span;
 }

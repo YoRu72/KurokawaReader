@@ -11,7 +11,7 @@
 
 - **Library** — import, drag in, open from other apps, or scan the device; folders, filters, search, continue-reading card.
 - **Reading** — chapters or continuous, several books in one flow, bookmarks, highlights with numbered notes, PDF pinned notes, a notes page across all books, search, furigana, read-aloud, gestures, rebindable shortcuts, immersive mode.
-- **Look** — presets, 19 themes, custom colours with a wheel picker, textures and background pictures, your own fonts.
+- **Look** — presets, 27 themes, custom colours with a wheel picker, textures and background pictures, your own fonts.
 - **Tools** — snapshots of selected text, translation (built-in, device apps, or AI chapter translation with your own key), AI voices, export pages as PNG.
 - **Sync & backup** — progress and notes synced through your Dropbox / WebDAV / a Drive folder; portable backups (JSON or ZIP with books) that restore on any platform.
 - **Updates** — checked at launch; downloaded and installed in-app on every platform.

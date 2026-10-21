@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "KurokawaReader — an offline reader for EPUB, PDF, DOCX, XLSX, PPTX, TXT and more, with first-class Arabic typography (Lora · Uthman TN1 · Sultan).",
   "private": true,
   "type": "module",

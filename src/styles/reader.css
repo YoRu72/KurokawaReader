@@ -27,6 +27,14 @@
 .reader[data-theme='paper'] { --r-bg: #ebe5da; --r-fg: #27221d; --r-dim: #6e665b; --r-link: #7a4e12; --r-rule: #cfc6b7; --r-img-filter: none; }
 .reader[data-theme='light'] { --r-bg: #fbfaf7; --r-fg: #1d1a16; --r-dim: #6a635a; --r-link: #8a5a1e; --r-rule: #e2ddd3; --r-img-filter: none; }
 .reader[data-theme='custom'] { --r-bg: var(--r-custom-bg, #14110f); --r-fg: var(--r-custom-fg, #e6dcc8); --r-dim: color-mix(in srgb, var(--r-fg) 65%, var(--r-bg)); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg)); --r-link: color-mix(in srgb, var(--r-fg) 80%, #d8b36a); }
+.reader[data-theme='charcoal'] { --r-bg: #232323; --r-fg: #dcdcdc; --r-dim: #8e8e8e; --r-rule: #383838; --r-link: #9ccbe8; }
+.reader[data-theme='nord'] { --r-bg: #2e3440; --r-fg: #d8dee9; --r-dim: #8b94a5; --r-rule: #3b4252; --r-link: #88c0d0; }
+.reader[data-theme='dracula'] { --r-bg: #282a36; --r-fg: #f8f8f2; --r-dim: #9a9cab; --r-rule: #3b3d4d; --r-link: #8be9fd; }
+.reader[data-theme='solardark'] { --r-bg: #002b36; --r-fg: #a9b7b8; --r-dim: #657b83; --r-rule: #0f3a45; --r-link: #6fb3d2; }
+.reader[data-theme='gruvbox'] { --r-bg: #282828; --r-fg: #ebdbb2; --r-dim: #a89984; --r-rule: #3c3836; --r-link: #83a598; }
+.reader[data-theme='solarlight'] { --r-bg: #fdf6e3; --r-fg: #586e75; --r-dim: #93a1a1; --r-rule: #e9e2cf; --r-link: #268bd2; --r-img-filter: none; }
+.reader[data-theme='cream'] { --r-bg: #fff8e7; --r-fg: #2d2a26; --r-dim: #7a736a; --r-rule: #eadfc9; --r-link: #8a5a1e; --r-img-filter: none; }
+.reader[data-theme='peach'] { --r-bg: #fbeee4; --r-fg: #3a2a22; --r-dim: #8a7066; --r-rule: #ecd8cb; --r-link: #a0522d; --r-img-filter: none; }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
 
 /* Background systems: texture, picture, warmth and brightness overlays — all
@@ -234,7 +242,11 @@ html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
 .autoscroll-hud svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }
 
 /* Immersive mode hides chrome */
-.reader-view .topbar { position: absolute; left: 0; right: 0; transition: transform var(--dur-med) var(--ease-emph), opacity var(--dur-med); }
+/* Reader chrome takes the page's own colours so the top strip (incl. the status-bar area) never clashes with the text surface. */
+.reader-view .topbar { position: absolute; left: 0; right: 0; transition: transform var(--dur-med) var(--ease-emph), opacity var(--dur-med), background var(--dur-med); background: color-mix(in srgb, var(--chrome-bg, var(--md-surface)) 86%, transparent); color: var(--chrome-fg, var(--md-on-surface)); }
+.reader-view .topbar .title small, .reader-view .read-footer { color: color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 70%, transparent); }
+.reader-view .topbar .icon-btn { color: inherit; }
+.reader-view .read-footer { background: color-mix(in srgb, var(--chrome-bg, var(--md-surface)) 86%, transparent); }
 .reader-view .reader { padding-top: calc(var(--topbar-h) + 24px + var(--safe-top)); }
 .reader-view.immersive .topbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
 .reader-view.immersive .read-footer { opacity: 0; }

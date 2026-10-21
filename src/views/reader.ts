@@ -9,7 +9,7 @@ import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
 import { BLOCK_SELECTOR } from '../formats/shared';
 import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
-import { applySettings, getSettings, onSettingsChange, updateSettings } from '../settings';
+import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
 import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
@@ -42,7 +42,7 @@ interface OpenDoc {
   chapter: number;
 }
 
-interface SearchHit { bookId: string; label: string; before: string; match: string; after: string; range: Range }
+interface SearchHit { bookId: string; label: string; pct: number; before: string; match: string; after: string; range: Range }
 
 export function readerView(ids: string[]): HTMLElement {
   const root = h('div', { class: 'view reader-view' });
@@ -72,6 +72,8 @@ export function readerView(ids: string[]): HTMLElement {
 async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void): Promise<void> {
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
+  const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
+  onDispose(() => { document.body.style.background = ''; applyChrome(); });
   const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
   queueMicrotask(syncComfort);
   const flow = h('div', { class: 'reader-flow' });
@@ -126,6 +128,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   reader.append(scroll);
   const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
   root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  syncChrome();
   const chapterMode = () => getSettings().readingMode === 'chapters';
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
 
@@ -157,6 +160,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     docs.push({ book, wrapper, blocks: [], allBlocks: [], chapters: [], chapter: 0 });
   }
   flow.append(chapterNav);
+
+  // Reader state lives above the (slow) render loop so toolbar actions used while
+  // a long book is still rendering never hit a temporal-dead-zone error.
+  let swipe: { x: number; y: number; t: number } | null = null;
+  let searchHighlight: Highlight | undefined;
+  let autoScrollRaf = 0;
+  let autoHud: HTMLElement | null = null;
+  let speaking = false;
+  let aiAudio: HTMLAudioElement | null = null;
+  const aiQueue = new Map<string, Blob>();
+  let sleepTimer = 0;
 
   async function renderDoc(doc: OpenDoc): Promise<void> {
     const handler = flowHandlerFor(doc.book.format);
@@ -234,12 +248,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   /* ---------- chapter mode ---------- */
   interface Unit { doc: OpenDoc; el: HTMLElement; index: number }
-  const units = (): Unit[] => docs.flatMap((doc) => doc.chapters.map((el, index) => ({ doc, el, index })));
-  const chapterTitle = (u: Unit): string => {
+  function units(): Unit[] { return docs.flatMap((doc) => doc.chapters.map((el, index) => ({ doc, el, index }))); }
+  function chapterTitle(u: Unit): string {
     const toc = u.doc.render?.toc ?? [];
     const hit = toc.find((item) => { const el = document.getElementById(item.anchor); return !!el && (el === u.el || u.el.contains(el)); });
     return (u.el.querySelector('h1, h2, h3')?.textContent?.trim() || hit?.label || '').trim();
-  };
+  }
   function currentUnitIndex(): number {
     const cur = currentLocator();
     const list = units();
@@ -293,7 +307,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (k >= 0 && (list[k].doc.chapter !== list[k].index || list[k].doc.wrapper.hidden)) showUnit(k);
   }
   // Swipe between chapters on touch screens.
-  let swipe: { x: number; y: number; t: number } | null = null;
   scroll.addEventListener('touchstart', (e) => { const tch = e.touches[0]; swipe = { x: tch.clientX, y: tch.clientY, t: Date.now() }; }, { passive: true });
   scroll.addEventListener('touchend', (e) => {
     if (!swipe || !chapterMode()) return;
@@ -456,7 +469,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => { window.clearTimeout(saveTimer); void saveProgress(); docs.forEach((d) => d.render?.dispose()); });
 
   /* ---------- settings ---------- */
-  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome(); }));
+  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome(); }));
   root.addEventListener('kr-rerender', async () => {
     const cur = currentLocator();
     for (const doc of docs) await renderDoc(doc);
@@ -516,7 +529,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const cur = currentLocator();
     const book = cur?.doc.book ?? docs[0].book;
     try {
-      const opts = { text, title: book.title, author: book.author, appName: t('appName') };
+      const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '' };
       showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style }));
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
@@ -659,7 +672,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
 
   /* ---------- search ---------- */
-  let searchHighlight: Highlight | undefined;
   function clearSearchMarks(): void {
     const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
     reg?.delete('kr-search');
@@ -688,7 +700,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           range.setStart(node, s); range.setEnd(node, e);
           ranges.push(range);
           const block = (node.parentElement?.closest(BLOCK_SELECTOR) as HTMLElement | null);
-          hits.push({ bookId: doc.book.id, label: labelFor(doc, block ? Math.max(0, doc.blocks.indexOf(block)) : 0), before: text.slice(Math.max(0, s - 60), s), match: text.slice(s, e), after: text.slice(e, e + 60), range });
+          const all = doc.allBlocks.length ? doc.allBlocks : doc.blocks;
+          const bi = block ? Math.max(0, all.indexOf(block)) : 0;
+          hits.push({ bookId: doc.book.id, label: labelFor(doc, bi), pct: all.length ? (bi / all.length) * 100 : 0, before: text.slice(Math.max(0, s - 60), s), match: text.slice(s, e), after: text.slice(e, e + 60), range });
           idx = norm.text.indexOf(q.text, idx + q.text.length);
         }
       }
@@ -716,16 +730,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         for (const hit of hits) {
           if (docs.length > 1 && hit.bookId !== lastBook) { lastBook = hit.bookId; list.append(h('div', { class: 'toc-book', dir: 'auto' }, docs.find((d) => d.book.id === hit.bookId)?.book.title)); }
           list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => {
-            const el = hit.range.startContainer.parentElement!;
-            const sr = scroll.getBoundingClientRect();
-            const r = hit.range.getBoundingClientRect();
-            scroll.scrollTop += r.top - sr.top - sr.height * 0.3;
-            const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-            const HL = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
-            if (reg && HL) reg.set('kr-search-current', new HL(hit.range));
-            el.classList.add('kr-flash'); setTimeout(() => el.classList.remove('kr-flash'), 1600);
+            const el = (hit.range.startContainer.parentElement ?? hit.range.startContainer) as HTMLElement;
+            const block = (el.closest(BLOCK_SELECTOR) as HTMLElement | null) ?? el;
             if (window.innerWidth < 900) panel.close();
-          } }, h('span', { class: 'meta', dir: 'auto' }, hit.label), h('span', { class: 'ctx', dir: 'auto' }, '…' + hit.before, h('mark', null, hit.match), hit.after + '…'))));
+            // The hit may sit in a hidden chapter or another book: show it first, then measure.
+            revealElement(block);
+            const jump = () => {
+              const sr = scroll.getBoundingClientRect();
+              const r = hit.range.getBoundingClientRect();
+              const rect = r.height ? r : block.getBoundingClientRect();
+              scroll.scrollTop += rect.top - sr.top - sr.height * 0.3;
+              const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+              const HL = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+              if (reg && HL) reg.set('kr-search-current', new HL(hit.range));
+              block.classList.add('kr-flash'); setTimeout(() => block.classList.remove('kr-flash'), 1600);
+              scheduleSave();
+            };
+            requestAnimationFrame(jump);
+          } },
+            h('span', { class: 'meta', dir: 'auto' }, hit.label, h('b', { class: 'hit-pct' }, localDigits(hit.pct.toFixed(1)) + '%')),
+            h('span', { class: 'ctx', dir: 'auto' }, (hit.before ? '…' : '') + hit.before, h('mark', null, hit.match), hit.after + (hit.after ? '…' : '')))));
         }
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(run, 250); });
@@ -767,8 +791,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     panel.open(t('visualOptions'), [{ id: 'options', label: t('visualOptions'), render: (body) => renderOptions(body) }]);
   }
 
-  let autoScrollRaf = 0;
-  let autoHud: HTMLElement | null = null;
   function toggleAutoScroll(): void {
     if (autoScrollRaf) { stopAutoScroll(); return; }
     let speed = getSettings().autoScrollSpeed;
@@ -788,7 +810,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(stopAutoScroll);
 
   // Read aloud with the Web Speech API (voices are the device's own, so this works offline where the OS provides them).
-  let speaking = false;
   function speak(chunks: string[], startBlock?: { doc: OpenDoc; index: number }): void {
     if (!('speechSynthesis' in window)) return;
     stopSpeaking();
@@ -841,13 +862,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     };
     next();
   }
-  let aiAudio: HTMLAudioElement | null = null;
-  const aiQueue = new Map<string, Blob>();
   function stopSpeaking(): void { speaking = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
   onDispose(stopSpeaking);
 
   // Sleep timer: stops read-aloud and auto-scroll after N minutes.
-  let sleepTimer = 0;
   function sleepTimerSheet(): void {
     if (sleepTimer) { window.clearTimeout(sleepTimer); sleepTimer = 0; toast(t('sleepTimerOff')); return; }
     const sh = openSheet(t('sleepTimer'), t('close'));
@@ -941,6 +959,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   if (!file) { navigate('/', true); return; }
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
+  const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
+  onDispose(() => { document.body.style.background = ''; applyChrome(); });
   const title = h('div', { class: 'title', dir: 'auto' }, book.title, h('small', null, book.author ?? ''));
   const panel = new SidePanel(root);
   const pageInput = h('input', { type: 'number', min: '1', 'aria-label': t('goToPage') }) as HTMLInputElement;
@@ -969,6 +989,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
   queueMicrotask(syncComfort);
   root.append(topbar, reader, bar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
+  syncChrome();
 
   const openPdfOptions = () => panel.open(t('visualOptions'), [{ id: 'o', label: t('visualOptions'), render: (b) => renderOptions(b, { pdf: true }) }]);
   let saveTimer: number | undefined;
@@ -994,13 +1015,13 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   else if (jump?.kind === 'pin') { const pin = (book.pins ?? []).find((x) => x.id === jump.id); if (pin) viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); }
   else if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
   onDispose(() => viewer.destroy());
-  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncComfort(); viewer.setInvert(s.pdfInvert); }));
+  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   onDispose(attachSelectionToolbar(reader, {
     search: (text) => openSearch(text),
     highlight: () => toast(t('fmtPdf')),
     note: () => toast(t('fmtPdf')),
     speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; u.rate = getSettings().speechRate; speechSynthesis.speak(u); } },
-    textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: t('appName') }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
+    textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '' }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
