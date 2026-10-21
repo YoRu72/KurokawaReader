@@ -113,6 +113,12 @@ html[data-ui='light'] {
 }
 
 /* ---------- Accent presets (dark / light) ---------- */
+html[data-accent='graphite'] { --md-primary: #c9ccd2; --md-on-primary: #1f2226; --md-primary-container: #3a3e45; --md-on-primary-container: #e6e8ec; --md-secondary-container: #2e3237; --md-on-secondary-container: #dfe2e6; --md-tertiary-container: #2b3540; --md-on-tertiary-container: #d6e1ec; }
+html[data-accent='graphite'][data-ui='light'] { --md-primary: #3f444b; --md-on-primary: #fff; --md-primary-container: #dfe2e6; --md-on-primary-container: #15181b; --md-secondary-container: #e6e8ec; --md-on-secondary-container: #1a1d20; --md-tertiary-container: #d8e3ee; --md-on-tertiary-container: #0f1d2a; }
+html[data-accent='teal'] { --md-primary: #86d6cf; --md-on-primary: #003733; --md-primary-container: #1f4f4a; --md-on-primary-container: #b5f1ea; --md-secondary-container: #2d3f3d; --md-on-secondary-container: #cfe6e3; --md-tertiary-container: #2f3f52; --md-on-tertiary-container: #cfdff5; }
+html[data-accent='teal'][data-ui='light'] { --md-primary: #136a63; --md-on-primary: #fff; --md-primary-container: #b5f1ea; --md-on-primary-container: #00201d; --md-secondary-container: #d2e6e3; --md-on-secondary-container: #0f1f1d; --md-tertiary-container: #d4e3f5; --md-on-tertiary-container: #0c1a2a; }
+html[data-accent='coral'] { --md-primary: #ffb59f; --md-on-primary: #561f0b; --md-primary-container: #6e3420; --md-on-primary-container: #ffdbcf; --md-secondary-container: #4e3b34; --md-on-secondary-container: #f1dcd4; --md-tertiary-container: #4a4a2a; --md-on-tertiary-container: #e9e8c0; }
+html[data-accent='coral'][data-ui='light'] { --md-primary: #96472b; --md-on-primary: #fff; --md-primary-container: #ffdbcf; --md-on-primary-container: #370e00; --md-secondary-container: #f5dcd3; --md-on-secondary-container: #2c1510; --md-tertiary-container: #e9e8c0; --md-on-tertiary-container: #202008; }
 html[data-accent='aqua'] { --md-primary: #8fd0f0; --md-on-primary: #003546; --md-primary-container: #1f4b5e; --md-on-primary-container: #c8ecff; --md-secondary-container: #2c3f49; --md-on-secondary-container: #d2e6ef; --md-tertiary-container: #2f4a3a; --md-on-tertiary-container: #c7f0d7; }
 html[data-accent='aqua'][data-ui='light'] { --md-primary: #11617c; --md-on-primary: #fff; --md-primary-container: #c3e8fb; --md-on-primary-container: #001f2b; --md-secondary-container: #d3e5ee; --md-on-secondary-container: #0e1d24; --md-tertiary-container: #cdeedb; --md-on-tertiary-container: #0a2418; }
 html[data-accent='gold'] { --md-primary: #ebc47e; --md-on-primary: #412d00; --md-primary-container: #5d4300; --md-on-primary-container: #ffdea8; --md-secondary-container: #52442f; --md-on-secondary-container: #f5e0c1; --md-tertiary-container: #274e44; --md-on-tertiary-container: #c2f0df; }
@@ -510,3 +516,14 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .chip.add { background: transparent; box-shadow: inset 0 0 0 1px var(--md-outline-variant); }
 .chip.drop { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: var(--sh-full); transform: scale(1.06); }
 .dragging-book .chip { outline: 2px dashed color-mix(in srgb, var(--md-primary) 50%, transparent); outline-offset: 2px; }
+
+.shortcuts-hint { color: var(--md-on-surface-dim); font-size: 12px; margin-top: 18px; line-height: 1.7; }
+.shortcuts-hint svg { width: 16px; height: 16px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+
+/* Folder cards */
+.cover.folder { display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.cover.folder > svg { width: 44px; height: 44px; fill: none; stroke: currentColor; stroke-width: 1.6; position: relative; z-index: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
+.cover.folder .stack { position: absolute; inset: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; opacity: .55; }
+.cover.folder .stack img, .cover.folder .stack .ph { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+.folder-card.add .cover.folder { background: transparent; box-shadow: inset 0 0 0 2px dashed var(--md-outline-variant); border: 2px dashed var(--md-outline-variant); color: var(--md-on-surface-dim); }
+.folder-card.drop .cover { transform: scale(1.06); box-shadow: 0 0 0 3px var(--md-primary), var(--el-3); }

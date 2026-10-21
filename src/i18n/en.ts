@@ -1,7 +1,7 @@
 // English UI strings. Keys are shared with ar.ts — keep both in sync.
 export const en = {
   appName: 'KurokawaReader',
-  tagline: 'An offline reader for everything readable.',
+  tagline: 'A reader for anything that can be read.',
 
   // Navigation
   library: 'Library',
@@ -303,6 +303,40 @@ export const en = {
   emptyFolder: 'This folder is empty',
   importHere: 'Import into this folder',
   noFolder: 'No folder',
+
+  direction: 'Layout direction',
+  dirAuto: 'By language',
+  dirLtr: 'Left to right',
+  dirRtl: 'Right to left',
+  langSystem: 'System',
+  readingMode: 'Reading flow',
+  modeChapters: 'Chapter by chapter',
+  modeContinuous: 'Continuous scroll',
+  nextChapter: 'Next chapter',
+  prevChapter: 'Previous chapter',
+  endOfBook: 'End of book',
+  hideSystemBars: 'Hide status and navigation bars while reading',
+  textColorOverride: 'Text colour',
+  pageColorOverride: 'Page colour',
+  useThemeColor: 'Theme default',
+  libraryView: 'Library view',
+  viewChips: 'Folder tabs',
+  viewCards: 'Folders beside the books',
+  sortSize: 'Size',
+  sortTitleNum: 'Title (1, 2, 10…)',
+  showAll: 'Show everything',
+  themeGrey: 'Grey',
+  themeSlate: 'Slate',
+  themeMintPaper: 'Mint paper',
+  themeRosePaper: 'Rose paper',
+  themeNight: 'Night blue',
+  accentGraphite: 'Graphite',
+  accentTeal: 'Teal',
+  accentCoral: 'Coral',
+  openFolder: 'Open folder',
+  booksInFolder: '{n} inside',
+  create: 'Create',
+  rename: 'Rename',
 };
 
 export type Strings = typeof en;

@@ -16,19 +16,28 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 
   /* ----- Theme ----- */
   const themes: [Theme, string, string, string][] = [
-    ['dark', t('themeDark'), '#14110f', '#e6dcc8'], ['black', t('themeBlack'), '#000', '#d9d2c4'], ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'],
-    ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['custom', t('themeCustom'), s.customBg, s.customFg],
+    ['grey', t('themeGrey'), '#1b1b1b', '#d2d2d2'], ['dark', t('themeDark'), '#141414', '#cfcbc4'], ['black', t('themeBlack'), '#000', '#c9c9c9'], ['slate', t('themeSlate'), '#1e2228', '#d3d8de'], ['night', t('themeNight'), '#0f1626', '#cfd8e8'],
+    ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'], ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['mintpaper', t('themeMintPaper'), '#e6efe6', '#1f2a22'], ['rosepaper', t('themeRosePaper'), '#f3e6e6', '#2c1e20'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['custom', t('themeCustom'), s.customBg, s.customFg],
   ];
   grid.append(head('theme', t('theme')), h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
-    h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
+    h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
   if (s.theme === 'custom') {
     grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => updateSettings({ customBg: v }))),
       h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => updateSettings({ customFg: v }))));
+  } else {
+    // Colour overrides on top of the chosen theme
+    const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
+    const fgNow = s.fgOverride || cur.getPropertyValue('--r-fg').trim() || '#d2d2d2';
+    const bgNow = s.bgOverride || cur.getPropertyValue('--r-bg').trim() || '#1b1b1b';
+    grid.append(
+      h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColorOverride')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.fgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ fgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(fgNow), (v) => updateSettings({ fgOverride: v })))),
+      h('div', { class: 'row' }, h('span', { class: 'label' }, t('pageColorOverride')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.bgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ bgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(bgNow), (v) => updateSettings({ bgOverride: v })))),
+    );
   }
 
   // Presets: one-tap comfortable combinations.
   const presets: [string, Partial<VisualSettings>][] = [
-    [t('presetNight'), { theme: 'black', texture: 'none', warmth: 0.18, dimOverlay: 0.1, bgImage: false }],
+    [t('presetNight'), { theme: 'night', texture: 'none', warmth: 0.12, dimOverlay: 0.08, bgImage: false, fgOverride: '', bgOverride: '' }],
     [t('presetCandle'), { theme: 'custom', customBg: '#2a1d12', customFg: '#f1dcb8', texture: 'paper', textureOpacity: 0.45, warmth: 0.25, dimOverlay: 0, bgImage: false }],
     [t('presetManuscript'), { theme: 'custom', customBg: '#e9d9b6', customFg: '#3a2a16', texture: 'parchment', textureOpacity: 0.6, warmth: 0.05, dimOverlay: 0, bgImage: false }],
     [t('presetDaylight'), { theme: 'light', texture: 'none', warmth: 0, dimOverlay: 0, bgImage: false }],
@@ -98,6 +107,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 
   /* ----- Behaviour ----- */
   grid.append(head('behaviour', t('behaviourSection')));
+  const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['continuous', t('modeContinuous')]];
+  grid.append(section(t('readingMode'), segmented(modes, s.readingMode, (v) => { updateSettings({ readingMode: v }); rerender(); bump(); })));
+  grid.append(toggle(t('hideSystemBars'), s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
 
   container.append(grid, footer());
@@ -110,6 +122,12 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 function head(_id: Section, label: string): HTMLElement { return h('h4', null, label); }
 function section(label: string, control: HTMLElement): HTMLElement { return h('div', { class: 'field' }, h('span', { class: 'label' }, label), control); }
 function pct(v: number): string { return `${Math.round(v * 100)}%`; }
+function toHex(c: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c);
+  if (!m) return '#888888';
+  return '#' + [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, '0')).join('');
+}
 function round2(v: number): number { return Math.round(v * 100) / 100; }
 
 function colorInput(value: string, onChange: (v: string) => void): HTMLElement {

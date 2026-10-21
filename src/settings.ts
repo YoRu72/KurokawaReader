@@ -2,10 +2,10 @@ import { familyFor } from './fonts';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
-export type Theme = 'dark' | 'black' | 'sepia' | 'paper' | 'light' | 'custom';
+export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'custom';
 export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots';
 export type UiMode = 'system' | 'light' | 'dark' | 'page';
-export type Accent = 'aqua' | 'gold' | 'rose' | 'mint' | 'violet' | 'mono' | 'custom';
+export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher' | (string & {});
@@ -44,10 +44,18 @@ export interface VisualSettings {
   accentCustom: string;    // hex, used when accent === 'custom'
   orientation: Orientation;
   highlightColor: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
+  /* Overrides that apply on top of any theme ('' = theme default) */
+  fgOverride: string;
+  bgOverride: string;
+  /* Reading flow */
+  readingMode: 'chapters' | 'continuous';
+  hideSystemBars: boolean;
+  /* Library */
+  libraryView: 'cards' | 'chips';
 }
 
 export const DEFAULTS: VisualSettings = {
-  theme: 'dark',
+  theme: 'grey',
   latinFont: 'lora',
   arabicFont: 'uthman',
   fontSize: 19,
@@ -72,11 +80,16 @@ export const DEFAULTS: VisualSettings = {
   bgBlur: 0,
   warmth: 0,
   dimOverlay: 0,
-  uiMode: 'system',
-  accent: 'aqua',
+  uiMode: 'page',
+  accent: 'graphite',
   accentCustom: '#7fb8ff',
   orientation: 'auto',
   highlightColor: 'amber',
+  fgOverride: '',
+  bgOverride: '',
+  readingMode: 'chapters',
+  hideSystemBars: true,
+  libraryView: 'cards',
 };
 
 const KEY = 'kr.visual';
@@ -153,8 +166,10 @@ export function isLightColor(hex: string): boolean {
 }
 
 /** Which chrome the page would call for (light reading themes → light chrome). */
+const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper'];
 export function pageIsLight(s: VisualSettings = current): boolean {
-  return s.theme === 'sepia' || s.theme === 'paper' || s.theme === 'light' || (s.theme === 'custom' && isLightColor(s.customBg));
+  if (s.bgOverride) return isLightColor(s.bgOverride);
+  return LIGHT_THEMES.includes(s.theme) || (s.theme === 'custom' && isLightColor(s.customBg));
 }
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
@@ -217,7 +232,11 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.dataset.theme = s.theme;
   root.dataset.dimImages = String(s.dimImages);
   root.dataset.texture = s.texture;
-  root.dataset.dark = String(s.theme === 'custom' ? !isLightColor(s.customBg) : s.theme === 'dark' || s.theme === 'black');
+  root.dataset.dark = String(!pageIsLight(s));
+  if (s.fgOverride) root.style.setProperty('--r-fg-override', s.fgOverride); else root.style.removeProperty('--r-fg-override');
+  if (s.bgOverride) root.style.setProperty('--r-bg-override', s.bgOverride); else root.style.removeProperty('--r-bg-override');
+  root.classList.toggle('has-fg-override', !!s.fgOverride);
+  root.classList.toggle('has-bg-override', !!s.bgOverride);
   root.style.setProperty('--r-custom-bg', s.customBg);
   root.style.setProperty('--r-custom-fg', s.customFg);
   root.style.setProperty('--r-texture-opacity', String(s.textureOpacity));

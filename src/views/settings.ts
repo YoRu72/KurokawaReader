@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear } from '../ui/dom';
-import { t, getLang, setLang, formatBytes } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -15,11 +15,12 @@ export function settingsView(): HTMLElement {
     body);
   const s = getSettings();
 
-  // Language
-  const langSeg = h('div', { class: 'segmented' },
-    h('button', { type: 'button', 'aria-pressed': String(getLang() === 'en'), onclick: () => { setLang('en'); navigate('/settings', true); } }, t('languageEnglish')),
-    h('button', { type: 'button', 'aria-pressed': String(getLang() === 'ar'), style: { fontFamily: 'var(--font-ui-ar)', fontSize: '16px' }, onclick: () => { setLang('ar'); navigate('/settings', true); } }, t('languageArabic')));
-  body.append(h('section', { class: 'card' }, h('h3', null, t('language')), langSeg));
+  // Language & direction
+  const langs: [LangPref, string][] = [['system', t('langSystem')], ['en', t('languageEnglish')], ['ar', t('languageArabic')]];
+  const dirs: [DirPref, string][] = [['auto', t('dirAuto')], ['ltr', t('dirLtr')], ['rtl', t('dirRtl')]];
+  body.append(h('section', { class: 'card' }, h('h3', null, t('language')),
+    h('div', { class: 'segmented' }, ...langs.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getLangPref() === id), style: id === 'ar' ? { fontFamily: 'var(--font-ui-ar)', fontSize: '16px' } : undefined, onclick: () => { setLangPref(id); navigate('/settings', true); } }, label))),
+    h('div', { class: 'field' }, h('span', { class: 'label' }, t('direction')), h('div', { class: 'segmented' }, ...dirs.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getDirPref() === id), onclick: () => { setDirPref(id); navigate('/settings', true); } }, label))))));
 
   // Appearance: interface mode, accent, orientation
   const appearance = h('section', { class: 'card' });
@@ -27,13 +28,14 @@ export function settingsView(): HTMLElement {
     clear(appearance);
     const cur = getSettings();
     const modes: [UiMode, string][] = [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')], ['page', t('uiPage')]];
-    const accents: [Accent, string, string][] = [['aqua', t('accentAqua'), '#8fd0f0'], ['gold', t('accentGold'), '#ebc47e'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
+    const accents: [Accent, string, string][] = [['graphite', t('accentGraphite'), '#c9ccd2'], ['aqua', t('accentAqua'), '#8fd0f0'], ['teal', t('accentTeal'), '#86d6cf'], ['gold', t('accentGold'), '#ebc47e'], ['coral', t('accentCoral'), '#ffb59f'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
     const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('uiMode')), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('accent')), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
       cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), (() => { const c = h('input', { type: 'color', value: cur.accentCustom, oninput: () => updateSettings({ accentCustom: c.value }) }) as HTMLInputElement; return c; })()) : null,
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('orientation')), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('libraryView')), h('div', { class: 'segmented' }, ...([['cards', t('viewCards')], ['chips', t('viewChips')]] as ['cards' | 'chips', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.libraryView === id), onclick: () => { updateSettings({ libraryView: id }); renderAppearance(); } }, label)))),
     ];
     appearance.append(...parts.filter((x): x is HTMLElement => x !== null));
   };
@@ -89,11 +91,11 @@ export function settingsView(): HTMLElement {
   const installBtn = h('button', { class: 'btn primary small', onclick: async () => { await window.__krInstallPrompt?.prompt(); } }, icon('download'), t('installApp'));
   const standalone = matchMedia('(display-mode: standalone)').matches;
   body.append(h('section', { class: 'card' }, h('h3', null, t('about')), h('p', null, t('aboutBody')),
-    h('p', null, `${t('version')} 0.2.0`),
+    h('p', null, `${t('version')} 0.3.0`),
     standalone ? h('p', null, t('installed')) : window.__krInstallPrompt ? installBtn : null,
     h('h3', null, t('supportedFormats')),
     h('ul', null, ...(['fmtEpub', 'fmtPdf', 'fmtDocx', 'fmtXlsx', 'fmtPptx', 'fmtText', 'fmtFb2', 'fmtOdt', 'fmtCbz', 'fmtImages'] as const).map((k) => h('li', null, t(k)))),
-    h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody'))));
+    ...(isTouchDevice() ? [] : [h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody'))])));
 
   void s;
   return root;

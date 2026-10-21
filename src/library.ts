@@ -4,7 +4,13 @@ import { readMeta, sniffFormat } from './formats';
 
 export async function importFiles(files: FileList | File[], onEach?: (book: Book | null, file: File, error?: unknown) => void): Promise<Book[]> {
   const out: Book[] = [];
-  for (const file of Array.from(files)) {
+  const queue = Array.from(files);
+  const worker = async () => { while (queue.length) await importOne(queue.shift()!); };
+  // A few files at a time: metadata extraction (cover rendering, zip parsing) overlaps with storage writes.
+  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
+  return out;
+
+  async function importOne(file: File): Promise<void> {
     try {
       const format = await sniffFormat(file, file.name);
       const meta = await readMeta(file, file.name, format);
@@ -31,7 +37,6 @@ export async function importFiles(files: FileList | File[], onEach?: (book: Book
       onEach?.(null, file, err);
     }
   }
-  return out;
 }
 
 export async function listBooks(): Promise<Book[]> {

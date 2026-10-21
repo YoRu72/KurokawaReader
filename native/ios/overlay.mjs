@@ -28,7 +28,12 @@ ${types.map(([name, utis]) => `    <dict>
   <key>UISupportsDocumentBrowser</key><false/>
 `;
 if (!plist.includes('CFBundleDocumentTypes')) plist = plist.replace(/<dict>\n/, `<dict>\n${docTypes}`);
-plist = plist.replace(/<key>CFBundleDisplayName<\/key>\s*<string>[^<]*<\/string>/, '<key>CFBundleDisplayName</key>\n  <string>قارئ كروكاوا</string>');
-if (!plist.includes('CFBundleDisplayName')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>CFBundleDisplayName</key>\n  <string>قارئ كروكاوا</string>\n');
+plist = plist.replace(/<key>CFBundleDisplayName<\/key>\s*<string>[^<]*<\/string>/, '<key>CFBundleDisplayName</key>\n  <string>KurokawaReader</string>');
+if (!plist.includes('CFBundleDisplayName')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>CFBundleDisplayName</key>\n  <string>KurokawaReader</string>\n');
+if (!plist.includes('UIViewControllerBasedStatusBarAppearance')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>UIViewControllerBasedStatusBarAppearance</key><true/>\n  <key>UIStatusBarHidden</key><false/>\n');
 await fs.writeFile(plistPath, plist);
+// Arabic display name
+const arDir = path.join(root, 'ios/App/App/ar.lproj');
+await fs.mkdir(arDir, { recursive: true });
+await fs.writeFile(path.join(arDir, 'InfoPlist.strings'), 'CFBundleDisplayName = "قارئ كروكاوا";\nCFBundleName = "قارئ كروكاوا";\n');
 console.log('iOS overlay applied');

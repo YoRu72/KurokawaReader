@@ -51,16 +51,23 @@ manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="s
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
 await fs.writeFile(manifestPath, manifest);
 
-// App name (Arabic), as requested.
+// App name follows the system language: KurokawaReader by default, قارئ كروكاوا on Arabic devices.
 const stringsPath = path.join(app, 'src/main/res/values/strings.xml');
 let strings = await fs.readFile(stringsPath, 'utf8');
-strings = strings.replace(/<string name="app_name">[^<]*<\/string>/, '<string name="app_name">قارئ كروكاوا</string>')
-  .replace(/<string name="title_activity_main">[^<]*<\/string>/, '<string name="title_activity_main">قارئ كروكاوا</string>');
+strings = strings.replace(/<string name="app_name">[^<]*<\/string>/, '<string name="app_name">KurokawaReader</string>')
+  .replace(/<string name="title_activity_main">[^<]*<\/string>/, '<string name="title_activity_main">KurokawaReader</string>');
 await fs.writeFile(stringsPath, strings);
+await fs.mkdir(path.join(app, 'src/main/res/values-ar'), { recursive: true });
+await fs.writeFile(path.join(app, 'src/main/res/values-ar/strings.xml'), `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">قارئ كروكاوا</string>
+    <string name="title_activity_main">قارئ كروكاوا</string>
+</resources>
+`);
 
 // Plugin + MainActivity
 await fs.mkdir(pkgDir, { recursive: true });
-await fs.copyFile(path.join(root, 'native/android/SystemTextPlugin.java'), path.join(pkgDir, 'SystemTextPlugin.java'));
+await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.join(pkgDir, 'KurokawaPlugin.java'));
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
 
 // ABI splits + signing config read from environment variables set by CI.

@@ -17,6 +17,8 @@ export interface Locator {
   anchor?: string;
   /** PDF page number (1-based). */
   page?: number;
+  /** Chapter index inside the book (chapter-by-chapter mode). */
+  chapter?: number;
   /** Overall fraction through the document, for the progress bar. */
   pct: number;
 }

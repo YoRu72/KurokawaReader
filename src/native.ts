@@ -54,3 +54,14 @@ export function initNativeBridges(): void {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
   }
 }
+
+interface ImmersivePlugin { setImmersive(o: { on: boolean }): Promise<void> }
+interface StatusBarPlugin { hide(): Promise<void>; show(): Promise<void> }
+/** Hide / show the system bars while reading (Android via our plugin, iOS via StatusBar). */
+export async function setImmersive(on: boolean): Promise<void> {
+  const plugins = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: ImmersivePlugin; StatusBar?: StatusBarPlugin } }) | undefined)?.Plugins;
+  try {
+    if (plugins?.Kurokawa?.setImmersive) { await plugins.Kurokawa.setImmersive({ on }); return; }
+    if (plugins?.StatusBar) { if (on) await plugins.StatusBar.hide(); else await plugins.StatusBar.show(); }
+  } catch { /* ignore */ }
+}

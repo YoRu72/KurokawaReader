@@ -24,6 +24,32 @@ export function setLang(lang: Lang): void {
   listeners.forEach((fn) => fn(lang));
 }
 
+export type LangPref = 'system' | Lang;
+export function getLangPref(): LangPref {
+  const saved = localStorage.getItem('kr.lang');
+  return saved === 'en' || saved === 'ar' ? saved : 'system';
+}
+export function setLangPref(pref: LangPref): void {
+  if (pref === 'system') { localStorage.removeItem('kr.lang'); current = navigator.language.toLowerCase().startsWith('ar') ? 'ar' : 'en'; applyDocumentLang(); listeners.forEach((fn) => fn(current)); }
+  else setLang(pref);
+}
+
+export type DirPref = 'auto' | 'ltr' | 'rtl';
+export function getDirPref(): DirPref {
+  const d = localStorage.getItem('kr.dir');
+  return d === 'ltr' || d === 'rtl' ? d : 'auto';
+}
+export function setDirPref(d: DirPref): void {
+  if (d === 'auto') localStorage.removeItem('kr.dir'); else localStorage.setItem('kr.dir', d);
+  applyDocumentLang();
+  listeners.forEach((fn) => fn(current));
+}
+
+/** Touch-first device (phone/tablet) — hides keyboard-only hints. */
+export function isTouchDevice(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+}
+
 export function onLangChange(fn: (lang: Lang) => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -31,7 +57,8 @@ export function onLangChange(fn: (lang: Lang) => void): () => void {
 
 export function applyDocumentLang(): void {
   document.documentElement.lang = current;
-  document.documentElement.dir = current === 'ar' ? 'rtl' : 'ltr';
+  const pref = getDirPref();
+  document.documentElement.dir = pref === 'auto' ? (current === 'ar' ? 'rtl' : 'ltr') : pref;
   document.title = t('appName');
 }
 
@@ -67,4 +94,23 @@ export function isRtlText(text: string): boolean {
   const rtl = (sample.match(/[֐-ࣿיִ-﷿ﹰ-﻿]/g) ?? []).length;
   const ltr = (sample.match(/[A-Za-zÀ-ɏ]/g) ?? []).length;
   return rtl > ltr;
+}
+
+/** Arabic-Indic digits for Arabic UI. */
+export function localDigits(n: number | string): string {
+  const s = String(n);
+  return current === 'ar' ? s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]) : s;
+}
+
+/** "1 file / 2 files" — and the Arabic rules for counted nouns:
+ *  كتابٌ واحد · كتابان · ٣–١٠ كُتب · ١١–٩٩ كتابًا · المئات والمئون مفردٌ مجرور. */
+export function countBooks(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'file' : 'files'}`;
+  if (n === 0) return 'لا كتب';
+  if (n === 1) return 'كتابٌ واحد';
+  if (n === 2) return 'كتابان';
+  const r = n % 100;
+  if (r >= 3 && r <= 10) return `${localDigits(n)} كُتب`;
+  if (r >= 11) return `${localDigits(n)} كتابًا`;
+  return `${localDigits(n)} كتاب`;
 }

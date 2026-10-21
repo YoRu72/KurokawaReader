@@ -1,16 +1,18 @@
 import { h, icon, iconButton, toast, clear, coverColors } from '../ui/dom';
-import { t, formatBytes, formatDate } from '../i18n';
+import { t, formatBytes, formatDate, countBooks } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
 import { db, uid, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats';
 import { navigate } from '../router';
+import { getSettings } from '../settings';
 
-type Sort = 'recent' | 'added' | 'title' | 'author';
+type Sort = 'title' | 'recent' | 'added' | 'author' | 'size';
+const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export function libraryView(): HTMLElement {
   let books: Book[] = [];
   let query = '';
-  let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'recent';
+  let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'title';
   let folders: Folder[] = [];
   let activeFolder: string | null = localStorage.getItem('kr.folder') || null;
   let selecting = false;
@@ -21,7 +23,7 @@ export function libraryView(): HTMLElement {
 
   const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); renderGrid(); } }) as HTMLInputElement;
   const sortSel = h('select', { 'aria-label': t('sortBy'), onchange: () => { sort = sortSel.value as Sort; localStorage.setItem('kr.sort', sort); renderGrid(); } },
-    h('option', { value: 'recent' }, t('sortRecent')), h('option', { value: 'added' }, t('sortAdded')), h('option', { value: 'title' }, t('sortTitle')), h('option', { value: 'author' }, t('sortAuthor'))) as HTMLSelectElement;
+    h('option', { value: 'title' }, t('sortTitleNum')), h('option', { value: 'recent' }, t('sortRecent')), h('option', { value: 'added' }, t('sortAdded')), h('option', { value: 'author' }, t('sortAuthor')), h('option', { value: 'size' }, t('sortSize'))) as HTMLSelectElement;
   sortSel.value = sort;
 
   const grid = h('div', { class: 'book-grid', role: 'list' });
@@ -77,14 +79,34 @@ export function libraryView(): HTMLElement {
   }
 
   function sorted(): Book[] {
-    const list = books.filter((b) => (!activeFolder || b.folderId === activeFolder) && (!query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query)));
+    const cards = getSettings().libraryView === 'cards';
+    const list = books.filter((b) => {
+      const inFolder = activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
+      return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query));
+    });
     const by: Record<Sort, (a: Book, b: Book) => number> = {
       recent: (a, b) => (b.lastOpenedAt ?? b.addedAt) - (a.lastOpenedAt ?? a.addedAt),
       added: (a, b) => b.addedAt - a.addedAt,
-      title: (a, b) => a.title.localeCompare(b.title),
-      author: (a, b) => (a.author ?? '￿').localeCompare(b.author ?? '￿') || a.title.localeCompare(b.title),
+      title: (a, b) => natural.compare(a.title, b.title),
+      author: (a, b) => natural.compare(a.author ?? '￿', b.author ?? '￿') || natural.compare(a.title, b.title),
+      size: (a, b) => b.size - a.size,
     };
     return list.sort(by[sort]);
+  }
+
+  function folderCard(f: Folder): HTMLElement {
+    const inside = books.filter((b) => b.folderId === f.id);
+    const covers = inside.slice(0, 4).map((b) => coverUrl(b));
+    const el = h('button', { class: 'book-card folder-card', type: 'button', title: f.name, dataset: { folder: f.id } },
+      h('div', { class: 'cover folder' }, h('div', { class: 'stack' }, ...covers.map((u, i) => u ? h('img', { src: u, alt: '' }) : h('div', { class: 'ph', style: { background: coverColors(inside[i].title)[0] } }))), icon('folder')),
+      h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, f.name), h('div', { class: 'ba' }, t('booksInFolder', { n: inside.length }))));
+    el.addEventListener('click', () => { activeFolder = f.id; localStorage.setItem('kr.folder', f.id); renderChips(); renderGrid(); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); folderSheet(f.id); });
+    let pt: number | undefined; el.addEventListener('pointerdown', () => { pt = window.setTimeout(() => folderSheet(f.id), 560); }); const cancel = () => window.clearTimeout(pt); el.addEventListener('pointerup', cancel); el.addEventListener('pointerleave', cancel);
+    el.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('text/kr-book')) { e.preventDefault(); el.classList.add('drop'); } });
+    el.addEventListener('dragleave', () => el.classList.remove('drop'));
+    el.addEventListener('drop', async (e) => { e.preventDefault(); el.classList.remove('drop'); const ids = (e.dataTransfer?.getData('text/kr-book') ?? '').split(',').filter(Boolean); await moveBooks(ids, f.id); });
+    return el;
   }
 
   function card(book: Book): HTMLElement {
@@ -146,6 +168,7 @@ export function libraryView(): HTMLElement {
 
   function renderChips() {
     clear(chips);
+    chips.hidden = getSettings().libraryView === 'cards' && !activeFolder;
     if (!books.length) return;
     const chip = (label: string, id: string | null, iconName?: string) => {
       const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); } }, iconName ? icon(iconName) : null, h('span', null, label));
@@ -161,13 +184,28 @@ export function libraryView(): HTMLElement {
     chips.append(h('button', { type: 'button', class: 'chip add', onclick: () => void newFolder() }, icon('folderPlus'), h('span', null, t('newFolder'))));
   }
 
+  function askName(title: string, initial = ''): Promise<string | null> {
+    return import('../ui/dom').then(({ openSheet }) => new Promise<string | null>((resolve) => {
+      const sh = openSheet(title, t('close'));
+      sh.body.style.fontFamily = 'var(--font-ui)';
+      const input = h('input', { type: 'text', value: initial, placeholder: t('folderName'), style: { width: '100%' }, dir: 'auto', autofocus: true }) as HTMLInputElement;
+      const done = () => { const v = input.value.trim(); sh.close(); resolve(v || null); };
+      sh.body.append(h('form', { onsubmit: (e: Event) => { e.preventDefault(); done(); } }, input));
+      sh.actions.append(h('button', { class: 'btn primary small', type: 'button', onclick: done }, icon('check'), initial ? t('rename') : t('create')));
+      sh.el.addEventListener('transitionend', () => undefined);
+      const obs = new MutationObserver(() => { if (!document.body.contains(sh.el)) { obs.disconnect(); resolve(null); } });
+      obs.observe(document.body, { childList: true });
+      setTimeout(() => input.focus(), 80);
+    }));
+  }
+
   async function newFolder(): Promise<string | null> {
-    const name = prompt(t('folderName'))?.trim();
+    const name = await askName(t('newFolder'));
     if (!name) return null;
     const f: Folder = { id: uid(), name, createdAt: Date.now() };
     folders = [...folders, f];
     await db.setMeta('folders', folders);
-    renderChips();
+    renderChips(); renderGrid();
     return f.id;
   }
 
@@ -196,7 +234,7 @@ export function libraryView(): HTMLElement {
       const s = openSheet(f.name, t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
-        h('li', null, h('button', { type: 'button', onclick: async () => { const name = prompt(t('renameFolder'), f.name)?.trim(); if (name) { f.name = name; await db.setMeta('folders', folders); renderChips(); } s.close(); } }, icon('type'), t('renameFolder'))),
+        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const name = await askName(t('renameFolder'), f.name); if (name) { f.name = name; await db.setMeta('folders', folders); renderChips(); renderGrid(); } } }, icon('type'), t('renameFolder'))),
         h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = folders.filter((x) => x.id !== id); await db.setMeta('folders', folders); for (const b of books) if (b.folderId === id) { delete b.folderId; await db.updateBook(b.id, (bb) => { delete bb.folderId; }); } if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
     });
   }
@@ -206,7 +244,7 @@ export function libraryView(): HTMLElement {
     renderSelBar();
     renderChips();
     const list = sorted();
-    heroSub.textContent = books.length ? `${books.length} · ${t('tagline')}` : t('tagline');
+    heroSub.textContent = books.length ? `${countBooks(books.length)} · ${t('tagline')}` : t('tagline');
     fab.hidden = selecting;
     if (!books.length) {
       grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('div', { class: 'glyph' }, icon('empty')), h('h2', null, t('emptyLibraryTitle')), h('p', null, t('emptyLibraryBody')),
@@ -217,7 +255,9 @@ export function libraryView(): HTMLElement {
       return;
     }
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, activeFolder && !query ? t('emptyFolder') : t('noResults')), activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
+    if (getSettings().libraryView === 'cards' && !activeFolder && !query) folders.forEach((f) => grid.appendChild(folderCard(f)));
     list.forEach((b) => grid.appendChild(card(b)));
+    if (getSettings().libraryView === 'cards' && !activeFolder && !query) grid.appendChild(h('button', { class: 'book-card folder-card add', type: 'button', onclick: () => void newFolder() }, h('div', { class: 'cover folder' }, icon('folderPlus')), h('div', { class: 'book-meta' }, h('div', { class: 'bt' }, t('newFolder')))));
   }
 
   async function addSamples() {

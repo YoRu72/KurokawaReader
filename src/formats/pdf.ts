@@ -8,9 +8,18 @@ import { h } from '../ui/dom';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./pdf.worker.min.mjs', import.meta.url).href;
 
+const RES = new URL('./pdfjs/', import.meta.url).href;
+
 async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () => void }> {
   const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({ data, useSystemFonts: true });
+  const task = pdfjs.getDocument({
+    data,
+    useSystemFonts: true,
+    cMapUrl: `${RES}cmaps/`, cMapPacked: true,
+    standardFontDataUrl: `${RES}standard_fonts/`,
+    wasmUrl: `${RES}wasm/`,
+    iccUrl: `${RES}iccs/`,
+  } as Parameters<typeof pdfjs.getDocument>[0]);
   const doc = await task.promise;
   return { doc, close: () => { void task.destroy(); } };
 }
@@ -43,6 +52,18 @@ export interface PdfViewerOptions {
   invert: boolean;
 }
 
+/** Android: render page bitmaps with the platform renderer (system fonts, JBIG2/JPX, fast). */
+interface NativePdf { pdfOpen(o: { path: string }): Promise<{ pageCount: number }>; pdfRender(o: { page: number; width: number; quality?: number }): Promise<{ data: string; width: number; height: number }>; pdfClose(): Promise<void> }
+interface NativeFs { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }>; stat(o: { path: string; directory: string }): Promise<{ uri: string }> }
+function nativePdf(): { pdf: NativePdf; fs: NativeFs } | null {
+  const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: NativePdf; Filesystem?: NativeFs } } }).Capacitor;
+  if (cap?.getPlatform?.() !== 'android' || !cap.Plugins?.Kurokawa || !cap.Plugins.Filesystem) return null;
+  return { pdf: cap.Plugins.Kurokawa, fs: cap.Plugins.Filesystem };
+}
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] ?? ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+}
+
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];
@@ -60,6 +81,7 @@ export class PdfViewer {
   private resizeObs?: ResizeObserver;
   private destroyed = false;
   private closeDoc: () => void = () => undefined;
+  private native: NativePdf | null = null;
 
   constructor(private opts: PdfViewerOptions) {
     this.scroll = h('div', { class: 'pdf-scroll' });
@@ -68,11 +90,23 @@ export class PdfViewer {
     opts.container.appendChild(this.root);
   }
 
-  async load(file: Blob): Promise<void> {
+  async load(file: Blob, cacheKey?: string): Promise<void> {
     const opened = await openDoc(file);
     this.doc = opened.doc;
     this.closeDoc = opened.close;
     this.total = this.doc.numPages;
+    // Prefer the platform renderer on Android; pdf.js stays in charge of text, search and outline.
+    const nat = nativePdf();
+    if (nat && cacheKey) {
+      try {
+        const path = `kr-pdf/${cacheKey}.pdf`;
+        let uri: string;
+        try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
+        catch { uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri; }
+        const info = await nat.pdf.pdfOpen({ path: uri });
+        if (info.pageCount === this.total) this.native = nat.pdf;
+      } catch (e) { console.warn('[kurokawa] native PDF renderer unavailable', e); this.native = null; }
+    }
     for (let i = 1; i <= this.total; i++) {
       const page = await this.doc.getPage(i).catch(() => null);
       const vp = page?.getViewport({ scale: 1 });
@@ -128,15 +162,27 @@ export class PdfViewer {
     if (this.destroyed || !this.rendered.has(n)) return;
     const viewport = page.getViewport({ scale: this.scale });
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(viewport.width * dpr);
-    canvas.height = Math.floor(viewport.height * dpr);
-    entry.canvas = canvas;
-    el.appendChild(canvas);
-    const ctx = canvas.getContext('2d', { alpha: false })!;
-    entry.task = page.render({ canvas, canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
-    try { await entry.task.promise; } catch { return; }
-    if (this.destroyed || !this.rendered.has(n)) return;
+    if (this.native) {
+      try {
+        const res = await this.native.pdfRender({ page: n, width: Math.round(viewport.width * dpr), quality: 85 });
+        if (this.destroyed || !this.rendered.has(n)) return;
+        const img = document.createElement('img');
+        img.className = 'native-page'; img.decoding = 'async'; img.alt = String(n);
+        img.src = `data:image/jpeg;base64,${res.data}`;
+        el.appendChild(img);
+      } catch { this.native = null; /* fall back to pdf.js below */ }
+    }
+    if (!this.native) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      entry.canvas = canvas;
+      el.appendChild(canvas);
+      const ctx = canvas.getContext('2d', { alpha: false })!;
+      entry.task = page.render({ canvas, canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
+      try { await entry.task.promise; } catch { return; }
+      if (this.destroyed || !this.rendered.has(n)) return;
+    }
     const textDiv = h('div', { class: 'textLayer' });
     el.appendChild(textDiv);
     try {
@@ -153,7 +199,7 @@ export class PdfViewer {
     entry.task?.cancel();
     entry.text?.cancel();
     const el = this.pages[n - 1];
-    el.querySelectorAll('canvas, .textLayer').forEach((c) => c.remove());
+    el.querySelectorAll('canvas, img.native-page, .textLayer').forEach((c) => c.remove());
     this.rendered.delete(n);
   }
 
@@ -309,6 +355,7 @@ export class PdfViewer {
     this.resizeObs?.disconnect();
     for (const n of [...this.rendered.keys()]) this.releasePage(n);
     this.closeDoc();
+    void this.native?.pdfClose().catch(() => undefined);
     this.root.remove();
   }
 }

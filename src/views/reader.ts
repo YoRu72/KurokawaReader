@@ -2,7 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
-import { t, isRtlText } from '../i18n';
+import { t, isRtlText, isTouchDevice } from '../i18n';
 import { db, uid, type Book, type Locator, type Bookmark, type Highlight } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -21,6 +21,7 @@ import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCard } from '../ui/textcard';
 import { shareFile, canvasToBlob, downloadBlob } from '../ui/share';
 import { applyOrientation } from '../settings';
+import { setImmersive } from '../native';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet } from '../ui/dom';
 
@@ -28,7 +29,10 @@ interface OpenDoc {
   book: Book;
   wrapper: HTMLElement;      // .kr-doc
   render?: FlowRender;
-  blocks: HTMLElement[];
+  blocks: HTMLElement[];     // blocks currently visible (chapter mode shows one chapter)
+  allBlocks: HTMLElement[];
+  chapters: HTMLElement[];   // chapter sections (one entry = whole content when the format has none)
+  chapter: number;
 }
 
 interface SearchHit { bookId: string; label: string; before: string; match: string; after: string; range: Range }
@@ -69,6 +73,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const footerWhere = h('span', { class: 'where' });
   const footerPct = h('span', { class: 'pct' });
   const footer = h('div', { class: 'read-footer' }, footerWhere, h('div', { class: 'bar' }, footerBar), footerPct);
+  const statusWhere = h('span', { class: 'where' });
+  const statusPage = h('span', { class: 'pg' });
+  const statusClock = h('span', { class: 'clock' });
+  const statusBatt = h('span', { class: 'batt' });
+  const statusPct = h('span', { class: 'pct' });
+  const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusClock, statusBatt, statusPct);
+  const tickClock = () => { statusClock.textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date()); };
+  tickClock(); const clockTimer = window.setInterval(tickClock, 15000); onDispose(() => window.clearInterval(clockTimer));
+  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.().then((b) => { const paint = () => { statusBatt.textContent = `${Math.round(b.level * 100)}%`; }; paint(); b.addEventListener('levelchange', paint); }).catch(() => undefined);
   const title = h('div', { class: 'title' });
   const panel = new SidePanel(root);
 
@@ -88,10 +101,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     iconButton('more', t('more'), () => openMore()),
   );
   reader.append(scroll);
-  root.append(topbar, reader, footer, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
+  root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  const chapterMode = () => getSettings().readingMode === 'chapters';
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
 
   const docs: OpenDoc[] = [];
+  let lastTracked: { doc: OpenDoc; block: number } | null = null;
+  // Late-bound hooks so chapter navigation can run before the chrome helpers are defined.
+  const hooks = { update: () => undefined as void, save: () => undefined as void };
   const settings = getSettings();
   let allImages: ImageRef[] = [];
   let saveTimer: number | undefined;
@@ -106,8 +124,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         h('div', null, h('div', { class: 't', dir: 'auto' }, book.title), book.author ? h('span', { class: 'a', dir: 'auto' }, book.author) : null)));
     }
     flow.append(wrapper);
-    docs.push({ book, wrapper, blocks: [] });
+    docs.push({ book, wrapper, blocks: [], allBlocks: [], chapters: [], chapter: 0 });
   }
+  flow.append(chapterNav);
 
   async function renderDoc(doc: OpenDoc): Promise<void> {
     const handler = flowHandlerFor(doc.book.format);
@@ -119,7 +138,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       doc.wrapper.querySelector('.kr-content')?.remove();
       doc.render = await handler.render(file, ctx);
       doc.wrapper.append(doc.render.element);
-      doc.blocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+      doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+      const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img'));
+      doc.chapters = sections.length > 1 ? sections : [doc.render.element];
+      doc.chapter = 0;
+      doc.blocks = doc.allBlocks;
       applyHighlights(doc);
     } catch (err) {
       console.error(err);
@@ -133,26 +156,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   books.forEach((b) => void touchBook(b.id));
   void applyOrientation();
+  if (getSettings().hideSystemBars) void setImmersive(true);
+  onDispose(() => void setImmersive(false));
   // Reading statistics: words per block, tracked as the reader scrolls past them.
-  const blockWords = new Map<OpenDoc, number[]>();
+  const wordsOf = new WeakMap<HTMLElement, number>();
+  const wordCount = (b: HTMLElement): number => { let w = wordsOf.get(b); if (w === undefined) { w = b.tagName === 'IMG' ? 0 : countWords(b.textContent ?? ''); wordsOf.set(b, w); } return w; };
   const trackers = new Map<OpenDoc, ReadingTracker>();
   for (const doc of docs) {
-    const words = doc.blocks.map((b) => (b.tagName === 'IMG' ? 0 : countWords(b.textContent ?? '')));
-    blockWords.set(doc, words);
-    const total = words.reduce((a, b) => a + b, 0);
+    const total = doc.allBlocks.reduce((a, b) => a + wordCount(b), 0);
     const chars = (doc.render?.element.textContent ?? '').replace(/\s+/g, '').length;
     const tr = new ReadingTracker(doc.book, () => currentLocator()?.doc === doc, total, chars);
     tr.start();
     trackers.set(doc, tr);
   }
-  let lastTracked: { doc: OpenDoc; block: number } | null = null;
   const trackProgress = () => {
     const cur = currentLocator();
     if (!cur) return;
-    const tr = trackers.get(cur.doc); const words = blockWords.get(cur.doc) ?? [];
+    const tr = trackers.get(cur.doc); const blocks = cur.doc.blocks;
     const block = cur.loc.block ?? 0;
     let passed = 0;
-    if (lastTracked && lastTracked.doc === cur.doc && block > lastTracked.block && block - lastTracked.block < 60) for (let i = lastTracked.block; i < block; i++) passed += words[i] ?? 0;
+    if (lastTracked && lastTracked.doc === cur.doc && block > lastTracked.block && block - lastTracked.block < 60) for (let i = lastTracked.block; i < block; i++) passed += wordCount(blocks[i]);
     tr?.advance(passed, cur.loc.pct);
     lastTracked = { doc: cur.doc, block };
   };
@@ -161,6 +184,78 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   restore();
   // Images loading above the saved position shift the layout; settle a few times.
   [400, 1200, 2500].forEach((ms) => setTimeout(() => { if (!userScrolled) restore(); }, ms));
+
+  /* ---------- chapter mode ---------- */
+  interface Unit { doc: OpenDoc; el: HTMLElement; index: number }
+  const units = (): Unit[] => docs.flatMap((doc) => doc.chapters.map((el, index) => ({ doc, el, index })));
+  const chapterTitle = (u: Unit): string => {
+    const toc = u.doc.render?.toc ?? [];
+    const hit = toc.find((item) => { const el = document.getElementById(item.anchor); return !!el && (el === u.el || u.el.contains(el)); });
+    return hit?.label ?? u.el.querySelector('h1, h2, h3')?.textContent?.trim() ?? `${t('chapter')} ${u.index + 1}`;
+  };
+  function currentUnitIndex(): number {
+    const cur = currentLocator();
+    const list = units();
+    const doc = cur?.doc ?? docs[0];
+    return Math.max(0, list.findIndex((u) => u.doc === doc && u.index === doc.chapter));
+  }
+  function applyLayoutMode(): void {
+    const on = chapterMode();
+    for (const doc of docs) {
+      const multi = doc.chapters.length > 1;
+      doc.chapters.forEach((c, i) => { c.hidden = on && multi && i !== doc.chapter; });
+      doc.blocks = on && multi ? doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b)) : doc.allBlocks;
+      doc.wrapper.hidden = false;
+    }
+    if (on && docs.length > 1) {
+      // One book at a time: the others are hidden until the chain reaches them.
+      const k = currentUnitIndex(); const u = units()[k];
+      for (const doc of docs) doc.wrapper.hidden = doc !== u?.doc;
+    }
+    renderChapterNav();
+  }
+  function renderChapterNav(): void {
+    clear(chapterNav);
+    const list = units();
+    chapterNav.hidden = !chapterMode() || list.length <= 1;
+    if (chapterNav.hidden) return;
+    const k = currentUnitIndex();
+    const prev = list[k - 1], next = list[k + 1];
+    chapterNav.append(
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next)), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+    );
+  }
+  function showUnit(k: number, atEnd = false): void {
+    const list = units();
+    const u = list[Math.max(0, Math.min(list.length - 1, k))];
+    if (!u) return;
+    u.doc.chapter = u.index;
+    for (const doc of docs) { doc.wrapper.hidden = docs.length > 1 && doc !== u.doc; doc.chapters.forEach((c, i) => { c.hidden = doc.chapters.length > 1 && i !== doc.chapter; }); doc.blocks = doc.chapters.length > 1 ? doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b)) : doc.allBlocks; }
+    renderChapterNav();
+    scroll.scrollTop = atEnd ? scroll.scrollHeight : 0;
+    lastTracked = null;
+    hooks.update(); hooks.save();
+  }
+  /** Make sure the element's chapter is on screen (chapter mode) before scrolling to it. */
+  function revealElement(el: Element): void {
+    if (!chapterMode()) return;
+    const list = units();
+    const k = list.findIndex((u) => u.el === el || u.el.contains(el));
+    if (k >= 0 && (list[k].doc.chapter !== list[k].index || list[k].doc.wrapper.hidden)) showUnit(k);
+  }
+  // Swipe between chapters on touch screens.
+  let swipe: { x: number; y: number; t: number } | null = null;
+  scroll.addEventListener('touchstart', (e) => { const tch = e.touches[0]; swipe = { x: tch.clientX, y: tch.clientY, t: Date.now() }; }, { passive: true });
+  scroll.addEventListener('touchend', (e) => {
+    if (!swipe || !chapterMode()) return;
+    const tch = e.changedTouches[0]; const dx = tch.clientX - swipe.x, dy = tch.clientY - swipe.y; swipe = null;
+    if (Math.abs(dx) < 90 || Math.abs(dy) > 60 || document.getSelection()?.isCollapsed === false) return;
+    const rtl = (docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false);
+    const forward = rtl ? dx > 0 : dx < 0;
+    const k = currentUnitIndex();
+    showUnit(forward ? k + 1 : k - 1, !forward);
+  }, { passive: true });
 
   /* ---------- position & progress ---------- */
 
@@ -190,14 +285,23 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const rect = block?.getBoundingClientRect();
     const offset = rect ? Math.min(1, Math.max(0, (sr.top + probeY - rect.top) / Math.max(1, rect.height))) : 0;
     const wr = doc.wrapper.getBoundingClientRect();
-    const pct = Math.min(1, Math.max(0, (sr.top - wr.top + probeY) / Math.max(1, wr.height - sr.height * 0.5)));
-    return { doc, loc: { bookId: doc.book.id, block: lo, offset, pct } };
+    let pct = Math.min(1, Math.max(0, (sr.top - wr.top + probeY) / Math.max(1, wr.height - sr.height * 0.5)));
+    if (chapterMode() && doc.chapters.length > 1) {
+      const cr = doc.chapters[doc.chapter].getBoundingClientRect();
+      const within = Math.min(1, Math.max(0, (sr.top - cr.top + probeY) / Math.max(1, cr.height - sr.height * 0.5)));
+      pct = (doc.chapter + within) / doc.chapters.length;
+    }
+    return { doc, loc: { bookId: doc.book.id, block: lo, offset, pct, chapter: doc.chapter } };
   }
 
   function scrollToLocator(loc: Locator): void {
     const doc = docs.find((d) => d.book.id === loc.bookId) ?? docs[0];
     if (!doc) return;
     if (loc.anchor) { scrollToAnchor(loc.anchor); return; }
+    if (chapterMode() && doc.chapters.length > 1) {
+      const ch = Math.min(doc.chapters.length - 1, loc.chapter ?? 0);
+      if (ch !== doc.chapter || doc.wrapper.hidden) { const k = units().findIndex((u) => u.doc === doc && u.index === ch); if (k >= 0) showUnit(k); }
+    }
     const sr = scroll.getBoundingClientRect();
     const block = doc.blocks[loc.block ?? 0];
     if (block) {
@@ -212,6 +316,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function scrollToAnchor(anchor: string, flash = true): void {
     const el = document.getElementById(anchor);
     if (!el) return;
+    revealElement(el);
     el.dispatchEvent(new CustomEvent('kr-reveal', { bubbles: true, detail: anchor }));
     const sr = scroll.getBoundingClientRect();
     const r = el.getBoundingClientRect();
@@ -253,6 +358,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const pct = Math.round(cur.loc.pct * 100);
     footerPct.textContent = `${pct}%`;
     footerBar.style.width = `${pct}%`;
+    // Moon+-style status line: chapter · screen x/y · clock · battery · %
+    statusWhere.textContent = label; statusWhere.setAttribute('dir', 'auto');
+    const unitEl = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
+    const sr = scroll.getBoundingClientRect(); const ur = unitEl.getBoundingClientRect();
+    const total = Math.max(1, Math.ceil(ur.height / Math.max(1, sr.height)));
+    const page = Math.min(total, Math.max(1, Math.floor((sr.top - ur.top) / Math.max(1, sr.height)) + 1));
+    statusPage.textContent = `(${page}/${total})`;
+    statusPct.textContent = `${pct}%`;
   }, 150);
 
   function scheduleSave(): void {
@@ -268,6 +381,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     for (const d of docs) if (d !== cur.doc && docs.indexOf(d) < docs.indexOf(cur.doc) && (d.book.progress?.pct ?? 0) < 1) { d.book.progress = { bookId: d.book.id, pct: 1 }; await db.updateBook(d.book.id, (b) => { b.progress = d.book.progress; }); }
   }
 
+  hooks.update = () => updateChrome();
+  hooks.save = () => scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
   scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); }, { passive: true });
   updateChrome();
@@ -279,8 +394,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const cur = currentLocator();
     for (const doc of docs) await renderDoc(doc);
     allImages = docs.flatMap((d) => d.render?.images ?? []);
+    applyLayoutMode();
     if (cur) scrollToLocator(cur.loc);
   });
+  applyLayoutMode();
 
   /* ---------- links & taps ---------- */
   flow.addEventListener('click', (e) => {
@@ -504,7 +621,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const cur = currentLocator();
     const doc = cur?.doc ?? docs[0];
     const tr = trackers.get(doc);
-    const words = blockWords.get(doc) ?? [];
+    const words = doc.blocks.map(wordCount);
     const block = cur?.loc.block ?? 0;
     const toc = doc.render?.toc ?? [];
     const label = labelFor(doc, block);
@@ -600,7 +717,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('highlight', t('highlights'), () => openContents('highlights')),
         docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
-      ), h('p', { style: { color: 'var(--text-dim)', fontSize: '12px', marginTop: '18px', lineHeight: '1.7' } }, icon('keyboard'), ' ', t('shortcutsBody')));
+      ));
+      if (!isTouchDevice()) body.append(h('p', { class: 'shortcuts-hint' }, icon('keyboard'), ' ', t('shortcutsBody')));
     } }]);
   }
 
@@ -611,6 +729,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const page = scroll.clientHeight * 0.9;
     switch (e.key) {
+      case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); showUnit(fwd ? k + 1 : k - 1, !fwd); break; }
       case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
       case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
       case ' ': case 'PageDown': e.preventDefault(); scroll.scrollBy({ top: e.shiftKey ? -page : page, behavior: 'smooth' }); break;
@@ -690,7 +809,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     },
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
-  await viewer.load(file);
+  await viewer.load(file, book.id);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
   if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
@@ -704,6 +823,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     textImage: async (text) => { try { const blob = await renderTextCard({ text, title: book.title, author: book.author, appName: t('appName') }); await shareFile(blob, `${book.title.slice(0, 40)}.png`, book.title); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();
+  if (getSettings().hideSystemBars) void setImmersive(true);
+  onDispose(() => void setImmersive(false));
 
   // Reading statistics for PDFs: words per page counted as pages are reached.
   const tracker = new ReadingTracker(book, () => true);

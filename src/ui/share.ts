@@ -33,7 +33,7 @@ export async function shareText(text: string, title?: string): Promise<boolean> 
 
 interface SystemTextPlugin { processText(o: { text: string; readonly?: boolean }): Promise<void> }
 function systemTextPlugin(): SystemTextPlugin | undefined {
-  return (window as unknown as { Capacitor?: { Plugins?: { SystemText?: SystemTextPlugin } } }).Capacitor?.Plugins?.SystemText;
+  return (window as unknown as { Capacitor?: { Plugins?: { Kurokawa?: SystemTextPlugin } } }).Capacitor?.Plugins?.Kurokawa;
 }
 
 /** Hand the text to another app for translation: Android's PROCESS_TEXT chooser

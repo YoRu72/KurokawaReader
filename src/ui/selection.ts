@@ -33,28 +33,33 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     if (!rect.width && !rect.height) { hide(); return; }
     if (rect.bottom < 0 || rect.top > window.innerHeight) { hide(); return; }
     if (!bar) {
-      const btn = (name: string, label: string, fn: () => void) => h('button', { type: 'button', onclick: (e: Event) => { e.preventDefault(); fn(); } }, icon(name), h('span', null, label));
-      const colors = h('div', { class: 'sel-colors' }, ...HIGHLIGHT_COLORS.map(([id, hex]) => h('button', { type: 'button', class: 'dot', title: t('highlight'), 'aria-label': `${t('highlight')} ${id}`, style: { background: hex }, onclick: (e: Event) => { e.preventDefault(); const r = sel.getRangeAt(0).cloneRange(); actions.highlight(r, text, id); sel.removeAllRanges(); hide(); } })));
+      // Capture the range now: on touch devices the selection is often gone by the time the tap lands.
+      const captured = range.cloneRange();
+      const act = (fn: () => void) => (e: Event) => { e.preventDefault(); e.stopPropagation(); fn(); };
+      const btn = (name: string, label: string, fn: () => void) => h('button', { type: 'button', onclick: act(fn) }, icon(name), h('span', null, label));
+      const colors = h('div', { class: 'sel-colors' }, ...HIGHLIGHT_COLORS.map(([id, hex]) => h('button', { type: 'button', class: 'dot', title: t('highlight'), 'aria-label': `${t('highlight')} ${id}`, style: { background: hex }, onclick: act(() => { actions.highlight(captured.cloneRange(), text, id); document.getSelection()?.removeAllRanges(); hide(); }) })));
       const row = h('div', { class: 'sel-row' },
         btn('copy', t('copySelected'), async () => { try { await navigator.clipboard.writeText(text); toast(t('copied')); } catch { document.execCommand('copy'); toast(t('copied')); } hide(); }),
         btn('search', t('searchSelected'), () => { actions.search(text); hide(); }),
         btn('define', t('defineSelected'), () => { showDefinition(text); hide(); }),
         btn('translate', t('translateSelected'), () => { showTranslation(text); hide(); }),
-        btn('note', t('note'), () => { const r = sel.getRangeAt(0).cloneRange(); actions.note(r, text); sel.removeAllRanges(); hide(); }),
+        btn('note', t('note'), () => { actions.note(captured.cloneRange(), text); document.getSelection()?.removeAllRanges(); hide(); }),
         btn('images', t('textAsImage'), () => { actions.textImage(text); hide(); }),
         btn('more', t('more'), () => { moreSheet(text, actions); hide(); }),
       );
       bar = h('div', { class: 'sel-toolbar', role: 'toolbar' }, colors, row);
-      // Keep the selection when tapping toolbar buttons.
+      // Keep the selection when clicking toolbar buttons with a mouse (touch taps use the captured range).
       bar.addEventListener('mousedown', (e) => e.preventDefault());
-      bar.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
       document.body.appendChild(bar);
     }
     const bw = bar.offsetWidth, bh = bar.offsetHeight;
     let x = rect.left + rect.width / 2;
     x = Math.max(bw / 2 + 8, Math.min(window.innerWidth - bw / 2 - 8, x));
-    let y = rect.top - bh - 10;
-    if (y < 64) y = rect.bottom + 10;
+    // Below the selection on touch devices (the OS puts its own handles and menu above it), above on desktop.
+    const touch = matchMedia('(pointer: coarse)').matches;
+    let y = touch ? rect.bottom + 14 : rect.top - bh - 10;
+    if (!touch && y < 64) y = rect.bottom + 10;
+    if (touch && y + bh > window.innerHeight - 20) y = rect.top - bh - 14;
     y = Math.max(64, Math.min(window.innerHeight - bh - 20, y));
     bar.style.left = `${x}px`;
     bar.style.top = `${y}px`;
