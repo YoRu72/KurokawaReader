@@ -6,6 +6,7 @@ import { importFiles } from './library';
 import { navigate } from './router';
 import { toast } from './ui/dom';
 import { t } from './i18n';
+import { actionFor } from './shortcuts';
 
 interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton', fn: (d: { url: string; canGoBack?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
 interface CapFs { readFile(o: { path: string }): Promise<{ data: string | Blob }> }
@@ -67,6 +68,7 @@ export async function openIncoming(file: File): Promise<void> {
 }
 
 async function handleUrl(url: string): Promise<void> {
+  if (/^kurokawareader:/i.test(url)) { void import('./sync').then((m) => m.handleOAuthRedirect(url)).catch((e) => toast(String((e as Error).message ?? e), 'error')); return; }
   if (!/^(content|file):/i.test(url)) return;
   const fs = window.Capacitor?.Plugins?.Filesystem;
   if (!fs) return;
@@ -82,14 +84,13 @@ async function handleUrl(url: string): Promise<void> {
 }
 
 export function initNativeBridges(): void {
-  // Keyboard shortcuts that work everywhere (the desktop menu sends the same commands).
+  // Keyboard shortcuts (rebindable in Settings); the desktop menu sends the same commands.
   window.addEventListener('keydown', (e) => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    const k = e.key.toLowerCase();
-    const cmd = k === 'o' && e.shiftKey ? 'scan' : k === 'o' ? 'import' : k === 'l' ? 'library' : k === ',' ? 'settings' : k === 'f' ? 'search' : (k === 'v' && e.shiftKey) ? 'options' : '';
+    if ((e.target as HTMLElement).matches?.('input, textarea, select, [contenteditable]')) return;
+    const cmd = actionFor(e);
     if (!cmd) return;
     e.preventDefault();
-    if (cmd === 'library') navigate('/'); else if (cmd === 'settings') navigate('/settings');
+    if (cmd === 'library') navigate('/'); else if (cmd === 'settings') navigate('/settings'); else if (cmd === 'notes') navigate('/notes');
     else document.dispatchEvent(new CustomEvent('kr:command', { detail: cmd }));
   });
   const cap = window.Capacitor;
@@ -112,6 +113,7 @@ export function initNativeBridges(): void {
   }
   if (window.kurokawaDesktop) {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
+    (window.kurokawaDesktop as DesktopBridge & { onOpenUrl?(cb: (u: string) => void): void }).onOpenUrl?.((u) => void handleUrl(u));
     // Menu / keyboard commands from the shell: views listen for `kr:command`; a few are global.
     (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string) => void): void }).onCommand?.((c) => {
       if (c === 'library') navigate('/');

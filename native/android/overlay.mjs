@@ -41,6 +41,17 @@ ${EXTS.flatMap((e) => [data(`android:pathPattern=".*\\\\.${e}"`), data(`android:
 
 const manifestPath = path.join(app, 'src/main/AndroidManifest.xml');
 let manifest = await fs.readFile(manifestPath, 'utf8');
+if (!manifest.includes('android:scheme="kurokawareader"')) {
+  manifest = manifest.replace(/(<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>)/, `$1
+      <!-- OAuth redirects for cloud sync -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="kurokawareader" />
+      </intent-filter>
+`);
+}
 if (!manifest.includes('android.intent.action.VIEW')) {
   // Insert after the MAIN/LAUNCHER intent filter of the main activity.
   manifest = manifest.replace(/(<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>)/, `$1\n${intentFilters}`);

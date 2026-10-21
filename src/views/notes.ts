@@ -6,6 +6,7 @@ import { db, type Book } from '../db';
 import { listBooks, coverUrl } from '../library';
 import { navigate } from '../router';
 import { setJump } from './reader';
+import { markDeleted } from '../sync';
 
 export function notesView(): HTMLElement {
   const body = h('div', { class: 'library-body notes-view' });
@@ -37,7 +38,7 @@ export function notesView(): HTMLElement {
         h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '2px' }, onclick: () => open('bm', bm.id) },
           h('span', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, icon('bookmark'), h('span', { dir: 'auto' }, bm.label), h('span', { class: 'meta' }, formatDate(bm.createdAt))),
           bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
-        h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { b.bookmarks = b.bookmarks.filter((x) => x.id !== bm.id); }); void render(); } }, icon('trash'))));
+        h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = b.bookmarks.filter((x) => x.id !== bm.id); }); void render(); } }, icon('trash'))));
     }
     if (filter !== 'bookmarks') {
       book.highlights.filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).forEach((hl, i) => {
@@ -52,7 +53,7 @@ export function notesView(): HTMLElement {
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => open('pin', pin.id) },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: book.pageCount ?? pin.page }))),
             h('span', { dir: 'auto' }, pin.note)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { b.pins = (b.pins ?? []).filter((x) => x.id !== pin.id); }); void render(); } }, icon('trash'))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); await db.updateBook(book.id, (b) => { b.pins = (b.pins ?? []).filter((x) => x.id !== pin.id); }); void render(); } }, icon('trash'))));
       });
     }
     if (!items.children.length) return h('div');

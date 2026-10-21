@@ -238,12 +238,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
       - name: Release notes
         run: |
+          # What's new: commit subjects since the previous release, split into bullets.
+          git fetch --tags --quiet || true
+          PREV=$(git tag --sort=-v:refname | grep -v "^v${{ needs.version.outputs.v }}$" | head -n 1)
+          if [ -n "$PREV" ]; then RANGE="$PREV..HEAD"; else RANGE="HEAD~5..HEAD"; fi
+          git log --format='%s' $RANGE | grep -v -i '^ci:\|^readme\|^release:\|^docs' | sed -E 's/^v?[0-9]+\.[0-9]+\.[0-9]+: //' | tr ';' '\n' | sed -E 's/^ +//; s/^(.)/- \u\1/' | grep -v '^- $' > whatsnew.txt || true
           {
             echo "## KurokawaReader v${{ needs.version.outputs.v }}"
+            echo
+            echo "## What's new"
+            if [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
+            echo
+            echo "## Files"
             echo
             echo "| Platform | File |"
             echo "|---|---|"

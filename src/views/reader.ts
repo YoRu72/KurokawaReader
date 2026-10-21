@@ -24,6 +24,7 @@ import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
 import { attachFurigana, isJapanese } from '../furigana';
+import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
@@ -233,7 +234,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const chapterTitle = (u: Unit): string => {
     const toc = u.doc.render?.toc ?? [];
     const hit = toc.find((item) => { const el = document.getElementById(item.anchor); return !!el && (el === u.el || u.el.contains(el)); });
-    return hit?.label ?? u.el.querySelector('h1, h2, h3')?.textContent?.trim() ?? `${t('chapter')} ${u.index + 1}`;
+    return (u.el.querySelector('h1, h2, h3')?.textContent?.trim() || hit?.label || '').trim();
   };
   function currentUnitIndex(): number {
     const cur = currentLocator();
@@ -264,8 +265,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const k = currentUnitIndex();
     const prev = list[k - 1], next = list[k + 1];
     chapterNav.append(
-      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev))) : h('span'),
-      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next)), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
     );
   }
   function showUnit(k: number, atEnd = false): void {
@@ -424,7 +425,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   async function saveProgress(): Promise<void> {
     const cur = currentLocator();
     if (!cur) return;
-    await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; });
+    await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; b.progressAt = Date.now(); });
+    scheduleSync();
     cur.doc.book.progress = cur.loc;
     // Books fully scrolled past count as finished.
     for (const d of docs) if (d !== cur.doc && docs.indexOf(d) < docs.indexOf(cur.doc) && (d.book.progress?.pct ?? 0) < 1) { d.book.progress = { bookId: d.book.id, pct: 1 }; await db.updateBook(d.book.id, (b) => { b.progress = d.book.progress; }); }
@@ -470,7 +472,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(attachPinchText(scroll));
   // Ctrl + mouse wheel changes the text size (desktop).
   scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); const d = e.deltaY < 0 ? 1 : -1; updateSettings({ fontSize: Math.min(40, Math.max(12, getSettings().fontSize + d)) }); }, { passive: false });
-  const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (c === 'search') openSearch(); else if (c === 'options') openOptions(); };
+  const onCommand = (e: Event) => {
+    const c = (e as CustomEvent<string>).detail;
+    if (c === 'search') openSearch(); else if (c === 'options') openOptions(); else if (c === 'toc') openContents('toc'); else if (c === 'bookmark') void addBookmark();
+    else if (c === 'translate') translator.toggleUi(); else if (c === 'speak') { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }
+    else if (c === 'fullscreen') { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }
+    else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
+    else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
+  };
   document.addEventListener('kr:command', onCommand);
   onDispose(() => document.removeEventListener('kr:command', onCommand));
   // Volume keys (Android) turn screens when enabled.
@@ -518,7 +527,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const hl: Highlight = { id: uid(), text, anchor: chapter?.id || undefined, color, note, createdAt: Date.now() };
     const marks = wrapRange(range, 'kr-hl', hl.color, hl.id);
     if (note) marks.forEach((m) => { m.title = note; m.classList.add('has-note'); });
-    doc.book.highlights = [...(doc.book.highlights ?? []), hl];
+    doc.book.highlights = [...(doc.book.highlights ?? []), hl]; scheduleSync();
     await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; });
     if (note) renumberNotes(doc);
     updateSettings({ highlightColor: color });
@@ -554,7 +563,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       ta);
     sheet.actions.append(
       h('button', { class: 'btn danger small', onclick: async () => { await removeHighlight(doc, hl.id); sheet.close(); } }, icon('trash'), t('removeHighlight')),
-      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = Date.now(); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
   }, true);
 
   function applyHighlights(doc: OpenDoc): void {
@@ -569,6 +578,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   async function removeHighlight(doc: OpenDoc, id: string): Promise<void> {
     doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => m.replaceWith(...m.childNodes));
+    void markDeleted(id);
     doc.book.highlights = (doc.book.highlights ?? []).filter((x) => x.id !== id);
     await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; });
     renumberNotes(doc);
@@ -610,7 +620,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         body.append(h('ul', { class: 'plain-list' }, ...all.map(({ doc, bm }) => h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { scrollToLocator(bm.locator); panel.close(); } },
             h('span', { dir: 'auto' }, bm.label), h('span', { class: 'meta', dir: 'auto' }, (docs.length > 1 ? doc.book.title + ' · ' : '') + (bm.excerpt ?? ''))),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { doc.book.bookmarks = doc.book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(doc.book.id, (b) => { b.bookmarks = doc.book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); doc.book.bookmarks = doc.book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(doc.book.id, (b) => { b.bookmarks = doc.book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
         const all = docs.flatMap((d) => (d.book.highlights ?? []).filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).map((hl, i) => ({ doc: d, hl, n: i + 1 })));
@@ -952,7 +962,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
       window.clearTimeout(saveTimer);
-      saveTimer = window.setTimeout(() => { const loc: Locator = { bookId: book.id, page, offset: viewer.currentOffset(), pct: total ? page / total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; }); }, 600);
+      saveTimer = window.setTimeout(() => { const loc: Locator = { bookId: book.id, page, offset: viewer.currentOffset(), pct: total ? page / total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); scheduleSync(); }, 600);
     },
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
@@ -1089,7 +1099,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         if (!list.length) { body.append(h('p', { class: 'center' }, t('noBookmarks'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...list.map((bm) => h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); panel.close(); } }, h('span', null, bm.label), bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
         const list = [...(book.pins ?? [])].sort((a, b) => a.createdAt - b.createdAt);
@@ -1098,7 +1108,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.close(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: viewer.total }))),
             h('span', { dir: 'auto' }, pin.note)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash'))))));
       } },
     ], tab);
   }
@@ -1123,12 +1133,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     let color: Highlight['color'] = existing?.color ?? getSettings().highlightColor;
     const colors = h('div', { class: 'sel-colors', style: { justifyContent: 'flex-start', border: '0', padding: '0 0 10px' } }, ...HIGHLIGHT_COLORS.map(([cid, hex]) => h('button', { type: 'button', class: 'dot', style: { background: hex, width: '44px', height: '22px', borderRadius: '999px', outline: color === cid ? '3px solid var(--md-primary)' : 'none' }, onclick: (e: Event) => { color = cid; colors.querySelectorAll('button').forEach((b) => (b.style.outline = 'none')); (e.currentTarget as HTMLElement).style.outline = '3px solid var(--md-primary)'; } })));
     sheet.body.append(h('p', { class: 'src' }, t('pageOf', { n: pin.page, total: viewer.total })), colors, ta);
-    if (existing) sheet.actions.append(h('button', { class: 'btn danger small', onclick: async () => { book.pins = (book.pins ?? []).filter((x) => x.id !== existing.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); sheet.close(); } }, icon('trash'), t('delete')));
+    if (existing) sheet.actions.append(h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(existing.id); book.pins = (book.pins ?? []).filter((x) => x.id !== existing.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); sheet.close(); } }, icon('trash'), t('delete')));
     sheet.actions.append(h('button', { class: 'btn primary small', onclick: async () => {
       const note = ta.value.trim(); if (!note) { ta.focus(); return; }
       if (existing) { existing.note = note; existing.color = color; }
       else book.pins = [...(book.pins ?? []), { id: uid(), page: pin.page, x: pin.x, y: pin.y, note, color, createdAt: Date.now() }];
-      await db.updateBook(book.id, (b) => { b.pins = book.pins; });
+      await db.updateBook(book.id, (b) => { b.pins = book.pins; }); scheduleSync();
       renderPins(); sheet.close(); toast(t('noteSaved'));
     } }, icon('check'), t('done')));
     setTimeout(() => ta.focus(), 80);
@@ -1151,7 +1161,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     const page = viewer.current;
     const excerpt = (await viewer.pageText(page)).trim().replace(/\s+/g, ' ').slice(0, 120);
     const bm: Bookmark = { id: uid(), label: t('pageOf', { n: page, total: viewer.total }), excerpt, locator: { bookId: book.id, page, offset: viewer.currentOffset(), pct: page / viewer.total }, createdAt: Date.now() };
-    book.bookmarks = [...(book.bookmarks ?? []), bm];
+    book.bookmarks = [...(book.bookmarks ?? []), bm]; scheduleSync();
     await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; });
     toast(t('bookmarkAdded'));
     panel.refresh();

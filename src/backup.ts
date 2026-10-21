@@ -30,7 +30,7 @@ async function manifest(full: boolean): Promise<Manifest> {
   for (const k of LOCAL_KEYS) { const v = localStorage.getItem(k); if (v) local[k] = v; }
   return {
     app: 'KurokawaReader', version: 1, createdAt: Date.now(), full,
-    settings: { ...getSettings(), aiKey: '' }, local, folders, fonts: await listFonts(),
+    settings: { ...getSettings(), aiKey: '', syncDropboxRefresh: '', syncWebdavPass: '' }, local, folders, fonts: await listFonts(),
     books: books.map((b) => ({
       key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
       folderName: folders.find((f) => f.id === b.folderId)?.name, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
@@ -75,7 +75,7 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   if (m.app !== 'KurokawaReader' || !Array.isArray(m.books)) throw new Error('not a KurokawaReader backup');
 
   // settings
-  const keep = getSettings().aiKey; updateSettings({ ...m.settings, aiKey: m.settings.aiKey || keep });
+  const cur = getSettings(); updateSettings({ ...m.settings, aiKey: m.settings.aiKey || cur.aiKey, syncDropboxRefresh: cur.syncDropboxRefresh, syncWebdavPass: cur.syncWebdavPass });
   for (const [k, v] of Object.entries(m.local ?? {})) localStorage.setItem(k, v);
 
   // folders: merge by name

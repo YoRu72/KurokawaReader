@@ -108,11 +108,19 @@ export async function suitableAsset(rel: ReleaseInfo): Promise<Asset | undefined
 /** Download `asset` and hand it to the platform installer (or save/share it when there is none). */
 async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<void> {
   const platform = nativePlatform();
-  if (platform === 'android' && /\.apk$/i.test(asset.name)) {
+  if (platform === 'android') {
     const p = androidPlugins(); if (!p) throw new Error('native');
-    const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal);
-    const { uri } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true });
-    await p.kr.installApk({ path: uri });
+    // Native download: GitHub's asset redirects carry no CORS headers, so the WebView cannot fetch them.
+    const kr = p.kr as AndroidPlugin & { downloadFile?(o: { url: string; name: string }): Promise<{ path: string; size: number }>; addListener?(ev: string, fn: (d: Progress) => void): Promise<{ remove(): void }> };
+    let sub: { remove(): void } | undefined;
+    try {
+      sub = await kr.addListener?.('downloadProgress', (d) => onProgress({ pct: d.pct, got: d.got, total: d.total || asset.size, speed: d.speed }));
+      let path: string;
+      if (kr.downloadFile) ({ path } = await kr.downloadFile({ url: asset.url, name: asset.name }));
+      else { const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal); ({ uri: path } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true })); }
+      if (/\.apk$/i.test(asset.name)) await p.kr.installApk({ path });
+      else toast(t('savedTo', { f: asset.name }));
+    } finally { sub?.remove(); }
     return;
   }
   if (platform === 'desktop' && /\.(exe|dmg|AppImage)$/i.test(asset.name)) {
@@ -122,10 +130,16 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
     await d.installUpdate(asset.url);
     return;
   }
-  // Anything else: download in-app and hand the file over (share sheet / Downloads).
-  const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal);
-  const { shareFile } = await import('./ui/share');
-  await shareFile(blob, asset.name, asset.name);
+  // Anything else: download in-app and hand the file over (share sheet / Downloads); when the
+  // browser blocks the cross-origin download, open it in a tab instead.
+  try {
+    const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal);
+    const { shareFile } = await import('./ui/share');
+    await shareFile(blob, asset.name, asset.name);
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') throw err;
+    window.open(asset.url, '_blank', 'noopener');
+  }
 }
 
 export function showUpdateSheet(rel: ReleaseInfo): void {
@@ -139,7 +153,8 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
     h('span', { class: 'upd-chip' }, APP_VERSION), icon('arrowRight'), h('span', { class: 'upd-chip new' }, rel.version),
     date ? h('span', { class: 'upd-date' }, date) : null));
   // What's new: bullet lines from the release notes (the install table is left out)
-  const lines = rel.notes.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('|') && !l.startsWith('#') && !/^<|^\d+\. /.test(l)).slice(0, 14);
+  const section = /## What's new\s*([\s\S]*?)(?:\n## |$)/.exec(rel.notes)?.[1] ?? '';
+  const lines = section.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('-') || l.startsWith('*')).slice(0, 20);
   if (lines.length) s.body.append(h('h4', { class: 'upd-title' }, t('whatsNew')), h('ul', { class: 'upd-notes' }, ...lines.map((l) => h('li', { dir: 'auto' }, l.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '')))));
   // Download block
   const fileLine = h('p', { class: 'upd-file' });

@@ -86,6 +86,17 @@ export interface VisualSettings {
   readerToolbar: string[];    // ids of the floating toolbar buttons, in order
   systemFonts: string[];      // system font families picked on desktop
   highlightPalette: Record<'amber' | 'rose' | 'mint' | 'sky' | 'violet', string>;
+  shortcuts: Record<string, string>;   // user rebindings, id → combo
+  // Cloud sync
+  syncProvider: 'none' | 'dropbox' | 'webdav' | 'folder';
+  syncAuto: boolean;
+  syncDropboxKey: string;
+  syncDropboxRefresh: string;
+  syncWebdavUrl: string;
+  syncWebdavUser: string;
+  syncWebdavPass: string;
+  syncFolder: string;
+  syncLastAt: number;
   volumeKeys: boolean;        // page turning with volume keys (Android)
 }
 
@@ -157,6 +168,16 @@ export const DEFAULTS: VisualSettings = {
   speechEngine: 'system',
   readerToolbar: ['toc', 'search', 'images', 'bookmark', 'sep', 'type', 'more'],
   systemFonts: [],
+  shortcuts: {},
+  syncProvider: 'none',
+  syncAuto: true,
+  syncDropboxKey: '',
+  syncDropboxRefresh: '',
+  syncWebdavUrl: '',
+  syncWebdavUser: '',
+  syncWebdavPass: '',
+  syncFolder: '',
+  syncLastAt: 0,
   highlightPalette: { amber: '#e5c56b', rose: '#e58a8a', mint: '#7fcfa5', sky: '#7fb4e5', violet: '#b9a3e8' },
   volumeKeys: false,
 };

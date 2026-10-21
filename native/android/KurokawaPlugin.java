@@ -84,6 +84,78 @@ public class KurokawaPlugin extends Plugin {
     }
 
     /** Opens the system package installer for a downloaded APK (in-app update). */
+    /** Generic HTTP request from native code (no CORS): used for sync back-ends. Body/response as text. */
+    @PluginMethod
+    public void httpRequest(PluginCall call) {
+        final String urlStr = call.getString("url", "");
+        final String method = call.getString("method", "GET");
+        final String body = call.getString("body", null);
+        final JSObject headers = call.getObject("headers", new JSObject());
+        final boolean binary = call.getBoolean("binary", false);
+        new Thread(() -> {
+            try {
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(urlStr).openConnection();
+                conn.setRequestMethod(method);
+                conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                java.util.Iterator<String> it = headers.keys();
+                while (it.hasNext()) { String k = it.next(); conn.setRequestProperty(k, headers.getString(k)); }
+                if (body != null) { conn.setDoOutput(true); try (OutputStream os = conn.getOutputStream()) { os.write(call.getBoolean("bodyBase64", false) ? Base64.decode(body, Base64.DEFAULT) : body.getBytes("UTF-8")); } }
+                int code = conn.getResponseCode();
+                InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                if (in != null) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) bos.write(buf, 0, n); }
+                JSObject ret = new JSObject();
+                ret.put("status", code);
+                ret.put("body", binary ? Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP) : new String(bos.toByteArray(), "UTF-8"));
+                JSObject hs = new JSObject();
+                for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
+                ret.put("headers", hs);
+                call.resolve(ret);
+            } catch (Exception e) { call.reject("Request failed: " + e.getMessage(), e); }
+        }).start();
+    }
+
+    /** Downloads a file (following redirects, no CORS) into the cache with progress events. Returns file:// path. */
+    @PluginMethod
+    public void downloadFile(PluginCall call) {
+        final String urlStr = call.getString("url", "");
+        final String name = call.getString("name", "download.bin");
+        new Thread(() -> {
+            try {
+                java.net.URL url = new java.net.URL(urlStr);
+                java.net.HttpURLConnection conn = null;
+                for (int hop = 0; hop < 8; hop++) {
+                    conn = (java.net.HttpURLConnection) url.openConnection();
+                    conn.setInstanceFollowRedirects(false);
+                    conn.setRequestProperty("User-Agent", "KurokawaReader");
+                    conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                    int code = conn.getResponseCode();
+                    if (code >= 300 && code < 400) { String loc = conn.getHeaderField("Location"); conn.disconnect(); url = new java.net.URL(url, loc); continue; }
+                    if (code >= 400) { call.reject("HTTP " + code); return; }
+                    break;
+                }
+                long total = conn.getContentLengthLong();
+                File dir = new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
+                File out = new File(dir, name);
+                long got = 0, lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0;
+                try (InputStream in = conn.getInputStream(); FileOutputStream fo = new FileOutputStream(out)) {
+                    byte[] buf = new byte[1 << 16]; int n;
+                    while ((n = in.read(buf)) > 0) {
+                        fo.write(buf, 0, n); got += n;
+                        long now = System.currentTimeMillis();
+                        if (now - lastT > 300) {
+                            speed = (got - lastGot) / ((now - lastT) / 1000.0); lastT = now; lastGot = got;
+                            JSObject ev = new JSObject(); ev.put("got", got); ev.put("total", total); ev.put("speed", speed); ev.put("pct", total > 0 ? (int) (got * 100 / total) : 0);
+                            notifyListeners("downloadProgress", ev);
+                        }
+                    }
+                }
+                JSObject ret = new JSObject(); ret.put("path", "file://" + out.getAbsolutePath()); ret.put("size", got);
+                call.resolve(ret);
+            } catch (Exception e) { call.reject("Download failed: " + e.getMessage(), e); }
+        }).start();
+    }
+
     @PluginMethod
     public void installApk(PluginCall call) {
         String path = call.getString("path", "");

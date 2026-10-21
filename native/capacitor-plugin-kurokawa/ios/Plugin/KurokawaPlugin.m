@@ -8,4 +8,5 @@ CAP_PLUGIN(KurokawaPlugin, "Kurokawa",
   CAP_PLUGIN_METHOD(saveToGallery, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(copyImage, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(deviceInfo, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(httpRequest, CAPPluginReturnPromise);
 )

@@ -10,5 +10,10 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   openDefaultApps() { return ipcRenderer.invoke('kr:default-apps'); },
   setImmersive(on) { return ipcRenderer.invoke('kr:immersive', on); },
   copyImage(b64) { return ipcRenderer.invoke('kr:copy-image', b64); },
+  http(o) { return ipcRenderer.invoke('kr:http', o); },
+  pickFolder() { return ipcRenderer.invoke('kr:folder-pick'); },
+  readTextFile(p) { return ipcRenderer.invoke('kr:folder-read', p); },
+  writeTextFile(p, text) { return ipcRenderer.invoke('kr:folder-write', p, text); },
+  onOpenUrl(cb) { ipcRenderer.on('kr:open-url', (_e, u) => cb(u)); },
   onCommand(cb) { ipcRenderer.on('kr:command', (_e, c) => cb(c)); },
 });

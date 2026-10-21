@@ -64,6 +64,7 @@ export function libraryView(): HTMLElement {
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
     importTopBtn,
     iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
+    iconButton('cloud', t('sync'), () => void import('../ui/syncsheet').then((m) => m.syncSheet())),
     selectBtn,
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );

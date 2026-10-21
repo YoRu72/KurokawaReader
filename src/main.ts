@@ -41,6 +41,7 @@ void loadFonts();
 initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);
 scheduleAutoCheck();
+import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });

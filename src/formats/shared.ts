@@ -80,7 +80,24 @@ export function sanitize(root: Element, keepStyles: boolean): void {
 
 /** Give every block a direction of its own so mixed Arabic/English books read naturally,
  *  and set `lang` so the Arabic font stack is picked up. */
+/** Number ordered-list items explicitly: some readers' WebViews render every marker as "0."
+ *  when the publisher's counter styles are stripped; an explicit `value` always wins. */
+export function numberLists(root: Element): void {
+  root.querySelectorAll('ol').forEach((ol) => {
+    const start = Number(ol.getAttribute('start') ?? '1') || 1;
+    let n = start;
+    for (const li of Array.from(ol.children)) {
+      if (li.tagName !== 'LI') continue;
+      const own = li.getAttribute('value');
+      if (own && !Number.isNaN(Number(own))) n = Number(own);
+      li.setAttribute('value', String(n));
+      n++;
+    }
+  });
+}
+
 export function markDirections(root: Element): boolean {
+  numberLists(root);
   let rtlBlocks = 0, total = 0;
   root.querySelectorAll<HTMLElement>(BLOCK_SELECTOR).forEach((el) => {
     const text = el.textContent ?? '';

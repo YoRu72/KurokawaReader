@@ -138,6 +138,25 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
         DispatchQueue.main.async { UIPasteboard.general.image = image; call.resolve() }
     }
 
+    /// Generic HTTP request from native code (no CORS) for the sync back-ends.
+    @objc func httpRequest(_ call: CAPPluginCall) {
+        guard let urlStr = call.getString("url"), let url = URL(string: urlStr) else { call.reject("url required"); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = call.getString("method") ?? "GET"
+        req.timeoutInterval = 60
+        if let headers = call.getObject("headers") { for (k, v) in headers { if let s = v as? String { req.setValue(s, forHTTPHeaderField: k) } } }
+        if let body = call.getString("body") { req.httpBody = (call.getBool("bodyBase64") ?? false) ? Data(base64Encoded: body) : body.data(using: .utf8) }
+        let binary = call.getBool("binary") ?? false
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            if let err = err { call.reject("Request failed: \(err.localizedDescription)"); return }
+            let http = resp as? HTTPURLResponse
+            var hs: [String: Any] = [:]
+            http?.allHeaderFields.forEach { k, v in hs[String(describing: k).lowercased()] = String(describing: v) }
+            let d = data ?? Data()
+            call.resolve(["status": http?.statusCode ?? 0, "body": binary ? d.base64EncodedString() : (String(data: d, encoding: .utf8) ?? ""), "headers": hs])
+        }.resume()
+    }
+
     @objc func deviceInfo(_ call: CAPPluginCall) {
         call.resolve(["platform": "ios", "version": UIDevice.current.systemVersion, "model": UIDevice.current.model])
     }

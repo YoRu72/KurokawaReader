@@ -7,6 +7,7 @@ import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
+import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
 
@@ -126,6 +127,10 @@ export function settingsView(): HTMLElement {
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup')))));
 
+  // Account & sync
+  body.append(h('section', { class: 'card' }, h('h3', null, t('sync')), h('p', null, t('syncBody')),
+    h('div', null, h('button', { class: 'btn tonal small', onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'), t('sync')))));
+
   // Backup & restore
   const restoreInput = h('input', { type: 'file', accept: '.json,.zip,application/json,application/zip', hidden: true }) as HTMLInputElement;
   const bkStatus = h('p', { class: 'src' });
@@ -141,6 +146,32 @@ export function settingsView(): HTMLElement {
       h('button', { class: 'btn small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { backupFull } = await import('../backup'); await backupFull((d, n) => { bkStatus.textContent = `${d}/${n}`; }); bkStatus.textContent = ''; } finally { b.disabled = false; } } }, icon('books'), t('backupFull')),
       h('button', { class: 'btn small outlined', onclick: () => restoreInput.click() }, icon('import'), t('restore')), restoreInput),
     bkStatus));
+
+  // Keyboard shortcuts (anything with a keyboard)
+  if (!isTouchDevice()) {
+    const list = h('div', { class: 'dest-list' });
+    const renderKeys = () => {
+      list.replaceChildren(...SHORTCUTS.map((sc) => {
+        const combo = bindingFor(sc.id);
+        const keyBtn = h('button', { type: 'button', class: 'key-cap', dir: 'ltr', 'aria-label': t('pressNewShortcut') }, combo || '—');
+        keyBtn.addEventListener('click', () => {
+          keyBtn.textContent = t('pressKeys'); keyBtn.classList.add('listening');
+          const onKey = (e: KeyboardEvent) => {
+            e.preventDefault(); e.stopPropagation();
+            if (e.key === 'Escape') { window.removeEventListener('keydown', onKey, true); renderKeys(); return; }
+            const c = comboOf(e); if (!c) return;
+            window.removeEventListener('keydown', onKey, true);
+            setBinding(sc.id, c); renderKeys();
+          };
+          window.addEventListener('keydown', onKey, true);
+        });
+        return h('div', { class: 'dest-row' }, icon(sc.scope === 'reader' ? 'books' : 'library'), h('span', { class: 'name' }, t(sc.label as 'library')), keyBtn);
+      }));
+    };
+    renderKeys();
+    body.append(h('section', { class: 'card' }, h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsEditBody')), list,
+      h('div', null, h('button', { class: 'btn small outlined', onclick: () => { resetBindings(); renderKeys(); } }, t('resetDefaults')))));
+  }
 
   // Updates
   const upd = h('section', { class: 'card' }, h('h3', null, t('updates')));

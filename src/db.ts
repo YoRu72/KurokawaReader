@@ -41,6 +41,7 @@ export interface Highlight {
   anchor?: string;
   color: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
   note?: string;
+  noteAt?: number;
   createdAt: number;
 }
 
@@ -65,6 +66,7 @@ export interface Book {
   cover?: Blob;
   pageCount?: number;
   progress?: Locator;
+  progressAt?: number;
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];
