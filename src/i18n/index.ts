@@ -69,23 +69,23 @@ export function t(key: keyof Strings, vars?: Record<string, string | number>): s
   return s;
 }
 
-/** Numbers are shown with Western digits in both languages — book pages, percentages
- *  and sizes stay unambiguous that way; Arabic prose still uses the Arabic percent sign. */
+/** Numbers interpolated into strings: Western digits in English, Arabic-Indic in Arabic
+ *  (strings such as file names pass through untouched). */
 export function formatNumber(v: string | number): string {
-  return typeof v === 'number' ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(v) : v;
+  return typeof v === 'number' ? localDigits(new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false }).format(v)) : v;
 }
 
 export function formatDate(ts: number | undefined): string {
   if (!ts) return t('never');
-  return new Intl.DateTimeFormat(current === 'ar' ? 'ar-SA-u-nu-latn' : 'en-GB', { dateStyle: 'medium' }).format(new Date(ts));
+  return new Intl.DateTimeFormat(current === 'ar' ? 'ar-SA-u-nu-arab-ca-gregory' : 'en-GB', { dateStyle: 'medium' }).format(new Date(ts));
 }
 
 export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
+  if (n < 1024) return `${localDigits(n)} B`;
   const units = ['KB', 'MB', 'GB'];
   let i = -1;
   do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
-  return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
+  return `${localDigits(n.toFixed(n < 10 ? 1 : 0))} ${units[i]}`;
 }
 
 /** Heuristic: does this text read right-to-left? */

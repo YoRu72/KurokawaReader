@@ -2,7 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
-import { t, isRtlText, isTouchDevice, getLang } from '../i18n';
+import { t, isRtlText, isTouchDevice, getLang, localDigits } from '../i18n';
 import { db, uid, type Book, type Locator, type Bookmark, type Highlight } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -83,12 +83,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusClock, statusBatt, statusPct);
   const tickClock = () => {
     const d = new Date();
-    if (getLang() === 'ar') { const h = d.getHours(); statusClock.textContent = `${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')} ${h >= 12 ? 'مساءً' : 'صباحًا'}`; }
+    if (getLang() === 'ar') { const h = d.getHours(); statusClock.textContent = localDigits(`${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')}`) + (h >= 12 ? ' مساءً' : ' صباحًا'); }
     else statusClock.textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
   };
   statusBar.hidden = !getSettings().showStatusLine;
   tickClock(); const clockTimer = window.setInterval(tickClock, 15000); onDispose(() => window.clearInterval(clockTimer));
-  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.().then((b) => { const paint = () => { statusBatt.textContent = `${Math.round(b.level * 100)}%`; }; paint(); b.addEventListener('levelchange', paint); }).catch(() => undefined);
+  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.().then((b) => { const paint = () => { statusBatt.textContent = `${localDigits(Math.round(b.level * 100))}%`; }; paint(); b.addEventListener('levelchange', paint); }).catch(() => undefined);
   const title = h('div', { class: 'title' });
   const panel = new SidePanel(root);
 
@@ -364,7 +364,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     footerWhere.textContent = docs.length > 1 ? `${docs.indexOf(cur.doc) + 1}/${docs.length} · ${label}` : label;
     footerWhere.setAttribute('dir', 'auto');
     const pct = Math.round(cur.loc.pct * 100);
-    footerPct.textContent = `${pct}%`;
+    footerPct.textContent = `${localDigits(pct)}%`;
     footerBar.style.width = `${pct}%`;
     // Moon+-style status line: chapter · screen x/y · clock · battery · %
     statusWhere.textContent = label; statusWhere.setAttribute('dir', 'auto');
@@ -372,8 +372,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const sr = scroll.getBoundingClientRect(); const ur = unitEl.getBoundingClientRect();
     const total = Math.max(1, Math.ceil(ur.height / Math.max(1, sr.height)));
     const page = Math.min(total, Math.max(1, Math.floor((sr.top - ur.top) / Math.max(1, sr.height)) + 1));
-    statusPage.textContent = `(${page}/${total})`;
-    statusPct.textContent = `${pct}%`;
+    statusPage.textContent = `(${localDigits(page)}/${localDigits(total)})`;
+    statusPct.textContent = `${localDigits(pct)}%`;
   }, 150);
 
   function scheduleSave(): void {
