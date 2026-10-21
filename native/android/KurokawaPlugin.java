@@ -198,7 +198,6 @@ public class KurokawaPlugin extends Plugin {
             call.reject("Cannot start installer: " + e.getMessage(), e);
         }
     }
-    }
 
     /* ---------- Scanning the device for readable files (Storage Access Framework) ---------- */
 
