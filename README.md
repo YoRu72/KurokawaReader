@@ -12,13 +12,8 @@
 ## What it does
 
 - **Library** — import files, drag them in, open them from other apps, or **scan the whole device** / a folder with type filters (Android, iOS Files, desktop); folders, format and status filters, search, natural sort, a *continue reading* card.
-<<<<<<< HEAD
-- **Reading** — chapter-by-chapter or continuous; several books in one flow; contents, bookmarks, highlights with notes, search that ignores diacritics, read-aloud (speed and voice), auto-scroll, tap / volume-key / edge-swipe / pinch gestures, keyboard shortcuts, immersive mode, keep-screen-on.
-- **Look** — 19 themes plus custom colours, textures, your own background picture, warmth and dimming; your own fonts; size, spacing, width, alignment, hyphenation.
-=======
 - **Reading** — chapter-by-chapter or continuous; several books in one flow; contents, bookmarks, highlights with notes, search that ignores diacritics, read-aloud (speed, voice, sleep timer), auto-scroll, tap / volume-key / edge-swipe / pinch gestures, keyboard shortcuts, immersive mode, keep-screen-on.
-- **Look** — ten one-tap presets, 19 themes plus custom colours, textures, your own background picture, warmth and dimming; Lora / Uthman TN1 / your own fonts; size, spacing, width, alignment, hyphenation.
->>>>>>> bd47e82 (v0.10.0: system selection menu really suppressed (KrWebView now replaces Capacitor's bridge_layout_main WebView, plus a hide loop); copy image goes native-first on Android/iOS and through Electron's clipboard on desktop; new Maqāmāt cover (migrates existing libraries); folder-add card removed (chip suffices); five more reading presets; sleep timer)
+- **Look** — ten one-tap presets, 19 themes plus custom colours, textures, your own background picture, warmth and dimming; your own fonts; size, spacing, width, alignment, hyphenation.
 - **Selection tools** — copy, search, define, translate (built-in or any translator app), note, share, read aloud, and **text snapshots** that copy the page's look and save to *Pictures/Screenshots*, share or copy.
 - **PDF** — instant open, the system renderer on Android for non-embedded fonts, page slider, search, outline, thumbnails grid, save / share / copy page as PNG.
 - **Interface** — Material 3 Expressive, light / dark / follow-the-page, accent colours, English and Arabic (RTL); the app name follows the system language.
