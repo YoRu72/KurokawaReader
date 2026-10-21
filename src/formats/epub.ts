@@ -32,6 +32,9 @@ function cachedPackage(file: Blob, bookId: string): Promise<Package> {
   return pkg;
 }
 
+/** Parse a book's package ahead of time (the library does this for the book most likely to be opened next). */
+export function prewarmEpub(file: Blob, bookId: string): void { void cachedPackage(file, bookId).catch(() => {}); }
+
 async function loadPackage(file: Blob): Promise<Package> {
   const zip = await JSZip.loadAsync(file);
   const container = zipFile(zip, 'META-INF/container.xml');
@@ -218,7 +221,15 @@ async function renderChapter(pkg: Package, item: ManifestItem, index: number, ct
     const path = resolveZipPath(item.href, v);
     mediaTasks.push(pool.fromZip(pkg.zip, path).then((u) => { if (u) e.setAttribute(attr, u); else e.removeAttribute(attr); }));
   };
-  doc.querySelectorAll('img').forEach((e) => fix(e, 'src'));
+  // Pictures are resolved as they scroll near; everything else up front.
+  const lazyImg = (e: Element, attr: string) => {
+    const v = e.getAttribute(attr);
+    if (!v || /^(data:|https?:|blob:)/i.test(v)) return;
+    const path = resolveZipPath(item.href, v);
+    if (!zipFile(pkg.zip, path)) { e.removeAttribute(attr); return; }
+    pool.lazy(pkg.zip, path, e, attr);
+  };
+  doc.querySelectorAll('img').forEach((e) => lazyImg(e, 'src'));
   doc.querySelectorAll('image').forEach((e) => { fix(e, 'xlink:href'); fix(e, 'href'); });
   doc.querySelectorAll('source, video, audio').forEach((e) => fix(e, 'src'));
   await Promise.all(mediaTasks);
@@ -310,7 +321,7 @@ export const epubHandler: FlowHandler = {
 
     const rtl = markDirections(root) || pkg.rtlProgression || /^(ar|he|fa|ur)/i.test(pkg.meta.language ?? '');
     if (rtl) root.setAttribute('dir', 'rtl');
-    const images: ImageRef[] = collectImages(root, ctx, 'epub');
+    const images: ImageRef[] = collectImages(root, ctx, 'epub', pool, pkg.zip);
     return { element: root, toc, images, rtl, dispose: () => pool.dispose() };
   },
 };

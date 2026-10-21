@@ -28,7 +28,7 @@ import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
-import { setImmersive, keepAwake, toggleFullscreen } from '../native';
+import { setImmersive, keepAwake, toggleFullscreen, nativePlatform } from '../native';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet } from '../ui/dom';
 
@@ -102,7 +102,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), () => navigate('/')),
     title,
-    iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
+    iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
   );
   // M3 Expressive floating toolbar carries the reading actions.
   const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') });
@@ -119,7 +119,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     scroll: () => iconButton('scroll', t('autoScroll'), () => toggleAutoScroll()),
     info: () => iconButton('info', t('bookInfo'), () => showInfo()),
     snapshot: () => iconButton('camera', t('textAsImage'), () => toast(t('selectTextFirst'))),
-    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
+    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
     more: () => iconButton('more', t('more'), () => openMore()),
   };
   const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => TOOLBAR_ITEMS[id]())); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(TOOLBAR_ITEMS.more()); };
@@ -494,7 +494,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (y > 0.62) { scroll.scrollBy({ top: page, behavior: 'smooth' }); return; }
       if (y < 0.22) { scroll.scrollBy({ top: -page, behavior: 'smooth' }); return; }
     }
-    root.classList.toggle('immersive');
+    const on = root.classList.toggle('immersive');
+    if (nativePlatform() === 'android' || nativePlatform() === 'ios') void setImmersive(on || getSettings().hideSystemBars);
   });
 
   onDispose(attachEdgeBrightness(scroll));
@@ -505,7 +506,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const c = (e as CustomEvent<string>).detail;
     if (c === 'search') openSearch(); else if (c === 'options') openOptions(); else if (c === 'toc') openContents('toc'); else if (c === 'bookmark') void addBookmark();
     else if (c === 'translate') translator.toggleUi(); else if (c === 'speak') { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }
-    else if (c === 'fullscreen') { void toggleFullscreen(); }
+    else if (c === 'fullscreen') { void toggleFullscreen(root); }
     else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
@@ -888,7 +889,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('type', t('visualOptions'), openOptions),
         item(speaking ? 'stop' : 'speak', speaking ? t('stopReading') : t('readAloud'), () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }),
         item('scroll', t('autoScroll'), toggleAutoScroll),
-        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
+        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
         item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
@@ -923,7 +924,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       case 'g': showGallery(); break;
       case 'v': openOptions(); break;
       case 'c': openContents('toc'); break;
-      case 'f': void toggleFullscreen(); break;
+      case 'f': void toggleFullscreen(root); break;
       case 'a': toggleAutoScroll(); break;
       case '[': case ']': {
         const cur = currentLocator();
@@ -1125,7 +1126,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   function showInfo(): void {
     showBookInfo({ book, stats: tracker.current, speed: tracker.speed(), pages: viewer.total, currentPage: viewer.current, pct: viewer.current / viewer.total });
   }
-  reader.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('.textLayer span, a, button, input')) return; if (document.getSelection()?.isCollapsed === false) return; root.classList.toggle('immersive'); });
+  reader.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('.textLayer span, a, button, input')) return; if (document.getSelection()?.isCollapsed === false) return; const on = root.classList.toggle('immersive'); if (nativePlatform() === 'android' || nativePlatform() === 'ios') void setImmersive(on || getSettings().hideSystemBars); });
 
   let outline: TocItem[] | null = null;
   function openContents(tab: 'toc' | 'bookmarks' | 'notes') {
@@ -1250,7 +1251,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('images', t('savePagesRange'), () => savePagesSheet()),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('type', t('visualOptions'), openPdfOptions),
-        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
+        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('target', t('goToPage'), () => pageInput.focus()),
       ));
@@ -1275,7 +1276,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       case 'g': pageInput.focus(); break;
       case '+': case '=': viewer.zoom(0.15); break;
       case '-': viewer.zoom(-0.15); break;
-      case 'f': void toggleFullscreen(); break;
+      case 'f': void toggleFullscreen(root); break;
       default: return;
     }
   };

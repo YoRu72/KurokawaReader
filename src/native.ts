@@ -6,6 +6,7 @@ import { importFiles } from './library';
 import { navigate } from './router';
 import { toast } from './ui/dom';
 import { t } from './i18n';
+import { getSettings } from './settings';
 import { actionFor } from './shortcuts';
 
 interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton', fn: (d: { url: string; canGoBack?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
@@ -170,10 +171,19 @@ export async function setVolumeKeys(on: boolean): Promise<void> {
 }
 
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */
-export async function toggleFullscreen(): Promise<void> {
+export async function toggleFullscreen(view?: HTMLElement): Promise<void> {
   const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;
   if (desk?.setFullscreen) { try { await desk.setFullscreen('toggle'); } catch { /* ignore */ } return; }
-  if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen?.();
+  // Phones and tablets (and browsers without the Fullscreen API): full screen means the
+  // reader's immersive mode — chrome and system bars hidden — toggled from the view.
+  const native = nativePlatform() === 'android' || nativePlatform() === 'ios';
+  if (view && (native || !document.documentElement.requestFullscreen)) {
+    const on = view.classList.toggle('immersive');
+    await setImmersive(on || getSettings().hideSystemBars);
+    return;
+  }
+  try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen?.(); }
+  catch { if (view) view.classList.toggle('immersive'); }
 }
 
 async function restoreFromFile(file: File): Promise<void> {

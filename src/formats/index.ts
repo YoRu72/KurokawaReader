@@ -8,6 +8,20 @@ import { pptxHandler } from './pptx';
 import { txtHandler, mdHandler, htmlHandler } from './text';
 import { fb2Handler, odtHandler, cbzHandler, imageHandler } from './misc';
 import { pdfMeta } from './pdf';
+import { prewarmEpub } from './epub';
+
+/**
+ * Warm up what opening `book` will need, while the library is idle: the parsed EPUB
+ * package, or the pdf.js chunk and worker. Cheap, and makes the next open feel instant.
+ */
+export function prewarm(book: { id: string; format: Format }, getFile: () => Promise<Blob | undefined>): void {
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+  const idle = (fn: () => void) => (w.requestIdleCallback ? w.requestIdleCallback(fn, { timeout: 2500 }) : window.setTimeout(fn, 400));
+  idle(() => {
+    if (book.format === 'pdf') { void import('./pdf').then((m) => m.loadPdfjs()).catch(() => {}); return; }
+    if (book.format === 'epub') void getFile().then((f) => { if (f) prewarmEpub(f, book.id); }).catch(() => {});
+  });
+}
 
 const EXT: Record<string, Format> = {
   epub: 'epub', pdf: 'pdf', docx: 'docx', docm: 'docx', dotx: 'docx', xlsx: 'xlsx', xlsm: 'xlsx', csv: 'csv', tsv: 'csv', pptx: 'pptx', ppsx: 'pptx',

@@ -15,9 +15,12 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
     body);
 
   if (!images.length) body.append(h('div', { class: 'empty' }, icon('images'), h('p', null, t('galleryEmpty'))));
+  /** Object URL of a picture, decompressing lazily loaded ones on first use. */
+  const srcOf = async (im: ImageRef): Promise<string> => { if (!im.src && im.load) im.src = await im.load(); return im.src; };
+  const lazyImg = (im: ImageRef, attrs: Record<string, string>) => { const el = h('img', { ...attrs, alt: im.alt ?? '' }) as HTMLImageElement; void srcOf(im).then((u) => { if (u) el.src = u; }); return el; };
   images.forEach((img, i) => {
     grid.append(h('button', { type: 'button', onclick: () => lightbox(i) },
-      h('img', { src: img.src, alt: img.alt ?? '', loading: 'lazy', decoding: 'async' }),
+      lazyImg(img, { loading: 'lazy', decoding: 'async' }),
       h('span', { class: 'cap', dir: 'auto' }, img.alt || img.bookTitle)));
   });
 
@@ -32,14 +35,14 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
       const im = images[current];
       clear(lb!);
       lb!.append(
-        h('div', { class: 'lb-img', onclick: closeLb }, h('img', { src: im.src, alt: im.alt ?? '' })),
+        h('div', { class: 'lb-img', onclick: closeLb }, lazyImg(im, {})),
         h('div', { class: 'lb-bar' },
           iconButton('chevronLeft', t('previousPage'), () => { current = (current - 1 + images.length) % images.length; render(); }),
           h('span', { class: 'cap', dir: 'auto' }, `${current + 1} / ${images.length} · ${im.alt || t('imageFrom', { title: im.bookTitle })}`),
           opts.lightboxOnly ? null : iconButton('target', t('jumpToImage'), () => { lb?.remove(); lb = null; close(); onJump(im.anchor); }),
-          iconButton('download', t('saveImage'), async () => { try { const { blob, ext } = await blobOf(im.src); await saveImage(blob, `${(im.bookTitle || 'image').slice(0, 30)}-${current + 1}.${ext}`); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
-          iconButton('copy', t('copyImage'), async () => { try { const { blob } = await blobOf(im.src); if (await copyImage(blob)) toast(t('copied')); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
-          iconButton('external', t('shareImage'), async () => { try { const { blob, ext } = await blobOf(im.src); await shareFile(blob, `image-${current + 1}.${ext}`, im.bookTitle); } catch { /* ignore */ } }),
+          iconButton('download', t('saveImage'), async () => { try { const { blob, ext } = await blobOf(await srcOf(im)); await saveImage(blob, `${(im.bookTitle || 'image').slice(0, 30)}-${current + 1}.${ext}`); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
+          iconButton('copy', t('copyImage'), async () => { try { const { blob } = await blobOf(await srcOf(im)); if (await copyImage(blob)) toast(t('copied')); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
+          iconButton('external', t('shareImage'), async () => { try { const { blob, ext } = await blobOf(await srcOf(im)); await shareFile(blob, `image-${current + 1}.${ext}`, im.bookTitle); } catch { /* ignore */ } }),
           iconButton('chevronRight', t('nextPage'), () => { current = (current + 1) % images.length; render(); }),
           (() => { const b = iconButton('close', t('close'), closeLb); b.classList.add('lb-close'); return b; })(),
         ));

@@ -2,7 +2,7 @@ import { h, icon, iconButton, toast, clear, coverColors, pickSheet } from '../ui
 import { t, formatBytes, formatDate, countBooks, localDigits } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
 import { db, uid, type Book, type Folder } from '../db';
-import { SUPPORTED_ACCEPT } from '../formats';
+import { SUPPORTED_ACCEPT, prewarm } from '../formats';
 import { navigate } from '../router';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
 import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
@@ -97,6 +97,9 @@ export function libraryView(): HTMLElement {
   const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (!root.isConnected) return; if (c === 'import') input.click(); else if (c === 'scan') openScan(); };
   document.addEventListener('kr:command', onCommand);
   const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
+  const FINE_POINTER = matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const endDrag = () => root.classList.remove('dragging-book');
+  for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.addEventListener(ev, endDrag, { passive: true });
 
   function setSelecting(v: boolean) {
     selecting = v;
@@ -180,9 +183,13 @@ export function libraryView(): HTMLElement {
       cover,
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size)))),
     );
-    el.draggable = true;
-    el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData('text/kr-book', selecting && selected.has(book.id) ? [...selected].join(',') : book.id); e.dataTransfer!.effectAllowed = 'move'; root.classList.add('dragging-book'); });
-    el.addEventListener('dragend', () => root.classList.remove('dragging-book'));
+    // Mouse-only: on touch screens a long press is the folder menu, and a WebView
+    // drag that never ends used to leave every chip with a dashed drop outline.
+    if (FINE_POINTER) {
+      el.draggable = true;
+      el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData('text/kr-book', selecting && selected.has(book.id) ? [...selected].join(',') : book.id); e.dataTransfer!.effectAllowed = 'move'; root.classList.add('dragging-book'); });
+      el.addEventListener('dragend', endDrag);
+    }
     let pressTimer: number | undefined;
     el.addEventListener('pointerdown', () => { pressTimer = window.setTimeout(() => { if (!selecting) { setSelecting(true); selected.add(book.id); renderGrid(); } }, 520); });
     const cancel = () => window.clearTimeout(pressTimer);
@@ -323,11 +330,13 @@ export function libraryView(): HTMLElement {
     });
   }
 
+  let prewarmed = '';
   function renderResume() {
     clear(resume);
     const last = [...books].filter((b) => b.lastOpenedAt && (b.progress?.pct ?? 0) < 0.98).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
     resume.hidden = !last || selecting || !!query || !!activeFolder;
     if (resume.hidden || !last) return;
+    if (prewarmed !== last.id) { prewarmed = last.id; prewarm(last, () => db.getFile(last.id)); }
     const pct = Math.round((last.progress?.pct ?? 0) * 100);
     const cover = h('div', { class: 'cover' });
     const url = coverUrl(last);

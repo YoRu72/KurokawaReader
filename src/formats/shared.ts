@@ -46,6 +46,36 @@ export class UrlPool {
     this.urls.set(path, url);
     return url;
   }
+  /**
+   * Point `attr` at the zip entry only when the element nears the viewport, so
+   * opening a picture-heavy book does not decompress every image up front.
+   */
+  lazy(zip: JSZip, path: string, el: Element, attr: string): void {
+    const cached = this.urls.get(path);
+    if (cached) { el.setAttribute(attr, cached); return; }
+    el.setAttribute('data-kr-lazy', path);
+    el.removeAttribute(attr);
+    this.pending.set(el, { zip, path, attr });
+    this.observer().observe(el);
+  }
+  /** Load every lazy picture under `root` now (e.g. before printing or exporting). */
+  async resolveAll(root: ParentNode): Promise<void> {
+    await Promise.all([...root.querySelectorAll('[data-kr-lazy]')].map((el) => this.resolveEl(el)));
+  }
+  private pending = new Map<Element, { zip: JSZip; path: string; attr: string }>();
+  private io: IntersectionObserver | null = null;
+  private observer(): IntersectionObserver {
+    this.io ??= new IntersectionObserver((entries) => { for (const e of entries) if (e.isIntersecting) void this.resolveEl(e.target); }, { rootMargin: '200% 0px' });
+    return this.io;
+  }
+  private async resolveEl(el: Element): Promise<void> {
+    const p = this.pending.get(el);
+    if (!p) return;
+    this.pending.delete(el); this.io?.unobserve(el);
+    const url = await this.fromZip(p.zip, p.path);
+    if (url) el.setAttribute(p.attr, url);
+    el.removeAttribute('data-kr-lazy');
+  }
   fromBlob(key: string, blob: Blob): string {
     if (this.urls.has(key)) return this.urls.get(key)!;
     const url = URL.createObjectURL(blob);
@@ -53,6 +83,7 @@ export class UrlPool {
     return url;
   }
   dispose(): void {
+    this.io?.disconnect(); this.io = null; this.pending.clear();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     this.urls.clear();
   }
@@ -133,16 +164,18 @@ export function tagLineArt(img: HTMLImageElement): void {
 }
 
 /** Collect images with stable ids for the gallery. */
-export function collectImages(root: Element, ctx: RenderContext, prefix: string): ImageRef[] {
+export function collectImages(root: Element, ctx: RenderContext, prefix: string, pool?: UrlPool, zip?: JSZip): ImageRef[] {
   const out: ImageRef[] = [];
   let i = 0;
-  root.querySelectorAll<HTMLImageElement>('img[src]').forEach((img) => {
+  root.querySelectorAll<HTMLImageElement>('img[src], img[data-kr-lazy]').forEach((img) => {
     if (!img.id) img.id = ctx.id(`${prefix}-img${i}`);
     i++;
     img.loading = 'lazy';
     img.decoding = 'async';
     tagLineArt(img);
-    out.push({ src: img.src || img.getAttribute('src')!, alt: img.alt || undefined, anchor: img.id, bookId: ctx.bookId, bookTitle: ctx.bookTitle });
+    const lazy = img.dataset.krLazy;
+    const load = lazy && pool ? () => pool.fromZip(zip!, lazy).then((u) => u ?? '') : undefined;
+    out.push({ src: img.src || img.getAttribute('src') || '', load, alt: img.alt || undefined, anchor: img.id, bookId: ctx.bookId, bookTitle: ctx.bookTitle });
   });
   return out;
 }

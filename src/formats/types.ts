@@ -10,8 +10,10 @@ export interface TocItem {
 }
 
 export interface ImageRef {
-  /** Object URL (or data URL) of the image. */
+  /** Object URL (or data URL) of the image; '' until a lazily loaded picture is resolved — use load(). */
   src: string;
+  /** Resolves the object URL (decompressing the picture on first use). */
+  load?: () => Promise<string>;
   alt?: string;
   /** id of the <img> in the rendered content, for "show in text". */
   anchor: string;
