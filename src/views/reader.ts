@@ -19,6 +19,8 @@ import { navigate } from '../router';
 import { ReadingTracker, countWords } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot } from '../ui/textcard';
+import { exportNotes } from '../ui/exportnotes';
+import { attachEdgeBrightness } from '../ui/brightness';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake } from '../native';
@@ -423,6 +425,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     root.classList.toggle('immersive');
   });
 
+  onDispose(attachEdgeBrightness(scroll));
   // Volume keys (Android) turn screens when enabled.
   const onVolume = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; scroll.scrollBy({ top: dir * scroll.clientHeight * 0.88, behavior: 'smooth' }); };
   document.addEventListener('kr:volume', onVolume);
@@ -733,6 +736,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('scroll', t('autoScroll'), toggleAutoScroll),
         item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
+        item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
         item('highlight', t('highlights'), () => openContents('highlights')),
         docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
       ));
@@ -849,6 +853,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   if (getSettings().hideSystemBars) void setImmersive(true);
   keepAwake(getSettings().keepAwake);
   onDispose(() => { void setImmersive(false); keepAwake(false); });
+  onDispose(attachEdgeBrightness(viewer.scroll));
   const onVolumePdf = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; viewer.scroll.scrollBy({ top: dir * viewer.scroll.clientHeight * 0.9, behavior: 'smooth' }); };
   document.addEventListener('kr:volume', onVolumePdf);
   onDispose(() => document.removeEventListener('kr:volume', onVolumePdf));
@@ -969,6 +974,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
       body.append(h('ul', { class: 'plain-list' },
         item('info', t('bookInfo'), showInfo),
+        item('download', t('exportNotes'), () => void exportNotes(book)),
         item('grid', t('pagesGrid'), showPagesGrid),
         item('camera', t('savePageImage'), () => void savePage(false)),
         item('external', t('sharePage'), () => void savePage(true)),

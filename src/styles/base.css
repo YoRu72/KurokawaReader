@@ -563,3 +563,17 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .dest-row input[type=text] { grid-column: 2 / -1; }
 .actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .chip-sep { width: 1px; align-self: stretch; margin: 6px 4px; background: var(--md-outline-variant); flex: 0 0 auto; }
+.brightness-hud { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: color-mix(in srgb, var(--md-surface-container-highest) 85%, transparent); color: var(--md-on-surface); font: 500 14px var(--font-ui); z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.brightness-hud.on { opacity: 1; }
+
+/* Continue-reading card */
+.resume-card { display: grid; grid-template-columns: 56px 1fr auto; align-items: center; gap: 14px; padding: 12px 14px; margin: 0 0 18px; border-radius: 20px; background: var(--md-surface-container); }
+.resume-card .cover { width: 56px; height: 80px; border-radius: 8px; overflow: hidden; background: var(--md-surface-container-highest); }
+.resume-card .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.resume-card .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--md-primary); text-transform: uppercase; }
+.resume-card .bt { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume-card .sub { font-size: 13px; color: var(--md-on-surface-variant); }
+.resume-card .bar { height: 4px; border-radius: 2px; background: var(--md-surface-container-highest); margin-top: 6px; overflow: hidden; }
+.resume-card .bar span { display: block; height: 100%; background: var(--md-primary); border-radius: 2px; }
+.resume-meta { min-width: 0; }
+@media (max-width: 480px) { .resume-card { grid-template-columns: 48px 1fr; } .resume-card > .btn { grid-column: 1 / -1; justify-self: end; } }

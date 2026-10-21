@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear, coverColors } from '../ui/dom';
-import { t, formatBytes, formatDate, countBooks } from '../i18n';
+import { t, formatBytes, formatDate, countBooks, localDigits } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
 import { db, uid, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats';
@@ -45,6 +45,7 @@ export function libraryView(): HTMLElement {
   sortSel.value = sort;
 
   const grid = h('div', { class: 'book-grid', role: 'list' });
+  const resume = h('div', { class: 'resume-card', hidden: true });
   const chips = h('div', { class: 'folder-chips', role: 'tablist' });
   const fmtChips = h('div', { class: 'format-chips', role: 'group', 'aria-label': t('filterFormats') });
   const heroSub = h('div', { class: 'sub' });
@@ -54,6 +55,7 @@ export function libraryView(): HTMLElement {
     h('div', { class: 'library-tools' }, search, sortSel),
     chips,
     fmtChips,
+    resume,
     grid);
 
   const selectBtn = iconButton('check', t('select'), () => setSelecting(!selecting), { pressed: false });
@@ -314,8 +316,28 @@ export function libraryView(): HTMLElement {
     });
   }
 
+  function renderResume() {
+    clear(resume);
+    const last = [...books].filter((b) => b.lastOpenedAt && (b.progress?.pct ?? 0) < 0.98).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
+    resume.hidden = !last || selecting || !!query || !!activeFolder;
+    if (resume.hidden || !last) return;
+    const pct = Math.round((last.progress?.pct ?? 0) * 100);
+    const cover = h('div', { class: 'cover' });
+    const url = coverUrl(last);
+    if (url) cover.appendChild(h('img', { src: url, alt: '' })); else { const [c1, c2] = coverColors(last.title); cover.style.background = `linear-gradient(160deg, ${c1}, ${c2})`; }
+    resume.append(
+      cover,
+      h('div', { class: 'resume-meta' },
+        h('div', { class: 'eyebrow' }, t('continueReading')),
+        h('div', { class: 'bt', dir: 'auto' }, last.title),
+        h('div', { class: 'sub' }, [last.author, `${localDigits(pct)}%`].filter(Boolean).join(' · ')),
+        h('div', { class: 'bar' }, h('span', { style: { width: `${pct}%` } }))),
+      h('button', { class: 'btn primary small', type: 'button', onclick: () => navigate(`/read/${last.id}`) }, icon('play'), t('open')));
+  }
+
   function renderGrid() {
     clear(grid);
+    renderResume();
     renderSelBar();
     renderChips();
     renderFormatChips();

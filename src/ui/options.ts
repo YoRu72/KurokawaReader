@@ -1,7 +1,7 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
 import { h, clear, icon, toast } from './dom';
-import { t } from '../i18n';
+import { isTouchDevice, t } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { getSettings, updateSettings, resetSettings, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont } from '../settings';
 import { fontsSync } from '../fonts';
@@ -114,6 +114,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle(t('hideSystemBars'), s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
   grid.append(toggle(t('tapToTurn'), s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
   grid.append(toggle(t('showStatusLine'), s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
+  if (isTouchDevice()) grid.append(toggle(t('edgeBrightness'), s.edgeBrightness, (v) => updateSettings({ edgeBrightness: v })));
   grid.append(toggle(t('keepAwake'), s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
   if (nativePlatform() === 'android') grid.append(toggle(t('volumeKeys'), s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));

@@ -62,6 +62,7 @@ export interface VisualSettings {
   formatFilter: string[];
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   keepAwake: boolean;         // screen wake lock while reading
+  edgeBrightness: boolean;    // left-edge swipe adjusts dimming
   volumeKeys: boolean;        // page turning with volume keys (Android)
 }
 
@@ -111,6 +112,7 @@ export const DEFAULTS: VisualSettings = {
   formatFilter: [],
   statusFilter: [],
   keepAwake: true,
+  edgeBrightness: true,
   volumeKeys: false,
 };
 
