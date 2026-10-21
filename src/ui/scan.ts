@@ -14,13 +14,14 @@ export interface ScanResult { folderName: string; files: ScanEntry[]; truncated:
 import { destinationList, type Destination } from './destination';
 export type { Destination };
 
+interface ScanFile { uri: string; tree?: string; name: string; path: string; mime: string; size: number }
 interface KrScan {
   storageAccess(): Promise<{ granted: boolean; needsSettings: boolean }>;
   requestStorageAccess(): Promise<{ granted: boolean }>;
-  scanDevice(o: { exts: string[] }): Promise<{ files: { uri: string; name: string; path: string; mime: string; size: number }[]; truncated: boolean }>;
+  scanDevice(o: { exts: string[] }): Promise<{ files: ScanFile[]; truncated: boolean }>;
   pickTree(): Promise<{ uri: string; name: string }>;
-  listTree(o: { uri: string; exts: string[] }): Promise<{ files: { uri: string; name: string; path: string; mime: string; size: number }[]; truncated: boolean }>;
-  readDocument(o: { uri: string }): Promise<{ data: string }>;
+  listTree(o: { uri: string; exts: string[] }): Promise<{ files: ScanFile[]; truncated: boolean }>;
+  readDocument(o: { uri: string; tree?: string }): Promise<{ data: string }>;
 }
 interface Cap { getPlatform?(): string; Plugins?: { Kurokawa?: Partial<KrScan> } }
 const cap = (): Cap | undefined => (window as unknown as { Capacitor?: Cap }).Capacitor;
@@ -44,8 +45,7 @@ export const groupOf = (f: Format): string => FORMAT_GROUPS.find((g) => g.format
 
 export function canScan(): boolean {
   const c = cap();
-  if (c?.getPlatform?.() === 'android') return !!c.Plugins?.Kurokawa?.pickTree;
-  if (c?.getPlatform?.() === 'ios') return false;
+  if (c?.getPlatform?.() === 'android' || c?.getPlatform?.() === 'ios') return !!c.Plugins?.Kurokawa?.pickTree;
   return 'showDirectoryPicker' in window || !!desktop()?.scanDevice;
 }
 /** Whole-device scanning: Android with storage access, or the desktop app. */
@@ -63,10 +63,10 @@ function base64ToBlob(b64: string, mime: string): Blob {
 
 const ALL_EXTS = FORMAT_GROUPS.flatMap((g) => g.exts);
 
-function toEntries(plugin: KrScan, files: { uri: string; name: string; path: string; mime: string; size: number }[]): ScanEntry[] {
+function toEntries(plugin: KrScan, files: ScanFile[]): ScanEntry[] {
   return files.map((f) => ({
     name: f.name, path: f.path, size: f.size, format: detectFormat(f.name, f.mime),
-    read: async () => { const { data } = await plugin.readDocument({ uri: f.uri }); return new File([base64ToBlob(data, f.mime)], f.name, { type: f.mime }); },
+    read: async () => { const { data } = await plugin.readDocument({ uri: f.uri, tree: f.tree }); return new File([base64ToBlob(data, f.mime)], f.name, { type: f.mime }); },
   }));
 }
 
@@ -185,10 +185,11 @@ export function openScanSheet(o: ScanSheetOptions): void {
     status.textContent = t('scanning');
     const exts = ALL_EXTS;
     try {
-      const android = cap()?.getPlatform?.() === 'android';
+      const plat = cap()?.getPlatform?.();
+      const mobile = plat === 'android' || plat === 'ios';
       let r: ScanResult | 'denied' | null;
-      if (mode === 'whole') r = android ? await scanAndroidWhole(exts) : await scanDesktopWhole(exts);
-      else r = android ? await scanAndroid(exts) : await scanWeb(exts);
+      if (mode === 'whole') r = plat === 'android' ? await scanAndroidWhole(exts) : await scanDesktopWhole(exts);
+      else r = mobile ? await scanAndroid(exts) : await scanWeb(exts);
       if (r === 'denied') { status.textContent = t('storageDenied'); result = null; return; }
       result = r;
       if (!result) { status.textContent = t('scanBody'); return; }

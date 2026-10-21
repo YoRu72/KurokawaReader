@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   isPortable() { return ipcRenderer.invoke('kr:is-portable'); },
   scanDevice(exts) { return ipcRenderer.invoke('kr:scan-device', exts); },
   readFile(p) { return ipcRenderer.invoke('kr:read-file', p); },
+  onCommand(cb) { ipcRenderer.on('kr:command', (_e, c) => cb(c)); },
 });

@@ -26,6 +26,7 @@ ${types.map(([name, utis]) => `    <dict>
   <key>LSSupportsOpeningDocumentsInPlace</key><true/>
   <key>UIFileSharingEnabled</key><true/>
   <key>UISupportsDocumentBrowser</key><false/>
+  <key>NSPhotoLibraryAddUsageDescription</key><string>Saves text snapshots and PDF pages to your Photos.</string>
 `;
 if (!plist.includes('CFBundleDocumentTypes')) plist = plist.replace(/<dict>\n/, `<dict>\n${docTypes}`);
 plist = plist.replace(/<key>CFBundleDisplayName<\/key>\s*<string>[^<]*<\/string>/, '<key>CFBundleDisplayName</key>\n  <string>KurokawaReader</string>');

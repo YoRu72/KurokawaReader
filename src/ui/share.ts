@@ -67,7 +67,7 @@ export async function shareText(text: string, title?: string): Promise<boolean> 
 export async function saveImage(blob: Blob, filename: string): Promise<void> {
   const c = cap();
   const folder = getSettings().snapFolder.trim() || 'Screenshots';
-  if (platform() === 'android' && c?.Plugins?.Kurokawa?.saveToGallery) {
+  if ((platform() === 'android' || platform() === 'ios') && c?.Plugins?.Kurokawa?.saveToGallery) {
     try {
       const res = await c.Plugins.Kurokawa.saveToGallery({ data: await blobToBase64(blob), name: filename, folder });
       toast(t('savedTo', { f: res.path })); return;
@@ -107,7 +107,7 @@ export async function copyImage(blob: Blob): Promise<boolean> {
     if (CI && navigator.clipboard?.write) { await navigator.clipboard.write([new CI({ [blob.type || 'image/png']: blob })]); return true; }
   } catch (e) { console.warn('[kurokawa] clipboard image failed', e); }
   const kr = c?.Plugins?.Kurokawa as (KrPlugin & { copyImage?(o: { data: string }): Promise<void> }) | undefined;
-  if (platform() === 'android' && kr?.copyImage) {
+  if ((platform() === 'android' || platform() === 'ios') && kr?.copyImage) {
     try { await kr.copyImage({ data: await blobToBase64(blob) }); return true; } catch (e) { console.warn('[kurokawa] native copy failed', e); }
   }
   toast(t('copyFailed'), 'error');

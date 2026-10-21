@@ -52,6 +52,13 @@ export function initNativeBridges(): void {
   }
   if (window.kurokawaDesktop) {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
+    // Menu / keyboard commands from the shell: views listen for `kr:command`; a few are global.
+    (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string) => void): void }).onCommand?.((c) => {
+      if (c === 'library') navigate('/');
+      else if (c === 'settings') navigate('/settings');
+      else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
+      else document.dispatchEvent(new CustomEvent('kr:command', { detail: c }));
+    });
   }
 }
 
@@ -61,7 +68,7 @@ interface StatusBarPlugin { hide(): Promise<void>; show(): Promise<void> }
 export async function setImmersive(on: boolean): Promise<void> {
   const plugins = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: ImmersivePlugin; StatusBar?: StatusBarPlugin } }) | undefined)?.Plugins;
   try {
-    if (plugins?.Kurokawa?.setImmersive) { await plugins.Kurokawa.setImmersive({ on }); return; }
+    if (nativePlatform() === 'android' && plugins?.Kurokawa?.setImmersive) { await plugins.Kurokawa.setImmersive({ on }); return; }
     if (plugins?.StatusBar) { if (on) await plugins.StatusBar.hide(); else await plugins.StatusBar.show(); }
   } catch { /* ignore */ }
 }

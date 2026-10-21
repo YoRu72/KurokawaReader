@@ -426,6 +426,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   });
 
   onDispose(attachEdgeBrightness(scroll));
+  const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (c === 'search') openSearch(); else if (c === 'options') openOptions(); };
+  document.addEventListener('kr:command', onCommand);
+  onDispose(() => document.removeEventListener('kr:command', onCommand));
   // Volume keys (Android) turn screens when enabled.
   const onVolume = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; scroll.scrollBy({ top: dir * scroll.clientHeight * 0.88, behavior: 'smooth' }); };
   document.addEventListener('kr:volume', onVolume);

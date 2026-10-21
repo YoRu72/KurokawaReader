@@ -91,6 +91,8 @@ export function libraryView(): HTMLElement {
   }
 
   const selBar = h('div', { class: 'selection-bar', hidden: true });
+  const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (!root.isConnected) return; if (c === 'import') input.click(); else if (c === 'scan') openScan(); };
+  document.addEventListener('kr:command', onCommand);
   const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
 
   function setSelecting(v: boolean) {

@@ -7,6 +7,12 @@
 4. Releases are signed with the maintainer's private key, kept only in the repository's Actions secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`), so a newer APK installs over the old one and keeps your library. The key is never committed. Builds before 0.6.2 used other keys: uninstall those once first.
 5. *Scan the whole device* asks for **All files access** on Android 11+; you can decline and pick a folder instead.
 
+### macOS
+Open the `.dmg` and drag KurokawaReader to Applications. The build is not notarized, so the first launch needs **right-click → Open** (or *System Settings → Privacy & Security → Open Anyway*).
+
+### Linux
+`chmod +x KurokawaReader-<version>-linux-x64.AppImage` and run it; file associations are registered on first launch if you accept the prompt.
+
 ### Windows
 Run `KurokawaReader-<version>-win-x64.exe` to install (it registers the file types so double-clicking an EPUB or PDF opens the reader), or use the portable `.exe` with no installation. SmartScreen may warn because the build is not code‑signed — choose *More info → Run anyway*.
 

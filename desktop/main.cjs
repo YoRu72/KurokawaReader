@@ -30,9 +30,45 @@ function flush() {
   }
 }
 
+// Remember window size/position between runs.
+const statePath = () => path.join(app.getPath('userData'), 'window-state.json');
+function loadState() { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; } }
+function saveState() { if (!win) return; try { const b = win.getNormalBounds(); fs.writeFileSync(statePath(), JSON.stringify({ ...b, maximized: win.isMaximized() })); } catch { /* ignore */ } }
+
+function send(channel, payload) { if (win && !win.webContents.isLoading()) win.webContents.send(channel, payload); }
+
+function buildMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    { label: 'File', submenu: [
+      { label: 'Add books…', accelerator: 'CmdOrCtrl+O', click: () => send('kr:command', 'import') },
+      { label: 'Scan this computer…', accelerator: 'CmdOrCtrl+Shift+O', click: () => send('kr:command', 'scan') },
+      { type: 'separator' },
+      { label: 'Library', accelerator: 'CmdOrCtrl+L', click: () => send('kr:command', 'library') },
+      { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('kr:command', 'settings') },
+      { type: 'separator' },
+      isMac ? { role: 'close' } : { role: 'quit' },
+    ] },
+    { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: 'View', submenu: [
+      { label: 'Visual options', accelerator: 'CmdOrCtrl+Shift+V', click: () => send('kr:command', 'options') },
+      { label: 'Search in book', accelerator: 'CmdOrCtrl+F', click: () => send('kr:command', 'search') },
+      { type: 'separator' },
+      { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' },
+    ] },
+    { label: 'Help', submenu: [
+      { label: 'Check for updates', click: () => send('kr:command', 'update') },
+      { label: 'Releases on GitHub', click: () => shell.openExternal('https://github.com/YoRu72/KurokawaReader/releases') },
+    ] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createWindow() {
+  const st = loadState();
   win = new BrowserWindow({
-    width: 1180, height: 820, minWidth: 420, minHeight: 600,
+    width: st.width || 1180, height: st.height || 820, x: st.x, y: st.y, minWidth: 420, minHeight: 600,
     backgroundColor: '#121314', title: 'KurokawaReader', autoHideMenuBar: true,
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
@@ -40,6 +76,8 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('did-finish-load', flush);
   win.loadURL('app://kurokawa/index.html');
+  if (st.maximized) win.maximize();
+  win.on('resize', saveState); win.on('move', saveState); win.on('close', saveState);
   win.on('closed', () => { win = null; });
 }
 
@@ -57,7 +95,7 @@ else {
       if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
       return net.fetch('file://' + file).then((res) => new Response(res.body, { headers: { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' } }));
     });
-    Menu.setApplicationMenu(null);
+    buildMenu();
     createWindow();
     process.argv.slice(app.isPackaged ? 1 : 2).forEach(queueFile);
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -71,7 +109,8 @@ ipcMain.handle('kr:install-update', async (e, url) => {
   const res = await net.fetch(url);
   if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
   const total = Number(res.headers.get('content-length') || 0);
-  const file = path.join(app.getPath('temp'), 'KurokawaReader-update.exe');
+  const ext = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage';
+  const file = path.join(process.platform === 'linux' ? app.getPath('downloads') : app.getPath('temp'), 'KurokawaReader-update' + ext);
   const out = fs.createWriteStream(file);
   const reader = res.body.getReader();
   let got = 0;
@@ -83,6 +122,7 @@ ipcMain.handle('kr:install-update', async (e, url) => {
     if (total) e.sender.send('kr:update-progress', Math.round((got / total) * 100));
   }
   await new Promise((r) => out.end(r));
+  if (process.platform === 'linux') { fs.chmodSync(file, 0o755); shell.showItemInFolder(file); return file; }
   const err = await shell.openPath(file);
   if (err) throw new Error(err);
   setTimeout(() => app.quit(), 1500);

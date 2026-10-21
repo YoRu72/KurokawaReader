@@ -87,8 +87,11 @@ async function installAndroid(rel: ReleaseInfo, onProgress: (p: number) => void)
 async function installDesktop(rel: ReleaseInfo, onProgress: (p: number) => void): Promise<void> {
   const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string): Promise<void>; onUpdateProgress?(cb: (p: number) => void): void }) | undefined;
   if (!d?.installUpdate) throw new Error('desktop');
-  const asset = rel.assets.find((a) => /win-x64\.exe$/.test(a.name) && !/portable/.test(a.name));
-  if (!asset) throw new Error('no exe');
+  const os = (d as { platform?: string }).platform ?? 'win32';
+  const asset = os === 'darwin' ? rel.assets.find((a) => /\.dmg$/.test(a.name))
+    : os === 'linux' ? rel.assets.find((a) => /\.AppImage$/.test(a.name))
+    : rel.assets.find((a) => /win-x64\.exe$/.test(a.name) && !/portable/.test(a.name));
+  if (!asset) throw new Error('no installer for this platform');
   d.onUpdateProgress?.(onProgress);
   await d.installUpdate(asset.url);
 }

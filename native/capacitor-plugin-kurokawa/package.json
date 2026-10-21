@@ -1,0 +1,13 @@
+{
+  "name": "capacitor-plugin-kurokawa",
+  "version": "0.1.0",
+  "description": "KurokawaReader native helpers for iOS: folder scanning, saving snapshots to Photos, clipboard images.",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "files": ["ios/", "*.podspec", "index.js"],
+  "capacitor": {
+    "ios": { "src": "ios" }
+  },
+  "peerDependencies": { "@capacitor/core": "^6.0.0" }
+}
