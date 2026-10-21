@@ -31,6 +31,9 @@ export interface Bookmark {
   createdAt: number;
 }
 
+/** A note pinned to a point on a PDF page (x, y as fractions of the page). */
+export interface PdfNote { id: string; page: number; x: number; y: number; note: string; color: Highlight['color']; createdAt: number }
+
 export interface Highlight {
   id: string;
   text: string;
@@ -64,6 +67,7 @@ export interface Book {
   progress?: Locator;
   bookmarks: Bookmark[];
   highlights: Highlight[];
+  pins?: PdfNote[];
   /** Cached per-book override of the visual settings (optional). */
   prefs?: Record<string, unknown>;
 }

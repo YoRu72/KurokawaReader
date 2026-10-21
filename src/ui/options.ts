@@ -127,6 +127,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if (nativePlatform() === 'android') grid.append(toggle(t('volumeKeys'), s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
   grid.append(toggle(t('pdfPinchZoom'), s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
   grid.append(toggle(t('pdfPageNumbers'), s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
+  const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
+  grid.append(section(t('pdfNoteStyle'), segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section(t('translatorChoice'), segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));

@@ -159,6 +159,12 @@ html[dir='rtl'] .kr-slide .kr-slide-n { text-transform: none; letter-spacing: 0;
 .pdf-inner { display: block; will-change: transform; }
 .pdf-view[data-pagenums='false'] .pdf-page .pnum { display: none; }
 .pdf-page { position: relative; margin: 0 auto 14px; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.45); overflow: hidden; }
+.pdf-page:not(:has(canvas, img.native-page)) { background: linear-gradient(100deg, #f2f2f2 30%, #fafafa 50%, #f2f2f2 70%) 0 0 / 200% 100%; animation: kr-shimmer 1.4s linear infinite; }
+.pdf-view[data-invert='true'] .pdf-page:not(:has(canvas, img.native-page)) { background: linear-gradient(100deg, #1e1e1e 30%, #2a2a2a 50%, #1e1e1e 70%) 0 0 / 200% 100%; }
+@keyframes kr-shimmer { to { background-position: -200% 0; } }
+/* Pictures in books fade in instead of popping */
+.kr-content img.kr-img-pending { opacity: 0; min-height: 80px; background: color-mix(in srgb, var(--r-fg) 6%, transparent); border-radius: 6px; }
+.kr-content img { transition: opacity .25s ease; }
 .pdf-page canvas, .pdf-page img.native-page { display: block; width: 100%; height: 100%; }
 .pdf-view[data-invert='true'] .pdf-page img.native-page { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
 .pdf-page .textLayer {
@@ -261,3 +267,14 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .read-status { color: var(--md-on-surface-dim); background: color-mix(in srgb, var(--md-surface) 92%, transparent); }
 
 .reader-view .float-toolbar, .reader-view .pdf-bar { bottom: calc(34px + var(--safe-bottom)); }
+/* Note bubbles after highlighted passages */
+.kr-note-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.5em; height: 1.5em; padding: 0 .45em; margin-inline-start: .25em; border-radius: 999px; font: 600 .62em var(--font-ui); line-height: 1; vertical-align: super; background: color-mix(in srgb, var(--r-fg) 16%, var(--r-bg)); color: var(--r-fg); cursor: pointer; user-select: none; -webkit-user-select: none; }
+.kr-note-badge:hover { background: color-mix(in srgb, var(--r-fg) 28%, var(--r-bg)); }
+.kr-note-badge.static { font-size: 12px; min-width: 22px; height: 22px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); vertical-align: baseline; cursor: default; }
+/* PDF pinned notes */
+.pdf-pin { position: absolute; transform: translate(-50%, -50%); z-index: 4; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 999px; background: #e5c56b; color: #1a1a1a; font: 700 12px var(--font-ui); box-shadow: 0 2px 8px rgba(0,0,0,.35); cursor: pointer; }
+.pdf-pin[data-color='rose'] { background: #e58a8a; } .pdf-pin[data-color='mint'] { background: #7fcfa5; } .pdf-pin[data-color='sky'] { background: #7fb4e5; } .pdf-pin[data-color='violet'] { background: #b9a3e8; }
+.pdf-pin svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; }
+.pdf-view[data-pin-style='dot'] .pdf-pin { min-width: 12px; height: 12px; padding: 0; }
+.pdf-view[data-pin-style='pin'] .pdf-pin { border-radius: 50% 50% 50% 0; transform: translate(-50%, -100%) rotate(-45deg); }
+.pdf-view[data-pin-style='pin'] .pdf-pin svg { transform: rotate(45deg); }

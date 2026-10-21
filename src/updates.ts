@@ -9,7 +9,7 @@ import { nativePlatform } from './native';
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
 const REPO = 'YoRu72/KurokawaReader';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
-const CHECK_EVERY_MS = 6 * 3600 * 1000;
+const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour
 
 export interface ReleaseInfo { version: string; url: string; notes: string; assets: { name: string; url: string; size: number }[] }
 
@@ -46,10 +46,10 @@ export function scheduleAutoCheck(): void {
 
 function offerUpdate(rel: ReleaseInfo): void {
   const el = h('div', { class: 'toast update-toast', role: 'status' }, h('span', null, t('updateAvailableShort', { v: rel.version })),
-    h('button', { type: 'button', class: 'btn small primary', onclick: () => { el.remove(); showUpdateSheet(rel); } }, icon('download'), t('more')),
+    h('button', { type: 'button', class: 'btn small primary', onclick: () => { el.remove(); showUpdateSheet(rel); } }, icon('download'), t('updateNow')),
     h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('close'), onclick: () => el.remove() }, icon('close')));
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 15000);
+  setTimeout(() => el.remove(), 30000);
 }
 
 /* ---------- platform installers ---------- */

@@ -139,7 +139,7 @@ export class PdfViewer {
           if (!this.destroyed && info.pageCount === this.total) {
             this.native = nat.pdf;
             // Redraw what pdf.js already painted so non-embedded Arabic fonts shape correctly.
-            for (const n of [...this.rendered.keys()]) { this.releasePage(n); void this.renderPage(n); }
+            for (const n of [...this.rendered.keys()]) { const e = this.rendered.get(n); e?.task?.cancel(); e?.text?.cancel(); this.rendered.delete(n); void this.renderPage(n, true); }
           }
         } catch (e) { console.warn('[kurokawa] native PDF renderer unavailable', e); this.native = null; }
       })();
@@ -173,7 +173,7 @@ export class PdfViewer {
       this.sizePage(this.pages[i - 1], i);
       // Keep what the reader is looking at where it is when an earlier page grows.
       if (i < this.current) this.scroll.scrollTop += this.pages[i - 1].offsetHeight - before;
-      if (this.rendered.has(i)) { this.releasePage(i); void this.renderPage(i); }
+      if (this.rendered.has(i)) { const e = this.rendered.get(i); e?.task?.cancel(); e?.text?.cancel(); this.rendered.delete(i); void this.renderPage(i, true); }
       if (i % 25 === 0) await new Promise((r) => setTimeout(r, 0));
     }
   }
@@ -193,11 +193,14 @@ export class PdfViewer {
     el.style.setProperty('--scale-factor', String(this.scale));
   }
 
-  private async renderPage(n: number): Promise<void> {
+  private async renderPage(n: number, replace = false): Promise<void> {
     if (this.destroyed || this.rendered.has(n)) return;
     const entry: { task?: RenderTask; canvas?: HTMLCanvasElement; text?: TextLayer } = {};
     this.rendered.set(n, entry);
     const el = this.pages[n - 1];
+    // When re-rendering (zoom, size correction) the old picture stays until the new one is ready.
+    const old = replace ? Array.from(el.querySelectorAll('canvas, img.native-page, .textLayer')) : [];
+    const swap = () => { old.forEach((o) => o.remove()); old.length = 0; };
     let page: PDFPageProxy;
     try { page = await this.doc.getPage(n); } catch { return; }
     if (this.destroyed || !this.rendered.has(n)) return;
@@ -211,7 +214,9 @@ export class PdfViewer {
         const img = document.createElement('img');
         img.className = 'native-page'; img.decoding = 'async'; img.alt = String(n);
         img.src = `data:image/jpeg;base64,${res.data}`;
-        el.appendChild(img);
+        try { await img.decode(); } catch { /* still show it */ }
+        if (this.destroyed || !this.rendered.has(n)) return;
+        el.appendChild(img); swap();
       } catch { this.native = null; /* fall back to pdf.js below */ }
     }
     if (!this.native) {
@@ -219,11 +224,11 @@ export class PdfViewer {
       canvas.width = Math.floor(viewport.width * dpr);
       canvas.height = Math.floor(viewport.height * dpr);
       entry.canvas = canvas;
-      el.appendChild(canvas);
       const ctx = canvas.getContext('2d', { alpha: false })!;
       entry.task = page.render({ canvas, canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
       try { await entry.task.promise; } catch { return; }
       if (this.destroyed || !this.rendered.has(n)) return;
+      el.appendChild(canvas); swap();
     }
     const textDiv = h('div', { class: 'textLayer' });
     el.appendChild(textDiv);
@@ -250,9 +255,11 @@ export class PdfViewer {
     const anchorPage = this.current;
     const rel = this.relativeOffset(anchorPage);
     this.scale = scale;
-    for (const n of [...this.rendered.keys()]) this.releasePage(n);
+    const shown = [...this.rendered.keys()];
+    for (const n of shown) { const e = this.rendered.get(n); e?.task?.cancel(); e?.text?.cancel(); this.rendered.delete(n); }
     this.pages.forEach((p, i) => this.sizePage(p, i + 1));
     this.goTo(anchorPage, rel);
+    for (const n of shown) void this.renderPage(n, true);
     this.pages.forEach((p) => { this.observer.unobserve(p); this.observer.observe(p); });
   }
 
@@ -291,6 +298,8 @@ export class PdfViewer {
     };
     this.scroll.addEventListener('touchend', end); this.scroll.addEventListener('touchcancel', end);
   }
+
+  pageElement(n: number): HTMLElement | undefined { return this.pages[n - 1]; }
 
   zoom(delta: number): void {
     this.fitWidth = false;

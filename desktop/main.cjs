@@ -164,6 +164,7 @@ ipcMain.handle('kr:scan-device', async (_e, exts) => {
   if (queue.length) truncated = true;
   return { root: roots.join(' · '), files, truncated };
 });
+ipcMain.handle('kr:default-apps', () => { if (process.platform === 'win32') return shell.openExternal('ms-settings:defaultapps'); if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:'); return false; });
 ipcMain.handle('kr:immersive', (_e, on) => { if (win) win.setFullScreen(!!on); return true; });
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });

@@ -143,6 +143,8 @@ export function settingsView(): HTMLElement {
   // Updates
   const upd = h('section', { class: 'card' }, h('h3', null, t('updates')));
   renderUpdateCard(upd);
+  const desk = (window as unknown as { kurokawaDesktop?: { platform?: string; openDefaultApps?(): Promise<unknown> } }).kurokawaDesktop;
+  if (desk?.openDefaultApps && desk.platform === 'win32') upd.append(h('p', { style: { marginTop: '12px' } }, t('defaultAppsBody')), h('button', { class: 'btn small', onclick: () => void desk.openDefaultApps!() }, icon('external'), t('defaultApps')));
   body.append(upd);
 
   // Storage

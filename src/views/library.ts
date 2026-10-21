@@ -63,6 +63,7 @@ export function libraryView(): HTMLElement {
   const topbar = h('header', { class: 'topbar' },
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
     importTopBtn,
+    iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
     selectBtn,
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );

@@ -598,3 +598,13 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .sort-btn:hover { background: var(--md-surface-container-highest); }
 .progress-bar { height: 6px; border-radius: 3px; background: var(--md-surface-container-highest); overflow: hidden; margin: 8px 0; }
 .progress-bar span { display: block; height: 100%; width: 0; background: var(--md-primary); border-radius: 3px; transition: width .3s; }
+
+/* Bookmarks & notes view */
+.notes-book { margin-bottom: 22px; padding: 12px; border-radius: 20px; background: var(--md-surface-container-low); }
+.notes-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; cursor: pointer; }
+.notes-head .cover { width: 40px; height: 56px; border-radius: 6px; overflow: hidden; background: var(--md-surface-container-highest); flex: 0 0 auto; }
+.notes-head .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.notes-head .bt { font-weight: 600; }
+.notes-head .sub { font-size: 13px; color: var(--md-on-surface-variant); }
+.notes-view .plain-list li { display: flex; align-items: center; }
+.notes-view .plain-list li .del { flex: 0 0 auto; }

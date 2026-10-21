@@ -6,6 +6,7 @@ import { onRoute, parseRoute, navigate, type Route } from './router';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
 import { settingsView } from './views/settings';
+import { notesView } from './views/notes';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
@@ -26,6 +27,7 @@ function mount(route: Route): void {
   switch (route.name) {
     case 'read': current = readerView(route.ids); break;
     case 'settings': current = settingsView(); break;
+    case 'notes': current = notesView(); break;
     default: current = libraryView();
   }
   app.appendChild(current);
