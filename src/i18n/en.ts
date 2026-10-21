@@ -528,6 +528,8 @@ export const en = {
   syncAsk: 'You read offline — sync now?',
   syncAskBody: 'Changes made on this device have not reached your other devices yet.',
   later: 'Later',
+  allowInstallHint: 'Allow KurokawaReader to install updates on the page that opens, then come back.',
+  installNotAllowed: 'Installing updates is not allowed for this app yet (Settings → Install unknown apps).',
   clearFilters: 'Clear filters',
   filterFormats: 'Formats',
   scanDevice: 'Scan a folder on this device',

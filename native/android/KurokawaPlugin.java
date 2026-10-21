@@ -156,21 +156,48 @@ public class KurokawaPlugin extends Plugin {
         }).start();
     }
 
+    /** Can this app launch the package installer? (Android 8+ needs the per-app "install unknown apps" grant.) */
+    @PluginMethod
+    public void canInstall(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls());
+        call.resolve(r);
+    }
+
+    /** Opens the system page where the user allows this app to install updates; resolves when they come back. */
+    @PluginMethod
+    public void requestInstallPermission(PluginCall call) {
+        if (Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()) { JSObject r = new JSObject(); r.put("granted", true); call.resolve(r); return; }
+        Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
+        startActivityForResult(call, i, "installPermResult");
+    }
+
+    @ActivityCallback
+    private void installPermResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r);
+    }
+
     @PluginMethod
     public void installApk(PluginCall call) {
         String path = call.getString("path", "");
         if (path.startsWith("file://")) path = path.substring(7);
         try {
             File apk = new File(path);
+            if (!apk.exists()) { call.reject("APK not found: " + path); return; }
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
-            Intent intent = new Intent(Intent.ACTION_VIEW);
+            Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            getContext().startActivity(intent);
+            intent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+            intent.putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, getContext().getPackageName());
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // Launched from the activity (no NEW_TASK) so the installer's result and prompt are tied to us.
+            getActivity().startActivity(intent);
             call.resolve();
         } catch (Exception e) {
             call.reject("Cannot start installer: " + e.getMessage(), e);
         }
+    }
     }
 
     /* ---------- Scanning the device for readable files (Storage Access Framework) ---------- */

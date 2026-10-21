@@ -180,6 +180,7 @@ ipcMain.handle('kr:folder-pick', async () => { const { dialog } = require('elect
 ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('fs/promises').readFile(String(p), 'utf8'); } catch { return null; } });
 ipcMain.handle('kr:folder-write', async (_e, p, text) => { await require('fs/promises').writeFile(String(p), String(text), 'utf8'); return true; });
 ipcMain.handle('kr:default-apps', () => { if (process.platform === 'win32') return shell.openExternal('ms-settings:defaultapps'); if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:'); return false; });
+ipcMain.handle('kr:fullscreen', (_e, v) => { if (!win) return false; const next = v === 'toggle' ? !win.isFullScreen() : !!v; win.setFullScreen(next); return next; });
 ipcMain.handle('kr:immersive', (_e, on) => { if (win) win.setFullScreen(!!on); return true; });
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });

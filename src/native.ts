@@ -160,3 +160,10 @@ export async function setVolumeKeys(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
 }
+
+/** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */
+export async function toggleFullscreen(): Promise<void> {
+  const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;
+  if (desk?.setFullscreen) { try { await desk.setFullscreen('toggle'); } catch { /* ignore */ } return; }
+  if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen?.();
+}

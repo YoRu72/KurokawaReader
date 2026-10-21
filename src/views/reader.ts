@@ -28,7 +28,7 @@ import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
-import { setImmersive, keepAwake } from '../native';
+import { setImmersive, keepAwake, toggleFullscreen } from '../native';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet } from '../ui/dom';
 
@@ -100,7 +100,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), () => navigate('/')),
     title,
-    iconButton('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
+    iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
   );
   // M3 Expressive floating toolbar carries the reading actions.
   const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') });
@@ -117,7 +117,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     scroll: () => iconButton('scroll', t('autoScroll'), () => toggleAutoScroll()),
     info: () => iconButton('info', t('bookInfo'), () => showInfo()),
     snapshot: () => iconButton('camera', t('textAsImage'), () => toast(t('selectTextFirst'))),
-    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
+    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
     more: () => iconButton('more', t('more'), () => openMore()),
   };
   const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => TOOLBAR_ITEMS[id]())); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(TOOLBAR_ITEMS.more()); };
@@ -215,7 +215,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const trackProgress = () => {
     const cur = currentLocator();
     if (!cur) return;
-    const tr = trackers.get(cur.doc); const blocks = cur.doc.blocks;
+    const tr = trackers.get(cur.doc); const blocks = cur.doc.allBlocks;
     const block = cur.loc.block ?? 0;
     let passed = 0;
     if (lastTracked && lastTracked.doc === cur.doc && block > lastTracked.block && block - lastTracked.block < 60) for (let i = lastTracked.block; i < block; i++) passed += wordCount(blocks[i]);
@@ -330,24 +330,36 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const offset = rect ? Math.min(1, Math.max(0, (sr.top + probeY - rect.top) / Math.max(1, rect.height))) : 0;
     const wr = doc.wrapper.getBoundingClientRect();
     let pct = Math.min(1, Math.max(0, (sr.top - wr.top + probeY) / Math.max(1, wr.height - sr.height * 0.5)));
+    // Block index is always relative to the whole book, so a position survives switching
+    // between chapter and continuous mode; progress is weighted by content, not by chapter count.
+    const globalIdx = block ? doc.allBlocks.indexOf(block) : -1;
     if (chapterMode() && doc.chapters.length > 1) {
       const cr = doc.chapters[doc.chapter].getBoundingClientRect();
       const within = Math.min(1, Math.max(0, (sr.top - cr.top + probeY) / Math.max(1, cr.height - sr.height * 0.5)));
-      pct = (doc.chapter + within) / doc.chapters.length;
+      const first = doc.allBlocks.indexOf(blocks[0]);
+      pct = doc.allBlocks.length ? Math.min(1, Math.max(0, (Math.max(0, first) + within * blocks.length) / doc.allBlocks.length)) : (doc.chapter + within) / doc.chapters.length;
     }
-    return { doc, loc: { bookId: doc.book.id, block: lo, offset, pct, chapter: doc.chapter } };
+    return { doc, loc: { bookId: doc.book.id, block: globalIdx >= 0 ? globalIdx : lo, offset, pct, chapter: doc.chapter } };
   }
 
   function scrollToLocator(loc: Locator): void {
     const doc = docs.find((d) => d.book.id === loc.bookId) ?? docs[0];
     if (!doc) return;
     if (loc.anchor) { scrollToAnchor(loc.anchor); return; }
+    // Positions are stored as whole-book block indices; older ones were chapter-local.
+    let target = doc.allBlocks[loc.block ?? 0];
     if (chapterMode() && doc.chapters.length > 1) {
       const ch = Math.min(doc.chapters.length - 1, loc.chapter ?? 0);
-      if (ch !== doc.chapter || doc.wrapper.hidden) { const k = units().findIndex((u) => u.doc === doc && u.index === ch); if (k >= 0) showUnit(k); }
+      if (target && loc.chapter !== undefined && !doc.chapters[ch].contains(target)) {
+        const local = doc.allBlocks.filter((b) => doc.chapters[ch].contains(b))[loc.block ?? 0];
+        if (local) target = local;
+      }
+      const wantCh = target ? doc.chapters.findIndex((c) => c.contains(target)) : ch;
+      const goCh = wantCh >= 0 ? wantCh : ch;
+      if (goCh !== doc.chapter || doc.wrapper.hidden) { const k = units().findIndex((u) => u.doc === doc && u.index === goCh); if (k >= 0) showUnit(k); }
     }
     const sr = scroll.getBoundingClientRect();
-    const block = doc.blocks[loc.block ?? 0];
+    const block = target ?? doc.blocks[loc.block ?? 0];
     if (block) {
       const r = block.getBoundingClientRect();
       scroll.scrollTop += r.top - sr.top - 8 + (loc.offset ?? 0) * r.height;
@@ -385,7 +397,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function labelFor(doc: OpenDoc, blockIdx: number): string {
     const toc = doc.render?.toc ?? [];
     if (!toc.length) return doc.book.title;
-    const block = doc.blocks[blockIdx];
+    const block = doc.allBlocks[blockIdx];
     if (!block) return doc.book.title;
     let best = '';
     for (const item of toc) {
@@ -476,7 +488,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const c = (e as CustomEvent<string>).detail;
     if (c === 'search') openSearch(); else if (c === 'options') openOptions(); else if (c === 'toc') openContents('toc'); else if (c === 'bookmark') void addBookmark();
     else if (c === 'translate') translator.toggleUi(); else if (c === 'speak') { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }
-    else if (c === 'fullscreen') { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }
+    else if (c === 'fullscreen') { void toggleFullscreen(); }
     else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
@@ -588,7 +600,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   async function addBookmark(): Promise<void> {
     const cur = currentLocator();
     if (!cur) return;
-    const block = cur.doc.blocks[cur.loc.block ?? 0];
+    const block = cur.doc.allBlocks[cur.loc.block ?? 0];
     const excerpt = (block?.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 120);
     const bm: Bookmark = { id: uid(), label: labelFor(cur.doc, cur.loc.block ?? 0), excerpt, locator: cur.loc, createdAt: Date.now() };
     cur.doc.book.bookmarks = [...(cur.doc.book.bookmarks ?? []), bm];
@@ -782,9 +794,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (!speaking) return;
       let text = chunks[i];
       if (text === undefined && startBlock) {
-        const block = startBlock.doc.blocks[startBlock.index + i];
+        const block = startBlock.doc.allBlocks[startBlock.index + i];
         if (!block) { stopSpeaking(); return; }
         text = (block.textContent ?? '').trim();
+        revealElement(block);
         const sr = scroll.getBoundingClientRect();
         const r = block.getBoundingClientRect();
         if (r.bottom > sr.bottom || r.top < sr.top) scroll.scrollTop += r.top - sr.top - 40;
@@ -800,7 +813,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
             const blob = aiQueue.get(text) ?? await aiSpeak(text);
             aiQueue.delete(text);
             if (!speaking) return;
-            const nextText = chunks[i] ?? (startBlock ? (startBlock.doc.blocks[startBlock.index + i]?.textContent ?? '').trim() : '');
+            const nextText = chunks[i] ?? (startBlock ? (startBlock.doc.allBlocks[startBlock.index + i]?.textContent ?? '').trim() : '');
             if (nextText && !aiQueue.has(nextText)) aiSpeak(nextText).then((b) => aiQueue.set(nextText, b)).catch(() => undefined);
             const url = URL.createObjectURL(blob);
             aiAudio = new Audio(url);
@@ -853,7 +866,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('type', t('visualOptions'), openOptions),
         item(speaking ? 'stop' : 'speak', speaking ? t('stopReading') : t('readAloud'), () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }),
         item('scroll', t('autoScroll'), toggleAutoScroll),
-        item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
+        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
         item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
@@ -888,7 +901,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       case 'g': showGallery(); break;
       case 'v': openOptions(); break;
       case 'c': openContents('toc'); break;
-      case 'f': if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); break;
+      case 'f': void toggleFullscreen(); break;
       case 'a': toggleAutoScroll(); break;
       case '[': case ']': {
         const cur = currentLocator();
@@ -1209,7 +1222,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('images', t('savePagesRange'), () => savePagesSheet()),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('type', t('visualOptions'), openPdfOptions),
-        item('fullscreen', t('fullscreen'), () => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }),
+        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('target', t('goToPage'), () => pageInput.focus()),
       ));
@@ -1234,7 +1247,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       case 'g': pageInput.focus(); break;
       case '+': case '=': viewer.zoom(0.15); break;
       case '-': viewer.zoom(-0.15); break;
-      case 'f': if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); break;
+      case 'f': void toggleFullscreen(); break;
       default: return;
     }
   };

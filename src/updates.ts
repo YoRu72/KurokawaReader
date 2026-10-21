@@ -118,8 +118,14 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
       let path: string;
       if (kr.downloadFile) ({ path } = await kr.downloadFile({ url: asset.url, name: asset.name }));
       else { const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal); ({ uri: path } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true })); }
-      if (/\.apk$/i.test(asset.name)) await p.kr.installApk({ path });
-      else toast(t('savedTo', { f: asset.name }));
+      if (/\.apk$/i.test(asset.name)) {
+        // Android 8+: the installer refuses silently unless this app may install unknown apps.
+        const perm = p.kr as AndroidPlugin & { canInstall?(): Promise<{ granted: boolean }>; requestInstallPermission?(): Promise<{ granted: boolean }> };
+        let ok = (await perm.canInstall?.().catch(() => ({ granted: true })))?.granted ?? true;
+        if (!ok) { toast(t('allowInstallHint'), 'info', 6000); ok = (await perm.requestInstallPermission?.().catch(() => ({ granted: false })))?.granted ?? false; }
+        if (!ok) throw new Error(t('installNotAllowed'));
+        await p.kr.installApk({ path });
+      } else toast(t('savedTo', { f: asset.name }));
     } finally { sub?.remove(); }
     return;
   }
