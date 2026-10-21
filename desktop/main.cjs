@@ -117,13 +117,15 @@ ipcMain.handle('kr:install-update', async (e, url) => {
   const file = path.join(process.platform === 'linux' ? app.getPath('downloads') : app.getPath('temp'), 'KurokawaReader-update' + ext);
   const out = fs.createWriteStream(file);
   const reader = res.body.getReader();
-  let got = 0;
+  let got = 0; let lastT = Date.now(); let lastGot = 0; let speed = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     out.write(Buffer.from(value));
     got += value.length;
-    if (total) e.sender.send('kr:update-progress', Math.round((got / total) * 100));
+    const now = Date.now();
+    if (now - lastT > 400) { speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; }
+    e.sender.send('kr:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed });
   }
   await new Promise((r) => out.end(r));
   if (process.platform === 'linux') { fs.chmodSync(file, 0o755); shell.showItemInFolder(file); return file; }

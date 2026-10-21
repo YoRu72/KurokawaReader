@@ -1,7 +1,7 @@
 // "Define" and "Translate" for selected text. The reader is offline-first, so
 // these are the only features that touch the network — and they say so when
 // there is none.
-import { h, icon, openSheet } from './dom';
+import { h, icon, openSheet, pickButton } from './dom';
 import { t, getLang, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
 import { hasSystemText, translateWithSystem } from './share';
@@ -82,8 +82,7 @@ export function showTranslation(text: string): void {
   let target = localStorage.getItem('kr.translateTo') || (sourceIsArabic ? 'en' : getLang() === 'ar' ? 'ar' : 'en');
   if (sourceIsArabic && target === 'ar') target = 'en';
   const s = openSheet(t('translate'), t('close'));
-  const sel = h('select', { 'aria-label': t('translateTo'), onchange: () => { target = sel.value; localStorage.setItem('kr.translateTo', target); void run(); } }, ...TARGETS.map((code) => h('option', { value: code }, NAMES[code]))) as HTMLSelectElement;
-  sel.value = target;
+  const sel = pickButton(t('translateTo'), TARGETS.map((code): [string, string] => [code, NAMES[code]]), target, (v) => { target = v; localStorage.setItem('kr.translateTo', target); void run(); }, t('close'));
   const out = h('div');
   s.body.append(h('div', { class: 'src', dir: 'auto' }, text.length > 300 ? text.slice(0, 300) + '…' : text), out);
   s.actions.append(h('label', { class: 'field', style: { flexDirection: 'row', alignItems: 'center', gap: '8px' } }, h('span', { class: 'label' }, t('translateTo')), sel));

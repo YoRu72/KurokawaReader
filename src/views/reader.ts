@@ -23,6 +23,7 @@ import { exportNotes } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
+import { attachFurigana, isJapanese } from '../furigana';
 import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
@@ -182,6 +183,16 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   for (const doc of docs) { await renderDoc(doc); if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); restore(); } }
   root.querySelector('#kr-loading')?.remove();
   allImages = docs.flatMap((d) => d.render?.images ?? []);
+  // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
+  const isJa = docs.some((d) => isJapanese(d.wrapper.textContent?.slice(0, 4000) ?? '', d.book.language));
+  if (isJa) {
+    let furi: (() => void) & { refresh?: () => void } | null = null;
+    const start = () => { if (furi || !getSettings().furigana) return; furi = attachFurigana(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), () => toast(t('furiganaOffline'), 'error', 4000)); };
+    start();
+    chapterListeners.push(() => furi?.refresh?.());
+    onDispose(onSettingsChange((st) => { if (st.furigana) start(); }));
+    onDispose(() => furi?.());
+  }
   // Fade pictures in as they decode rather than letting them pop.
   flow.querySelectorAll('img').forEach((img) => { if (img.complete && img.naturalWidth) return; img.decoding = 'async'; img.classList.add('kr-img-pending'); const done = () => img.classList.remove('kr-img-pending'); img.addEventListener('load', done, { once: true }); img.addEventListener('error', done, { once: true }); });
   books.forEach((b) => void touchBook(b.id));

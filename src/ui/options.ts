@@ -1,6 +1,6 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
-import { h, clear, icon, toast } from './dom';
+import { h, clear, icon, toast, pickButton } from './dom';
 import { isTouchDevice, t } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
@@ -129,6 +129,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle(t('pdfPageNumbers'), s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
   const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
   grid.append(section(t('pdfNoteStyle'), segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
+  grid.append(toggle(t('furigana'), s.furigana, (v) => { updateSettings({ furigana: v }); bump(); }));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section(t('translatorChoice'), segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
@@ -142,9 +143,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     if (s.speechEngine === 'ai') {
       const list = AI_VOICES[s.aiProvider === 'openrouter' || s.aiProvider === 'custom' ? 'openai' : s.aiProvider] ?? [];
       if (list.length) {
-        const vsel = h('select', { onchange: () => updateSettings({ aiVoice: vsel.value }) }, ...list.map((v) => h('option', { value: v }, v))) as HTMLSelectElement;
-        vsel.value = s.aiVoice || list[0];
-        grid.append(section(t('aiVoice'), vsel));
+        grid.append(section(t('aiVoice'), pickButton(t('aiVoice'), list.map((v): [string, string] => [v, v]), s.aiVoice || list[0], (v) => updateSettings({ aiVoice: v }), t('close'))));
       } else {
         const vin = h('input', { type: 'text', value: s.aiVoice, dir: 'ltr', placeholder: 'alloy', onchange: () => updateSettings({ aiVoice: vin.value.trim() }) }) as HTMLInputElement;
         grid.append(section(t('aiVoice'), vin));
@@ -155,9 +154,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     }
     const voices = speechSynthesis.getVoices();
     if (voices.length && s.speechEngine === 'system') {
-      const sel = h('select', { onchange: () => updateSettings({ speechVoice: sel.value }) }, h('option', { value: '' }, t('voiceDefault')), ...voices.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`))) as HTMLSelectElement;
-      sel.value = s.speechVoice;
-      grid.append(section(t('speechVoice'), sel));
+      grid.append(section(t('speechVoice'), pickButton(t('speechVoice'), [['', t('voiceDefault')] as [string, string], ...voices.map((v): [string, string] => [v.name, `${v.name} (${v.lang})`])], s.speechVoice, (v) => updateSettings({ speechVoice: v }), t('close'))));
     }
   }
 

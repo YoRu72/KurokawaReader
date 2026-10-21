@@ -7,6 +7,22 @@ export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'cus
 
 export const DEFAULT_PROMPT_AR = 'ترجم النصّ ترجمةً سليمةً صحيحةً غير حرفية إلى العربية الفصيحة، ملتزمًا قواعد النحو والصرف كما قرّرها ابن مالك في ألفيته: صحّة الإعراب، وسلامة التراكيب، وحسن اختيار اللفظ، مع الحفاظ على المعنى والنبرة. لا تشرح ولا تعلّق؛ أخرج الترجمة وحدها.';
 export const DEFAULT_PROMPT_EN = 'Translate the text into natural, accurate, idiomatic {lang}. Preserve meaning and tone; do not explain or comment — output only the translation.';
+/** Default instructions written in the target language itself. */
+export const DEFAULT_PROMPTS: Record<string, string> = {
+  ar: DEFAULT_PROMPT_AR,
+  en: 'Translate the text into natural, accurate, idiomatic English — faithful to the meaning and tone, never word-for-word. Do not explain or comment; output only the translation.',
+  fr: 'Traduisez le texte en un français naturel, exact et idiomatique — fidèle au sens et au ton, jamais mot à mot. N\'expliquez rien, ne commentez pas ; ne renvoyez que la traduction.',
+  tr: 'Metni doğal, doğru ve deyimsel bir Türkçeye çevir — anlama ve tona sadık kal, kelimesi kelimesine çevirme. Açıklama ve yorum ekleme; yalnızca çeviriyi ver.',
+  ur: 'متن کا فطری، درست اور بامحاورہ اردو میں ترجمہ کیجیے — معنی اور لہجے کے وفادار رہتے ہوئے، لفظ بہ لفظ نہیں۔ کوئی وضاحت یا تبصرہ نہ کیجیے؛ صرف ترجمہ دیجیے۔',
+  fa: 'متن را به فارسی روان، دقیق و اصطلاحی ترجمه کن — وفادار به معنا و لحن، نه واژه‌به‌واژه. توضیح و تفسیر نده؛ فقط ترجمه را بنویس.',
+  de: 'Übersetze den Text in natürliches, genaues, idiomatisches Deutsch – sinn- und tongetreu, nie Wort für Wort. Keine Erklärungen oder Kommentare; gib nur die Übersetzung aus.',
+  es: 'Traduce el texto a un español natural, preciso e idiomático, fiel al sentido y al tono, nunca palabra por palabra. No expliques ni comentes; devuelve solo la traducción.',
+  id: 'Terjemahkan teks ke dalam bahasa Indonesia yang alami, akurat, dan idiomatis — setia pada makna dan nada, bukan kata per kata. Jangan menjelaskan atau berkomentar; keluarkan terjemahannya saja.',
+  ja: 'テキストを自然で正確、かつ慣用的な日本語に翻訳してください。意味と語調を忠実に保ち、逐語訳は避けること。説明や注釈は付けず、訳文のみを出力してください。',
+  'zh-CN': '请将文本翻译成自然、准确、地道的中文，忠于原意与语气，切勿逐字直译。不要解释或评论，只输出译文。',
+  ru: 'Переведите текст на естественный, точный и идиоматичный русский язык — верно передавая смысл и тон, не дословно. Без пояснений и комментариев; выведите только перевод.',
+};
+export const FURIGANA_PROMPT = 'You annotate Japanese text with furigana. Return the SAME text with every kanji word wrapped as <ruby>漢字<rt>かんじ</rt></ruby> (hiragana readings, one ruby per word or compound). Keep all other characters, punctuation and line breaks exactly; do not translate, explain or add anything.';
 
 export const PROVIDERS: { id: AiProvider; label: string; model: string; baseUrl: string; keyUrl: string }[] = [
   { id: 'gemini', label: 'Google Gemini', model: 'gemini-2.5-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', keyUrl: 'https://aistudio.google.com/apikey' },
@@ -22,10 +38,12 @@ export function effectiveModel(): string { return getSettings().aiModel.trim() |
 export function effectiveBaseUrl(): string { return (getSettings().aiBaseUrl.trim() || providerInfo().baseUrl).replace(/\/+$/, ''); }
 export function effectivePrompt(): string {
   const s = getSettings();
+  if (s.aiTask === 'furigana') return FURIGANA_PROMPT;
   const p = s.aiPrompt.trim();
   if (p) return p;
-  return s.aiTarget === 'ar' ? DEFAULT_PROMPT_AR : DEFAULT_PROMPT_EN.replace('{lang}', langName(s.aiTarget));
+  return defaultPrompt(s.aiTarget);
 }
+export function defaultPrompt(target: string): string { return DEFAULT_PROMPTS[target] ?? DEFAULT_PROMPT_EN.replace('{lang}', langName(target)); }
 export function langName(code: string): string {
   const names: Record<string, string> = { ar: 'Arabic', en: 'English', fr: 'French', tr: 'Turkish', ur: 'Urdu', fa: 'Persian', de: 'German', es: 'Spanish', id: 'Indonesian', ja: 'Japanese', 'zh-CN': 'Chinese', ru: 'Russian' };
   return names[code] ?? code;
@@ -34,7 +52,7 @@ export function langName(code: string): string {
 /** A stable key for caching: text + everything that changes the output. */
 export function translationKey(text: string): string {
   const s = getSettings();
-  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTarget}|${effectivePrompt()}|${text}`);
+  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${text}`);
 }
 export function hash(str: string): string {
   let h1 = 0x811c9dc5, h2 = 0x01000193;

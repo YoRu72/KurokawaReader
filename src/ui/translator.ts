@@ -7,6 +7,7 @@ import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText, localDigits } from '../i18n';
 import { db } from '../db';
 import { translateBatch, translationKey, aiReady } from '../ai';
+import { getSettings } from '../settings';
 import { aiSettingsSheet } from './aisettings';
 
 export interface TranslatorHost {
@@ -40,10 +41,18 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
   }
 
   const textOf = (el: HTMLElement) => (el.innerText ?? el.textContent ?? '').replace(/\s+\n/g, '\n').trim();
-  const eligible = (el: HTMLElement) => !SKIP.has(el.tagName) && !el.querySelector('img, table, svg') && textOf(el).length >= 2;
+  const eligible = (el: HTMLElement) => !SKIP.has(el.tagName) && !el.querySelector('img, table, svg') && textOf(el).length >= 2 && (getSettings().aiTask !== 'furigana' || /[\u4e00-\u9fff]/.test(textOf(el)));
 
   function apply(el: HTMLElement, translated: string) {
     if (!originals.has(el)) originals.set(el, el.innerHTML);
+    if (getSettings().aiTask === 'furigana') {
+      // Only ruby markup may come back; everything else is escaped.
+      const safe = translated.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
+        .replace(/&lt;(\/?)(ruby|rt|rp)&gt;/g, '<$1$2>');
+      el.innerHTML = safe;
+      el.classList.add('kr-translated', 'kr-furigana');
+      return;
+    }
     el.textContent = translated;
     el.classList.add('kr-translated');
     el.dir = isRtlText(translated) ? 'rtl' : 'ltr';
@@ -51,7 +60,7 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
   function restore(el: HTMLElement) {
     const o = originals.get(el);
     if (o === undefined) return;
-    el.innerHTML = o; el.classList.remove('kr-translated'); el.removeAttribute('dir'); originals.delete(el);
+    el.innerHTML = o; el.classList.remove('kr-translated', 'kr-furigana'); el.removeAttribute('dir'); originals.delete(el);
   }
   function restoreAll() { for (const { el } of host.blocks()) restore(el); }
 

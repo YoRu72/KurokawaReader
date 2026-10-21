@@ -608,3 +608,21 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .notes-head .sub { font-size: 13px; color: var(--md-on-surface-variant); }
 .notes-view .plain-list li { display: flex; align-items: center; }
 .notes-view .plain-list li .del { flex: 0 0 auto; }
+.pick-btn { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 52px; padding: 0 16px 0 18px; border-radius: var(--sh-lg); background: var(--md-surface-container-high); color: var(--md-on-surface); font: 500 15px var(--font-ui); text-align: start; }
+.pick-btn:hover { background: var(--md-surface-container-highest); }
+.pick-btn svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; color: var(--md-on-surface-variant); }
+.pick-btn .pick-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet.stacked { max-height: 60vh; }
+
+/* Update sheet */
+.upd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.upd-head svg { width: 18px; height: 18px; fill: none; stroke: var(--md-on-surface-variant); stroke-width: 2; }
+.upd-chip { padding: 6px 12px; border-radius: 999px; background: var(--md-surface-container-highest); font: 600 13px var(--font-ui); letter-spacing: .02em; }
+.upd-chip.new { background: var(--md-primary); color: var(--md-on-primary); }
+.upd-date { color: var(--md-on-surface-variant); font-size: 13px; margin-inline-start: auto; }
+.upd-title { margin: 6px 0 6px; font-size: 14px; font-weight: 600; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: .04em; }
+.upd-notes { margin: 0 0 14px; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.45; }
+.upd-file { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--md-surface-container); font-size: 13px; }
+.upd-file svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; flex: 0 0 auto; }
+.upd-status { margin-top: 6px; font-variant-numeric: tabular-nums; }
+.field .hint { display: block; font-size: 12px; color: var(--md-on-surface-variant); margin-top: 4px; }

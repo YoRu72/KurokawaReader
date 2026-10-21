@@ -52,6 +52,7 @@ const PATHS: Record<string, string> = {
   share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   sort: '<path d="M11 5h10"/><path d="M11 9h7"/><path d="M11 13h4"/><path d="m3 17 3 3 3-3"/><path d="M6 18V4"/>',
+  arrowRight: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   define: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6"/><path d="M9 11h6"/>',
   translate: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
@@ -114,15 +115,17 @@ export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200): 
 }
 
 /** A bottom sheet. Returns the body element and a close function. */
-export function openSheet(title: string, closeLabel: string): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
-  document.querySelectorAll('.sheet, .sheet-scrim').forEach((s) => s.remove());
+export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
+  // A stacked sheet opens above the current one (choice lists inside a form) instead of replacing it.
+  if (!opts.stack) document.querySelectorAll('.sheet, .sheet-scrim').forEach((s) => s.remove());
+  const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
   const close = () => { el.remove(); scrim.remove(); };
-  const el = h('div', { class: 'sheet', role: 'dialog', 'aria-label': title },
+  const el = h('div', { class: 'sheet' + (depth ? ' stacked' : ''), role: 'dialog', 'aria-label': title, style: depth ? { zIndex: String(70 + depth * 2) } : undefined },
     h('div', { class: 'sheet-head' }, h('h3', null, title), iconButton('close', closeLabel, close)),
     body, actions);
-  const scrim = h('div', { class: 'scrim sheet-scrim', onclick: close });
+  const scrim = h('div', { class: 'scrim sheet-scrim', style: depth ? { zIndex: String(69 + depth * 2) } : undefined, onclick: close });
   document.body.append(scrim, el);
   return { body, actions, close, el };
 }
@@ -156,9 +159,19 @@ export function coverColors(seed: string): [string, string] {
 
 /** An M3 choice sheet (radio list) used in place of native <select> menus. */
 export function pickSheet<T extends string>(title: string, options: [T, string, string?][], value: T, onPick: (v: T) => void, closeLabel = 'Close'): void {
-  const sh = openSheet(title, closeLabel);
+  const sh = openSheet(title, closeLabel, { stack: true });
   sh.body.style.fontFamily = 'var(--font-ui)';
   sh.body.append(h('div', { class: 'dest-list' }, ...options.map(([id, label, ic]) => h('label', { class: 'dest-row' + (id === value ? ' on' : '') },
     h('input', { type: 'radio', name: 'kr-pick', checked: id === value, onchange: () => { sh.close(); onPick(id); } }),
     ic ? icon(ic) : h('span'), h('span', { class: 'name', dir: 'auto' }, label)))));
+}
+
+/** A dropdown-looking button that opens an M3 choice sheet (replaces native <select>). */
+export function pickButton<T extends string>(title: string, options: [T, string, string?][], value: T, onChange: (v: T) => void, closeLabel = 'Close'): HTMLButtonElement & { setValue(v: T): void } {
+  const label = h('span', { class: 'pick-label', dir: 'auto' }, options.find((o) => o[0] === value)?.[1] ?? String(value));
+  const btn = h('button', { type: 'button', class: 'pick-btn', 'aria-haspopup': 'dialog' }, label, icon('chevronDown')) as HTMLButtonElement & { setValue(v: T): void };
+  let cur = value;
+  btn.setValue = (v: T) => { cur = v; label.textContent = options.find((o) => o[0] === v)?.[1] ?? String(v); };
+  btn.addEventListener('click', () => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); }, closeLabel));
+  return btn;
 }

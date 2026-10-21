@@ -278,3 +278,7 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .pdf-view[data-pin-style='dot'] .pdf-pin { min-width: 12px; height: 12px; padding: 0; }
 .pdf-view[data-pin-style='pin'] .pdf-pin { border-radius: 50% 50% 50% 0; transform: translate(-50%, -100%) rotate(-45deg); }
 .pdf-view[data-pin-style='pin'] .pdf-pin svg { transform: rotate(45deg); }
+/* Furigana: ruby readings on by default, hidden on request */
+.reader[data-furigana='false'] .kr-content rt { display: none; }
+.kr-content ruby { ruby-position: over; }
+.kr-content rt { font-size: 0.5em; line-height: 1; opacity: .85; }

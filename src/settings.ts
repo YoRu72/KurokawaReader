@@ -78,6 +78,8 @@ export interface VisualSettings {
   aiBaseUrl: string;
   aiPrompt: string;
   aiTarget: string;           // target language code
+  aiTask: 'translate' | 'furigana';  // what the chapter pass does
+  furigana: boolean;          // show ruby readings in Japanese books
   aiTtsModel: string;
   aiVoice: string;
   speechEngine: 'system' | 'ai';
@@ -147,6 +149,8 @@ export const DEFAULTS: VisualSettings = {
   aiBaseUrl: '',
   aiPrompt: '',
   aiTarget: 'ar',
+  aiTask: 'translate',
+  furigana: true,
   aiTtsModel: '',
   aiVoice: '',
   speechEngine: 'system',
@@ -296,6 +300,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.dataset.theme = s.theme;
   root.dataset.dimImages = String(s.dimImages);
   root.dataset.texture = s.texture;
+  root.dataset.furigana = String(s.furigana);
   root.dataset.dark = String(!pageIsLight(s));
   if (s.fgOverride) root.style.setProperty('--r-fg-override', s.fgOverride); else root.style.removeProperty('--r-fg-override');
   if (s.bgOverride) root.style.setProperty('--r-bg-override', s.bgOverride); else root.style.removeProperty('--r-bg-override');

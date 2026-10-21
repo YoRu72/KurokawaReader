@@ -98,8 +98,8 @@ export function initNativeBridges(): void {
     void cap.Plugins.App.getLaunchUrl().then((d) => { if (d?.url) void handleUrl(d.url); }).catch(() => undefined);
     // Android back: close whatever is open first (sheet, side panel, lightbox), then go back a view, then minimise.
     void cap.Plugins.App.addListener('backButton', () => {
-      const sheet = document.querySelector('.sheet .sheet-head button') as HTMLButtonElement | null;
-      if (sheet) { sheet.click(); return; }
+      const sheets = document.querySelectorAll('.sheet .sheet-head button');
+      if (sheets.length) { (sheets[sheets.length - 1] as HTMLButtonElement).click(); return; }
       const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
       if (panelClose) { panelClose.click(); return; }
       // Full-screen overlays (gallery, pages grid, lightbox) carry a dialog role and a back/close button in their top bar.
