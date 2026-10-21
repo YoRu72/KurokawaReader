@@ -527,3 +527,6 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .cover.folder .stack img, .cover.folder .stack .ph { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
 .folder-card.add .cover.folder { background: transparent; box-shadow: inset 0 0 0 2px dashed var(--md-outline-variant); border: 2px dashed var(--md-outline-variant); color: var(--md-on-surface-dim); }
 .folder-card.drop .cover { transform: scale(1.06); box-shadow: 0 0 0 3px var(--md-primary), var(--el-3); }
+
+.update-toast { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 18px; border-radius: var(--sh-full); }
+.update-toast .icon-btn { width: 36px; height: 36px; color: inherit; }

@@ -87,7 +87,7 @@ const buildOptions = {
   sourcemap: true,
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' },
   logLevel: 'info',
-  define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
+  define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version) },
 };
 
 await copyStatic();

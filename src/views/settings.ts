@@ -5,6 +5,7 @@ import { db } from '../db';
 import { renderOptions } from '../ui/options';
 import { getSettings, updateSettings, applyOrientation, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
+import { renderUpdateCard, APP_VERSION } from '../updates';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
 
@@ -80,6 +81,11 @@ export function settingsView(): HTMLElement {
   body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: a.length })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));
 
+  // Updates
+  const upd = h('section', { class: 'card' }, h('h3', null, t('updates')));
+  renderUpdateCard(upd);
+  body.append(upd);
+
   // Storage
   const storageP = h('p', null, t('storageUnknown'));
   navigator.storage?.estimate?.().then((e) => { if (e.usage != null && e.quota != null) storageP.textContent = t('storageUsed', { used: formatBytes(e.usage), quota: formatBytes(e.quota) }); }).catch(() => undefined);
@@ -91,7 +97,7 @@ export function settingsView(): HTMLElement {
   const installBtn = h('button', { class: 'btn primary small', onclick: async () => { await window.__krInstallPrompt?.prompt(); } }, icon('download'), t('installApp'));
   const standalone = matchMedia('(display-mode: standalone)').matches;
   body.append(h('section', { class: 'card' }, h('h3', null, t('about')), h('p', null, t('aboutBody')),
-    h('p', null, `${t('version')} 0.3.0`),
+    h('p', null, `${t('version')} ${APP_VERSION}`),
     standalone ? h('p', null, t('installed')) : window.__krInstallPrompt ? installBtn : null,
     h('h3', null, t('supportedFormats')),
     h('ul', null, ...(['fmtEpub', 'fmtPdf', 'fmtDocx', 'fmtXlsx', 'fmtPptx', 'fmtText', 'fmtFb2', 'fmtOdt', 'fmtCbz', 'fmtImages'] as const).map((k) => h('li', null, t(k)))),

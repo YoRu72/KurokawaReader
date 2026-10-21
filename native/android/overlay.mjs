@@ -44,6 +44,9 @@ if (!manifest.includes('android.intent.action.VIEW')) {
   // Insert after the MAIN/LAUNCHER intent filter of the main activity.
   manifest = manifest.replace(/(<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>)/, `$1\n${intentFilters}`);
 }
+if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
+  manifest = manifest.replace('<application', '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n    <application');
+}
 if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
   manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.PROCESS_TEXT" />\n      <data android:mimeType="text/plain" />\n    </intent>\n  </queries>\n</manifest>`);
 }
@@ -64,6 +67,14 @@ await fs.writeFile(path.join(app, 'src/main/res/values-ar/strings.xml'), `<?xml 
     <string name="title_activity_main">قارئ كروكاوا</string>
 </resources>
 `);
+
+// FileProvider paths: the update APK lives in the cache directory.
+const fpPath = path.join(app, 'src/main/res/xml/file_paths.xml');
+try {
+  let fp = await fs.readFile(fpPath, 'utf8');
+  if (!fp.includes('cache-path')) fp = fp.replace('</paths>', '    <cache-path name="kr_cache" path="." />\n</paths>');
+  await fs.writeFile(fpPath, fp);
+} catch { /* Capacitor template always ships it */ }
 
 // Plugin + MainActivity
 await fs.mkdir(pkgDir, { recursive: true });

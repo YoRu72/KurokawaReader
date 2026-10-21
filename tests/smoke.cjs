@@ -28,7 +28,7 @@ const server = http.createServer((req, res) => {
 
   const lang = process.argv[2] || 'en';
   await page.goto('http://localhost:5180/');
-  await page.evaluate((l) => localStorage.setItem('kr.lang', l), lang);
+  await page.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }, lang);
   await page.reload();
   await page.waitForSelector('.library-view');
   await page.screenshot({ path: `${SHOTS}/${lang}-01-empty.png` });
@@ -153,7 +153,7 @@ const server = http.createServer((req, res) => {
   const mp = await mobile.newPage();
   mp.on('pageerror', (e) => errors.push('[mobile pageerror] ' + e.message));
   await mp.goto('http://localhost:5180/');
-  await mp.evaluate((l) => localStorage.setItem('kr.lang', l), lang);
+  await mp.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }, lang);
   await mp.reload();
   await mp.waitForSelector('.library-view');
   await mp.setInputFiles('input[type=file]', [path.join(FIX, 'maqamat-al-hariri.epub'), path.join(FIX, 'alice-in-wonderland.epub')]);

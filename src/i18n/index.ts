@@ -102,15 +102,16 @@ export function localDigits(n: number | string): string {
   return current === 'ar' ? s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]) : s;
 }
 
-/** "1 file / 2 files" — and the Arabic rules for counted nouns:
- *  كتابٌ واحد · كتابان · ٣–١٠ كُتب · ١١–٩٩ كتابًا · المئات والمئون مفردٌ مجرور. */
+/** "1 file / 2 files" — and the Arabic rules for the counted noun (تمييز العدد):
+ *  كتاب · كتابان · ٣–١٠ كتب (جمعٌ مجرور) · ١١–٩٩ كتابًا (مفردٌ منصوب) · ١٠٠ و٢٠٠… كتابٍ (مفردٌ مجرور). */
 export function countBooks(n: number): string {
   if (current !== 'ar') return `${n} ${n === 1 ? 'file' : 'files'}`;
   if (n === 0) return 'لا كتب';
-  if (n === 1) return 'كتابٌ واحد';
+  if (n === 1) return 'كتاب';
   if (n === 2) return 'كتابان';
   const r = n % 100;
-  if (r >= 3 && r <= 10) return `${localDigits(n)} كُتب`;
-  if (r >= 11) return `${localDigits(n)} كتابًا`;
-  return `${localDigits(n)} كتاب`;
+  if (r === 0) return `${localDigits(n)} كتابٍ`;
+  if (r >= 3 && r <= 10) return `${localDigits(n)} كتب`;
+  if (r === 1 || r === 2) return `${localDigits(n)} كتابٍ`; // مئةٌ وكتابٌ… تُرَدُّ إلى المفرد المجرور عرفًا في العرض
+  return `${localDigits(n)} كتابًا`;
 }

@@ -110,6 +110,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['continuous', t('modeContinuous')]];
   grid.append(section(t('readingMode'), segmented(modes, s.readingMode, (v) => { updateSettings({ readingMode: v }); rerender(); bump(); })));
   grid.append(toggle(t('hideSystemBars'), s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
+  grid.append(toggle(t('tapToTurn'), s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
   grid.append(toggle(t('publisherStyles'), s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
 
   container.append(grid, footer());

@@ -9,6 +9,7 @@ import { settingsView } from './views/settings';
 import { applyChrome, onSettingsChange } from './settings';
 import { loadFonts } from './fonts';
 import { initNativeBridges, isNative } from './native';
+import { scheduleAutoCheck } from './updates';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
@@ -34,6 +35,7 @@ applyDocumentLang();
 applyChrome();
 void loadFonts();
 initNativeBridges();
+scheduleAutoCheck();
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);

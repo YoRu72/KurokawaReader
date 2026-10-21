@@ -1,6 +1,10 @@
 package app.kurokawa.reader;
 
 import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
+import androidx.core.content.FileProvider;
+import com.getcapacitor.JSArray;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.pdf.PdfRenderer;
@@ -45,6 +49,32 @@ public class KurokawaPlugin extends Plugin {
             call.resolve();
         } catch (Exception e) {
             call.reject("No app can process text", e);
+        }
+    }
+
+    @PluginMethod
+    public void deviceInfo(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("abis", new JSArray(java.util.Arrays.asList(Build.SUPPORTED_ABIS)));
+        ret.put("sdk", Build.VERSION.SDK_INT);
+        call.resolve(ret);
+    }
+
+    /** Opens the system package installer for a downloaded APK (in-app update). */
+    @PluginMethod
+    public void installApk(PluginCall call) {
+        String path = call.getString("path", "");
+        if (path.startsWith("file://")) path = path.substring(7);
+        try {
+            File apk = new File(path);
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, "application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Cannot start installer: " + e.getMessage(), e);
         }
     }
 

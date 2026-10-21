@@ -52,6 +52,8 @@ export interface VisualSettings {
   hideSystemBars: boolean;
   /* Library */
   libraryView: 'cards' | 'chips';
+  autoUpdateCheck: boolean;
+  tapToTurn: boolean;
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -90,6 +92,8 @@ export const DEFAULTS: VisualSettings = {
   readingMode: 'chapters',
   hideSystemBars: true,
   libraryView: 'cards',
+  autoUpdateCheck: true,
+  tapToTurn: true,
 };
 
 const KEY = 'kr.visual';

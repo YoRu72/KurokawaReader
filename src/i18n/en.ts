@@ -337,6 +337,28 @@ export const en = {
   booksInFolder: '{n} inside',
   create: 'Create',
   rename: 'Rename',
+
+  // Updates
+  updates: 'App updates',
+  checkUpdates: 'Check for updates',
+  checking: 'Checking…',
+  upToDate: 'You have the latest version',
+  updateAvailable: 'Update available: {v}',
+  updateAvailableShort: 'Update {v} is available',
+  autoCheck: 'Check automatically when online',
+  downloadInstall: 'Download and install',
+  downloading: 'Downloading… {p}%',
+  installStarted: 'The installer has been opened',
+  installWithAltStore: 'Install with AltStore',
+  installWithSideStore: 'Install with SideStore',
+  openReleasePage: 'Open the release page',
+  reloadToUpdate: 'Reload to update',
+  lastChecked: 'Last checked: {d}',
+  updateFailed: 'Could not check for updates',
+  whatsNew: 'What’s new',
+  iosUpdateHint: 'iOS cannot install apps from inside the app. Tap a button below: AltStore or SideStore opens with the new build ready to sign, or download the IPA from the release page.',
+  portableHint: 'Portable build: download the new EXE from the release page and replace this one.',
+  tapToTurn: 'Tap the page to move a screen up or down',
 };
 
 export type Strings = typeof en;

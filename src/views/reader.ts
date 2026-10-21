@@ -407,6 +407,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (img && allImages.length) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { showGallery(idx); return; } }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
+    // Moon+-style tap zones on touch screens: lower part = next screen, upper part = previous, middle = chrome.
+    if (getSettings().tapToTurn && isTouchDevice()) {
+      const sr = scroll.getBoundingClientRect(); const y = (e.clientY - sr.top) / sr.height;
+      const page = sr.height * 0.88;
+      if (y > 0.62) { scroll.scrollBy({ top: page, behavior: 'smooth' }); return; }
+      if (y < 0.22) { scroll.scrollBy({ top: -page, behavior: 'smooth' }); return; }
+    }
     root.classList.toggle('immersive');
   });
 

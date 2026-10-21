@@ -65,3 +65,27 @@ else {
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 }
 ipcMain.handle('kr:ready', () => { flush(); return true; });
+
+// In-app update: download the installer to the temp folder and run it.
+ipcMain.handle('kr:install-update', async (e, url) => {
+  const res = await net.fetch(url);
+  if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+  const total = Number(res.headers.get('content-length') || 0);
+  const file = path.join(app.getPath('temp'), 'KurokawaReader-update.exe');
+  const out = fs.createWriteStream(file);
+  const reader = res.body.getReader();
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out.write(Buffer.from(value));
+    got += value.length;
+    if (total) e.sender.send('kr:update-progress', Math.round((got / total) * 100));
+  }
+  await new Promise((r) => out.end(r));
+  const err = await shell.openPath(file);
+  if (err) throw new Error(err);
+  setTimeout(() => app.quit(), 1500);
+  return file;
+});
+ipcMain.handle('kr:is-portable', () => !!process.env.PORTABLE_EXECUTABLE_DIR);
