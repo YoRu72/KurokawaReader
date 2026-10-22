@@ -79,12 +79,14 @@ export async function openIncoming(file: File): Promise<void> {
 async function handleUrl(url: string): Promise<void> {
   if (/^kurokawareader:/i.test(url)) { void import('./sync').then((m) => m.handleOAuthRedirect(url)).catch((e) => toast(String((e as Error).message ?? e), 'error')); return; }
   if (!/^(content|file):/i.test(url)) return;
-  const fs = window.Capacitor?.Plugins?.Filesystem;
-  if (!fs) return;
+  const plugins = window.Capacitor?.Plugins as { Filesystem?: { readFile(o: { path: string }): Promise<{ data: string | Blob }> }; Kurokawa?: { readDocument?(o: { uri: string }): Promise<{ data: string; name?: string }> } } | undefined;
+  const fs = plugins?.Filesystem;
   try {
-    const res = await fs.readFile({ path: url });
-    const blob = typeof res.data === 'string' ? base64ToBlob(res.data) : res.data;
-    let name = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '');
+    let blob: Blob; let name = '';
+    if (plugins?.Kurokawa?.readDocument) { const r = await plugins.Kurokawa.readDocument({ uri: url }); blob = base64ToBlob(r.data); name = r.name ?? ''; }
+    else if (fs) { const res = await fs.readFile({ path: url }); blob = typeof res.data === 'string' ? base64ToBlob(res.data) : res.data; }
+    else return;
+    if (!name) name = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '');
     if (!name || !/\.[a-z0-9]{2,5}$/i.test(name)) name = (name || 'document') + '.bin';
     await openIncoming(new File([blob], name));
   } catch (err) {
@@ -136,6 +138,16 @@ export function initNativeBridges(): void {
 interface ImmersivePlugin { setImmersive(o: { on: boolean }): Promise<void> }
 interface StatusBarPlugin { hide(): Promise<void>; show(): Promise<void> }
 /** Hide / show the system bars while reading (Android via our plugin, iOS via StatusBar). */
+interface BrightnessPlugin { setBrightness(o: { value: number }): Promise<void>; getBrightness(): Promise<{ value: number }> }
+function brightnessPlugin(): BrightnessPlugin | null {
+  const k = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: Partial<BrightnessPlugin> } }) | undefined)?.Plugins?.Kurokawa;
+  return k?.setBrightness && k.getBrightness ? (k as BrightnessPlugin) : null;
+}
+export function canDeviceBrightness(): boolean { return !!brightnessPlugin(); }
+/** Screen brightness 0–1 (phones and tablets); -1 hands control back to the system. */
+export async function setDeviceBrightness(value: number): Promise<void> { try { await brightnessPlugin()?.setBrightness({ value }); } catch { /* ignore */ } }
+export async function getDeviceBrightness(): Promise<number> { try { return (await brightnessPlugin()?.getBrightness())?.value ?? 0.5; } catch { return 0.5; } }
+
 export async function setImmersive(on: boolean): Promise<void> {
   const desk = window.kurokawaDesktop as (DesktopBridge & { setImmersive?(on: boolean): Promise<boolean> }) | undefined;
   if (desk?.setImmersive) { try { await desk.setImmersive(on); } catch { /* ignore */ } return; }
@@ -184,6 +196,14 @@ export async function toggleFullscreen(view?: HTMLElement): Promise<void> {
   }
   try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen?.(); }
   catch { if (view) view.classList.toggle('immersive'); }
+}
+
+/** Escape: leave window/HTML fullscreen or the reader's immersive mode, whichever is on. */
+export async function leaveFullscreen(view?: HTMLElement): Promise<void> {
+  const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;
+  if (desk?.setFullscreen) { try { await desk.setFullscreen(false); } catch { /* ignore */ } }
+  else if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch { /* ignore */ } }
+  if (view?.classList.contains('immersive')) { view.classList.remove('immersive'); if (!getSettings().hideSystemBars) void setImmersive(false); }
 }
 
 async function restoreFromFile(file: File): Promise<void> {

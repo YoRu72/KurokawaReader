@@ -14,6 +14,8 @@ export interface TranslatorHost {
   root: HTMLElement;                                   // reader root (the pill is appended here)
   scroll: HTMLElement;
   blocks(): { el: HTMLElement; bookId: string }[];      // blocks of what is currently shown
+  chapters(): { label: string; bookId: string; blocks: HTMLElement[] }[];   // every chapter of every open book
+  currentChapter(): number;
   onChapterChange(fn: () => void): void;
 }
 
@@ -111,6 +113,74 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
     running = false; paint();
   }
 
+  /* ---------- translate ahead: N chapters, a range, or the whole book ---------- */
+  let aheadGen = 0;
+  async function translateAhead(from: number, to: number, status: HTMLElement, bar: HTMLElement, onDone: () => void) {
+    const gen = ++aheadGen;
+    const chapters = host.chapters().slice(from, to + 1);
+    const items: { bookId: string; text: string; key: string }[] = [];
+    const seen = new Set<string>();
+    for (const ch of chapters) for (const el of ch.blocks) {
+      if (!eligible(el)) continue;
+      const text = originals.has(el) ? htmlToText(originals.get(el)!) : textOf(el);
+      const key = translationKey(text);
+      if (seen.has(key)) continue; seen.add(key);
+      const c = await cache(ch.bookId);
+      if (!c[key]) items.push({ bookId: ch.bookId, text, key });
+    }
+    const total = items.length; let finished = 0, failed = 0;
+    const paintAhead = () => { status.textContent = t('translatingAhead', { n: finished, total }); bar.style.width = total ? `${Math.round((finished / total) * 100)}%` : '100%'; };
+    paintAhead();
+    if (!total) { status.textContent = t('alreadyTranslated'); onDone(); return; }
+    const batches: typeof items[] = []; let cur: typeof items = []; let size = 0;
+    for (const it of items) { if (cur.length && (size + it.text.length > 2500 || cur.length >= 12)) { batches.push(cur); cur = []; size = 0; } cur.push(it); size += it.text.length; }
+    if (cur.length) batches.push(cur);
+    const worker = async () => {
+      while (batches.length && gen === aheadGen) {
+        const batch = batches.shift()!;
+        try {
+          const out = await translateBatch(batch.map((x) => x.text));
+          if (gen !== aheadGen) return;
+          for (let i = 0; i < batch.length; i++) { const tr = out[i]?.trim(); if (!tr) continue; const c = await cache(batch[i].bookId); c[batch[i].key] = tr; scheduleSave(batch[i].bookId); }
+          finished += batch.length;
+        } catch (err) { failed++; console.warn('[kurokawa] translate-ahead failed', err); if (failed === 1) toast(String((err as Error).message ?? err), 'error', 5000); if (failed > 3) { batches.length = 0; } }
+        paintAhead();
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    if (gen !== aheadGen) return;
+    status.textContent = failed ? t('translateAheadPartial', { n: finished, total }) : t('translateAheadDone', { n: finished });
+    onDone();
+    if (on) void run();   // the shown chapter picks up what is now cached
+  }
+
+  function aheadSheet() {
+    const chapters = host.chapters();
+    const cur = host.currentChapter();
+    const sh = openSheet(t('translateAhead'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    const num = (v: number, min: number, max: number) => h('input', { type: 'number', min: String(min), max: String(max), value: String(v), dir: 'ltr', style: { width: '5.5em' } }) as HTMLInputElement;
+    const count = num(Math.min(5, chapters.length - cur), 1, chapters.length - cur);
+    const fromI = num(cur + 1, 1, chapters.length), toI = num(Math.min(chapters.length, cur + 5), 1, chapters.length);
+    const row = (...kids: (HTMLElement | string)[]) => h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap' } }, ...kids);
+    const status = h('p', { class: 'src' }, t('translateAheadBody', { n: chapters.length }));
+    const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
+    let busy = false;
+    const start = (from: number, to: number) => {
+      if (busy) return; busy = true; track.hidden = false;
+      if (!aiReady()) { busy = false; toast(t('aiNeedsKey'), 'error', 4000); settingsSheet(); return; }
+      void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, bar, () => { busy = false; });
+    };
+    const btn = (label: string, fn: () => void) => h('button', { class: 'btn small tonal', type: 'button', onclick: fn }, label);
+    sh.body.append(
+      status, track,
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('nextChapters')), row(count, btn(t('translateSelected'), () => start(cur, cur + Number(count.value || 1) - 1)))),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('chapterRange')), row(fromI, '→', toI, btn(t('translateSelected'), () => start(Number(fromI.value) - 1, Number(toI.value) - 1)))),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('wholeBook')), row(btn(t('translateWholeBook'), () => start(0, chapters.length - 1)))),
+    );
+    sh.actions.append(h('button', { class: 'btn small', type: 'button', onclick: () => { aheadGen++; sh.close(); } }, icon('close'), t('cancel')));
+  }
+
   function htmlToText(html: string): string { const d = document.createElement('div'); d.innerHTML = html; return (d.innerText ?? d.textContent ?? '').trim(); }
 
   /* ---------- pill ---------- */
@@ -133,6 +203,7 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
       toggleBtn, status,
       h('button', { type: 'button', title: t('retranslate'), 'aria-label': t('retranslate'), onclick: () => { if (!on) setOn(true); else void run(true); } }, icon('rotate')),
       h('button', { type: 'button', title: t('clearTranslationCache'), 'aria-label': t('clearTranslationCache'), onclick: async () => { for (const { bookId } of host.blocks()) { caches.set(bookId, {}); await db.setMeta(`tr:${bookId}`, {}); } restoreAll(); if (on) void run(); toast(t('done')); } }, icon('trash')),
+      h('button', { type: 'button', title: t('translateAhead'), 'aria-label': t('translateAhead'), onclick: () => aheadSheet() }, icon('books')),
       h('button', { type: 'button', title: t('customize'), 'aria-label': t('customize'), onclick: () => settingsSheet() }, icon('settings')),
       h('button', { type: 'button', title: t('close'), 'aria-label': t('close'), onclick: () => { setOn(false); pill?.remove(); pill = null; } }, icon('close')),
     );

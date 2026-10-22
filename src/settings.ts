@@ -55,7 +55,7 @@ export interface VisualSettings {
   fgOverride: string;
   bgOverride: string;
   /* Reading flow */
-  readingMode: 'chapters' | 'continuous';
+  readingMode: 'chapters' | 'flow' | 'continuous';   // flow: chapter by chapter, the next one loads when you scroll past the end
   hideSystemBars: boolean;
   /* Library */
   libraryView: 'cards' | 'chips';
@@ -66,11 +66,13 @@ export interface VisualSettings {
   translator: 'builtin' | 'system';
   snapStyle: 'plain' | 'card';
   snapWatermark: boolean;
+  invertLineArt: boolean;
   snapFolder: string;
   formatFilter: string[];
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   keepAwake: boolean;         // screen wake lock while reading
   edgeBrightness: boolean;    // left-edge swipe adjusts dimming
+  brightnessMode: 'app' | 'device';   // what the swipe (and dimming) controls: the reader's overlay or the screen itself
   pinchText: boolean;         // two-finger pinch changes the text size
   speechRate: number;         // read-aloud speed, 0.5–2
   speechVoice: string;        // voice name, '' = system default for the language
@@ -155,11 +157,13 @@ export const DEFAULTS: VisualSettings = {
   translator: 'builtin',
   snapStyle: 'plain',
   snapWatermark: false,
+  invertLineArt: false,
   snapFolder: 'Screenshots',
   formatFilter: [],
   statusFilter: [],
   keepAwake: true,
   edgeBrightness: true,
+  brightnessMode: 'app',
   pinchText: true,
   speechRate: 1,
   speechVoice: '',
@@ -347,6 +351,7 @@ export async function applyOrientation(s: VisualSettings = current): Promise<voi
 export function applySettings(root: HTMLElement, s: VisualSettings = current): void {
   root.dataset.theme = s.theme;
   root.dataset.dimImages = String(s.dimImages);
+  root.dataset.invertLineart = String(s.invertLineArt);
   root.dataset.texture = s.texture;
   root.dataset.furigana = String(s.furigana);
   root.dataset.dark = String(!pageIsLight(s));

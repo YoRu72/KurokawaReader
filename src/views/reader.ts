@@ -28,7 +28,7 @@ import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
-import { setImmersive, keepAwake, toggleFullscreen, nativePlatform } from '../native';
+import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatform } from '../native';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet } from '../ui/dom';
 
@@ -129,7 +129,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
   root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
   syncChrome();
-  const chapterMode = () => getSettings().readingMode === 'chapters';
+  const chapterMode = () => getSettings().readingMode !== 'continuous';
+  const flowMode = () => getSettings().readingMode === 'flow';
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
 
   const docs: OpenDoc[] = [];
@@ -140,6 +141,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const translator = attachTranslator({
     root, scroll,
     blocks: () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks.map((el) => ({ el, bookId: d.book.id }))),
+    chapters: () => units().map((u, i) => ({ label: chapterTitle(u) || `${localDigits(i + 1)}`, bookId: u.doc.book.id, blocks: u.doc.allBlocks.filter((b) => u.el === b || u.el.contains(b)) })),
+    currentChapter: () => Math.max(0, currentUnitIndex()),
     onChapterChange: (fn) => chapterListeners.push(fn),
   });
   onDispose(() => translator.dispose());
@@ -174,20 +177,36 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   async function renderDoc(doc: OpenDoc): Promise<void> {
     const handler = flowHandlerFor(doc.book.format);
+    const t0 = performance.now();
     const file = await db.getFile(doc.book.id);
+    performance.measure('kr:getFile', { start: t0 });
     if (!handler || !file) { doc.wrapper.append(h('p', { class: 'kr-content' }, t('unsupportedFormat'))); return; }
     const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}` };
     try {
       doc.render?.dispose();
       doc.wrapper.querySelector('.kr-content')?.remove();
+      const t1 = performance.now();
       doc.render = await handler.render(file, ctx);
+      performance.measure('kr:render', { start: t1 });
+      const t2 = performance.now();
       doc.wrapper.append(doc.render.element);
       doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
       const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img'));
       doc.chapters = sections.length > 1 ? sections : [doc.render.element];
       doc.chapter = 0;
       doc.blocks = doc.allBlocks;
+      if (chapterMode() && doc.chapters.length > 1) {
+        // Hide the other chapters before the first layout: laying out a whole book
+        // just to show one chapter was most of the time a large EPUB took to open.
+        const p = doc.book.progress;
+        const pb = p && p.bookId === doc.book.id && p.block !== undefined ? doc.allBlocks[p.block] : undefined;
+        const idx = pb ? doc.chapters.findIndex((c) => c === pb || c.contains(pb)) : -1;
+        doc.chapter = Math.max(0, idx);
+        doc.chapters.forEach((c, i) => { c.hidden = i !== doc.chapter; });
+        doc.blocks = doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b));
+      }
       applyHighlights(doc);
+      performance.measure('kr:dom', { start: t2 });
     } catch (err) {
       console.error(err);
       doc.wrapper.append(h('p', { class: 'kr-content' }, t('openError', { error: String((err as Error)?.message ?? err) })));
@@ -195,7 +214,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
 
   // Render books in order so the first one appears quickly.
-  for (const doc of docs) { await renderDoc(doc); if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); restore(); } }
+  for (const doc of docs) { await renderDoc(doc); if (doc === docs[0]) { const tr = performance.now(); root.querySelector('#kr-loading')?.remove(); restore(); performance.measure('kr:restore', { start: tr }); } }
+  const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
@@ -242,7 +262,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
   onDispose(() => window.removeEventListener('pagehide', flushAll));
   if (books.length > 1) toast(t('openedTogether', { n: books.length }));
+  performance.measure('kr:post', { start: tPost });
+  const tR2 = performance.now();
   restore();
+  performance.measure('kr:restore2', { start: tR2 });
   // Images loading above the saved position shift the layout; settle a few times.
   [400, 1200, 2500].forEach((ms) => setTimeout(() => { if (!userScrolled) restore(); }, ms));
 
@@ -282,6 +305,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (chapterNav.hidden) return;
     const k = currentUnitIndex();
     const prev = list[k - 1], next = list[k + 1];
+    if (flowMode()) {
+      // Scroll-on mode: no buttons, just a hint that pulling past the end goes on.
+      chapterNav.classList.add('flow');
+      chapterNav.append(h('div', { class: 'cn-pull', dir: 'auto' }, h('div', { class: 'spinner small' }), h('span', null, next ? `${t('pullForNext')} · ${chapterTitle(next)}`.replace(/ · $/, '') : t('endOfBook'))));
+      return;
+    }
+    chapterNav.classList.remove('flow');
     chapterNav.append(
       prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
       next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
@@ -305,6 +335,38 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const list = units();
     const k = list.findIndex((u) => u.el === el || u.el.contains(el));
     if (k >= 0 && (list[k].doc.chapter !== list[k].index || list[k].doc.wrapper.hidden)) showUnit(k);
+  }
+  // Scroll-on mode: pulling past the end (or the start) of a chapter moves to the next (previous) one.
+  {
+    let pull = 0, pullDir = 0, armed = false, ty = 0, wheelT = 0;
+    const atBottom = () => scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2;
+    const atTop = () => scroll.scrollTop <= 1;
+    const indicator = () => chapterNav.querySelector<HTMLElement>('.cn-pull');
+    const paintPull = () => { const el = indicator(); if (el) el.style.setProperty('--pull', String(Math.min(1, pull / 110))); root.classList.toggle('pulling', pull > 8); };
+    const fire = () => {
+      const list = units(); const k = currentUnitIndex();
+      if (pullDir > 0 && list[k + 1]) showUnit(k + 1); else if (pullDir < 0 && list[k - 1]) showUnit(k - 1, true);
+      pull = 0; paintPull();
+    };
+    const reset = () => { pull = 0; pullDir = 0; armed = false; paintPull(); };
+    scroll.addEventListener('touchstart', (e) => { if (!flowMode()) return; ty = e.touches[0].clientY; armed = atBottom() || atTop(); pull = 0; }, { passive: true });
+    scroll.addEventListener('touchmove', (e) => {
+      if (!flowMode() || !armed) return;
+      const dy = e.touches[0].clientY - ty; ty = e.touches[0].clientY;
+      if (dy < 0 && atBottom()) { pullDir = 1; pull += -dy; paintPull(); }
+      else if (dy > 0 && atTop()) { pullDir = -1; pull += dy; paintPull(); }
+      else if (pull > 0) { pull = Math.max(0, pull - Math.abs(dy)); paintPull(); }
+    }, { passive: true });
+    scroll.addEventListener('touchend', () => { if (!flowMode()) return; if (pull >= 110) fire(); else reset(); }, { passive: true });
+    scroll.addEventListener('wheel', (e) => {
+      if (!flowMode() || e.ctrlKey) return;
+      if (e.deltaY > 0 && atBottom()) { pullDir = 1; pull += e.deltaY; }
+      else if (e.deltaY < 0 && atTop()) { pullDir = -1; pull += -e.deltaY; }
+      else { if (pull) reset(); return; }
+      paintPull();
+      window.clearTimeout(wheelT); wheelT = window.setTimeout(reset, 700);
+      if (pull >= 240) { window.clearTimeout(wheelT); fire(); }
+    }, { passive: true });
   }
   // Swipe between chapters on touch screens.
   scroll.addEventListener('touchstart', (e) => { const tch = e.touches[0]; swipe = { x: tch.clientX, y: tch.clientY, t: Date.now() }; }, { passive: true });
@@ -904,7 +966,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   /* ---------- keyboard ---------- */
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); return; }
+    if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); else void leaveFullscreen(root); return; }
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const page = scroll.clientHeight * 0.9;
@@ -912,8 +974,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); showUnit(fwd ? k + 1 : k - 1, !fwd); break; }
       case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
       case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
-      case ' ': case 'PageDown': e.preventDefault(); scroll.scrollBy({ top: e.shiftKey ? -page : page, behavior: 'smooth' }); break;
-      case 'PageUp': e.preventDefault(); scroll.scrollBy({ top: -page, behavior: 'smooth' }); break;
+      case ' ': case 'PageDown': {
+        e.preventDefault();
+        const back = e.shiftKey;
+        if (flowMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); break; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); break; } }
+        scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' }); break;
+      }
+      case 'PageUp': { e.preventDefault(); if (flowMode() && scroll.scrollTop <= 1 && units()[currentUnitIndex() - 1]) { showUnit(currentUnitIndex() - 1, true); break; } scroll.scrollBy({ top: -page, behavior: 'smooth' }); break; }
       case 'Home': scroll.scrollTop = 0; break;
       case 'End': scroll.scrollTop = scroll.scrollHeight; break;
       case '/': e.preventDefault(); openSearch(); break;
@@ -1259,7 +1326,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   }
 
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { panel.close(); return; }
+    if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else void leaveFullscreen(root); return; }
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {

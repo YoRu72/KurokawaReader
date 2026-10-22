@@ -1,7 +1,7 @@
 // Provider, key, model, language and instructions for the AI features (shared by
 // the translator pill and Settings). Choice lists open as stacked M3 sheets.
 import { h, icon, openSheet, pickButton } from './dom';
-import { t } from '../i18n';
+import { t, isRtlText } from '../i18n';
 import { getSettings, updateSettings, type VisualSettings } from '../settings';
 import { PROVIDERS, providerInfo, effectiveModel, defaultPrompt, langName, AI_VOICES, type AiProvider } from '../ai';
 
@@ -17,7 +17,12 @@ export function aiSettingsSheet(onDone?: () => void): void {
   const keyLink = h('a', { class: 'btn small', href: providerInfo().keyUrl, target: '_blank', rel: 'noopener', hidden: !providerInfo().keyUrl }, icon('external'), t('getKey')) as HTMLAnchorElement;
   const model = h('input', { type: 'text', value: s.aiModel, placeholder: providerInfo().model, dir: 'ltr', spellcheck: 'false', onchange: () => updateSettings({ aiModel: model.value.trim() }) }) as HTMLInputElement;
   const url = h('input', { type: 'text', value: s.aiBaseUrl, placeholder: providerInfo().baseUrl, dir: 'ltr', spellcheck: 'false', onchange: () => updateSettings({ aiBaseUrl: url.value.trim() }) }) as HTMLInputElement;
-  const prompt = h('textarea', { rows: '5', placeholder: defaultPrompt(s.aiTarget), dir: 'auto', onchange: () => updateSettings({ aiPrompt: prompt.value.trim() }) }, s.aiPrompt) as HTMLTextAreaElement;
+  // Direction follows the text when there is some, else the target language — a WebView's
+  // dir="auto" ignores the placeholder, which left Arabic instructions left-aligned.
+  const RTL = /^(ar|ur|fa|he)/i;
+  const prompt = h('textarea', { rows: '5', placeholder: defaultPrompt(s.aiTarget), onchange: () => updateSettings({ aiPrompt: prompt.value.trim() }), oninput: () => promptDir() }, s.aiPrompt) as HTMLTextAreaElement;
+  const promptDir = () => { prompt.dir = prompt.value.trim() ? (isRtlText(prompt.value) ? 'rtl' : 'ltr') : (RTL.test(getSettings().aiTarget) ? 'rtl' : 'ltr'); };
+  promptDir();
   const modelLine = h('p', { class: 'src' }, `${t('aiModel')}: ${effectiveModel()}`);
 
   const prov = pickButton<AiProvider>(t('aiProvider'), PROVIDERS.map((p) => [p.id, p.label]), s.aiProvider, (v) => {
@@ -26,7 +31,7 @@ export function aiSettingsSheet(onDone?: () => void): void {
     keyLink.hidden = !providerInfo().keyUrl; keyLink.href = providerInfo().keyUrl;
     modelLine.textContent = `${t('aiModel')}: ${effectiveModel()}`;
   }, t('close'));
-  const target = pickButton(t('translateTo'), TARGETS.map((c): [string, string] => [c, langName(c)]), s.aiTarget, (v) => { updateSettings({ aiTarget: v }); prompt.placeholder = defaultPrompt(v); }, t('close'));
+  const target = pickButton(t('translateTo'), TARGETS.map((c): [string, string] => [c, langName(c)]), s.aiTarget, (v) => { updateSettings({ aiTarget: v }); prompt.placeholder = defaultPrompt(v); promptDir(); }, t('close'));
   const task = pickButton<VisualSettings['aiTask']>(t('aiTask'), [['translate', t('aiTaskTranslate'), 'translate'], ['furigana', t('aiTaskFurigana'), 'type']], s.aiTask, (v) => { updateSettings({ aiTask: v }); langField.hidden = v !== 'translate'; promptField.hidden = v !== 'translate'; }, t('close'));
 
   const langField = field(t('translateTo'), target);
@@ -57,6 +62,6 @@ export function aiSettingsSheet(onDone?: () => void): void {
     ttsField,
   );
   sh.actions.append(
-    h('button', { class: 'btn small', type: 'button', onclick: () => { prompt.value = ''; updateSettings({ aiPrompt: '' }); prompt.placeholder = defaultPrompt(getSettings().aiTarget); } }, t('resetPrompt')),
+    h('button', { class: 'btn small', type: 'button', onclick: () => { prompt.value = ''; updateSettings({ aiPrompt: '' }); promptDir(); prompt.placeholder = defaultPrompt(getSettings().aiTarget); } }, t('resetPrompt')),
     h('button', { class: 'btn small primary', type: 'button', onclick: () => { sh.close(); onDone?.(); } }, icon('check'), t('done')));
 }

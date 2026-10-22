@@ -25,6 +25,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   // selection the reader extends with the handles is what the buttons act on.
   const state = { text: '', range: null as Range | null };
 
+  let suppressed = false; // while the More sheet is up the toolbar stays away
   const hide = () => { bar?.remove(); bar = null; };
 
   const build = () => {
@@ -39,7 +40,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
       btn('translate', t('translateSelected'), () => { showTranslation(cur().text); hide(); }),
       btn('note', t('note'), () => { const c = cur(); actions.note(c.range, c.text); document.getSelection()?.removeAllRanges(); hide(); }),
       btn('images', t('textAsImage'), () => { actions.textImage(cur().text); hide(); }),
-      btn('more', t('more'), () => { moreSheet(cur().text, actions); hide(); }),
+      btn('more', t('more'), () => { hide(); suppressed = true; moreSheet(cur().text, actions, () => { suppressed = false; }); }),
     );
     const el = h('div', { class: 'sel-toolbar', role: 'toolbar' }, colors, row);
     el.addEventListener('mousedown', (e) => e.preventDefault());
@@ -47,6 +48,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   };
 
   const show = () => {
+    if (suppressed) { hide(); return; }
     const sel = document.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hide(); return; }
     const range = sel.getRangeAt(0);
@@ -90,8 +92,9 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   };
 }
 
-function moreSheet(text: string, actions: SelectionActions): void {
+function moreSheet(text: string, actions: SelectionActions, onClose?: () => void): void {
   const s = openSheet(t('more'), t('close'));
+  if (onClose) { const obs = new MutationObserver(() => { if (!s.el.isConnected) { obs.disconnect(); onClose(); } }); obs.observe(document.body, { childList: true }); }
   s.body.style.fontFamily = 'var(--font-ui)';
   s.body.style.fontSize = '14px';
   s.body.append(h('p', { class: 'src', dir: 'auto' }, text.length > 200 ? text.slice(0, 200) + '…' : text));

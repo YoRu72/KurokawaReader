@@ -3,7 +3,7 @@
 import { h, clear, icon, toast, pickButton } from './dom';
 import { colorField } from './colorpicker';
 import { isTouchDevice, t } from '../i18n';
-import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
+import { keepAwake, setVolumeKeys, nativePlatform, canDeviceBrightness, setDeviceBrightness } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont } from '../settings';
 import { fontsSync } from '../fonts';
@@ -28,8 +28,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(head('theme', t('theme')), h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
     h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
   if (s.theme === 'custom') {
-    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => updateSettings({ customBg: v }))),
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => updateSettings({ customFg: v }))));
+    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => updateSettings({ customFg: v }))),
+      h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => updateSettings({ customBg: v }))));
   } else {
     // Colour overrides on top of the chosen theme
     const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
@@ -102,6 +102,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(stepper([t('warmth'), 'warmth'], s.warmth, 0, 0.6, 0.05, (v) => updateSettings({ warmth: round2(v) }), pct));
   grid.append(stepper([t('dimScreen'), 'dimOverlay'], s.dimOverlay, 0, 0.7, 0.05, (v) => updateSettings({ dimOverlay: round2(v) }), pct));
   grid.append(toggle([t('dimImages'), 'dimImages'], s.dimImages, (v) => updateSettings({ dimImages: v })));
+  grid.append(toggle([t('invertLineArt'), 'invertLineArt'], s.invertLineArt, (v) => updateSettings({ invertLineArt: v })));
 
   /* ----- Type ----- */
   grid.append(head('type', t('typeSection')));
@@ -128,12 +129,13 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 
   /* ----- Behaviour ----- */
   grid.append(head('behaviour', t('behaviourSection')));
-  const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['continuous', t('modeContinuous')]];
+  const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['flow', t('modeFlow')], ['continuous', t('modeContinuous')]];
   grid.append(section([t('readingMode'), 'readingMode'], segmented(modes, s.readingMode, (v) => { updateSettings({ readingMode: v }); rerender(); bump(); })));
   grid.append(toggle([t('hideSystemBars'), 'hideSystemBars'], s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
   grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
   grid.append(toggle([t('showStatusLine'), 'showStatusLine'], s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
   if (isTouchDevice()) grid.append(toggle([t('edgeBrightness'), 'edgeBrightness'], s.edgeBrightness, (v) => updateSettings({ edgeBrightness: v })));
+  if (canDeviceBrightness()) grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['app', t('brightnessApp')], ['device', t('brightnessDevice')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); if (v === 'app') void setDeviceBrightness(-1); rerender(); })));
   if (isTouchDevice()) grid.append(toggle([t('pinchText'), 'pinchText'], s.pinchText, (v) => updateSettings({ pinchText: v })));
   grid.append(toggle([t('keepAwake'), 'keepAwake'], s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
   if (nativePlatform() === 'android') grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));

@@ -20,8 +20,6 @@
 .reader[data-theme='coffee'] { --r-bg: #1c1512; --r-fg: #d9c9b8; --r-dim: #9a8a7a; --r-rule: #342923; --r-link: #d8a872; }
 .reader[data-theme='lavender'] { --r-bg: #efeaf6; --r-fg: #2b2436; --r-dim: #6f6480; --r-rule: #d8cfe6; --r-link: #6b4fa0; --r-img-filter: none; }
 .reader[data-theme='sky'] { --r-bg: #e9f1f7; --r-fg: #1f2a33; --r-dim: #5f7180; --r-rule: #cbdbe7; --r-link: #1f5f8a; --r-img-filter: none; }
-.reader.has-fg-override { --r-fg: var(--r-fg-override); --r-dim: color-mix(in srgb, var(--r-fg-override) 65%, var(--r-bg)); }
-.reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-theme='black'] { --r-bg: #000; --r-fg: #c9c9c9; --r-dim: #858585; --r-rule: #262626; --r-link: #8ec8e8; }
 .reader[data-theme='sepia'] { --r-bg: #f3e8d2; --r-fg: #3b2f21; --r-dim: #7a6a55; --r-link: #8a5a1e; --r-rule: #d9c9a8; --r-img-filter: none; }
 .reader[data-theme='paper'] { --r-bg: #ebe5da; --r-fg: #27221d; --r-dim: #6e665b; --r-link: #7a4e12; --r-rule: #cfc6b7; --r-img-filter: none; }
@@ -35,6 +33,8 @@
 .reader[data-theme='solarlight'] { --r-bg: #fdf6e3; --r-fg: #586e75; --r-dim: #93a1a1; --r-rule: #e9e2cf; --r-link: #268bd2; --r-img-filter: none; }
 .reader[data-theme='cream'] { --r-bg: #fff8e7; --r-fg: #2d2a26; --r-dim: #7a736a; --r-rule: #eadfc9; --r-link: #8a5a1e; --r-img-filter: none; }
 .reader[data-theme='peach'] { --r-bg: #fbeee4; --r-fg: #3a2a22; --r-dim: #8a7066; --r-rule: #ecd8cb; --r-link: #a0522d; --r-img-filter: none; }
+.reader.has-fg-override { --r-fg: var(--r-fg-override); --r-dim: color-mix(in srgb, var(--r-fg-override) 65%, var(--r-bg)); }
+.reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
 
 /* Background systems: texture, picture, warmth and brightness overlays — all
@@ -95,7 +95,7 @@
 .kr-content img, .kr-content svg, .kr-content video { max-width: 100%; height: auto; filter: var(--r-img-filter); border-radius: 3px; }
 .kr-content img { display: block; margin: 1em auto; }
 /* Black-on-transparent line art (engravings, diagrams) is invisible on dark pages; flip it. */
-.reader[data-dark='true'] .kr-content img.kr-lineart { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
+.reader[data-dark='true'][data-invert-lineart='true'] .kr-content img.kr-lineart { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
 .kr-content img.inline, .kr-content p img:not(:only-child) { display: inline; margin: 0; vertical-align: middle; }
 .kr-content figure { margin: 1.2em 0; text-align: center; }
 .kr-content figcaption { font-size: .85em; color: var(--r-dim); }
@@ -271,6 +271,10 @@ html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
 .chapter-nav .cn-btn { display: flex; align-items: center; gap: 10px; max-width: 48%; min-width: 0; padding: 12px 16px; border-radius: 999px; color: var(--r-fg); border: 1px solid var(--r-rule); background: color-mix(in srgb, var(--r-fg) 5%, transparent); font-size: 14px; transition: transform var(--dur-short) var(--ease-spring), background var(--dur-short); }
 .chapter-nav .cn-btn.primary { background: color-mix(in srgb, var(--r-fg) 14%, transparent); border-color: transparent; font-weight: 600; }
 .chapter-nav .cn-btn:active { transform: scale(.96); }
+.chapter-nav.flow { justify-content: center; border-top: 0; margin: 32px 0 48px; }
+.chapter-nav .cn-pull { --pull: 0; display: flex; align-items: center; gap: 12px; color: var(--r-dim); font-size: 13.5px; opacity: calc(.45 + var(--pull) * .55); transform: translateY(calc(var(--pull) * -6px)); transition: opacity .15s, transform .15s; }
+.chapter-nav .cn-pull .spinner.small { width: 20px; height: 20px; opacity: calc(.25 + var(--pull) * .75); transform: rotate(calc(var(--pull) * 180deg)); animation: none; background: var(--r-dim); border-radius: 50%; }
+.reader-view.pulling .cn-pull .spinner.small { animation: morph 1.2s var(--ease-emph) infinite; }
 .chapter-nav .cn-btn svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; }
 html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .chapter-nav .cn-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; flex-direction: column; align-items: flex-start; }

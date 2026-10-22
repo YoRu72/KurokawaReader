@@ -157,6 +157,18 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
         }.resume()
     }
 
+    @objc func setBrightness(_ call: CAPPluginCall) {
+        let v = call.getDouble("value") ?? -1
+        DispatchQueue.main.async {
+            if v >= 0 { UIScreen.main.brightness = CGFloat(max(0.01, min(1.0, v))) }
+            call.resolve()
+        }
+    }
+
+    @objc func getBrightness(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(["value": Double(UIScreen.main.brightness)]) }
+    }
+
     @objc func deviceInfo(_ call: CAPPluginCall) {
         call.resolve(["platform": "ios", "version": UIDevice.current.systemVersion, "model": UIDevice.current.model])
     }

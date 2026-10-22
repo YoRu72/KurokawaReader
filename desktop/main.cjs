@@ -90,7 +90,8 @@ else {
   app.on('second-instance', (_e, argv) => { argv.slice(1).forEach((a) => { if (/^kurokawareader:/i.test(a)) handleUrl(a); else queueFile(a); }); if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   app.on('open-url', (e, u) => { e.preventDefault(); handleUrl(u); });
   app.on('open-file', (e, p) => { e.preventDefault(); queueFile(p); });
-  app.whenReady().then(() => {
+  process.on('uncaughtException', (err) => { console.error('[kurokawa] uncaught', err); });
+app.whenReady().then(() => {
     protocol.handle('app', (req) => {
       const url = new URL(req.url);
       let p = decodeURIComponent(url.pathname);
@@ -119,7 +120,11 @@ ipcMain.handle('kr:install-update', async (e, url) => {
   const total = Number(res.headers.get('content-length') || 0);
   const ext = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage';
   const file = path.join(app.getPath('temp'), `KurokawaReader-update-${Date.now()}` + ext);
+  // Old leftovers (a locked one from a previous attempt must never take the app down).
+  try { for (const f of fs.readdirSync(app.getPath('temp'))) if (f.startsWith('KurokawaReader-update') && f !== path.basename(file)) { try { fs.unlinkSync(path.join(app.getPath('temp'), f)); } catch { /* still busy */ } } } catch { /* ignore */ }
   const out = fs.createWriteStream(file);
+  let streamError = null;
+  out.on('error', (err) => { streamError = err; });
   const reader = res.body.getReader();
   let got = 0; let lastT = Date.now(); let lastGot = 0; let speed = 0;
   for (;;) {
@@ -132,15 +137,18 @@ ipcMain.handle('kr:install-update', async (e, url) => {
     e.sender.send('kr:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed });
   }
   await new Promise((r) => out.end(r));
+  if (streamError) throw streamError;
   const { spawn } = require('child_process');
   const portableFile = process.env.PORTABLE_EXECUTABLE_FILE;
   if (process.platform === 'win32' && portableFile) {
     // Portable build: swap the running .exe for the new one once we have exited, then start it.
     const script = path.join(app.getPath('temp'), 'kr-update.cmd');
     fs.writeFileSync(script, [
-      '@echo off', 'timeout /t 2 /nobreak >nul',
-      ':retry', `move /y "${file}" "${portableFile}" >nul 2>&1 || (timeout /t 1 /nobreak >nul & goto retry)`,
-      `start "" "${portableFile}"`, 'del "%~f0"',
+      '@echo off', 'timeout /t 2 /nobreak >nul', 'set n=0',
+      ':retry', 'set /a n+=1', 'if %n% gtr 60 goto fail',
+      `move /y "${file}" "${portableFile}" >nul 2>&1 || (timeout /t 1 /nobreak >nul & goto retry)`,
+      `start "" "${portableFile}"`, 'del "%~f0"', 'exit',
+      ':fail', `start "" "${file}"`, 'del "%~f0"',
     ].join('\r\n'));
     spawn('cmd.exe', ['/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     setTimeout(() => app.quit(), 500);

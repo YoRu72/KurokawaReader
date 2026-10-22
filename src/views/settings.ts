@@ -7,6 +7,7 @@ import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting, type VisualSettings, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
+import { nativePlatform } from '../native';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
@@ -147,8 +148,8 @@ export function settingsView(): HTMLElement {
       h('button', { class: 'btn small outlined', onclick: () => restoreInput.click() }, icon('import'), t('restore')), restoreInput),
     bkStatus));
 
-  // Keyboard shortcuts (anything with a keyboard)
-  if (!isTouchDevice()) {
+  // Keyboard shortcuts: every PC and browser (touch-screen laptops included); phones and tablets skip it.
+  if (nativePlatform() !== 'android' && nativePlatform() !== 'ios') {
     const list = h('div', { class: 'dest-list' });
     const renderKeys = () => {
       list.replaceChildren(...SHORTCUTS.map((sc) => {
@@ -214,6 +215,8 @@ export function settingsView(): HTMLElement {
     title.classList.add('card-title');
     title.setAttribute('role', 'button'); title.setAttribute('tabindex', '0');
     title.prepend(icon('chevronDown'));
+    // Everything starts folded except Updates, so the page is a short list of headings.
+    if ((title.textContent ?? '').trim() !== t('updates')) card.classList.add('collapsed');
     const toggleCard = () => card.classList.toggle('collapsed');
     title.addEventListener('click', toggleCard);
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } });

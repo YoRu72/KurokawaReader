@@ -37,6 +37,13 @@ ${MIMES.map((m) => data(`android:mimeType="${m}"`)).join('\n')}
         <data android:mimeType="*/*" />
 ${EXTS.flatMap((e) => [data(`android:pathPattern=".*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\..*\\\\.${e}"`)]).join('\n')}
       </intent-filter>
+      <!-- "Share to…" from other apps -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+${MIMES.map((m) => data(`android:mimeType="${m}"`)).join('\n')}
+      </intent-filter>
 `;
 
 const manifestPath = path.join(app, 'src/main/AndroidManifest.xml');
@@ -52,7 +59,7 @@ if (!manifest.includes('android:scheme="kurokawareader"')) {
       </intent-filter>
 `);
 }
-if (!manifest.includes('android.intent.action.VIEW')) {
+if (!manifest.includes('android:mimeType="application/pdf"')) {
   // Insert after the MAIN/LAUNCHER intent filter of the main activity.
   manifest = manifest.replace(/(<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>)/, `$1\n${intentFilters}`);
 }

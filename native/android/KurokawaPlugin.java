@@ -396,8 +396,19 @@ public class KurokawaPlugin extends Plugin {
             while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
             JSObject ret = new JSObject();
             ret.put("data", Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP));
+            ret.put("name", displayName(Uri.parse(uriStr)));
             call.resolve(ret);
         } catch (Exception e) { call.reject("read failed: " + e.getMessage(), e); }
+    }
+
+    /** The file name a content:// URI stands for (what the sharing app calls it). */
+    private String displayName(Uri uri) {
+        if ("file".equals(uri.getScheme())) return uri.getLastPathSegment();
+        try (android.database.Cursor c = getContext().getContentResolver().query(uri, new String[]{ android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst()) { int i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME); if (i >= 0) { String n = c.getString(i); if (n != null && !n.isEmpty()) return n; } }
+        } catch (Exception ignored) { }
+        String last = uri.getLastPathSegment();
+        return last == null ? "" : last;
     }
 
     /** Saves a PNG/JPEG (base64) into the device gallery under Pictures/<folder>. */
@@ -438,6 +449,31 @@ public class KurokawaPlugin extends Plugin {
 
     /** Volume keys turn pages when the reader asks for it (MainActivity consults this flag). */
     public static volatile boolean volumeKeys = false;
+
+    /** Screen brightness of this window: 0–1, or -1 to follow the system setting. */
+    @PluginMethod
+    public void setBrightness(PluginCall call) {
+        final double v = call.getDouble("value", -1.0);
+        getActivity().runOnUiThread(() -> {
+            android.view.WindowManager.LayoutParams lp = getActivity().getWindow().getAttributes();
+            lp.screenBrightness = v < 0 ? android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : (float) Math.max(0.01, Math.min(1.0, v));
+            getActivity().getWindow().setAttributes(lp);
+            call.resolve();
+        });
+    }
+
+    /** Current brightness: the window override if set, else the system level (0–1). */
+    @PluginMethod
+    public void getBrightness(PluginCall call) {
+        JSObject ret = new JSObject();
+        float lp = getActivity().getWindow().getAttributes().screenBrightness;
+        double v = lp >= 0 ? lp : -1;
+        if (v < 0) {
+            try { v = android.provider.Settings.System.getInt(getContext().getContentResolver(), android.provider.Settings.System.SCREEN_BRIGHTNESS) / 255.0; } catch (Exception e) { v = 0.5; }
+        }
+        ret.put("value", v);
+        call.resolve(ret);
+    }
 
     @PluginMethod
     public void setVolumeKeys(PluginCall call) {

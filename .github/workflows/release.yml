@@ -21,6 +21,14 @@ jobs:
       - uses: actions/checkout@v4
       - id: v
         run: echo "v=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - name: Repository topics
+        continue-on-error: true
+        env: { GH_TOKEN: '${{ secrets.REPO_ADMIN_TOKEN || github.token }}' }
+        run: |
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/topics" -H "Accept: application/vnd.github+json" \
+            --input - <<'JSON'
+          {"names":["ebook-reader","epub-reader","pdf-reader","reader","android","ios","windows","macos","linux","electron","capacitor","pwa","typescript","arabic","rtl","epub","pdf","docx","material-design-3","offline-first"]}
+          JSON
 
   web:
     name: Web build & tests
