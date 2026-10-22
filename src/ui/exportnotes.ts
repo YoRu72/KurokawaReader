@@ -15,6 +15,15 @@ export function notesMarkdown(book: Book): string {
       out.push('', `<sub>${formatDate(hl.createdAt)}</sub>`, '');
     }
   }
+  const pdf = [...(book.pdfHighlights ?? [])].sort((a, b) => a.createdAt - b.createdAt);
+  if (pdf.length) {
+    out.push(`## ${t('highlights')} · PDF`, '');
+    for (const hl of pdf) {
+      out.push(`> ${hl.text.replace(/\n+/g, '\n> ')}`);
+      if (hl.note) out.push('', `${hl.note}`);
+      out.push('', `<sub>${t('pageOf', { n: hl.page, total: book.pageCount ?? hl.page })} · ${formatDate(hl.createdAt)}</sub>`, '');
+    }
+  }
   if (book.bookmarks.length) {
     out.push(`## ${t('bookmarks')}`, '');
     for (const bm of book.bookmarks) out.push(`- **${bm.label}**${bm.excerpt ? ` — ${bm.excerpt}` : ''}`);

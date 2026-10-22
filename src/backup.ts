@@ -11,8 +11,8 @@ import { importFiles } from './library';
 import { t } from './i18n';
 
 interface BookRecord {
-  key: string; title: string; author?: string; fileName: string; size: number; format: string; folderName?: string;
-  addedAt: number; lastOpenedAt?: number; progress?: Book['progress']; bookmarks: Book['bookmarks']; highlights: Book['highlights']; prefs?: Book['prefs']; stats?: Book['stats'];
+  key: string; title: string; author?: string; fileName: string; size: number; format: string; folderName?: string; tags?: string[]; tagsAt?: number;
+  addedAt: number; lastOpenedAt?: number; progress?: Book['progress']; bookmarks: Book['bookmarks']; highlights: Book['highlights']; pins?: Book['pins']; pdfHighlights?: Book['pdfHighlights']; prefs?: Book['prefs']; stats?: Book['stats'];
   id?: string;
 }
 interface Manifest {
@@ -33,8 +33,8 @@ async function manifest(full: boolean): Promise<Manifest> {
     settings: { ...getSettings(), aiKey: '', syncDropboxRefresh: '', syncWebdavPass: '' }, local, folders, fonts: await listFonts(),
     books: books.map((b) => ({
       key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
-      folderName: folders.find((f) => f.id === b.folderId)?.name, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
-      progress: b.progress, bookmarks: b.bookmarks, highlights: b.highlights, prefs: b.prefs, stats: b.stats,
+      folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
+      progress: b.progress, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins, pdfHighlights: b.pdfHighlights, prefs: b.prefs, stats: b.stats,
     })),
   };
 }
@@ -117,10 +117,15 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
       b.bookmarks.push(...(rec.bookmarks ?? []).filter((x) => !ids.has(x.id)));
       const hids = new Set(b.highlights.map((x) => x.id));
       b.highlights.push(...(rec.highlights ?? []).filter((x) => !hids.has(x.id)));
+      const pids = new Set((b.pins ?? []).map((x) => x.id));
+      b.pins = [...(b.pins ?? []), ...(rec.pins ?? []).filter((x) => !pids.has(x.id))];
+      const phids = new Set((b.pdfHighlights ?? []).map((x) => x.id));
+      b.pdfHighlights = [...(b.pdfHighlights ?? []), ...(rec.pdfHighlights ?? []).filter((x) => !phids.has(x.id))];
       if (rec.progress && (!b.lastOpenedAt || (rec.lastOpenedAt ?? 0) >= b.lastOpenedAt)) { b.progress = rec.progress; b.lastOpenedAt = rec.lastOpenedAt ?? b.lastOpenedAt; }
       if (rec.prefs) b.prefs = { ...b.prefs, ...rec.prefs };
-      if (rec.stats && !b.stats) b.stats = rec.stats;
+      if (rec.stats && (rec.stats.sessionAt ?? 0) > (b.stats?.sessionAt ?? 0)) b.stats = rec.stats;
       const fid = folderId(rec.folderName); if (fid && !b.folderId) b.folderId = fid;
+      if (rec.tags?.length) { b.tags = [...new Set([...(b.tags ?? []), ...rec.tags])]; b.tagsAt = Date.now(); }
     });
     applied++;
   }

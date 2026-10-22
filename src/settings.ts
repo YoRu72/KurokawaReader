@@ -70,6 +70,7 @@ export interface VisualSettings {
   snapFolder: string;
   formatFilter: string[];
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
+  readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   keepAwake: boolean;         // screen wake lock while reading
   edgeBrightness: boolean;    // left-edge swipe adjusts dimming
   brightnessMode: 'app' | 'device';   // what the swipe (and dimming) controls: the reader's overlay or the screen itself
@@ -162,6 +163,7 @@ export const DEFAULTS: VisualSettings = {
   snapFolder: 'Screenshots',
   formatFilter: [],
   statusFilter: [],
+  readingGoalMinutes: 0,
   keepAwake: true,
   edgeBrightness: false,
   brightnessMode: 'device',

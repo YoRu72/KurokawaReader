@@ -273,6 +273,22 @@ export const ar: Strings = {
   hoursMinutes: '{h} س {m} د',
   today: 'اليوم',
 
+  // إحصاءات القراءة
+  readingStats: 'إحصاءات القراءة',
+  totalReading: 'إجمالي وقت القراءة',
+  readingSessions: 'جلسات القراءة',
+  pagesRead: 'الصفحات المقروءة',
+  daysRead: 'أيام القراءة',
+  readingStreak: 'أيام متتالية',
+  dailyGoal: 'هدف اليوم',
+  goalValue: '{n} دقيقة',
+  goalOff: 'مطفأ',
+  setGoal: 'حدّد هدف اليوم',
+  goalProgress: '{done} من {goal} دقيقة',
+  last14Days: 'آخر ١٤ يومًا',
+  mostRead: 'الأكثر قراءة',
+  noReadingYet: 'لا قراءة مسجّلة بعد',
+
   // الصور والتصدير
   shareImage: 'مشاركة الصورة',
   savePageImage: 'حفظ الصفحة صورةً (PNG)',
@@ -310,6 +326,18 @@ export const ar: Strings = {
   emptyFolder: 'هذه الحافظة خالية',
   importHere: 'الإضافة إلى هذه الحافظة',
   noFolder: 'بلا حافظة',
+
+  // الوسوم
+  tags: 'الوسوم',
+  tagName: 'اسم الوسم',
+  newTag: 'وسم جديد',
+  addTag: 'إضافة',
+  manageTags: 'تعديل الوسوم',
+  noTags: 'لا وسوم بعد',
+  renameTag: 'إعادة تسمية الوسم',
+  deleteTag: 'حذف الوسم',
+  deleteTagConfirm: 'أتحذف الوسم «{name}» من كلّ الكتب؟',
+  noTaggedBooks: 'لا كتب بهذا الوسم',
 
   direction: 'اتجاه الواجهة',
   dirAuto: 'بحسب اللغة',
@@ -503,7 +531,7 @@ export const ar: Strings = {
   notes: 'التعليقات',
   noNotes: 'لا تعليقات بعد؛ حدِّد نصًّا واختر «تعليق».',
   editNote: 'تعديل التعليق',
-  noPdfNotes: 'لا تعليقات على هذا الملف؛ اضغط مطوَّلًا (أو بالزرّ الأيمن) على موضعٍ في الصفحة لإضافة تعليق.',
+  noPdfNotes: 'لا تعليقات على هذا الملف؛ حدِّد نصًّا أو اضغط مطوَّلًا (أو بالزرّ الأيمن) على موضعٍ في الصفحة لإضافة تعليق.',
   pdfNoteStyle: 'هيئة تعليقات PDF',
   pinBadge: 'فقاعة مرقَّمة',
   pinIcon: 'أيقونة تعليق',

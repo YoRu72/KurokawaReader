@@ -268,6 +268,22 @@ export const en = {
   hoursMinutes: '{h}h {m}m',
   today: 'Today',
 
+  // Reading statistics
+  readingStats: 'Reading statistics',
+  totalReading: 'Total reading time',
+  readingSessions: 'Reading sessions',
+  pagesRead: 'Pages read',
+  daysRead: 'Days read',
+  readingStreak: 'Day streak',
+  dailyGoal: 'Daily goal',
+  goalValue: '{n} min',
+  goalOff: 'Off',
+  setGoal: 'Set daily goal',
+  goalProgress: '{done} of {goal} min',
+  last14Days: 'Last 14 days',
+  mostRead: 'Most read',
+  noReadingYet: 'No reading recorded yet',
+
   // Images & export
   shareImage: 'Share image',
   savePageImage: 'Save page as PNG',
@@ -305,6 +321,18 @@ export const en = {
   emptyFolder: 'This folder is empty',
   importHere: 'Import into this folder',
   noFolder: 'No folder',
+
+  // Tags
+  tags: 'Tags',
+  tagName: 'Tag name',
+  newTag: 'New tag',
+  addTag: 'Add',
+  manageTags: 'Edit tags',
+  noTags: 'No tags yet',
+  renameTag: 'Rename tag',
+  deleteTag: 'Delete tag',
+  deleteTagConfirm: 'Delete the tag “{name}” from all books?',
+  noTaggedBooks: 'No books with this tag',
 
   direction: 'Layout direction',
   dirAuto: 'By language',
@@ -498,7 +526,7 @@ export const en = {
   notes: 'Notes',
   noNotes: 'No notes yet — select text and choose Note.',
   editNote: 'Edit note',
-  noPdfNotes: 'No notes on this document — long-press (or right-click) a spot on a page to add one.',
+  noPdfNotes: 'No notes on this document — select text or long-press a spot to add one.',
   pdfNoteStyle: 'PDF notes look like',
   pinBadge: 'Numbered bubble',
   pinIcon: 'Note icon',

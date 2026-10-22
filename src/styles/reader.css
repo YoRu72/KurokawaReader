@@ -190,6 +190,13 @@ html[dir='rtl'] .kr-slide .kr-slide-n { text-transform: none; letter-spacing: 0;
 .pdf-page .textLayer .endOfContent.active { top: 0; }
 .pdf-page .textLayer .highlight { background: rgba(255, 200, 0, .35); border-radius: 2px; }
 .pdf-page .textLayer .highlight.selected { background: rgba(255, 140, 0, .6); }
+.pdf-page .pdf-hl-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.pdf-page .pdf-hl { position: absolute; border-radius: 2px; opacity: .34; background: var(--hl-amber, #e5c56b); }
+.pdf-page .pdf-hl[data-color='rose'] { background: var(--hl-rose, #e58a8a); }
+.pdf-page .pdf-hl[data-color='mint'] { background: var(--hl-mint, #7fcfa5); }
+.pdf-page .pdf-hl[data-color='sky'] { background: var(--hl-sky, #7fb4e5); }
+.pdf-page .pdf-hl[data-color='violet'] { background: var(--hl-violet, #b9a3e8); }
+.pdf-view[data-invert='true'] .pdf-page .pdf-hl { mix-blend-mode: screen; opacity: .3; }
 .pdf-page .pnum { position: absolute; bottom: 4px; inset-inline-end: 6px; font: 11px var(--font-ui); color: #999; z-index: 3; pointer-events: none; }
 .pdf-view[data-invert='true'] .pdf-page canvas { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
 .pdf-view[data-invert='true'] .pdf-page { background: #111; }

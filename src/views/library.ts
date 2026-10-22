@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet } from '../ui/dom';
-import { t, formatBytes, formatDate, countBooks, localDigits } from '../i18n';
+import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
 import { db, uid, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
@@ -7,6 +7,7 @@ import { navigate } from '../router';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
 import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
+import { todayKey, liveStatsOf } from '../stats';
 
 type Sort = 'title' | 'recent' | 'added' | 'author' | 'size';
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -17,6 +18,7 @@ export function libraryView(): HTMLElement {
   let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'title';
   let folders: Folder[] = [];
   let activeFolder: string | null = localStorage.getItem('kr.folder') || null;
+  let tagFilter: string | null = localStorage.getItem('kr.tag') || null;
   let selecting = false;
   const selected = new Set<string>();
 
@@ -49,13 +51,16 @@ export function libraryView(): HTMLElement {
   const grid = h('div', { class: 'book-grid', role: 'list' });
   const resume = h('div', { class: 'resume-card', hidden: true });
   const chips = h('div', { class: 'folder-chips', role: 'tablist' });
+  const tagChips = h('div', { class: 'format-chips tag-chips', role: 'group', 'aria-label': t('tags') });
   const fmtChips = h('div', { class: 'format-chips', role: 'group', 'aria-label': t('filterFormats') });
   const heroSub = h('div', { class: 'sub' });
-  const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub);
+  const heroGoal = h('div', { class: 'goal-line', hidden: true });
+  const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub, heroGoal);
   const body = h('div', { class: 'library-body' },
     hero,
     h('div', { class: 'library-tools' }, search, sortSel, selectBtn),
     chips,
+    tagChips,
     fmtChips,
     resume,
     grid);
@@ -66,6 +71,7 @@ export function libraryView(): HTMLElement {
     h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
     importTopBtn,
     syncTopBtn,
+    iconButton('chart', t('readingStats'), () => void import('../ui/stats').then((m) => m.showStats())),
     iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );
@@ -117,6 +123,7 @@ export function libraryView(): HTMLElement {
       h('span', null, t('selectedCount', { n })),
       h('button', { class: 'btn small', onclick: () => { books.forEach((b) => selected.add(b.id)); renderGrid(); } }, t('selectAll')),
       h('span', { class: 'spacer' }),
+      h('button', { class: 'btn small', disabled: n === 0, onclick: () => tagsSheet([...selected]) }, icon('tag'), t('tags')),
       h('button', { class: 'btn small', disabled: n === 0, onclick: () => moveSheet([...selected]) }, icon('folder'), t('moveToFolder')),
       h('button', { class: 'btn small danger', disabled: n === 0, onclick: async () => {
         if (!confirm(t('deleteConfirm', { n }))) return;
@@ -139,8 +146,9 @@ export function libraryView(): HTMLElement {
     const list = books.filter((b) => {
       if (fmt.size && !fmt.has(groupOf(b.format))) return false;
       if (st.size && !st.has(statusOf(b))) return false;
+      if (tagFilter && !(b.tags ?? []).includes(tagFilter)) return false;
       const inFolder = activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
-      return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName}`.toLowerCase().includes(query));
+      return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName} ${(b.tags ?? []).join(' ')}`.toLowerCase().includes(query));
     });
     const by: Record<Sort, (a: Book, b: Book) => number> = {
       recent: (a, b) => (b.lastOpenedAt ?? b.addedAt) - (a.lastOpenedAt ?? a.addedAt),
@@ -219,8 +227,10 @@ export function libraryView(): HTMLElement {
         [t('progress'), `${Math.round((book.progress?.pct ?? 0) * 100)}%`],
       ];
       if (book.pageCount) rows.push([t('pages'), String(book.pageCount)]);
+      if (book.tags?.length) rows.push([t('tags'), book.tags.join(' · ')]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
       s.actions.append(
+        h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
@@ -243,6 +253,110 @@ export function libraryView(): HTMLElement {
     fmtChips.append(h('span', { class: 'chip-sep' }));
     for (const [id, label, ic] of states) fmtChips.append(h('button', { type: 'button', class: 'chip small' + (st.has(id) ? ' on' : ''), 'aria-pressed': String(st.has(id)), onclick: () => { const next = new Set(st); if (next.has(id)) next.delete(id); else next.add(id); updateSettings({ statusFilter: [...next] }); renderGrid(); } }, icon(st.has(id) ? 'check' : ic), h('span', null, label)));
     if (active.size || st.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
+  }
+
+  function allTags(): { name: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const b of books) for (const name of b.tags ?? []) counts.set(name, (counts.get(name) ?? 0) + 1);
+    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => natural.compare(a.name, b.name));
+  }
+
+  function setTagFilter(name: string | null) {
+    tagFilter = name;
+    if (name) localStorage.setItem('kr.tag', name); else localStorage.removeItem('kr.tag');
+    renderGrid();
+  }
+
+  function renderTagChips() {
+    clear(tagChips);
+    const tags = allTags();
+    tagChips.hidden = !tags.length;
+    if (!tags.length) return;
+    for (const tag of tags) {
+      const on = tagFilter === tag.name;
+      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon('tag'), h('span', { dir: 'auto' }, tag.name));
+      c.addEventListener('contextmenu', (e) => { e.preventDefault(); tagSheet(tag.name); });
+      let pt: number | undefined;
+      c.addEventListener('pointerdown', () => { pt = window.setTimeout(() => tagSheet(tag.name), 560); });
+      const cancel = () => window.clearTimeout(pt);
+      c.addEventListener('pointerup', cancel); c.addEventListener('pointerleave', cancel);
+      tagChips.append(c);
+    }
+  }
+
+  async function setTag(ids: string[], name: string, on: boolean): Promise<void> {
+    const at = Date.now();
+    for (const id of ids) {
+      const bk = books.find((b) => b.id === id);
+      const next = new Set(bk?.tags ?? []);
+      if (on) next.add(name); else next.delete(name);
+      const tags = [...next];
+      await db.updateBook(id, (b) => { if (tags.length) b.tags = tags; else delete b.tags; b.tagsAt = at; });
+      if (bk) { if (tags.length) bk.tags = tags; else delete bk.tags; bk.tagsAt = at; }
+    }
+    renderGrid();
+  }
+
+  function tagsSheet(ids: string[]) {
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(t('tags'), t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      s.body.style.fontSize = '14px';
+      const list = h('div', { class: 'dest-list' });
+      const input = h('input', { type: 'text', placeholder: t('newTag'), dir: 'auto', style: { flex: '1' } }) as HTMLInputElement;
+      const draw = () => {
+        clear(list);
+        const sel = books.filter((b) => ids.includes(b.id));
+        const tags = allTags();
+        if (!tags.length) { list.append(h('p', { style: { color: 'var(--md-on-surface-dim)', margin: '8px 2px' } }, t('noTags'))); return; }
+        for (const tag of tags) {
+          const on = sel.length > 0 && sel.every((b) => (b.tags ?? []).includes(tag.name));
+          list.append(h('label', { class: 'dest-row' + (on ? ' on' : '') },
+            h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => { void setTag(ids, tag.name, (e.target as HTMLInputElement).checked).then(draw); } }),
+            icon('tag'),
+            h('span', { class: 'name', dir: 'auto' }, tag.name, h('span', { style: { color: 'var(--md-on-surface-dim)', fontSize: '12px' } }, ` · ${localDigits(tag.count)}`))));
+        }
+      };
+      const add = () => { const name = input.value.trim(); if (!name) return; input.value = ''; void setTag(ids, name, true).then(draw); };
+      s.body.append(
+        h('form', { onsubmit: (e: Event) => { e.preventDefault(); add(); }, style: { display: 'flex', gap: '8px', marginBottom: '10px' } }, input, h('button', { class: 'btn primary small', type: 'submit' }, icon('plus'), t('addTag'))),
+        list);
+      draw();
+      s.actions.append(h('button', { class: 'btn primary small', type: 'button', onclick: () => s.close() }, icon('check'), t('done')));
+    });
+  }
+
+  function tagSheet(name: string) {
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(name, t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      s.body.append(h('ul', { class: 'plain-list' },
+        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const next = await askName(t('renameTag'), name, t('tagName')); if (next && next !== name) await renameTag(name, next); } }, icon('type'), t('renameTag'))),
+        h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteTagConfirm', { name }))) return; s.close(); await deleteTag(name); } }, icon('trash'), t('deleteTag')))));
+    });
+  }
+
+  async function renameTag(from: string, to: string): Promise<void> {
+    const at = Date.now();
+    for (const b of books) {
+      if (!(b.tags ?? []).includes(from)) continue;
+      const tags = [...new Set((b.tags ?? []).map((x) => (x === from ? to : x)))];
+      await db.updateBook(b.id, (x) => { x.tags = tags; x.tagsAt = at; });
+      b.tags = tags; b.tagsAt = at;
+    }
+    if (tagFilter === from) setTagFilter(to); else renderGrid();
+  }
+
+  async function deleteTag(name: string): Promise<void> {
+    const at = Date.now();
+    for (const b of books) {
+      if (!(b.tags ?? []).includes(name)) continue;
+      const tags = (b.tags ?? []).filter((x) => x !== name);
+      await db.updateBook(b.id, (x) => { if (tags.length) x.tags = tags; else delete x.tags; x.tagsAt = at; });
+      if (tags.length) b.tags = tags; else delete b.tags;
+      b.tagsAt = at;
+    }
+    if (tagFilter === name) setTagFilter(null); else renderGrid();
   }
 
   function statusOf(b: Book): string {
@@ -271,11 +385,11 @@ export function libraryView(): HTMLElement {
     if (importChip) chips.append(importChip);
   }
 
-  function askName(title: string, initial = ''): Promise<string | null> {
+  function askName(title: string, initial = '', placeholder = t('folderName')): Promise<string | null> {
     return import('../ui/dom').then(({ openSheet }) => new Promise<string | null>((resolve) => {
       const sh = openSheet(title, t('close'));
       sh.body.style.fontFamily = 'var(--font-ui)';
-      const input = h('input', { type: 'text', value: initial, placeholder: t('folderName'), style: { width: '100%' }, dir: 'auto', autofocus: true }) as HTMLInputElement;
+      const input = h('input', { type: 'text', value: initial, placeholder, style: { width: '100%' }, dir: 'auto', autofocus: true }) as HTMLInputElement;
       const done = () => { const v = input.value.trim(); sh.close(); resolve(v || null); };
       sh.body.append(h('form', { onsubmit: (e: Event) => { e.preventDefault(); done(); } }, input));
       sh.actions.append(h('button', { class: 'btn primary small', type: 'button', onclick: done }, icon('check'), initial ? t('rename') : t('create')));
@@ -334,7 +448,7 @@ export function libraryView(): HTMLElement {
   function renderResume() {
     clear(resume);
     const last = [...books].filter((b) => b.lastOpenedAt && (b.progress?.pct ?? 0) < 0.98).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
-    resume.hidden = !last || selecting || !!query || !!activeFolder;
+    resume.hidden = !last || selecting || !!query || !!activeFolder || !!tagFilter;
     if (resume.hidden || !last) return;
     if (prewarmed !== last.id) { prewarmed = last.id; prewarm(last, () => db.getFile(last.id)); }
     const pct = Math.round((last.progress?.pct ?? 0) * 100);
@@ -351,11 +465,24 @@ export function libraryView(): HTMLElement {
       h('button', { class: 'btn primary small', type: 'button', onclick: () => navigate(`/read/${last.id}`) }, icon('play'), t('open')));
   }
 
+  function renderGoal() {
+    const goal = getSettings().readingGoalMinutes;
+    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days[todayKey()]?.ms ?? 0), 0);
+    clear(heroGoal);
+    heroGoal.hidden = !goal;
+    if (!goal) return;
+    heroGoal.append(
+      h('span', null, `${t('today')}: ${formatDuration(today)} · ${t('goalValue', { n: goal })}`),
+      h('div', { class: 'bar' }, h('span', { style: { width: `${Math.min(100, (today / (goal * 60000)) * 100)}%` } })));
+  }
+
   function renderGrid() {
     clear(grid);
     renderResume();
+    renderGoal();
     renderSelBar();
     renderChips();
+    renderTagChips();
     renderFormatChips();
     const list = sorted();
     heroSub.textContent = books.length ? `${countBooks(books.length)} · ${t('tagline')}` : t('tagline');
@@ -368,8 +495,9 @@ export function libraryView(): HTMLElement {
         h('p', { style: { fontSize: '13px' } }, t('sampleBooksBody'))));
       return;
     }
-    if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, activeFolder && !query ? t('emptyFolder') : t('noResults')), activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
-    if (getSettings().libraryView === 'cards' && !activeFolder && !query) folders.forEach((f) => grid.appendChild(folderCard(f)));
+    if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, tagFilter && !query ? t('noTaggedBooks') : activeFolder && !query ? t('emptyFolder') : t('noResults')),
+      tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
+    if (getSettings().libraryView === 'cards' && !activeFolder && !query && !tagFilter) folders.forEach((f) => grid.appendChild(folderCard(f)));
     list.forEach((b) => grid.appendChild(card(b)));
   }
 
@@ -389,6 +517,7 @@ export function libraryView(): HTMLElement {
     books = await listBooks();
     folders = (await db.getMeta<Folder[]>('folders')) ?? [];
     if (activeFolder && !folders.some((f) => f.id === activeFolder)) activeFolder = null;
+    if (tagFilter && !books.some((b) => (b.tags ?? []).includes(tagFilter!))) { tagFilter = null; localStorage.removeItem('kr.tag'); }
     renderGrid();
   }
 

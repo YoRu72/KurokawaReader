@@ -1,17 +1,27 @@
 // Reading statistics: time spent with a book open and visible, words passed,
-// per-day history. Drives "Book information" (hours, speed, history, time left).
+// pages, sessions, per-day history. Drives "Book information" and the library
+// statistics sheet (hours, speed, history, time left, daily goal).
 import { db, type Book, type ReadingStats } from './db';
 
 const TICK_MS = 5000;
 const SAVE_MS = 30000;
+/** A gap longer than this starts a new reading session. */
+const SESSION_GAP_MS = 30 * 60000;
+const WORDS_PER_PAGE = 300;
 
 export function countWords(text: string): number {
   return (text.match(/[\p{L}\p{N}]+(?:['’ـ-ٟ][\p{L}\p{N}]+)*/gu) ?? []).length;
 }
 
-function today(): string {
+export function todayKey(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Statistics of books being read right now, so the library is current before the next save. */
+const liveStats = new Map<string, ReadingStats>();
+export function liveStatsOf(id: string): ReadingStats | undefined {
+  return liveStats.get(id);
 }
 
 export class ReadingTracker {
@@ -20,17 +30,22 @@ export class ReadingTracker {
   private saveTimer: number | undefined;
   private lastTick = 0;
   private pendingWords = 0;
+  private pendingPages = 0;
   private lastPct = 0;
+  private totalPages = 0;
   private dirty = false;
 
   constructor(private book: Book, private isActive: () => boolean, bookWords?: number, bookChars?: number) {
     this.stats = book.stats ?? { ms: 0, words: 0, days: {} };
     if (bookWords != null) this.stats.bookWords = bookWords;
     if (bookChars != null) this.stats.bookChars = bookChars;
+    this.totalPages = book.pageCount ?? (this.stats.bookWords ? Math.max(1, Math.round(this.stats.bookWords / WORDS_PER_PAGE)) : 0);
     this.lastPct = book.progress?.pct ?? 0;
   }
 
   start(): void {
+    this.ensureSession();
+    liveStats.set(this.book.id, this.stats);
     this.lastTick = performance.now();
     this.timer = window.setInterval(() => this.tick(), TICK_MS);
     this.saveTimer = window.setInterval(() => void this.save(), SAVE_MS);
@@ -39,22 +54,42 @@ export class ReadingTracker {
 
   private onVis = () => { this.lastTick = performance.now(); };
 
+  /** Count a session when reading resumes after a long pause (or on the first tick). */
+  private ensureSession(): void {
+    const now = Date.now();
+    if (!this.stats.sessionAt || now - this.stats.sessionAt > SESSION_GAP_MS) {
+      this.stats.sessions = (this.stats.sessions ?? 0) + 1;
+      const d = this.stats.days[todayKey()] ?? { ms: 0, pct: this.lastPct, words: 0 };
+      d.sessions = (d.sessions ?? 0) + 1;
+      this.stats.days[todayKey()] = d;
+      this.dirty = true;
+    }
+    this.stats.sessionAt = now;
+  }
+
   private tick(): void {
     const now = performance.now();
     const dt = now - this.lastTick;
     this.lastTick = now;
     if (document.visibilityState !== 'visible' || !this.isActive() || dt > 60000) return;
-    const d = this.stats.days[today()] ?? { ms: 0, pct: this.lastPct, words: 0 };
+    this.ensureSession();
+    const d = this.stats.days[todayKey()] ?? { ms: 0, pct: this.lastPct, words: 0 };
     d.ms += dt; this.stats.ms += dt;
     d.words += this.pendingWords; this.stats.words += this.pendingWords; this.pendingWords = 0;
+    if (this.pendingPages > 0) {
+      d.pages = (d.pages ?? 0) + this.pendingPages; this.stats.pages = (this.stats.pages ?? 0) + this.pendingPages; this.pendingPages = 0;
+    }
     d.pct = Math.max(d.pct, this.lastPct);
-    this.stats.days[today()] = d;
+    this.stats.days[todayKey()] = d;
     this.dirty = true;
+    liveStats.set(this.book.id, this.stats);
   }
 
   /** Report words the reader scrolled past, and the new progress fraction. */
   advance(words: number, pct: number): void {
     if (words > 0) this.pendingWords += words;
+    // Pages only follow steady progress — a jump from the table of contents is not reading.
+    if (this.totalPages > 0 && pct > this.lastPct && pct - this.lastPct <= 0.1) this.pendingPages += (pct - this.lastPct) * this.totalPages;
     this.lastPct = Math.max(this.lastPct, pct);
   }
 
@@ -71,6 +106,7 @@ export class ReadingTracker {
     if (!this.dirty) return;
     this.dirty = false;
     this.book.stats = this.stats;
+    liveStats.set(this.book.id, this.stats);
     await db.updateBook(this.book.id, (b) => { b.stats = this.stats; });
   }
 

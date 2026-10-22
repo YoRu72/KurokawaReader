@@ -57,6 +57,7 @@ export interface PdfSearchHit { page: number; excerpt: string; term: string }
 export interface PdfViewerOptions {
   container: HTMLElement;
   onPageChange(page: number, total: number): void;
+  onPageRender?(page: number): void;
   invert: boolean;
 }
 
@@ -238,6 +239,7 @@ export class PdfViewer {
       await text.render();
       textDiv.appendChild(h('div', { class: 'endOfContent' }));
     } catch { /* text layer is optional */ }
+    this.opts.onPageRender?.(n);
   }
 
   private releasePage(n: number): void {

@@ -14,7 +14,7 @@ import { toast } from './ui/dom';
 export type SyncProvider = 'none' | 'dropbox' | 'webdav' | 'folder';
 const FILE = 'kurokawa-sync.json';
 
-interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; folderName?: string }
+interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats'] }
 interface SyncState { app: 'KurokawaReader'; version: 1; updatedAt: number; device: string; folders: { name: string; createdAt: number }[]; books: Record<string, BookState>; deleted: Record<string, number> }
 
 const keyOf = (b: { fileName: string; size: number }) => `${b.fileName}:${b.size}`;
@@ -34,7 +34,7 @@ async function localState(): Promise<SyncState> {
   const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
   const deleted = (await db.getMeta<Record<string, number>>('sync.deleted')) ?? {};
   const out: SyncState = { app: 'KurokawaReader', version: 1, updatedAt: Date.now(), device: deviceId(), folders: folders.map((f) => ({ name: f.name, createdAt: f.createdAt })), books: {}, deleted };
-  for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name };
+  for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats };
   return out;
 }
 
@@ -66,8 +66,11 @@ async function applyRemote(remote: SyncState): Promise<number> {
       for (const rh of r.highlights ?? []) { const lh = mergedHl.find((y) => y.id === rh.id); if (lh && rh.note !== lh.note && (rh.noteAt ?? 0) > (lh.noteAt ?? 0)) { lh.note = rh.note; lh.noteAt = rh.noteAt; dirty = true; } }
       x.highlights = mergedHl;
       x.pins = merge(x.pins ?? [], r.pins ?? []);
+      x.pdfHighlights = merge(x.pdfHighlights ?? [], r.pdfHighlights ?? []);
       if (r.progress && (r.progressAt ?? 0) > (x.progressAt ?? x.lastOpenedAt ?? 0)) { x.progress = { ...r.progress, bookId: x.id }; x.progressAt = r.progressAt; x.lastOpenedAt = Math.max(x.lastOpenedAt ?? 0, r.lastOpenedAt ?? 0); dirty = true; }
       if (r.folderName && !x.folderId) { const f = folders.find((y) => y.name === r.folderName); if (f) { x.folderId = f.id; dirty = true; } }
+      if ((r.tagsAt ?? 0) > (x.tagsAt ?? 0)) { if (r.tags?.length) x.tags = [...new Set(r.tags)]; else delete x.tags; x.tagsAt = r.tagsAt; dirty = true; }
+      if ((r.stats?.sessionAt ?? 0) > (x.stats?.sessionAt ?? 0)) { x.stats = r.stats; dirty = true; }
     });
     if (dirty) changed++;
   }
@@ -82,10 +85,14 @@ function mergeStates(local: SyncState, remote: SyncState | null): SyncState {
     const r = remote.books[k];
     if (!r) { out.books[k] = l; continue; }
     const uniq = <T extends { id: string }>(a: T[], b: T[]) => { const seen = new Set<string>(); return [...a, ...b].filter((x) => !out.deleted[x.id] && !seen.has(x.id) && seen.add(x.id)); };
+    const tags = (l.tagsAt ?? 0) >= (r.tagsAt ?? 0) ? l : r;
     out.books[k] = {
       ...(l.progressAt >= (r.progressAt ?? 0) ? l : r),
       bookmarks: uniq(l.bookmarks, r.bookmarks ?? []), highlights: uniq(l.highlights, r.highlights ?? []), pins: uniq(l.pins, r.pins ?? []),
+      pdfHighlights: uniq(l.pdfHighlights ?? [], r.pdfHighlights ?? []),
       folderName: l.folderName ?? r.folderName,
+      tags: tags.tags ?? [], tagsAt: tags.tagsAt,
+      stats: (l.stats?.sessionAt ?? 0) >= (r.stats?.sessionAt ?? 0) ? l.stats : r.stats,
     };
   }
   return out;

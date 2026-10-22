@@ -34,6 +34,9 @@ export interface Bookmark {
 /** A note pinned to a point on a PDF page (x, y as fractions of the page). */
 export interface PdfNote { id: string; page: number; x: number; y: number; note: string; color: Highlight['color']; createdAt: number }
 
+/** A text highlight on a PDF page. Rects are fractions of the page: [x, y, width, height]. */
+export interface PdfHighlight { id: string; page: number; rects: [number, number, number, number][]; text: string; color: Highlight['color']; note?: string; noteAt?: number; createdAt: number }
+
 export interface Highlight {
   id: string;
   text: string;
@@ -45,14 +48,16 @@ export interface Highlight {
   createdAt: number;
 }
 
-export interface ReadingDay { ms: number; pct: number; words: number }
-export interface ReadingStats { ms: number; words: number; days: Record<string, ReadingDay>; bookWords?: number; bookChars?: number }
+export interface ReadingDay { ms: number; pct: number; words: number; sessions?: number; pages?: number }
+export interface ReadingStats { ms: number; words: number; pages?: number; sessions?: number; sessionAt?: number; days: Record<string, ReadingDay>; bookWords?: number; bookChars?: number }
 
 export interface Folder { id: string; name: string; createdAt: number }
 
 export interface Book {
   id: string;
   folderId?: string;
+  tags?: string[];
+  tagsAt?: number;
   stats?: ReadingStats;
   title: string;
   author?: string;
@@ -70,6 +75,7 @@ export interface Book {
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];
+  pdfHighlights?: PdfHighlight[];
   /** Cached per-book override of the visual settings (optional). */
   prefs?: Record<string, unknown>;
 }

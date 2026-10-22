@@ -19,7 +19,7 @@ export function notesView(): HTMLElement {
   body.append(chips, list);
 
   async function render() {
-    const books = (await listBooks()).filter((b) => b.bookmarks.length || b.highlights.some((x) => x.note) || b.pins?.length);
+    const books = (await listBooks()).filter((b) => b.bookmarks.length || b.highlights.some((x) => x.note) || b.pins?.length || b.pdfHighlights?.some((x) => x.note));
     chips.replaceChildren(...([['all', t('allBooks')], ['bookmarks', t('bookmarks')], ['notes', t('notes')]] as [typeof filter, string][]).map(([id, label]) =>
       h('button', { type: 'button', class: 'chip' + (filter === id ? ' on' : ''), onclick: () => { filter = id; void render(); } }, h('span', null, label))));
     list.replaceChildren();
@@ -47,6 +47,13 @@ export function notesView(): HTMLElement {
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = b.highlights.find((y) => y.id === hl.id); if (x) x.note = undefined; }); void render(); } }, icon('trash'))));
+      });
+      (book.pdfHighlights ?? []).filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).forEach((hl, i) => {
+        items.append(h('li', null,
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => open('hl', hl.id) },
+            h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
+            h('span', { dir: 'auto' }, hl.note!)),
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) x.note = undefined; }); void render(); } }, icon('trash'))));
       });
       (book.pins ?? []).sort((a, b) => a.createdAt - b.createdAt).forEach((pin, i) => {
         items.append(h('li', null,

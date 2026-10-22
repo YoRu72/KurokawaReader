@@ -80,6 +80,12 @@ export function formatDate(ts: number | undefined): string {
   return new Intl.DateTimeFormat(current === 'ar' ? 'ar-SA-u-nu-arab-ca-gregory' : 'en-GB', { dateStyle: 'medium' }).format(new Date(ts));
 }
 
+/** Reading time as "2h 5m" (localised digits and unit). */
+export function formatDuration(ms: number): string {
+  const m = Math.round(ms / 60000);
+  return t('hoursMinutes', { h: Math.floor(m / 60), m: m % 60 });
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${localDigits(n)} B`;
   const units = ['KB', 'MB', 'GB'];

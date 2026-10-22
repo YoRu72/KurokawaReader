@@ -1,9 +1,11 @@
 // "Book information" sheet — the Moon+-style summary: file facts, position,
 // reading time and speed, per-day history, size of the text, time left.
 import { h, openSheet, append } from './dom';
-import { t, formatBytes, formatDate } from '../i18n';
+import { t, formatBytes, formatDate, formatDuration } from '../i18n';
 import type { Book, ReadingStats } from '../db';
 import { coverUrl } from '../library';
+import { getSettings } from '../settings';
+import { todayKey } from '../stats';
 
 export interface BookInfoInput {
   book: Book;
@@ -19,10 +21,6 @@ export interface BookInfoInput {
   wordsLeftInBook?: number;
 }
 
-function hm(ms: number): string {
-  const m = Math.round(ms / 60000);
-  return t('hoursMinutes', { h: Math.floor(m / 60), m: m % 60 });
-}
 function mmss(ms: number): string {
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}'${String(s % 60).padStart(2, '0')}"`;
@@ -40,6 +38,8 @@ export function showBookInfo(i: BookInfoInput): void {
   const speed = i.speed;
   const leftChapter = speed && i.wordsLeftInChapter != null ? Math.ceil(i.wordsLeftInChapter / speed) : undefined;
   const leftBook = speed && i.wordsLeftInBook != null ? Math.ceil(i.wordsLeftInBook / speed) : undefined;
+  const goal = getSettings().readingGoalMinutes;
+  const todayMs = stats.days[todayKey()]?.ms ?? 0;
 
   append(sheet.body, [
     cover ? h('img', { src: cover, alt: '', style: { width: '100%', maxHeight: '220px', objectFit: 'contain', borderRadius: '14px', marginBottom: '14px', background: 'var(--md-surface-container)' } }) : null,
@@ -53,10 +53,16 @@ export function showBookInfo(i: BookInfoInput): void {
     i.currentChapter ? row(t('currentChapter'), `${i.currentChapterIndex != null ? i.currentChapterIndex + 1 + ', ' : ''}${i.currentChapter}`) : null,
     row(t('progress'), `${Math.round(i.pct * 100)}%`),
     h('div', { style: { height: '12px' } }),
-    row(t('readingHours'), hm(stats.ms)),
+    row(t('readingHours'), formatDuration(stats.ms)),
+    row(t('readingSessions'), stats.sessions || undefined),
+    row(t('pagesRead'), stats.pages ? Math.round(stats.pages) : undefined),
     row(t('readingSpeed'), speed ?? '—'),
     days.length ? h('div', null, h('b', null, t('readingHistory') + ':'), h('div', { style: { fontSize: '13px', color: 'var(--md-on-surface-variant)', fontVariantNumeric: 'tabular-nums', marginTop: '4px' } },
       ...days.map(([d, v]) => h('div', { dir: 'ltr' }, `${d}  ${mmss(v.ms)}  ${v.ms > 30000 && v.words > 20 ? Math.round(v.words / (v.ms / 60000)) + ' w/m' : ''}  ${Math.round(v.pct * 100)}%`)))) : null,
+    h('div', { class: 'goal-line' },
+      h('span', null, `${t('today')}: ${formatDuration(todayMs)}`),
+      goal ? h('div', { class: 'bar' }, h('span', { style: { width: `${Math.min(100, (todayMs / (goal * 60000)) * 100)}%` } })) : null,
+      goal ? h('span', null, t('goalValue', { n: goal })) : null),
     h('div', { style: { height: '12px' } }),
     stats.bookChars != null ? row(t('charsInBook'), stats.bookChars.toLocaleString('en-US')) : null,
     stats.bookWords != null ? row(t('wordsInBook'), stats.bookWords.toLocaleString('en-US')) : null,

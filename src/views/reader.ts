@@ -3,7 +3,7 @@
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
 import { t, isRtlText, isTouchDevice, getLang, localDigits } from '../i18n';
-import { db, uid, type PdfNote, type Book, type Locator, type Bookmark, type Highlight } from '../db';
+import { db, uid, type PdfNote, type PdfHighlight, type Book, type Locator, type Bookmark, type Highlight } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
@@ -1064,6 +1064,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer = new PdfViewer({
     container: reader,
     invert: getSettings().pdfInvert,
+    onPageRender: (n) => renderHighlights(n),
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
@@ -1081,13 +1082,14 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const jump = takeJump();
   if (jump?.kind === 'bm') { const bm = book.bookmarks.find((x) => x.id === jump.id); if (bm) viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); }
   else if (jump?.kind === 'pin') { const pin = (book.pins ?? []).find((x) => x.id === jump.id); if (pin) viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); }
+  else if (jump?.kind === 'hl') { const hl = (book.pdfHighlights ?? []).find((x) => x.id === jump.id); if (hl) viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); }
   else if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
   onDispose(() => viewer.destroy());
   onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   onDispose(attachSelectionToolbar(reader, {
     search: (text) => openSearch(text),
-    highlight: () => toast(t('fmtPdf')),
-    note: () => toast(t('fmtPdf')),
+    highlight: (range, text, color) => addPdfHighlight(range, text, color),
+    note: (range, text) => addPdfNote(range, text),
     speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; u.rate = getSettings().speechRate; speechSynthesis.speak(u); } },
     textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '' }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
@@ -1211,15 +1213,104 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
-        const list = [...(book.pins ?? [])].sort((a, b) => a.createdAt - b.createdAt);
-        if (!list.length) { body.append(h('p', { class: 'center' }, t('noPdfNotes'))); return; }
-        body.append(h('ul', { class: 'plain-list' }, ...list.map((pin, i) => h('li', null,
+        const pins = [...(book.pins ?? [])].sort((a, b) => a.createdAt - b.createdAt);
+        const noted = [...(book.pdfHighlights ?? [])].filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt);
+        if (!pins.length && !noted.length) { body.append(h('p', { class: 'center' }, t('noPdfNotes'))); return; }
+        const list = h('ul', { class: 'plain-list' });
+        pins.forEach((pin, i) => list.append(h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.close(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: viewer.total }))),
             h('span', { dir: 'auto' }, pin.note)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash')))));
+        noted.forEach((hl, i) => list.append(h('li', null,
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); panel.close(); } },
+            h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: hl.page, total: viewer.total }))),
+            h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text),
+            h('span', { dir: 'auto' }, hl.note!)),
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) x.note = undefined; }); const local = (book.pdfHighlights ?? []).find((y) => y.id === hl.id); if (local) local.note = undefined; renderHighlights(hl.page); panel.refresh(); } }, icon('trash')))));
+        body.append(list);
       } },
     ], tab);
+  }
+
+  /* ---------- PDF text highlights ---------- */
+  type PageRects = { page: number; rects: [number, number, number, number][] };
+
+  /** Client rectangles of a selection, mapped onto the page(s) they sit on. */
+  function selectionRects(range: Range): PageRects[] {
+    const groups = new Map<number, [number, number, number, number][]>();
+    const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    for (const r of Array.from(range.getClientRects())) {
+      if (r.width < 2 || r.height < 2) continue;
+      const hit = document.elementFromPoint(r.left + r.width / 2, Math.min(window.innerHeight - 1, Math.max(0, r.top + r.height / 2))) as HTMLElement | null;
+      const el = hit?.closest('.pdf-page') as HTMLElement | null;
+      if (!el) continue;
+      const box = el.getBoundingClientRect();
+      if (!box.width || !box.height) continue;
+      const x = clamp((r.left - box.left) / box.width), y = clamp((r.top - box.top) / box.height);
+      if (x >= 1 || y >= 1) continue;
+      const rects = groups.get(Number(el.dataset.page)) ?? [];
+      rects.push([x, y, Math.min(clamp(r.width / box.width), 1 - x), Math.min(clamp(r.height / box.height), 1 - y)]);
+      groups.set(Number(el.dataset.page), rects);
+    }
+    return [...groups].map(([page, rects]) => ({ page, rects }));
+  }
+
+  async function persistHighlights(): Promise<void> {
+    await db.updateBook(book.id, (b) => { b.pdfHighlights = book.pdfHighlights; });
+  }
+
+  function createHighlights(groups: PageRects[], text: string, color: HighlightColor, note?: string): void {
+    const at = Date.now();
+    const added: PdfHighlight[] = groups.map((g, i) => ({ id: uid(), page: g.page, rects: g.rects, text, color, note: i === 0 ? note : undefined, noteAt: note && i === 0 ? at : undefined, createdAt: at + i }));
+    book.pdfHighlights = [...(book.pdfHighlights ?? []), ...added];
+    void persistHighlights(); scheduleSync();
+    updateSettings({ highlightColor: color });
+    renderHighlights();
+  }
+
+  function addPdfHighlight(range: Range, text: string, color: HighlightColor): void {
+    const groups = selectionRects(range);
+    if (!groups.length) { toast(t('fmtPdf')); return; }
+    createHighlights(groups, text, color);
+    toast(t('highlight'));
+  }
+
+  function addPdfNote(range: Range, text: string): void {
+    const groups = selectionRects(range);
+    if (!groups.length) { toast(t('fmtPdf')); return; }
+    const sheet = openSheet(t('addNote'), t('close'));
+    sheet.body.style.fontFamily = 'var(--font-ui)';
+    const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '4', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
+    sheet.body.append(h('p', { class: 'src', dir: 'auto' }, text.length > 160 ? text.slice(0, 160) + '…' : text), ta);
+    sheet.actions.append(h('button', { class: 'btn primary small', onclick: () => { createHighlights(groups, text, getSettings().highlightColor, ta.value.trim() || undefined); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+    setTimeout(() => ta.focus(), 100);
+  }
+
+  function renderHighlights(page?: number): void {
+    const pages = page ? [page] : [...new Set((book.pdfHighlights ?? []).map((x) => x.page))];
+    for (const n of pages) {
+      const el = viewer.pageElement(n);
+      if (!el) continue;
+      el.querySelector('.pdf-hl-layer')?.remove();
+      const list = (book.pdfHighlights ?? []).filter((x) => x.page === n);
+      if (!list.length) continue;
+      el.append(h('div', { class: 'pdf-hl-layer' }, ...list.flatMap((hl) => hl.rects.map(([x, y, w, hgt]) =>
+        h('div', { class: 'pdf-hl', dataset: { color: hl.color }, title: hl.note ?? '', style: { left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${hgt * 100}%` } })))));
+    }
+  }
+
+  function pdfHighlightSheet(hl: PdfHighlight): void {
+    const sheet = openSheet(t('highlight'), t('close'));
+    sheet.body.style.fontFamily = 'var(--font-ui)';
+    const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '3', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
+    ta.value = hl.note ?? '';
+    const colors = h('div', { class: 'sel-colors', style: { justifyContent: 'flex-start', border: '0', padding: '0 0 10px' } }, ...HIGHLIGHT_COLORS.map(([cid, hex]) => h('button', { type: 'button', class: 'dot', style: { background: hex, width: '44px', height: '22px', borderRadius: '999px', outline: hl.color === cid ? '3px solid var(--md-primary)' : 'none' }, onclick: async () => { hl.color = cid; await persistHighlights(); renderHighlights(hl.page); sheet.close(); } })));
+    sheet.body.append(h('p', { class: 'src', dir: 'auto' }, hl.text.length > 200 ? hl.text.slice(0, 200) + '…' : hl.text), colors, ta);
+    sheet.actions.append(
+      h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(hl.id); book.pdfHighlights = (book.pdfHighlights ?? []).filter((x) => x.id !== hl.id); await persistHighlights(); renderHighlights(hl.page); panel.refresh(); sheet.close(); } }, icon('trash'), t('removeHighlight')),
+      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = Date.now(); await persistHighlights(); renderHighlights(hl.page); panel.refresh(); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+    setTimeout(() => ta.focus(), 100);
   }
 
   /* ---------- PDF notes: long-press (touch) or right-click (desktop) on a page ---------- */
@@ -1259,6 +1350,15 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     return { page: Number(el.dataset.page), x: (clientX - r.left) / r.width, y: (clientY - r.top) / r.height };
   };
   viewer.scroll.addEventListener('contextmenu', (e) => { if (document.getSelection()?.isCollapsed === false) return; const p = pointOnPage(e.clientX, e.clientY); if (p) { e.preventDefault(); pinSheet(p); } });
+  viewer.scroll.addEventListener('click', (e) => {
+    if (document.getSelection()?.isCollapsed === false) return;
+    if ((e.target as HTMLElement).closest('.pdf-pin')) return;
+    const p = pointOnPage(e.clientX, e.clientY);
+    if (!p) return;
+    const hl = (book.pdfHighlights ?? []).find((x) => x.page === p.page && x.rects.some(([rx, ry, rw, rh]) => p.x >= rx && p.x <= rx + rw && p.y >= ry && p.y <= ry + rh));
+    if (!hl) return;
+    e.preventDefault(); e.stopPropagation(); pdfHighlightSheet(hl);
+  });
   let pressTimer = 0; let pressPt: { x: number; y: number } | null = null;
   viewer.scroll.addEventListener('touchstart', (e) => { if (e.touches.length !== 1) { window.clearTimeout(pressTimer); return; } pressPt = { x: e.touches[0].clientX, y: e.touches[0].clientY }; pressTimer = window.setTimeout(() => { if (!pressPt || document.getSelection()?.isCollapsed === false) return; const p = pointOnPage(pressPt.x, pressPt.y); if (p && !(document.elementFromPoint(pressPt.x, pressPt.y) as HTMLElement)?.closest('.textLayer span')) pinSheet(p); }, 650); }, { passive: true });
   viewer.scroll.addEventListener('touchmove', (e) => { if (pressPt && Math.hypot(e.touches[0].clientX - pressPt.x, e.touches[0].clientY - pressPt.y) > 10) { window.clearTimeout(pressTimer); pressPt = null; } }, { passive: true });
