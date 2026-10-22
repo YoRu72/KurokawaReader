@@ -1,6 +1,6 @@
 # قارئ كروكاوا · KurokawaReader
 
- — EPUB, PDF, Word, Excel, PowerPoint, text & Markdown, HTML, FictionBook, OpenDocument, comics and images.
+EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · FictionBook · OpenDocument · comics · images — one offline library.
 
 **Download:** [Releases](../../releases) — Android · Windows · macOS · Linux · iOS (sideload) · [install notes](docs/INSTALL.md)
 
