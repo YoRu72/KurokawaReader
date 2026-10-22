@@ -1,6 +1,6 @@
 # قارئ كروكاوا · KurokawaReader
 
-**One offline library for everything readable** — EPUB, PDF, Word, Excel, PowerPoint, text & Markdown, HTML, FictionBook, OpenDocument, comics and images. Arabic-first typography, Material 3 interface, Moon+-style reading features.
+ — EPUB, PDF, Word, Excel, PowerPoint, text & Markdown, HTML, FictionBook, OpenDocument, comics and images.
 
 **Download:** [Releases](../../releases) — Android · Windows · macOS · Linux · iOS (sideload) · [install notes](docs/INSTALL.md)
 
