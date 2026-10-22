@@ -154,11 +154,10 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
     if (on) void run();   // the shown chapter picks up what is now cached
   }
 
-  function aheadSheet() {
+  /** The translate-ahead controls (used in their own sheet and inside the AI settings sheet). */
+  function aheadControls(): HTMLElement {
     const chapters = host.chapters();
     const cur = host.currentChapter();
-    const sh = openSheet(t('translateAhead'), t('close'));
-    sh.body.style.fontFamily = 'var(--font-ui)';
     const num = (v: number, min: number, max: number) => h('input', { type: 'number', min: String(min), max: String(max), value: String(v), dir: 'ltr', style: { width: '5.5em' } }) as HTMLInputElement;
     const count = num(Math.min(5, chapters.length - cur), 1, chapters.length - cur);
     const fromI = num(cur + 1, 1, chapters.length), toI = num(Math.min(chapters.length, cur + 5), 1, chapters.length);
@@ -166,19 +165,28 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
     const status = h('p', { class: 'src' }, t('translateAheadBody', { n: chapters.length }));
     const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
     let busy = false;
+    const cancel = h('button', { class: 'btn small', type: 'button', hidden: true, onclick: () => { aheadGen++; busy = false; cancel.hidden = true; status.textContent = t('cancelled'); } }, icon('close'), t('cancel'));
     const start = (from: number, to: number) => {
-      if (busy) return; busy = true; track.hidden = false;
-      if (!aiReady()) { busy = false; toast(t('aiNeedsKey'), 'error', 4000); settingsSheet(); return; }
-      void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, bar, () => { busy = false; });
+      if (busy) return;
+      if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
+      busy = true; track.hidden = false; cancel.hidden = false;
+      void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, bar, () => { busy = false; cancel.hidden = true; });
     };
     const btn = (label: string, fn: () => void) => h('button', { class: 'btn small tonal', type: 'button', onclick: fn }, label);
-    sh.body.append(
+    return h('div', { class: 'tr-ahead' },
+      h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('translateAhead')),
       status, track,
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('nextChapters')), row(count, btn(t('translateSelected'), () => start(cur, cur + Number(count.value || 1) - 1)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('chapterRange')), row(fromI, '→', toI, btn(t('translateSelected'), () => start(Number(fromI.value) - 1, Number(toI.value) - 1)))),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('wholeBook')), row(btn(t('translateWholeBook'), () => start(0, chapters.length - 1)))),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('wholeBook')), row(btn(t('translateWholeBook'), () => start(0, chapters.length - 1)), cancel)),
     );
-    sh.actions.append(h('button', { class: 'btn small', type: 'button', onclick: () => { aheadGen++; sh.close(); } }, icon('close'), t('cancel')));
+  }
+
+  function aheadSheet() {
+    const sh = openSheet(t('translateAhead'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    const c = aheadControls(); c.querySelector('h4')?.remove();
+    sh.body.append(c);
   }
 
   function htmlToText(html: string): string { const d = document.createElement('div'); d.innerHTML = html; return (d.innerText ?? d.textContent ?? '').trim(); }
@@ -218,5 +226,5 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
     dispose() { generation++; pill?.remove(); pill = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
   };
 
-  function settingsSheet() { aiSettingsSheet(() => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }); }
+  function settingsSheet() { aiSettingsSheet(() => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, aheadControls()); }
 }

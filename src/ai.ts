@@ -25,10 +25,10 @@ export const DEFAULT_PROMPTS: Record<string, string> = {
 export const FURIGANA_PROMPT = 'You annotate Japanese text with furigana. Return the SAME text with every kanji word wrapped as <ruby>漢字<rt>かんじ</rt></ruby> (hiragana readings, one ruby per word or compound). Keep all other characters, punctuation and line breaks exactly; do not translate, explain or add anything.';
 
 export const PROVIDERS: { id: AiProvider; label: string; model: string; baseUrl: string; keyUrl: string }[] = [
-  { id: 'gemini', label: 'Google Gemini', model: 'gemini-2.5-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', keyUrl: 'https://aistudio.google.com/apikey' },
+  { id: 'gemini', label: 'Google Gemini', model: 'gemini-3.5-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', keyUrl: 'https://aistudio.google.com/apikey' },
   { id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', label: 'Anthropic Claude', model: 'claude-haiku-4-5', baseUrl: 'https://api.anthropic.com/v1', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  { id: 'openrouter', label: 'OpenRouter', model: 'google/gemini-2.5-flash', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys' },
+  { id: 'openrouter', label: 'OpenRouter', model: 'google/gemini-3.5-flash', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys' },
   { id: 'custom', label: 'OpenAI-compatible (custom URL)', model: 'gpt-4o-mini', baseUrl: 'http://localhost:11434/v1', keyUrl: '' },
 ];
 
@@ -125,6 +125,38 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
 }
 
 export async function translateOne(text: string): Promise<string> { return (await translateBatch([text]))[0]; }
+
+/** The provider's model list for the current key (text-generation models, newest-looking first). */
+export async function listModels(): Promise<string[]> {
+  const s = getSettings();
+  const key = s.aiKey.trim();
+  const base = effectiveBaseUrl();
+  const ctl = new AbortController(); const timeout = setTimeout(() => ctl.abort(), 20000);
+  try {
+    let names: string[] = [];
+    if (s.aiProvider === 'gemini') {
+      const r = await fetch(`${base}/models?pageSize=200&key=${encodeURIComponent(key)}`, { signal: ctl.signal });
+      if (!r.ok) throw new Error(`Gemini ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const j = await r.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+      names = (j.models ?? []).filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent')).map((m) => m.name.replace(/^models\//, ''));
+    } else if (s.aiProvider === 'anthropic') {
+      const r = await fetch(`${base}/models?limit=100`, { signal: ctl.signal, headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } });
+      if (!r.ok) throw new Error(`Anthropic ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const j = await r.json() as { data?: { id: string }[] };
+      names = (j.data ?? []).map((m) => m.id);
+    } else {
+      const headers: Record<string, string> = {};
+      if (key) headers.authorization = `Bearer ${key}`;
+      const r = await fetch(`${base}/models`, { signal: ctl.signal, headers });
+      if (!r.ok) throw new Error(`${providerInfo().label} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const j = await r.json() as { data?: { id: string }[] };
+      names = (j.data ?? []).map((m) => m.id);
+    }
+    // Chat models first; embeddings, audio, image and vision-only models are noise here.
+    const noise = /embed|tts|whisper|audio|image|imagen|veo|vision-only|moderation|realtime|transcribe|dall-e|aqa/i;
+    return [...new Set(names)].filter((n) => !noise.test(n)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  } finally { clearTimeout(timeout); }
+}
 
 /* ---------- Read-aloud through an AI voice ---------- */
 

@@ -84,6 +84,7 @@ export interface VisualSettings {
   aiModel: string;
   aiBaseUrl: string;
   aiPrompt: string;
+  aiPromptPrefill: boolean;   // show the built-in instructions in the box, ready to be extended
   aiTarget: string;           // target language code
   aiTask: 'translate' | 'furigana';  // what the chapter pass does
   furigana: boolean;          // show ruby readings in Japanese books
@@ -162,8 +163,8 @@ export const DEFAULTS: VisualSettings = {
   formatFilter: [],
   statusFilter: [],
   keepAwake: true,
-  edgeBrightness: true,
-  brightnessMode: 'app',
+  edgeBrightness: false,
+  brightnessMode: 'device',
   pinchText: true,
   speechRate: 1,
   speechVoice: '',
@@ -174,6 +175,7 @@ export const DEFAULTS: VisualSettings = {
   aiModel: '',
   aiBaseUrl: '',
   aiPrompt: '',
+  aiPromptPrefill: true,
   aiTarget: 'ar',
   aiTask: 'translate',
   furigana: true,

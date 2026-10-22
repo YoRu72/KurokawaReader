@@ -17,7 +17,8 @@ export function attachEdgeBrightness(area: HTMLElement): () => void {
     window.clearTimeout(hideT); hideT = window.setTimeout(() => hud?.classList.remove('on'), 900);
   };
   const down = (e: PointerEvent) => {
-    if (e.pointerType === 'mouse' || !getSettings().edgeBrightness) return;
+    // Off by default; and when the device's own brightness is in charge the page is never dimmed by a swipe.
+    if (e.pointerType === 'mouse' || !getSettings().edgeBrightness || getSettings().brightnessMode === 'device') return;
     const r = area.getBoundingClientRect();
     const edge = (e.clientX - r.left) / r.width;
     const rtl = getComputedStyle(area).direction === 'rtl';

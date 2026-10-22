@@ -1,4 +1,4 @@
-
+[العربية](README.ar.md)
 
 EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · FictionBook · OpenDocument · comics · images — one offline library.
 

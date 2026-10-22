@@ -156,7 +156,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   // Header: version chips, date
   const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString(getLang() === 'ar' ? 'ar-SA-u-nu-arab-ca-gregory' : 'en-GB', { dateStyle: 'medium' }) : '';
   s.body.append(h('div', { class: 'upd-head' },
-    h('span', { class: 'upd-chip' }, APP_VERSION), icon('arrowRight'), h('span', { class: 'upd-chip new' }, rel.version),
+    h('span', { class: 'upd-chip' }, APP_VERSION), h('span', { class: 'upd-arrow' }, icon('arrowRight')), h('span', { class: 'upd-chip new' }, rel.version),
     date ? h('span', { class: 'upd-date' }, date) : null));
   // What's new: bullet lines from the release notes (the install table is left out)
   const section = /## What's new\s*([\s\S]*?)(?:\n## |$)/.exec(rel.notes)?.[1] ?? '';

@@ -619,6 +619,8 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 /* Update sheet */
 .upd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .upd-head svg { width: 18px; height: 18px; fill: none; stroke: var(--md-on-surface-variant); stroke-width: 2; }
+html[dir='rtl'] .upd-arrow svg { transform: scaleX(-1); }
+.upd-arrow { display: inline-flex; align-items: center; }
 .upd-chip { padding: 6px 12px; border-radius: 999px; background: var(--md-surface-container-highest); font: 600 13px var(--font-ui); letter-spacing: .02em; }
 .upd-chip.new { background: var(--md-primary); color: var(--md-on-primary); }
 .upd-date { color: var(--md-on-surface-variant); font-size: 13px; margin-inline-start: auto; }

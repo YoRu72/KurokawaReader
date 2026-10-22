@@ -125,7 +125,10 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
-  const close = () => { el.remove(); scrim.remove(); };
+  const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); };
+  // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
+  const onEsc = (e: KeyboardEvent) => { if (e.key !== 'Escape' || !el.isConnected) return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
+  window.addEventListener('keydown', onEsc, true);
   const el = h('div', { class: 'sheet' + (depth ? ' stacked' : ''), role: 'dialog', 'aria-label': title, style: depth ? { zIndex: String(70 + depth * 2) } : undefined },
     h('div', { class: 'sheet-head' }, h('h3', null, title), iconButton('close', closeLabel, close)),
     body, actions);

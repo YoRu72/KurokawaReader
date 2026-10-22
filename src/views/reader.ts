@@ -1335,11 +1335,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       case 'Home': viewer.goTo(1); break;
       case 'End': viewer.goTo(viewer.total); break;
       case '/': e.preventDefault(); openSearch(); break;
-      case '+': case '=': updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); break;
-      case '-': case '_': updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) }); break;
-      case '0': updateSettings({ fontSize: 19 }); break;
+      case '+': case '=': viewer.zoom(0.15); break;
+      case '-': case '_': viewer.zoom(-0.15); break;
+      case '0': viewer.fitToWidth(); break;
       case 'b': void addBookmark(); break;
       case 'c': openContents('toc'); break;
+      case 'v': openPdfOptions(); break;
       case 'g': pageInput.focus(); break;
       case '+': case '=': viewer.zoom(0.15); break;
       case '-': viewer.zoom(-0.15); break;
