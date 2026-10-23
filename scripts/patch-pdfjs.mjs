@@ -24,6 +24,7 @@ export async function buildPdfWorker(outFile) {
   // 1) state + helpers, declared next to the text item being built
   src = replaceOnce(src, '    const textContentItem = {', `    let krAT = null; // the /ActualText span being collected
     const krGlyphs = new WeakMap(); // item → glyphs in drawing order with their extents (until the batch is sent)
+    let krLastBaseY = null, krGlyphLow = false; // baseline of the last letter drawn; a low fatha stroke (kasra)
     let krPending = []; // harakat drawn apart from their run, waiting for its letters
     /** Place the pending marks on the letters now in this batch; at the end (or once stale) report the rest as pieces. */
     function krResolveMarks(final) {
@@ -52,6 +53,8 @@ export async function buildPdfWorker(outFile) {
       }
       if (!best) return false;
       const { it, g, hit } = best;
+      // A fatha stroke drawn well below the baseline is a kasra (legacy fonts have one stroke for both).
+      if (y < it.transform[5] - (it.height || 10) * 0.15) mark = mark.replace(/\u064e/g, "\u0650").replace(/\u064b/g, "\u064d");
       const visual = g.visual.join("");
       // Only when the item is exactly its drawing order turned round (pure right-to-left) can positions be mapped.
       if (it.str !== [...visual].reverse().join("")) return false;
@@ -139,6 +142,26 @@ export async function buildPdfWorker(outFile) {
           continue;
         }
         let charSpacing = baseCharSpacing + (i + 1 === ii ? extraSpacing : 0);`, `        if (category.isInvisibleFormatMark) {
+          continue;
+        }
+        // A legacy font's whole-word glyph (Quran word fonts, "رضي الله عنه"): its own item, as wide as its ink.
+        if (!font.vertical && font.krInk?.[originalCharCode] && glyph.unicode && (glyph.unicode.length > 2 || /\s/.test(glyph.unicode)) && !krMark.test(glyph.unicode)) {
+          const ink = font.krInk[originalCharCode];
+          flushTextContentItem();
+          ensureTextContentItem(); // registers the font style for the text layer
+          textContentItem.initialized = false;
+          const t0 = getCurrentTextTransform();
+          const s = Math.hypot(t0[0], t0[1]);
+          const tr = [...t0]; tr[4] = t0[4] + ink[0] * s;
+          const u = /[\ufdf0-\ufdfd]/.test(glyph.unicode) ? glyph.unicode.normalize("NFKC") : glyph.unicode;
+          textContent.items.push({ str: u, dir: /[\u0600-\u06ff]/.test(u) ? "rtl" : "ltr", width: Math.max(0.01, (ink[1] - ink[0]) * s), height: Math.hypot(t0[2], t0[3]), transform: tr, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null });
+          resetLastChars();
+          textState.translateTextMatrix((glyph.width * textState.fontMatrix[0] * textState.fontSize + baseCharSpacing) * textState.textHScale, 0);
+          continue;
+        }
+        // A glyph that stands for no text (a legacy font's kashida piece): not part of any item.
+        if (glyph.unicode === "\u200b" && !font.vertical) {
+          textState.translateTextMatrix((glyph.width * textState.fontMatrix[0] * textState.fontSize + baseCharSpacing) * textState.textHScale, 0);
           continue;
         }
         if (krAT && !font.vertical) {
@@ -233,6 +256,10 @@ export async function buildPdfWorker(outFile) {
           textChunk.krMinX = Math.min(textChunk.krMinX, gx); textChunk.krMaxX = Math.max(textChunk.krMaxX, gx + gw);
           (textChunk.krGX ||= []).push([textChunk.str.length, Math.min(gx, gx + gw), Math.max(gx, gx + gw)]);
           // The glyph's code and text, for rebuilding a subset font that has no Unicode map.
+          // A fatha stroke drawn well below the last letter's baseline is a kasra (legacy fonts have one stroke for both).
+          krGlyphLow = false;
+          if (/^[\u064b\u064e]/.test(glyph.unicode || "")) krGlyphLow = krLastBaseY !== null && gtr[5] < krLastBaseY - Math.hypot(gtr[2], gtr[3]) * 0.15;
+          else if (glyph.width > 0 && !krMark.test(glyph.unicode || "")) krLastBaseY = gtr[5];
           if (textState.font?.krNeedsUse) (textChunk.krCodes ||= []).push(glyph.originalCharCode, glyph.unicode || "", gx, gtr[5], Math.hypot(gtr[2], gtr[3]), glyph.width * textState.fontMatrix[0]);
         }
         if (category.isZeroWidthDiacritic) {
@@ -265,6 +292,8 @@ export async function buildPdfWorker(outFile) {
       krStr = krStr.replace(/\\s+(?=[\\u064b-\\u065f\\u0670])/g, "").replace(/([\\u060c\\u061b\\u061f.,:;!])([\\u064b-\\u065f\\u0670]+)/g, "$2$1");
       return {
         str: krStr,`, 'bidi str');
+
+
   src = replaceOnce(src, `        fontName: textChunk.fontName,
         hasEOL: textChunk.hasEOL
       };
@@ -283,7 +312,10 @@ export async function buildPdfWorker(outFile) {
   src = replaceOnce(src, `        if (!intersector) {
           textChunk.str.push(glyphUnicode);
         }`, `        if (!intersector) {
-          textChunk.str.push(glyphUnicode.length > 1 && /^[\\u0600-\\u06ff\\u0750-\\u077f\\ufb50-\\ufdff\\ufe70-\\ufeff]+$/.test(glyphUnicode) ? [...glyphUnicode].reverse().join("") : glyphUnicode);
+          // (A word ligature such as "ﷺ" spells out its words first.)
+          let krU = /[\\ufdf0-\\ufdfd]/.test(glyphUnicode) ? glyphUnicode.normalize("NFKC") : glyphUnicode;
+          if (krGlyphLow) krU = krU.replace(/\\u064e/g, "\\u0650").replace(/\\u064b/g, "\\u064d");
+          textChunk.str.push(krU.length > 1 && /^[\\u0600-\\u06ff\\u0750-\\u077f\\ufb50-\\ufdff\\ufe70-\\ufeff ]+$/.test(krU) && /[\\u0600-\\u06ff]/.test(krU) ? [...krU].reverse().join("") : krU);
         }`, 'glyph push');
 
   // 3) marked content begin/end in getTextContent
@@ -343,7 +375,8 @@ export async function buildPdfWorker(outFile) {
               if (markedContentData.level === 0) {`, 'EMC');
 
   // 4) rebuild a broken /ToUnicode from the embedded font (see scripts/pdfjs-font-unicode.js)
-  const fontUnicode = await fs.readFile(new URL('./pdfjs-font-unicode.js', import.meta.url), 'utf8');
+  const fontUnicode = await fs.readFile(new URL('./pdfjs-font-unicode.js', import.meta.url), 'utf8')
+    + '\n' + await fs.readFile(new URL('./pdfjs-legacy-glyphs.js', import.meta.url), 'utf8');
   src = replaceOnce(src, 'class Font {\n', fontUnicode + '\nclass Font {\n', 'class Font');
   src = replaceOnce(src, `        case "OpenType":
         case "TrueType":
@@ -358,9 +391,12 @@ export async function buildPdfWorker(outFile) {
   src = replaceOnce(src, `    amendFallbackToUnicode(properties);
     this.data = data;`, `    amendFallbackToUnicode(properties);
     if (krRaw) krRepairToUnicode(this, krRaw, properties);
+    if (krCff) krLegacyUnicode(this, krCff, properties);
     this.data = data;`, 'font amend');
   src = replaceOnce(src, `    [type, subtype] = getFontFileType(file, properties);`, `    [type, subtype] = getFontFileType(file, properties);
-    let krRaw = null;`, 'font raw decl');
+    let krRaw = null, krCff = null;`, 'font raw decl');
+  src = replaceOnce(src, `          const cff = subtype === "Type1C" || subtype === "CIDFontType0C" ? new CFFFont(file, properties) : new Type1Font(name, file, properties);`, `          const cff = subtype === "Type1C" || subtype === "CIDFontType0C" ? new CFFFont(file, properties) : new Type1Font(name, file, properties);
+          if (cff instanceof CFFFont) krCff = cff;`, 'cff keep');
 
   // 5) the untouched font program travels with the font (only when extra properties are asked for:
   //    PDF → DOCX embeds the PDF's own fonts in the document).
@@ -395,6 +431,10 @@ export const pdfjsMainPlugin = {
     build.onLoad({ filter: /pdfjs-dist[\\/]legacy[\\/]build[\\/]pdf\.mjs$/ }, async (args) => {
       let src = await fs.readFile(args.path, 'utf8');
       src = replaceOnce(src, '  showText(opIdx, glyphs) {\n', '  showText(opIdx, glyphs) {\n    if (this.ctx?.canvas?.krNoText && !this.ctx.canvas.krKeepFonts?.has(this.current.font?.loadedName)) return undefined;\n', 'showText');
+      // Text layer: a one-letter piece gets its true width too (pdf.js leaves it at the browser font's width,
+      // so in PDFs set letter by letter — Arabic with harakat, legacy fonts — the boxes overlap their
+      // neighbours, the selection highlight is off and word gaps vanish).
+      src = replaceOnce(src, '    if (geom.str.length > 1) {\n      shouldScaleText = true;\n', '    if (geom.str.length > 1 || (geom.str.trim() !== "" && geom.width > 0)) {\n      shouldScaleText = true;\n', 'scale one letter');
       src = replaceOnce(src, '  showType3Text(opIdx, glyphs) {\n', '  showType3Text(opIdx, glyphs) {\n    if (this.ctx?.canvas?.krNoText) return undefined;\n', 'showType3Text');
       return { contents: src, loader: 'js' };
     });

@@ -14,7 +14,7 @@ export const COMBINING = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0591-\
 
 /** Control characters (glyphs with no Unicode) are not text. */
 export function cleanPdfText(s: string): string {
-  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/g, '').replace(/\u00A0/g, ' ');
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD\u200B]/g, '').replace(/\u00A0/g, ' ');
 }
 
 export function isRtlText(s: string): boolean {
