@@ -21,8 +21,15 @@ export function isRtlText(s: string): boolean {
   return (s.match(RTL_CHAR_G) ?? []).length > (s.match(/[A-Za-z\u00C0-\u024F]/g) ?? []).length;
 }
 
+/** Punctuation alone (no letters, no digits) — a closing quote and the comma after it, "،»" — comes from
+ *  pdf.js in drawing order; on a right-to-left line it reads the other way round ("»،"). */
+export function logicalNeutral(s: string, rtlLine: boolean): string {
+  if (!rtlLine || [...s.trim()].length < 2 || /[\p{L}\p{N}]/u.test(s)) return s;
+  return [...s].reverse().join('');
+}
+
 /** A right-to-left piece stored in drawing order (a mark before its letter, "ُه") is turned round to "هُ". */
-function logicalRtlPiece(s: string): string {
+export function logicalRtlPiece(s: string): string {
   const core = s.trim();
   if (!core || !COMBINING.test(core[0]) || !/[\u0600-\u06FF]/.test(core)) return s;
   // Only a single cluster (marks + one letter) is in drawing order; longer text with a stray mark in front is not.
@@ -41,7 +48,7 @@ export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: b
   for (const p of sorted) {
     if (p.text === '\u2009') { if (s && !/\s$/.test(s)) s += ' '; continue; }
     if (!p.text.trim()) continue;
-    const text = rtl ? logicalRtlPiece(p.text) : p.text;
+    const text = rtl ? logicalNeutral(logicalRtlPiece(p.text), true) : p.text;
     if (prev && !marked) {
       const gap = rtl ? prev.l - p.r : p.l - prev.r;
       if (gap > Math.min(prev.h, p.h) * 0.18 && !/\s$/.test(s) && !/^\s/.test(text) && !COMBINING.test(text[0])) s += ' ';

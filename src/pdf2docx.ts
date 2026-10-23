@@ -7,7 +7,7 @@
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
 import { loadPdfjs } from './formats/pdf';
-import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks } from './pdftext';
+import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
 
@@ -373,7 +373,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   for (const { p, space, tab } of ordered) {
     const f = fonts.get(p.font) ?? { family: 'Times New Roman', bold: false, italic: false };
     // A piece stored in drawing order (mark before its letter) reads in logical order through joinLine.
-    const text = joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text;
+    const text = logicalNeutral(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text, rtlLine);
     const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text)), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined };
     const last = runs[runs.length - 1];
     if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
@@ -1023,7 +1023,9 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     bidirectional: b.rtl,
     run: markRun(b),
     widowControl: false,
-    alignment: alignOf(b.align, b.kashida),
+    // (Justified by its spaces even where the page used tatweels: a line ending in a line break is stretched by
+    // Word and LibreOffice alike only that way.)
+    alignment: alignOf(b.align, false),
     indent: { start: Math.round(b.indStart * PT), end: Math.round(b.indEnd * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) },
     spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: LineRuleType.EXACT },
     tabStops: b.tabs?.map((t) => ({ type: TabStopType.LEFT, position: Math.round(t * PT) })),
@@ -1268,6 +1270,11 @@ async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string
   const fixed = docXml.replace(/<w:sectPr([^>]*)>/g, (m) => `${m}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
     .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<\/w:sectPr>)/g, (m, a: string, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${b}` : m));
   zip.file('word/document.xml', fixed);
+  // A raised run's position in half-points (docx writes "4pt", which LibreOffice and older Words ignore).
+  for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes)\.xml$/.test(n))) {
+    const xml = await zip.file(name)!.async('string');
+    if (xml.includes('<w:position w:val="')) zip.file(name, xml.replace(/<w:position w:val="(-?[\d.]+)pt"\/>/g, (m, v: string) => `<w:position w:val="${Math.round(+v * 2)}"/>`));
+  }
   if (subs.size) {
     const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const bySlot = new Map([...subs].map(([k, v]) => [esc(k), v]));

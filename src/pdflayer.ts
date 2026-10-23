@@ -7,7 +7,7 @@
 //  - each line cut into words, every word one box exactly over its letters on the page,
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { attachMarks, cleanPdfText, COMBINING, isRtlText } from './pdftext';
+import { attachMarks, cleanPdfText, COMBINING, isRtlText, logicalNeutral } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string };
 type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean };
@@ -44,7 +44,7 @@ function wordsOf(line: Piece[]): Word[] {
   let curDir = '';
   for (const p of sorted) {
     if (p.space) { breakNext = true; continue; }
-    const text = rtl ? logical(p.text) : p.text;
+    const text = rtl ? logicalNeutral(logical(p.text), true) : p.text;
     const d = dirOf(text);
     const gap = cur ? (rtl ? edge - p.r : p.l - edge) : 0;
     const split = !cur || breakNext || (!marked && gap > p.h * 0.18 && !COMBINING.test(text[0])) || (d && curDir && d !== curDir);
@@ -69,6 +69,8 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
   const handle = { cancel: () => { cancelled = true; } };
   const tc = await page.getTextContent();
   if (cancelled) return handle;
+  const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
+  if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && it.str.includes(dbg)) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.width.toFixed(1), it.dir]));
   const pieces: Piece[] = [];
   const turned: { text: string; tx: number[]; w: number; h: number; angle: number }[] = [];
   for (const raw of tc.items as Item[]) {
