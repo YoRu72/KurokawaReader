@@ -99,4 +99,5 @@ export const zh: Partial<Strings> = {
   deckTryingNext: '该来源失败 — 正在尝试下一个…',
   deckOpenedInBrowser: '已在浏览器中打开；下载完成后请导入文件。',
   hskSentencesBody: '同一 HSK 卡组，附例句。',
+  addBooks: '添加书籍', addBooksNow: '现在添加书籍', tagExists: '已有同名标签', tagCreated: '已创建标签', addedToTag: '已将 {n} 本添加到“{name}”', emptyTagBody: '此标签为空。从书库中添加书籍。',
 };

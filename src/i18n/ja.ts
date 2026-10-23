@@ -99,4 +99,5 @@ export const ja: Partial<Strings> = {
   deckTryingNext: 'この入手元は失敗しました — 次を試しています…',
   deckOpenedInBrowser: 'ブラウザーで開きました。ダウンロード後にファイルを追加してください。',
   hskSentencesBody: '同じ HSK デッキに例文付き。',
+  addBooks: '本を追加', addBooksNow: '今すぐ本を追加', tagExists: '同じ名前のタグがあります', tagCreated: 'タグを作成しました', addedToTag: '{n} 冊を「{name}」に追加しました', emptyTagBody: 'このタグは空です。ライブラリから本を追加してください。',
 };

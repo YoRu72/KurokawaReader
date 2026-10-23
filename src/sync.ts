@@ -15,7 +15,7 @@ export type SyncProvider = 'none' | 'dropbox' | 'webdav' | 'folder';
 const FILE = 'kurokawa-sync.json';
 
 interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats'] }
-interface SyncState { app: 'KurokawaReader'; version: 1; updatedAt: number; device: string; folders: { name: string; createdAt: number }[]; books: Record<string, BookState>; deleted: Record<string, number> }
+interface SyncState { app: 'KurokawaReader'; version: 1; updatedAt: number; device: string; folders: { name: string; createdAt: number }[]; tags?: { name: string; createdAt: number }[]; books: Record<string, BookState>; deleted: Record<string, number> }
 
 const keyOf = (b: { fileName: string; size: number }) => `${b.fileName}:${b.size}`;
 const deviceId = (): string => { let d = localStorage.getItem('kr.device'); if (!d) { d = `${nativePlatform()}-${Math.random().toString(36).slice(2, 8)}`; localStorage.setItem('kr.device', d); } return d; };
@@ -33,7 +33,7 @@ async function localState(): Promise<SyncState> {
   const books = await db.allBooks();
   const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
   const deleted = (await db.getMeta<Record<string, number>>('sync.deleted')) ?? {};
-  const out: SyncState = { app: 'KurokawaReader', version: 1, updatedAt: Date.now(), device: deviceId(), folders: folders.map((f) => ({ name: f.name, createdAt: f.createdAt })), books: {}, deleted };
+  const out: SyncState = { app: 'KurokawaReader', version: 1, updatedAt: Date.now(), device: deviceId(), folders: folders.map((f) => ({ name: f.name, createdAt: f.createdAt })), tags: (await db.getMeta<{ name: string; createdAt: number }[]>('tags')) ?? [], books: {}, deleted };
   for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats };
   return out;
 }
@@ -47,6 +47,12 @@ async function applyRemote(remote: SyncState): Promise<number> {
   for (const f of remote.folders ?? []) if (!folders.some((x) => x.name === f.name)) folders = [...folders, { id: `f-${Math.random().toString(36).slice(2, 10)}`, name: f.name, createdAt: f.createdAt }];
   await db.setMeta('folders', folders);
   await db.setMeta('sync.deleted', deleted);
+  // Tags the user created (also empty ones): union by name; a deletion newer than the tag wins.
+  const gone = (tg: { name: string; createdAt: number }) => (deleted[`tag:${tg.name}`] ?? 0) > tg.createdAt;
+  const localTags = (await db.getMeta<{ name: string; createdAt: number }[]>('tags')) ?? [];
+  const mergedTags = localTags.filter((tg) => !gone(tg));
+  for (const tg of remote.tags ?? []) if (!gone(tg) && !mergedTags.some((x) => x.name === tg.name)) mergedTags.push(tg);
+  if (mergedTags.length !== localTags.length || mergedTags.some((x, i) => x !== localTags[i])) await db.setMeta('tags', mergedTags);
   let changed = 0;
   for (const b of books) {
     const r = remote.books[keyOf(b)];

@@ -1,7 +1,7 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet } from '../ui/dom';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
-import { db, uid, FAV_TAG, type Book, type Folder } from '../db';
+import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
@@ -18,6 +18,7 @@ export function libraryView(): HTMLElement {
   let query = '';
   let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'title';
   let folders: Folder[] = [];
+  let tagDefs: TagDef[] = [];
   let activeFolder: string | null = localStorage.getItem('kr.folder') || null;
   let tagFilter: string | null = localStorage.getItem('kr.tag') || null;
   let selecting = false;
@@ -292,6 +293,7 @@ export function libraryView(): HTMLElement {
 
   function allTags(): { name: string; count: number }[] {
     const counts = new Map<string, number>();
+    for (const tg of tagDefs) counts.set(tg.name, 0);
     for (const b of books) for (const name of b.tags ?? []) counts.set(name, (counts.get(name) ?? 0) + 1);
     return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => (a.name === FAV_TAG ? -1 : b.name === FAV_TAG ? 1 : natural.compare(a.name, b.name)));
   }
@@ -319,10 +321,105 @@ export function libraryView(): HTMLElement {
       c.addEventListener('pointerup', cancel); c.addEventListener('pointerleave', cancel);
       tagChips.append(c);
     }
+    if (tagFilter) tagChips.append(h('button', { type: 'button', class: 'chip small add', 'aria-label': t('addBooks'), title: t('addBooks'), onclick: () => void addBooksToTag(tagFilter!) }, icon('plus'), h('span', null, t('addBooks'))));
+  }
+
+  async function saveTagDefs(next: TagDef[]): Promise<void> { tagDefs = next; await db.setMeta('tags', next); }
+  /** Remember a tag so it stays (also when empty) until it is deleted. */
+  async function declareTag(name: string): Promise<void> {
+    if (name === FAV_TAG || tagDefs.some((x) => x.name === name)) return;
+    await saveTagDefs([...tagDefs, { name, createdAt: Date.now() }]);
+  }
+
+  /** A searchable checklist of the library's books. */
+  function bookChecklist(initial: Iterable<string>, onChange?: (n: number) => void): { el: HTMLElement; selected: Set<string>; focus: () => void } {
+    const sel = new Set(initial);
+    const search = h('input', { type: 'search', placeholder: t('searchLibrary'), dir: 'auto', class: 'book-pick-search' }) as HTMLInputElement;
+    const count = h('span', { class: 'hint' });
+    const list = h('div', { class: 'book-pick' });
+    const all = [...books].sort((a, b) => natural.compare(a.title, b.title));
+    let visible: Book[] = all;
+    const sync = () => { count.textContent = t('selectedCount', { n: localDigits(sel.size) }); onChange?.(sel.size); };
+    const draw = () => {
+      const q = search.value.trim().toLocaleLowerCase();
+      visible = q ? all.filter((b) => `${b.title} ${b.author ?? ''} ${b.fileName}`.toLocaleLowerCase().includes(q)) : all;
+      clear(list);
+      if (!visible.length) { list.append(h('p', { class: 'hint', style: { margin: '8px 2px' } }, t('noResults'))); return; }
+      for (const b of visible.slice(0, 400)) {
+        const url = coverUrl(b);
+        const thumb = h('span', { class: 'thumb' });
+        if (url) thumb.append(h('img', { src: url, alt: '', loading: 'lazy' })); else { const [c1, c2] = coverColors(b.title); thumb.style.background = `linear-gradient(160deg, ${c1}, ${c2})`; }
+        const row = h('label', { class: 'book-pick-row' + (sel.has(b.id) ? ' on' : '') },
+          h('input', { type: 'checkbox', checked: sel.has(b.id), onchange: (e: Event) => { const on = (e.target as HTMLInputElement).checked; if (on) sel.add(b.id); else sel.delete(b.id); row.classList.toggle('on', on); sync(); } }),
+          thumb,
+          h('span', { class: 'meta' }, h('b', { dir: 'auto' }, b.title), b.author ? h('small', { dir: 'auto' }, b.author) : null));
+        list.append(row);
+      }
+    };
+    const toggleAll = h('button', { type: 'button', class: 'btn small', onclick: () => { const every = visible.every((b) => sel.has(b.id)); for (const b of visible) { if (every) sel.delete(b.id); else sel.add(b.id); } draw(); sync(); } }, icon('check'), t('selectAll'));
+    search.addEventListener('input', draw);
+    draw(); sync();
+    return { el: h('div', { class: 'book-pick-wrap' }, h('div', { class: 'book-pick-bar' }, search, toggleAll), count, list), selected: sel, focus: () => search.focus() };
+  }
+
+  /** Create a tag, optionally putting some books in it right away. */
+  function newTagSheet(): void {
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(t('newTag'), t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      const name = h('input', { type: 'text', placeholder: t('tagName'), dir: 'auto', style: { width: '100%' } }) as HTMLInputElement;
+      const pickCb = h('input', { type: 'checkbox' }) as HTMLInputElement;
+      let picker: ReturnType<typeof bookChecklist> | null = null;
+      const holder = h('div', { hidden: true, style: { marginTop: '8px' } });
+      const createBtn = h('button', { class: 'btn primary small', type: 'button' }, icon('check'), t('create')) as HTMLButtonElement;
+      pickCb.addEventListener('change', () => {
+        holder.hidden = !pickCb.checked;
+        if (pickCb.checked && !picker) { picker = bookChecklist([]); holder.append(picker.el); }
+      });
+      const done = async () => {
+        const n = name.value.trim();
+        if (!n) { name.focus(); return; }
+        if (n === FAV_TAG || allTags().some((x) => x.name === n)) { toast(t('tagExists'), 'error'); name.focus(); return; }
+        createBtn.disabled = true;
+        await declareTag(n);
+        const ids = pickCb.checked && picker ? [...picker.selected] : [];
+        if (ids.length) await setTag(ids, n, true);
+        s.close();
+        setTagFilter(n);
+        toast(ids.length ? t('addedToTag', { n: localDigits(ids.length), name: n }) : t('tagCreated'));
+      };
+      s.body.append(
+        h('form', { onsubmit: (e: Event) => { e.preventDefault(); void done(); } }, name),
+        h('label', { class: 'row', hidden: !books.length, style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '12px' } }, h('span', { class: 'switch' }, pickCb, h('i')), h('span', null, t('addBooksNow'))),
+        holder);
+      createBtn.addEventListener('click', () => void done());
+      s.actions.append(createBtn);
+      setTimeout(() => name.focus(), 80);
+    });
+  }
+
+  /** Pick books from the library to put in (or take out of) a tag. */
+  function addBooksToTag(tag: string): void {
+    import('../ui/dom').then(({ openSheet }) => {
+      const s = openSheet(tag === FAV_TAG ? t('favorites') : tag, t('close'));
+      s.body.style.fontFamily = 'var(--font-ui)';
+      const before = new Set(books.filter((b) => (b.tags ?? []).includes(tag)).map((b) => b.id));
+      const picker = bookChecklist(before);
+      s.body.append(picker.el);
+      s.actions.append(h('button', { class: 'btn primary small', type: 'button', onclick: async () => {
+        const add = [...picker.selected].filter((id) => !before.has(id));
+        const drop = [...before].filter((id) => !picker.selected.has(id));
+        s.close();
+        if (add.length) await setTag(add, tag, true);
+        if (drop.length) await setTag(drop, tag, false);
+        if (add.length) toast(t('addedToTag', { n: localDigits(add.length), name: tag === FAV_TAG ? t('favorites') : tag }));
+      } }, icon('check'), t('done')));
+    });
   }
 
   async function setTag(ids: string[], name: string, on: boolean): Promise<void> {
     const at = Date.now();
+    if (on) await declareTag(name);
     for (const id of ids) {
       const bk = books.find((b) => b.id === id);
       const next = new Set(bk?.tags ?? []);
@@ -381,6 +478,8 @@ export function libraryView(): HTMLElement {
       await db.updateBook(b.id, (x) => { x.tags = tags; x.tagsAt = at; });
       b.tags = tags; b.tagsAt = at;
     }
+    await saveTagDefs([...tagDefs.filter((x) => x.name !== from && x.name !== to), { name: to, createdAt: Date.now() }]);
+    void import('../sync').then((m) => m.markDeleted(`tag:${from}`)).catch(() => {});
     if (tagFilter === from) setTagFilter(to); else renderGrid();
   }
 
@@ -393,6 +492,8 @@ export function libraryView(): HTMLElement {
       if (tags.length) b.tags = tags; else delete b.tags;
       b.tagsAt = at;
     }
+    await saveTagDefs(tagDefs.filter((x) => x.name !== name));
+    void import('../sync').then((m) => m.markDeleted(`tag:${name}`)).catch(() => {});
     if (tagFilter === name) setTagFilter(null); else renderGrid();
   }
 
@@ -420,6 +521,7 @@ export function libraryView(): HTMLElement {
     for (const f of folders) chips.append(chip(f.name, f.id, 'folder'));
     chips.append(h('button', { type: 'button', class: 'chip add', onclick: () => void newFolder() }, icon('folderPlus'), h('span', null, t('newFolder'))));
     if (importChip) chips.append(importChip);
+    chips.append(h('button', { type: 'button', class: 'chip add', onclick: () => newTagSheet() }, icon('tag'), h('span', null, t('newTag'))));
   }
 
   function askName(title: string, initial = '', placeholder = t('folderName')): Promise<string | null> {
@@ -532,6 +634,14 @@ export function libraryView(): HTMLElement {
         h('p', { style: { fontSize: '13px' } }, t('sampleBooksBody'))));
       return;
     }
+    if (!list.length && tagFilter && !query) {
+      const tag = tagFilter;
+      grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('div', { class: 'glyph' }, icon(tag === FAV_TAG ? 'heart' : 'tag')), h('p', null, t('emptyTagBody')),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn primary', onclick: () => addBooksToTag(tag) }, icon('plus'), t('addBooks')),
+          h('button', { class: 'btn', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')))));
+      return;
+    }
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, tagFilter && !query ? t('noTaggedBooks') : activeFolder && !query ? t('emptyFolder') : t('noResults')),
       tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
     if (getSettings().libraryView === 'cards' && !activeFolder && !query && !tagFilter) folders.forEach((f) => grid.appendChild(folderCard(f)));
@@ -553,8 +663,9 @@ export function libraryView(): HTMLElement {
   async function refresh() {
     books = await listBooks();
     folders = (await db.getMeta<Folder[]>('folders')) ?? [];
+    tagDefs = (await db.getMeta<TagDef[]>('tags')) ?? [];
     if (activeFolder && !folders.some((f) => f.id === activeFolder)) activeFolder = null;
-    if (tagFilter && !books.some((b) => (b.tags ?? []).includes(tagFilter!))) { tagFilter = null; localStorage.removeItem('kr.tag'); }
+    if (tagFilter && !tagDefs.some((x) => x.name === tagFilter) && !books.some((b) => (b.tags ?? []).includes(tagFilter!))) { tagFilter = null; localStorage.removeItem('kr.tag'); }
     renderGrid();
   }
 

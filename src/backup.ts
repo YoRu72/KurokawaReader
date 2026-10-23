@@ -3,7 +3,7 @@
 // position (keyed by file name + size so they re-attach to the same files). A
 // "full" backup is a ZIP with that JSON plus the book files and covers.
 import JSZip from 'jszip';
-import { db, type Book, type Folder } from './db';
+import { db, type Book, type Folder, type TagDef } from './db';
 import { getSettings, updateSettings, type VisualSettings } from './settings';
 import { listFonts, type CustomFont } from './fonts';
 import { shareFile } from './ui/share';
@@ -17,7 +17,7 @@ interface BookRecord {
 }
 interface Manifest {
   app: 'KurokawaReader'; version: 1; createdAt: number; full: boolean;
-  settings: VisualSettings; local: Record<string, string>; folders: Folder[]; fonts: CustomFont[]; books: BookRecord[];
+  settings: VisualSettings; local: Record<string, string>; folders: Folder[]; tags?: TagDef[]; fonts: CustomFont[]; books: BookRecord[];
 }
 
 const LOCAL_KEYS = ['kr.lang', 'kr.dir', 'kr.sort', 'kr.translateTo'];
@@ -30,7 +30,7 @@ async function manifest(full: boolean): Promise<Manifest> {
   for (const k of LOCAL_KEYS) { const v = localStorage.getItem(k); if (v) local[k] = v; }
   return {
     app: 'KurokawaReader', version: 1, createdAt: Date.now(), full,
-    settings: { ...getSettings(), aiKey: '', syncDropboxRefresh: '', syncWebdavPass: '' }, local, folders, fonts: await listFonts(),
+    settings: { ...getSettings(), aiKey: '', syncDropboxRefresh: '', syncWebdavPass: '' }, local, folders, tags: (await db.getMeta<TagDef[]>('tags')) ?? [], fonts: await listFonts(),
     books: books.map((b) => ({
       key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
       folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
@@ -82,6 +82,10 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
   for (const f of m.folders ?? []) if (!folders.some((x) => x.name === f.name)) folders.push({ ...f });
   await db.setMeta('folders', folders);
+  // tags the user created (empty ones too): merge by name
+  const tagDefs = (await db.getMeta<TagDef[]>('tags')) ?? [];
+  for (const tg of m.tags ?? []) if (!tagDefs.some((x) => x.name === tg.name)) tagDefs.push({ ...tg });
+  await db.setMeta('tags', tagDefs);
   const folderId = (name?: string) => (name ? folders.find((f) => f.name === name)?.id : undefined);
 
   // fonts (full backups carry the files)

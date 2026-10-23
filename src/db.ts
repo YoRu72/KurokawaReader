@@ -58,6 +58,8 @@ export interface ReadingDay { ms: number; pct: number; words: number; sessions?:
 export interface ReadingStats { ms: number; words: number; pages?: number; sessions?: number; sessionAt?: number; days: Record<string, ReadingDay>; bookWords?: number; bookChars?: number }
 
 export interface Folder { id: string; name: string; createdAt: number }
+/** A tag the user created; kept even while no book carries it (meta 'tags'). */
+export interface TagDef { name: string; createdAt: number }
 
 export interface Book {
   id: string;
