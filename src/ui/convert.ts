@@ -2,14 +2,14 @@
 // add the result to the library or send it to a Kindle.
 import { h, icon, openSheet, toast, pickSheet } from './dom';
 import { t, formatBytes } from '../i18n';
-import { TARGETS, convertBook, type Target } from '../convert';
+import { TARGETS, convertBook, convertible, type Target } from '../convert';
 import { db, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob } from './share';
 
 /** Choose which book to convert (library tools button), then open the sheet for it. */
 export async function convertPicker(books: Book[], pickFile: () => void): Promise<void> {
-  const eligible = books.filter((b) => b.format !== 'image' && b.format !== 'cbz');
+  const eligible = books.filter((b) => convertible(b.format));
   if (!eligible.length) { pickFile(); return; }
   pickSheet(t('convertFile'), [...eligible.map((b): [string, string, string?] => [b.id, `${b.title} · ${b.format.toUpperCase()}`, 'books']), ['__file', t('pickAFile'), 'folder']], '', (id) => {
     if (id === '__file') { pickFile(); return; }

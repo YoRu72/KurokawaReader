@@ -15,9 +15,11 @@ const MIMES = [
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.oasis.opendocument.text', 'application/x-fictionbook+xml', 'application/vnd.comicbook+zip', 'application/x-cbz',
   'text/plain', 'text/markdown', 'text/html', 'text/csv', 'text/comma-separated-values',
+  'application/x-mobipocket-ebook', 'application/vnd.amazon.ebook', 'application/vnd.amazon.mobi8-ebook', 'application/x-mobi8-ebook', 'application/apkg', 'application/vnd.anki',
+  'audio/mpeg', 'audio/mp4', 'audio/x-m4b', 'audio/aac', 'audio/ogg', 'audio/opus', 'audio/flac', 'audio/x-flac', 'audio/wav',
   'font/ttf', 'font/otf', 'font/woff', 'font/woff2', 'application/x-font-ttf', 'application/x-font-opentype', 'application/font-sfnt', 'application/vnd.ms-opentype', 'application/font-woff', 'application/zip', 'application/x-zip-compressed',
 ];
-const EXTS = ['epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'csv', 'ttf', 'otf', 'woff', 'woff2', 'zip'];
+const EXTS = ['mobi', 'azw', 'azw3', 'prc', 'apkg', 'colpkg', 'mp3', 'm4a', 'm4b', 'flac', 'ogg', 'opus', 'epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'csv', 'ttf', 'otf', 'woff', 'woff2', 'zip'];
 
 const data = (attrs) => `        <data ${attrs} />`;
 const intentFilters = `
@@ -65,10 +67,11 @@ if (!manifest.includes('android:mimeType="application/pdf"')) {
 }
 if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
   manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Scanning the whole device for books: legacy read permission up to Android 12, "All files access" from Android 11. -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Whole-device scanning uses the ordinary read permission on Android 10 and older. "All files access"
+         (MANAGE_EXTERNAL_STORAGE) is deliberately not requested: Play Protect treats it as high-risk for
+         apps installed outside the Play Store. From Android 11 the reader picks folders instead. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <application`);
   if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 }
@@ -99,6 +102,7 @@ if (!manifest.includes('android:name=".LauncherAuto"')) {
   ].join('');
   manifest = manifest.replace('</application>', `${aliases}\n    </application>`);
 }
+manifest = manifest.replace(/\s*<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"[^>]*\/>/g, '');
 await fs.writeFile(manifestPath, manifest);
 
 // App name follows the system language: KurokawaReader by default, قارئ كروكاوا on Arabic devices.

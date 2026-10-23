@@ -17,6 +17,14 @@ interface DesktopBridge { onOpenFile(cb: (p: { name: string; data: ArrayBuffer }
 declare global { interface Window { Capacitor?: CapGlobal; kurokawaDesktop?: DesktopBridge } }
 
 export function isNative(): boolean { return !!window.Capacitor?.isNativePlatform?.() || !!window.kurokawaDesktop; }
+/** A content:// or file:// document as a File: streamed by the WebView when possible, else through the plugin. */
+export async function readContentUri(uri: string, name: string, mime = '', tree?: string): Promise<File> {
+  const cap = window.Capacitor as (CapGlobal & { convertFileSrc?(u: string): string; Plugins?: { Kurokawa?: { readDocument?(o: { uri: string; tree?: string }): Promise<{ data: string }> } } }) | undefined;
+  if (cap?.convertFileSrc) { try { const r = await fetch(cap.convertFileSrc(uri)); if (r.ok) return new File([await r.blob()], name, { type: mime }); } catch { /* fall back */ } }
+  const res = await cap?.Plugins?.Kurokawa?.readDocument?.({ uri, tree });
+  if (!res) throw new Error('read');
+  return new File([base64ToBlob(res.data)], name, { type: mime });
+}
 export function nativePlatform(): string { return window.kurokawaDesktop ? 'desktop' : window.Capacitor?.getPlatform?.() ?? 'web'; }
 
 function base64ToBlob(b64: string): Blob {

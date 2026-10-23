@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -185,10 +185,25 @@ export function settingsView(): HTMLElement {
 
   // Storage
   const storageP = h('p', null, t('storageUnknown'));
-  navigator.storage?.estimate?.().then((e) => { if (e.usage != null && e.quota != null) storageP.textContent = t('storageUsed', { used: formatBytes(e.usage), quota: formatBytes(e.quota) }); }).catch(() => undefined);
+  const storageActions = h('div', { class: 'actions-row', style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } });
+  const paintStorage = () => void import('../storage').then(async (m) => {
+    const r = await m.storageReport();
+    storageP.textContent = [r.total != null ? t('storageAppTotal', { size: formatBytes(r.total) }) : null, t('storageBooks', { n: r.books, linked: r.linked, copied: r.copied.length, size: formatBytes(r.copiedBytes) }), r.cache != null ? t('storageCache', { size: formatBytes(r.cache) }) : null].filter(Boolean).join(' · ');
+    clear(storageActions);
+    storageActions.append(h('button', { class: 'btn small', type: 'button', onclick: async () => { const freed = await m.freeSpace(); toast(t('spaceFreed', { size: formatBytes(freed) })); paintStorage(); } }, icon('trash'), t('freeSpace')));
+    if (r.copied.length && m.canMoveOut()) {
+      const status = h('span', { class: 'hint' });
+      storageActions.append(h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => {
+        (e.currentTarget as HTMLButtonElement).disabled = true;
+        const n = await m.moveBooksOut(r.copied, (done, total, name) => { status.textContent = name ? `${localDigits(done + 1)}/${localDigits(total)} · ${name}` : ''; });
+        toast(t('movedOut', { n })); paintStorage();
+      } }, icon('folder'), t('moveOut', { n: r.copied.length, size: formatBytes(r.copiedBytes) })), status);
+    }
+  }).catch(() => undefined);
+  paintStorage();
   if (navigator.storage?.persist) navigator.storage.persisted().then((p) => { if (!p) void navigator.storage.persist(); }).catch(() => undefined);
   const importModeField = (nativePlatform() === 'android' || 'kurokawaDesktop' in window) ? h('div', { class: 'field' }, resettable(t('importMode'), 'importMode', () => renderAppearance()), h('div', { class: 'segmented' }, ...([['link', t('importLink')], ['copy', t('importCopy')]] as ['link' | 'copy', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getSettings().importMode === id), onclick: () => { updateSettings({ importMode: id }); navigate('/settings', true); } }, label))), h('span', { class: 'hint' }, t('importModeHint'))) : null;
-  body.append(h('section', { class: 'card' }, h('h3', null, t('storage')), storageP, importModeField,
+  body.append(h('section', { class: 'card' }, h('h3', null, t('storage')), storageP, storageActions, importModeField,
     h('div', null, h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: (await db.allBooks()).length }))) { await db.clearAll(); toast(t('done')); } } }, icon('trash'), t('clearLibrary')))));
 
   // About

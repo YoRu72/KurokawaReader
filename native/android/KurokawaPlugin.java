@@ -120,6 +120,8 @@ public class KurokawaPlugin extends Plugin {
     public void downloadFile(PluginCall call) {
         final String urlStr = call.getString("url", "");
         final String name = call.getString("name", "download.bin");
+        // "persist": keep the file (e.g. a downloaded deck the library links to) instead of the cache.
+        final boolean persist = Boolean.TRUE.equals(call.getBoolean("persist", false));
         new Thread(() -> {
             try {
                 java.net.URL url = new java.net.URL(urlStr);
@@ -135,7 +137,7 @@ public class KurokawaPlugin extends Plugin {
                     break;
                 }
                 long total = conn.getContentLengthLong();
-                File dir = new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
+                File dir = persist ? new File(getContext().getFilesDir(), "downloads") : new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
                 File out = new File(dir, name);
                 long got = 0, lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0;
                 try (InputStream in = conn.getInputStream(); FileOutputStream fo = new FileOutputStream(out)) {
@@ -205,7 +207,7 @@ public class KurokawaPlugin extends Plugin {
     @PluginMethod
     public void pickTree(PluginCall call) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(call, intent, "treeResult");
     }
 
@@ -250,7 +252,7 @@ public class KurokawaPlugin extends Plugin {
         if (call == null) return;
         if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) { call.reject("cancelled"); return; }
         Uri tree = result.getData().getData();
-        try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {}
+        try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); } catch (Exception e) { try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {} }
         JSObject ret = new JSObject();
         ret.put("uri", tree.toString());
         String name = tree.getLastPathSegment();
@@ -486,6 +488,74 @@ public class KurokawaPlugin extends Plugin {
     /** Volume keys turn pages when the reader asks for it (MainActivity consults this flag). */
     public static volatile boolean volumeKeys = false;
 
+    private static long dirSize(File f) {
+        if (f == null || !f.exists()) return 0;
+        if (f.isFile()) return f.length();
+        long n = 0; File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) n += dirSize(k);
+        return n;
+    }
+    private static void deleteTree(File f) {
+        if (f == null || !f.exists()) return;
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+
+    /** Where the app's space goes: WebView data (library database), cache, everything else. */
+    @PluginMethod
+    public void storageInfo(PluginCall call) {
+        File data = getContext().getDataDir();
+        JSObject ret = new JSObject();
+        ret.put("webview", dirSize(new File(data, "app_webview")));
+        ret.put("cache", dirSize(getContext().getCacheDir()) + dirSize(getContext().getCodeCacheDir()));
+        ret.put("files", dirSize(getContext().getFilesDir()));
+        ret.put("total", dirSize(data) + dirSize(getContext().getCacheDir()));
+        call.resolve(ret);
+    }
+
+    /** Frees everything that can be rebuilt: page caches, downloaded updates, the WebView's HTTP / code caches. */
+    @PluginMethod
+    public void clearCaches(PluginCall call) {
+        long before = dirSize(getContext().getCacheDir()) + dirSize(getContext().getCodeCacheDir());
+        deleteTree(new File(getContext().getCacheDir(), "kr-pdf"));
+        deleteTree(new File(getContext().getCacheDir(), "kr-update"));
+        File[] kids = getContext().getCacheDir().listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        getActivity().runOnUiThread(() -> {
+            try { getBridge().getWebView().clearCache(true); } catch (Exception ignored) {}
+            long after = dirSize(getContext().getCacheDir()) + dirSize(getContext().getCodeCacheDir());
+            JSObject ret = new JSObject();
+            ret.put("freed", Math.max(0, before - after));
+            call.resolve(ret);
+        });
+    }
+
+    /** Write a file into a folder the user picked (tree URI). Call with append=true for further chunks to the returned uri. */
+    @PluginMethod
+    public void writeDocument(PluginCall call) {
+        String data = call.getString("data", "");
+        String target = call.getString("uri", null);
+        try {
+            Uri uri;
+            if (target == null) {
+                Uri tree = Uri.parse(call.getString("tree", ""));
+                Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+                uri = DocumentsContract.createDocument(getContext().getContentResolver(), parent, call.getString("mime", "application/octet-stream"), call.getString("name", "file"));
+                if (uri == null) { call.reject("cannot create"); return; }
+            } else uri = Uri.parse(target);
+            try (java.io.OutputStream out = getContext().getContentResolver().openOutputStream(uri, target == null ? "w" : "wa")) {
+                if (out == null) { call.reject("cannot write"); return; }
+                out.write(Base64.decode(data, Base64.DEFAULT));
+            }
+            try { getContext().getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {}
+            JSObject ret = new JSObject();
+            ret.put("uri", uri.toString());
+            call.resolve(ret);
+        } catch (Exception e) { call.reject("write failed: " + e.getMessage(), e); }
+    }
+
     /** Which launcher alias (and so which app name) is shown: "auto" follows the system language, or en/ar/ja/zh/ko. */
     @PluginMethod
     public void setAppName(PluginCall call) {
@@ -559,7 +629,10 @@ public class KurokawaPlugin extends Plugin {
         try {
             synchronized (lock) {
                 closeInternal();
-                pfd = ParcelFileDescriptor.open(new File(path), ParcelFileDescriptor.MODE_READ_ONLY);
+                // Linked books open straight from where they live (no copy in the cache).
+                pfd = path.startsWith("content://")
+                    ? getContext().getContentResolver().openFileDescriptor(Uri.parse(path), "r")
+                    : ParcelFileDescriptor.open(new File(path), ParcelFileDescriptor.MODE_READ_ONLY);
                 renderer = new PdfRenderer(pfd);
                 JSObject ret = new JSObject();
                 ret.put("pageCount", renderer.getPageCount());

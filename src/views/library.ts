@@ -4,6 +4,7 @@ import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks 
 import { db, uid, FAV_TAG, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
 import { navigate } from '../router';
+import { readContentUri } from '../native';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
 import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
@@ -56,7 +57,7 @@ export function libraryView(): HTMLElement {
   const heroSub = h('div', { class: 'sub' });
   const heroGoal = h('div', { class: 'goal-line', hidden: true });
   const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub, heroGoal);
-  const convertBtn = iconButton('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertPicker(books, () => input.click())));
+  const convertBtn = iconButton('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertPicker(books, () => void pickFiles())));
   convertBtn.classList.add('tool-btn');
   const body = h('div', { class: 'library-body' },
     hero,
@@ -95,9 +96,7 @@ export function libraryView(): HTMLElement {
     toast(t('importing', { n: localDigits(picked.length) }), 'info', 60000);
     for (const f of picked) {
       try {
-        const { data } = await k.readDocument({ uri: f.uri });
-        const bin = atob(data); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        const file = new File([bytes], f.name || 'document', { type: f.mime || '' }) as File & { krSource?: { uri: string } };
+        const file = await readContentUri(f.uri, f.name || 'document', f.mime || '') as File & { krSource?: { uri: string } };
         if (link) file.krSource = { uri: f.uri };
         files.push(file);
       } catch (err) { toast(t('importFailed', { name: f.name, error: String((err as Error).message ?? err) }), 'error', 4000); }
@@ -109,20 +108,21 @@ export function libraryView(): HTMLElement {
     } else await doImport(files);
   }
   function importMenu() {
-    if (!canScan()) { void pickFiles(); return; }
+    if (!canScan()) { void import('../ui/dom').then(({ openSheet }) => { const s = openSheet(t('importBooks'), t('close')); s.body.style.fontFamily = 'var(--font-ui)'; s.body.append(h('ul', { class: 'plain-list' }, h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))), h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void import('../ui/decks').then((m) => m.starterDecksSheet(() => void refresh())); } }, icon('books'), t('starterDecks'))))); }); return; }
     import('../ui/dom').then(({ openSheet }) => {
       const s = openSheet(t('importBooks'), t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice')))));
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))),
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void import('../ui/decks').then((m) => m.starterDecksSheet(() => void refresh())); } }, icon('books'), t('starterDecks')))));
     });
   }
   function openScan() {
     openScanSheet({
       folders, activeFolder,
       existing: new Set(books.map((b) => `${b.fileName}:${b.size}`)),
-      fallbackPick: () => input.click(),
+      fallbackPick: () => void pickFiles(),
       onImport: async (files, dest) => { await doImport(files, await resolveDestination(dest)); },
     });
   }
@@ -267,7 +267,7 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
-        ...(book.format !== 'image' && book.format !== 'cbz' ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/convert').then((m) => m.convertSheet(book, () => void refresh())); } }, icon('convert'), t('convertFile'))] : []),
+        ...(!['image', 'cbz', 'anki', 'audio', 'unknown'].includes(book.format) ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/convert').then((m) => m.convertSheet(book, () => void refresh())); } }, icon('convert'), t('convertFile'))] : []),
         h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
@@ -528,7 +528,7 @@ export function libraryView(): HTMLElement {
     if (!books.length) {
       grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('div', { class: 'glyph' }, icon('empty')), h('h2', null, t('emptyLibraryTitle')), h('p', null, t('emptyLibraryBody')),
         h('div', { class: 'actions' },
-          h('button', { class: 'btn primary large', onclick: () => input.click() }, icon('import'), t('importBooks')),
+          h('button', { class: 'btn primary large', onclick: () => importMenu() }, icon('import'), t('importBooks')),
           h('button', { class: 'btn tonal large', onclick: () => void addSamples() }, icon('books'), t('sampleBooks'))),
         h('p', { style: { fontSize: '13px' } }, t('sampleBooksBody'))));
       return;

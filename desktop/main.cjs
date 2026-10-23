@@ -213,6 +213,20 @@ ipcMain.handle('kr:http', async (_e, o) => {
 });
 ipcMain.handle('kr:folder-pick', async () => { const { dialog } = require('electron'); const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('fs/promises').readFile(String(p), 'utf8'); } catch { return null; } });
+// Plain download into the app's data folder (learning decks), with progress.
+ipcMain.handle('kr:download', async (e, url, name) => {
+  const res = await net.fetch(String(url));
+  if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+  const total = Number(res.headers.get('content-length') || 0);
+  const dir = path.join(app.getPath('userData'), 'downloads'); fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, String(name).replace(/[\\/:*?"<>|]/g, '_'));
+  const out = fs.createWriteStream(file); let err = null; out.on('error', (x) => { err = x; });
+  const reader = res.body.getReader(); let got = 0, lastT = Date.now(), lastGot = 0, speed = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; out.write(Buffer.from(value)); got += value.length; const now = Date.now(); if (now - lastT > 400) { speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; e.sender.send('kr:download-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); } }
+  await new Promise((r) => out.end(r)); if (err) throw err;
+  return file;
+});
+ipcMain.handle('kr:write-binary', async (_e, p, b64, append) => { const fsp = require('fs/promises'); const buf = Buffer.from(String(b64), 'base64'); if (append) await fsp.appendFile(String(p), buf); else await fsp.writeFile(String(p), buf); return true; });
 ipcMain.handle('kr:folder-write', async (_e, p, text) => { await require('fs/promises').writeFile(String(p), String(text), 'utf8'); return true; });
 ipcMain.handle('kr:default-apps', () => { if (process.platform === 'win32') return shell.openExternal('ms-settings:defaultapps'); if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:'); return false; });
 ipcMain.handle('kr:fullscreen', (_e, v) => { if (!win) return false; const next = v === 'toggle' ? !win.isFullScreen() : !!v; win.setFullScreen(next); return next; });

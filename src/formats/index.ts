@@ -8,6 +8,8 @@ import { pptxHandler } from './pptx';
 import { txtHandler, mdHandler, htmlHandler } from './text';
 import { fb2Handler, odtHandler, cbzHandler, imageHandler } from './misc';
 import { pdfMeta } from './pdf';
+import { mobiHandler } from './mobi';
+import { readAudioMeta } from './audio';
 import { prewarmEpub } from './epub';
 
 /**
@@ -27,6 +29,9 @@ const EXT: Record<string, Format> = {
   epub: 'epub', pdf: 'pdf', docx: 'docx', docm: 'docx', dotx: 'docx', xlsx: 'xlsx', xlsm: 'xlsx', csv: 'csv', tsv: 'csv', pptx: 'pptx', ppsx: 'pptx',
   txt: 'txt', text: 'txt', log: 'txt', md: 'md', markdown: 'md', html: 'html', htm: 'html', xhtml: 'html', fb2: 'fb2', odt: 'odt', cbz: 'cbz',
   jpg: 'image', jpeg: 'image', png: 'image', gif: 'image', webp: 'image', avif: 'image', svg: 'image', bmp: 'image',
+  mobi: 'mobi', azw: 'mobi', azw3: 'mobi', kf8: 'mobi', prc: 'mobi',
+  apkg: 'anki', colpkg: 'anki',
+  mp3: 'audio', m4a: 'audio', m4b: 'audio', aac: 'audio', ogg: 'audio', oga: 'audio', opus: 'audio', flac: 'audio', wav: 'audio',
 };
 
 export function detectFormat(fileName: string, mime?: string): Format {
@@ -39,6 +44,9 @@ export function detectFormat(fileName: string, mime?: string): Format {
     if (mime.includes('spreadsheetml')) return 'xlsx';
     if (mime.includes('presentationml')) return 'pptx';
     if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.includes('mobipocket') || mime.includes('kindle') || mime.includes('x-mobi8')) return 'mobi';
+    if (mime.includes('anki')) return 'anki';
     if (mime === 'text/markdown') return 'md';
     if (mime === 'text/html') return 'html';
     if (mime === 'text/csv') return 'csv';
@@ -51,15 +59,18 @@ export function detectFormat(fileName: string, mime?: string): Format {
 export async function sniffFormat(file: Blob, fileName: string): Promise<Format> {
   const byName = detectFormat(fileName.replace(/\.bin$/i, ''), file.type);
   if (byName !== 'unknown' && byName !== 'txt') return byName;
-  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
   const ascii = String.fromCharCode(...head);
   if (ascii.startsWith('%PDF')) return 'pdf';
+  if (String.fromCharCode(...new Uint8Array(await file.slice(60, 68).arrayBuffer())) === 'BOOKMOBI') return 'mobi';
+  if (ascii.startsWith('ID3') || ascii.startsWith('fLaC') || ascii.startsWith('OggS') || (ascii.slice(4, 8) === 'ftyp' && /M4[AB]|mp4|isom/.test(ascii.slice(8, 12)))) return 'audio';
   if (head[0] === 0x50 && head[1] === 0x4b) {
     // Some zip: look inside for the tell-tale parts.
     try {
       const JSZip = (await import('jszip')).default;
       const zip = await JSZip.loadAsync(file);
       const names = Object.keys(zip.files);
+      if (names.some((n) => n.startsWith('collection.anki2'))) return 'anki';
       if (names.some((n) => n === 'mimetype' || n.startsWith('META-INF/container.xml'))) return 'epub';
       if (names.some((n) => n.startsWith('word/'))) return 'docx';
       if (names.some((n) => n.startsWith('xl/'))) return 'xlsx';
@@ -81,6 +92,9 @@ const HANDLERS: Partial<Record<Format, Handler>> = {
   epub: epubHandler, docx: docxHandler, xlsx: xlsxHandler, csv: csvHandler, pptx: pptxHandler,
   txt: txtHandler, md: mdHandler, html: htmlHandler, fb2: fb2Handler, odt: odtHandler, cbz: cbzHandler, image: imageHandler,
   pdf: { kind: 'pdf', format: 'pdf', readMeta: pdfMeta },
+  mobi: mobiHandler,
+  anki: { kind: 'deck', format: 'anki', readMeta: async (file) => { const { deckMeta } = await import('../anki'); const m = await deckMeta(file); return { title: m.title, pageCount: m.cards }; } },
+  audio: { kind: 'audio', format: 'audio', readMeta: async (file, name) => { const m = await readAudioMeta(file, name); return { title: m.title, author: m.author, cover: m.cover }; } },
 };
 
 export function handlerFor(format: Format): Handler | undefined {
@@ -104,4 +118,4 @@ export async function readMeta(file: Blob, fileName: string, format: Format): Pr
   }
 }
 
-export const SUPPORTED_ACCEPT = '.epub,.pdf,.docx,.docm,.xlsx,.xlsm,.csv,.tsv,.pptx,.ppsx,.txt,.md,.markdown,.html,.htm,.xhtml,.fb2,.odt,.cbz,.jpg,.jpeg,.png,.gif,.webp,.avif,.svg,.bmp,application/epub+zip,application/pdf,text/*,image/*';
+export const SUPPORTED_ACCEPT = '.epub,.pdf,.docx,.docm,.xlsx,.xlsm,.csv,.tsv,.pptx,.ppsx,.txt,.md,.markdown,.html,.htm,.xhtml,.fb2,.odt,.cbz,.jpg,.jpeg,.png,.gif,.webp,.avif,.svg,.bmp,application/epub+zip,application/pdf,text/*,image/*,.mobi,.azw,.azw3,.kf8,.prc,.apkg,.colpkg,.mp3,.m4a,.m4b,.aac,.ogg,.oga,.opus,.flac,.wav,audio/*';

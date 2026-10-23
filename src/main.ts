@@ -58,6 +58,10 @@ if (getSettings().openLastOnLaunch && (location.hash === '' || location.hash ===
 // Offline support.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => undefined); });
+} else if (isNative()) {
+  // The installed app ships its files; an offline cache left by an older version would only duplicate them (and books).
+  void navigator.serviceWorker?.getRegistrations?.().then((regs) => regs.forEach((r) => void r.unregister())).catch(() => {});
+  void caches?.keys?.().then((keys) => keys.forEach((k) => void caches.delete(k))).catch(() => {});
 }
 
 // Keep the install prompt for the Settings page.

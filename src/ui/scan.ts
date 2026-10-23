@@ -13,6 +13,7 @@ export interface ScanResult { folderName: string; files: ScanEntry[]; truncated:
 
 import { destinationList, type Destination } from './destination';
 import type { FileSource } from '../db';
+import { readContentUri } from '../native';
 import { getSettings } from '../settings';
 import type { SourcedFile } from '../library';
 export type { Destination };
@@ -42,6 +43,9 @@ export const FORMAT_GROUPS: { id: string; label: string; formats: Format[]; exts
   { id: 'fb2', label: 'FB2', formats: ['fb2'], exts: ['fb2'] },
   { id: 'odt', label: 'ODT', formats: ['odt'], exts: ['odt'] },
   { id: 'cbz', label: 'CBZ', formats: ['cbz'], exts: ['cbz'] },
+  { id: 'mobi', label: 'Kindle', formats: ['mobi'], exts: ['mobi', 'azw', 'azw3', 'kf8', 'prc'] },
+  { id: 'anki', label: 'Anki', formats: ['anki'], exts: ['apkg', 'colpkg'] },
+  { id: 'audio', label: t('audiobooks'), formats: ['audio'], exts: ['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'flac', 'wav'] },
   { id: 'image', label: t('images'), formats: ['image'], exts: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg', 'bmp'] },
 ];
 export const groupOf = (f: Format): string => FORMAT_GROUPS.find((g) => g.formats.includes(f))?.id ?? 'text';
@@ -52,9 +56,11 @@ export function canScan(): boolean {
   return 'showDirectoryPicker' in window || !!desktop()?.scanDevice;
 }
 /** Whole-device scanning: Android with storage access, or the desktop app. */
+let androidSdk = 0;
+/** Android 11+ cannot read the whole shared storage without "All files access", which the app no longer asks for. */
 export function canScanWhole(): boolean {
   const c = cap();
-  if (c?.getPlatform?.() === 'android') return !!c.Plugins?.Kurokawa?.scanDevice;
+  if (c?.getPlatform?.() === 'android') return !!c.Plugins?.Kurokawa?.scanDevice && androidSdk > 0 && androidSdk < 30;
   return !!desktop()?.scanDevice;
 }
 
@@ -69,7 +75,7 @@ const ALL_EXTS = FORMAT_GROUPS.flatMap((g) => g.exts);
 function toEntries(plugin: KrScan, files: ScanFile[]): ScanEntry[] {
   return files.map((f) => ({
     name: f.name, path: f.path, size: f.size, format: detectFormat(f.name, f.mime), source: { uri: f.uri, tree: f.tree },
-    read: async () => { const { data } = await plugin.readDocument({ uri: f.uri, tree: f.tree }); return new File([base64ToBlob(data, f.mime)], f.name, { type: f.mime }); },
+    read: async () => { try { return await readContentUri(f.uri, f.name, f.mime, f.tree); } catch { const { data } = await plugin.readDocument({ uri: f.uri, tree: f.tree }); return new File([base64ToBlob(data, f.mime)], f.name, { type: f.mime }); } },
   }));
 }
 
@@ -133,6 +139,13 @@ export interface ScanSheetOptions {
   onImport(files: File[], dest: Destination): Promise<void>;
   fallbackPick(): void;                        // plain file picker when scanning is unavailable
 }
+
+/** Learn the Android version once (decides whether whole-device scanning is possible). */
+export async function primeScan(): Promise<void> {
+  const k = cap()?.Plugins?.Kurokawa as { deviceInfo?(): Promise<{ sdk?: number }> } | undefined;
+  if (cap()?.getPlatform?.() === 'android' && k?.deviceInfo) { try { androidSdk = (await k.deviceInfo()).sdk ?? 0; } catch { /* ignore */ } }
+}
+void primeScan();
 
 export function openScanSheet(o: ScanSheetOptions): void {
   if (!canScan()) { toast(t('notSupportedHere')); o.fallbackPick(); return; }

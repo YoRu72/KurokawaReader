@@ -55,6 +55,8 @@ export function readerView(ids: string[]): HTMLElement {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
     if (disposed) return;
     if (!books.length) { navigate('/', true); return; }
+    if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); return; }
+    if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); return; }
     const pdfs = books.filter((b) => b.format === 'pdf');
     const flows = books.filter((b) => b.format !== 'pdf');
     if (pdfs.length && (flows.length || pdfs.length > 1)) toast(t('fmtPdf') + ' · ' + t('open'), 'info', 3000);
@@ -1137,7 +1139,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.pinchZoom = getSettings().pdfPinchZoom;
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
   onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); }));
-  await viewer.load(file, book.id);
+  await viewer.load(file, book.id, book.source?.uri);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
   const jump = takeJump();

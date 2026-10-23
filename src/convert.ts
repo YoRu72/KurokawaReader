@@ -13,6 +13,9 @@ import { loadPdfjs } from './formats/pdf';
 import { getSettings } from './settings';
 import { isRtlText } from './i18n';
 
+/** Formats the converter can read. */
+export const convertible = (f: Book['format']) => !['image', 'cbz', 'anki', 'audio', 'unknown'].includes(f);
+
 export type Target = 'epub' | 'kindle' | 'docx' | 'pdf' | 'html' | 'md' | 'txt';
 export interface Chapter { title: string; html: string; rtl: boolean }
 export interface ConvDoc {
@@ -30,7 +33,7 @@ export type Progress = (msg: string, pct?: number) => void;
 
 export async function readDocument(book: Book, file: Blob, progress: Progress, password?: string): Promise<ConvDoc> {
   if (book.format === 'pdf') return readPdf(book, file, progress, password);
-  if (book.format === 'image' || book.format === 'cbz') throw new Error('unsupported');
+  if (!convertible(book.format)) throw new Error('unsupported');
   const handler = flowHandlerFor(book.format);
   if (!handler) throw new Error('unsupported');
   progress('render', 5);

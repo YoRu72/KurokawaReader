@@ -12,6 +12,7 @@ const types = [
   ['Excel workbook', ['org.openxmlformats.spreadsheetml.sheet']], ['PowerPoint', ['org.openxmlformats.presentationml.presentation']],
   ['Text', ['public.plain-text', 'net.daringfireball.markdown', 'public.html', 'public.comma-separated-values-text']],
   ['Comic archive', ['public.zip-archive']], ['Image', ['public.image']], ['Font', ['public.font', 'public.truetype-ttf-font', 'public.opentype-font']],
+  ['Audio', ['public.audio', 'public.mp3', 'public.mpeg-4-audio', 'com.apple.m4a-audio', 'com.apple.protected-mpeg-4-audio']], ['Kindle book', ['public.data']],
 ];
 const docTypes = `  <key>CFBundleDocumentTypes</key>
   <array>

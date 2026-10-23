@@ -4,7 +4,7 @@
 
 export type Format =
   | 'epub' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'txt' | 'md' | 'html'
-  | 'fb2' | 'odt' | 'cbz' | 'image' | 'unknown';
+  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'unknown';
 
 export interface Locator {
   /** Which opened document (book id). */
@@ -137,7 +137,12 @@ async function readLinked(src: FileSource, name: string, mime?: string): Promise
   const cap = (window as unknown as { Capacitor?: { Plugins?: { Kurokawa?: { readDocument?(o: { uri: string; tree?: string }): Promise<{ data: string }> } } } }).Capacitor;
   const desk = (window as unknown as { kurokawaDesktop?: { readFile?(p: string): Promise<ArrayBuffer | Uint8Array> } }).kurokawaDesktop;
   try {
-    if (src.uri && cap?.Plugins?.Kurokawa?.readDocument) {
+    const conv = (window as unknown as { Capacitor?: { convertFileSrc?(u: string): string } }).Capacitor?.convertFileSrc;
+    if (src.uri && conv) {
+      // The WebView reads the file straight from storage (no base64 round trip through the bridge).
+      try { const r = await fetch(conv(src.uri)); if (r.ok) blob = new File([await r.blob()], name, { type: mime }); } catch { /* fall back below */ }
+    }
+    if (!blob && src.uri && cap?.Plugins?.Kurokawa?.readDocument) {
       const { data } = await cap.Plugins.Kurokawa.readDocument({ uri: src.uri, tree: src.tree });
       const bin = atob(data); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       blob = new File([bytes], name, { type: mime });

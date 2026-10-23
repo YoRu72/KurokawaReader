@@ -710,3 +710,48 @@ html[dir='rtl'] .card.collapsed .card-title svg { transform: rotate(90deg); }
 .convert-target:hover:not(:disabled) { background: var(--md-surface-container-highest); }
 .convert-target:disabled { opacity: .5; }
 .convert-result { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* Anki */
+.anki-main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; padding: calc(var(--topbar-h) + var(--safe-top) + 8px) 16px calc(16px + var(--safe-bottom)); max-width: 760px; width: 100%; margin: 0 auto; }
+.anki-overview { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 28px 8px; text-align: center; }
+.anki-overview h2 { margin: 0; font-size: 22px; }
+.anki-counts { display: flex; gap: 14px; }
+.anki-count { display: flex; flex-direction: column; align-items: center; min-width: 88px; padding: 14px 10px; border-radius: 22px; background: var(--md-surface-container-high); }
+.anki-count b { font-size: 30px; line-height: 1.1; }
+.anki-count span { font-size: 12.5px; color: var(--md-on-surface-dim); }
+.anki-count.new b, .anki-mini-counts .new { color: #5b9cf5; }
+.anki-count.learn b, .anki-mini-counts .learn { color: #e5716b; }
+.anki-count.rev b, .anki-mini-counts .rev { color: #5fbf7f; }
+.anki-study { min-width: 200px; justify-content: center; }
+.anki-stats { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; color: var(--md-on-surface-dim); font-size: 13px; }
+.anki-mini-counts { display: flex; gap: 14px; justify-content: center; font-size: 14px; padding: 4px 0 8px; }
+.anki-card-host { flex: 1; min-height: 0; overflow: auto; border-radius: 24px; background: var(--md-surface-container); }
+.anki-card-host.small { max-height: 60vh; }
+.anki-bar { display: flex; gap: 8px; padding-top: 12px; }
+.anki-show { flex: 1; justify-content: center; height: 52px; font-size: 16px; }
+.anki-grade { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 9px 4px; border-radius: 18px; background: var(--md-surface-container-high); font-weight: 600; font-size: 14px; color: var(--md-on-surface); }
+.anki-grade small { font-weight: 400; font-size: 11.5px; color: var(--md-on-surface-dim); }
+.anki-grade.again span { color: #e5716b; } .anki-grade.hard span { color: #d9a441; } .anki-grade.good span { color: #5fbf7f; } .anki-grade.easy span { color: #5b9cf5; }
+
+/* Audiobooks */
+.audio-main { flex: 1; overflow: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: calc(var(--topbar-h) + var(--safe-top) + 12px) 22px calc(24px + var(--safe-bottom)); max-width: 560px; width: 100%; margin: 0 auto; text-align: center; }
+.audio-cover { width: min(72vw, 300px); aspect-ratio: 1; border-radius: 26px; overflow: hidden; background: var(--md-surface-container-high); display: grid; place-items: center; box-shadow: var(--el-3); margin-bottom: 8px; }
+.audio-cover img { width: 100%; height: 100%; object-fit: cover; }
+.audio-cover svg { width: 64px; height: 64px; fill: none; stroke: var(--md-on-surface-dim); stroke-width: 1.5; }
+.audio-main h2 { margin: 6px 0 0; font-size: 20px; }
+.audio-author { margin: 0; color: var(--md-on-surface-dim); }
+.audio-chapter { margin: 0; color: var(--md-primary); font-size: 14px; min-height: 1.4em; }
+.audio-seek-row { width: 100%; }
+.audio-seek { width: 100%; }
+.audio-times { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--md-on-surface-dim); font-variant-numeric: tabular-nums; }
+.audio-controls { display: flex; align-items: center; gap: 14px; margin: 6px 0; }
+.audio-play { width: 72px; height: 72px; border-radius: 26px; background: var(--md-primary); color: var(--md-on-primary); display: grid; place-items: center; }
+.audio-play svg { width: 30px; height: 30px; fill: currentColor; stroke: currentColor; }
+.audio-skip { width: 52px; height: 52px; border-radius: var(--sh-full); background: var(--md-surface-container-high); font-weight: 600; font-size: 14px; color: var(--md-on-surface); }
+.audio-extra { display: flex; gap: 8px; }
+
+.deck-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--md-outline-variant); }
+.deck-info { flex: 1; min-width: 0; }
+.deck-info p { margin: 4px 0 6px; font-size: 13.5px; color: var(--md-on-surface-variant); }
+.deck-info small { color: var(--md-on-surface-dim); font-weight: 400; }
+.deck-actions { display: flex; gap: 6px; flex: 0 0 auto; }

@@ -109,7 +109,7 @@ export class PdfViewer {
     opts.container.appendChild(this.root);
   }
 
-  async load(file: Blob, cacheKey?: string): Promise<void> {
+  async load(file: Blob, cacheKey?: string, sourceUri?: string): Promise<void> {
     const opened = await openDoc(file);
     this.doc = opened.doc;
     this.closeDoc = opened.close;
@@ -138,10 +138,16 @@ export class PdfViewer {
     if (nat && cacheKey) {
       void (async () => {
         try {
-          const path = `kr-pdf/${cacheKey}.pdf`;
           let uri: string;
-          try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
-          catch { uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri; }
+          if (sourceUri?.startsWith('content://')) uri = sourceUri;   // linked file: the renderer reads it in place
+          else {
+            const path = `kr-pdf/${cacheKey}.pdf`;
+            try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
+            catch {
+              uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri;
+              void prunePdfCache(nat.fs, `${cacheKey}.pdf`);
+            }
+          }
           const info = await nat.pdf.pdfOpen({ path: uri });
           if (!this.destroyed && info.pageCount === this.total) {
             this.native = nat.pdf;
@@ -447,4 +453,14 @@ export class PdfViewer {
     void this.native?.pdfClose().catch(() => undefined);
     this.root.remove();
   }
+}
+
+/** Keep only the few most recently opened PDF copies in the cache. */
+async function prunePdfCache(fs: unknown, keep: string): Promise<void> {
+  const f = fs as { readdir(o: { path: string; directory: string }): Promise<{ files: { name: string; mtime?: number }[] }>; deleteFile(o: { path: string; directory: string }): Promise<void> };
+  try {
+    const { files } = await f.readdir({ path: 'kr-pdf', directory: 'CACHE' });
+    const old = files.filter((x) => x.name !== keep).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)).slice(2);
+    for (const x of old) await f.deleteFile({ path: `kr-pdf/${x.name}`, directory: 'CACHE' }).catch(() => {});
+  } catch { /* nothing cached */ }
 }

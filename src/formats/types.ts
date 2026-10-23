@@ -62,7 +62,14 @@ export interface PdfHandler {
   readMeta(file: Blob, fileName: string): Promise<BookMeta>;
 }
 
-export type Handler = FlowHandler | PdfHandler;
+/** Formats with a view of their own (Anki decks, audiobooks): metadata only here. */
+export interface OtherHandler {
+  kind: 'deck' | 'audio';
+  format: Format;
+  readMeta(file: Blob, fileName: string): Promise<BookMeta>;
+}
+
+export type Handler = FlowHandler | PdfHandler | OtherHandler;
 
 export function titleFromFileName(name: string): string {
   return name.replace(/\.[a-z0-9]+$/i, '').replace(/[_]+/g, ' ').trim() || name;

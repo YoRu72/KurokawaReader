@@ -68,6 +68,8 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.origin !== location.origin) return;
+  // Book files streamed from device storage (Capacitor) and anything that is not an app asset stay out of the cache.
+  if (url.pathname.startsWith('/_capacitor_') || !(url.pathname === '/' || ASSETS.includes(url.pathname) || url.pathname.startsWith('/assets/'))) return;
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then((hit) => hit || fetch(e.request).then((res) => {
       const copy = res.clone();
