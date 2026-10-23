@@ -497,6 +497,35 @@ public class KurokawaPlugin extends Plugin {
         } catch (Exception e) { call.reject("read failed: " + e.getMessage(), e); }
     }
 
+    /** Name, size and whether the app may keep reading this URI later (so it can be linked instead of copied). */
+    @PluginMethod
+    public void docInfo(PluginCall call) {
+        String uriStr = call.getString("uri");
+        if (uriStr == null) { call.reject("uri required"); return; }
+        Uri uri = Uri.parse(uriStr);
+        JSObject ret = new JSObject();
+        ret.put("name", displayName(uri));
+        long size = -1;
+        if ("file".equals(uri.getScheme())) { java.io.File f = new java.io.File(uri.getPath()); if (f.exists()) size = f.length(); }
+        else try (android.database.Cursor c = getContext().getContentResolver().query(uri, new String[]{ android.provider.OpenableColumns.SIZE }, null, null, null)) {
+            if (c != null && c.moveToFirst()) { int i = c.getColumnIndex(android.provider.OpenableColumns.SIZE); if (i >= 0 && !c.isNull(i)) size = c.getLong(i); }
+        } catch (Exception ignored) { }
+        boolean persistable = false;
+        if ("content".equals(uri.getScheme())) {
+            try { getContext().getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); persistable = true; } catch (Exception ignored) { }
+        }
+        ret.put("size", size);
+        ret.put("persistable", persistable);
+        call.resolve(ret);
+    }
+
+    /** Make the WebView draw again (after the app is brought up by another app it can sit on a stale frame until touched). */
+    @PluginMethod
+    public void repaint(PluginCall call) {
+        if (getActivity() instanceof MainActivity) ((MainActivity) getActivity()).kick();
+        call.resolve();
+    }
+
     /** The file name a content:// URI stands for (what the sharing app calls it). */
     private String displayName(Uri uri) {
         if ("file".equals(uri.getScheme())) return uri.getLastPathSegment();

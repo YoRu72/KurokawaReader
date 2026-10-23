@@ -50,7 +50,14 @@ export async function pdfMeta(file: Blob, fileName: string): Promise<BookMeta> {
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
     await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-    const cover = await new Promise<Blob | undefined>((res) => canvas.toBlob((b) => res(b ?? undefined), 'image/jpeg', 0.82));
+    // toBlob can wait for the next frame (a WebView brought up by another app may not draw one until touched);
+    // fall back to the synchronous encoder so importing never stalls on it.
+    const cover = await new Promise<Blob | undefined>((res) => {
+      let done = false;
+      const fin = (b?: Blob | null) => { if (!done) { done = true; res(b ?? undefined); } };
+      setTimeout(() => { try { const u = canvas.toDataURL('image/jpeg', 0.82); const bin = atob(u.split(',')[1]); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); fin(new Blob([a], { type: 'image/jpeg' })); } catch { fin(); } }, 700);
+      canvas.toBlob((b) => fin(b), 'image/jpeg', 0.82);
+    });
     const title = info?.Title?.trim();
     return { title: title && title.toLowerCase() !== 'untitled' ? title : titleFromFileName(fileName), author: info?.Author?.trim() || undefined, pageCount: doc.numPages, cover };
   } finally {

@@ -19,6 +19,31 @@ public class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         asView(intent);
         super.onNewIntent(intent);
+        kick();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        kick();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) kick();
+    }
+
+    /**
+     * When the app is opened from another app (open with / share), the WebView can keep showing a stale
+     * frame until the screen is touched. Invalidate it a few times while it settles so new content paints.
+     */
+    void kick() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final android.webkit.WebView w = getBridge().getWebView();
+        for (long d : new long[]{ 0, 120, 400, 1000, 2000 }) {
+            w.postDelayed(() -> { w.invalidate(); w.requestLayout(); getWindow().getDecorView().invalidate(); }, d);
+        }
     }
 
     /** "Share to KurokawaReader" arrives as SEND with a stream extra; hand it to the web side like an open-with. */

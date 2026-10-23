@@ -84,21 +84,57 @@ export async function openIncoming(file: File): Promise<void> {
   await importBooks([file]);
 }
 
+type KrDoc = {
+  readDocument?(o: { uri: string }): Promise<{ data: string; name?: string }>;
+  docInfo?(o: { uri: string }): Promise<{ name: string; size: number; persistable: boolean }>;
+  repaint?(): Promise<void>;
+};
+/** After the app is brought up by another app, make sure the new view actually paints. */
+function repaint(): void {
+  const k = (window.Capacitor?.Plugins as { Kurokawa?: KrDoc } | undefined)?.Kurokawa;
+  void k?.repaint?.().catch(() => undefined);
+  requestAnimationFrame(() => requestAnimationFrame(() => void k?.repaint?.().catch(() => undefined)));
+}
+
+let opening: string | null = null;
 async function handleUrl(url: string): Promise<void> {
   if (/^kurokawareader:/i.test(url)) { void import('./sync').then((m) => m.handleOAuthRedirect(url)).catch((e) => toast(String((e as Error).message ?? e), 'error')); return; }
   if (!/^(content|file):/i.test(url)) return;
-  const plugins = window.Capacitor?.Plugins as { Filesystem?: { readFile(o: { path: string }): Promise<{ data: string | Blob }> }; Kurokawa?: { readDocument?(o: { uri: string }): Promise<{ data: string; name?: string }> } } | undefined;
+  if (opening === url) return; // getLaunchUrl and appUrlOpen can both report the same file
+  opening = url; setTimeout(() => { if (opening === url) opening = null; }, 4000);
+  const plugins = window.Capacitor?.Plugins as { Filesystem?: { readFile(o: { path: string }): Promise<{ data: string | Blob }> }; Kurokawa?: KrDoc } | undefined;
+  const kr = plugins?.Kurokawa;
   const fs = plugins?.Filesystem;
+  toast(t('loading'), 'info', 60000);
+  repaint();
   try {
-    let blob: Blob; let name = '';
-    if (plugins?.Kurokawa?.readDocument) { const r = await plugins.Kurokawa.readDocument({ uri: url }); blob = base64ToBlob(r.data); name = r.name ?? ''; }
-    else if (fs) { const res = await fs.readFile({ path: url }); blob = typeof res.data === 'string' ? base64ToBlob(res.data) : res.data; }
-    else return;
+    let name = '';
+    let file: File | null = null;
+    // Already in the library (same name and size)? Open it straight away instead of importing it again.
+    const info = kr?.docInfo ? await kr.docInfo({ uri: url }).catch(() => null) : null;
+    if (info?.name) name = info.name;
+    if (info && info.size > 0 && name) {
+      const { db } = await import('./db');
+      const same = (await db.allBooks()).find((b) => b.fileName === name && b.size === info.size);
+      if (same) { navigate(`/read/${same.id}`); repaint(); return; }
+    }
     if (!name) name = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '');
     if (!name || !/\.[a-z0-9]{2,5}$/i.test(name)) name = (name || 'document') + '.bin';
-    await openIncoming(new File([blob], name));
+    if (kr?.docInfo || kr?.readDocument) {
+      file = await readContentUri(url, name);
+      // When the app may keep reading the file, link it like the importer does instead of copying it in.
+      if (info?.persistable && !FONT_EXT.test(name) && !/\.(json|zip)$/i.test(name)) (file as File & { krSource?: { uri: string } }).krSource = { uri: url };
+    } else if (fs) {
+      const res = await fs.readFile({ path: url });
+      file = new File([typeof res.data === 'string' ? base64ToBlob(res.data) : res.data], name);
+    }
+    if (!file) return;
+    await openIncoming(file);
+    repaint();
   } catch (err) {
     toast(t('openError', { error: String((err as Error)?.message ?? err) }), 'error', 5000);
+  } finally {
+    document.querySelectorAll('.toast').forEach((el) => { if (el.textContent === t('loading')) el.remove(); });
   }
 }
 
