@@ -6,6 +6,7 @@
 // rebuilt from geometry (right-to-left when the line is Arabic/Hebrew), paragraphs
 // from the spacing, headings from the font size — and the fonts the PDF embeds are
 // carried over, so an Arabic, Japanese or Chinese PDF keeps its look in the EPUB.
+import { joinLine, cleanPdfText } from './pdftext';
 import JSZip from 'jszip';
 import { db, type Book } from './db';
 import { flowHandlerFor } from './formats';
@@ -92,7 +93,8 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
       if (!('str' in it)) continue;
       const [a, b, , , e, f] = it.transform;
       const h = it.height || Math.hypot(a, b) || 10;
-      items.push({ str: it.str, x: e, y: f, w: it.width, h, font: it.fontName, eol: !!it.hasEOL });
+      const str = cleanPdfText(it.str);
+      items.push({ str: /^\u2009+$/.test(str) ? '\u2009' : str, x: e, y: f, w: it.width, h, font: it.fontName, eol: !!it.hasEOL });
       if (it.fontName && !fontFamilies.has(it.fontName)) {
         try {
           const fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) as { name?: string; data?: Uint8Array; mimetype?: string; loadedName?: string } : null;
@@ -106,21 +108,15 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
       }
     }
     // Lines by vertical position (PDF y grows upwards).
-    const sorted = items.filter((i) => i.str.trim() || i.eol).sort((a, b) => b.y - a.y || a.x - b.x);
+    const sorted = items.filter((i) => i.str.trim() || i.str === '\u2009' || i.eol).sort((a, b) => b.y - a.y || a.x - b.x);
     const lines: It[][] = [];
     for (const it of sorted) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - it.y) < Math.max(cur[0].h, it.h) * 0.5) cur.push(it); else lines.push([it]); }
     let prevBottom: number | null = null; let prevSize = 0; let buf = ''; let bufSize = 0; let bufFont: string | undefined; let bufRtl = false;
     const flush = () => { if (buf.trim()) { paragraphs.push({ text: buf.replace(/\s+/g, ' ').trim(), size: bufSize, rtl: bufRtl, family: bufFont, heading: false, page: p }); sizes.push(bufSize); } buf = ''; };
     for (const line of lines) {
-      const joined = line.map((i) => i.str).join('');
-      const rtl = (joined.match(/[֐-ࣿﭐ-﷿ﹰ-﻿]/g) ?? []).length > (joined.match(/[A-Za-zÀ-ɏ]/g) ?? []).length;
-      line.sort((a, b) => (rtl ? (b.x + b.w) - (a.x + a.w) : a.x - b.x));
-      let text = '';
-      for (let i = 0; i < line.length; i++) {
-        const it = line[i]; const prev = line[i - 1];
-        if (prev) { const gap = rtl ? prev.x - (it.x + it.w) : it.x - (prev.x + prev.w); if (gap > it.h * 0.15 && !text.endsWith(' ') && !it.str.startsWith(' ')) text += ' '; }
-        text += it.str;
-      }
+      const joinedLine = joinLine(line.map((i) => ({ text: i.str, l: i.x, r: i.x + i.w, h: i.h })));
+      const rtl = joinedLine.rtl;
+      let text = joinedLine.text;
       text = fixArabicLine(text.trim());
       if (!text) continue;
       const size = Math.max(...line.map((i) => i.h));

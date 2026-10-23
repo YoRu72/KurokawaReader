@@ -1,5 +1,6 @@
 // Floating toolbar that appears over selected text: Copy · Search · Define ·
 // Translate · Highlight · Speak.
+import { joinLine, cleanPdfText, type LinePiece } from '../pdftext';
 import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
@@ -38,7 +39,9 @@ export function selectionText(sel: Selection): string {
   const spans = Array.from(layer.querySelectorAll<HTMLElement>('.textLayer > span')).filter((el) => el.firstChild && range.intersectsNode(el));
   // Geometry decides the order: pieces are grouped into lines by their vertical position, and
   // within a line read right-to-left when the line is mostly Arabic/Hebrew, else left-to-right.
-  type Piece = { text: string; x: number; y: number; h: number };
+  // Pieces are joined by the gap between them (not with a space each): PDFs made by Word and the
+  // like cut Arabic with harakat into many small pieces, often one letter or one mark each.
+  type Piece = LinePiece & { y: number };
   const pieces: Piece[] = [];
   for (const el of spans) {
     const node = el.firstChild!;
@@ -46,21 +49,16 @@ export function selectionText(sel: Selection): string {
     if (node === range.startContainer && node === range.endContainer) text = text.slice(range.startOffset, range.endOffset);
     else if (node === range.startContainer) text = text.slice(range.startOffset);
     else if (node === range.endContainer) text = text.slice(0, range.endOffset);
-    if (!text.trim()) continue;
-    const r = el.getBoundingClientRect();
-    pieces.push({ text, x: r.left + r.width / 2, y: r.top + r.height / 2, h: r.height || 10 });
+    text = cleanPdfText(text);
+    if (/^\u2009+$/.test(text)) text = '\u2009'; // a real space the PDF draws (see scripts/patch-pdfjs.mjs)
+    else if (!text.trim()) continue;
+    const rc = el.getBoundingClientRect();
+    pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10 });
   }
   pieces.sort((a, b) => a.y - b.y);
   const lines: Piece[][] = [];
   for (const p of pieces) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
-  let out = '';
-  for (const line of lines) {
-    const joined = line.map((p) => p.text).join('');
-    const rtl = (joined.match(/[\u0590-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) ?? []).length > (joined.match(/[A-Za-z\u00C0-\u024F]/g) ?? []).length;
-    line.sort((a, b) => (rtl ? b.x - a.x : a.x - b.x));
-    out += line.map((p) => p.text.trim()).filter(Boolean).join(' ') + '\n';
-  }
-  out = out.trimEnd();
+  const out = lines.map((line) => joinLine(line).text).filter(Boolean).join('\n');
   return fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
 }
 

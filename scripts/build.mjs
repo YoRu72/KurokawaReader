@@ -38,8 +38,9 @@ async function copyStatic() {
   await fs.mkdir(path.join(dist, 'assets'), { recursive: true });
   await copyDir(path.join(root, 'public'), dist);
   // pdf.js worker must be a separate file loaded by the browser.
-  const worker = require.resolve('pdfjs-dist/legacy/build/pdf.worker.min.mjs');
-  await fs.copyFile(worker, path.join(dist, 'assets', 'pdf.worker.min.mjs'));
+  // Built from the readable worker with a small patch (ActualText in extracted text; see the script).
+  const { buildPdfWorker } = await import('./patch-pdfjs.mjs');
+  await buildPdfWorker(path.join(dist, 'assets', 'pdf.worker.min.mjs'));
   // pdf.js side resources: CMaps (CID fonts), standard fonts, image decoders (JPX/JBIG2 as WASM), ICC profiles.
   const pdfRoot = path.dirname(require.resolve('pdfjs-dist/package.json'));
   for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
