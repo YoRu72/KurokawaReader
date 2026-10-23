@@ -15,6 +15,26 @@ const [pdf, pageNo, shot] = [path.resolve(process.argv[2]), process.argv[3] || '
   await page.fill('.pdf-bar input[type=number]', pageNo); await page.press('.pdf-bar input[type=number]', 'Enter');
   await page.waitForTimeout(2500);
   const idx = +pageNo - 1;
+  if (process.env.DRAG) {
+    // DRAG="line,fromFrac,toFrac": press on a text line (index among the layer's lines) at a fraction of the page
+    // width and drag to another fraction, like a reader selecting with the mouse; print what Copy gives.
+    const [li, f0, f1] = process.env.DRAG.split(',').map(Number);
+    const box = await page.evaluate(([i, li]) => {
+      const pg = [...document.querySelectorAll('.pdf-page')].find((p) => p.dataset.page === String(i + 1));
+      const spans = [...pg.querySelectorAll('.textLayer > span')];
+      const tops = [...new Set(spans.map((s) => Math.round(s.getBoundingClientRect().top)))].sort((a, b) => a - b);
+      const r = pg.getBoundingClientRect(); const ln = spans.filter((s) => Math.abs(Math.round(s.getBoundingClientRect().top) - tops[li]) < 4);
+      const rr = ln[0].getBoundingClientRect();
+      return { x: r.left, w: r.width, y: rr.top + rr.height / 2 };
+    }, [idx, li]);
+    await page.mouse.move(box.x + box.w * f0, box.y); await page.mouse.down();
+    for (let k = 1; k <= 10; k++) await page.mouse.move(box.x + box.w * (f0 + (f1 - f0) * k / 10), box.y);
+    await page.mouse.up(); await page.waitForTimeout(600);
+    console.log('native:', await page.evaluate(() => getSelection().toString()));
+    const b = await page.$('button:has-text("Copy")'); if (b) { await b.click(); await page.waitForTimeout(300); console.log('copy:', await page.evaluate(() => navigator.clipboard.readText())); }
+    if (shot) await page.screenshot({ path: shot });
+    await browser.close(); server.close(); return;
+  }
   const text = await page.evaluate(async (i) => {
     const pages = [...document.querySelectorAll('.pdf-page')];
     const pg = pages.find((p) => p.dataset.page === String(i + 1)) || pages[i];

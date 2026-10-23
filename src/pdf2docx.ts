@@ -4,21 +4,26 @@
 // spacing and line pitch, runs with their font, size, weight and colour, two-column verse as a
 // borderless table, the running head in the page header, and footnotes as Word footnotes.
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
-import { rebuildFont, type GlyphUse } from './fontfix';
+import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
+import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
 import { loadPdfjs } from './formats/pdf';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
 
 type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
-type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; usage?: GlyphUse[][]; rebuilt?: boolean; spaceCode?: number };
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[] };
+type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[] };
+/** How the document uses its embedded fonts' glyphs: runs of glyphs along a line, cut where a word ends (each
+ *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
+type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>> };
+const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number };
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
-type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number };
+type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string };
 type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: number[] };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
 type Block = Para | Verse;
@@ -342,17 +347,19 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   let prev: Piece | null = null; let pendingSpace = false;
   // Word gaps of a stretched line are all wide: a tab is much wider than the line's usual gap.
   const gaps: number[] = [];
-  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim()) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
+  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim() || a.conn || b.conn) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
   const wideGap = gaps.length >= 3 ? median(gaps) * 2.5 : 0;
   const normalY = pieces.filter((p) => !p.sup && p.text.trim()).map((p) => p.y);
   const lineBase = normalY.length ? median(normalY) : null;
   for (const p of sorted) {
     if (p.text === '\u2009') { pendingSpace = true; continue; }
+    if (p.conn) { const pv = prev as Piece | null; if (pv) prev = { ...pv, l: Math.min(pv.l, p.l), r: Math.max(pv.r, p.r) }; continue; }
     if (!p.text.trim()) { pendingSpace = true; continue; }
     let space = pendingSpace;
     const gap = prev ? (rtlLine ? prev.l - p.r : p.l - prev.r) : 0;
     if (prev && !marked && gap > Math.min(prev.h, p.h) * 0.18) space = true;
-    if (COMBINING.test(p.text[0])) space = false;
+    // (A mark first in a piece stored in drawing order — "َأ" — is not a mark starting the piece.)
+    if (COMBINING.test(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text[0] ?? '')) space = false;
     // A wide gap inside a line (a section number and its title, a list label, columns of figures) is a
     // tab to where the next piece starts.
     // A drawn space before it means a stretched (justified) word gap instead.
@@ -427,8 +434,13 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     // Justified Arabic is stretched with tatweel glyphs that overlap in the PDF; the text keeps none of
     // them and Word stretches the lines itself (kashida justification), to the same width.
     // Only where the page stretched its lines with tatweel (Word-style); a page justified by widening spaces keeps that.
-    const kashida = align === 'both' && rtl && runs.some((r) => /\u0640/.test(r.text));
-    if (kashida) for (const r of runs) r.text = r.text.replace(/\u0640+/g, '');
+    // (A few tatweels in a page justified by its spaces — a legacy book's occasional stretch — are not that:
+    // Word's kashida justification would stretch every line with them.)
+    const allText = runs.map((r) => r.text).join('');
+    const stretches = (allText.match(/\u0640+/g) ?? []).length, words = allText.split(/\s+/).filter(Boolean).length;
+    const kashida = align === 'both' && rtl && stretches > 0 && stretches >= Math.max(1, words * 0.12);
+    if (!kashida && align === 'both' && rtl) for (const r of runs) r.text = r.text.replace(/\u0640+/g, '');
+    if (kashida) for (const r of runs) { if (r.text.includes('\u0640')) r.kText = r.text; r.text = r.text.replace(/\u0640+/g, ''); }
     const tabX = runs.filter((r) => r.tab !== undefined).map((r) => r.tab!);
     let tabs: number[] | undefined;
     if (tabX.length) {
@@ -584,7 +596,101 @@ function subLine(l: Line, pieces: Piece[]): Line {
   return { pieces, base: l.base, size: l.size, l: Math.min(...pieces.map((p) => p.l)), r: Math.max(...pieces.map((p) => p.r)), rtl: isRtlText(pieces.map((p) => p.text).join('')) };
 }
 
-async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean): Promise<PageModel> {
+/** Rebuild the embedded fonts from their glyphs and how the document uses them (see fontfix.ts). Fonts
+ *  that are one face (same family and style: subsets of one font) or that share words (legacy Arabic fonts
+ *  holding different letter forms) become one font. Returns family renames for the runs. */
+function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched: Set<string>): Map<string, string> {
+  const alias = new Map<string, string>();
+  const parent = new Map<string, string>();
+  const find = (k: string): string => { let r = k; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(k, r); return r; };
+  const union = (a: string, b: string) => { const x = find(a), y = find(b); if (x !== y) parent.set(y, x); };
+  const used = [...fonts].filter(([, f]) => f.uses && f.src);
+  for (const [k] of used) parent.set(k, k);
+  const byFace = new Map<string, string>();
+  for (const [k, f] of used) { const key = `${f.family}|${f.bold}|${f.italic}`; const o = byFace.get(key); if (o) union(o, k); else byFace.set(key, k); }
+  // Legacy fonts are one font when they meet inside words often (a bold face meets the regular one only now
+  // and then, where a phrase in bold runs into its quote mark).
+  const meet = new Map<string, number>();
+  for (const seq of store.seqs) for (let i = 1; i < seq.length; i++) {
+    const a = seq[i - 1][0], b = seq[i][0];
+    if (a !== b && parent.has(a) && parent.has(b) && fonts.get(a)!.legacy && fonts.get(b)!.legacy) { const k = a < b ? `${a}\n${b}` : `${b}\n${a}`; meet.set(k, (meet.get(k) ?? 0) + 1); }
+  }
+  const most = new Map<string, number>();
+  for (const [k, n] of meet) for (const f of k.split('\n')) most.set(f, Math.max(most.get(f) ?? 0, n));
+  for (const [k, n] of meet) {
+    const [a, b] = k.split('\n');
+    if (n >= 3 && n >= most.get(a)! * 0.2 && n >= most.get(b)! * 0.2) union(a, b);
+  }
+  const groups = new Map<string, string[]>();
+  for (const [k] of used) { const r = find(k); (groups.get(r) ?? groups.set(r, []).get(r)!).push(k); }
+  const debug = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
+  for (const keys of groups.values()) {
+    keys.sort((a, b) => (fonts.get(b)!.uses ?? 0) - (fonts.get(a)!.uses ?? 0));
+    const lead = fonts.get(keys[0])!;
+    // A complete TrueType font with a Unicode map is carried as it is.
+    let own = 0; try { own = keys.length === 1 && lead.raw && !lead.legacy ? cmapCoverage(lead.raw).size : 0; } catch { /* unreadable */ }
+    if (own > 0) continue;
+    const sources: GlyphSource[] = []; const c2g: Map<number, number>[] = []; const idx = new Map<string, number>();
+    for (const k of keys) {
+      const f = fonts.get(k)!; const sf = readSfnt(f.src!.data); if (!sf) continue;
+      try {
+        const r = glyphReader(sf); const vm = verticalMetrics(sf); const cm = cmapGlyphs(sf);
+        const m = new Map<number, number>();
+        for (const [code, fc] of Object.entries(f.src!.toFontChar)) { const g = cm.get(fc); if (g) m.set(+code, g); }
+        idx.set(k, sources.length); sources.push({ outline: r.outline, upem: r.upem, asc: vm?.asc, desc: vm?.desc }); c2g.push(m);
+      } catch (e) { if (debug) console.warn('P2D font read failed', f.family, e); }
+    }
+    if (!sources.length) continue;
+    const member = new Set(keys);
+    const lines: Use[][] = [];
+    for (const seq of store.seqs) {
+      let cur: Use[] = [];
+      const push = (x: Use[]) => lines.push(Object.assign(x, { rtl: seq.rtl }));
+      for (const [font, u] of seq) {
+        const i = member.has(font) ? idx.get(font) : undefined;
+        if (i === undefined) { if (cur.length) push(cur); cur = []; continue; }
+        const g = c2g[i].get(u[0]); if (!g) continue;
+        cur.push([i * 65536 + g, u[1], u[2], u[3], u[4], u[5], u[6]]);
+      }
+      if (cur.length) push(cur);
+    }
+    // The space code's glyph, when it is a blank one (a legacy font's "space" may be a letter).
+    let sp = !lead.legacy && lead.spaceCode !== undefined && idx.has(keys[0]) ? c2g[idx.get(keys[0])!].get(lead.spaceCode) : undefined;
+    if (sp !== undefined) { try { if (sources[idx.get(keys[0])!].outline(sp).contours.length) sp = undefined; } catch { sp = undefined; } }
+    let built: Uint8Array | null = null;
+    try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, tatweel: keys.some((k) => stretched.has(fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
+    if (debug) console.warn('P2D rebuilt', lead.family, keys.map((k) => fonts.get(k)!.family).join('+'), lines.length, built?.length);
+    if (!built) continue;
+    lead.raw = built; lead.cov = undefined; lead.rebuilt = true; lead.noUnicode = false;
+    for (const k of keys.slice(1)) { const f = fonts.get(k)!; if (f.family !== lead.family) alias.set(f.family, lead.family); f.raw = undefined; }
+  }
+  return alias;
+}
+
+/** A space as wide as the commonest gap between words (em), when the PDF draws none. */
+function spaceFromGaps(gaps: number[]): number {
+  if (gaps.length < 3) return 0.25;
+  const s = [...gaps].sort((a, b) => a - b);
+  return Math.min(0.5, Math.max(0.2, s[Math.floor(s.length * 0.25)]));
+}
+
+/** Runs set in fonts merged into another take its name, and runs that now match are joined (Arabic joins only
+ *  within a run). */
+function renameRuns(pg: PageModel, alias: Map<string, string>) {
+  const fix = (runs: Run[]) => {
+    for (const r of runs) r.font = alias.get(r.font) ?? r.font;
+    for (let i = runs.length - 1; i > 0; i--) {
+      const a = runs[i - 1], b = runs[i];
+      if (a.font === b.font && a.size === b.size && a.bold === b.bold && a.italic === b.italic && a.color === b.color && a.sup === b.sup && a.rtl === b.rtl && a.raise === b.raise
+        && a.note === undefined && b.note === undefined && !a.br && !b.br && b.tab === undefined) { a.text += b.text; runs.splice(i, 1); }
+    }
+  };
+  const block = (b: Block) => { if (b.kind === 'p') fix(b.runs); else for (const row of b.rows) for (const cell of row) fix(cell); };
+  for (const b of [...pg.body, ...pg.header, ...pg.footer, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) block(b);
+  for (const f of pg.furniture) fix(f.runs);
+}
+
+async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: [], seen: new Map() }): Promise<PageModel> {
   const [, , W, H] = page.view;
   const ol = await page.getOperatorList();
   const tc = await page.getTextContent();
@@ -594,15 +700,23 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     if (typeof it.str !== 'string') continue;
     let text = cleanPdfText(it.str);
     if (/^\u2009+$/.test(text)) text = '\u2009'; else if (!text.trim()) continue;
+    // A legacy font's kashida connector (a sliver joining two letter forms, several on a stretched line) is
+    // no letter: the rebuilt font joins the letters itself, and Word stretches lines its own way. It still
+    // tells that the letters on either side are one word.
+    const conn = /^\u0640+$/.test(text) && it.width < (it.height || 10) * 0.12;
     const [a, b, , , e, f] = it.transform;
     const h = it.height || Math.hypot(a, b) || 10;
     // Fill+stroke "bold": Word's own synthetic bold strokes about 1/35 em; a much thinner stroke is
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
-    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014 });
+    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}) });
     if (it.fontName && !fonts.has(it.fontName)) {
-      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number } | null = null;
+      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
-      const info: FontInfo = { ...parseFontName(fo?.name, fo), raw: fo?.krRaw, noUnicode: !!fo?.krNoToUnicode, symbolic: !!fo?.isSymbolicFont, serif: !!fo?.isSerifFont, mono: !!fo?.isMonospace, spaceCode: fo?.krSpaceCode };
+      const info: FontInfo = { ...parseFontName(fo?.name, fo), raw: fo?.krRaw, noUnicode: !!fo?.krNoToUnicode, symbolic: !!fo?.isSymbolicFont, serif: !!fo?.isSerifFont, mono: !!fo?.isMonospace, spaceCode: fo?.krSpaceCode, legacy: !!fo?.krLegacy, src: fo?.data && fo.toFontChar ? { data: fo.data, toFontChar: fo.toFontChar } : undefined };
+      // Word carries TrueType outlines only: a CFF-flavoured OpenType file is rebuilt, never embedded as is.
+      if (info.raw && info.raw[0] === 0x4f) info.raw = undefined;
+      // The width of its space (em), for a rebuilt font whose space glyph pdf.js dropped.
+      { const sc = fo?.krSpaceCode ?? 32; const w = fo?.widths?.[sc]; if (w) info.spaceW = w * (fo?.fontMatrix?.[0] ?? 0.001); }
       // The font file says whether it is a bold (or italic) face.
       const os2 = fo?.krRaw ? readOs2(fo.krRaw) : null;
       if (os2) { info.weight = os2.weight; if (os2.weight >= 600 || os2.bold) info.bold = true; if (os2.italic) info.italic = true; }
@@ -612,6 +726,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       else if (!/\s/.test(info.family)) info.family = info.family.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D fontname', fo?.name, '→', info.family, '| own:', own);
       fonts.set(it.fontName, info);
+      if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) { const x = fo as unknown as { data?: Uint8Array; type?: string; subtype?: string; toFontChar?: Record<string, number>; mimetype?: string; composite?: boolean }; console.warn('P2D fontdata', info.family, x?.type, x?.subtype, x?.mimetype, x?.composite, x?.data?.length, x?.data ? String.fromCharCode(...x.data.subarray(0, 4)).replace(/[^\x20-\x7e]/g, '.') : '', JSON.stringify(Object.entries(x?.toFontChar ?? {}).slice(0, 5))); }
     }
     // (The glyphs of one /ActualText span are one cluster: its letter and that letter's marks.)
     if (it.krCodes) { const k = it.krCodes; const g = it.krSpan ? ++spanSeq : 0; const seq: GlyphUse[] = []; for (let i = 0; i + 5 < k.length; i += 6) seq.push([k[i] as number, k[i + 1] as string, k[i + 2] as number, k[i + 3] as number, k[i + 4] as number, k[i + 5] as number, g]); pieces[pieces.length - 1].codes = seq; }
@@ -633,18 +748,39 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     keepFonts.add(p.font); pieces.splice(i, 1);
   }
   const lines = buildLines(attachMarks(pieces).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
-  // How a subset font without a Unicode map is used: its glyphs along each line, in drawing order, cut
-  // where a word ends (a gap, a space, another font) so each glyph's joining form can be told.
+  // How embedded fonts are used: their glyphs along each line, in drawing order, cut where a word ends (a gap,
+  // a space) so each glyph's joining form can be told.
   for (const l of lines) {
-    let seq: GlyphUse[] = []; let font = ''; let prevR = -Infinity;
-    const flush = () => { const fi = fonts.get(font); if (seq.length && fi && (fi.usage ??= []).length < 30000) fi.usage.push(seq); seq = []; };
+    let seq: [string, GlyphUse][] = []; let prevR = -Infinity;
+    const flush = () => {
+      if (!seq.length) return;
+      let keep = false;
+      for (const [font, u] of seq) {
+        const fi = fonts.get(font); if (!fi) continue;
+        const seen = store.seen.get(font) ?? store.seen.set(font, new Set()).get(font)!;
+        if ((fi.uses ?? 0) < USE_CAP || !seen.has(u[0])) keep = true;
+      }
+      if (keep) for (const [font, u] of seq) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); }
+      if (keep) store.seqs.push(Object.assign(seq, { rtl: l.rtl }));
+      seq = [];
+    };
     for (const p of [...l.pieces].sort((a, b) => a.l - b.l)) {
       if (!p.codes) { if (p.text === '\u2009' || p.l - prevR > 0.5) flush(); prevR = Math.max(prevR, p.r); continue; }
-      if (p.font !== font || p.l - prevR > p.h * 0.12) flush();
-      font = p.font; seq.push(...p.codes); prevR = Math.max(prevR, p.r);
+      if (p.l - prevR > p.h * 0.12) flush();
+      // Words inside one piece (a PDF that draws no spaces) are cut where the glyphs leave a gap; the gaps
+      // tell how wide the font's space is when the PDF has none.
+      let end = NaN;
+      for (const c of p.codes) {
+        const gap = (c[2] - end) / c[4];
+        if (gap > 0.12) { flush(); if (gap < 1) { const fi = fonts.get(p.font); if (fi && (fi.gaps ??= []).length < 400) fi.gaps.push(gap); } }
+        seq.push([p.font, c]);
+        if (c[5] > 0) end = c[2] + c[5] * c[4];
+      }
+      prevR = Math.max(prevR, p.r);
     }
     flush();
   }
+  if ((globalThis as { krDebugLine?: string }).krDebugLine) for (const l of lines) if (l.pieces.some((p) => p.text.includes((globalThis as { krDebugLine?: string }).krDebugLine!))) console.warn('P2D line', JSON.stringify(l.pieces.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), p.font])));
   const textLines = lines.filter((l) => l.pieces.some((p) => p.text.trim() && p.text !== '\u2009'));
   // Typical baseline-to-baseline pitch for a given size, measured on this page.
   const pitchOf = pitchTable([textLines]);
@@ -826,15 +962,33 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), password, fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` } as Parameters<typeof pdfjs.getDocument>[0]);
   let doc; try { doc = await task.promise; } catch (e) { if ((e as Error).name === 'PasswordException') throw new Error('password'); throw e; }
   const fonts = new Map<string, FontInfo>();
+  const store: UseStore = { seqs: [], seen: new Map() };
   const pages: PageModel[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     progress('pdfPage', Math.round((p / doc.numPages) * 80));
     const page = await doc.getPage(p);
-    pages.push(await analysePage(pdfjs, page, fonts, true));
+    pages.push(await analysePage(pdfjs, page, fonts, true, store));
     if (p % 8 === 0) await new Promise((r) => setTimeout(r, 0));
   }
   await task.destroy();
   progress('build', 85);
+
+  // The PDF's embedded fonts, rebuilt as TrueType fonts Word can carry (subsets of one face merged, and the
+  // several fonts a legacy Arabic book spreads its letter forms over made one), then runs renamed to them.
+  // Fonts whose text Word stretches with kashidas (verses, tatweel-justified paragraphs, tatweels kept in the
+  // text) keep their tatweel; the others lose it, or LibreOffice would stretch every justified line with it.
+  const stretched = new Set<string>();
+  for (const pg of pages) for (const b of [...pg.body, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) {
+    if (b.kind === 'verse') { for (const row of b.rows) for (const cell of row) for (const r of cell) stretched.add(r.font); }
+    else for (const r of b.runs) if (b.kashida || r.text.includes('\u0640')) stretched.add(r.font);
+  }
+  const alias = buildDocFonts(fonts, store, stretched);
+  // In a font rebuilt from the PDF's own glyphs, the page's own tatweels give its lines exactly their width:
+  // they stay, and Word adds none.
+  const exact = new Set([...fonts.values()].filter((f) => f.rebuilt && f.raw).map((f) => f.family));
+  for (const [a, b] of alias) if (exact.has(b)) exact.add(a);
+  store.seqs = [];
+  if (alias.size) for (const pg of pages) renameRuns(pg, alias);
 
   const docx = await import('docx');
   const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak } = docx;
@@ -863,7 +1017,9 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const r = b.runs?.find((x) => x.text.trim()); const half = Math.max(2, Math.round((r?.size ?? b.size) * 2));
     return r ? { font: { ascii: r.font, hAnsi: r.font, cs: r.font, eastAsia: r.font }, size: half, sizeComplexScript: half, rightToLeft: b.rtl || undefined } : { size: half, sizeComplexScript: half, rightToLeft: b.rtl || undefined };
   };
-  const paraFor = (b: Para, footnotes: Map<number, number> | null, extra: { before?: number; colBreak?: boolean } = {}) => new Paragraph({
+  // A stretched paragraph set in a rebuilt font keeps the page's tatweels and is justified by its spaces.
+  const ownStretch = (b: Para): Para => (b.kashida && b.runs.every((r) => !r.text.trim() || exact.has(r.font)) ? { ...b, kashida: false, runs: b.runs.map((r) => (r.kText ? { ...r, text: r.kText } : r)) } : b);
+  const paraFor = (b0: Para, footnotes: Map<number, number> | null, extra: { before?: number; colBreak?: boolean } = {}) => { const b = ownStretch(b0); return new Paragraph({
     bidirectional: b.rtl,
     run: markRun(b),
     widowControl: false,
@@ -872,7 +1028,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: LineRuleType.EXACT },
     tabStops: b.tabs?.map((t) => ({ type: TabStopType.LEFT, position: Math.round(t * PT) })),
     children: [...(extra.colBreak ? [new ColumnBreak()] : []), ...b.runs.map((r) => runFor(r, footnotes))],
-  });
+  }); };
   const none = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
   const verseFor = (v: Verse, footnotes: Map<number, number> | null) => {
     const cols = v.rows[0].length;
@@ -896,10 +1052,11 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
           children: [new Paragraph({
             bidirectional: v.rtl,
             // Each half-line fills its cell the way the book stretches it (Word adds the kashidas).
+            // (In a rebuilt font the half-line keeps the page's own tatweels, which give it its width.)
             alignment: cols === 3 && c === 1 ? AlignmentType.CENTER : AlignmentType.DISTRIBUTE,
             widowControl: false,
             spacing: { before: i === 0 ? Math.round(v.before * PT) : 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
-            children: runs.map((r) => runFor({ ...r, text: r.text.replace(/\u0640+/g, '') }, footnotes)),
+            children: runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: r.text.replace(/\u0640+/g, '') }, footnotes)),
           })],
         })),
       })),
@@ -1025,14 +1182,6 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     if (!f.raw) continue;
     const face = faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic);
     const used = usedChars.get(`${f.family}|${face}`); if (!used?.size) continue;
-    // A subset font with no Unicode map gets one (and Arabic shaping) from how the PDF uses its glyphs.
-    if (f.usage?.length && !f.rebuilt) {
-      f.rebuilt = true;
-      if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D usage', f.family, JSON.stringify(f.usage.slice(0, 3000).map((l) => l.map(([c, t, x, y, em, w, g]) => [c, t, +x.toFixed(2), +y.toFixed(2), +em.toFixed(2), +w.toFixed(3), g]))));
-      const fixed = (() => { try { return rebuildFont(f.raw!, f.usage!, f.spaceCode); } catch (e) { console.warn('P2D font rebuild failed', f.family, e); return null; } })();
-      if (fixed) { f.raw = fixed; f.cov = undefined; }
-      f.usage = undefined;
-    }
     const cov = (f.cov ??= cmapCoverage(f.raw));
     let ok = 0, total = 0;
     for (const c of used) { if (c <= 0x20 || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }

@@ -15,6 +15,8 @@
  *  - an OS/2 table when there is none (Word needs it to embed the font).
  */
 
+import { readSfnt, glyphReader, verticalMetrics, writeTrueType, type Outline } from './fontbuild';
+
 type Tables = Map<string, Uint8Array>;
 
 function readTables(b: Uint8Array): Tables | null {
@@ -88,34 +90,65 @@ const ccc = (c: number) => ({ 0x64b: 27, 0x64c: 28, 0x64d: 29, 0x64e: 30, 0x64f:
 const norm = (s: string) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s);
 const isMark = (c: number) => joining(c) === 'T';
 
-export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: number): Uint8Array | null {
-  const t = readTables(raw); if (!t || t.has('GSUB') || !t.has('cmap')) return null;
+/** One use of a glyph (by its number across all sources: source × 65536 + glyph) along a line. */
+/** A run of uses; `rtl` is the direction of the line it was found on. */
+type RtlLine = Use[] & { rtl?: boolean };
+export type Use = [gid: number, text: string, x: number, y: number, em: number, width: number, span?: number];
+/** Where glyph outlines come from (a font of the PDF, read through pdf.js's copy of it). */
+export type GlyphSource = { outline(gid: number): Outline; upem: number; asc?: number; desc?: number };
+
+/** The old entry point: a TrueType subset with codes looked up in its own (symbol) cmap. */
+export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: number, family = 'Font', bold = false, italic = false): Uint8Array | null {
+  const t = readTables(raw); if (!t || !t.has('cmap')) return null;
   const c2g = codeToGid(t.get('cmap')!);
   if (!c2g.size) return null;
-  const maxp = t.get('maxp')!; let numGlyphs = dvOf(maxp).getUint16(4);
-  const upem = dvOf(t.get('head')!).getUint16(18) || 1000;
+  const sf = readSfnt(raw); if (!sf) return null;
+  const r = glyphReader(sf); const vm = verticalMetrics(sf);
+  const uses = lines.map((l) => l.map(([code, text, x, y, em, w, sp]) => [c2g.get(code) ?? 0, text, x, y, em, w, sp] as Use));
+  return buildFont([{ outline: r.outline, upem: r.upem, asc: vm?.asc, desc: vm?.desc }], uses, { family, bold, italic }, spaceCode !== undefined ? c2g.get(spaceCode) : undefined);
+}
 
+const ADDED = 0x7fff0000;
+const CLONE = 0x7ff00000; // copies of a glyph that stands for two marks // ids of the empty glyphs made for characters with no glyph of their own
+
+/**
+ * A TrueType font for Word, built from the glyphs a document uses: cmap, Arabic shaping (forms, ligatures in
+ * the PDF's priority, contextual variants), marks where the PDF put them — learnt from the uses — and the
+ * glyphs' own outlines from their sources (several fonts can be merged into one: a legacy book's letter forms
+ * live in several PDF fonts, and Word joins Arabic letters only within one font).
+ */
+export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family: string; bold?: boolean; italic?: boolean; space?: number; tatweel?: boolean }, spaceGid?: number): Uint8Array | null {
+  if (!sources.length) return null;
+  const upem = sources.length === 1 ? sources[0].upem : 1000;
+  // A glyph read as a space is a word break, not the font's space (a legacy font may file a letter under the
+  // space code); the space comes from spaceGid or meta.space.
+  lines = lines.flatMap((l) => { const out: Use[][] = [[]]; for (const u of l) { if (u[1] && !u[1].trim()) out.push([]); else out[out.length - 1].push(u); } return out.filter((x) => x.length).map((x) => Object.assign(x, { rtl: (l as RtlLine).rtl })); });
   const tally = <K>(m: Map<K, Map<number, number>>, k: K, g: number) => { let x = m.get(k); if (!x) m.set(k, x = new Map()); x.set(g, (x.get(g) ?? 0) + 1); };
   const top = (x: Map<number, number>) => [...x.entries()].sort((a, b) => b[1] - a[1])[0][0];
   const letterForm = new Map<string, Map<number, number>>(); // `${char}|${form}` → glyph uses
   const markGlyph = new Map<number, Map<number, number>>(); // mark char → glyph uses
   const markGuess = new Map<number, Map<number, number>>();
-  const streams: { stream: { c: number; form: Form }[]; occ: { key: string; at: number; len: number }[] }[] = [];
+  const streams: { stream: { c: number; form: Form }[]; occ: { key: string; at: number; len: number }[]; inLig: Set<number> }[] = [];
   const ctxNext = new Map<string, Map<number, number>>(), ctxPrev = new Map<string, Map<number, number>>();
+  const ctxNextF = new Map<string, Map<number, number>>(), ctxPrevF = new Map<string, Map<number, number>>();
   const plain = new Map<number, Map<number, number>>(); // non-joining char → glyph uses
   const ligs = new Map<string, { comps: { c: number; form: Form }[]; gid: number; across?: boolean }>(); // letters only
+  const ligCount = new Map<string, number>();
   const absorbed = new Map<string, { c: number; form: Form; marks: number[]; gid: number }>(); // a letter drawn with its marks
   const markLigs = new Map<string, { marks: number[]; gid: number }>(); // several marks drawn as one glyph
   const offsets = new Map<string, [number, number][]>(); // `${base}|${mark}` → mark origin − base origin (font units)
   const markGids = new Set<number>(), ligGids = new Set<number>();
   const seen = new Set<number>();
+  const allGids = new Set<number>();
+  const checks: { text: string; bases: number[]; rtl: boolean }[] | null = (globalThis as { krDebugP2D?: boolean }).krDebugP2D ? [] : null;
 
   for (const line of lines) {
     // Clusters: each spacing glyph with the zero-width glyphs (its marks) drawn over it.
     type Cl = { gid: number; cps: number[]; marks: number[]; x: number; y: number; em: number; adv: number; mpos: [number, number][]; bad?: boolean; span?: number };
     const cls: Cl[] = []; const loose: { gid: number; x: number; y: number; cps: number[]; span?: number }[] = [];
-    for (const [code, text, x, y, em, w, span] of line) {
-      const gid = c2g.get(code) ?? 0; if (!gid) continue;
+    for (const [gid, text, x, y, em, w, span] of line) {
+      if (!gid) continue;
+      allGids.add(gid);
       // (A code with no real text comes as a control or private-use character.)
       const cps = [...norm(text)].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd);
       if (text === '\uffff') { cls.push({ gid, cps: [], marks: [], x, y, em, adv: w * em, mpos: [], bad: true }); continue; }
@@ -135,11 +168,23 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
     cls.sort((a, b) => a.x - b.x || b.adv - a.adv);
     const rtl = cls.filter((e) => e.cps.some((c) => c >= 0x600 && c <= 0x6ff)).length > cls.length / 2;
     if (rtl) cls.reverse();
+    // (For checking the font against the PDF: each word's text and the letter glyphs the PDF drew for it.)
+    if (checks && checks.length < 3000 && cls.length && !cls.some((e) => e.bad || !e.cps.length)) checks.push({ text: String.fromCodePoint(...cls.flatMap((e) => e.cps)), bases: cls.filter((e) => e.em > 0).map((e) => e.gid), rtl: (line as RtlLine).rtl ?? rtl });
+    // Brackets and quotes on their own take the direction of the line they stand in.
+    const mirror = cls.some((e) => e.cps.some((c) => joining(c) !== 'U' || /\p{L}/u.test(String.fromCodePoint(c)))) ? rtl : (line as RtlLine).rtl ?? rtl;
     const stream: { c: number; form: Form }[] = []; const occ: { key: string; at: number; len: number }[] = [];
-    streams.push({ stream, occ });
+    const inLig = new Set<number>();
+    streams.push({ stream, occ, inLig });
     const letters = (e: Cl) => (e.bad || !e.cps.length ? [0x20] : e.cps.filter((c) => !isMark(c)));
     const firstJ = (e: Cl) => { const n = letters(e); return n.length ? joining(n[0]) : 'T'; };
     const lastJ = (e: Cl) => { const n = letters(e); return n.length ? joining(n[n.length - 1]) : 'T'; };
+    // The joining form of cluster i's (first or last) letter.
+    const formAt = (i: number): Form => {
+      const e = cls[i];
+      let p = i - 1; while (p >= 0 && firstJ(cls[p]) === 'T') p--;
+      let q = i + 1; while (q < cls.length && firstJ(cls[q]) === 'T') q++;
+      return formOf(p >= 0 && lastJ(cls[p]) === 'D' && (firstJ(e) === 'D' || firstJ(e) === 'R'), q < cls.length && lastJ(e) === 'D' && (firstJ(cls[q]) === 'D' || firstJ(cls[q]) === 'R'));
+    };
     for (let i = 0; i < cls.length; i++) {
       const e = cls[i];
       if (e.bad || !e.cps.length) { stream.push({ c: 0, form: 'isol' }); continue; }
@@ -150,7 +195,9 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
         e.marks.forEach((g, k) => {
           markGids.add(g); if (!(e.em > 0)) return;
           const off: [number, number] = [(e.mpos[k][0] - e.x) / e.em * upem, (e.mpos[k][1] - e.y) / e.em * upem];
-          for (const key of [`${base}|${g}`, ...(letterKey ? [`L${letterKey}|${g}`] : [])]) { const list = offsets.get(key) ?? []; list.push(off); offsets.set(key, list); }
+          // (which mark it is: a legacy font draws fatha and kasra with one stroke, above or below)
+          const ch = e.marks.length === marks.length ? marks[k] : 0;
+          for (const key of [`${base}|${g}|${ch}`, ...(letterKey ? [`L${letterKey}|${g}|${ch}`] : [])]) { const list = offsets.get(key) ?? []; list.push(off); offsets.set(key, list); }
         });
         // One mark, one glyph: that is its glyph; with several, the order is only a guess (used when nothing better).
         if (e.marks.length === 1 && marks.length === 1) tally(markGlyph, marks[0], e.marks[0]);
@@ -171,7 +218,7 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
         const c = lets[0];
         // A bracket in right-to-left text is drawn mirrored: its glyph has the other bracket's shape (the
         // shaper mirrors it back).
-        if (joining(c) === 'U') { if (!marks.length) tally(plain, rtl ? MIRROR[c] ?? c : c, e.gid); markPart(e.gid); stream.push({ c: 0, form: 'isol' }); continue; }
+        if (joining(c) === 'U') { if (!marks.length) tally(plain, mirror ? MIRROR[c] ?? c : c, e.gid); markPart(e.gid); stream.push({ c: 0, form: 'isol' }); continue; }
         stream.push({ c, form });
         if (marks.length && !e.marks.length) absorbed.set(`${c}|${form}|${marks.join(',')}`, { c, form, marks, gid: e.gid }); // the glyph draws the marks
         else {
@@ -181,6 +228,9 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
           const nb = (k: number, last: boolean) => { if (k < 0 || k >= cls.length) return 0; const l = letters(cls[k]); const x = last ? l[l.length - 1] : l[0]; return x && joining(x) !== 'U' ? x : 0; };
           const nl = nb(q, false), pl = nb(p, true);
           tally(ctxNext, `${c}|${form}|${nl}`, e.gid); tally(ctxPrev, `${c}|${form}|${pl}`, e.gid);
+          // (and the form that neighbour takes: a letter before a medial yeh is often drawn unlike one before a final yeh)
+          if (nl && letters(cls[q]).length === 1) tally(ctxNextF, `${c}|${form}|${nl}|${formAt(q)}`, e.gid);
+          if (pl && letters(cls[p]).length === 1) tally(ctxPrevF, `${c}|${form}|${pl}|${formAt(p)}`, e.gid);
         }
         continue;
       }
@@ -194,16 +244,40 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
       });
       const lkey = `${lets.join(',')}|${comps.map((x) => x.form).join(',')}`;
       // Marks between its letters: the ligature also forms across them (otherwise marks keep the letters apart).
-      const across = e.cps.some((c, k) => isMark(c) && k > 0 && k < e.cps.length - 1 && e.cps.slice(k).some((x) => !isMark(x)));
+      // (Lam-alef always does: a shaper's lam-alef is a required ligature that never lets a haraka part them —
+      // لَا, الْإِ.)
+      const across = lets.some((c, k) => c === 0x644 && [0x622, 0x623, 0x625, 0x627, 0x671, 0x672, 0x673, 0x675].includes(lets[k + 1]))
+        || e.cps.some((c, k) => isMark(c) && k > 0 && k < e.cps.length - 1 && e.cps.slice(k).some((x) => !isMark(x)));
       ligs.set(lkey, { comps, gid: e.gid, across: across || ligs.get(lkey)?.across });
+      ligCount.set(lkey, (ligCount.get(lkey) ?? 0) + 1);
+      for (let k = 0; k < comps.length; k++) inLig.add(stream.length + k);
       if (occ.length < 4000) occ.push({ key: lkey, at: stream.length, len: comps.length });
       stream.push(...comps);
       markPart(e.gid);
     }
   }
 
+  // A ligature the PDF uses only now and then (a stretched one setting a justified line, while the same letters
+  // are drawn apart everywhere else) is not how the font writes those letters.
+  {
+    const byFirst = new Map<string, string[]>();
+    for (const [k, l] of ligs) { const f = `${l.comps[0].c}|${l.comps[0].form}`; (byFirst.get(f) ?? byFirst.set(f, []).get(f)!).push(k); }
+    const apart = new Map<string, number>();
+    for (const { stream, inLig } of streams) for (let i = 0; i < stream.length; i++) {
+      if (inLig.has(i)) continue;
+      for (const key of byFirst.get(`${stream[i].c}|${stream[i].form}`) ?? []) {
+        const comps = ligs.get(key)!.comps; let ok = true;
+        for (let k = 0; k < comps.length && ok; k++) { const x = stream[i + k]; ok = !!x && !inLig.has(i + k) && x.c === comps[k].c && x.form === comps[k].form; }
+        if (ok) apart.set(key, (apart.get(key) ?? 0) + 1);
+      }
+    }
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D ligs', meta.family, JSON.stringify([...ligs].map(([k, l]) => [k.split('|')[0].split(',').map((c) => String.fromCodePoint(+c)).join(''), k.split('|')[1], l.gid % 65536, ligCount.get(k), apart.get(k) ?? 0])));
+    for (const k of [...ligs.keys()]) if ((apart.get(k) ?? 0) > (ligCount.get(k) ?? 0)) ligs.delete(k);
+  }
+
   // Each (letter, form) → its most used glyph; each character's nominal glyph (what the cmap gives).
   const formGlyph = new Map<number, Partial<Record<Form, number>>>();
+  const cands = new Map<string, [number, number][]>();
   // The usual glyph of a letter in a form is the one drawn beside the most different neighbours (a variant
   // used only before, say, a noon is the exception, even when that pair is frequent).
   const groups = (ctx: Map<string, Map<number, number>>, c: number, f: Form) => [...ctx.entries()].filter(([k]) => k.startsWith(`${c}|${f}|`)).map(([k, uses]) => ({ other: +k.split('|')[2], uses }));
@@ -213,17 +287,38 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
     for (const g of groups(side, +c, f as Form)) { const t = top(g.uses); score.set(t, (score.get(t) ?? 0) + 1); }
     const all = [...uses.entries()].sort((a, b) => (score.get(b[0]) ?? 0) - (score.get(a[0]) ?? 0) || b[1] - a[1]);
     const m = formGlyph.get(+c) ?? {}; m[f as Form] = all[0][0]; formGlyph.set(+c, m);
+    cands.set(k, all);
+  }
+  // One glyph cannot be a letter's form both joined on the left and not (medial and final, initial and
+  // isolated): a word cut short in the PDF makes a medial letter look final. The form that uses it less
+  // takes its next glyph (or none: the shaper then shows the letter's plain glyph).
+  for (const [c, m] of formGlyph) {
+    for (const [x, y] of [['fina', 'medi'], ['fina', 'init'], ['isol', 'medi'], ['isol', 'init']] as [Form, Form][]) {
+      if (m[x] === undefined || m[x] !== m[y]) continue;
+      const g = m[x]!; const n = (f: Form) => letterForm.get(`${c}|${f}`)?.get(g) ?? 0;
+      const lose: Form = n(x) >= n(y) ? y : x;
+      const next = (cands.get(`${c}|${lose}`) ?? []).find(([h]) => h !== g && h !== m[lose === x ? y : x]);
+      if (next) m[lose] = next[0]; else delete m[lose];
+    }
   }
   const nominal = new Map<number, number>();
   for (const [c, uses] of plain) nominal.set(c, top(uses));
-  const sp = spaceCode !== undefined ? c2g.get(spaceCode) : undefined; if (sp) nominal.set(0x20, sp);
+  if (spaceGid) nominal.set(0x20, spaceGid);
+  else if (meta.space) nominal.set(0x20, ADDED - 1); // a space as wide as the PDF's (its glyph is not in the font pdf.js kept)
   for (const [c, uses] of markGlyph) nominal.set(c, top(uses));
   for (const [c, uses] of markGuess) if (!nominal.has(c)) nominal.set(c, top(uses));
+  // One glyph standing for two marks (fatha and kasra from one stroke) gets a copy for the second, so each
+  // can sit in its own place.
+  const cloneSrc = new Map<number, number>();
+  { const owner = new Map<number, number>();
+    for (const [c, g] of [...nominal]) { if (!isMark(c)) continue; if (!owner.has(g)) { owner.set(g, c); continue; } const id = CLONE + cloneSrc.size; cloneSrc.set(id, g); nominal.set(c, id); markGids.add(id); } }
   for (const [c, m] of formGlyph) nominal.set(c, m.isol ?? m.fina ?? m.init ?? m.medi!);
   const added: number[] = [];
-  for (const c of seen) if (!nominal.has(c) && c > 0x20) { nominal.set(c, numGlyphs + added.length); added.push(c); if (isMark(c)) markGids.add(numGlyphs + added.length - 1); }
+  // (Arabic only: there the shaping that hides them always runs; a Latin letter seen only inside a ligature is
+  // left to fall back, not drawn as nothing.)
+  for (const c of seen) if (!nominal.has(c) && c > 0x20 && ((c >= 0x600 && c <= 0x6ff) || (c >= 0x750 && c <= 0x77f) || (c >= 0x8a0 && c <= 0x8ff))) { nominal.set(c, ADDED + added.length); added.push(c); if (isMark(c)) markGids.add(ADDED + added.length - 1); }
+  if (meta.tatweel === false) nominal.delete(0x640);
   if (!nominal.size) return null;
-  numGlyphs += added.length;
 
   // GSUB: positional forms, letters drawn with their marks, marks drawn together, letter ligatures.
   const singles: Record<Form, Map<number, number>> = { isol: new Map(), fina: new Map(), medi: new Map(), init: new Map() };
@@ -242,8 +337,15 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
     for (const l of m.values()) l.sort((a, b) => b.rest.length - a.rest.length);
     return m;
   };
-  // Marks as the text has them and in canonical order (shapers sort marks by combining class).
-  const orders = (ms: number[]) => { const c = [...ms].sort((a, b) => ccc(a) - ccc(b)); return c.join() === ms.join() ? [ms] : [ms, c]; };
+  // Marks in every order: shapers sort them, each its own way (HarfBuzz puts shadda first, as Uniscribe does;
+  // canonical order puts it after fatha).
+  const orders = (ms: number[]): number[][] => {
+    if (ms.length > 3) return [ms, [...ms].sort((a, b) => ccc(a) - ccc(b))];
+    const out = new Map<string, number[]>();
+    const perm = (rest: number[], acc: number[]) => { if (!rest.length) { out.set(acc.join(), acc); return; } rest.forEach((m, i) => perm([...rest.slice(0, i), ...rest.slice(i + 1)], [...acc, m])); };
+    perm(ms, []);
+    return [...out.values()];
+  };
   const absorbRules = rules([...absorbed.values()].flatMap((a) => orders(a.marks).map((ms) => ({ seq: [after(a.c, a.form), ...ms.map((c) => nominal.get(c)!)], gid: a.gid }))));
   const markRules = rules([...markLigs.values()].flatMap((a) => orders(a.marks).map((ms) => ({ seq: ms.map((c) => nominal.get(c)!), gid: a.gid }))));
   // Ligatures that overlap (مي and ين in "مين") are tried in the order the PDF shows: one that won where
@@ -274,20 +376,20 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
   // A letter's marks also attach to the glyph the shaper will pick for that letter and form.
   for (const [k, list] of [...offsets]) {
     if (!k.startsWith('L')) continue;
-    const [c, f, m] = k.slice(1).split('|'); const shaped = after(+c, f as Form);
-    if (!offsets.has(`${shaped}|${m}`)) offsets.set(`${shaped}|${m}`, list);
+    const [c, f, m, ch] = k.slice(1).split('|'); const shaped = after(+c, f as Form);
+    if (!offsets.has(`${shaped}|${m}|${ch}`)) offsets.set(`${shaped}|${m}|${ch}`, list);
   }
   for (const [k, list] of offsets) {
     if (k.startsWith('L')) continue;
-    const [b, m] = k.split('|').map(Number);
+    const [b, g, ch] = k.split('|').map(Number);
+    // The mark's glyph in the new font: its copy when the glyph also stands for another mark.
+    const n = ch ? nominal.get(ch) : undefined; const m = n !== undefined && (n === g || cloneSrc.get(n) === g) ? n : g;
     const xs = list.map((v) => v[0]).sort((a, c) => a - c), ys = list.map((v) => v[1]).sort((a, c) => a - c);
     const mid = (a: number[]) => a[Math.floor(a.length / 2)];
     let row = anchors.get(b); if (!row) anchors.set(b, row = new Map());
     row.set(m, [Math.round(mid(xs)), Math.round(mid(ys))]);
   }
 
-  const out = new Map(t);
-  out.set('cmap', buildCmap(nominal));
   // Contextual variants: the usual form glyph becomes the variant the PDF drew next to that neighbour.
   const glyphsOf = new Map<number, Set<number>>();
   for (const [k, uses] of letterForm) { const c = +k.split('|')[0]; const set = glyphsOf.get(c) ?? new Set<number>(); for (const g of uses.keys()) set.add(g); glyphsOf.set(c, set); }
@@ -301,42 +403,88 @@ export function rebuildFont(raw: Uint8Array, lines: GlyphUse[][], spaceCode?: nu
     (ligEnds.get(z) ?? ligEnds.set(z, new Set()).get(z)!).add(l.gid);
   }
   const variants: Ctx[] = [];
+  if ((globalThis as { krDebugCtx?: number }).krDebugCtx) { const c0 = (globalThis as { krDebugCtx?: number }).krDebugCtx!; console.warn('P2D ctx', JSON.stringify([...ctxNext].filter(([k]) => k.startsWith(`${c0}|`)).map(([k, u]) => [k, [...u]])), JSON.stringify([...letterForm].filter(([k]) => k.startsWith(`${c0}|`)).map(([k, u]) => [k, [...u]]))); }
+  // The glyphs a letter has in one form by the time contextual forms are chosen (its form glyph, or a
+  // ligature beginning — or ending — with it in that form).
+  const formGlyphs = (c: number, f: Form, end: boolean) => {
+    const set = new Set<number>([after(c, f)]);
+    for (const l of ligs.values()) { const x = end ? l.comps[l.comps.length - 1] : l.comps[0]; if (x.c === c && x.form === f) set.add(l.gid); }
+    return set;
+  };
+  const specific: Ctx[] = [];
   for (const [k] of letterForm) {
     const [c, f] = k.split('|'); const form = f as Form; const usual = after(+c, form);
-    for (const g of groups(form === 'fina' ? ctxPrev : ctxNext, +c, form)) {
-      const v = top(g.uses); if (v === usual || !g.other) continue;
-      const other = new Set([...(glyphsOf.get(g.other) ?? []), ...((form === 'fina' ? ligEnds : ligStarts).get(g.other) ?? [])]);
+    const before = form === 'fina';
+    const chosen = new Map<number, number>(); // neighbour letter → glyph the letter-wide rule gives
+    for (const g of groups(before ? ctxPrev : ctxNext, +c, form)) {
+      const v = top(g.uses); chosen.set(g.other, v); if (v === usual || !g.other) continue;
+      const other = new Set([...(glyphsOf.get(g.other) ?? []), ...((before ? ligEnds : ligStarts).get(g.other) ?? [])]);
       if (!other.size) continue;
-      variants.push({ from: usual, to: v, ctx: [...other].sort((a, b) => a - b), before: form === 'fina' });
+      variants.push({ from: usual, to: v, ctx: [...other].sort((a, b) => a - b), before });
+    }
+    // Where the neighbour's form makes the difference, a rule for that form goes first.
+    for (const [kf, uses] of before ? ctxPrevF : ctxNextF) {
+      const [c2, f2, o, of] = kf.split('|'); if (+c2 !== +c || f2 !== f || !+o) continue;
+      const v = top(uses); const n = [...uses.values()].reduce((a, b) => a + b, 0);
+      if (v === (chosen.get(+o) ?? usual) || (uses.get(v) ?? 0) < Math.max(3, n * 0.6)) continue;
+      // (only glyphs that are that form's own: one shared with another form would apply the rule there too)
+      const ctx = formGlyphs(+o, of as Form, before);
+      for (const f3 of FORMS) if (f3 !== of) for (const g3 of formGlyphs(+o, f3, before)) ctx.delete(g3);
+      if (!ctx.size) continue;
+      specific.push({ from: usual, to: v, ctx: [...ctx].sort((a, b) => a - b), before });
     }
   }
-  out.set('GSUB', buildGsub(singles, [{ rules: absorbRules, flag: 0 }, { rules: markRules, flag: 0 }, ...ligLevels], variants));
-  if (anchors.size) out.set('GPOS', buildGpos(anchors));
-  out.set('GDEF', buildGdef(markGids, ligGids));
-  // Empty glyphs for the added characters; full metrics; marks take no advance.
-  const head = t.get('head')!; const longLoca = dvOf(head).getInt16(50) === 1;
-  if (added.length) {
-    const loca = t.get('loca')!; const oldN = numGlyphs - added.length;
-    const last = longLoca ? dvOf(loca).getUint32(oldN * 4) : dvOf(loca).getUint16(oldN * 2);
-    const nl = new Uint8Array((numGlyphs + 1) * (longLoca ? 4 : 2)); nl.set(loca.subarray(0, (oldN + 1) * (longLoca ? 4 : 2)));
-    const nd = dvOf(nl); for (let g = oldN + 1; g <= numGlyphs; g++) { if (longLoca) nd.setUint32(g * 4, last); else nd.setUint16(g * 2, last); }
-    out.set('loca', nl);
-    const m2 = maxp.slice(); dvOf(m2).setUint16(4, numGlyphs); out.set('maxp', m2);
+  variants.unshift(...specific);
+
+  // The new font's glyphs: every glyph the document used, then the empty ones made for lone characters.
+  const ids = new Set<number>(allGids);
+  for (const g of nominal.values()) ids.add(g);
+  const order = [...ids].filter((g) => g).sort((a, b) => a - b);
+  const newId = new Map<number, number>(order.map((g, i) => [g, i + 1]));
+  const m = (g: number) => newId.get(g) ?? 0;
+  const mapRules = (r: Map<number, { rest: number[]; gid: number }[]>) => new Map([...r].map(([k, v]) => [m(k), v.map((x) => ({ rest: x.rest.map(m), gid: m(x.gid) }))] as [number, { rest: number[]; gid: number }[]]));
+  const singlesN = Object.fromEntries(FORMS.map((f) => [f, new Map([...singles[f]].map(([a, b2]) => [m(a), m(b2)]))])) as Record<Form, Map<number, number>>;
+  const variantsN = variants.map((v) => ({ from: m(v.from), to: m(v.to), ctx: v.ctx.map(m).sort((a, b) => a - b), before: v.before }));
+  const anchorsN = new Map([...anchors].map(([b2, row]) => [m(b2), new Map([...row].map(([mk, o]) => [m(mk), o]))] as [number, Map<number, [number, number]>]));
+  const marksN = new Set([...markGids].map(m)), ligsN = new Set([...ligGids].map(m));
+  const nominalN = new Map([...nominal].map(([c, g]) => [c, m(g)]));
+  const outlines: Outline[] = [{ contours: [], adv: Math.round(upem / 2) }];
+  for (const g0 of order) {
+    const g = cloneSrc.get(g0) ?? g0;
+    if (g === ADDED - 1) { outlines.push({ contours: [], adv: Math.round(meta.space! * upem) }); continue; }
+    if (g >= ADDED) { outlines.push({ contours: [], adv: 0 }); continue; }
+    const src = sources[Math.floor(g / 65536)]; if (!src) { outlines.push({ contours: [], adv: 0 }); continue; }
+    const o = src.outline(g % 65536); const k = upem / src.upem;
+    outlines.push(k === 1 ? o : { adv: o.adv * k, contours: o.contours.map((c) => c.map((q) => ({ x: Math.round(q.x * k), y: Math.round(q.y * k), on: q.on }))) });
   }
-  const hhea = t.get('hhea')!.slice(); const hm = t.get('hmtx')!; const nh = dvOf(hhea).getUint16(34);
-  const adv: number[] = [], lsb: number[] = [];
-  const oldN = numGlyphs - added.length;
-  for (let g = 0; g < oldN; g++) { adv.push(dvOf(hm).getUint16(Math.min(g, nh - 1) * 4)); lsb.push(g < nh ? dvOf(hm).getInt16(g * 4 + 2) : dvOf(hm).getInt16(nh * 4 + (g - nh) * 2)); }
-  for (let k = 0; k < added.length; k++) { adv.push(0); lsb.push(0); }
-  for (const g of markGids) if (g < adv.length) adv[g] = 0;
-  const hmtx = new Uint8Array(numGlyphs * 4); const hd = dvOf(hmtx);
-  for (let g = 0; g < numGlyphs; g++) { hd.setUint16(g * 4, adv[g]); hd.setInt16(g * 4 + 2, lsb[g]); }
-  dvOf(hhea).setUint16(34, numGlyphs); out.set('hhea', hhea); out.set('hmtx', hmtx);
-  // post: format 3 (no glyph names), the names of the subset mean nothing now.
-  const post = t.get('post'); const np = new Uint8Array(32); if (post && post.length >= 32) np.set(post.subarray(0, 32)); dvOf(np).setUint32(0, 0x00030000); out.set('post', np);
-  if (!out.has('OS/2')) out.set('OS/2', buildOs2(t, nominal, adv));
-  out.delete('hdmx'); out.delete('LTSH'); out.delete('VDMX'); // per-glyph tables that no longer match
-  return writeFont(out);
+  // Marks take no room (a legacy font may give them an advance; the PDF placed them itself) — unless the glyph
+  // is also some letter's own.
+  const sp = nominalN.get(0x20); if (sp && outlines[sp] && outlines[sp].adv <= 0) outlines[sp] = { contours: [], adv: Math.round((meta.space ?? 0.25) * upem) };
+  const letterGlyph = new Set([...nominalN].filter(([c]) => !isMark(c)).map(([, g]) => g));
+  outlines.forEach((o, i) => { if (marksN.has(i) && !letterGlyph.has(i)) o.adv = 0; });
+  if (checks) console.warn('P2D check', meta.family, JSON.stringify(checks.map((c) => [c.text, c.bases.map(m), c.rtl ? 1 : 0])));
+  const extra = new Map<string, Uint8Array>();
+  extra.set('cmap', buildCmap(nominalN));
+  extra.set('GSUB', buildGsub(singlesN, [{ rules: mapRules(absorbRules), flag: 0 }, { rules: mapRules(markRules), flag: 0 }, ...ligLevels.map((l) => ({ rules: mapRules(l.rules), flag: l.flag }))], variantsN));
+  // Where the PDF never showed a mark on a letter, it sits centred over (or under) the letter's ink.
+  const box = outlines.map((o) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const c of o.contours) for (const q of c) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); } return x0 <= x1 ? [x0, y0, x1, y1] : null; });
+  const markChar = new Map<number, number>(); for (const [c, g] of nominalN) if (isMark(c)) markChar.set(g, c);
+  const BELOW = new Set([0x650, 0x64d, 0x655, 0x656, 0x61a, 0x6e3, 0x6ea, 0x6ed, 0x65c, 0x65f]);
+  const fbMarks = [...marksN].filter((g) => box[g] && !letterGlyph.has(g)).map((g) => { const [x0, y0, x1, y1] = box[g]!; const ch = markChar.get(g); const below = ch ? BELOW.has(ch) : (y0 + y1) / 2 < upem * 0.05; return { g, below, x: Math.round((x0 + x1) / 2), y: Math.round(below ? y1 : y0) }; });
+  const fbBases = outlines.map((_, g) => g).filter((g) => g > 0 && box[g] && !marksN.has(g)).map((g) => { const [x0, y0, x1, y1] = box[g]!; const pad = upem * 0.06; return { g, x: Math.round((x0 + x1) / 2), top: Math.round(Math.max(y1, upem * 0.3) + pad), bottom: Math.round(Math.min(y0, 0) - pad) }; });
+  // A learnt offset that puts the mark off its letter's ink came from a mark given to the wrong letter.
+  for (const [b2, row] of anchorsN) for (const [mk, [ox, oy]] of row) {
+    const bb = box[b2], mb = box[mk]; if (!bb || !mb) { row.delete(mk); continue; }
+    const cx = ox + (mb[0] + mb[2]) / 2, slack = upem * 0.08;
+    const cy = oy + (mb[1] + mb[3]) / 2;
+    if (cx < bb[0] - slack || cx > bb[2] + slack || cy < bb[1] - upem * 0.6 || cy > bb[3] + upem * 0.6) row.delete(mk);
+  }
+  if (anchorsN.size || (fbMarks.length && fbBases.length)) extra.set('GPOS', buildGpos(anchorsN, fbMarks, fbBases));
+  extra.set('GDEF', buildGdef(marksN, ligsN));
+  const k0 = upem / sources[0].upem;
+  const asc = sources[0].asc !== undefined ? sources[0].asc * k0 : undefined, desc = sources[0].desc !== undefined ? sources[0].desc * k0 : undefined;
+  return writeTrueType({ family: meta.family, bold: meta.bold, italic: meta.italic, upem, asc, desc }, outlines, extra,
+    (box, avg) => buildOs2(upem, box, avg, nominalN, { asc: asc ?? box[3], desc: desc ?? box[1], bold: !!meta.bold, italic: !!meta.italic }));
 }
 
 function buildCmap(map: Map<number, number>): Uint8Array {
@@ -462,26 +610,42 @@ function lookupOf(type: number, sub: number[], flag = 0): number[] {
 
 /** Mark-to-base positioning: every mark glyph its own class, anchored at (0,0); each base has, for each mark
  *  seen on it, the offset at which the PDF drew that mark. */
-function buildGpos(anchors: Map<number, Map<number, [number, number]>>): Uint8Array {
+/** Mark-to-base positioning in two lookups. First, every mark over (or under) every letter's ink — two
+ *  classes, above and below; then, overriding it, each mark at the offset where the PDF drew it on that
+ *  letter (each mark its own class, anchored at its origin). */
+function buildGpos(anchors: Map<number, Map<number, [number, number]>>, fbMarks: { g: number; below: boolean; x: number; y: number }[] = [], fbBases: { g: number; x: number; top: number; bottom: number }[] = []): Uint8Array {
+  const markBase = (marks: number[], markAnchor: (m: number) => [number, number, number], bases: number[], baseAnchor: (b: number, cls: number) => [number, number] | null, nCls: number): number[] => {
+    const st = new W();
+    st.u16(1); const mcAt = st.len; st.u16(0); const bcAt = st.len; st.u16(0); st.u16(nCls); const maAt = st.len; st.u16(0); const baAt = st.len; st.u16(0);
+    st.at(maAt, st.len); const ma = st.len; st.u16(marks.length);
+    const mrAt = marks.map((m) => { st.u16(markAnchor(m)[0]); const p = st.len; st.u16(0); return p; });
+    marks.forEach((m, i) => { const [, x, y] = markAnchor(m); st.at(mrAt[i], st.len - ma); st.u16(1).u16(x & 0xffff).u16(y & 0xffff); });
+    st.at(baAt, st.len); const ba = st.len; st.u16(bases.length);
+    const slots = bases.map((b) => Array.from({ length: nCls }, (_, k) => { const p = st.len; st.u16(0); return baseAnchor(b, k) ? p : -1; }));
+    // Identical anchors are written once.
+    const seen = new Map<string, number>();
+    bases.forEach((b, i) => { for (let k = 0; k < nCls; k++) {
+      const p = slots[i][k]; if (p < 0) continue;
+      const [x, y] = baseAnchor(b, k)!; const key = `${x},${y}`;
+      let at = seen.get(key); if (at === undefined) { at = st.len; seen.set(key, at); st.u16(1).u16(x & 0xffff).u16(y & 0xffff); }
+      st.at(p, at - ba);
+    } });
+    st.at(mcAt, st.len); st.b.push(...coverage(marks));
+    st.at(bcAt, st.len); st.b.push(...coverage(bases));
+    return lookupOf(4, st.b);
+  };
+  const lookups: number[][] = [];
+  if (fbMarks.length && fbBases.length) {
+    const fm = new Map(fbMarks.map((m) => [m.g, m])); const fb = new Map(fbBases.map((b) => [b.g, b]));
+    lookups.push(markBase([...fm.keys()].sort((a, b) => a - b), (m) => { const x = fm.get(m)!; return [x.below ? 1 : 0, x.x, x.y]; }, [...fb.keys()].sort((a, b) => a - b), (b, k) => { const x = fb.get(b)!; return [x.x, k ? x.bottom : x.top]; }, 2));
+  }
   const marks = [...new Set([...anchors.values()].flatMap((r) => [...r.keys()]))].sort((a, b) => a - b);
   const bases = [...anchors.keys()].filter((b) => !marks.includes(b)).sort((a, b) => a - b);
-  const cls = new Map(marks.map((m, i) => [m, i]));
-  const st = new W();
-  st.u16(1); const mcAt = st.len; st.u16(0); const bcAt = st.len; st.u16(0); st.u16(marks.length); const maAt = st.len; st.u16(0); const baAt = st.len; st.u16(0);
-  // MarkArray
-  st.at(maAt, st.len); const ma = st.len; st.u16(marks.length);
-  const mrAt = marks.map((m) => { st.u16(cls.get(m)!); const p = st.len; st.u16(0); return p; });
-  marks.forEach((_, i) => { st.at(mrAt[i], st.len - ma); st.u16(1).u16(0).u16(0); });
-  // BaseArray
-  st.at(baAt, st.len); const ba = st.len; st.u16(bases.length);
-  const slots = bases.map((b) => marks.map((m) => { const p = st.len; st.u16(0); return anchors.get(b)!.has(m) ? p : -1; }));
-  bases.forEach((b, i) => marks.forEach((m, k) => {
-    const p = slots[i][k]; if (p < 0) return;
-    const [x, y] = anchors.get(b)!.get(m)!; st.at(p, st.len - ba); st.u16(1).u16(x & 0xffff).u16(y & 0xffff);
-  }));
-  st.at(mcAt, st.len); st.b.push(...coverage(marks));
-  st.at(bcAt, st.len); st.b.push(...coverage(bases));
-  return layoutTable([{ tag: 'mark', idx: [0] }], [lookupOf(4, st.b)]);
+  if (marks.length && bases.length) {
+    const cls = new Map(marks.map((m, i) => [m, i]));
+    lookups.push(markBase(marks, (m) => [cls.get(m)!, 0, 0], bases, (b, k) => anchors.get(b)!.get(marks[k]) ?? null, marks.length));
+  }
+  return layoutTable([{ tag: 'mark', idx: lookups.map((_, i) => i) }], lookups);
 }
 
 /** Glyph classes: marks (so ligatures skip them and they attach to letters), ligatures; the rest bases. */
@@ -492,50 +656,23 @@ function buildGdef(marks: Set<number>, ligs: Set<number>): Uint8Array {
   return w.bytes();
 }
 
-function buildOs2(t: Tables, nominal: Map<number, number>, adv: number[]): Uint8Array {
-  const head = dvOf(t.get('head')!), hhea = dvOf(t.get('hhea')!);
-  const asc = hhea.getInt16(4), desc = hhea.getInt16(6), gap = hhea.getInt16(8);
-  const yMax = head.getInt16(42), yMin = head.getInt16(38);
-  const used = [...nominal.values()].map((g) => adv[g] ?? 0).filter((a) => a > 0);
-  const avg = used.length ? Math.round(used.reduce((a, b) => a + b, 0) / used.length) : 500;
-  const macStyle = head.getUint16(44); const bold = !!(macStyle & 1), italic = !!(macStyle & 2);
+function buildOs2(em: number, box: [number, number, number, number], avg: number, nominal: Map<number, number>, v: { asc: number; desc: number; bold: boolean; italic: boolean }): Uint8Array {
   const cs = [...nominal.keys()].filter((c) => c <= 0xffff);
   const arabic = cs.some((c) => c >= 0x600 && c <= 0x6ff);
   const w = new W();
-  w.u16(4).u16(avg).u16(bold ? 700 : 400).u16(5).u16(0); // version, xAvgCharWidth, weight, width, fsType: installable
-  const em = head.getUint16(18);
-  for (const v of [Math.round(em * 0.65), Math.round(em * 0.6), 0, Math.round(em * 0.075), Math.round(em * 0.65), Math.round(em * 0.6), 0, Math.round(em * 0.48), Math.round(em * 0.05), Math.round(em * 0.25)]) w.u16(v & 0xffff);
+  w.u16(4).u16(avg).u16(v.bold ? 700 : 400).u16(5).u16(0); // version, xAvgCharWidth, weight, width, fsType: installable
+  for (const x of [Math.round(em * 0.65), Math.round(em * 0.6), 0, Math.round(em * 0.075), Math.round(em * 0.65), Math.round(em * 0.6), 0, Math.round(em * 0.48), Math.round(em * 0.05), Math.round(em * 0.25)]) w.u16(x & 0xffff);
   w.u16(0); // sFamilyClass
   for (let i = 0; i < 10; i++) w.b.push(0); // panose
   w.u32(1 | (arabic ? 1 << 13 : 0)).u32(0).u32(0).u32(0); // Unicode ranges: Basic Latin, Arabic
   w.tag('KRDR');
-  w.u16((bold ? 0x20 : 0) | (italic ? 1 : 0) | (!bold && !italic ? 0x40 : 0) | 0x80);
+  w.u16((v.bold ? 0x20 : 0) | (v.italic ? 1 : 0) | (!v.bold && !v.italic ? 0x40 : 0));
   w.u16(cs.length ? Math.min(...cs) : 0x20).u16(cs.length ? Math.max(...cs) : 0x20);
-  w.u16(asc & 0xffff).u16(desc & 0xffff).u16(gap & 0xffff);
-  w.u16(Math.max(0, yMax)).u16(Math.max(0, -yMin));
+  const asc = Math.round(v.asc), desc = Math.round(v.desc);
+  w.u16(asc & 0xffff).u16(desc & 0xffff).u16(0);
+  w.u16(Math.max(0, asc, box[3])).u16(Math.max(0, -desc, -box[1]));
   w.u32(1 | (arabic ? 1 << 6 : 0)).u32(0); // code pages: Latin 1, Arabic
   w.u16(Math.round(em * 0.5)).u16(Math.round(em * 0.7)).u16(0).u16(0x20).u16(0);
   return w.bytes();
 }
 
-function writeFont(tables: Tables): Uint8Array {
-  const tags = [...tables.keys()].sort();
-  const n = tags.length;
-  let off = 12 + n * 16; const offs: number[] = [];
-  for (const t of tags) { offs.push(off); off += (tables.get(t)!.length + 3) & ~3; }
-  const out = new Uint8Array(off); const d = dvOf(out);
-  d.setUint32(0, 0x00010000); d.setUint16(4, n);
-  const es = Math.floor(Math.log2(n)); d.setUint16(6, 16 * 2 ** es); d.setUint16(8, es); d.setUint16(10, n * 16 - 16 * 2 ** es);
-  const sum = (a: Uint8Array) => { let s = 0; for (let i = 0; i < a.length; i += 4) s = (s + ((a[i] << 24) | ((a[i + 1] ?? 0) << 16) | ((a[i + 2] ?? 0) << 8) | (a[i + 3] ?? 0))) >>> 0; return s; };
-  tags.forEach((t, i) => {
-    let data = tables.get(t)!;
-    if (t === 'head') { data = data.slice(); dvOf(data).setUint32(8, 0); }
-    const r = 12 + i * 16;
-    for (let k = 0; k < 4; k++) out[r + k] = t.charCodeAt(k);
-    d.setUint32(r + 4, sum(data)); d.setUint32(r + 8, offs[i]); d.setUint32(r + 12, data.length);
-    out.set(data, offs[i]);
-  });
-  const hi = tags.indexOf('head');
-  if (hi >= 0) d.setUint32(offs[hi] + 8, (0xb1b0afba - sum(out)) >>> 0);
-  return out;
-}

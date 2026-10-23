@@ -1,6 +1,7 @@
 // PDF viewing on top of pdf.js: lazily rendered pages with a selectable text
 // layer, a page slider, go-to, outline and full-text search.
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { buildTextLayer } from '../pdflayer';
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
 import { h } from '../ui/dom';
@@ -89,7 +90,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];
-  private rendered = new Map<number, { task?: RenderTask; canvas?: HTMLCanvasElement; text?: TextLayer }>();
+  private rendered = new Map<number, { task?: RenderTask; canvas?: HTMLCanvasElement; text?: { cancel(): void } }>();
   private observer!: IntersectionObserver;
   private scale = 1;
   private baseWidths: number[] = [];
@@ -215,7 +216,7 @@ export class PdfViewer {
 
   private async renderPage(n: number, replace = false): Promise<void> {
     if (this.destroyed || this.rendered.has(n)) return;
-    const entry: { task?: RenderTask; canvas?: HTMLCanvasElement; text?: TextLayer } = {};
+    const entry: { task?: RenderTask; canvas?: HTMLCanvasElement; text?: { cancel(): void } } = {};
     this.rendered.set(n, entry);
     const el = this.pages[n - 1];
     // When re-rendering (zoom, size correction) the old picture stays until the new one is ready.
@@ -253,9 +254,10 @@ export class PdfViewer {
     const textDiv = h('div', { class: 'textLayer' });
     el.appendChild(textDiv);
     try {
-      const text = new (await loadPdfjs()).TextLayer({ textContentSource: page.streamTextContent(), container: textDiv, viewport });
-      entry.text = text;
-      await text.render();
+      // Our own layer: words in reading order, harakat inside their letters (see src/pdflayer.ts).
+      const pending = buildTextLayer(page, viewport, textDiv);
+      entry.text = { cancel: () => void pending.then((l) => l.cancel()) };
+      await pending;
       textDiv.appendChild(h('div', { class: 'endOfContent' }));
     } catch { /* text layer is optional */ }
     this.opts.onPageRender?.(n);
@@ -421,9 +423,14 @@ export class PdfViewer {
       if (!layer || !layer.childElementCount) { if (attempt < 20) setTimeout(() => tryMark(attempt + 1), 150); return; }
       layer.querySelectorAll('.highlight').forEach((e) => e.classList.remove('highlight'));
       let first: Element | null = null;
-      layer.querySelectorAll('span').forEach((sp) => {
-        if (normalizeForSearch(sp.textContent ?? '').text.includes(q)) { sp.classList.add('highlight'); first ??= sp; }
-      });
+      // The words of the layer in reading order, joined: a match may run over several word boxes.
+      const spans = Array.from(layer.querySelectorAll<HTMLElement>('span'));
+      let joined = ''; const at: [number, number, HTMLElement][] = [];
+      for (const sp of spans) { const t = normalizeForSearch(sp.textContent ?? '').text.trim(); if (!t) continue; if (joined && !joined.endsWith(' ')) joined += ' '; at.push([joined.length, joined.length + t.length, sp]); joined += t; }
+      const qq = q.replace(/\s+/g, ' ').trim();
+      for (let i = qq ? joined.indexOf(qq) : -1; i >= 0; i = joined.indexOf(qq, i + qq.length)) {
+        for (const [a, b, sp] of at) if (b > i && a < i + qq.length) { sp.classList.add('highlight'); first ??= sp; }
+      }
       (first as Element | null)?.scrollIntoView({ block: 'center' });
     };
     tryMark(0);

@@ -93,7 +93,10 @@ export async function buildPdfWorker(outFile) {
       const size = Math.abs(textState.fontSize) * Math.hypot(textState.textMatrix[0], textState.textMatrix[1]) || 1;
       return (textState.krLW ?? 1) / size;
     }
-    function krCmyk(c, m, y, k) { return [1 - Math.min(1, c + k), 1 - Math.min(1, m + k), 1 - Math.min(1, y + k)]; }
+    // CMYK as pdf.js paints it on the page (a printer's magenta is a deep pink, not #FF00FF).
+    function krCmyk(c, m, y, k) {
+      try { const v = ColorSpaceUtils.cmyk.getRgb([c, m, y, k], 0); return [v[0] / 255, v[1] / 255, v[2] / 255]; } catch { return [1 - Math.min(1, c + k), 1 - Math.min(1, m + k), 1 - Math.min(1, y + k)]; }
+    }
     function krAtBegin(props) {
       if (krAT) { krAT.depth++; return; }
       const v = props instanceof Dict ? props.get("ActualText") : null;
@@ -154,7 +157,7 @@ export async function buildPdfWorker(outFile) {
           const s = Math.hypot(t0[0], t0[1]);
           const tr = [...t0]; tr[4] = t0[4] + ink[0] * s;
           const u = /[\ufdf0-\ufdfd]/.test(glyph.unicode) ? glyph.unicode.normalize("NFKC") : glyph.unicode;
-          textContent.items.push({ str: u, dir: /[\u0600-\u06ff]/.test(u) ? "rtl" : "ltr", width: Math.max(0.01, (ink[1] - ink[0]) * s), height: Math.hypot(t0[2], t0[3]), transform: tr, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null });
+          textContent.items.push({ str: u, dir: /[\u0600-\u06ff]/.test(u) ? "rtl" : "ltr", width: Math.max(0.01, (ink[1] - ink[0]) * s), height: Math.hypot(t0[2], t0[3]), transform: tr, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, ...(font.krNeedsUse ? { krCodes: [originalCharCode, u, t0[4], t0[5], Math.hypot(t0[2], t0[3]), glyph.width * textState.fontMatrix[0]] } : {}) });
           resetLastChars();
           textState.translateTextMatrix((glyph.width * textState.fontMatrix[0] * textState.fontSize + baseCharSpacing) * textState.textHScale, 0);
           continue;
@@ -406,7 +409,13 @@ export async function buildPdfWorker(outFile) {
     if (krRaw && properties.composite && !(properties.cidToGidMap && properties.cidToGidMap.length)) this.krRawAll = krRaw;
     // A simple TrueType font with no Unicode cmap (a typical subset): its glyph uses are recorded, so
     // PDF → DOCX can give it one.
-    if (krRaw && this.fontExtraProperties && !properties.composite) {
+    // Any other embedded font (CFF, Type 1, composite TrueType) too: PDF → DOCX rebuilds it as a TrueType
+    // font Word can carry, with a Unicode map from what its glyphs stand for.
+    if (file && this.fontExtraProperties && properties.type !== "Type3" && !(krRaw && !properties.composite && krRaw[0] !== 0x4f)) {
+      this.krNeedsUse = true;
+      if (properties.toUnicode) properties.toUnicode.forEach((code, u) => { if ((u === 0x20 || u === " ") && this.krSpaceCode === undefined) this.krSpaceCode = +code; });
+    }
+    if (krRaw && this.fontExtraProperties && !properties.composite && krRaw[0] !== 0x4f) {
       try {
         const dv = new DataView(krRaw.buffer, krRaw.byteOffset, krRaw.byteLength); let cm = -1;
         for (let i = 0, n = dv.getUint16(4); i < n; i++) { const r = 12 + i * 16; if (dv.getUint32(r) === 0x636d6170) cm = dv.getUint32(r + 8); }
@@ -414,10 +423,10 @@ export async function buildPdfWorker(outFile) {
         if (cm >= 0) for (let i = 0, n = dv.getUint16(cm + 2); i < n; i++) { const p = dv.getUint16(cm + 4 + i * 8), e = dv.getUint16(cm + 6 + i * 8); if (p === 0 || (p === 3 && (e === 1 || e === 10))) uni = true; }
         this.krNeedsUse = cm >= 0 && !uni;
         // The code of its space (spaces are never seen as glyph uses).
-        if (this.krNeedsUse && properties.toUnicode) properties.toUnicode.forEach((code, u) => { if (u === 0x20 && this.krSpaceCode === undefined) this.krSpaceCode = +code; });
+        if (this.krNeedsUse && properties.toUnicode) properties.toUnicode.forEach((code, u) => { if ((u === 0x20 || u === " ") && this.krSpaceCode === undefined) this.krSpaceCode = +code; });
       } catch { this.krNeedsUse = false; }
     }`, 'font raw keep');
-  src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "cMap",`, 'export extra');
+  src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "krLegacy", "cMap",`, 'export extra');
 
   const out = await esbuild.transform(src, { minify: true, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);
