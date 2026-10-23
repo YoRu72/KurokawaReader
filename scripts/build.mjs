@@ -98,6 +98,7 @@ const buildOptions = {
   sourcemap: true,
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' },
   logLevel: 'info',
+  plugins: [(await import('./patch-pdfjs.mjs')).pdfjsMainPlugin],
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version) },
 };
 

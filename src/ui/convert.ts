@@ -44,9 +44,9 @@ export function convertSheet(book: Book, onDone?: () => void): void {
     } catch (err) {
       const msg = String((err as Error).message ?? err);
       if (msg === 'password') {
-        const pw = prompt(t('pdfPasswordPrompt')) ?? '';
-        busy = false; grid.querySelectorAll('button').forEach((b) => { b.disabled = false; });
-        if (pw) { void run(target, pw); return; }
+        // Asked again (with the right wording) when a password was given and was wrong.
+        const pw = prompt(password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')) ?? '';
+        if (pw) { busy = false; queueMicrotask(() => void run(target, pw)); return; }
         status.textContent = t('cancelled');
       } else if (msg === 'unsupported') status.textContent = t('convertUnsupported');
       else { status.textContent = `${t('convertFailed')} — ${msg}`; console.error(err); }

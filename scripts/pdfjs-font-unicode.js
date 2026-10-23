@@ -1,0 +1,193 @@
+// Injected into the pdf.js worker by scripts/patch-pdfjs.mjs.
+//
+// Some PDF writers emit a broken /ToUnicode for shaped (Arabic) fonts: whole runs of glyph ids
+// mapped to consecutive code points, so extracted text is nonsense ("ث ٞٮله" for "بقوله").
+// The embedded font itself knows better: its cmap names the base letters, and its GSUB rules lead
+// from them to every shaped form and ligature. krFontUnicode() rebuilds glyph → text from those,
+// and krRepairToUnicode() uses it when the PDF's map clearly disagrees with the font.
+function krFontUnicode(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u16 = (o) => dv.getUint16(o), i16 = (o) => dv.getInt16(o), u32 = (o) => dv.getUint32(o);
+  const tables = {};
+  const n = u16(4);
+  for (let i = 0; i < n; i++) {
+    const r = 12 + i * 16;
+    const tag = String.fromCharCode(bytes[r], bytes[r + 1], bytes[r + 2], bytes[r + 3]);
+    tables[tag] = u32(r + 8);
+  }
+  const map = new Map(); // gid → text
+  // cmap: Unicode → glyph, inverted (first code point wins, so a letter is not replaced by a variant).
+  const cm = tables.cmap;
+  if (cm !== undefined) {
+    const subs = [];
+    for (let i = 0, nn = u16(cm + 2); i < nn; i++) {
+      const p = u16(cm + 4 + i * 8), e = u16(cm + 6 + i * 8), off = u32(cm + 8 + i * 8);
+      if (p === 3 && (e === 1 || e === 10) || p === 0) subs.push(cm + off);
+    }
+    for (const s of subs) {
+      const fmt = u16(s);
+      if (fmt === 4) {
+        const seg = u16(s + 6) / 2, ends = s + 14, starts = ends + seg * 2 + 2, deltas = starts + seg * 2, ros = deltas + seg * 2;
+        for (let k = 0; k < seg; k++) {
+          const end = u16(ends + k * 2), start = u16(starts + k * 2), delta = i16(deltas + k * 2), ro = u16(ros + k * 2);
+          if (start === 0xffff) continue;
+          for (let c = start; c <= end; c++) {
+            let g;
+            if (ro === 0) g = (c + delta) & 0xffff;
+            else { const gp = ros + k * 2 + ro + (c - start) * 2; if (gp + 2 > bytes.length) continue; g = u16(gp); if (g) g = (g + delta) & 0xffff; }
+            if (g && !map.has(g)) map.set(g, String.fromCodePoint(c));
+          }
+        }
+      } else if (fmt === 12) {
+        for (let k = 0, ng = u32(s + 12); k < ng; k++) {
+          const st = u32(s + 16 + k * 12), en = u32(s + 20 + k * 12), sg = u32(s + 24 + k * 12);
+          for (let c = st; c <= en && c - st < 0x10000; c++) if (!map.has(sg + c - st)) map.set(sg + c - st, String.fromCodePoint(c));
+        }
+      }
+    }
+  }
+  const gs = tables.GSUB;
+  if (gs === undefined || !map.size) return map;
+  const coverage = (o) => {
+    const out = [];
+    const fmt = u16(o);
+    if (fmt === 1) for (let i = 0, c = u16(o + 2); i < c; i++) out.push(u16(o + 4 + i * 2));
+    else if (fmt === 2) for (let i = 0, c = u16(o + 2); i < c; i++) { const a = u16(o + 4 + i * 6), b = u16(o + 6 + i * 6); for (let g = a; g <= b; g++) out.push(g); }
+    return out;
+  };
+  const subtables = []; // [type, offset]
+  const ll = gs + u16(gs + 8);
+  for (let i = 0, lc = u16(ll); i < lc; i++) {
+    const lk = ll + u16(ll + 2 + i * 2);
+    let type = u16(lk);
+    for (let j = 0, sc = u16(lk + 4); j < sc; j++) {
+      let st = lk + u16(lk + 6 + j * 2);
+      let t = type;
+      if (t === 7) { t = u16(st + 2); st = st + u32(st + 4); }
+      subtables.push([t, st]);
+    }
+  }
+  const set = (g, s) => { if (s && !map.has(g)) { map.set(g, s); return true; } return false; };
+  const ligs = new Set();
+  for (let pass = 0; pass < 6; pass++) {
+    let changed = false;
+    for (const [t, st] of subtables) {
+      try {
+        if (t === 1) {
+          const cov = coverage(st + u16(st + 2));
+          if (u16(st) === 1) { const d = i16(st + 4); for (const g of cov) if (map.has(g)) changed = set((g + d) & 0xffff, map.get(g)) || changed; }
+          else cov.forEach((g, i) => { if (map.has(g)) changed = set(u16(st + 6 + i * 2), map.get(g)) || changed; });
+        } else if (t === 2 || t === 3) {
+          const cov = coverage(st + u16(st + 2));
+          cov.forEach((g, i) => {
+            if (!map.has(g)) return;
+            const seq = st + u16(st + 6 + i * 2);
+            const cnt = u16(seq);
+            for (let k = 0; k < cnt; k++) changed = set(u16(seq + 2 + k * 2), t === 3 || k === 0 ? map.get(g) : "\u200c") || changed;
+          });
+        } else if (t === 4) {
+          const cov = coverage(st + u16(st + 2));
+          cov.forEach((g, i) => {
+            const ls = st + u16(st + 6 + i * 2);
+            for (let k = 0, lc = u16(ls); k < lc; k++) {
+              const lig = ls + u16(ls + 2 + k * 2);
+              const lg = u16(lig), cc = u16(lig + 2);
+              const parts = [g];
+              for (let m = 1; m < cc; m++) parts.push(u16(lig + 4 + (m - 1) * 2));
+              if (!parts.every((p) => map.has(p))) continue;
+              const str = parts.map((p) => map.get(p)).join("").replace(/\u200c/g, "");
+              // One glyph can close several ligatures ("لله" and "الله"): the shortest reading is the glyph's own.
+              const had = map.get(lg);
+              if (had === undefined) changed = set(lg, str) || changed;
+              else if (ligs.has(lg) && str.length < had.length) { map.set(lg, str); changed = true; }
+              ligs.add(lg);
+            }
+          });
+        } else if (t === 8) {
+          const cov = coverage(st + u16(st + 2));
+          const bc = u16(st + 4), la = st + 6 + bc * 2, lc = u16(la), gcAt = la + 2 + lc * 2;
+          cov.forEach((g, i) => { if (map.has(g)) changed = set(u16(gcAt + 2 + i * 2), map.get(g)) || changed; });
+        }
+      } catch { /* malformed subtable: skip */ }
+    }
+    if (!changed) break;
+  }
+  for (const [g, s] of map) if (s === "\u200c") map.delete(g);
+  return map;
+}
+
+function krRepairToUnicode(font, raw, properties) {
+  try {
+    const tu = font.toUnicode;
+    if (!raw || raw.length < 12 || !properties.composite || !tu || !Array.isArray(tu._map)) return;
+    const gidOf = (code) => { const m = properties.cidToGidMap; return m && m.length ? m[code] ?? code : code; };
+    const derived = krFontUnicode(raw);
+    if (derived.size < 4) return;
+    let compared = 0, agree = 0;
+    const norm = (s) => (s || "").normalize("NFKC").replace(/\s+/g, "");
+    for (const code in tu._map) {
+      const d = derived.get(gidOf(+code));
+      if (d === undefined) continue;
+      compared++;
+      if (norm(d) === norm(tu._map[code])) agree++;
+    }
+    // Presentation forms (the font's shaped glyphs) become plain letters.
+    const plain = (d) => d.replace(/[\ufb50-\ufdff\ufe70-\ufefc]+/g, (m) => m.normalize("NFKC"));
+    // A sound /ToUnicode agrees with the font almost everywhere; a broken one hardly anywhere.
+    if (compared >= 12 && agree / compared <= 0.6) {
+      for (const code in tu._map) {
+        const d = derived.get(gidOf(+code)); if (d === undefined) continue;
+        const cur = tu._map[code] || "";
+        // The PDF names this glyph as the tail of what the font says ("لله" for the "الله" ligature): the PDF is precise here.
+        if (cur.length > 1 && /^[\u0600-\u06ff]+$/.test(cur) && norm(d) !== norm(cur) && norm(d).endsWith(norm(cur))) continue;
+        tu._map[code] = plain(d);
+      }
+      font.krToUnicodeRepaired = true;
+      return;
+    }
+    // Mostly sound: still correct single Arabic glyphs the PDF names wrongly (a lam read as meem).
+    const ar = /^[\u0600-\u06ff\ufb50-\ufdff\ufe70-\ufefc]+$/;
+    let fixed = 0;
+    for (const code in tu._map) {
+      const d = derived.get(gidOf(+code)); const cur = tu._map[code];
+      if (d === undefined || !ar.test(d) || !(ar.test(cur || "") || /^[\u0000-\u001f\ue000-\uf8ff]*$/.test(cur || ""))) continue;
+      if (norm(d) !== norm(cur) && norm(d).length === norm(cur).length) { tu._map[code] = plain(d); fixed++; }
+    }
+    // Digits: the PDF says "1" where the font draws "١" (Word's context numerals) — keep what is drawn.
+    for (const code in tu._map) {
+      const d = derived.get(gidOf(+code)); const cur = tu._map[code];
+      if (d && /^[\u0660-\u0669\u06f0-\u06f9]$/.test(d) && /^[0-9]$/.test(cur || "")) { tu._map[code] = d; fixed++; }
+    }
+    if (fixed) font.krToUnicodeRepaired = true;
+  } catch { /* leave the PDF's map alone */ }
+}
+
+/** Horizontal centre of a glyph's outline (font units, relative to its origin), from the TrueType glyf/loca
+ *  tables — where a mark actually shows, as opposed to where it is drawn from. Cached per font. */
+function krGlyphCentre(font, gid) {
+  const raw = font.krRawAll;
+  if (!raw) return null;
+  let t = font.krGlyf;
+  if (t === undefined) {
+    t = null;
+    try {
+      const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+      const tables = {};
+      for (let i = 0, n = dv.getUint16(4); i < n; i++) { const r = 12 + i * 16; tables[String.fromCharCode(raw[r], raw[r + 1], raw[r + 2], raw[r + 3])] = dv.getUint32(r + 8); }
+      if (tables.head !== undefined && tables.loca !== undefined && tables.glyf !== undefined && tables.maxp !== undefined) {
+        t = { dv, long: dv.getInt16(tables.head + 50) === 1, loca: tables.loca, glyf: tables.glyf, n: dv.getUint16(tables.maxp + 4), upm: dv.getUint16(tables.head + 18) || 1000, cache: new Map() };
+      }
+    } catch { t = null; }
+    font.krGlyf = t;
+  }
+  if (!t || gid < 0 || gid >= t.n) return null;
+  if (t.cache.has(gid)) return t.cache.get(gid);
+  let c = null;
+  try {
+    const off = t.long ? t.dv.getUint32(t.loca + gid * 4) : t.dv.getUint16(t.loca + gid * 2) * 2;
+    const next = t.long ? t.dv.getUint32(t.loca + gid * 4 + 4) : t.dv.getUint16(t.loca + gid * 2 + 2) * 2;
+    if (next > off) { const g = t.glyf + off; c = ((t.dv.getInt16(g + 2) + t.dv.getInt16(g + 6)) / 2) / t.upm; }
+  } catch { c = null; }
+  t.cache.set(gid, c);
+  return c;
+}

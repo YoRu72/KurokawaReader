@@ -1,6 +1,6 @@
 // Floating toolbar that appears over selected text: Copy · Search · Define ·
 // Translate · Highlight · Speak.
-import { joinLine, cleanPdfText, type LinePiece } from '../pdftext';
+import { joinLine, cleanPdfText, attachMarks, type LinePiece } from '../pdftext';
 import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
@@ -55,9 +55,10 @@ export function selectionText(sel: Selection): string {
     const rc = el.getBoundingClientRect();
     pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10 });
   }
-  pieces.sort((a, b) => a.y - b.y);
+  const kept = attachMarks(pieces);
+  kept.sort((a, b) => a.y - b.y);
   const lines: Piece[][] = [];
-  for (const p of pieces) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
+  for (const p of kept) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
   const out = lines.map((line) => joinLine(line).text).filter(Boolean).join('\n');
   return fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
 }

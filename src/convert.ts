@@ -397,8 +397,20 @@ export const TARGETS: { id: Target; label: string; ext: string; mime: string; fr
 export async function convertBook(book: Book, target: Target, progress: Progress, password?: string): Promise<{ blob: Blob; name: string }> {
   const file = await db.getFile(book.id);
   if (!file) throw new Error('missing');
-  const d = await readDocument(book, file, progress, password);
   const tg = TARGETS.find((x) => x.id === target)!;
+  // PDF → Word keeps the page layout (its own path); other routes go through the reflowed document.
+  if (book.format === 'pdf' && target === 'docx') {
+    try {
+      const { pdfToDocx } = await import('./pdf2docx');
+      const blob = await pdfToDocx(book, file, progress, password);
+      progress('done', 100);
+      return { blob, name: `${slug(book.title)}.${tg.ext}` };
+    } catch (err) {
+      if ((err as Error).message === 'password') throw err;
+      console.warn('[kurokawa] layout PDF → DOCX failed, using the reflowed route', err);
+    }
+  }
+  const d = await readDocument(book, file, progress, password);
   let blob: Blob;
   if (target === 'epub' || target === 'kindle') {
     if (target === 'kindle') { d.fonts.clear(); }   // Kindle prefers its own typefaces; embedded fonts often fail its import
