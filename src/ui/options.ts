@@ -148,6 +148,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
   grid.append(section([t('pdfNoteStyle'), 'pdfNoteStyle'], segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
   grid.append(toggle([t('furigana'), 'furigana'], s.furigana, (v) => { updateSettings({ furigana: v }); bump(); }));
+  grid.append(toggle([t('autoReadings'), 'autoReadings'], s.autoReadings, (v) => updateSettings({ autoReadings: v })));
   grid.append(toggle([t('publisherStyles'), 'publisherStyles'], s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section([t('translatorChoice'), 'translator'], segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
@@ -156,6 +157,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if ('speechSynthesis' in window) {
     grid.append(head('behaviour', t('readAloud')));
     grid.append(stepper([t('speechRate'), 'speechRate'], s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
+  grid.append(section([t('speechScope'), 'speechScope'], segmented([['chapter', t('speechChapter')], ['book', t('speechBook')]], s.speechScope, (v) => updateSettings({ speechScope: v }))));
     const engines: [VisualSettings['speechEngine'], string][] = [['system', t('speechSystem')], ['ai', t('speechAi')]];
     grid.append(section([t('speechEngine'), 'speechEngine'], segmented(engines, s.speechEngine, (v) => { updateSettings({ speechEngine: v }); rerender(); })));
     if (s.speechEngine === 'ai') {

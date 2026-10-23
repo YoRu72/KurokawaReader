@@ -1,7 +1,7 @@
 // "Define" and "Translate" for selected text. The reader is offline-first, so
 // these are the only features that touch the network — and they say so when
 // there is none.
-import { h, icon, openSheet, pickButton } from './dom';
+import { h, icon, openSheet, pickButton, toast } from './dom';
 import { t, getLang, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
 import { hasSystemText, translateWithSystem } from './share';
@@ -108,4 +108,17 @@ export function showTranslation(text: string): void {
     }
   }
   void run();
+}
+
+/** Furigana / pinyin for the selected text, in a small sheet; the ruby is copyable. */
+export function showReadings(text: string, lang?: string): void {
+  const s = openSheet(t('readings'), t('close'));
+  s.body.style.fontFamily = 'var(--font-read)';
+  s.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('loading')));
+  void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => {
+    s.body.innerHTML = '';
+    if (!html) { s.body.append(h('p', { class: 'src' }, t('noReadings'))); return; }
+    const d = h('div', { class: 'readings', lang: /[\u3040-\u30ff]/.test(text) ? 'ja' : 'zh' }); d.innerHTML = html; s.body.append(d);
+    s.actions.append(h('button', { class: 'btn small', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(d.innerText); toast(t('copied')); } catch { /* ignore */ } } }, icon('copy'), t('copySelected')));
+  }).catch(() => { s.body.innerHTML = ''; s.body.append(h('p', { class: 'src' }, t('furiganaOffline'))); });
 }

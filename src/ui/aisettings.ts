@@ -77,6 +77,7 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     ...(extra ? [extra] : []),
     h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('readAloud')),
     field(t('speechEngine'), engine),
+    field(t('speechScope'), pickButton<VisualSettings['speechScope']>(t('speechScope'), [['chapter', t('speechChapter'), 'books'], ['book', t('speechBook'), 'library']], s.speechScope, (v) => updateSettings({ speechScope: v }), t('close'))),
     voiceField,
     ttsField,
   );

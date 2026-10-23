@@ -450,6 +450,23 @@ public class KurokawaPlugin extends Plugin {
     /** Volume keys turn pages when the reader asks for it (MainActivity consults this flag). */
     public static volatile boolean volumeKeys = false;
 
+    /** Which launcher alias (and so which app name) is shown: "auto" follows the system language, or en/ar/ja/zh/ko. */
+    @PluginMethod
+    public void setAppName(PluginCall call) {
+        String lang = call.getString("lang", "auto");
+        String[] all = { "Auto", "En", "Ar", "Ja", "Zh", "Ko" };
+        String want = lang.equals("auto") ? "Auto" : Character.toUpperCase(lang.charAt(0)) + lang.substring(1).toLowerCase();
+        android.content.pm.PackageManager pm = getContext().getPackageManager();
+        String pkg = getContext().getPackageName();
+        boolean found = false;
+        for (String a : all) if (a.equals(want)) found = true;
+        if (!found) want = "Auto";
+        // Enable the wanted alias first so the launcher never sees a moment without an entry.
+        pm.setComponentEnabledSetting(new android.content.ComponentName(pkg, pkg + ".Launcher" + want), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP);
+        for (String a : all) if (!a.equals(want)) pm.setComponentEnabledSetting(new android.content.ComponentName(pkg, pkg + ".Launcher" + a), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP);
+        call.resolve();
+    }
+
     /** Screen brightness of this window: 0–1, or -1 to follow the system setting. */
     @PluginMethod
     public void setBrightness(PluginCall call) {

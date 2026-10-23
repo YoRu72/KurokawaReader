@@ -144,6 +144,12 @@ function brightnessPlugin(): BrightnessPlugin | null {
   return k?.setBrightness && k.getBrightness ? (k as BrightnessPlugin) : null;
 }
 export function canDeviceBrightness(): boolean { return !!brightnessPlugin(); }
+/** Android: the launcher shows the app under the chosen language's name. */
+export function canSetAppName(): boolean { return nativePlatform() === 'android' && !!(window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setAppName?: unknown } } }) | undefined)?.Plugins?.Kurokawa?.setAppName; }
+export async function setAppName(lang: string): Promise<void> {
+  const k = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setAppName?(o: { lang: string }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
+  try { await k?.setAppName?.({ lang }); } catch { /* ignore */ }
+}
 /** Screen brightness 0–1 (phones and tablets); -1 hands control back to the system. */
 export async function setDeviceBrightness(value: number): Promise<void> { try { await brightnessPlugin()?.setBrightness({ value }); } catch { /* ignore */ } }
 export async function getDeviceBrightness(): Promise<number> { try { return (await brightnessPlugin()?.getBrightness())?.value ?? 0.5; } catch { return 0.5; } }

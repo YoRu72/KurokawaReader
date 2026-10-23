@@ -3,7 +3,7 @@
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
 import { t, isRtlText, isTouchDevice, getLang, localDigits } from '../i18n';
-import { db, uid, type PdfNote, type PdfHighlight, type Book, type Locator, type Bookmark, type Highlight } from '../db';
+import { db, uid, type PdfNote, type PdfHighlight, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
@@ -14,7 +14,7 @@ import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
 import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
 import { openGallery } from './gallery';
-import { touchBook, coverUrl } from '../library';
+import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate } from '../router';
 import { ReadingTracker, countWords } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
@@ -24,6 +24,7 @@ import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
 import { attachFurigana, isJapanese } from '../furigana';
+import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
 import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
@@ -180,7 +181,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const t0 = performance.now();
     const file = await db.getFile(doc.book.id);
     performance.measure('kr:getFile', { start: t0 });
-    if (!handler || !file) { doc.wrapper.append(h('p', { class: 'kr-content' }, t('unsupportedFormat'))); return; }
+    if (!handler || !file) { doc.wrapper.append(h('p', { class: 'kr-content' }, !file && doc.book.source ? t('linkedFileMissing', { title: doc.book.title }) : t('unsupportedFormat'))); return; }
     const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}` };
     try {
       doc.render?.dispose();
@@ -219,7 +220,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   root.querySelector('#kr-loading')?.remove();
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
+  const sample = docs.map((d) => d.wrapper.textContent?.slice(0, 4000) ?? '').join('\n');
   const isJa = docs.some((d) => isJapanese(d.wrapper.textContent?.slice(0, 4000) ?? '', d.book.language));
+  const isZh = !isJa && (/[\u4e00-\u9fff]/.test(sample) || docs.some((d) => /^zh/i.test(d.book.language ?? '')));
+  if (isZh) {
+    // Pinyin above the characters of Chinese books (same switch as furigana; readings load from the CDN once).
+    let py: (() => void) & { refresh?: () => void } | null = null;
+    const start = () => { if (py || !getSettings().furigana) return; py = attachPinyin(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), () => toast(t('pinyinOffline'), 'error', 4000)); };
+    start();
+    chapterListeners.push(() => py?.refresh?.());
+    onDispose(onSettingsChange((st) => { if (st.furigana) start(); }));
+    onDispose(() => py?.());
+  }
   if (isJa) {
     let furi: (() => void) & { refresh?: () => void } | null = null;
     const start = () => { if (furi || !getSettings().furigana) return; furi = attachFurigana(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), () => toast(t('furiganaOffline'), 'error', 4000)); };
@@ -584,6 +596,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     search: (text) => openSearch(text),
     highlight: (range, text, color) => addHighlight(range, text, color),
     note: (range, text) => addNote(range, text),
+    lang: () => currentLocator()?.doc.book.language ?? docs[0]?.book.language,
     speak: (text) => speak([text]),
     textImage: (text) => void textImage(text),
   }));
@@ -873,18 +886,47 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(stopAutoScroll);
 
   // Read aloud with the Web Speech API (voices are the device's own, so this works offline where the OS provides them).
+  /** Splits a long paragraph at sentence ends so each utterance stays short (long ones stall on Android). */
+  function speechPieces(text: string): string[] {
+    if (text.length <= 320) return [text];
+    const parts = text.match(/[^.!?。！？؟\n]+[.!?。！？؟]*\s*/g) ?? [text];
+    const out: string[] = []; let cur = '';
+    for (const p of parts) { if (cur && cur.length + p.length > 320) { out.push(cur.trim()); cur = ''; } cur += p; }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  const speechLang = (text: string, doc?: OpenDoc): string => {
+    if (/[\u3040-\u30ff]/.test(text)) return 'ja-JP';
+    if (/[\uac00-\ud7af]/.test(text)) return 'ko-KR';
+    if (/[\u4e00-\u9fff]/.test(text)) return (doc?.book.language ?? '').startsWith('ja') ? 'ja-JP' : 'zh-CN';
+    if (isRtlText(text)) return /[\u0600-\u06FF]/.test(text) ? 'ar-SA' : 'he-IL';
+    const l = doc?.book.language; return l && !/^(ar|ja|zh|ko|he)/.test(l) ? l : 'en-US';
+  };
   function speak(chunks: string[], startBlock?: { doc: OpenDoc; index: number }): void {
     if (!('speechSynthesis' in window)) return;
     stopSpeaking();
     speaking = true;
+    keepAwake(true);
     let i = 0;
+    // Where reading stops: the end of this chapter, or the end of the book.
+    const scopeEnd = (() => {
+      if (!startBlock || getSettings().speechScope === 'book') return Infinity;
+      const u = units().find((x) => x.doc === startBlock.doc && (x.el === startBlock.doc.allBlocks[startBlock.index] || x.el.contains(startBlock.doc.allBlocks[startBlock.index])));
+      if (!u) return Infinity;
+      let end = startBlock.index; while (startBlock.doc.allBlocks[end + 1] && u.el.contains(startBlock.doc.allBlocks[end + 1])) end++;
+      return end - startBlock.index;
+    })();
+    const queue: string[] = [];
     const next = () => {
       if (!speaking) return;
+      if (queue.length) { say(queue.shift()!); return; }
       let text = chunks[i];
       if (text === undefined && startBlock) {
+        if (i > scopeEnd) { stopSpeaking(); toast(t('chapterReadDone')); return; }
         const block = startBlock.doc.allBlocks[startBlock.index + i];
         if (!block) { stopSpeaking(); return; }
-        text = (block.textContent ?? '').trim();
+        text = (block.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (!/[\p{L}\p{N}]/u.test(text)) { i++; next(); return; }
         revealElement(block);
         const sr = scroll.getBoundingClientRect();
         const r = block.getBoundingClientRect();
@@ -894,6 +936,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (text === undefined) { stopSpeaking(); return; }
       i++;
       if (!text) { next(); return; }
+      const pieces = speechPieces(text);
+      if (pieces.length > 1) { queue.push(...pieces.slice(1)); text = pieces[0]; }
+      say(text);
+    };
+    const say = (text: string) => {
       if (getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady()) {
         // AI voice: fetch this passage (prefetched when possible), play it, prefetch the next one.
         const play = async () => {
@@ -915,7 +962,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         return;
       }
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = isRtlText(text) ? 'ar-SA' : 'en-US';
+      u.lang = speechLang(text, startBlock?.doc);
       u.rate = getSettings().speechRate;
       const vname = getSettings().speechVoice; const voice = vname ? speechSynthesis.getVoices().find((v) => v.name === vname) : undefined;
       if (voice) u.voice = voice;
@@ -925,7 +972,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     };
     next();
   }
-  function stopSpeaking(): void { speaking = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
+  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); if ('speechSynthesis' in window) speechSynthesis.cancel(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
   onDispose(stopSpeaking);
 
   // Sleep timer: stops read-aloud and auto-scroll after N minutes.
@@ -947,6 +994,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       body.append(h('ul', { class: 'plain-list' },
         item('info', t('bookInfo'), () => showInfo()),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
+        item((currentLocator()?.doc.book ?? docs[0].book).tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', (currentLocator()?.doc.book ?? docs[0].book).tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(currentLocator()?.doc.book ?? docs[0].book)),
         item('images', t('images'), () => showGallery()),
         item('type', t('visualOptions'), openOptions),
         item(speaking ? 'stop' : 'speak', speaking ? t('stopReading') : t('readAloud'), () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }),
@@ -954,6 +1002,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
+        item('external', t('shareFile'), () => { const cur = currentLocator(); void shareBooks([(cur?.doc.book ?? docs[0].book).id]); }),
         item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
         item('translate', t('aiTranslate'), () => translator.toggleUi()),
         item('settings', t('toolbarButtons'), () => toolbarSheet()),
@@ -1012,6 +1061,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 /* PDF reader                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Toggle the favourite mark on a book (the reserved ★ tag). */
+async function toggleFavorite(book: Book): Promise<boolean> {
+  const has = (book.tags ?? []).includes(FAV_TAG);
+  const tags = has ? (book.tags ?? []).filter((x) => x !== FAV_TAG) : [...(book.tags ?? []), FAV_TAG];
+  await db.updateBook(book.id, (b) => { if (tags.length) b.tags = tags; else delete b.tags; b.tagsAt = Date.now(); });
+  if (tags.length) book.tags = tags; else delete book.tags;
+  scheduleSync();
+  toast(has ? t('removedFromFavorites') : t('addedToFavorites'));
+  return !has;
+}
+
 /** A one-shot jump target set by the Bookmarks & notes view before opening a book. */
 export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin'; id: string }
 export function setJump(j: Jump): void { sessionStorage.setItem('kr.jump', JSON.stringify(j)); }
@@ -1024,7 +1084,7 @@ function snapName(title: string): string {
 
 async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void): Promise<void> {
   const file = await db.getFile(book.id);
-  if (!file) { navigate('/', true); return; }
+  if (!file) { toast(t(book.source ? 'linkedFileMissing' : 'openError', { title: book.title, error: '' }), 'error', 5000); navigate('/', true); return; }
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
@@ -1411,12 +1471,14 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       body.append(h('ul', { class: 'plain-list' },
         item('info', t('bookInfo'), showInfo),
         item('download', t('exportNotes'), () => void exportNotes(book)),
+        item('external', t('shareFile'), () => void shareBooks([book.id])),
         item('grid', t('pagesGrid'), showPagesGrid),
         item('camera', t('savePageImage'), () => void savePage(false)),
         item('external', t('sharePage'), () => void savePage(true)),
         item('copy', t('copyPageImage'), () => void savePage('copy')),
         item('images', t('savePagesRange'), () => savePagesSheet()),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
+        item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
         item('type', t('visualOptions'), openPdfOptions),
         item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),

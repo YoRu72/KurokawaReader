@@ -23,6 +23,12 @@ export interface Locator {
   pct: number;
 }
 
+/** A linked file: a content:// / file:// URI on Android, a path on the desktop. */
+/** The reserved tag that marks favourites (shown with a heart, sorted first; it syncs and backs up like any tag). */
+export const FAV_TAG = '★';
+
+export interface FileSource { uri?: string; tree?: string; path?: string }
+
 export interface Bookmark {
   id: string;
   label: string;
@@ -75,6 +81,8 @@ export interface Book {
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];
+  /** Where the file lives when it is linked instead of copied into the app (scan import). */
+  source?: FileSource;
   pdfHighlights?: PdfHighlight[];
   /** Cached per-book override of the visual settings (optional). */
   prefs?: Record<string, unknown>;
@@ -120,6 +128,27 @@ function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) 
   );
 }
 
+// Small cache so re-opening a linked book, or re-rendering it, does not re-read it from storage.
+const linkedCache = new Map<string, { size: number; blob: Blob }>();
+async function readLinked(src: FileSource, name: string, mime?: string): Promise<Blob | undefined> {
+  const key = src.uri ?? src.path ?? '';
+  const hit = linkedCache.get(key); if (hit) return hit.blob;
+  let blob: Blob | undefined;
+  const cap = (window as unknown as { Capacitor?: { Plugins?: { Kurokawa?: { readDocument?(o: { uri: string; tree?: string }): Promise<{ data: string }> } } } }).Capacitor;
+  const desk = (window as unknown as { kurokawaDesktop?: { readFile?(p: string): Promise<ArrayBuffer | Uint8Array> } }).kurokawaDesktop;
+  try {
+    if (src.uri && cap?.Plugins?.Kurokawa?.readDocument) {
+      const { data } = await cap.Plugins.Kurokawa.readDocument({ uri: src.uri, tree: src.tree });
+      const bin = atob(data); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      blob = new File([bytes], name, { type: mime });
+    } else if (src.path && desk?.readFile) {
+      blob = new File([await desk.readFile(src.path) as ArrayBuffer], name, { type: mime });
+    }
+  } catch { blob = undefined; }
+  if (blob) { linkedCache.set(key, { size: blob.size, blob }); while (linkedCache.size > 3) linkedCache.delete(linkedCache.keys().next().value!); }
+  return blob;
+}
+
 export const db = {
   async allBooks(): Promise<Book[]> {
     return tx<Book[]>('books', 'readonly', (s) => s.getAll());
@@ -145,7 +174,12 @@ export const db = {
     await tx('files', 'readwrite', (s) => s.put(blob, id));
   },
   async getFile(id: string): Promise<Blob | undefined> {
-    return tx<Blob | undefined>('files', 'readonly', (s) => s.get(id));
+    const stored = await tx<Blob | undefined>('files', 'readonly', (s) => s.get(id));
+    if (stored) return stored;
+    // Linked books are read from where they live, through the platform bridge.
+    const book = await this.getBook(id);
+    if (!book?.source) return undefined;
+    return readLinked(book.source, book.fileName, book.mime);
   },
   async deleteFile(id: string): Promise<void> {
     await tx('files', 'readwrite', (s) => s.delete(id));

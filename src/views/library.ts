@@ -1,7 +1,7 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet } from '../ui/dom';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration } from '../i18n';
-import { importFiles, listBooks, removeBooks, coverUrl, forgetCover } from '../library';
-import { db, uid, type Book, type Folder } from '../db';
+import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
+import { db, uid, FAV_TAG, type Book, type Folder } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
 import { navigate } from '../router';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
@@ -119,23 +119,27 @@ export function libraryView(): HTMLElement {
     selBar.hidden = !selecting;
     if (!selecting) return;
     const n = selected.size;
+    const act = (name: string, label: string, onclick: () => void, cls = '') => h('button', { class: 'sel-act' + (cls ? ' ' + cls : ''), type: 'button', disabled: n === 0, 'aria-label': label, title: label, onclick }, icon(name), h('span', null, label));
     selBar.append(
-      h('span', null, t('selectedCount', { n })),
-      h('button', { class: 'btn small', onclick: () => { books.forEach((b) => selected.add(b.id)); renderGrid(); } }, t('selectAll')),
-      h('span', { class: 'spacer' }),
-      h('button', { class: 'btn small', disabled: n === 0, onclick: () => tagsSheet([...selected]) }, icon('tag'), t('tags')),
-      h('button', { class: 'btn small', disabled: n === 0, onclick: () => moveSheet([...selected]) }, icon('folder'), t('moveToFolder')),
-      h('button', { class: 'btn small danger', disabled: n === 0, onclick: async () => {
-        if (!confirm(t('deleteConfirm', { n }))) return;
-        await removeBooks([...selected]);
-        selected.forEach(forgetCover);
-        setSelecting(false);
-        await refresh();
-      } }, icon('trash'), t('delete')),
-      h('button', { class: 'btn small primary', disabled: n === 0, onclick: () => {
-        const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id);
-        navigate(`/read/${ids.join(',')}`);
-      } }, icon('books'), n > 1 ? t('openTogether') : t('open')),
+      h('div', { class: 'sel-head' },
+        h('span', { class: 'sel-count' }, t('selectedCount', { n })),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { if (selected.size === books.length) selected.clear(); else books.forEach((b) => selected.add(b.id)); renderGrid(); } }, selected.size === books.length && n ? t('selectNone') : t('selectAll')),
+        h('span', { class: 'spacer' }),
+        iconButton('close', t('close'), () => setSelecting(false))),
+      h('div', { class: 'sel-actions' },
+        act('heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })),
+        act('tag', t('tags'), () => tagsSheet([...selected])),
+        act('folder', t('moveToFolder'), () => moveSheet([...selected])),
+        act('external', t('shareFile'), () => void shareBooks([...selected])),
+        act('trash', t('delete'), async () => {
+          if (!confirm(t('deleteConfirm', { n }))) return;
+          await removeBooks([...selected]);
+          selected.forEach(forgetCover);
+          setSelecting(false);
+          await refresh();
+        }, 'danger'),
+        act('books', n > 1 ? t('openTogether') : t('open'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); navigate(`/read/${ids.join(',')}`); }, 'primary'),
+      ),
     );
   }
 
@@ -182,6 +186,7 @@ export function libraryView(): HTMLElement {
     const cover = h('div', { class: 'cover' },
       url ? h('img', { src: url, alt: '', loading: 'lazy' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badge' }, book.format.toUpperCase()),
+      (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
       pct > 0 ? h('div', { class: 'progress' }, h('i', { style: { width: `${pct}%` } })) : null,
       selecting ? h('div', { class: 'check' }, icon('check')) : null,
     );
@@ -230,8 +235,10 @@ export function libraryView(): HTMLElement {
       if (book.tags?.length) rows.push([t('tags'), book.tags.join(' · ')]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
       s.actions.append(
+        (() => { const isFav = (book.tags ?? []).includes(FAV_TAG); return h('button', { class: 'btn small' + (isFav ? ' tonal' : ''), onclick: async () => { await setTag([book.id], FAV_TAG, !isFav); s.close(); await refresh(); toast(isFav ? t('removedFromFavorites') : t('addedToFavorites')); } }, icon(isFav ? 'heartFill' : 'heart'), isFav ? t('unfavorite') : t('favorite')); })(),
         h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
+        h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
         h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
@@ -258,7 +265,7 @@ export function libraryView(): HTMLElement {
   function allTags(): { name: string; count: number }[] {
     const counts = new Map<string, number>();
     for (const b of books) for (const name of b.tags ?? []) counts.set(name, (counts.get(name) ?? 0) + 1);
-    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => natural.compare(a.name, b.name));
+    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => (a.name === FAV_TAG ? -1 : b.name === FAV_TAG ? 1 : natural.compare(a.name, b.name)));
   }
 
   function setTagFilter(name: string | null) {
@@ -274,7 +281,9 @@ export function libraryView(): HTMLElement {
     if (!tags.length) return;
     for (const tag of tags) {
       const on = tagFilter === tag.name;
-      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon('tag'), h('span', { dir: 'auto' }, tag.name));
+      const fav = tag.name === FAV_TAG;
+      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : '') + (fav ? ' fav' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon(fav ? 'heartFill' : 'tag'), h('span', { dir: 'auto' }, fav ? t('favorites') : tag.name));
+      if (fav) { tagChips.append(c); continue; }
       c.addEventListener('contextmenu', (e) => { e.preventDefault(); tagSheet(tag.name); });
       let pt: number | undefined;
       c.addEventListener('pointerdown', () => { pt = window.setTimeout(() => tagSheet(tag.name), 560); });
@@ -313,8 +322,8 @@ export function libraryView(): HTMLElement {
           const on = sel.length > 0 && sel.every((b) => (b.tags ?? []).includes(tag.name));
           list.append(h('label', { class: 'dest-row' + (on ? ' on' : '') },
             h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => { void setTag(ids, tag.name, (e.target as HTMLInputElement).checked).then(draw); } }),
-            icon('tag'),
-            h('span', { class: 'name', dir: 'auto' }, tag.name, h('span', { style: { color: 'var(--md-on-surface-dim)', fontSize: '12px' } }, ` · ${localDigits(tag.count)}`))));
+            icon(tag.name === FAV_TAG ? 'heartFill' : 'tag'),
+            h('span', { class: 'name', dir: 'auto' }, tag.name === FAV_TAG ? t('favorites') : tag.name, h('span', { style: { color: 'var(--md-on-surface-dim)', fontSize: '12px' } }, ` · ${localDigits(tag.count)}`))));
         }
       };
       const add = () => { const name = input.value.trim(); if (!name) return; input.value = ''; void setTag(ids, name, true).then(draw); };

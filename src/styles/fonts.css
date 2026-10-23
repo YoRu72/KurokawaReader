@@ -47,7 +47,8 @@
 :root {
   /* Latin first, Arabic second: browsers fall through per glyph, so Arabic letters
      inside an English interface still land on Sultan, and vice versa. */
-  --font-ui: 'Inter', 'Sultan', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-cjk: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo', 'PingFang SC', 'Microsoft YaHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK JP', 'Noto Sans CJK SC', 'Noto Sans CJK KR', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans KR', 'Source Han Sans', sans-serif;
+  --font-ui: 'Inter', 'Sultan', system-ui, -apple-system, 'Segoe UI', var(--font-cjk);
   --font-ui-ar: 'Sultan', 'Inter', 'Noto Naskh Arabic', system-ui, sans-serif;
   --font-read-latin: 'Lora';
   --font-read-arabic: 'Uthman TN1';
@@ -55,3 +56,7 @@
   --font-read-rtl: var(--font-read-arabic), var(--font-read-latin), 'Noto Naskh Arabic', serif;
 }
 html[dir='rtl'] { --font-ui: var(--font-ui-ar); }
+/* Chinese, Japanese and Korean interfaces use the platform's own CJK sans; reading text in those scripts falls back to it too. */
+html[lang^='ja'], html[lang^='zh'], html[lang^='ko'] { --font-ui: var(--font-cjk); }
+.kr-content :is([lang^='ja'], [lang^='zh'], [lang^='ko']), .kr-content[lang^='ja'], .kr-content[lang^='zh'], .kr-content[lang^='ko'], .reader[data-lang^='ja'] .kr-content, .reader[data-lang^='zh'] .kr-content, .reader[data-lang^='ko'] .kr-content { font-family: var(--r-font), var(--font-cjk); }
+.readings-pop, .readings { font-family: var(--font-cjk); }

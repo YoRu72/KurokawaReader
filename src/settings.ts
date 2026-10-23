@@ -63,6 +63,7 @@ export interface VisualSettings {
   tapToTurn: boolean;
   showStatusLine: boolean;
   importButton: 'chips' | 'top' | 'fab';
+  appName: 'auto' | 'en' | 'ar' | 'ja' | 'zh' | 'ko';   // launcher name on the device (Android)
   translator: 'builtin' | 'system';
   snapStyle: 'plain' | 'card';
   snapWatermark: boolean;
@@ -75,7 +76,8 @@ export interface VisualSettings {
   edgeBrightness: boolean;    // left-edge swipe adjusts dimming
   brightnessMode: 'app' | 'device';   // what the swipe (and dimming) controls: the reader's overlay or the screen itself
   pinchText: boolean;         // two-finger pinch changes the text size
-  speechRate: number;         // read-aloud speed, 0.5–2
+  speechRate: number;
+  speechScope: 'chapter' | 'book';   // read aloud stops at the end of the chapter, or carries on to the end of the book         // read-aloud speed, 0.5–2
   speechVoice: string;        // voice name, '' = system default for the language
   openLastOnLaunch: boolean;  // reopen the last book when the app starts
   coverSize: 'small' | 'medium' | 'large';
@@ -88,7 +90,8 @@ export interface VisualSettings {
   aiPromptPrefill: boolean;   // show the built-in instructions in the box, ready to be extended
   aiTarget: string;           // target language code
   aiTask: 'translate' | 'furigana';  // what the chapter pass does
-  furigana: boolean;          // show ruby readings in Japanese books
+  furigana: boolean;
+  autoReadings: boolean;      // show furigana / pinyin as soon as CJK text is selected          // show ruby readings in Japanese books
   aiTtsModel: string;
   aiVoice: string;
   speechEngine: 'system' | 'ai';
@@ -156,6 +159,7 @@ export const DEFAULTS: VisualSettings = {
   tapToTurn: true,
   showStatusLine: false,
   importButton: 'chips',
+  appName: 'auto',
   translator: 'builtin',
   snapStyle: 'plain',
   snapWatermark: false,
@@ -169,6 +173,7 @@ export const DEFAULTS: VisualSettings = {
   brightnessMode: 'device',
   pinchText: true,
   speechRate: 1,
+  speechScope: 'chapter',
   speechVoice: '',
   openLastOnLaunch: false,
   coverSize: 'medium',
@@ -181,6 +186,7 @@ export const DEFAULTS: VisualSettings = {
   aiTarget: 'ar',
   aiTask: 'translate',
   furigana: true,
+  autoReadings: false,
   aiTtsModel: '',
   aiVoice: '',
   speechEngine: 'system',

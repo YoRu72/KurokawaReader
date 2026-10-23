@@ -8,10 +8,12 @@ import { t, formatBytes, localDigits } from '../i18n';
 import { detectFormat } from '../formats';
 import type { Format, Folder } from '../db';
 
-export interface ScanEntry { name: string; path: string; size: number; format: Format; read: () => Promise<File> }
+export interface ScanEntry { name: string; path: string; size: number; format: Format; read: () => Promise<File>; source?: FileSource }
 export interface ScanResult { folderName: string; files: ScanEntry[]; truncated: boolean }
 
 import { destinationList, type Destination } from './destination';
+import type { FileSource } from '../db';
+import type { SourcedFile } from '../library';
 export type { Destination };
 
 interface ScanFile { uri: string; tree?: string; name: string; path: string; mime: string; size: number }
@@ -65,7 +67,7 @@ const ALL_EXTS = FORMAT_GROUPS.flatMap((g) => g.exts);
 
 function toEntries(plugin: KrScan, files: ScanFile[]): ScanEntry[] {
   return files.map((f) => ({
-    name: f.name, path: f.path, size: f.size, format: detectFormat(f.name, f.mime),
+    name: f.name, path: f.path, size: f.size, format: detectFormat(f.name, f.mime), source: { uri: f.uri, tree: f.tree },
     read: async () => { const { data } = await plugin.readDocument({ uri: f.uri, tree: f.tree }); return new File([base64ToBlob(data, f.mime)], f.name, { type: f.mime }); },
   }));
 }
@@ -86,7 +88,7 @@ async function scanDesktopWhole(exts: string[]): Promise<ScanResult | null> {
   const d = desktop();
   if (!d?.scanDevice || !d.readFile) return null;
   const res = await d.scanDevice(exts);
-  return { folderName: res.root, truncated: res.truncated, files: res.files.map((f) => ({ name: f.name, path: f.path, size: f.size, format: detectFormat(f.name), read: async () => new File([await d.readFile!(f.path)], f.name) })) };
+  return { folderName: res.root, truncated: res.truncated, files: res.files.map((f) => ({ name: f.name, path: f.path, size: f.size, format: detectFormat(f.name), source: { path: f.path }, read: async () => new File([await d.readFile!(f.path)], f.name) })) };
 }
 
 async function scanAndroid(exts: string[]): Promise<ScanResult | null> {
@@ -135,7 +137,9 @@ export function openScanSheet(o: ScanSheetOptions): void {
   if (!canScan()) { toast(t('notSupportedHere')); o.fallbackPick(); return; }
   const sheet = openSheet(t('scanDevice'), t('close'));
   sheet.body.style.fontFamily = 'var(--font-ui)';
-  const picked = new Set<string>(FORMAT_GROUPS.map((g) => g.id));
+  // Pictures are rarely what someone wants to import from a whole device; they start unticked.
+  const picked = new Set<string>(FORMAT_GROUPS.filter((g) => g.id !== 'image').map((g) => g.id));
+  let link = true;
   const typeRow = h('div', { class: 'chip-row wrap' });
   const renderTypes = () => {
     clear(typeRow);
@@ -156,6 +160,8 @@ export function openScanSheet(o: ScanSheetOptions): void {
   const importSel = h('button', { class: 'btn small primary', type: 'button', disabled: true, onclick: () => void run(false) }, icon('import'), t('importSelected'));
   const importAll = h('button', { class: 'btn small', type: 'button', disabled: true, onclick: () => void run(true) }, t('importAll'));
   sheet.body.append(h('div', { class: 'field', style: { marginTop: '12px' } }, h('span', { class: 'label' }, t('destination')), destList.el));
+  const linkCb = h('input', { type: 'checkbox', onchange: () => { link = linkCb.checked; } }) as HTMLInputElement; linkCb.checked = link;
+  sheet.body.append(h('label', { class: 'row', style: { marginTop: '10px' } }, h('span', { class: 'label' }, t('linkFiles'), h('span', { class: 'hint' }, t('linkFilesHint'))), h('span', { class: 'switch' }, linkCb, h('i'))));
   sheet.actions.append(importAll, importSel);
 
   const visible = (): ScanEntry[] => (result?.files ?? []).filter((f) => picked.has(groupOf(f.format)));
@@ -208,7 +214,7 @@ export function openScanSheet(o: ScanSheetOptions): void {
     importSel.disabled = importAll.disabled = true;
     toast(t('importing', { n: localDigits(entries.length) }), 'info', 60000);
     const files: File[] = [];
-    for (const e of entries) { try { files.push(await e.read()); } catch (err) { toast(t('importFailed', { name: e.name, error: String((err as Error).message ?? err) }), 'error', 4000); } }
+    for (const e of entries) { try { const f = await e.read() as SourcedFile; if (link && e.source && (e.source.uri || e.source.path)) f.krSource = e.source; files.push(f); } catch (err) { toast(t('importFailed', { name: e.name, error: String((err as Error).message ?? err) }), 'error', 4000); } }
     sheet.close();
     await o.onImport(files, dest);
   }

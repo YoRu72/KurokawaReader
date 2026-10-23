@@ -35,8 +35,11 @@ plist = plist.replace(/<key>CFBundleDisplayName<\/key>\s*<string>[^<]*<\/string>
 if (!plist.includes('CFBundleDisplayName')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>CFBundleDisplayName</key>\n  <string>KurokawaReader</string>\n');
 if (!plist.includes('UIViewControllerBasedStatusBarAppearance')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>UIViewControllerBasedStatusBarAppearance</key><true/>\n  <key>UIStatusBarHidden</key><false/>\n');
 await fs.writeFile(plistPath, plist);
-// Arabic display name
-const arDir = path.join(root, 'ios/App/App/ar.lproj');
-await fs.mkdir(arDir, { recursive: true });
-await fs.writeFile(path.join(arDir, 'InfoPlist.strings'), 'CFBundleDisplayName = "قارئ كروكاوا";\nCFBundleName = "قارئ كروكاوا";\n');
+// Localised display names (iOS picks the one matching the device language).
+const NAMES = { ar: 'قارئ كروكاوا', ja: '黒川リーダー', 'zh-Hans': '黑川阅读器', ko: '쿠로카와 리더' };
+for (const [code, name] of Object.entries(NAMES)) {
+  const dir = path.join(root, `ios/App/App/${code}.lproj`);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'InfoPlist.strings'), `CFBundleDisplayName = "${name}";\nCFBundleName = "${name}";\n`);
+}
 console.log('iOS overlay applied');

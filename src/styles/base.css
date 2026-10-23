@@ -341,12 +341,28 @@ html[dir='rtl'] .library-tools select { background-position: 14px center; }
 
 /* Selection action bar — floating toolbar */
 .selection-bar {
-  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + var(--safe-bottom)); z-index: 31;
-  display: flex; gap: 8px; align-items: center; padding: 8px 10px 8px 18px; max-width: calc(100vw - 24px);
-  background: var(--md-surface-container-high); border-radius: var(--sh-full); box-shadow: var(--el-3); animation: pop var(--dur-med) var(--ease-spring);
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--safe-bottom)); z-index: 31;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; width: min(560px, calc(100vw - 20px));
+  background: var(--md-surface-container-high); border-radius: 28px; box-shadow: var(--el-3); animation: pop var(--dur-med) var(--ease-spring);
 }
-.selection-bar .spacer { width: 4px; }
-.selection-bar > span:first-child { font-weight: 600; white-space: nowrap; }
+.selection-bar .sel-head { display: flex; align-items: center; gap: 8px; padding-inline-start: 8px; }
+.selection-bar .sel-count { font-weight: 600; white-space: nowrap; flex: 0 0 auto; }
+.selection-bar .spacer { flex: 1; }
+.selection-bar .sel-actions { display: flex; gap: 4px; justify-content: space-between; }
+.selection-bar .sel-act { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 18px; font-size: 11.5px; color: var(--md-on-surface-variant); }
+.selection-bar .sel-act span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.selection-bar .sel-act svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.selection-bar .sel-act:hover:not(:disabled) { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.selection-bar .sel-act:disabled { opacity: .4; }
+.selection-bar .sel-act.danger { color: var(--md-error); }
+.selection-bar .sel-act.primary { color: var(--md-primary); font-weight: 600; }
+@media (min-width: 720px) {
+  .selection-bar { flex-direction: row; width: auto; max-width: calc(100vw - 24px); padding: 8px 10px; border-radius: var(--sh-full); align-items: center; }
+  .selection-bar .sel-head { padding-inline-start: 10px; }
+  .selection-bar .sel-actions { gap: 2px; }
+  .selection-bar .sel-act { flex-direction: row; gap: 8px; padding: 8px 12px; font-size: 13px; }
+  .selection-bar .sel-act svg { width: 18px; height: 18px; }
+}
 @keyframes pop { from { transform: translateX(-50%) translateY(16px) scale(.96); opacity: 0; } }
 
 /* ---------- Side sheet (wide) / bottom sheet (narrow) ---------- */
@@ -677,3 +693,12 @@ html[dir='rtl'] .card.collapsed .card-title svg { transform: rotate(90deg); }
 .library-tools .tool-btn { width: 52px; height: 52px; border-radius: var(--sh-lg); background: var(--md-surface-container-high); flex: 0 0 auto; }
 .library-tools .tool-btn[aria-pressed='true'] { background: var(--md-primary-container); color: var(--md-on-primary-container); }
 .chip.sync-chip { padding: 0 12px; }
+
+/* Readings (furigana / pinyin) popover and sheet */
+.readings-pop { position: fixed; z-index: 60; max-width: min(92vw, 520px); padding: 10px 14px; border-radius: 16px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); font-family: var(--font-read); font-size: 18px; line-height: 2.3; animation: pop var(--dur-med) var(--ease-spring); }
+.readings-pop ruby rt, .readings ruby rt { font-size: .55em; color: var(--md-primary); letter-spacing: 0; }
+.readings { font-size: 20px; line-height: 2.4; padding: 6px 0; }
+.chip.fav svg, .badge.fav svg { color: #e5718a; }
+.cover .badge.fav { right: auto; left: 10px; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; background: rgba(0,0,0,.45); }
+.badge.fav svg { width: 15px; height: 15px; fill: currentColor; stroke: none; }
+.chip.fav svg { fill: currentColor; stroke: none; }

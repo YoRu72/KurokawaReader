@@ -63,7 +63,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   // Optional components fetched once from a CDN (the Japanese dictionary): cache-first, kept across app updates.
-  if (url.host === 'cdn.jsdelivr.net' && url.pathname.includes('/kuromoji')) {
+  if (url.host === 'cdn.jsdelivr.net' && (url.pathname.includes('/kuromoji') || url.pathname.includes('/pinyin-pro'))) {
     e.respondWith(caches.open('kurokawa-ext').then((c) => c.match(e.request).then((hit) => hit || fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; }))));
     return;
   }

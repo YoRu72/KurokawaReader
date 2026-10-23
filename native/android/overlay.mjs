@@ -77,21 +77,44 @@ if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
 }
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
+// Launcher name the reader can choose: the MAIN/LAUNCHER filter moves off MainActivity onto
+// activity-aliases — one that follows the system language, and one per supported language —
+// and the plugin enables exactly one of them (setAppName).
+if (!manifest.includes('android:name=".LauncherAuto"')) {
+  manifest = manifest.replace(/\s*<intent-filter>\s*<action android:name="android.intent.action.MAIN" \/>\s*<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>/, '');
+  const alias = (name, label, enabled) => `
+        <activity-alias android:name=".${name}" android:targetActivity=".MainActivity" android:label="${label}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:exported="true" android:enabled="${enabled}">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>`;
+  const aliases = [
+    alias('LauncherAuto', '@string/app_name', 'true'),
+    alias('LauncherEn', 'KurokawaReader', 'false'),
+    alias('LauncherAr', '@string/app_name_ar', 'false'),
+    alias('LauncherJa', '@string/app_name_ja', 'false'),
+    alias('LauncherZh', '@string/app_name_zh', 'false'),
+    alias('LauncherKo', '@string/app_name_ko', 'false'),
+  ].join('');
+  manifest = manifest.replace('</application>', `${aliases}\n    </application>`);
+}
 await fs.writeFile(manifestPath, manifest);
 
 // App name follows the system language: KurokawaReader by default, قارئ كروكاوا on Arabic devices.
 const stringsPath = path.join(app, 'src/main/res/values/strings.xml');
 let strings = await fs.readFile(stringsPath, 'utf8');
+const NAMES = { ar: 'قارئ كروكاوا', ja: '黒川リーダー', zh: '黑川阅读器', ko: '쿠로카와 리더' };
 strings = strings.replace(/<string name="app_name">[^<]*<\/string>/, '<string name="app_name">KurokawaReader</string>')
   .replace(/<string name="title_activity_main">[^<]*<\/string>/, '<string name="title_activity_main">KurokawaReader</string>');
+// Fixed-language names for the chosen-name launcher aliases (same in every locale).
+for (const [code, name] of Object.entries(NAMES)) if (!strings.includes(`app_name_${code}`)) strings = strings.replace('</resources>', `    <string name="app_name_${code}">${name}</string>\n</resources>`);
 await fs.writeFile(stringsPath, strings);
-await fs.mkdir(path.join(app, 'src/main/res/values-ar'), { recursive: true });
-await fs.writeFile(path.join(app, 'src/main/res/values-ar/strings.xml'), `<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">قارئ كروكاوا</string>
-    <string name="title_activity_main">قارئ كروكاوا</string>
-</resources>
-`);
+// Localised default name (the "follow the system" alias) per language.
+for (const [code, name] of Object.entries(NAMES)) {
+  await fs.mkdir(path.join(app, `src/main/res/values-${code}`), { recursive: true });
+  await fs.writeFile(path.join(app, `src/main/res/values-${code}/strings.xml`), `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">${name}</string>\n    <string name="title_activity_main">${name}</string>\n</resources>\n`);
+}
 
 // FileProvider paths: the update APK lives in the cache directory.
 const fpPath = path.join(app, 'src/main/res/xml/file_paths.xml');

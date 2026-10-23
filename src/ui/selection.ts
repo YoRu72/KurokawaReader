@@ -2,7 +2,8 @@
 // Translate · Highlight · Speak.
 import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText } from '../i18n';
-import { showDefinition, showTranslation } from './lookup';
+import { getSettings } from '../settings';
+import { showDefinition, showTranslation, showReadings } from './lookup';
 import { shareText, translateWithSystem, hasSystemText } from './share';
 
 export interface SelectionActions {
@@ -11,10 +12,77 @@ export interface SelectionActions {
   note(range: Range, text: string): void;
   speak(text: string): void;
   textImage(text: string): void;
+  /** Language of the book the selection is in (helps choose furigana vs pinyin). */
+  lang?(): string | undefined;
 }
 
 export type HighlightColor = 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
 export const HIGHLIGHT_COLORS: [HighlightColor, string][] = [['amber', 'var(--hl-amber, #e5c56b)'], ['rose', 'var(--hl-rose, #e58a8a)'], ['mint', 'var(--hl-mint, #7fcfa5)'], ['sky', 'var(--hl-sky, #7fb4e5)'], ['violet', 'var(--hl-violet, #b9a3e8)']];
+
+
+/**
+ * The selected text, read the way a reader expects it rather than the way the
+ * DOM happens to be ordered. In a PDF text layer the spans are absolutely
+ * positioned pieces of lines; joining them with the browser's default rules
+ * drops line breaks, glues words together and, for Arabic, mixes visual and
+ * logical order. Here the pieces are taken in content order, line breaks are
+ * kept, and Arabic runs are normalised (presentation forms → letters, reversed
+ * runs turned round).
+ */
+export function selectionText(sel: Selection): string {
+  if (sel.rangeCount === 0) return '';
+  const range = sel.getRangeAt(0);
+  const anc = range.commonAncestorContainer;
+  const layer = (anc.nodeType === 1 ? (anc as Element) : anc.parentElement)?.closest('.textLayer, .pdf-page, .pdf-inner, .pdf-scroll');
+  if (!layer) return sel.toString();
+  const spans = Array.from(layer.querySelectorAll<HTMLElement>('.textLayer > span')).filter((el) => el.firstChild && range.intersectsNode(el));
+  // Geometry decides the order: pieces are grouped into lines by their vertical position, and
+  // within a line read right-to-left when the line is mostly Arabic/Hebrew, else left-to-right.
+  type Piece = { text: string; x: number; y: number; h: number };
+  const pieces: Piece[] = [];
+  for (const el of spans) {
+    const node = el.firstChild!;
+    let text = el.textContent ?? '';
+    if (node === range.startContainer && node === range.endContainer) text = text.slice(range.startOffset, range.endOffset);
+    else if (node === range.startContainer) text = text.slice(range.startOffset);
+    else if (node === range.endContainer) text = text.slice(0, range.endOffset);
+    if (!text.trim()) continue;
+    const r = el.getBoundingClientRect();
+    pieces.push({ text, x: r.left + r.width / 2, y: r.top + r.height / 2, h: r.height || 10 });
+  }
+  pieces.sort((a, b) => a.y - b.y);
+  const lines: Piece[][] = [];
+  for (const p of pieces) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
+  let out = '';
+  for (const line of lines) {
+    const joined = line.map((p) => p.text).join('');
+    const rtl = (joined.match(/[\u0590-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) ?? []).length > (joined.match(/[A-Za-z\u00C0-\u024F]/g) ?? []).length;
+    line.sort((a, b) => (rtl ? b.x - a.x : a.x - b.x));
+    out += line.map((p) => p.text.trim()).filter(Boolean).join(' ') + '\n';
+  }
+  out = out.trimEnd();
+  return fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
+}
+
+const COMMON_AR = /\b(في|من|على|إلى|الى|أن|ان|كان|هذا|هذه|التي|الذي|ما|لا|قال|عن|ثم|أو|او|كل|بين|عند|حتى|إذا|اذا|لم|قد|هو|هي|ذلك|بعد|قبل|غير|مع|يا|إن|لكن)\b/g;
+/** Arabic text as a PDF exposes it is often in presentation forms or reversed per line; put it right. */
+export function fixArabic(text: string): string {
+  if (!/[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text)) return text;
+  // Presentation forms (ﻻ, ﺑ …) → plain letters; tatweel out; ligature lam-alef into two letters.
+  let t = text.normalize('NFKC').replace(/\u0640/g, '');
+  return t.split('\n').map((line) => {
+    if (!/[\u0600-\u06FF]/.test(line)) return line;
+    const rev = reverseArabicRuns(line);
+    const hits = (s: string) => (s.match(COMMON_AR) ?? []).length;
+    const a = hits(line), b = hits(rev);
+    return b > a ? rev : line;
+  }).join('\n');
+}
+function reverseArabicRuns(line: string): string {
+  // Reverse the order of words and the letters inside each Arabic run, leaving digits and Latin alone.
+  const words = line.split(' ');
+  return words.reverse().map((w) => (/^[\u0600-\u06FF\s؛،؟.!:«»()]+$/.test(w) ? [...w].reverse().map((c) => ({ '(': ')', ')': '(', '«': '»', '»': '«' }[c] ?? c)).join('') : w)).join(' ');
+}
 
 export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionActions): () => void {
   let bar: HTMLElement | null = null;
@@ -26,6 +94,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   const state = { text: '', range: null as Range | null };
 
   let suppressed = false; // while the More sheet is up the toolbar stays away
+  let lastAuto = '';
   const hide = () => { bar?.remove(); bar = null; };
 
   const build = () => {
@@ -38,6 +107,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
       btn('search', t('searchSelected'), () => { actions.search(cur().text); hide(); }),
       btn('define', t('defineSelected'), () => { showDefinition(cur().text); hide(); }),
       btn('translate', t('translateSelected'), () => { showTranslation(cur().text); hide(); }),
+      btn('type', t('readings'), () => { showReadings(cur().text, actions.lang?.()); hide(); }),
       btn('note', t('note'), () => { const c = cur(); actions.note(c.range, c.text); document.getSelection()?.removeAllRanges(); hide(); }),
       btn('images', t('textAsImage'), () => { actions.textImage(cur().text); hide(); }),
       btn('more', t('more'), () => { hide(); suppressed = true; moreSheet(cur().text, actions, () => { suppressed = false; }); }),
@@ -53,13 +123,17 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hide(); return; }
     const range = sel.getRangeAt(0);
     if (!scope.contains(range.commonAncestorContainer)) { hide(); return; }
-    const text = sel.toString().trim();
+    const text = selectionText(sel).trim();
     if (!text) { hide(); return; }
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) { hide(); return; }
     if (rect.bottom < 0 || rect.top > window.innerHeight) { hide(); return; }
     state.text = text; state.range = range.cloneRange();
     if (!bar) { bar = build(); document.body.appendChild(bar); }
+    // The Reading button only matters for Chinese / Japanese text.
+    const rb = bar.querySelector<HTMLElement>('.sel-row button:nth-child(5)'); if (rb) rb.hidden = !/[\u3040-\u30ff\u3400-\u9fff]/.test(text);
+    // Automatic readings: a popover with furigana / pinyin as soon as CJK text is selected.
+    if (getSettings().autoReadings && /[\u3040-\u30ff\u3400-\u9fff]/.test(text) && text.length <= 400 && text !== lastAuto) { lastAuto = text; showAutoReadings(text, actions.lang?.(), range); }
     const bw = bar.offsetWidth, bh = bar.offsetHeight;
     let x = rect.left + rect.width / 2;
     x = Math.max(bw / 2 + 8, Math.min(window.innerWidth - bw / 2 - 8, x));
@@ -173,4 +247,17 @@ export function findTextRange(root: Element, text: string): Range | null {
   range.setStart(a.node, Math.min(a.offset, a.node.length));
   range.setEnd(b.node, Math.min(b.offset, b.node.length));
   return range;
+}
+
+/** A floating ruby popover above the selection (auto-readings setting). Disappears when the selection changes. */
+let autoPop: HTMLElement | null = null;
+function showAutoReadings(text: string, lang: string | undefined, range: Range): void {
+  autoPop?.remove();
+  const pop = h('div', { class: 'readings-pop', lang: /[\u3040-\u30ff]/.test(text) ? 'ja' : 'zh' }, h('div', { class: 'spinner', style: { width: '16px', height: '16px' } }));
+  autoPop = pop; document.body.appendChild(pop);
+  const place = () => { const r = range.getBoundingClientRect(); const w = pop.offsetWidth; let x = r.left + r.width / 2 - w / 2; x = Math.max(8, Math.min(window.innerWidth - w - 8, x)); pop.style.left = `${x}px`; pop.style.top = `${Math.max(8, r.bottom + 12)}px`; };
+  place();
+  void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => { if (autoPop !== pop) return; if (!html) { pop.remove(); return; } pop.innerHTML = html; place(); }).catch(() => pop.remove());
+  const onChange = () => { const sel = document.getSelection(); if (!sel || sel.isCollapsed || sel.toString().trim() !== text) { pop.remove(); if (autoPop === pop) autoPop = null; document.removeEventListener('selectionchange', onChange); } };
+  setTimeout(() => document.addEventListener('selectionchange', onChange), 50);
 }
