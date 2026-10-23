@@ -213,19 +213,71 @@ ipcMain.handle('kr:http', async (_e, o) => {
 });
 ipcMain.handle('kr:folder-pick', async () => { const { dialog } = require('electron'); const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('fs/promises').readFile(String(p), 'utf8'); } catch { return null; } });
-// Plain download into the app's data folder (learning decks), with progress.
-ipcMain.handle('kr:download', async (e, url, name) => {
-  const res = await net.fetch(String(url));
-  if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-  const total = Number(res.headers.get('content-length') || 0);
-  const dir = path.join(app.getPath('userData'), 'downloads'); fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, String(name).replace(/[\\/:*?"<>|]/g, '_'));
-  const out = fs.createWriteStream(file); let err = null; out.on('error', (x) => { err = x; });
-  const reader = res.body.getReader(); let got = 0, lastT = Date.now(), lastGot = 0, speed = 0;
-  for (;;) { const { done, value } = await reader.read(); if (done) break; out.write(Buffer.from(value)); got += value.length; const now = Date.now(); if (now - lastT > 400) { speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; e.sender.send('kr:download-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); } }
-  await new Promise((r) => out.end(r)); if (err) throw err;
+// Downloads into the app's data folder (learning decks), with progress. Uses aria2c when it is
+// installed (16 connections), otherwise splits the file into ranges fetched in parallel itself.
+function hasAria2() {
+  try { return require('child_process').spawnSync('aria2c', ['--version'], { timeout: 4000, windowsHide: true }).status === 0; } catch { return false; }
+}
+async function downloadAria2(e, url, dir, name) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve, reject) => {
+    const p = spawn('aria2c', ['-x', '16', '-s', '16', '-k', '1M', '--file-allocation=none', '--allow-overwrite=true', '--auto-file-renaming=false', '--summary-interval=1', '--console-log-level=warn', '-d', dir, '-o', name, url], { windowsHide: true });
+    const parse = (buf) => {
+      // [#2089b0 12MiB/104MiB(11%) CN:16 DL:5.2MiB ETA:17s]
+      const m = /([\d.]+)([KMG]?i?B)\/([\d.]+)([KMG]?i?B)\((\d+)%\).*?DL:([\d.]+)([KMG]?i?B)/.exec(String(buf));
+      if (!m) return;
+      const mul = (u) => (u.startsWith('G') ? 1073741824 : u.startsWith('M') ? 1048576 : u.startsWith('K') ? 1024 : 1);
+      e.sender.send('kr:download-progress', { got: Number(m[1]) * mul(m[2]), total: Number(m[3]) * mul(m[4]), pct: Number(m[5]), speed: Number(m[6]) * mul(m[7]), via: 'aria2c' });
+    };
+    p.stdout.on('data', parse); p.stderr.on('data', parse);
+    p.on('error', reject);
+    p.on('close', (code) => (code === 0 ? resolve(path.join(dir, name)) : reject(new Error('aria2c exited with ' + code))));
+  });
+}
+async function downloadSegmented(e, url, file) {
+  let total = 0, ranged = false, final = url;
+  const probe = await net.fetch(url, { headers: { Range: 'bytes=0-0' } });
+  final = probe.url || url;
+  const cr = probe.headers.get('content-range');
+  if (probe.status === 206 && cr && cr.includes('/')) { total = Number(cr.split('/').pop()); ranged = total > 0; }
+  try { await probe.arrayBuffer(); } catch { /* drain */ }
+  let got = 0, lastT = Date.now(), lastGot = 0, speed = 0;
+  const report = () => { const now = Date.now(); if (now - lastT < 400) return; speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; e.sender.send('kr:download-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); };
+  if (ranged && total > 4 * 1048576) {
+    const n = Math.min(8, Math.max(1, Math.floor(total / 1048576)));
+    const seg = Math.ceil(total / n);
+    const fh = await fs.promises.open(file, 'w'); await fh.truncate(total);
+    try {
+      await Promise.all(Array.from({ length: n }, async (_, i) => {
+        let pos = i * seg; const to = Math.min(total - 1, pos + seg - 1);
+        for (let attempt = 0; attempt < 4 && pos <= to; attempt++) {
+          try {
+            const res = await net.fetch(final, { headers: { Range: `bytes=${pos}-${to}` } });
+            if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
+            const reader = res.body.getReader();
+            for (;;) { const { done, value } = await reader.read(); if (done) break; await fh.write(Buffer.from(value), 0, value.length, pos); pos += value.length; got += value.length; report(); }
+          } catch (err) { if (attempt === 3) throw err; }
+        }
+      }));
+    } finally { await fh.close(); }
+  } else {
+    const res = await net.fetch(url);
+    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    total = Number(res.headers.get('content-length') || 0);
+    const out = fs.createWriteStream(file); let err = null; out.on('error', (x) => { err = x; });
+    const reader = res.body.getReader();
+    for (;;) { const { done, value } = await reader.read(); if (done) break; out.write(Buffer.from(value)); got += value.length; report(); }
+    await new Promise((r) => out.end(r)); if (err) throw err;
+  }
   return file;
+}
+ipcMain.handle('kr:download', async (e, url, name) => {
+  const dir = path.join(app.getPath('userData'), 'downloads'); fs.mkdirSync(dir, { recursive: true });
+  const safe = String(name).replace(/[\\/:*?"<>|]/g, '_');
+  if (hasAria2()) { try { return await downloadAria2(e, String(url), dir, safe); } catch (err) { console.warn('[kurokawa] aria2c failed, using the built-in downloader', err); } }
+  return downloadSegmented(e, String(url), path.join(dir, safe));
 });
+ipcMain.handle('kr:delete-download', async (_e, p) => { const dir = path.join(app.getPath('userData'), 'downloads'); const f = path.resolve(String(p)); if (!f.startsWith(dir)) return false; try { await fs.promises.unlink(f); return true; } catch { return false; } });
 ipcMain.handle('kr:write-binary', async (_e, p, b64, append) => { const fsp = require('fs/promises'); const buf = Buffer.from(String(b64), 'base64'); if (append) await fsp.appendFile(String(p), buf); else await fsp.writeFile(String(p), buf); return true; });
 ipcMain.handle('kr:folder-write', async (_e, p, text) => { await require('fs/promises').writeFile(String(p), String(text), 'utf8'); return true; });
 ipcMain.handle('kr:default-apps', () => { if (process.platform === 'win32') return shell.openExternal('ms-settings:defaultapps'); if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:'); return false; });

@@ -115,47 +115,105 @@ public class KurokawaPlugin extends Plugin {
         }).start();
     }
 
-    /** Downloads a file (following redirects, no CORS) into the cache with progress events. Returns file:// path. */
+    /** Downloads a file (following redirects, no CORS) with progress events. Returns file:// path.
+     *  Large files that the server can serve in ranges are fetched over several connections at once
+     *  (the way aria2 splits a download), each writing its own segment of the file. */
     @PluginMethod
     public void downloadFile(PluginCall call) {
         final String urlStr = call.getString("url", "");
         final String name = call.getString("name", "download.bin");
         // "persist": keep the file (e.g. a downloaded deck the library links to) instead of the cache.
         final boolean persist = Boolean.TRUE.equals(call.getBoolean("persist", false));
+        final int connections = Math.max(1, Math.min(16, call.getInt("connections", 8)));
         new Thread(() -> {
             try {
+                // Resolve redirects once (GitHub → signed storage URL) with a 1-byte range probe.
                 java.net.URL url = new java.net.URL(urlStr);
-                java.net.HttpURLConnection conn = null;
+                java.net.HttpURLConnection probe = null; int code = 0;
                 for (int hop = 0; hop < 8; hop++) {
-                    conn = (java.net.HttpURLConnection) url.openConnection();
-                    conn.setInstanceFollowRedirects(false);
-                    conn.setRequestProperty("User-Agent", "KurokawaReader");
-                    conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
-                    int code = conn.getResponseCode();
-                    if (code >= 300 && code < 400) { String loc = conn.getHeaderField("Location"); conn.disconnect(); url = new java.net.URL(url, loc); continue; }
-                    if (code >= 400) { call.reject("HTTP " + code); return; }
+                    probe = open(url); probe.setRequestProperty("Range", "bytes=0-0");
+                    code = probe.getResponseCode();
+                    if (code >= 300 && code < 400) { String loc = probe.getHeaderField("Location"); probe.disconnect(); url = new java.net.URL(url, loc); continue; }
                     break;
                 }
-                long total = conn.getContentLengthLong();
+                if (code >= 400) { call.reject("HTTP " + code); return; }
+                long total = -1;
+                String cr = probe.getHeaderField("Content-Range");
+                if (code == 206 && cr != null && cr.contains("/")) try { total = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) {}
+                boolean ranged = code == 206 && total > 0;
+                probe.disconnect();
                 File dir = persist ? new File(getContext().getFilesDir(), "downloads") : new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
                 File out = new File(dir, name);
-                long got = 0, lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0;
-                try (InputStream in = conn.getInputStream(); FileOutputStream fo = new FileOutputStream(out)) {
-                    byte[] buf = new byte[1 << 16]; int n;
-                    while ((n = in.read(buf)) > 0) {
-                        fo.write(buf, 0, n); got += n;
-                        long now = System.currentTimeMillis();
-                        if (now - lastT > 300) {
-                            speed = (got - lastGot) / ((now - lastT) / 1000.0); lastT = now; lastGot = got;
-                            JSObject ev = new JSObject(); ev.put("got", got); ev.put("total", total); ev.put("speed", speed); ev.put("pct", total > 0 ? (int) (got * 100 / total) : 0);
-                            notifyListeners("downloadProgress", ev);
-                        }
+                final java.util.concurrent.atomic.AtomicLong got = new java.util.concurrent.atomic.AtomicLong();
+                final long fTotal = total;
+                Runnable report = new Runnable() {
+                    long lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0;
+                    public void run() {
+                        long now = System.currentTimeMillis(); if (now - lastT < 300) return;
+                        long g = got.get(); speed = (g - lastGot) / ((now - lastT) / 1000.0); lastT = now; lastGot = g;
+                        JSObject ev = new JSObject(); ev.put("got", g); ev.put("total", fTotal); ev.put("speed", speed); ev.put("pct", fTotal > 0 ? (int) (g * 100 / fTotal) : 0);
+                        notifyListeners("downloadProgress", ev);
+                    }
+                };
+                if (ranged && total > 4L * 1024 * 1024 && connections > 1) {
+                    try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "rw")) { raf.setLength(total); }
+                    int n = (int) Math.min(connections, Math.max(1, total / (1024 * 1024)));
+                    long seg = (total + n - 1) / n;
+                    final java.net.URL fUrl = url;
+                    final Exception[] fail = { null };
+                    Thread[] workers = new Thread[n];
+                    for (int i = 0; i < n; i++) {
+                        final long from = i * seg, to = Math.min(total - 1, from + seg - 1);
+                        workers[i] = new Thread(() -> {
+                            long pos = from;
+                            for (int attempt = 0; attempt < 4 && pos <= to && fail[0] == null; attempt++) {
+                                try {
+                                    java.net.HttpURLConnection c = open(fUrl);
+                                    c.setRequestProperty("Range", "bytes=" + pos + "-" + to);
+                                    if (c.getResponseCode() != 206) throw new java.io.IOException("HTTP " + c.getResponseCode());
+                                    try (InputStream in = c.getInputStream(); java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "rw")) {
+                                        raf.seek(pos); byte[] buf = new byte[1 << 16]; int r;
+                                        while (pos <= to && (r = in.read(buf)) > 0) { raf.write(buf, 0, r); pos += r; got.addAndGet(r); synchronized (report) { report.run(); } }
+                                    }
+                                } catch (Exception e) { if (attempt == 3) fail[0] = e; }
+                            }
+                        });
+                        workers[i].start();
+                    }
+                    for (Thread w : workers) w.join();
+                    if (fail[0] != null) throw fail[0];
+                } else {
+                    java.net.HttpURLConnection conn = open(url);
+                    if (conn.getResponseCode() >= 400) { call.reject("HTTP " + conn.getResponseCode()); return; }
+                    try (InputStream in = conn.getInputStream(); FileOutputStream fo = new FileOutputStream(out)) {
+                        byte[] buf = new byte[1 << 16]; int r;
+                        while ((r = in.read(buf)) > 0) { fo.write(buf, 0, r); got.addAndGet(r); report.run(); }
                     }
                 }
-                JSObject ret = new JSObject(); ret.put("path", "file://" + out.getAbsolutePath()); ret.put("size", got);
+                JSObject done = new JSObject(); done.put("got", got.get()); done.put("total", got.get()); done.put("speed", 0); done.put("pct", 100);
+                notifyListeners("downloadProgress", done);
+                JSObject ret = new JSObject(); ret.put("path", "file://" + out.getAbsolutePath()); ret.put("size", got.get());
                 call.resolve(ret);
             } catch (Exception e) { call.reject("Download failed: " + e.getMessage(), e); }
         }).start();
+    }
+
+    private static java.net.HttpURLConnection open(java.net.URL url) throws java.io.IOException {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) url.openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "KurokawaReader");
+        c.setConnectTimeout(20000); c.setReadTimeout(60000);
+        return c;
+    }
+
+    /** Removes a file this app downloaded earlier (deleting a downloaded deck). */
+    @PluginMethod
+    public void deleteDownload(PluginCall call) {
+        String p = call.getString("path", "");
+        if (p.startsWith("file://")) p = p.substring(7);
+        File f = new File(p);
+        boolean ok = f.getAbsolutePath().startsWith(new File(getContext().getFilesDir(), "downloads").getAbsolutePath()) && f.delete();
+        JSObject r = new JSObject(); r.put("deleted", ok); call.resolve(r);
     }
 
     /** Can this app launch the package installer? (Android 8+ needs the per-app "install unknown apps" grant.) */

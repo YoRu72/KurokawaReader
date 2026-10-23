@@ -253,7 +253,7 @@ jobs:
         run: |
           # What's new: commit subjects since the previous release, split into bullets.
           git fetch --tags --quiet || true
-          PREV=$(git tag --sort=-v:refname | grep -v "^v${{ needs.version.outputs.v }}$" | head -n 1)
+          PREV=$(git tag --sort=-v:refname | grep "^v" | grep -v "^v${{ needs.version.outputs.v }}$" | head -n 1)
           if [ -n "$PREV" ]; then RANGE="$PREV..HEAD"; else RANGE="HEAD~5..HEAD"; fi
           git log --format='%s' $RANGE | grep -v -i -E '^(ci|release|docs|chore|build|test)(\(|:)|readme|^merge |^update [a-z0-9_./-]+\.(md|yml|yaml|json|txt)$|^create [a-z0-9_./-]+\.(md|yml|yaml)$|^delete ' | sed -E 's/^v?[0-9]+\.[0-9]+\.[0-9]+: //' | tr ';' '\n' | sed -E 's/^ +//; s/^(.)/- \u\1/' | grep -v '^- $' > whatsnew.txt || true
           {

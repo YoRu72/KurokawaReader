@@ -108,14 +108,13 @@ export function libraryView(): HTMLElement {
     } else await doImport(files);
   }
   function importMenu() {
-    if (!canScan()) { void import('../ui/dom').then(({ openSheet }) => { const s = openSheet(t('importBooks'), t('close')); s.body.style.fontFamily = 'var(--font-ui)'; s.body.append(h('ul', { class: 'plain-list' }, h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))), h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void import('../ui/decks').then((m) => m.starterDecksSheet(() => void refresh())); } }, icon('books'), t('starterDecks'))))); }); return; }
+    if (!canScan()) { void pickFiles(); return; }
     import('../ui/dom').then(({ openSheet }) => {
       const s = openSheet(t('importBooks'), t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))),
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void import('../ui/decks').then((m) => m.starterDecksSheet(() => void refresh())); } }, icon('books'), t('starterDecks')))));
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))),));
     });
   }
   function openScan() {

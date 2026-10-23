@@ -8,6 +8,7 @@ import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting,
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
 import { nativePlatform, canSetAppName, setAppName } from '../native';
+import { decksCard } from '../ui/decks';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
@@ -175,6 +176,9 @@ export function settingsView(): HTMLElement {
     body.append(h('section', { class: 'card' }, h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsEditBody')), list,
       h('div', null, h('button', { class: 'btn small outlined', onclick: () => { resetBindings(); renderKeys(); } }, t('resetDefaults')))));
   }
+
+  // Learning decks: optional downloads, nothing installed by default
+  body.append(decksCard());
 
   // Updates
   const upd = h('section', { class: 'card' }, h('h3', null, t('updates')));

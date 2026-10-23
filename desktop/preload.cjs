@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   readTextFile(p) { return ipcRenderer.invoke('kr:folder-read', p); },
   writeTextFile(p, text) { return ipcRenderer.invoke('kr:folder-write', p, text); },
   download(url, name) { return ipcRenderer.invoke('kr:download', url, name); },
+  deleteDownload(p) { return ipcRenderer.invoke('kr:delete-download', p); },
   onDownloadProgress(cb) { ipcRenderer.removeAllListeners('kr:download-progress'); ipcRenderer.on('kr:download-progress', (_e, p) => cb(p)); },
   writeBinary(p, b64, append) { return ipcRenderer.invoke('kr:write-binary', p, b64, !!append); },
   onOpenUrl(cb) { ipcRenderer.on('kr:open-url', (_e, u) => cb(u)); },

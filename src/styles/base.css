@@ -755,3 +755,5 @@ html[dir='rtl'] .card.collapsed .card-title svg { transform: rotate(90deg); }
 .deck-info p { margin: 4px 0 6px; font-size: 13.5px; color: var(--md-on-surface-variant); }
 .deck-info small { color: var(--md-on-surface-dim); font-weight: 400; }
 .deck-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.deck-meta { font-size: 12px !important; color: var(--md-on-surface-dim) !important; }
+.deck-list { display: flex; flex-direction: column; }

@@ -1,0 +1,52 @@
+name: Learning decks
+
+# Mirrors openly licensed Anki decks into this repository's "decks" release so the app
+# can offer them as optional downloads (nothing is bundled with the app itself).
+# Decks without a licence that allows redistribution are NOT mirrored; the app links
+# to their authors instead.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/decks.yml', 'decks/**']
+  schedule:
+    - cron: '17 3 1 * *'   # monthly refresh
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install aria2
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq aria2 jq
+      - name: Fetch decks from upstream
+        run: |
+          mkdir -p out
+          echo '[]' > out/decks.json
+          add() { # id title lang license source file
+            local size sha
+            size=$(stat -c%s "out/$6"); sha=$(sha256sum "out/$6" | cut -d' ' -f1)
+            jq --arg id "$1" --arg title "$2" --arg lang "$3" --arg license "$4" --arg source "$5" --arg file "$6" --argjson size "$size" --arg sha "$sha" \
+              '. + [{id:$id,title:$title,lang:$lang,license:$license,source:$source,file:$file,size:$size,sha256:$sha}]' out/decks.json > out/tmp.json && mv out/tmp.json out/decks.json
+          }
+          # Anki-xiehanzi (MIT / GPL-3.0; CC-CEDICT data CC BY-SA) — New HSK deck
+          URL=$(gh api repos/krmanik/Anki-xiehanzi/releases/latest -q '[.assets[] | select(.name | test("\\.apkg$")) | select(.name | test("sentence"; "i") | not)][0].browser_download_url')
+          if [ -n "$URL" ]; then
+            aria2c -q -x 16 -s 16 -k 1M -d out -o hsk-new-2025.apkg "$URL"
+            add hsk "Anki-xiehanzi · New HSK (2025)" zh "MIT / GPL-3.0 · CC-CEDICT CC BY-SA" "https://github.com/krmanik/Anki-xiehanzi" hsk-new-2025.apkg
+          fi
+          URL=$(gh api repos/krmanik/Anki-xiehanzi/releases/latest -q '[.assets[] | select(.name | test("sentence"; "i")) | select(.name | test("\\.apkg$"))][0].browser_download_url')
+          if [ -n "$URL" ]; then
+            aria2c -q -x 16 -s 16 -k 1M -d out -o hsk-new-2025-sentences.apkg "$URL"
+            add hsk-sentences "Anki-xiehanzi · New HSK (2025) with sentences" zh "MIT / GPL-3.0 · CC-CEDICT CC BY-SA" "https://github.com/krmanik/Anki-xiehanzi" hsk-new-2025-sentences.apkg
+          fi
+          cat out/decks.json
+      - name: Publish to the "decks" release
+        run: |
+          gh release view decks >/dev/null 2>&1 || gh release create decks --title "Learning decks (optional downloads)" --notes "Openly licensed Anki decks the app can download on request from Settings → Learning decks. Each deck keeps its own licence; see decks.json. Not part of the app releases." --latest=false
+          gh release upload decks out/*.apkg out/decks.json --clobber
