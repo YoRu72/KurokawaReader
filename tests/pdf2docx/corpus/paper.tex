@@ -1,0 +1,15 @@
+\documentclass[11pt,twocolumn]{article}
+\usepackage{amsmath}
+\title{On the Fidelity of Document Conversion}\author{A. Researcher \and B. Scientist}\date{October 2026}
+\begin{document}\maketitle
+\begin{abstract}We study how documents survive conversion between page-description and word-processing formats, and report measurements on a varied corpus.\end{abstract}
+\section{Introduction}
+Converting a page into an editable document is a classic problem\footnote{See the extensive literature on layout analysis.}. The difficulty lies in recovering paragraphs, columns and tables from positioned glyphs. Hyphenation, ligatures such as ``fi'' and ``fl'', and kerning further complicate matters. \textbf{Bold text}, \emph{emphasis} and \texttt{monospace} must be preserved.
+\section{Method}
+We render each page and compare baselines. The error is
+\begin{equation} E = \frac{1}{N}\sum_{i=1}^{N} |y_i - \hat{y}_i| \end{equation}
+where $y_i$ is the original baseline. Table~\ref{t} lists the results.
+\begin{table}[h]\centering\begin{tabular}{|l|r|r|}\hline Set & Pages & Error \\\hline A & 12 & 1.2 \\ B & 40 & 0.8 \\\hline\end{tabular}\caption{Results.}\label{t}\end{table}
+\section{Discussion}
+\input{body}
+\end{document}

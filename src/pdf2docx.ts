@@ -4,24 +4,29 @@
 // spacing and line pitch, runs with their font, size, weight and colour, two-column verse as a
 // borderless table, the running head in the page header, and footnotes as Word footnotes.
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
+import { rebuildFont, type GlyphUse } from './fontfix';
 import { loadPdfjs } from './formats/pdf';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
 
 type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
-type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number };
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean };
+type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; usage?: GlyphUse[][]; rebuilt?: boolean; spaceCode?: number };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[] };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
-type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean };
-type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean };
-type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number };
+type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number };
+/** A page area in PDF coordinates (y up). */
+type Box = { l: number; r: number; top: number; bottom: number };
+type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number };
+type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: number[] };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
 type Block = Para | Verse;
 type Note = { num: number; paras: Para[] };
 type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean };
-type PageModel = { w: number; h: number; pics: Pic[]; furniture: Furniture[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number } };
+/** Part of a page: full width (one column) or set in columns (blocks per column in reading order, column edges in page x). */
+type Region = { cols: Block[][]; edges: [number, number][] };
+type PageModel = { w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -42,10 +47,34 @@ function parseFontName(name: string | undefined, fo: { bold?: boolean; black?: b
   if (comma.length > 1) { const st = comma.slice(1).join(','); if (/bold|black|heavy/i.test(st)) bold = true; if (/italic|oblique/i.test(st)) italic = true; n = comma[0]; }
   const m = /^(.*?)[-_](Bold|BoldMT|BoldItalic|BoldItalicMT|Italic|ItalicMT|Regular|MT|PSMT|Roman|Book|Medium|Black|Heavy)$/i.exec(n);
   if (m) { if (/bold|black|heavy/i.test(m[2])) bold = true; if (/italic/i.test(m[2])) italic = true; n = m[1]; }
+  // TeX and other compact names: CMBX10 (bold extended), CMTI10 (text italic), LMRoman10-Bold, …
+  const low = n.toLowerCase();
+  if (/^(cm|lm|ec|tc)?bx|^cmb\d|^cmssbx|bold|black|heavy|semibold|demi/.test(low)) bold = true;
+  if (/^(cm|ec)(ti|sl|mi|itt|ssi)\d|^cmbxti|^cmbxsl|italic|oblique/.test(low)) italic = true;
   n = n.replace(/([a-z])([A-Z])/g, (s, a: string, b: string) => (/^(Times|Courier|Arial|Traditional|Simplified)/.test(n) ? `${a} ${b}` : s)).replace(/PSMT$|MT$/, '').trim();
   if (/^TimesNewRoman/i.test(n.replace(/\s/g, ''))) n = 'Times New Roman';
   if (/^Arial$/i.test(n.replace(/\s/g, ''))) n = 'Arial';
   return { family: n || 'Times New Roman', bold, italic };
+}
+
+/** Fonts any word processor can be expected to have (or map well by itself). */
+const COMMON_FONTS = /^(Arial|Arial Black|Arial Narrow|Times New Roman|Courier New|Calibri|Cambria|Cambria Math|Candara|Consolas|Constantia|Corbel|Georgia|Verdana|Tahoma|Trebuchet MS|Segoe UI|Garamond|Book Antiqua|Palatino Linotype|Century Gothic|Gill Sans MT|Lucida Console|Lucida Sans Unicode|Symbol|Wingdings|Webdings|Traditional Arabic|Simplified Arabic|Arabic Typesetting|Sakkal Majalla|Andalus|Microsoft Sans Serif|Microsoft Uighur|Aldhabi|Urdu Typesetting|MS Mincho|MS Gothic|SimSun|SimHei|Microsoft YaHei|Malgun Gothic|Batang|Liberation (Serif|Sans|Mono)|DejaVu (Serif|Sans|Sans Mono)|Noto .*)$/i;
+
+/** What to write instead of a font the reader will not have and the file cannot carry (TeX's Computer
+ *  Modern, a Type 3 font, a PostScript-only face): the common font of the same kind, so the text keeps
+ *  roughly its width and look. Times New Roman is narrower than most book faces, so justified lines
+ *  stay on one line. Returns null to keep the name. */
+function fontSubstitute(family: string, f: { serif?: boolean; mono?: boolean } | undefined): { latin: string; cs: string; ea: string } | null {
+  if (COMMON_FONTS.test(family)) return null;
+  const n = family.toLowerCase().replace(/\s+/g, '');
+  if (/^helvetica|^arialmt/.test(n)) return { latin: 'Arial', cs: 'Arial', ea: 'Arial' };
+  if (/^times/.test(n)) return { latin: 'Times New Roman', cs: 'Times New Roman', ea: 'Times New Roman' };
+  if (/^courier/.test(n)) return { latin: 'Courier New', cs: 'Courier New', ea: 'Courier New' };
+  const mono = f?.mono || /mono|courier|^cmtt|^sftt|typewriter|consol|code|inconsolata|menlo|monaco|^lmmono/.test(n);
+  if (mono) return { latin: 'Courier New', cs: 'Courier New', ea: 'MS Gothic' };
+  const sans = /sans|^cmss|^sfss|grotesk|gothic|helvet|arial|verdana|tahoma|calibri|segoe|frutiger|futura|roboto|opensans|lato|myriad|source ?sans|univers|avenir|kufi/.test(n) && !/serif/.test(n);
+  if (sans) return { latin: 'Arial', cs: 'Arial', ea: 'Microsoft YaHei' };
+  return { latin: 'Times New Roman', cs: 'Traditional Arabic', ea: 'SimSun' };
 }
 
 /** The family name a TrueType font gives itself (name table: typographic family, else family). */
@@ -161,6 +190,54 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
   return out;
 }
 
+/** Stacked lines closer together than any text line (a formula: fraction, sum limits, sub- and superscripts
+ *  on their own levels) cannot be set as paragraphs without growing taller than the page has them. Each such
+ *  stack becomes a picture of that part of the page, with an empty line of its exact height in the text. */
+function pullFormulas(lines: Line[], boxes: Box[]): Line[] {
+  const out: Line[] = [];
+  for (let i = 0; i < lines.length;) {
+    let j = i;
+    while (j + 1 < lines.length && !lines[j].spacer && !lines[j + 1].spacer && lines[j].base - lines[j + 1].base < Math.max(lines[j].size, lines[j + 1].size) * 0.6) j++;
+    if (j === i) { out.push(lines[i]); i++; continue; }
+    const ls = lines.slice(i, j + 1);
+    // A formula is made of short pieces; a line of prose with a note set close beside it is not one.
+    const words = (l: Line) => l.pieces.map((p) => p.text).join(' ').trim().split(/\s+/).filter((w) => /[\p{L}\p{N}]{2,}/u.test(w)).length;
+    if (ls.some((l) => words(l) > 5) || ls.every((l) => l.rtl)) { out.push(...ls); i = j + 1; continue; }
+    const box: Box = { l: Math.min(...ls.map((l) => l.l)) - 1, r: Math.max(...ls.map((l) => l.r)) + 1, top: Math.max(...ls.map((l) => l.base + l.size * 0.85)), bottom: Math.min(...ls.map((l) => l.base - l.size * 0.3)) };
+    boxes.push(box);
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D formula', ls.length, JSON.stringify(ls.map((l) => l.pieces.map((p) => p.text).join('').slice(0, 30))));
+    const h = box.top - box.bottom;
+    out.push({ pieces: [], base: box.top - BASE * h, size: Math.max(...ls.map((l) => l.size)), l: box.l, r: box.r, rtl: false, spacer: h });
+    i = j + 1;
+  }
+  return out;
+}
+
+/** Parts of the page drawn as they are, text and all. */
+async function renderRegions(page: import('pdfjs-dist').PDFPageProxy, scale: number, boxes: Box[]): Promise<Pic[]> {
+  if (!boxes.length) return [];
+  const vp = page.getViewport({ scale });
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  await page.render({ canvas: c, canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)' } as Parameters<typeof page.render>[0]).promise;
+  const H = page.view[3] - page.view[1];
+  const out: Pic[] = [];
+  for (const b of boxes) {
+    const x0 = Math.max(0, Math.floor(b.l * scale)), y0 = Math.max(0, Math.floor((H - b.top) * scale));
+    const x1 = Math.min(c.width, Math.ceil(b.r * scale)), y1 = Math.min(c.height, Math.ceil((H - b.bottom) * scale));
+    if (x1 <= x0 || y1 <= y0) continue;
+    const cc = document.createElement('canvas'); cc.width = x1 - x0; cc.height = y1 - y0;
+    const cx = cc.getContext('2d')!; cx.drawImage(c, x0, y0, cc.width, cc.height, 0, 0, cc.width, cc.height);
+    // White becomes transparent, like the other pictures.
+    const img = cx.getImageData(0, 0, cc.width, cc.height); const d = img.data;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250) d[i + 3] = 0;
+    cx.putImageData(img, 0, 0);
+    out.push({ png: await canvasPng(cc), x: x0 / scale, y: y0 / scale, w: cc.width / scale, h: cc.height / scale });
+  }
+  return out;
+}
+
 /** Thin horizontal rules on the page (page coordinates, y up): footnote separators and the like. */
 function findRules(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] }): { x0: number; x1: number; y: number }[] {
   const { OPS } = pdfjs;
@@ -200,6 +277,14 @@ function buildLines(pieces: Piece[]): Line[] {
     const g = groups[i]; const sz = sizeOf(g);
     const host = groups.find((o) => o !== g && sizeOf(o) > sz * 1.15 && g[0].y > o[0].y && g[0].y - o[0].y < sizeOf(o) * 0.75 && g.every((p) => p.r > Math.min(...o.map((q) => q.l)) - sizeOf(o) * 3 && p.l < Math.max(...o.map((q) => q.r)) + sizeOf(o) * 3));
     if (host) { g.forEach((p) => { p.sup = true; }); host.push(...g); groups.splice(i, 1); }
+  }
+  // A smaller piece raised above the others of its line is a superscript (a note number on a line of
+  // running text), even when it sits close enough to be grouped with them.
+  for (const g of groups) {
+    if (g.length < 2) continue;
+    const big = Math.max(...g.map((p) => p.h));
+    const host = g.filter((p) => p.h > big * 0.9); const hb = median(host.map((p) => p.y));
+    for (const p of g) if (p.h < big * 0.85 && p.y - hb > big * 0.18 && /^[\s(\[]*[0-9\u0660-\u0669\u06F0-\u06F9*\u2020\u2021a-z]{1,3}[)\]]?\s*$/.test(p.text)) p.sup = true;
   }
   return groups.map((g) => {
     const normal = g.filter((p) => !p.sup);
@@ -243,32 +328,48 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
   if (!wideGap && !centred) return null;
   const all = line.pieces;
   const inLeft = (p: Piece) => p.r <= gapMid + 0.01;
-  return [all.filter((p) => !inLeft(p)), all.filter(inLeft), []];
+  const res: [Piece[], Piece[], Piece[]] & { weak?: number } = [all.filter((p) => !inLeft(p)), all.filter(inLeft), []];
+  // Only a narrow gap: verse if a neighbouring line splits there too (a wide space after a full stop is not).
+  if (!wideGap) res.weak = gapMid;
+  return res;
 }
 
 function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean): Run[] {
   // Order and space the pieces like the copy text does, then merge neighbours with the same look.
-  const ordered: { p: Piece; space: boolean }[] = [];
+  const ordered: { p: Piece; space: boolean; tab?: number }[] = [];
   const marked = pieces.some((p) => p.text === '\u2009');
   const sorted = [...pieces].sort((a, b) => (rtlLine ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
   let prev: Piece | null = null; let pendingSpace = false;
+  // Word gaps of a stretched line are all wide: a tab is much wider than the line's usual gap.
+  const gaps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim()) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
+  const wideGap = gaps.length >= 3 ? median(gaps) * 2.5 : 0;
+  const normalY = pieces.filter((p) => !p.sup && p.text.trim()).map((p) => p.y);
+  const lineBase = normalY.length ? median(normalY) : null;
   for (const p of sorted) {
     if (p.text === '\u2009') { pendingSpace = true; continue; }
     if (!p.text.trim()) { pendingSpace = true; continue; }
     let space = pendingSpace;
-    if (prev && !marked) { const gap = rtlLine ? prev.l - p.r : p.l - prev.r; if (gap > Math.min(prev.h, p.h) * 0.18) space = true; }
+    const gap = prev ? (rtlLine ? prev.l - p.r : p.l - prev.r) : 0;
+    if (prev && !marked && gap > Math.min(prev.h, p.h) * 0.18) space = true;
     if (COMBINING.test(p.text[0])) space = false;
-    ordered.push({ p, space: space && ordered.length > 0 });
+    // A wide gap inside a line (a section number and its title, a list label, columns of figures) is a
+    // tab to where the next piece starts.
+    // A drawn space before it means a stretched (justified) word gap instead.
+    // (With few gaps to compare, a gap of about an em — a section number before its title — already is one.)
+    const tab = prev && !pendingSpace && gap > Math.max(prev.h, p.h) * (gaps.length >= 3 ? 1.5 : 0.9) && gap > wideGap ? (rtlLine ? p.r : p.l) : undefined;
+    ordered.push({ p, space: space && ordered.length > 0 && tab === undefined, tab });
     pendingSpace = false;
     prev = prev && (rtlLine ? p.l > prev.l : p.r < prev.r) ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
   }
   const runs: Run[] = [];
-  for (const { p, space } of ordered) {
+  for (const { p, space, tab } of ordered) {
     const f = fonts.get(p.font) ?? { family: 'Times New Roman', bold: false, italic: false };
     // A piece stored in drawing order (mark before its letter) reads in logical order through joinLine.
     const text = joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text;
-    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text)), sup: !!p.sup };
+    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text)), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined };
     const last = runs[runs.length - 1];
+    if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
     if (space && last) last.text += ' ';
     if (last && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl) last.text += text;
     else if (space && last && last.text.endsWith(' ')) runs.push({ ...look, text });
@@ -293,7 +394,10 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     const ls = cur.lines; const first = ls[0];
     const rtl = ls.filter((l) => l.rtl).length >= ls.length / 2;
     const size = median(ls.map((l) => l.size));
-    const pitch = ls.length > 1 ? median(ls.slice(1).map((l, i) => ls[i].base - l.base)) : pitchOf(size);
+    let pitch = ls.length > 1 ? median(ls.slice(1).map((l, i) => ls[i].base - l.base)) : pitchOf(size);
+    // A lone Latin line in a tall slot: Word puts the baseline 4/5 down an exact line, LibreOffice at the font's
+    // ascent; a slot just over the type size makes both agree. The space above it carries the rest.
+    if (ls.length === 1 && !first.rtl && pitch > size * 1.2) pitch = size * 1.15;
     let align: Para['align'];
     if (ls.every(centered)) align = 'center';
     else if (ls.length > 1 && ls.slice(0, -1).every((l, i) => (i === 0 ? endGap(l) < tolOf(l) : full(l)))) align = 'both';
@@ -325,14 +429,44 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     // Only where the page stretched its lines with tatweel (Word-style); a page justified by widening spaces keeps that.
     const kashida = align === 'both' && rtl && runs.some((r) => /\u0640/.test(r.text));
     if (kashida) for (const r of runs) r.text = r.text.replace(/\u0640+/g, '');
-    blocks.push({ kind: 'p', runs, align, kashida, rtl, indStart, indEnd, firstLine, before, pitch, size });
+    const tabX = runs.filter((r) => r.tab !== undefined).map((r) => r.tab!);
+    let tabs: number[] | undefined;
+    if (tabX.length) {
+      // Tab stops are measured from the text's edge (the margin, 3pt outside L/R).
+      // A piece set at the very end of the line stops a little short of it, so a slightly wider font cannot push it over.
+      const room = R - L + 6;
+      tabs = [...new Set(runs.filter((r) => r.tab !== undefined).map((r) => {
+        const pos = rtl ? R + 3 - r.tab! : r.tab! - (L - 3);
+        const w = r.text.length * r.size * 0.5;
+        return Math.round(Math.min(pos, room - w * 1.25 - 3) * 2) / 2;
+      }))].sort((a, b) => a - b);
+      // Positioned text: set flush from the start, no stretching (a justified line would spread the text after the last tab).
+      if (align === 'center' || ls.length === 1) { indStart = 0; indEnd = 0; firstLine = Math.max(0, startGap(first)); }
+      align = 'start';
+    }
+    blocks.push({ kind: 'p', runs, align, kashida, rtl, indStart, indEnd, firstLine, before, pitch, size, tabs });
     prevBase = ls[ls.length - 1].base; prevPitch = pitch;
     cur = null;
   };
   let verse: Verse | null = null;
   const closeVerse = () => { if (verse) blocks.push(verse); verse = null; };
-  for (const line of lines) {
-    const halves = splitVerse(line, L, R);
+  const splits = lines.map((l) => splitVerse(l, L, R) as ReturnType<typeof splitVerse> & { weak?: number } | null);
+  const gapAt = (h: (typeof splits)[number]) => (h ? h.weak ?? (Math.max(...h[1].map((p) => p.r)) + Math.min(...h[0].map((p) => p.l))) / 2 : NaN);
+  lines.forEach((l, i) => {
+    const h = splits[i]; if (!h || h.weak === undefined) return;
+    const near = [splits[i - 1], splits[i + 1]].some((o) => o && Math.abs(gapAt(o) - h.weak!) < l.size * 1.5);
+    if (!near) splits[i] = null;
+  });
+  for (const [li, line] of lines.entries()) {
+    if (line.spacer) {
+      closePara(); closeVerse();
+      const pitch = line.spacer;
+      const before = prevBase === null ? 0 : Math.max(0, prevBase - line.base - (1 - BASE) * (prevPitch || pitch) - BASE * pitch);
+      blocks.push({ kind: 'p', runs: [], align: 'start', rtl: line.rtl, indStart: 0, indEnd: 0, firstLine: 0, before, pitch, size: line.size });
+      prevBase = line.base; prevPitch = pitch;
+      continue;
+    }
+    const halves = splits[li];
     if (halves) {
       closePara();
       const rtl = line.rtl;
@@ -374,12 +508,89 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
   return blocks;
 }
 
+/** Running heads and page numbers: each item centred on where its glyphs are, so a font's slightly different
+ *  width cannot move it out of its ornament. */
+function pinnedFurniture(header: Line[], footer: Line[], fonts: Map<string, FontInfo>, H: number): Furniture[] {
+  const furniture: Furniture[] = [];
+  for (const l of [...header, ...footer]) {
+    const ps = l.pieces.filter((p) => p.text.trim() || p.text === '\u2009').sort((a, b) => a.l - b.l);
+    const groups: Piece[][] = [];
+    for (const p of ps) { const g = groups[groups.length - 1]; if (g && p.l - Math.max(...g.map((q) => q.r)) < l.size * 2.5) g.push(p); else groups.push([p]); }
+    for (const g of groups) {
+      const runs = runsOf(g, fonts, l.rtl); if (!runs.length) continue;
+      furniture.push({ runs, cx: (Math.min(...g.map((p) => p.l)) + Math.max(...g.map((p) => p.r))) / 2, base: H - l.base, size: l.size, top: header.includes(l) });
+    }
+  }
+  return furniture;
+}
+
+/** Typical baseline-to-baseline pitch for a given size, measured on runs of consecutive lines. */
+function pitchTable(runs: Line[][]): (size: number) => number {
+  const pitches = new Map<number, number[]>();
+  for (const ls of runs) ls.forEach((l, i) => { const n = ls[i + 1]; if (n && Math.abs(n.size - l.size) < l.size * 0.1) { const d = l.base - n.base; if (d > l.size * 0.9 && d < l.size * 2.6) { const k = Math.round(l.size); pitches.set(k, [...(pitches.get(k) ?? []), d]); } } });
+  return (size: number) => { const p = pitches.get(Math.round(size)); return p?.length ? median(p) : size * 1.65; };
+}
+
+/** A vertical gutter through the middle of the text: page x range [g0, g1], or null. */
+function findGutter(lines: Line[], W: number): [number, number] | null {
+  const ls = lines.filter((l) => l.pieces.some((p) => p.text.trim()));
+  if (ls.length < 8) return null;
+  const x0 = Math.floor(W * 0.25), x1 = Math.ceil(W * 0.75);
+  const cover = new Array(x1 - x0).fill(0);
+  for (const l of ls) {
+    const hit = new Uint8Array(x1 - x0);
+    for (const p of l.pieces) { if (!p.text.trim() || p.text === '\u2009') continue; for (let x = Math.max(x0, Math.floor(p.l)); x < Math.min(x1, Math.ceil(p.r)); x++) hit[x - x0] = 1; }
+    for (let i = 0; i < hit.length; i++) cover[i] += hit[i];
+  }
+  // Titles, a wide table or an equation may run across; most lines must stop short of the gutter.
+  const allowed = Math.max(2, Math.floor(ls.length * 0.25));
+  let best: [number, number] | null = null;
+  for (let i = 0; i < cover.length;) {
+    if (cover[i] > allowed) { i++; continue; }
+    let j = i; while (j < cover.length && cover[j] <= allowed) j++;
+    if (j - i >= 6 && (!best || j - i > best[1] - best[0])) best = [x0 + i, x0 + j];
+    i = j;
+  }
+  const dbg = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
+  if (dbg) console.warn('P2D gutter-scan', JSON.stringify(best), allowed, JSON.stringify(cover.map((c, i) => [x0 + i, c]).filter(([, c]) => c <= allowed + 3)));
+  if (!best) return null;
+  const [g0, g1] = best;
+  // Both sides must carry text on many lines (a centred title over empty space is not a gutter).
+  const side = (inSide: (p: Piece) => boolean) => ls.map((l) => l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009' && inSide(p))).filter((ps) => ps.length);
+  const left = side((p) => p.r <= g0 + 1), right = side((p) => p.l >= g1 - 1);
+  if (left.length < 4 || right.length < 4) return null;
+  // Columns of running text, not a table: the lines on each side carry several words.
+  const words = (ps: Piece[]) => ps.map((p) => p.text).join(' ').trim().split(/\s+/).length;
+  const prose = (rows: Piece[][]) => {
+    const lo = Math.min(...rows.flat().map((p) => p.l)), hi = Math.max(...rows.flat().map((p) => p.r));
+    const n = rows.filter((ps) => words(ps) >= 4 && Math.max(...ps.map((p) => p.r)) - Math.min(...ps.map((p) => p.l)) >= (hi - lo) * 0.6).length;
+    return n >= Math.max(4, rows.length * 0.3);
+  };
+  if (dbg) console.warn('P2D gutter-sides', left.length, right.length, prose(left), prose(right));
+  if (!prose(left) || !prose(right)) return null;
+  // Right-to-left verse sets its two halves on the same baselines, line after line; columns of prose drift
+  // apart (paragraph ends, headings). Without that drift an Arabic page is verse, not columns.
+  const rtl = ls.filter((l) => l.rtl).length > ls.length / 2;
+  if (rtl) {
+    const baseOf = (ps: Piece[]) => median(ps.map((p) => p.y)), sz = median(ls.map((l) => l.size));
+    const rb = right.map(baseOf);
+    const paired = left.filter((ps) => rb.some((b) => Math.abs(b - baseOf(ps)) < sz * 0.3)).length / Math.max(left.length, right.length);
+    if (paired >= 0.85) return null;
+  }
+  return best;
+}
+
+function subLine(l: Line, pieces: Piece[]): Line {
+  return { pieces, base: l.base, size: l.size, l: Math.min(...pieces.map((p) => p.l)), r: Math.max(...pieces.map((p) => p.r)), rtl: isRtlText(pieces.map((p) => p.text).join('')) };
+}
+
 async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean): Promise<PageModel> {
   const [, , W, H] = page.view;
   const ol = await page.getOperatorList();
   const tc = await page.getTextContent();
   const pieces: Piece[] = [];
-  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; strokeEm?: number }[]) {
+  let spanSeq = 0;
+  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number }[]) {
     if (typeof it.str !== 'string') continue;
     let text = cleanPdfText(it.str);
     if (/^\u2009+$/.test(text)) text = '\u2009'; else if (!text.trim()) continue;
@@ -389,9 +600,9 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
     pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014 });
     if (it.fontName && !fonts.has(it.fontName)) {
-      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean } | null = null;
+      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
-      const info: FontInfo = { ...parseFontName(fo?.name, fo), raw: fo?.krRaw, noUnicode: !!fo?.krNoToUnicode, symbolic: !!fo?.isSymbolicFont };
+      const info: FontInfo = { ...parseFontName(fo?.name, fo), raw: fo?.krRaw, noUnicode: !!fo?.krNoToUnicode, symbolic: !!fo?.isSymbolicFont, serif: !!fo?.isSerifFont, mono: !!fo?.isMonospace, spaceCode: fo?.krSpaceCode };
       // The font file says whether it is a bold (or italic) face.
       const os2 = fo?.krRaw ? readOs2(fo.krRaw) : null;
       if (os2) { info.weight = os2.weight; if (os2.weight >= 600 || os2.bold) info.bold = true; if (os2.italic) info.italic = true; }
@@ -402,6 +613,8 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D fontname', fo?.name, '→', info.family, '| own:', own);
       fonts.set(it.fontName, info);
     }
+    // (The glyphs of one /ActualText span are one cluster: its letter and that letter's marks.)
+    if (it.krCodes) { const k = it.krCodes; const g = it.krSpan ? ++spanSeq : 0; const seq: GlyphUse[] = []; for (let i = 0; i + 5 < k.length; i += 6) seq.push([k[i] as number, k[i + 1] as string, k[i + 2] as number, k[i + 3] as number, k[i + 4] as number, k[i + 5] as number, g]); pieces[pieces.length - 1].codes = seq; }
   }
   // Text in a decorative font that carries no letters (private-use codes, or Latin codes standing for
   // Arabic word art on an Arabic page) is not text a reader could use: it stays in the picture.
@@ -420,11 +633,21 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     keepFonts.add(p.font); pieces.splice(i, 1);
   }
   const lines = buildLines(attachMarks(pieces).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
+  // How a subset font without a Unicode map is used: its glyphs along each line, in drawing order, cut
+  // where a word ends (a gap, a space, another font) so each glyph's joining form can be told.
+  for (const l of lines) {
+    let seq: GlyphUse[] = []; let font = ''; let prevR = -Infinity;
+    const flush = () => { const fi = fonts.get(font); if (seq.length && fi && (fi.usage ??= []).length < 30000) fi.usage.push(seq); seq = []; };
+    for (const p of [...l.pieces].sort((a, b) => a.l - b.l)) {
+      if (!p.codes) { if (p.text === '\u2009' || p.l - prevR > 0.5) flush(); prevR = Math.max(prevR, p.r); continue; }
+      if (p.font !== font || p.l - prevR > p.h * 0.12) flush();
+      font = p.font; seq.push(...p.codes); prevR = Math.max(prevR, p.r);
+    }
+    flush();
+  }
   const textLines = lines.filter((l) => l.pieces.some((p) => p.text.trim() && p.text !== '\u2009'));
   // Typical baseline-to-baseline pitch for a given size, measured on this page.
-  const pitches = new Map<number, number[]>();
-  textLines.forEach((l, i) => { const n = textLines[i + 1]; if (n && Math.abs(n.size - l.size) < l.size * 0.1) { const d = l.base - n.base; if (d > l.size * 0.9 && d < l.size * 2.6) { const k = Math.round(l.size); pitches.set(k, [...(pitches.get(k) ?? []), d]); } } });
-  const pitchOf = (size: number) => { const p = pitches.get(Math.round(size)); return p?.length ? median(p) : size * 1.65; };
+  const pitchOf = pitchTable([textLines]);
   // Header / footer: lines in the top / bottom band of the page (running head, page number),
   // or a little further in when a clear gap cuts them off from the text.
   const header: Line[] = [], footer: Line[] = [];
@@ -437,10 +660,82 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     if (x1 > x0) ink += x1 - x0;
     return ink < W * 0.42;
   };
-  const cutTop = (i: number) => body[i].base > H * 0.88 && body[i].base - body[i + 1].base > pitchOf(body[i + 1].size) * 1.2 && sparse(body[i]);
+  // A lone page number may sit well inside the page (TeX leaves wide bottom margins).
+  const folio = (l: Line) => /^[\s\-\u2013\u2014(\[]*([0-9\u0660-\u0669\u06F0-\u06F9]{1,4}|[ivxlcdm]{1,6})[\s\-\u2013\u2014)\]]*$/i.test(l.pieces.map((p) => p.text).join(''));
+  const cutTop = (i: number) => (body[i].base > H * 0.88 || (body[i].base > H * 0.75 && folio(body[i]))) && body[i].base - body[i + 1].base > pitchOf(body[i + 1].size) * 1.2 && sparse(body[i]);
   while (body.length > 1 && header.length < 3 && cutTop(0)) header.push(body.shift()!);
-  const cutBottom = (i: number) => body[i].base < H * 0.08 && body[i - 1].base - body[i].base > pitchOf(body[i].size) * 1.2 && sparse(body[i]);
+  const cutBottom = (i: number) => (body[i].base < H * 0.08 || (body[i].base < H * 0.25 && folio(body[i]))) && body[i - 1].base - body[i].base > pitchOf(body[i].size) * 1.2 && sparse(body[i]);
   while (body.length > 1 && footer.length < 2 && cutBottom(body.length - 1)) footer.unshift(body.pop()!);
+  // Columns: a gutter down the middle splits the text into regions — full-width lines (titles, an abstract)
+  // and runs of lines set in two columns.
+  const gutter = findGutter(body, W);
+  if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D gutter', JSON.stringify(gutter), body.length);
+  if (gutter) {
+    const [g0, g1] = gutter;
+    const crosses = (l: Line) => l.pieces.some((p) => p.text.trim() && p.l < g1 - 1 && p.r > g0 + 1);
+    type Raw = { full?: Line[]; left?: Line[]; right?: Line[]; orig?: Line[] };
+    const raw: Raw[] = [];
+    for (const l of body) {
+      if (crosses(l)) { const cur = raw[raw.length - 1]; if (cur?.full) cur.full.push(l); else raw.push({ full: [l] }); continue; }
+      let cur = raw[raw.length - 1]; if (!cur || cur.full) raw.push(cur = { left: [], right: [], orig: [] });
+      cur.orig!.push(l);
+      const lp = l.pieces.filter((p) => p.r <= g0 + 1), rp = l.pieces.filter((p) => p.l >= g1 - 1);
+      if (lp.some((p) => p.text.trim())) cur.left!.push(subLine(l, lp));
+      if (rp.some((p) => p.text.trim())) cur.right!.push(subLine(l, rp));
+    }
+    // A line or two between full-width ones that merely leaves the gutter blank (authors set apart under a
+    // title) belongs with them, not in columns.
+    for (let i = 0; i < raw.length; i++) {
+      const r = raw[i];
+      if (r.full || r.orig!.length > 2) continue;
+      if ((i > 0 && !raw[i - 1].full) || (i < raw.length - 1 && !raw[i + 1].full)) continue;
+      raw[i] = { full: r.orig };
+    }
+    for (let i = raw.length - 1; i > 0; i--) if (raw[i].full && raw[i - 1].full) { raw[i - 1].full!.push(...raw[i].full!); raw.splice(i, 1); }
+    // Lines were grouped across the whole page: a big title in one column can have swallowed the other
+    // column's lines beside it (as raised pieces). Regroup each column on its own.
+    const regroup = (ls: Line[]) => buildLines(ls.flatMap((l) => l.pieces.map((p) => ({ ...p, sup: undefined }))));
+    for (const r of raw) if (!r.full) { r.left = regroup(r.left!); r.right = regroup(r.right!); }
+    const formulasC: Box[] = [];
+    for (const r of raw) { if (r.full) r.full = pullFormulas(r.full, formulasC); else { r.left = pullFormulas(r.left!, formulasC); r.right = pullFormulas(r.right!, formulasC); } }
+    const rtlPage = body.filter((l) => l.rtl).length > body.length / 2;
+    // Pitches measured within each column (lines of two columns interleave on the page).
+    const pitchCol = pitchTable(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])));
+    const edgesOf = (ls: Line[]): [number, number] => [Math.min(...ls.map((l) => l.l)), Math.max(...ls.map((l) => l.r))];
+    const regions: Region[] = []; let prevBase: number | null = null;
+    const pageLo = Math.min(...body.map((l) => l.l)), pageHi = Math.max(...body.map((l) => l.r));
+    for (const r of raw) {
+      if (r.full) {
+        regions.push({ cols: [buildBlocks(r.full, fonts, pageLo, pageHi, pitchCol, prevBase)], edges: [[pageLo, pageHi]] });
+        prevBase = r.full[r.full.length - 1].base;
+      } else {
+        const sides = [r.left!, r.right!].filter((x) => x.length);
+        if (sides.length < 2) {
+          const ls = sides[0] ?? []; if (!ls.length) continue;
+          regions.push({ cols: [buildBlocks(ls, fonts, pageLo, pageHi, pitchCol, prevBase)], edges: [[pageLo, pageHi]] });
+          prevBase = ls[ls.length - 1].base; continue;
+        }
+        const ordered = rtlPage ? [r.right!, r.left!] : [r.left!, r.right!];
+        regions.push({ cols: ordered.map((ls) => { const e = edgesOf(ls); return buildBlocks(ls, fonts, e[0], e[1], pitchCol, prevBase); }), edges: ordered.map(edgesOf) });
+        prevBase = Math.min(...[...r.left!, ...r.right!].map((l) => l.base));
+      }
+    }
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D regions', JSON.stringify(regions.map((r) => r.cols.map((c) => c.map((b) => (b.kind === 'p' ? b.runs.map((x) => x.text).join('').slice(0, 25) : 'verse'))))));
+    const lowestL = body[body.length - 1];
+    const lo = Math.min(...regions.flatMap((r) => r.edges.map((e) => e[0]))), hi = Math.max(...regions.flatMap((r) => r.edges.map((e) => e[1])));
+    const furnitureC = pinnedFurniture(header, footer, fonts, H);
+    const firstPitchC = regions[0]?.cols[0]?.[0]?.pitch ?? pitchOf(body[0].size);
+    const mC = {
+      top: Math.max(6, H - body[0].base - BASE * firstPitchC),
+      // Generous room below: a column that runs a little long must not push the next column onto a new page.
+      bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
+      left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
+    };
+    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts).catch(() => [] as Pic[]) : [];
+    if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
+    page.cleanup();
+    return { w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
+  }
   // Footnotes: below a short rule in the lower part of the page, in a smaller size.
   let notesLines: Line[] = [];
   const rules = findRules(pdfjs, ol);
@@ -473,19 +768,9 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
   const R = edge(ref.map((l) => l.r), (a, b) => a > b, W * 0.9);
   const bodySize = median(body.flatMap((l) => Array(Math.max(1, l.pieces.reduce((n, p) => n + p.text.length, 0))).fill(l.size))) || 12;
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D page', JSON.stringify({ W, H, L, R, bodySize, rule, lines: textLines.map((l) => ({ b: +l.base.toFixed(1), s: +l.size.toFixed(1), l: +l.l.toFixed(1), r: +l.r.toFixed(1), z: header.includes(l) ? 'H' : footer.includes(l) ? 'F' : notesLines.includes(l) ? 'N' : 'B', t: l.pieces.map((p) => p.text).join('|').slice(0, 60), ps: l.pieces.map((p) => [p.text.slice(0, 12), +p.l.toFixed(0), +p.r.toFixed(0), +p.y.toFixed(1), +p.h.toFixed(1)]), gaps: l.pieces.filter((p) => p.text.trim()).sort((x, y) => x.l - y.l).map((p, i, a) => (i ? +(p.l - a[i - 1].r).toFixed(1) : 0)).filter((g) => g > 8) })) }));
-  const bodyBlocks = buildBlocks(body, fonts, L, R, pitchOf, null);
-  // Running heads and page numbers: each line pinned to the page in a frame centred on where its glyphs
-  // are, so a font's slightly different width cannot move it out of its ornament.
-  const furniture: Furniture[] = [];
-  for (const l of [...header, ...footer]) {
-    const ps = l.pieces.filter((p) => p.text.trim() || p.text === '\u2009').sort((a, b) => a.l - b.l);
-    const groups: Piece[][] = [];
-    for (const p of ps) { const g = groups[groups.length - 1]; if (g && p.l - Math.max(...g.map((q) => q.r)) < l.size * 2.5) g.push(p); else groups.push([p]); }
-    for (const g of groups) {
-      const runs = runsOf(g, fonts, l.rtl); if (!runs.length) continue;
-      furniture.push({ runs, cx: (Math.min(...g.map((p) => p.l)) + Math.max(...g.map((p) => p.r))) / 2, base: H - l.base, size: l.size, top: header.includes(l) });
-    }
-  }
+  const formulas: Box[] = [];
+  const bodyBlocks = buildBlocks(pullFormulas(body, formulas), fonts, L, R, pitchOf, null);
+  const furniture = pinnedFurniture(header, footer, fonts, H);
   const headerBlocks: Block[] = [];
   const footerBlocks: Block[] = [];
   // Footnotes, split at their numbers (and kept whole, for pages whose notes cannot be Word footnotes).
@@ -524,6 +809,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     header: 6, footer: 6,
   };
   const pics = withGraphics ? await renderGraphics(page, 2, keepFonts).catch(() => [] as Pic[]) : [];
+  if (withGraphics) pics.push(...await renderRegions(page, 3, formulas).catch(() => [] as Pic[]));
   page.cleanup();
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
@@ -551,7 +837,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   progress('build', 85);
 
   const docx = await import('docx');
-  const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType } = docx;
+  const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak } = docx;
 
   const usedChars = new Map<string, Set<number>>();
   const runFor = (r: Run, footnotes: Map<number, number> | null) => {
@@ -561,14 +847,15 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     for (const ch of r.text) set.add(ch.codePointAt(0)!);
     const half = Math.max(2, Math.round(r.size * 2));
     return new TextRun({
-      text: r.text,
+      ...(r.tab !== undefined ? { children: [new Tab(), r.text] } : { text: r.text }),
       break: r.br ? 1 : undefined,
       font: { ascii: r.font, hAnsi: r.font, cs: r.font, eastAsia: r.font },
       size: half, sizeComplexScript: half,
       bold: r.bold, boldComplexScript: r.bold, italics: r.italic, italicsComplexScript: r.italic,
       color: r.color && r.color !== '000000' ? r.color : undefined,
       rightToLeft: r.rtl || undefined,
-      superScript: r.sup ? true : undefined,
+      // Raised by exactly what the page raises it, at its own size (Word's superscript would shrink it again).
+      ...(r.sup ? (r.raise ? { position: `${r.raise}pt` } : { superScript: true }) : {}),
     });
   };
   const alignOf = (a: Para['align'], kashida = false) => (a === 'center' ? AlignmentType.CENTER : a === 'both' ? (kashida ? AlignmentType.MEDIUM_KASHIDA : AlignmentType.BOTH) : a === 'end' ? AlignmentType.END : AlignmentType.START);
@@ -576,14 +863,15 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const r = b.runs?.find((x) => x.text.trim()); const half = Math.max(2, Math.round((r?.size ?? b.size) * 2));
     return r ? { font: { ascii: r.font, hAnsi: r.font, cs: r.font, eastAsia: r.font }, size: half, sizeComplexScript: half, rightToLeft: b.rtl || undefined } : { size: half, sizeComplexScript: half, rightToLeft: b.rtl || undefined };
   };
-  const paraFor = (b: Para, footnotes: Map<number, number> | null, extra: { before?: number } = {}) => new Paragraph({
+  const paraFor = (b: Para, footnotes: Map<number, number> | null, extra: { before?: number; colBreak?: boolean } = {}) => new Paragraph({
     bidirectional: b.rtl,
     run: markRun(b),
     widowControl: false,
     alignment: alignOf(b.align, b.kashida),
     indent: { start: Math.round(b.indStart * PT), end: Math.round(b.indEnd * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) },
     spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: LineRuleType.EXACT },
-    children: b.runs.map((r) => runFor(r, footnotes)),
+    tabStops: b.tabs?.map((t) => ({ type: TabStopType.LEFT, position: Math.round(t * PT) })),
+    children: [...(extra.colBreak ? [new ColumnBreak()] : []), ...b.runs.map((r) => runFor(r, footnotes))],
   });
   const none = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
   const verseFor = (v: Verse, footnotes: Map<number, number> | null) => {
@@ -621,7 +909,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
 
   const footnoteDefs: Record<number, { children: InstanceType<typeof Paragraph>[] }> = {};
   let noteId = 1;
-  const sections = pages.map((pg) => {
+  const sections = pages.flatMap((pg) => {
     const map = new Map<number, number>();
     // Real Word footnotes when every note is numbered and called from the text; otherwise the note area
     // is placed as a block exactly where the page has it.
@@ -683,18 +971,49 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // The pinned lines live in the page's header part with the decorations: positioned against the page, taking
     // no room, and keeping the body free to start like any page (LibreOffice mis-reads a section that opens
     // with frames before a table).
-    const children = [...blocksFor(pg.body, map), ...blocksFor(flowNotes, null)];
     const bottom = pg.m.bottom;
+    const page = { size: { width: Math.round(pg.w * PT), height: Math.round(pg.h * PT) }, margin: { top: Math.round(pg.m.top * PT), bottom: Math.round(bottom * PT), left: Math.round(pg.m.left * PT), right: Math.round(pg.m.right * PT), header: Math.round(pg.m.header * PT), footer: Math.round(footerDist * PT), gutter: 0 } };
+    const headers = { default: new Header({ children: headerChildren.length ? headerChildren : [new Paragraph({ children: [] })] }) };
+    const footers = { default: new Footer({ children: footerChildren.length ? footerChildren : [new Paragraph({ children: [] })] }) };
+    if (pg.regions?.length) {
+      // A page in columns: one continuous section per region, each with its own column layout; the columns'
+      // widths and gap follow the page, and a column break starts each column after the first.
+      const textL = pg.m.left, textR = pg.w - pg.m.right;
+      return pg.regions.map((rg, i) => {
+        const kids: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = [];
+        rg.cols.forEach((bs, c) => {
+          // The second column starts with a column break inside its first paragraph (a paragraph of its own
+          // would add its height to the column).
+          if (c > 0 && bs[0]?.kind === 'p') { kids.push(paraFor(bs[0], null, { colBreak: true }), ...blocksFor(bs.slice(1), null)); return; }
+          if (c > 0) kids.push(new Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new ColumnBreak()] }));
+          kids.push(...blocksFor(bs, null));
+        });
+        if (!kids.length) kids.push(new Paragraph({ children: [] }));
+        let column: object | undefined;
+        if (rg.cols.length > 1) {
+          // Visual left-to-right column boxes, then in the section's reading order.
+          const boxes = rg.edges.map(([a, b]) => [Math.max(textL, a - 3), Math.min(textR, b + 3)] as [number, number]).sort((x, y) => x[0] - y[0]);
+          const widths = [boxes[0][1] - textL, textR - boxes[1][0]];
+          const space = Math.max(6, textR - textL - widths[0] - widths[1]);
+          const rtlCols = rg.edges[0][0] > rg.edges[1][0];
+          const ordered = rtlCols ? [widths[1], widths[0]] : widths;
+          column = { count: 2, equalWidth: false, space: Math.round(space * PT), children: [new Column({ width: Math.round(ordered[0] * PT), space: Math.round(space * PT) }), new Column({ width: Math.round(ordered[1] * PT) })] };
+        }
+        return {
+          properties: { type: i === 0 ? SectionType.NEXT_PAGE : SectionType.CONTINUOUS, page, ...(column ? { column } : {}) },
+          ...(i === 0 ? { headers, footers } : {}),
+          children: kids,
+        };
+      });
+    }
+    const children = [...blocksFor(pg.body, map), ...blocksFor(flowNotes, null)];
     if (!children.length) children.push(new Paragraph({ children: [] }));
-    return {
-      properties: {
-        type: SectionType.NEXT_PAGE,
-        page: { size: { width: Math.round(pg.w * PT), height: Math.round(pg.h * PT) }, margin: { top: Math.round(pg.m.top * PT), bottom: Math.round(bottom * PT), left: Math.round(pg.m.left * PT), right: Math.round(pg.m.right * PT), header: Math.round(pg.m.header * PT), footer: Math.round(footerDist * PT), gutter: 0 } },
-      },
-      headers: { default: new Header({ children: headerChildren.length ? headerChildren : [new Paragraph({ children: [] })] }) },
-      footers: footerChildren.length ? { default: new Footer({ children: footerChildren }) } : undefined,
+    return [{
+      properties: { type: SectionType.NEXT_PAGE, page },
+      headers,
+      footers: footerChildren.length ? footers : undefined,
       children,
-    };
+    }];
   });
 
   // Embed the PDF's own fonts — each face (regular, bold, …) under its family — where they can draw
@@ -706,10 +1025,18 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     if (!f.raw) continue;
     const face = faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic);
     const used = usedChars.get(`${f.family}|${face}`); if (!used?.size) continue;
+    // A subset font with no Unicode map gets one (and Arabic shaping) from how the PDF uses its glyphs.
+    if (f.usage?.length && !f.rebuilt) {
+      f.rebuilt = true;
+      if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D usage', f.family, JSON.stringify(f.usage.slice(0, 3000).map((l) => l.map(([c, t, x, y, em, w, g]) => [c, t, +x.toFixed(2), +y.toFixed(2), +em.toFixed(2), +w.toFixed(3), g]))));
+      const fixed = (() => { try { return rebuildFont(f.raw!, f.usage!, f.spaceCode); } catch (e) { console.warn('P2D font rebuild failed', f.family, e); return null; } })();
+      if (fixed) { f.raw = fixed; f.cov = undefined; }
+      f.usage = undefined;
+    }
     const cov = (f.cov ??= cmapCoverage(f.raw));
     let ok = 0, total = 0;
     for (const c of used) { if (c <= 0x20 || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
-    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D font', f.family, face, ok, '/', total);
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D font', f.family, face, ok, '/', total, [...used].filter((c) => c > 0x20 && !COMBINING.test(String.fromCodePoint(c)) && !cov.has(c)).map((c) => c.toString(16)).join(' '));
     if (!total || ok / total < 0.97) continue; // a missing character or two falls back in Word
     let m = faces.get(f.family); if (!m) faces.set(f.family, m = new Map());
     if (!m.has(face)) m.set(face, f.raw);
@@ -727,7 +1054,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const os2 = readOs2(first); if (os2) sigs.set(family, os2);
   }
 
-  const rtlDoc = pages.flatMap((p) => p.body).filter((b) => b.rtl).length > pages.flatMap((p) => p.body).length / 2;
+  const allBlocks = pages.flatMap((p) => [...p.body, ...(p.regions ?? []).flatMap((r) => r.cols.flat())]);
+  const rtlDoc = allBlocks.filter((b) => b.rtl).length > allBlocks.length / 2;
   const d = new Document({
     creator: 'KurokawaReader', title: book.title,
     fonts: embedded.length ? (embedded as never) : undefined,
@@ -737,13 +1065,26 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   });
   progress('build', 92);
   let blob = await Packer.toBlob(d);
-  blob = await finishDocx(blob, rtlDoc, extraFaces, sigs);
+  // Fonts that are neither carried in the file nor common: named after a common font of the same kind.
+  const subs = new Map<string, { latin: string; cs: string; ea: string }>();
+  for (const key of usedChars.keys()) {
+    const family = key.split('|')[0];
+    if (faces.has(family) || subs.has(family)) continue;
+    // Arabic book faces keep their name: readers of such books mostly have them, and no common font
+    // looks like a given naskh.
+    const arabicUse = [...usedChars.entries()].some(([k, set]) => k.startsWith(`${family}|`) && [...set].some((c) => (c >= 0x600 && c <= 0x6ff) || (c >= 0x750 && c <= 0x77f) || (c >= 0xfb50 && c <= 0xfeff)));
+    if (arabicUse) continue;
+    const info = [...fonts.values()].find((f) => f.family === family);
+    const sub = fontSubstitute(family, info);
+    if (sub) subs.set(family, sub);
+  }
+  blob = await finishDocx(blob, rtlDoc, extraFaces, sigs, subs);
   progress('build', 100);
   return blob;
 }
 
 /** Word details the library has no option for: right-to-left sections, footnote numbers restart on each page. */
-async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>()): Promise<Blob> {
+async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>()): Promise<Blob> {
   const JSZip = (await import('jszip')).default;
   const zip = await JSZip.loadAsync(blob);
   // Fonts: the other faces of each embedded family (bold, …), the fonts' own signatures, and the switch that
@@ -778,6 +1119,17 @@ async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string
   const fixed = docXml.replace(/<w:sectPr([^>]*)>/g, (m) => `${m}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
     .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<\/w:sectPr>)/g, (m, a: string, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${b}` : m));
   zip.file('word/document.xml', fixed);
+  if (subs.size) {
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const bySlot = new Map([...subs].map(([k, v]) => [esc(k), v]));
+    for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes)\.xml$/.test(n))) {
+      const xml = await zip.file(name)!.async('string');
+      zip.file(name, xml.replace(/w:(ascii|hAnsi|cs|eastAsia)="([^"]*)"/g, (m, slot: string, v: string) => {
+        const sub = bySlot.get(v); if (!sub) return m;
+        return `w:${slot}="${slot === 'cs' ? sub.cs : slot === 'eastAsia' ? sub.ea : sub.latin}"`;
+      }));
+    }
+  }
   // The page already shows the book's own rule above the notes (in the background): Word's separator goes.
   const fn = zip.file('word/footnotes.xml');
   if (fn) zip.file('word/footnotes.xml', (await fn.async('string')).replace(/<w:separator\/>|<w:continuationSeparator\/>/g, ''));

@@ -98,6 +98,12 @@ export async function buildPdfWorker(outFile) {
       krAT = { str: stringToPDFString(v), depth: 1, minX: Infinity, maxX: -Infinity, anchor: null, first: null, fontName: null, color: textState.krFill || null, bold: textState.krTr === 2, strokeEm: 0 };
       krPageAT = true;
     }
+    function krSpanCodes(codes, str) {
+      const out = codes.slice(); let bases = 0;
+      for (let i = 0; i < out.length; i += 6) if (out[i + 5] > 0) bases++;
+      for (let i = 0; i < out.length; i += 6) out[i + 1] = out[i + 5] > 0 ? (bases === 1 ? str : "\uffff") : "";
+      return out;
+    }
     function krAtEnd() {
       if (!krAT) return false;
       if (--krAT.depth > 0) return true;
@@ -117,7 +123,12 @@ export async function buildPdfWorker(outFile) {
         hasEOL: false,
         color: at.color,
         fakeBold: at.bold,
-        strokeEm: at.strokeEm
+        strokeEm: at.strokeEm,
+        // One glyph: the span's text is that glyph's text; several: each glyph's own.
+        // The span's text belongs to its one spacing glyph (the others are its marks); with several spacing
+        // glyphs the text cannot be shared out, and their own text (often made up) is not trusted ("\uffff").
+        krCodes: at.codes ? krSpanCodes(at.codes, str) : undefined,
+        krSpan: at.codes ? 1 : undefined
       });
       return true;
     }
@@ -147,6 +158,7 @@ export async function buildPdfWorker(outFile) {
           krAT.maxX = Math.max(krAT.maxX, t0[4], t1[4]);
           // The base letter, not a mark drawn above or below it, gives the line's baseline.
           if (!krAT.anchor && glyph.width > 0 && !krMark.test(glyph.unicode || "")) krAT.anchor = t0;
+          if (font.krNeedsUse) (krAT.codes ||= []).push(originalCharCode, glyph.unicode || "", t0[4], t0[5], Math.hypot(t0[2], t0[3]), glyph.width * textState.fontMatrix[0]);
           continue;
         }
         if (krPageAT && !keepWhiteSpace && category.isWhitespace && !font.vertical) {
@@ -220,6 +232,8 @@ export async function buildPdfWorker(outFile) {
           if (textChunk.krMinX === undefined) { textChunk.krMinX = gx; textChunk.krMaxX = gx; }
           textChunk.krMinX = Math.min(textChunk.krMinX, gx); textChunk.krMaxX = Math.max(textChunk.krMaxX, gx + gw);
           (textChunk.krGX ||= []).push([textChunk.str.length, Math.min(gx, gx + gw), Math.max(gx, gx + gw)]);
+          // The glyph's code and text, for rebuilding a subset font that has no Unicode map.
+          if (textState.font?.krNeedsUse) (textChunk.krCodes ||= []).push(glyph.originalCharCode, glyph.unicode || "", gx, gtr[5], Math.hypot(gtr[2], gtr[3]), glyph.width * textState.fontMatrix[0]);
         }
         if (category.isZeroWidthDiacritic) {
           scaledDim = 0;
@@ -230,7 +244,8 @@ export async function buildPdfWorker(outFile) {
       if (textContentItem.krGX) krGlyphs.set(krItem, { visual: textContentItem.str.slice(), gx: textContentItem.krGX });
       textContentItem.initialized = false;
       textContentItem.krMinX = textContentItem.krMaxX = undefined;
-      textContentItem.krGX = null;`, 'extent reset');
+      textContentItem.krGX = null;
+      textContentItem.krCodes = null;`, 'extent reset');
 
   // 2a) every text item says its fill colour and whether it is drawn bold by stroking (render mode 2)
   src = replaceOnce(src, `      textContentItem.hasEOL = false;
@@ -257,7 +272,8 @@ export async function buildPdfWorker(outFile) {
         hasEOL: textChunk.hasEOL,
         color: textChunk.krColor,
         fakeBold: textChunk.krBold,
-        strokeEm: textChunk.krStrokeEm
+        strokeEm: textChunk.krStrokeEm,
+        krCodes: textChunk.krCodes || undefined
       };
     }`, 'bidi item');
 
@@ -351,8 +367,21 @@ export async function buildPdfWorker(outFile) {
   src = replaceOnce(src, `    if (krRaw) krRepairToUnicode(this, krRaw, properties);`, `    if (krRaw) krRepairToUnicode(this, krRaw, properties);
     if (krRaw && this.fontExtraProperties) this.krRaw = krRaw;
     this.krNoToUnicode = !properties.hasIncludedToUnicodeMap;
-    if (krRaw && properties.composite && !(properties.cidToGidMap && properties.cidToGidMap.length)) this.krRawAll = krRaw;`, 'font raw keep');
-  src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "cMap",`, 'export extra');
+    if (krRaw && properties.composite && !(properties.cidToGidMap && properties.cidToGidMap.length)) this.krRawAll = krRaw;
+    // A simple TrueType font with no Unicode cmap (a typical subset): its glyph uses are recorded, so
+    // PDF → DOCX can give it one.
+    if (krRaw && this.fontExtraProperties && !properties.composite) {
+      try {
+        const dv = new DataView(krRaw.buffer, krRaw.byteOffset, krRaw.byteLength); let cm = -1;
+        for (let i = 0, n = dv.getUint16(4); i < n; i++) { const r = 12 + i * 16; if (dv.getUint32(r) === 0x636d6170) cm = dv.getUint32(r + 8); }
+        let uni = false;
+        if (cm >= 0) for (let i = 0, n = dv.getUint16(cm + 2); i < n; i++) { const p = dv.getUint16(cm + 4 + i * 8), e = dv.getUint16(cm + 6 + i * 8); if (p === 0 || (p === 3 && (e === 1 || e === 10))) uni = true; }
+        this.krNeedsUse = cm >= 0 && !uni;
+        // The code of its space (spaces are never seen as glyph uses).
+        if (this.krNeedsUse && properties.toUnicode) properties.toUnicode.forEach((code, u) => { if (u === 0x20 && this.krSpaceCode === undefined) this.krSpaceCode = +code; });
+      } catch { this.krNeedsUse = false; }
+    }`, 'font raw keep');
+  src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "cMap",`, 'export extra');
 
   const out = await esbuild.transform(src, { minify: true, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);

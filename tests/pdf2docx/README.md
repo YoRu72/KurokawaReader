@@ -10,6 +10,16 @@ Regression tools for the layout-keeping PDF → Word converter (`src/pdf2docx.ts
 3. `node tests/pdf2docx/metrics.mjs <file.pdf> <outdir>/out.pdf` — matches text lines between the two and prints,
    per page, the baseline error (mean/max, points) and line-edge differences, plus the page counts.
 
-Install the PDF's fonts locally before judging the result (LibreOffice otherwise substitutes wider fonts and
-lines spill). LibreOffice is a development aid: Word is the reference renderer for right-to-left layout.
+Judge the result *without* the PDF's fonts installed — that is what a reader of the .docx has. The converter
+embeds the PDF's own fonts; a subset font with no Unicode map (LibreOffice, many Arabic PDFs) is rebuilt first
+(`src/fontfix.ts`: cmap, Arabic positional forms, ligatures in the PDF's priority, contextual variants, mark
+positions). LibreOffice is a development aid: Word is the reference renderer for right-to-left layout.
+
+`gsub-sim.py <font.ttf> <text>…` prints the glyphs a rebuilt font gives for a text (positional forms, rlig, calt),
+to compare with the glyph codes the PDF used.
+
+`corpus/` has the sources of the varied test PDFs: `mkdocx.py` (Word-style documents: report, two columns,
+mixed Arabic/English table, CJK, landscape — saved as .docx, then `soffice --convert-to pdf`), LaTeX
+(`paper.tex` two-column with a formula, table and footnote; `t3.tex` Type 3 fonts; `xe.tex` XeLaTeX). Add
+encrypted copies with `qpdf --encrypt`.
 Target on the reference Arabic books: same page count, mean baseline error under 2 pt.
