@@ -322,6 +322,6 @@ export const epubHandler: FlowHandler = {
     const rtl = markDirections(root) || pkg.rtlProgression || /^(ar|he|fa|ur)/i.test(pkg.meta.language ?? '');
     if (rtl) root.setAttribute('dir', 'rtl');
     const images: ImageRef[] = collectImages(root, ctx, 'epub', pool, pkg.zip);
-    return { element: root, toc, images, rtl, dispose: () => pool.dispose() };
+    return { element: root, toc, images, rtl, dispose: () => pool.dispose(), resolveImages: () => pool.resolveAll(root) };
   },
 };

@@ -13,6 +13,7 @@ export interface ScanResult { folderName: string; files: ScanEntry[]; truncated:
 
 import { destinationList, type Destination } from './destination';
 import type { FileSource } from '../db';
+import { getSettings } from '../settings';
 import type { SourcedFile } from '../library';
 export type { Destination };
 
@@ -139,7 +140,7 @@ export function openScanSheet(o: ScanSheetOptions): void {
   sheet.body.style.fontFamily = 'var(--font-ui)';
   // Pictures are rarely what someone wants to import from a whole device; they start unticked.
   const picked = new Set<string>(FORMAT_GROUPS.filter((g) => g.id !== 'image').map((g) => g.id));
-  let link = true;
+  let link = getSettings().importMode !== 'copy';
   const typeRow = h('div', { class: 'chip-row wrap' });
   const renderTypes = () => {
     clear(typeRow);

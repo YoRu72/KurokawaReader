@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   setFullscreen(v) { return ipcRenderer.invoke('kr:fullscreen', v); },
   setImmersive(on) { return ipcRenderer.invoke('kr:immersive', on); },
   copyImage(b64) { return ipcRenderer.invoke('kr:copy-image', b64); },
+  printToPdf(html, opts) { return ipcRenderer.invoke('kr:print-pdf', html, opts); },
   http(o) { return ipcRenderer.invoke('kr:http', o); },
   pickFolder() { return ipcRenderer.invoke('kr:folder-pick'); },
   readTextFile(p) { return ipcRenderer.invoke('kr:folder-read', p); },

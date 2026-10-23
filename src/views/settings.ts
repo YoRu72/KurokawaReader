@@ -187,7 +187,8 @@ export function settingsView(): HTMLElement {
   const storageP = h('p', null, t('storageUnknown'));
   navigator.storage?.estimate?.().then((e) => { if (e.usage != null && e.quota != null) storageP.textContent = t('storageUsed', { used: formatBytes(e.usage), quota: formatBytes(e.quota) }); }).catch(() => undefined);
   if (navigator.storage?.persist) navigator.storage.persisted().then((p) => { if (!p) void navigator.storage.persist(); }).catch(() => undefined);
-  body.append(h('section', { class: 'card' }, h('h3', null, t('storage')), storageP,
+  const importModeField = (nativePlatform() === 'android' || 'kurokawaDesktop' in window) ? h('div', { class: 'field' }, resettable(t('importMode'), 'importMode', () => renderAppearance()), h('div', { class: 'segmented' }, ...([['link', t('importLink')], ['copy', t('importCopy')]] as ['link' | 'copy', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getSettings().importMode === id), onclick: () => { updateSettings({ importMode: id }); navigate('/settings', true); } }, label))), h('span', { class: 'hint' }, t('importModeHint'))) : null;
+  body.append(h('section', { class: 'card' }, h('h3', null, t('storage')), storageP, importModeField,
     h('div', null, h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: (await db.allBooks()).length }))) { await db.clearAll(); toast(t('done')); } } }, icon('trash'), t('clearLibrary')))));
 
   // About

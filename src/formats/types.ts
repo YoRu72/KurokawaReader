@@ -45,6 +45,8 @@ export interface FlowRender {
   rtl: boolean;
   /** Release object URLs etc. */
   dispose(): void;
+  /** Load every lazily resolved picture now (export / conversion). */
+  resolveImages?(): Promise<void>;
 }
 
 export interface FlowHandler {

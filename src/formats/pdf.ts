@@ -4,6 +4,7 @@ import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfj
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
 import { h } from '../ui/dom';
+import { t } from '../i18n';
 
 // pdf.js (≈450 KB) is loaded on first use, not at start-up.
 type PdfJs = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -28,6 +29,11 @@ async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () =
     wasmUrl: `${RES}wasm/`,
     iccUrl: `${RES}iccs/`,
   } as Parameters<typeof pdfjs.getDocument>[0]);
+  // Protected files: ask for the password (again when it was wrong).
+  task.onPassword = (update: (pw: string) => void, reason: number) => {
+    const pw = window.prompt(reason === 2 ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'));
+    if (pw) update(pw); else throw new Error(t('cancelled'));
+  };
   const doc = await task.promise;
   return { doc, close: () => { void task.destroy(); } };
 }

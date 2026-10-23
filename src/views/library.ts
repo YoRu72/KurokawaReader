@@ -56,9 +56,11 @@ export function libraryView(): HTMLElement {
   const heroSub = h('div', { class: 'sub' });
   const heroGoal = h('div', { class: 'goal-line', hidden: true });
   const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub, heroGoal);
+  const convertBtn = iconButton('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertPicker(books, () => input.click())));
+  convertBtn.classList.add('tool-btn');
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, selectBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn),
     chips,
     tagChips,
     fmtChips,
@@ -80,13 +82,39 @@ export function libraryView(): HTMLElement {
   onSettingsChange(() => { applyImportPlace(); renderChips(); });
 
   /** Pick files, or scan a folder on the device. */
+  /** Android: pick through the plugin so files can be linked with a lasting grant; elsewhere the plain file input. */
+  async function pickFiles(): Promise<void> {
+    const plugin = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: { pickDocuments?(): Promise<{ files: { uri: string; name: string; size: number; mime?: string }[] }>; readDocument(o: { uri: string }): Promise<{ data: string }> } } } }).Capacitor;
+    const k = plugin?.Plugins?.Kurokawa;
+    if (plugin?.getPlatform?.() !== 'android' || !k?.pickDocuments) { input.click(); return; }
+    let picked: { uri: string; name: string; size: number; mime?: string }[];
+    try { picked = (await k.pickDocuments()).files; } catch { return; }
+    if (!picked.length) return;
+    const link = getSettings().importMode === 'link';
+    const files: File[] = [];
+    toast(t('importing', { n: localDigits(picked.length) }), 'info', 60000);
+    for (const f of picked) {
+      try {
+        const { data } = await k.readDocument({ uri: f.uri });
+        const bin = atob(data); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const file = new File([bytes], f.name || 'document', { type: f.mime || '' }) as File & { krSource?: { uri: string } };
+        if (link) file.krSource = { uri: f.uri };
+        files.push(file);
+      } catch (err) { toast(t('importFailed', { name: f.name, error: String((err as Error).message ?? err) }), 'error', 4000); }
+    }
+    if (folders.length || books.length) {
+      const d = await pickDestination(folders, activeFolder ? { kind: 'folder', id: activeFolder } : { kind: 'library' }, t('importBooks'));
+      if (!d) return;
+      await doImport(files, await resolveDestination(d));
+    } else await doImport(files);
+  }
   function importMenu() {
-    if (!canScan()) { input.click(); return; }
+    if (!canScan()) { void pickFiles(); return; }
     import('../ui/dom').then(({ openSheet }) => {
       const s = openSheet(t('importBooks'), t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); input.click(); } }, icon('import'), t('importBooks'))),
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice')))));
     });
   }
@@ -100,7 +128,7 @@ export function libraryView(): HTMLElement {
   }
 
   const selBar = h('div', { class: 'selection-bar', hidden: true });
-  const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (!root.isConnected) return; if (c === 'import') input.click(); else if (c === 'scan') openScan(); };
+  const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (!root.isConnected) return; if (c === 'import') void pickFiles(); else if (c === 'scan') openScan(); };
   document.addEventListener('kr:command', onCommand);
   const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
   const FINE_POINTER = matchMedia('(hover: hover) and (pointer: fine)').matches;
@@ -239,6 +267,7 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
+        ...(book.format !== 'image' && book.format !== 'cbz' ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/convert').then((m) => m.convertSheet(book, () => void refresh())); } }, icon('convert'), t('convertFile'))] : []),
         h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );

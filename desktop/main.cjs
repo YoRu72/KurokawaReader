@@ -217,5 +217,15 @@ ipcMain.handle('kr:folder-write', async (_e, p, text) => { await require('fs/pro
 ipcMain.handle('kr:default-apps', () => { if (process.platform === 'win32') return shell.openExternal('ms-settings:defaultapps'); if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:'); return false; });
 ipcMain.handle('kr:fullscreen', (_e, v) => { if (!win) return false; const next = v === 'toggle' ? !win.isFullScreen() : !!v; win.setFullScreen(next); return next; });
 ipcMain.handle('kr:immersive', (_e, on) => { if (win) win.setFullScreen(!!on); return true; });
+// Real, text-based PDF from HTML: a hidden window lays the document out and prints it.
+ipcMain.handle('kr:print-pdf', async (_e, html, opts) => {
+  const w = new BrowserWindow({ show: false, width: 900, height: 1200, webPreferences: { sandbox: true, javascript: false, offscreen: true } });
+  try {
+    await w.loadURL('data:text/html;charset=utf-8;base64,' + Buffer.from(String(html), 'utf8').toString('base64'));
+    await new Promise((r) => setTimeout(r, 400));   // fonts
+    const buf = await w.webContents.printToPDF({ pageSize: (opts && opts.pageSize) || 'A4', printBackground: true, margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }, preferCSSPageSize: false });
+    return buf.toString('base64');
+  } finally { w.destroy(); }
+});
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });

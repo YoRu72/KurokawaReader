@@ -64,6 +64,7 @@ export interface VisualSettings {
   showStatusLine: boolean;
   importButton: 'chips' | 'top' | 'fab';
   appName: 'auto' | 'en' | 'ar' | 'ja' | 'zh' | 'ko';   // launcher name on the device (Android)
+  importMode: 'link' | 'copy';   // keep imported files where they are (Android/desktop) or copy them into the app
   translator: 'builtin' | 'system';
   snapStyle: 'plain' | 'card';
   snapWatermark: boolean;
@@ -160,6 +161,7 @@ export const DEFAULTS: VisualSettings = {
   showStatusLine: false,
   importButton: 'chips',
   appName: 'auto',
+  importMode: 'link',
   translator: 'builtin',
   snapStyle: 'plain',
   snapWatermark: false,
