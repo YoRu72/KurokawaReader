@@ -1299,24 +1299,46 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   /* ---------- PDF text highlights ---------- */
   type PageRects = { page: number; rects: [number, number, number, number][] };
 
-  /** Client rectangles of a selection, mapped onto the page(s) they sit on. */
+  /** Client rectangles of a selection, mapped onto the page(s) they sit on, merged into one box per line. */
   function selectionRects(range: Range): PageRects[] {
     const groups = new Map<number, [number, number, number, number][]>();
     const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    // Pages are found by geometry (works for parts of the selection scrolled out of view).
+    const pages = Array.from(viewer.root.querySelectorAll<HTMLElement>('.pdf-page')).map((el) => ({ el, box: el.getBoundingClientRect() }));
     for (const r of Array.from(range.getClientRects())) {
       if (r.width < 2 || r.height < 2) continue;
-      const hit = document.elementFromPoint(r.left + r.width / 2, Math.min(window.innerHeight - 1, Math.max(0, r.top + r.height / 2))) as HTMLElement | null;
-      const el = hit?.closest('.pdf-page') as HTMLElement | null;
-      if (!el) continue;
-      const box = el.getBoundingClientRect();
-      if (!box.width || !box.height) continue;
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const pg = pages.find(({ box }) => cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom);
+      if (!pg || !pg.box.width || !pg.box.height) continue;
+      const box = pg.box;
       const x = clamp((r.left - box.left) / box.width), y = clamp((r.top - box.top) / box.height);
       if (x >= 1 || y >= 1) continue;
-      const rects = groups.get(Number(el.dataset.page)) ?? [];
+      const rects = groups.get(Number(pg.el.dataset.page)) ?? [];
       rects.push([x, y, Math.min(clamp(r.width / box.width), 1 - x), Math.min(clamp(r.height / box.height), 1 - y)]);
-      groups.set(Number(el.dataset.page), rects);
+      groups.set(Number(pg.el.dataset.page), rects);
     }
-    return [...groups].map(([page, rects]) => ({ page, rects }));
+    return [...groups].map(([page, rects]) => ({ page, rects: mergeLineRects(rects) }));
+  }
+  /** pdf.js gives one rectangle per text run; overlapping ones would darken where they meet. Join runs on the same line. */
+  function mergeLineRects(rects: [number, number, number, number][]): [number, number, number, number][] {
+    const sorted = [...rects].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+    const out: [number, number, number, number][] = [];
+    for (const r of sorted) {
+      const last = out[out.length - 1];
+      if (last) {
+        const lMid = last[1] + last[3] / 2, rMid = r[1] + r[3] / 2;
+        const sameLine = Math.abs(lMid - rMid) < Math.min(last[3], r[3]) * 0.5;
+        const gap = r[0] - (last[0] + last[2]);
+        if (sameLine && gap < Math.max(last[3], r[3]) * 1.5) {
+          const x0 = Math.min(last[0], r[0]), y0 = Math.min(last[1], r[1]);
+          const x1 = Math.max(last[0] + last[2], r[0] + r[2]), y1 = Math.max(last[1] + last[3], r[1] + r[3]);
+          out[out.length - 1] = [x0, y0, x1 - x0, y1 - y0];
+          continue;
+        }
+      }
+      out.push(r);
+    }
+    return out.map(([x, y, w, h2]) => [Number(x.toFixed(4)), Number(y.toFixed(4)), Number(w.toFixed(4)), Number(h2.toFixed(4))]);
   }
 
   async function persistHighlights(): Promise<void> {

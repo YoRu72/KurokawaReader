@@ -9,6 +9,7 @@ import { coverUrl } from '../library';
 import { scheduleSync } from '../sync';
 import { keepAwake } from '../native';
 import { readAudioMeta, type AudioChapter } from '../formats/audio';
+import { ReadingTracker } from '../stats';
 
 interface Track { book: Book; url: string; chapters: AudioChapter[]; duration: number }
 
@@ -44,6 +45,10 @@ export async function mountAudio(root: HTMLElement, books: Book[], onDispose: (f
   onDispose(() => revokes.forEach((u) => URL.revokeObjectURL(u)));
 
   const audio = new Audio(); audio.preload = 'metadata';
+  // Listening time counts in the reading statistics (sessions, daily goal, streak).
+  const tracker = new ReadingTracker(books[0], () => !audio.paused);
+  tracker.start();
+  onDispose(() => void tracker.stop());
   let ti = 0;
   const saved = await db.getMeta<{ track: number; time: number; rate: number }>(`audio:${books[0].id}`);
   if (saved && saved.track < tracks.length) ti = saved.track;
@@ -98,6 +103,7 @@ export async function mountAudio(root: HTMLElement, books: Book[], onDispose: (f
     const total = tracks.reduce((a, x) => a + (x.duration || 0), 0);
     const before = tracks.slice(0, ti).reduce((a, x) => a + (x.duration || 0), 0);
     const pct = total ? Math.min(1, (before + audio.currentTime) / total) : 0;
+    tracker.advance(0, pct);
     void db.setMeta(`audio:${books[0].id}`, { track: ti, time: audio.currentTime, rate: audio.playbackRate });
     void db.updateBook(track().book.id, (b) => { b.progress = { bookId: b.id, pct: (audio.duration ? audio.currentTime / audio.duration : 0) }; b.progressAt = now; b.lastOpenedAt = now; });
     if (books.length > 1) void db.updateBook(books[0].id, (b) => { b.progress = { bookId: b.id, pct }; });

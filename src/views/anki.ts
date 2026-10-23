@@ -7,6 +7,7 @@ import { db, type Book } from '../db';
 import { navigate } from '../router';
 import { getSettings, pageIsLight } from '../settings';
 import { scheduleSync } from '../sync';
+import { ReadingTracker } from '../stats';
 import { openDeck, loadProgress, saveProgress, buildQueue, nextCard, schedule, dueLabel, renderCard, attachMedia, soundUrl, noteSummary, today, type Deck, type Card, type Grade, type Progress } from '../anki';
 
 export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void): Promise<void> {
@@ -22,6 +23,11 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
   let deck: Deck;
   try { deck = await openDeck(book.id, file); } catch (err) { clear(main); main.append(h('p', { class: 'center' }, t('openError', { error: String((err as Error).message ?? err) }))); return; }
   let p = await loadProgress(book.id);
+  // Study time counts in the reading statistics while the study screen is up.
+  let studying = false;
+  const tracker = new ReadingTracker(book, () => studying);
+  tracker.start();
+  onDispose(() => void tracker.stop());
   const urls = new Map<string, string>();
   onDispose(() => { urls.forEach((u) => URL.revokeObjectURL(u)); audio?.pause(); });
   const night = () => !pageIsLight(getSettings()) || document.documentElement.dataset.ui === 'dark';
@@ -32,12 +38,14 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
     await saveProgress(book.id, p);
     const studied = Object.keys(p.cards).length;
     const pct = deck.cards.length ? studied / deck.cards.length : 0;
+    tracker.advance(0, pct);
     await db.updateBook(book.id, (b) => { b.progress = { bookId: book.id, pct }; b.progressAt = Date.now(); b.lastOpenedAt = Date.now(); });
     scheduleSync();
   };
 
   /* ---------- overview ---------- */
   function overview() {
+    studying = false;
     clear(main);
     const q = buildQueue(deck, p);
     const learnNow = q.learning.filter((c) => p.cards[c.id].due <= Date.now()).length;
@@ -61,6 +69,7 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
 
   /* ---------- study ---------- */
   function study() {
+    studying = true;
     clear(main);
     let q = buildQueue(deck, p);
     let card: Card | null = null; let side: 'q' | 'a' = 'q';
