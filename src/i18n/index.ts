@@ -1,16 +1,27 @@
 import { en, type Strings } from './en';
 import { ar } from './ar';
+import { ja } from './ja';
+import { zh } from './zh';
+import { ko } from './ko';
 
-export type Lang = 'en' | 'ar';
-const tables: Record<Lang, Strings> = { en, ar };
+export type Lang = 'en' | 'ar' | 'ja' | 'zh' | 'ko';
+const tables: Record<Lang, Partial<Strings>> = { en, ar, ja, zh, ko };
+/** Interface languages, each named in its own language (the picker lists these). */
+export const LANGS: [Lang, string][] = [['en', 'English'], ['ar', 'العربية'], ['ja', '日本語'], ['zh', '简体中文'], ['ko', '한국어']];
+const isLang = (v: string | null): v is Lang => !!v && LANGS.some(([c]) => c === v);
+/** The device's language when the app supports it, English otherwise. */
+export function systemLang(): Lang {
+  for (const l of navigator.languages ?? [navigator.language]) { const c = l.toLowerCase().split('-')[0]; if (isLang(c)) return c; }
+  return 'en';
+}
 
 let current: Lang = detectInitial();
 const listeners = new Set<(lang: Lang) => void>();
 
 function detectInitial(): Lang {
   const saved = localStorage.getItem('kr.lang');
-  if (saved === 'en' || saved === 'ar') return saved;
-  return navigator.language.toLowerCase().startsWith('ar') ? 'ar' : 'en';
+  if (isLang(saved)) return saved;
+  return systemLang();
 }
 
 export function getLang(): Lang {
@@ -27,10 +38,10 @@ export function setLang(lang: Lang): void {
 export type LangPref = 'system' | Lang;
 export function getLangPref(): LangPref {
   const saved = localStorage.getItem('kr.lang');
-  return saved === 'en' || saved === 'ar' ? saved : 'system';
+  return isLang(saved) ? saved : 'system';
 }
 export function setLangPref(pref: LangPref): void {
-  if (pref === 'system') { localStorage.removeItem('kr.lang'); current = navigator.language.toLowerCase().startsWith('ar') ? 'ar' : 'en'; applyDocumentLang(); listeners.forEach((fn) => fn(current)); }
+  if (pref === 'system') { localStorage.removeItem('kr.lang'); current = systemLang(); applyDocumentLang(); listeners.forEach((fn) => fn(current)); }
   else setLang(pref);
 }
 
@@ -77,7 +88,8 @@ export function formatNumber(v: string | number): string {
 
 export function formatDate(ts: number | undefined): string {
   if (!ts) return t('never');
-  return new Intl.DateTimeFormat(current === 'ar' ? 'ar-SA-u-nu-arab-ca-gregory' : 'en-GB', { dateStyle: 'medium' }).format(new Date(ts));
+  const loc: Record<Lang, string> = { ar: 'ar-SA-u-nu-arab-ca-gregory', en: 'en-GB', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR' };
+  return new Intl.DateTimeFormat(loc[current], { dateStyle: 'medium' }).format(new Date(ts));
 }
 
 /** Reading time as "2h 5m" (localised digits and unit). */

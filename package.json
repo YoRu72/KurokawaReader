@@ -25,7 +25,9 @@
     "@capacitor/screen-orientation": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
     "@capacitor/share": "^6.0.0",
-    "capacitor-plugin-kurokawa": "file:native/capacitor-plugin-kurokawa"
+    "capacitor-plugin-kurokawa": "file:native/capacitor-plugin-kurokawa",
+    "docx": "^9.5.0",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "esbuild": ">=0.25.0",

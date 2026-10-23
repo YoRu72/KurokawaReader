@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -20,7 +20,7 @@ export function settingsView(): HTMLElement {
   const s = getSettings();
 
   // Language & direction
-  const langs: [LangPref, string][] = [['system', t('langSystem')], ['en', t('languageEnglish')], ['ar', t('languageArabic')]];
+  const langs: [LangPref, string][] = [['system', `${t('langSystem')} · ${LANGS.find(([c]) => c === systemLang())?.[1] ?? 'English'}`], ...LANGS];
   const dirs: [DirPref, string][] = [['auto', t('dirAuto')], ['ltr', t('dirLtr')], ['rtl', t('dirRtl')]];
   body.append(h('section', { class: 'card' }, h('h3', null, t('language')),
     // A list rather than a row of buttons: it grows as interface languages are added.
