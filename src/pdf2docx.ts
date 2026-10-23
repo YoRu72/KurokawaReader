@@ -7,12 +7,12 @@
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
 import { loadPdfjs } from './formats/pdf';
-import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral } from './pdftext';
+import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
 
 type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
-type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[] };
+type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
 /** How the document uses its embedded fonts' glyphs: runs of glyphs along a line, cut where a word ends (each
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
 type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>> };
@@ -268,8 +268,10 @@ function findRules(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][]
 /* Layout analysis                                                     */
 /* ------------------------------------------------------------------ */
 
-function buildLines(pieces: Piece[]): Line[] {
-  pieces.sort((a, b) => b.y - a.y);
+function buildLines(all: Piece[]): Line[] {
+  // Drawn spaces join the line they separate words of once the lines are made: they decide nothing.
+  const spaces = all.filter((p) => p.text === '\u2009');
+  const pieces = all.filter((p) => p.text !== '\u2009').sort((a, b) => b.y - a.y);
   const groups: Piece[][] = [];
   for (const p of pieces) {
     const g = groups.find((gr) => Math.abs(gr[0].y - p.y) < Math.max(gr[0].h, p.h) * 0.4);
@@ -281,7 +283,12 @@ function buildLines(pieces: Piece[]): Line[] {
   for (let i = groups.length - 1; i >= 0; i--) {
     const g = groups[i]; const sz = sizeOf(g);
     const host = groups.find((o) => o !== g && sizeOf(o) > sz * 1.15 && g[0].y > o[0].y && g[0].y - o[0].y < sizeOf(o) * 0.75 && g.every((p) => p.r > Math.min(...o.map((q) => q.l)) - sizeOf(o) * 3 && p.l < Math.max(...o.map((q) => q.r)) + sizeOf(o) * 3));
-    if (host) { g.forEach((p) => { p.sup = true; }); host.push(...g); groups.splice(i, 1); }
+    if (host) { g.forEach((p) => { p.sup = true; }); host.push(...g); groups.splice(i, 1); continue; }
+    // Smaller print set a little low in a gap of a bigger line (a verse citation after the verse, beside a
+    // Quran font whose words sit on their own baseline) is part of that line.
+    const inGap = (o: Piece[]) => g.every((p) => p.l >= Math.min(...o.map((q) => q.l)) - 1 && p.r <= Math.max(...o.map((q) => q.r)) + 1 && !o.some((q) => q.text.trim() && q.text !== '\u2009' && q.l < p.r - 0.5 && q.r > p.l + 0.5));
+    const low = groups.find((o) => o !== g && sizeOf(o) > sz * 1.15 && g[0].y < o[0].y && o[0].y - g[0].y < sizeOf(o) * 0.6 && inGap(o));
+    if (low && !(globalThis as { krNoLow?: boolean }).krNoLow) { low.push(...g); groups.splice(i, 1); }
   }
   // A smaller piece raised above the others of its line is a superscript (a note number on a line of
   // running text), even when it sits close enough to be grouped with them.
@@ -291,12 +298,33 @@ function buildLines(pieces: Piece[]): Line[] {
     const host = g.filter((p) => p.h > big * 0.9); const hb = median(host.map((p) => p.y));
     for (const p of g) if (p.h < big * 0.85 && p.y - hb > big * 0.18 && /^[\s(\[]*[0-9\u0660-\u0669\u06F0-\u06F9*\u2020\u2021a-z]{1,3}[)\]]?\s*$/.test(p.text)) p.sup = true;
   }
-  return groups.map((g) => {
-    const normal = g.filter((p) => !p.sup);
+  for (const sp of spaces) {
+    let best: Piece[] | null = null, bd = Infinity;
+    for (const g of groups) {
+      const words = g.filter((p) => !p.sup); if (!words.length) continue;
+      const y = median(words.map((p) => p.y)), h = Math.max(...words.map((p) => p.h));
+      const lo = Math.min(...words.map((p) => p.l)), hi = Math.max(...words.map((p) => p.r));
+      const d = Math.abs(y - sp.y);
+      if (d < h * 0.5 && sp.l >= lo - 0.5 && sp.r <= hi + 0.5 && d < bd) { bd = d; best = g; }
+    }
+    best?.push(sp);
+  }
+  // Drawn spaces only separate words: a line of nothing else is no line, and one at either end of a line is
+  // not part of it.
+  const isMark = (p: Piece) => p.text === '\u2009';
+  const kept = groups.map((g) => {
+    const words = g.filter((p) => !isMark(p));
+    if (!words.length) return [];
+    const lo = Math.min(...words.map((p) => p.l)), hi = Math.max(...words.map((p) => p.r));
+    return g.filter((p) => !isMark(p) || (p.l >= lo - 0.5 && p.r <= hi + 0.5));
+  }).filter((g) => g.length);
+  return kept.map((g) => {
+    const normal = g.filter((p) => !p.sup && !isMark(p));
+    const ext = g.filter((p) => !isMark(p));
     const base = median(normal.map((p) => p.y));
     const size = median(normal.flatMap((p) => Array(Math.max(1, Math.round(p.text.length))).fill(p.h)));
     const text = g.map((p) => p.text).join('');
-    return { pieces: g, base, size, l: Math.min(...g.map((p) => p.l)), r: Math.max(...g.map((p) => p.r)), rtl: isRtlText(text) };
+    return { pieces: g, base, size, l: Math.min(...ext.map((p) => p.l)), r: Math.max(...ext.map((p) => p.r)), rtl: isRtlText(text) };
   }).sort((a, b) => b.base - a.base);
 }
 
@@ -343,7 +371,9 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   // Order and space the pieces like the copy text does, then merge neighbours with the same look.
   const ordered: { p: Piece; space: boolean; tab?: number }[] = [];
   const marked = pieces.some((p) => p.text === '\u2009');
-  const sorted = [...pieces].sort((a, b) => (rtlLine ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
+  const sorted = dropBuriedSpaces(pieces, (p) => p.text === '\u2009').sort((a, b) => (rtlLine ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
+  // (Brackets drawn on their own: opening or closing by where their words are — see fixLoneBrackets.)
+  fixLoneBrackets(sorted, rtlLine).forEach((t, i) => { if (t !== sorted[i].text) sorted[i] = { ...sorted[i], text: t }; });
   let prev: Piece | null = null; let pendingSpace = false;
   // Word gaps of a stretched line are all wide: a tab is much wider than the line's usual gap.
   const gaps: number[] = [];
@@ -357,7 +387,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     if (!p.text.trim()) { pendingSpace = true; continue; }
     let space = pendingSpace;
     const gap = prev ? (rtlLine ? prev.l - p.r : p.l - prev.r) : 0;
-    if (prev && !marked && gap > Math.min(prev.h, p.h) * 0.18) space = true;
+    if (prev && gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18)) space = true;
     // (A mark first in a piece stored in drawing order — "َأ" — is not a mark starting the piece.)
     if (COMBINING.test(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text[0] ?? '')) space = false;
     // A wide gap inside a line (a section number and its title, a list label, columns of figures) is a
@@ -373,7 +403,8 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   for (const { p, space, tab } of ordered) {
     const f = fonts.get(p.font) ?? { family: 'Times New Roman', bold: false, italic: false };
     // A piece stored in drawing order (mark before its letter) reads in logical order through joinLine.
-    const text = logicalNeutral(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text, rtlLine);
+    let text = logicalNeutral(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text, rtlLine);
+    if (rtlLine) text = balanceBrackets(text);
     const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text)), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined };
     const last = runs[runs.length - 1];
     if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
@@ -441,6 +472,12 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     const kashida = align === 'both' && rtl && stretches > 0 && stretches >= Math.max(1, words * 0.12);
     if (!kashida && align === 'both' && rtl) for (const r of runs) r.text = r.text.replace(/\u0640+/g, '');
     if (kashida) for (const r of runs) { if (r.text.includes('\u0640')) r.kText = r.text; r.text = r.text.replace(/\u0640+/g, ''); }
+    // A wide gap before a run that fills the rest of the line is a stretched word space, not a tab: a tab there
+    // would leave the run no room and push it onto a line of its own.
+    for (const r of runs) if (r.tab !== undefined) {
+      const pos = rtl ? R + 3 - r.tab : r.tab - (L - 3);
+      if (pos + r.text.length * r.size * 0.45 > R - L + 6) { r.tab = undefined; r.text = ` ${r.text}`; }
+    }
     const tabX = runs.filter((r) => r.tab !== undefined).map((r) => r.tab!);
     let tabs: number[] | undefined;
     if (tabX.length) {
@@ -450,7 +487,7 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       tabs = [...new Set(runs.filter((r) => r.tab !== undefined).map((r) => {
         const pos = rtl ? R + 3 - r.tab! : r.tab! - (L - 3);
         const w = r.text.length * r.size * 0.5;
-        return Math.round(Math.min(pos, room - w * 1.25 - 3) * 2) / 2;
+        return Math.round(Math.max(0, Math.min(pos, room - w * 1.25 - 3)) * 2) / 2;
       }))].sort((a, b) => a - b);
       // Positioned text: set flush from the start, no stretching (a justified line would spread the text after the last tab).
       if (align === 'center' || ls.length === 1) { indStart = 0; indEnd = 0; firstLine = Math.max(0, startGap(first)); }
@@ -486,7 +523,7 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       const first = rtl ? halves[0] : halves[1], second = rtl ? halves[1] : halves[0];
       const row: Run[][] = midRuns ? [runsOf(first, fonts, rtl), midRuns, runsOf(second, fonts, rtl)] : [runsOf(first, fonts, rtl), runsOf(second, fonts, rtl)];
       const midW = halves[2].length ? Math.max(...halves[2].map((p) => p.r)) - Math.min(...halves[2].map((p) => p.l)) + line.size : 0;
-      const ext = (a: Piece[]) => (a.length ? [Math.min(...a.map((p) => p.l)), Math.max(...a.map((p) => p.r))] : [0, 0]);
+      const ext = (a0: Piece[]) => { const a = a0.filter((p) => p.text.trim() && p.text !== '\u2009'); return a.length ? [Math.min(...a.map((p) => p.l)), Math.max(...a.map((p) => p.r))] : [0, 0]; };
       const gap = halves[2].length ? 0 : Math.max(0, ext(halves[0])[0] - ext(halves[1])[1]);
       if (verse && prevBase !== null && prevBase - line.base < pitchOf(line.size) * 2.2 && verse.rows[0].length === row.length) { verse.rows.push(row); verse.midW = Math.max(verse.midW, midW); verse.gap = Math.min(verse.gap || gap, gap || verse.gap); }
       else {
@@ -596,6 +633,19 @@ function subLine(l: Line, pieces: Piece[]): Line {
   return { pieces, base: l.base, size: l.size, l: Math.min(...pieces.map((p) => p.l)), r: Math.max(...pieces.map((p) => p.r)), rtl: isRtlText(pieces.map((p) => p.text).join('')) };
 }
 
+const PRESENTATION = /^[\ufb50-\ufdff\ufe70-\ufefc]$/u;
+/** Is this a word font — a glyph per word, under presentation-form codes (the King Fahd Complex QCF fonts)? */
+function isWordFont(f: FontInfo, seq: GlyphUse[]): boolean {
+  if (f.wordFont) return true;
+  if (/^QCF/i.test(f.family)) return seq.every((u) => !u[1] || PRESENTATION.test(u[1]) || !u[1].trim());
+  const pres = seq.filter((u) => PRESENTATION.test(u[1]));
+  if (seq.length < 3 || pres.length < seq.length * 0.8) return false;
+  // Words of a page run through consecutive codes; letters of real text do not.
+  let run = 0; const cps = pres.map((u) => u[1].codePointAt(0)!).sort((a, b) => a - b);
+  for (let i = 1; i < cps.length; i++) if (cps[i] - cps[i - 1] === 1) run++;
+  return run >= (cps.length - 1) * 0.6;
+}
+
 /** Rebuild the embedded fonts from their glyphs and how the document uses them (see fontfix.ts). Fonts
  *  that are one face (same family and style: subsets of one font) or that share words (legacy Arabic fonts
  *  holding different letter forms) become one font. Returns family renames for the runs. */
@@ -628,8 +678,16 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     keys.sort((a, b) => (fonts.get(b)!.uses ?? 0) - (fonts.get(a)!.uses ?? 0));
     const lead = fonts.get(keys[0])!;
     // A complete TrueType font with a Unicode map is carried as it is.
-    let own = 0; try { own = keys.length === 1 && lead.raw && !lead.legacy ? cmapCoverage(lead.raw).size : 0; } catch { /* unreadable */ }
-    if (own > 0) continue;
+    // A font of its own with a Unicode map that has the characters the document sets in it is carried as it is.
+    if (keys.length === 1 && lead.raw && !lead.legacy) {
+      let cov: Set<number> | null = null; try { cov = cmapCoverage(lead.raw); } catch { /* unreadable */ }
+      if (cov?.size) {
+        const used = new Set<number>();
+        for (const seq of store.seqs) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !COMBINING.test(ch)) used.add(c); }
+        let ok = 0; for (const c of used) if (cov.has(c)) ok++;
+        if (!used.size || ok / used.size >= 0.97) continue;
+      }
+    }
     const sources: GlyphSource[] = []; const c2g: Map<number, number>[] = []; const idx = new Map<string, number>();
     for (const k of keys) {
       const f = fonts.get(k)!; const sf = readSfnt(f.src!.data); if (!sf) continue;
@@ -658,7 +716,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     let sp = !lead.legacy && lead.spaceCode !== undefined && idx.has(keys[0]) ? c2g[idx.get(keys[0])!].get(lead.spaceCode) : undefined;
     if (sp !== undefined) { try { if (sources[idx.get(keys[0])!].outline(sp).contours.length) sp = undefined; } catch { sp = undefined; } }
     let built: Uint8Array | null = null;
-    try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, tatweel: keys.some((k) => stretched.has(fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
+    try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
     if (debug) console.warn('P2D rebuilt', lead.family, keys.map((k) => fonts.get(k)!.family).join('+'), lines.length, built?.length);
     if (!built) continue;
     lead.raw = built; lead.cov = undefined; lead.rebuilt = true; lead.noUnicode = false;
@@ -729,7 +787,19 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) { const x = fo as unknown as { data?: Uint8Array; type?: string; subtype?: string; toFontChar?: Record<string, number>; mimetype?: string; composite?: boolean }; console.warn('P2D fontdata', info.family, x?.type, x?.subtype, x?.mimetype, x?.composite, x?.data?.length, x?.data ? String.fromCharCode(...x.data.subarray(0, 4)).replace(/[^\x20-\x7e]/g, '.') : '', JSON.stringify(Object.entries(x?.toFontChar ?? {}).slice(0, 5))); }
     }
     // (The glyphs of one /ActualText span are one cluster: its letter and that letter's marks.)
-    if (it.krCodes) { const k = it.krCodes; const g = it.krSpan ? ++spanSeq : 0; const seq: GlyphUse[] = []; for (let i = 0; i + 5 < k.length; i += 6) seq.push([k[i] as number, k[i + 1] as string, k[i + 2] as number, k[i + 3] as number, k[i + 4] as number, k[i + 5] as number, g]); pieces[pieces.length - 1].codes = seq; }
+    if (it.krCodes) { const k = it.krCodes; const g = it.krSpan ? ++spanSeq : 0; const seq: GlyphUse[] = []; for (let i = 0; i + 5 < k.length; i += 6) seq.push([k[i] as number, k[i + 1] as string, k[i + 2] as number, k[i + 3] as number, k[i + 4] as number, k[i + 5] as number, g]); pieces[pieces.length - 1].codes = seq;
+      // A Quran word font (QCF): each glyph is a whole word, filed under an Arabic presentation-form code. Read as
+      // letters, those codes are gibberish that sets nothing like the word; kept as they are, the font (carried
+      // in the document) draws each word exactly as the page does.
+      const fi = fonts.get(it.fontName);
+      if (fi && seq.length && isWordFont(fi, seq)) {
+        fi.wordFont = true;
+        const ordered = [...seq].sort((a, b) => b[2] - a[2]); // right to left: reading order
+        let txt = ''; let edge = Infinity;
+        for (const u of ordered) { if (edge - (u[2] + u[5] * u[4]) > u[4] * 0.12 && txt) txt += ' '; txt += u[1]; edge = u[2]; }
+        pieces[pieces.length - 1].text = txt;
+      }
+    }
   }
   // Text in a decorative font that carries no letters (private-use codes, or Latin codes standing for
   // Arabic word art on an Arabic page) is not text a reader could use: it stays in the picture.
@@ -745,6 +815,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     let foreign = false;
     if (!pua && !latinArt && f.noUnicode && f.raw) { f.cov ??= cmapCoverage(f.raw); foreign = f.cov.size > 0 && [...p.text].some((c) => c.trim() && !f.cov!.has(c.codePointAt(0)!)); }
     if (!pua && !latinArt && !foreign) continue;
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art', f.family, pua, latinArt, foreign, JSON.stringify(p.text.slice(0, 40)));
     keepFonts.add(p.font); pieces.splice(i, 1);
   }
   const lines = buildLines(attachMarks(pieces).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
@@ -765,7 +836,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       seq = [];
     };
     for (const p of [...l.pieces].sort((a, b) => a.l - b.l)) {
-      if (!p.codes) { if (p.text === '\u2009' || p.l - prevR > 0.5) flush(); prevR = Math.max(prevR, p.r); continue; }
+      if (!p.codes) {
+        // (A drawn space's width is the font's space, which a rebuilt font must have.)
+        if (p.text === '\u2009' && p.r - p.l > 0.05 * p.h) { const fi = fonts.get(p.font); if (fi && (fi.gaps ??= []).length < 400) fi.gaps.push((p.r - p.l) / p.h); }
+        if (p.text === '\u2009' || p.l - prevR > 0.5) flush(); prevR = Math.max(prevR, p.r); continue;
+      }
       if (p.l - prevR > p.h * 0.12) flush();
       // Words inside one piece (a PDF that draws no spaces) are cut where the glyphs leave a gap; the gaps
       // tell how wide the font's space is when the PDF has none.
@@ -780,7 +855,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     }
     flush();
   }
-  if ((globalThis as { krDebugLine?: string }).krDebugLine) for (const l of lines) if (l.pieces.some((p) => p.text.includes((globalThis as { krDebugLine?: string }).krDebugLine!))) console.warn('P2D line', JSON.stringify(l.pieces.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), p.font])));
+  if ((globalThis as { krDebugLine?: string }).krDebugLine) for (const l of lines) if ((globalThis as { krDebugLine?: string }).krDebugLine === '*' || l.pieces.some((p) => p.text.includes((globalThis as { krDebugLine?: string }).krDebugLine!))) console.warn('P2D line', JSON.stringify(l.pieces.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), p.font])));
   const textLines = lines.filter((l) => l.pieces.some((p) => p.text.trim() && p.text !== '\u2009'));
   // Typical baseline-to-baseline pitch for a given size, measured on this page.
   const pitchOf = pitchTable([textLines]);
@@ -838,7 +913,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     // Pitches measured within each column (lines of two columns interleave on the page).
     const pitchCol = pitchTable(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])));
     const edgesOf = (ls: Line[]): [number, number] => [Math.min(...ls.map((l) => l.l)), Math.max(...ls.map((l) => l.r))];
-    const regions: Region[] = []; let prevBase: number | null = null;
+    const regions: Region[] = []; let prevBase: number | null = null; let colTop: number | null = null;
     const pageLo = Math.min(...body.map((l) => l.l)), pageHi = Math.max(...body.map((l) => l.r));
     for (const r of raw) {
       if (r.full) {
@@ -852,7 +927,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
           prevBase = ls[ls.length - 1].base; continue;
         }
         const ordered = rtlPage ? [r.right!, r.left!] : [r.left!, r.right!];
-        regions.push({ cols: ordered.map((ls) => { const e = edgesOf(ls); return buildBlocks(ls, fonts, e[0], e[1], pitchCol, prevBase); }), edges: ordered.map(edgesOf) });
+        // Columns at the top of the page start where the page's top line starts: each column's first line keeps
+        // its own height below it (a title in one column, text higher up in the other).
+        let start = prevBase;
+        if (start === null && !regions.length) { const t = [...r.left!, ...r.right!].reduce((a, b) => (b.base > a.base ? b : a)); start = t.base + BASE * pitchCol(t.size); colTop = start; }
+        regions.push({ cols: ordered.map((ls) => { const e = edgesOf(ls); return buildBlocks(ls, fonts, e[0], e[1], pitchCol, start); }), edges: ordered.map(edgesOf) });
         prevBase = Math.min(...[...r.left!, ...r.right!].map((l) => l.base));
       }
     }
@@ -862,7 +941,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const furnitureC = pinnedFurniture(header, footer, fonts, H);
     const firstPitchC = regions[0]?.cols[0]?.[0]?.pitch ?? pitchOf(body[0].size);
     const mC = {
-      top: Math.max(6, H - body[0].base - BASE * firstPitchC),
+      top: Math.max(6, colTop !== null ? H - colTop : H - body[0].base - BASE * firstPitchC),
       // Generous room below: a column that runs a little long must not push the next column onto a new page.
       bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
       left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
@@ -1180,6 +1259,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   type Face = 'Regular' | 'Bold' | 'Italic' | 'BoldItalic';
   const faceOf = (bold: boolean, italic: boolean): Face => (bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Regular');
   const faces = new Map<string, Map<Face, Uint8Array>>();
+  const best = new Map<string, { score: number }>();
   for (const f of fonts.values()) {
     if (!f.raw) continue;
     const face = faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic);
@@ -1189,8 +1269,13 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     for (const c of used) { if (c <= 0x20 || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D font', f.family, face, ok, '/', total, [...used].filter((c) => c > 0x20 && !COMBINING.test(String.fromCodePoint(c)) && !cov.has(c)).map((c) => c.toString(16)).join(' '));
     if (!total || ok / total < 0.97) continue; // a missing character or two falls back in Word
+    // (Several fonts of one family and style — subsets of it — compete: the one that covers most, a rebuilt
+    // one on a tie.)
+    const score = ok / total + (f.rebuilt ? 0.001 : 0);
+    const k = `${f.family}|${face}`; if ((best.get(k)?.score ?? -1) >= score) continue;
+    best.set(k, { score });
     let m = faces.get(f.family); if (!m) faces.set(f.family, m = new Map());
-    if (!m.has(face)) m.set(face, f.raw);
+    m.set(face, f.raw);
   }
   const embedded: { name: string; data: Uint8Array; characterSet?: (typeof CharacterSet)[keyof typeof CharacterSet] }[] = [];
   const extraFaces: { family: string; face: Face; data: Uint8Array }[] = [];

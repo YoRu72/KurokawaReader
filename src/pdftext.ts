@@ -28,6 +28,61 @@ export function logicalNeutral(s: string, rtlLine: boolean): string {
   return [...s].reverse().join('');
 }
 
+/** A drawn space lying inside a word's own box (a writer that draws the space and then sets the word back
+ *  over it) separates nothing: such markers go. `isSpace` tells the markers. */
+export function dropBuriedSpaces<T extends { l: number; r: number; text: string }>(line: T[], isSpace: (p: T) => boolean): T[] {
+  const words = line.filter((p) => !isSpace(p) && p.text.trim());
+  return line.filter((p) => !isSpace(p) || !words.some((q) => Math.min(q.r, p.r) - Math.max(q.l, p.l) > (p.r - p.l) * 0.5));
+}
+
+/** Inside one piece, a bracket type written one way only ("[النور: ٤٥[" — a PDF that names both by one
+ *  glyph) is made to pair up: opening, closing, opening… */
+export function balanceBrackets(text: string): string {
+  let out = text;
+  for (const [o, c] of [['(', ')'], ['[', ']'], ['{', '}'], ['«', '»']]) {
+    const no = [...out].filter((x) => x === o).length, nc = [...out].filter((x) => x === c).length;
+    if (no + nc < 2 || (no && nc)) continue;
+    let k = 0; out = [...out].map((x) => (x === o || x === c ? (k++ % 2 ? c : o) : x)).join('');
+  }
+  return out;
+}
+
+/** Each bracket's [opening, closing] form. */
+export const BRACKETS: Record<string, [string, string]> = { '(': ['(', ')'], ')': ['(', ')'], '[': ['[', ']'], ']': ['[', ']'], '{': ['{', '}'], '}': ['{', '}'], '«': ['«', '»'], '»': ['«', '»'], '﴾': ['﴿', '﴾'], '﴿': ['﴿', '﴾'] };
+
+/**
+ * Brackets drawn on their own, in reading order: whether each opens or closes. A PDF may name a bracket by its
+ * shape (which is mirrored on a right-to-left line) or use one name for both; what counts is where its words
+ * are — an opening bracket clings to the word after it — and, where it clings to both sides ("و(سبحان"), that
+ * brackets pair up. Returns the corrected text of each piece.
+ */
+export function fixLoneBrackets<T extends { text: string; l: number; r: number; h: number }>(seq: T[], rtl: boolean): string[] {
+  const out = seq.map((p) => p.text);
+  const depth = new Map<string, number>();
+  // (Only letters and digits tell: a bracket clings to punctuation either way — «».»، .)
+  const word = (p: T | undefined) => !!p && /[\p{L}\p{N}]/u.test(p.text);
+  for (let i = 0; i < seq.length; i++) {
+    const t = seq[i].text.trim(); const pair = BRACKETS[t];
+    if (!pair) {
+      // (Brackets inside longer pieces count too: "[النور:" opens what a lone "]" later closes.)
+      for (const ch of t) { const pr = BRACKETS[ch]; if (pr) depth.set(pr[0], Math.max(0, (depth.get(pr[0]) ?? 0) + (ch === pr[0] ? 1 : -1))); }
+      continue;
+    }
+    const p = seq[i];
+    let a = i - 1; while (a >= 0 && !word(seq[a])) a--;
+    let b = i + 1; while (b < seq.length && !word(seq[b])) b++;
+    const prev = a >= 0 ? seq[a] : undefined, next = b < seq.length ? seq[b] : undefined;
+    if (!prev && !next) continue;
+    const gap = (x: T | undefined, after: boolean) => (!x ? Infinity : rtl ? (after ? p.l - x.r : x.l - p.r) : (after ? x.l - p.r : p.l - x.r));
+    const gPrev = gap(prev, false), gNext = gap(next, true);
+    const d = depth.get(pair[0]) ?? 0;
+    const open = Math.abs(gPrev - gNext) > p.h * 0.15 ? gNext < gPrev : d === 0;
+    depth.set(pair[0], Math.max(0, d + (open ? 1 : -1)));
+    out[i] = seq[i].text.replace(t, pair[open ? 0 : 1]);
+  }
+  return out;
+}
+
 /** A right-to-left piece stored in drawing order (a mark before its letter, "ُه") is turned round to "هُ". */
 export function logicalRtlPiece(s: string): string {
   const core = s.trim();
@@ -41,17 +96,21 @@ export function logicalRtlPiece(s: string): string {
 /** One line of pieces (any order) → its text in reading order. */
 export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: boolean } {
   const rtl = isRtlText(line.map((p) => p.text).join(''));
-  const sorted = [...line].sort((a, b) => (rtl ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
+  const sorted = dropBuriedSpaces(line, (p) => p.text === '\u2009').sort((a, b) => (rtl ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
+  const fixed = fixLoneBrackets(sorted, rtl);
+  sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
   const marked = sorted.some((p) => p.text === '\u2009');
   let s = '';
   let prev: LinePiece | null = null;
   for (const p of sorted) {
-    if (p.text === '\u2009') { if (s && !/\s$/.test(s)) s += ' '; continue; }
-    if (!p.text.trim()) continue;
-    const text = rtl ? logicalNeutral(logicalRtlPiece(p.text), true) : p.text;
-    if (prev && !marked) {
+    // (A drawn space, however narrow — a justified line squeezes it — is a word break.)
+    if (p.text === '\u2009' || !p.text.trim()) { if (s && !/\s$/.test(s)) s += ' '; continue; }
+    const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text), true)) : p.text;
+    if (prev) {
+      // (Where the page draws its spaces, a gap is still a word break when it is wide: a stretched line may
+      // set some words apart by position alone.)
       const gap = rtl ? prev.l - p.r : p.l - prev.r;
-      if (gap > Math.min(prev.h, p.h) * 0.18 && !/\s$/.test(s) && !/^\s/.test(text) && !COMBINING.test(text[0])) s += ' ';
+      if (gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18) && !/\s$/.test(s) && !/^\s/.test(text) && !COMBINING.test(text[0])) s += ' ';
     }
     s += text;
     // A piece inside the previous one (a mark over its letter) must not move the edge back.

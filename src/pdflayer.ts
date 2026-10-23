@@ -7,7 +7,7 @@
 //  - each line cut into words, every word one box exactly over its letters on the page,
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { attachMarks, cleanPdfText, COMBINING, isRtlText, logicalNeutral } from './pdftext';
+import { attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string };
 type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean };
@@ -36,7 +36,9 @@ function logical(s: string): string {
 /** The words of one line, in reading order. */
 function wordsOf(line: Piece[]): Word[] {
   const rtl = isRtlText(line.map((p) => p.text).join(''));
-  const sorted = [...line].sort((a, b) => (rtl ? b.r - a.r || b.l - a.l : a.l - b.l || a.r - b.r));
+  const sorted = dropBuriedSpaces(line, (p) => !!p.space).sort((a, b) => (rtl ? b.r - a.r || b.l - a.l : a.l - b.l || a.r - b.r));
+  const fixed = fixLoneBrackets(sorted, rtl);
+  sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
   const marked = sorted.some((p) => p.space);
   const words: Word[] = [];
   let cur: Word | null = null; let edge = 0; let breakNext = false;
@@ -44,10 +46,10 @@ function wordsOf(line: Piece[]): Word[] {
   let curDir = '';
   for (const p of sorted) {
     if (p.space) { breakNext = true; continue; }
-    const text = rtl ? logicalNeutral(logical(p.text), true) : p.text;
+    const text = rtl ? balanceBrackets(logicalNeutral(logical(p.text), true)) : p.text;
     const d = dirOf(text);
     const gap = cur ? (rtl ? edge - p.r : p.l - edge) : 0;
-    const split = !cur || breakNext || (!marked && gap > p.h * 0.18 && !COMBINING.test(text[0])) || (d && curDir && d !== curDir);
+    const split = !cur || breakNext || (gap > p.h * (marked ? 0.3 : 0.18) && !COMBINING.test(text[0])) || (d && curDir && d !== curDir);
     if (split) {
       cur = { text, l: p.l, r: p.r, y: p.y, h: p.h, rtl: d ? d === 'r' : rtl };
       words.push(cur); curDir = d;
@@ -70,7 +72,7 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
   const tc = await page.getTextContent();
   if (cancelled) return handle;
   const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
-  if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && it.str.includes(dbg)) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.width.toFixed(1), it.dir]));
+  if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
   const pieces: Piece[] = [];
   const turned: { text: string; tx: number[]; w: number; h: number; angle: number }[] = [];
   for (const raw of tc.items as Item[]) {
@@ -80,7 +82,8 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     const h = Math.hypot(tx[2], tx[3]);
     const angle = Math.atan2(tx[1], tx[0]);
     const w = raw.width * viewport.scale;
-    if (/^ +$/.test(text)) { pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, space: true }); continue; }
+    // (U+2009 marks a space the page draws, see scripts/patch-pdfjs.mjs; pdf.js's own " " items only fill gaps.)
+    if (/^\u2009+$/.test(text)) { pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, space: true }); continue; }
     if (!text.trim() || !h) continue;
     if (Math.abs(angle) > 0.02) { turned.push({ text, tx, w, h, angle }); continue; }
     pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h });
@@ -90,7 +93,8 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
   kept.sort((a, b) => a.y - b.y);
   const lines: Piece[][] = [];
   for (const p of kept) {
-    const ln = lines.find((l) => Math.abs(l[0].y - p.y) < Math.min(l[0].h, p.h) * 0.5);
+    // (A space item may carry no real height: the line's letters decide.)
+    const ln = lines.find((l) => { const lh = l.find((q) => !q.space)?.h ?? l[0].h; return Math.abs(l[0].y - p.y) < (p.space ? lh : Math.min(lh, p.h)) * 0.5; });
     if (ln) ln.push(p); else lines.push([p]);
   }
   lines.sort((a, b) => a[0].y - b[0].y);
@@ -108,6 +112,7 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     frag.appendChild(s);
   };
   for (const line of lines) {
+    if (dbg && line.some((p) => p.text.includes(dbg))) console.warn('KR line', JSON.stringify(line.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), +p.y.toFixed(1), +p.h.toFixed(1), !!p.space])));
     const words = wordsOf(line);
     words.forEach((wd, i) => {
       const last = i === words.length - 1;

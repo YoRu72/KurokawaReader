@@ -26,6 +26,7 @@ export async function buildPdfWorker(outFile) {
     const krGlyphs = new WeakMap(); // item → glyphs in drawing order with their extents (until the batch is sent)
     let krLastBaseY = null, krGlyphLow = false; // baseline of the last letter drawn; a low fatha stroke (kasra)
     let krPending = []; // harakat drawn apart from their run, waiting for its letters
+    let krAfterSpace = false; // the last glyph was a drawn space (a mark right after it belongs to no run yet)
     /** Place the pending marks on the letters now in this batch; at the end (or once stale) report the rest as pieces. */
     function krResolveMarks(final) {
       if (!krPending.length) return;
@@ -187,27 +188,32 @@ export async function buildPdfWorker(outFile) {
           if (font.krNeedsUse) (krAT.codes ||= []).push(originalCharCode, glyph.unicode || "", t0[4], t0[5], Math.hypot(t0[2], t0[3]), glyph.width * textState.fontMatrix[0]);
           continue;
         }
-        if (krPageAT && !keepWhiteSpace && category.isWhitespace && !font.vertical) {
-          // A space drawn between /ActualText clusters: keep it where it is (U+2009 tells the reader
-          // it is a real word break, unlike the gap-filling spaces pdf.js invents).
-          let cs = baseCharSpacing + (i + 1 === ii ? extraSpacing : 0);
-          if (originalCharCode === 0x20) cs += textState.wordSpacing;
+        let krSpCs = baseCharSpacing + (i + 1 === ii ? extraSpacing : 0);
+        if (originalCharCode === 0x20) krSpCs += textState.wordSpacing;
+        if (!keepWhiteSpace && category.isWhitespace && !font.vertical && (krPageAT || glyph.unicode === " ")) {
+          // A space the page draws: keep it where it is (U+2009 tells the reader it is a real word break, unlike
+          // the gap-filling spaces pdf.js invents — and a justified line can squeeze a real one narrower than any
+          // gap rule would take for a space).
+          const cs = krSpCs;
           const t0 = getCurrentTextTransform();
           textState.translateTextMatrix((glyph.width * scale + cs) * textState.textHScale, 0);
           const t1 = getCurrentTextTransform();
           flushTextContentItem();
           resetLastChars();
+          krAfterSpace = !krPageAT;
           textContent.items.push({ str: "\u2009", dir: "ltr", width: Math.max(0.01, t1[4] - t0[4]), height: Math.hypot(t0[2], t0[3]), transform: t0, fontName: textState.loadedName, hasEOL: false });
           continue;
         }
         // A haraka drawn away from the run it would join (Word draws marks after the text, jumping back to their
         // letter): report it as its own piece at its place, so readers can put it back on that letter.
-        if (!font.vertical && krMark.test(glyph.unicode || "") && textContentItem.initialized && textContentItem.krMinX !== undefined) {
+        // (Also one drawn with no run under way — right after a space the page draws: it is no run's first letter.)
+        if (!font.vertical && krMark.test(glyph.unicode || "") && ((krAfterSpace && !textContentItem.initialized) || (textContentItem.initialized && textContentItem.krMinX !== undefined))) {
           const mtr = getCurrentTextTransform();
           const mx = mtr[4];
           const em = Math.hypot(mtr[0], mtr[1]);
           const tol = em * 0.15;
-          if (mx < textContentItem.krMinX - tol || mx > textContentItem.krMaxX + tol) {
+          if (!textContentItem.initialized || mx < textContentItem.krMinX - tol || mx > textContentItem.krMaxX + tol) {
+            krAfterSpace = false;
             flushTextContentItem();
             const t0 = getCurrentTextTransform();
             // Where the mark shows: its origin plus the centre of its outline (when the font tells).
@@ -218,6 +224,7 @@ export async function buildPdfWorker(outFile) {
             continue;
           }
         }
+        krAfterSpace = false;
         let charSpacing = baseCharSpacing + (i + 1 === ii ? extraSpacing : 0);`, 'glyph loop');
 
   // 2d) marks are placed before a batch leaves, and the last ones at the end; batches hold more items
@@ -421,7 +428,8 @@ export async function buildPdfWorker(outFile) {
         for (let i = 0, n = dv.getUint16(4); i < n; i++) { const r = 12 + i * 16; if (dv.getUint32(r) === 0x636d6170) cm = dv.getUint32(r + 8); }
         let uni = false;
         if (cm >= 0) for (let i = 0, n = dv.getUint16(cm + 2); i < n; i++) { const p = dv.getUint16(cm + 4 + i * 8), e = dv.getUint16(cm + 6 + i * 8); if (p === 0 || (p === 3 && (e === 1 || e === 10))) uni = true; }
-        this.krNeedsUse = cm >= 0 && !uni;
+        // (A subset with a Unicode map too: subsets of one font, and a map that misses characters, are rebuilt as one.)
+        this.krNeedsUse = cm >= 0;
         // The code of its space (spaces are never seen as glyph uses).
         if (this.krNeedsUse && properties.toUnicode) properties.toUnicode.forEach((code, u) => { if ((u === 0x20 || u === " ") && this.krSpaceCode === undefined) this.krSpaceCode = +code; });
       } catch { this.krNeedsUse = false; }

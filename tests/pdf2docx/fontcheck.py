@@ -69,9 +69,11 @@ def marks_of(data):
 def main(docx, log):
     fonts = fonts_of(docx)
     for line in open(log, encoding='utf-8'):
-        m = re.search(r'P2D check (.+?) (\[\[.*\]\])\s*$', line)
+        m = re.search(r'P2D check (.+?) (\d+) (\[\[.*\]\])\s*$', line)
         if not m or m.group(1) not in fonts: continue
-        fam, words = m.group(1), json.loads(m.group(2))
+        fam, words = m.group(1), json.loads(m.group(3))
+        from fontTools.ttLib import TTFont
+        if TTFont(io.BytesIO(fonts[fam]))['maxp'].numGlyphs != int(m.group(2)): continue  # another font of that family was embedded
         f, keep = font(fonts[fam]); marks = marks_of(fonts[fam])
         ok = 0; bad = Counter(); ex = {}
         for text, bases, rtl in words:

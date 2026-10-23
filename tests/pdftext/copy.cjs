@@ -8,7 +8,7 @@ const [pdf, pageNo, shot] = [path.resolve(process.argv[2]), process.argv[3] || '
 (async () => {
   await new Promise((r) => server.listen(5198, r));
   const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 900, height: 1200 }, permissions: ['clipboard-read', 'clipboard-write'] }); const page = await ctx.newPage();
-  if (process.env.ITEMS) { await page.addInitScript((n) => { globalThis.krDebugItems = n; }, process.env.ITEMS); page.on('console', (m) => { if (m.text().startsWith('KR item')) console.log(m.text()); }); }
+  if (process.env.ITEMS) { await page.addInitScript((n) => { globalThis.krDebugItems = n; }, process.env.ITEMS); page.on('console', (m) => { if (m.text().startsWith('KR ')) console.log(m.text()); }); }
   page.on('pageerror', (e) => console.log('pageerror', e.message)); page.on('dialog', (d) => void d.accept(process.env.PW || ''));
   await page.goto('http://localhost:5198/'); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [pdf]); await page.waitForSelector('.book-card', { timeout: 60000 });

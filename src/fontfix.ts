@@ -117,7 +117,7 @@ const CLONE = 0x7ff00000; // copies of a glyph that stands for two marks // ids 
  * glyphs' own outlines from their sources (several fonts can be merged into one: a legacy book's letter forms
  * live in several PDF fonts, and Word joins Arabic letters only within one font).
  */
-export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family: string; bold?: boolean; italic?: boolean; space?: number; tatweel?: boolean }, spaceGid?: number): Uint8Array | null {
+export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family: string; bold?: boolean; italic?: boolean; space?: number; tatweel?: boolean; raw?: boolean }, spaceGid?: number): Uint8Array | null {
   if (!sources.length) return null;
   const upem = sources.length === 1 ? sources[0].upem : 1000;
   // A glyph read as a space is a word break, not the font's space (a legacy font may file a letter under the
@@ -150,7 +150,7 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
       if (!gid) continue;
       allGids.add(gid);
       // (A code with no real text comes as a control or private-use character.)
-      const cps = [...norm(text)].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd);
+      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd);
       if (text === '\uffff') { cls.push({ gid, cps: [], marks: [], x, y, em, adv: w * em, mpos: [], bad: true }); continue; }
       if (w > 0 && !(cps.length && cps.every(isMark))) cls.push({ gid, cps, marks: [], x, y, em, adv: w * em, mpos: [], span: span || undefined });
       else loose.push({ gid, x, y, cps, span: span || undefined });
@@ -462,7 +462,7 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const sp = nominalN.get(0x20); if (sp && outlines[sp] && outlines[sp].adv <= 0) outlines[sp] = { contours: [], adv: Math.round((meta.space ?? 0.25) * upem) };
   const letterGlyph = new Set([...nominalN].filter(([c]) => !isMark(c)).map(([, g]) => g));
   outlines.forEach((o, i) => { if (marksN.has(i) && !letterGlyph.has(i)) o.adv = 0; });
-  if (checks) console.warn('P2D check', meta.family, JSON.stringify(checks.map((c) => [c.text, c.bases.map(m), c.rtl ? 1 : 0])));
+  if (checks) console.warn('P2D check', meta.family, outlines.length, JSON.stringify(checks.map((c) => [c.text, c.bases.map(m), c.rtl ? 1 : 0])));
   const extra = new Map<string, Uint8Array>();
   extra.set('cmap', buildCmap(nominalN));
   extra.set('GSUB', buildGsub(singlesN, [{ rules: mapRules(absorbRules), flag: 0 }, { rules: mapRules(markRules), flag: 0 }, ...ligLevels.map((l) => ({ rules: mapRules(l.rules), flag: l.flag }))], variantsN));
