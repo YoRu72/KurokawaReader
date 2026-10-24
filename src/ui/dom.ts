@@ -185,6 +185,6 @@ export function pickButton<T extends string>(title: string, options: [T, string,
   const btn = h('button', { type: 'button', class: 'pick-btn', 'aria-haspopup': 'dialog' }, label, icon('chevronDown')) as HTMLButtonElement & { setValue(v: T): void };
   let cur = value;
   btn.setValue = (v: T) => { cur = v; label.textContent = options.find((o) => o[0] === v)?.[1] ?? String(v); };
-  btn.addEventListener('click', () => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); }, closeLabel));
+  btn.addEventListener('click', () => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); btn.dispatchEvent(new Event('change', { bubbles: true })); }, closeLabel));
   return btn;
 }

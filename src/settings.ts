@@ -26,7 +26,7 @@ export interface VisualSettings {
   wordSpacing: number;    // em
   letterSpacing: number;  // em
   pdfInvert: boolean;
-  pdfPinchZoom: boolean;    // two-finger zoom in PDFs (off by default)
+  pdfPinchZoom: boolean;    // two-finger zoom in PDFs (on by default since 0.32)
   pdfPageNumbers: boolean;  // page number badge on each PDF page
   pdfNoteStyle: 'badge' | 'pin' | 'dot';  // how PDF notes are drawn on the page
   autoScrollSpeed: number; // px per second
@@ -135,7 +135,7 @@ export const DEFAULTS: VisualSettings = {
   wordSpacing: 0,
   letterSpacing: 0,
   pdfInvert: false,
-  pdfPinchZoom: false,
+  pdfPinchZoom: true,
   pdfPageNumbers: true,
   pdfNoteStyle: 'badge',
   autoScrollSpeed: 40,
@@ -229,6 +229,8 @@ function load(): VisualSettings {
     const s: VisualSettings = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
     // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
+    // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
+    if (!localStorage.getItem('kr.pinchMigrated')) { s.pdfPinchZoom = true; localStorage.setItem('kr.pinchMigrated', '1'); localStorage.setItem(KEY, JSON.stringify(s)); }
     return s;
   } catch {
     return { ...DEFAULTS };

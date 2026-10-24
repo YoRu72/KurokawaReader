@@ -183,7 +183,7 @@ html[dir='rtl'] .display, html[dir='rtl'] .headline { letter-spacing: 0; font-we
   position: sticky; top: 0; z-index: 20;
   transition: background var(--dur-med) var(--ease-emph);
 }
-.topbar .title { flex: 1; min-width: 0; font-weight: 600; font-size: 17px; letter-spacing: -.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-inline: 6px; }
+.topbar .title { flex: 1; min-width: 0; font-weight: 600; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-inline: 6px; }
 .topbar .title small { display: block; font-weight: 400; font-size: 12.5px; color: var(--md-on-surface-dim); letter-spacing: 0; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.01em; }
 .brand img { width: 30px; height: 30px; border-radius: 9px; }
@@ -335,7 +335,7 @@ html[dir='rtl'] .library-tools select { background-position: 14px center; }
 .book-card[aria-selected='true'] .cover .check { background: var(--md-primary); border-color: var(--md-primary); transform: scale(1.1); }
 .book-card[aria-selected='true'] .cover .check svg { opacity: 1; stroke: var(--md-on-primary); }
 .book-meta { padding-inline: 2px; }
-.book-meta .bt { font-size: 13.5px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; letter-spacing: -.005em; }
+.book-meta .bt { font-size: 13.5px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .book-meta .ba { font-size: 12.5px; color: var(--md-on-surface-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 .empty { margin: 6vh auto 0; max-width: 460px; text-align: center; padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--md-on-surface-dim); }
@@ -1130,3 +1130,8 @@ html[dir='rtl'] .organize-slider { direction: rtl; }
 .tool-row.drop-before { box-shadow: inset 0 3px 0 var(--md-primary); }
 .tool-row.drop-after { box-shadow: inset 0 -3px 0 var(--md-primary); }
 .tool-row-actions .page-pos { margin-inline-end: 4px; }
+
+/* Arabic letters join: any letter-spacing (even a hair's) pulls the lam-alef ligature apart on some phones
+   (الإ shown as «الـإ»). None in the Arabic interface, and none on Arabic text shown in the English one. */
+html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing: 0 !important; }
+:is(:lang(ar), :lang(fa), :lang(ur), [dir='rtl']):not(.kr-content, .kr-content *) { letter-spacing: 0 !important; }

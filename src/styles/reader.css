@@ -88,7 +88,7 @@
 .kr-content p, .kr-content li, .kr-content blockquote, .kr-content dd { margin: 0 0 var(--r-para); }
 .kr-content p:empty { display: none; }
 .kr-content h1, .kr-content h2, .kr-content h3, .kr-content h4, .kr-content h5, .kr-content h6 {
-  line-height: 1.25; font-weight: 600; margin: 1.6em 0 .7em; text-align: start; letter-spacing: -.005em;
+  line-height: 1.25; font-weight: 600; margin: 1.6em 0 .7em; text-align: start;
 }
 .kr-content h1 { font-size: 1.7em; } .kr-content h2 { font-size: 1.4em; } .kr-content h3 { font-size: 1.2em; } .kr-content h4, .kr-content h5, .kr-content h6 { font-size: 1.05em; }
 .kr-content a { color: var(--r-link); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--r-link) 40%, transparent); }
@@ -108,6 +108,9 @@
 .kr-content th { background: color-mix(in srgb, var(--r-fg) 7%, transparent); font-weight: 600; }
 .kr-content sup, .kr-content sub { line-height: 0; font-size: .7em; }
 .kr-content .kr-chapter { position: relative; }
+/* (Chapters away from the screen are not laid out or painted until they come near it: a whole book in one long page
+   — continuous reading — stays light.) */
+.reader-continuous .kr-content .kr-chapter { content-visibility: auto; contain-intrinsic-size: auto 3000px; }
 .kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
 .kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
 .kr-content mark.kr-hl { background: color-mix(in srgb, var(--hl-amber, #e5c56b) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
@@ -166,9 +169,14 @@ html[dir='rtl'] .kr-slide .kr-slide-n { text-transform: none; letter-spacing: 0;
 .pdf-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; padding: 12px 0 40vh; touch-action: pan-x pan-y; }
 .pdf-inner { display: block; will-change: transform; }
 .pdf-view[data-pagenums='false'] .pdf-page .pnum { display: none; }
-.pdf-page { position: relative; margin: 0 auto 14px; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.45); overflow: hidden; }
-.pdf-page:not(:has(canvas, img.native-page)) { background: linear-gradient(100deg, #f2f2f2 30%, #fafafa 50%, #f2f2f2 70%) 0 0 / 200% 100%; animation: kr-shimmer 1.4s linear infinite; }
-.pdf-view[data-invert='true'] .pdf-page:not(:has(canvas, img.native-page)) { background: linear-gradient(100deg, #1e1e1e 30%, #2a2a2a 50%, #1e1e1e 70%) 0 0 / 200% 100%; }
+/* (A light shadow, and no animation on the hundreds of pages out of view: both cost a repaint on every frame of
+   scrolling on a phone. Pages are laid out but not painted until near the screen.) */
+.pdf-page { position: relative; margin: 0 auto 14px; background: #f4f4f4; box-shadow: 0 1px 4px rgba(0,0,0,.35); overflow: hidden; content-visibility: auto; }
+.pdf-page.loading { background: linear-gradient(100deg, #f2f2f2 30%, #fafafa 50%, #f2f2f2 70%) 0 0 / 200% 100%; animation: kr-shimmer 1.4s linear infinite; }
+.pdf-view[data-invert='true'] .pdf-page.loading { background: linear-gradient(100deg, #1e1e1e 30%, #2a2a2a 50%, #1e1e1e 70%) 0 0 / 200% 100%; }
+.pdf-page .pdf-pic { position: absolute; inset: 0; }
+.pdf-page .pdf-tiles { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.pdf-page .pdf-tiles .pdf-tile { position: absolute; }
 @keyframes kr-shimmer { to { background-position: -200% 0; } }
 /* Pictures in books fade in instead of popping */
 .kr-content img.kr-img-pending { opacity: 0; min-height: 80px; background: color-mix(in srgb, var(--r-fg) 6%, transparent); border-radius: 6px; }

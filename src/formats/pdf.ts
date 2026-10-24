@@ -1,6 +1,6 @@
 // PDF viewing on top of pdf.js: lazily rendered pages with a selectable text
 // layer, a page slider, go-to, outline and full-text search.
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { buildTextLayer } from '../pdflayer';
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
@@ -80,28 +80,41 @@ export interface PdfViewerOptions {
 }
 
 /** Android: render page bitmaps with the platform renderer (system fonts, JBIG2/JPX, fast). */
-interface NativePdf { pdfOpen(o: { path: string }): Promise<{ pageCount: number }>; pdfRender(o: { page: number; width: number; quality?: number }): Promise<{ data: string; width: number; height: number }>; pdfClose(): Promise<void> }
+interface NativePdf { pdfOpen(o: { path: string }): Promise<{ pageCount: number }>; pdfRender(o: { page: number; width: number; quality?: number; tileX?: number; tileY?: number; tileW?: number; tileH?: number; toFile?: boolean }): Promise<{ data?: string; path?: string; width: number; height: number }>; pdfClose(): Promise<void> }
 interface NativeFs { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }>; stat(o: { path: string; directory: string }): Promise<{ uri: string }> }
 function nativePdf(): { pdf: NativePdf; fs: NativeFs } | null {
   const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: NativePdf; Filesystem?: NativeFs } } }).Capacitor;
   if (cap?.getPlatform?.() !== 'android' || !cap.Plugins?.Kurokawa || !cap.Plugins.Filesystem) return null;
   return { pdf: cap.Plugins.Kurokawa, fs: cap.Plugins.Filesystem };
 }
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] ?? ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
-}
+
+/** A page's drawing: its picture (a canvas, scaled to fill the page) and how sharp it is. */
+type Shown = {
+  pic?: HTMLCanvasElement;
+  /** 1: a quick, half-resolution picture (shown while scrolling); 2: full resolution at the current zoom. */
+  level: 0 | 1 | 2;
+  /** The zoom the picture was drawn at (a picture from before a zoom is kept, stretched, until it is redrawn). */
+  at: number;
+  tiles?: Map<string, HTMLCanvasElement>;
+  tileLayer?: HTMLElement;
+  text?: 'building' | 'done';
+  textCancel?: () => void;
+  seen?: boolean;
+};
+
+/** Pieces of a zoomed page, in device pixels (as Google Drive's viewer draws them). */
+const TILE = 800;
 
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];
-  private rendered = new Map<number, { task?: RenderTask; canvas?: HTMLCanvasElement; text?: { cancel(): void } }>();
-  private observer!: IntersectionObserver;
+  private shown = new Map<number, Shown>();
   private scale = 1;
   private baseWidths: number[] = [];
   private baseHeights: number[] = [];
   readonly scroll: HTMLElement;
   private inner: HTMLElement;
-  pinchZoom = false;
+  pinchZoom = true;
   readonly root: HTMLElement;
   current = 1;
   total = 0;
@@ -111,6 +124,19 @@ export class PdfViewer {
   private destroyed = false;
   private closeDoc: () => void = () => undefined;
   private native: NativePdf | null = null;
+  /** Where each page starts (its offsetTop), read in one go after the layout changes — never page by page while
+   *  scrolling, which made the browser lay out a thousand pages on every scroll event. */
+  private tops: number[] | null = null;
+  private first = 1;
+  private last = 1;
+  private scrolling = false;
+  private settleTimer = 0;
+  private frameAsked = false;
+  private busy = false;
+  /** The drawing being made now (one at a time: the page in view first). */
+  private running: { n: number; cancel(): void } | null = null;
+  private pool: HTMLCanvasElement[] = [];
+  private fetchSeq = 0;
 
   constructor(private opts: PdfViewerOptions) {
     this.inner = h('div', { class: 'pdf-inner' });
@@ -156,7 +182,8 @@ export class PdfViewer {
             const path = `kr-pdf/${cacheKey}.pdf`;
             try { uri = (await nat.fs.stat({ path, directory: 'CACHE' })).uri; }
             catch {
-              uri = (await nat.fs.writeFile({ path, data: await blobToBase64(file), directory: 'CACHE', recursive: true })).uri;
+              const { writeChunked } = await import('../ui/share');
+              uri = await writeChunked(nat.fs as never, path, file, 'CACHE');
               void prunePdfCache(nat.fs, `${cacheKey}.pdf`);
             }
           }
@@ -164,43 +191,50 @@ export class PdfViewer {
           if (!this.destroyed && info.pageCount === this.total) {
             this.native = nat.pdf;
             // Redraw what pdf.js already painted so non-embedded Arabic fonts shape correctly.
-            for (const n of [...this.rendered.keys()]) { const e = this.rendered.get(n); e?.task?.cancel(); e?.text?.cancel(); this.rendered.delete(n); void this.renderPage(n, true); }
+            for (const s of this.shown.values()) { s.level = 0; this.dropTiles(s); }
+            this.pump();
           }
         } catch (e) { console.warn('[kurokawa] native PDF renderer unavailable', e); this.native = null; }
       })();
     }
     void this.measurePages();
-    this.observer = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        const n = Number((e.target as HTMLElement).dataset.page);
-        if (e.isIntersecting) this.renderPage(n);
-        else this.releasePage(n);
-      }
-    }, { root: this.scroll, rootMargin: '150% 0px' });
-    this.pages.forEach((p) => this.observer.observe(p));
-    this.scroll.addEventListener('scroll', () => this.updateCurrent(), { passive: true });
-    this.resizeObs = new ResizeObserver(() => { if (this.fitWidth) this.rescale(this.computeFitScale()); });
+    this.scroll.addEventListener('scroll', () => this.onScroll(), { passive: true });
+    this.resizeObs = new ResizeObserver(() => { this.tops = null; if (this.fitWidth) this.rescale(this.computeFitScale()); else this.onScroll(); });
     this.resizeObs.observe(this.scroll);
     this.opts.onPageChange(this.current, this.total);
-    this.updateCurrent();
+    this.frame();
   }
 
   /** Fetch real page sizes in the background and correct the placeholders. */
   private async measurePages(): Promise<void> {
+    let changed: number[] = [];
+    const apply = () => {
+      if (!changed.length) return;
+      // Keep what the reader is looking at where it is when earlier pages change size (worked out from the sizes,
+      // not by asking the page for its height — that would lay the whole book out again each time).
+      let shift = 0;
+      for (const i of changed) {
+        const el = this.pages[i - 1]; const before = parseFloat(el.style.height) || 0;
+        this.sizePage(el, i);
+        if (i < this.current) shift += (parseFloat(el.style.height) || 0) - before;
+        const s = this.shown.get(i); if (s) { s.level = Math.min(s.level, 1) as 0 | 1; this.dropTiles(s); }
+      }
+      changed = [];
+      this.tops = null;
+      if (shift) this.scroll.scrollTop += shift;
+      this.pump();
+    };
     for (let i = 2; i <= this.total; i++) {
       if (this.destroyed) return;
       const page = await this.doc.getPage(i).catch(() => null);
       if (this.destroyed || !page) continue;
       const vp = page.getViewport({ scale: 1 });
-      if (Math.abs(vp.width - this.baseWidths[i - 1]) < 0.5 && Math.abs(vp.height - this.baseHeights[i - 1]) < 0.5) continue;
-      const before = this.pages[i - 1].offsetHeight;
-      this.baseWidths[i - 1] = vp.width; this.baseHeights[i - 1] = vp.height;
-      this.sizePage(this.pages[i - 1], i);
-      // Keep what the reader is looking at where it is when an earlier page grows.
-      if (i < this.current) this.scroll.scrollTop += this.pages[i - 1].offsetHeight - before;
-      if (this.rendered.has(i)) { const e = this.rendered.get(i); e?.task?.cancel(); e?.text?.cancel(); this.rendered.delete(i); void this.renderPage(i, true); }
-      if (i % 25 === 0) await new Promise((r) => setTimeout(r, 0));
+      if (Math.abs(vp.width - this.baseWidths[i - 1]) >= 0.5 || Math.abs(vp.height - this.baseHeights[i - 1]) >= 0.5) {
+        this.baseWidths[i - 1] = vp.width; this.baseHeights[i - 1] = vp.height; changed.push(i);
+      }
+      if (i % 40 === 0 || i === this.total) { apply(); await new Promise((r) => setTimeout(r, 0)); }
     }
+    apply();
   }
 
   private computeFitScale(): number {
@@ -218,63 +252,261 @@ export class PdfViewer {
     el.style.setProperty('--scale-factor', String(this.scale));
   }
 
-  private async renderPage(n: number, replace = false): Promise<void> {
-    if (this.destroyed || this.rendered.has(n)) return;
-    const entry: { task?: RenderTask; canvas?: HTMLCanvasElement; text?: { cancel(): void } } = {};
-    this.rendered.set(n, entry);
-    const el = this.pages[n - 1];
-    // When re-rendering (zoom, size correction) the old picture stays until the new one is ready.
-    const old = replace ? Array.from(el.querySelectorAll('canvas, img.native-page, .textLayer')) : [];
-    const swap = () => { old.forEach((o) => o.remove()); old.length = 0; };
-    let page: PDFPageProxy;
-    try { page = await this.doc.getPage(n); } catch { return; }
-    if (this.destroyed || !this.rendered.has(n)) return;
-    const viewport = page.getViewport({ scale: this.scale });
-    // Sharp text on dense screens: up to 3× device pixels, capped so a page stays under ~4K wide.
-    const dpr = Math.min(window.devicePixelRatio || 1, 3, 4096 / Math.max(1, viewport.width));
-    if (this.native) {
+  /* ---------- what is in view ---------- */
+
+  private layoutTops(): number[] {
+    if (!this.tops || this.tops.length !== this.pages.length) {
+      // (Measured from the top of the scrolled content: the pages' offsetParent may be the inner box.)
+      const base = this.pages[0]?.offsetParent === this.inner ? this.inner.offsetTop : 0;
+      this.tops = this.pages.map((p) => p.offsetTop + base);
+    }
+    return this.tops;
+  }
+  private pageHeight(n: number): number { return Math.floor(this.baseHeights[n - 1] * this.scale); }
+
+  /** The first page whose bottom is below `y`. */
+  private pageAt(y: number): number {
+    const tops = this.layoutTops();
+    let lo = 0, hi = this.pages.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (tops[m] + this.pageHeight(m + 1) < y) lo = m + 1; else hi = m; }
+    return lo + 1;
+  }
+
+  private onScroll(): void {
+    // (Several scroll events come between two frames: the work is done once per frame.)
+    if (!this.frameAsked) { this.frameAsked = true; requestAnimationFrame(() => { this.frameAsked = false; this.frame(); }); }
+    this.scrolling = true;
+    window.clearTimeout(this.settleTimer);
+    this.settleTimer = window.setTimeout(() => this.settle(), 220);
+  }
+
+  private frame(): void {
+    if (this.destroyed || !this.pages.length) return;
+    const top = this.scroll.scrollTop, hgt = this.scroll.clientHeight;
+    this.first = this.pageAt(top);
+    this.last = Math.max(this.first, this.pageAt(top + hgt));
+    this.updateCurrent();
+    // A drawing for a page that has gone well out of view is dropped.
+    if (this.running && (this.running.n < this.first - 2 || this.running.n > this.last + 2)) { this.running.cancel(); }
+    for (let n = Math.max(1, this.first - 1); n <= Math.min(this.total, this.last + 1); n++) this.pages[n - 1].classList.toggle('loading', !this.shown.get(n)?.pic);
+    this.pump();
+  }
+
+  /** Scrolling has stopped: pages far from view let go of their pictures, and the ones in view are made sharp. */
+  private settle(): void {
+    this.scrolling = false;
+    if (this.destroyed) return;
+    this.frame();
+    for (const n of [...this.shown.keys()]) if (n < this.first - 2 || n > this.last + 2) this.releasePage(n);
+    this.pump();
+  }
+
+  /* ---------- drawing, one thing at a time, the most needed first ---------- */
+
+  private device(): number { return window.devicePixelRatio || 1; }
+  /** The largest picture of a whole page, in device pixels on its longer side (as Drive: the screen's longer side,
+   *  at least 1024). Beyond it a zoomed page is drawn in tiles. */
+  private cap(): number { const d = this.device(); return Math.max(1024, Math.round(Math.max(screen.width, screen.height) * d)); }
+  /** The page's whole picture width (device pixels) at this zoom for `level`, and whether it needs tiles. */
+  private sizeFor(n: number, level: 1 | 2): { px: number; tiled: boolean } {
+    const w = this.baseWidths[n - 1] * this.scale, hh = this.baseHeights[n - 1] * this.scale;
+    const want = w * this.device(), cap = this.cap();
+    const most = Math.min(cap, (cap * w) / Math.max(1, hh));
+    const tiled = want > most * 1.05;
+    const full = tiled ? most / 2 : want;  // (under tiles, the whole page only as a backdrop)
+    return { px: Math.max(64, Math.round(level === 2 ? full : full / 2)), tiled };
+  }
+
+  private nextTask(): (() => Promise<void>) | null {
+    const first = this.first, last = this.last;
+    const vis: number[] = [];
+    // In view, nearest the middle first.
+    const mid = (first + last) / 2;
+    for (let n = first; n <= last; n++) vis.push(n);
+    vis.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
+    const near = [last + 1, first - 1].filter((n) => n >= 1 && n <= this.total);
+    const st = (n: number) => this.shown.get(n);
+    const stale = (n: number) => { const s = st(n); return !s?.pic || s.at !== this.scale; };
+    // 1. A page in view with nothing on it: quickly while scrolling, sharp when still.
+    for (const n of vis) if (!st(n)?.pic) return () => this.draw(n, this.scrolling ? 1 : 2);
+    // 2. While scrolling, the next pages get their quick picture too; nothing more until it stops.
+    if (this.scrolling) { for (const n of near) if (!st(n)?.pic) return () => this.draw(n, 1); return null; }
+    // 3. Pages in view made sharp (or redrawn at a new zoom), then their tiles when zoomed in.
+    for (const n of vis) { const s = st(n)!; if (s.level < 2 || s.at !== this.scale) return () => this.draw(n, 2); }
+    for (const n of vis) { const t = this.missingTile(n); if (t) return () => this.drawTile(n, t); }
+    // 4. The pages either side, sharp.
+    for (const n of near) if (stale(n) || st(n)!.level < 2) return () => this.draw(n, 2);
+    // 5. The text layer of the pages in view (to select and search), last.
+    for (const n of vis) { const s = st(n)!; if (!s.text) return () => this.buildText(n); }
+    return null;
+  }
+
+  private pump(): void {
+    if (this.busy || this.destroyed || !this.doc) return;
+    this.busy = true;
+    void (async () => {
       try {
-        const res = await this.native.pdfRender({ page: n, width: Math.round(viewport.width * dpr), quality: 92 });
-        if (this.destroyed || !this.rendered.has(n)) return;
-        const img = document.createElement('img');
-        img.className = 'native-page'; img.decoding = 'async'; img.alt = String(n);
-        img.src = `data:image/jpeg;base64,${res.data}`;
-        try { await img.decode(); } catch { /* still show it */ }
-        if (this.destroyed || !this.rendered.has(n)) return;
-        el.appendChild(img); swap();
-      } catch { this.native = null; /* fall back to pdf.js below */ }
+        for (let task = this.nextTask(); task && !this.destroyed; task = this.nextTask()) {
+          await task();
+          // (A frame between two drawings, so the page keeps moving under the finger.)
+          await new Promise((r) => requestAnimationFrame(() => r(null)));
+        }
+      } finally { this.busy = false; }
+    })();
+  }
+
+  private take(w: number, h: number): HTMLCanvasElement {
+    const i = this.pool.findIndex((c) => c.width === w && c.height === h);
+    const c = i >= 0 ? this.pool.splice(i, 1)[0] : document.createElement('canvas');
+    if (i < 0) { c.width = w; c.height = h; }
+    return c;
+  }
+  private give(c?: HTMLCanvasElement): void {
+    if (!c) return; c.remove();
+    if (this.pool.length < 6) this.pool.push(c); else { c.width = c.height = 0; }
+  }
+
+  /** A whole page's picture at `level`; the old one stays until the new one is ready. */
+  private async draw(n: number, level: 1 | 2): Promise<void> {
+    const el = this.pages[n - 1];
+    let s = this.shown.get(n);
+    if (!s) { s = { level: 0, at: 0 }; this.shown.set(n, s); }
+    const scale = this.scale;
+    const { px } = this.sizeFor(n, level);
+    let page: PDFPageProxy;
+    try { page = await this.doc.getPage(n); } catch { s.level = level; s.at = scale; return; }
+    if (this.destroyed || this.shown.get(n) !== s) return;
+    const vp1 = page.getViewport({ scale: 1 });
+    const k = px / vp1.width;
+    const W = Math.max(1, Math.round(px)), H = Math.max(1, Math.round(vp1.height * k));
+    const canvas = this.take(W, H);
+    canvas.className = 'pdf-pic';
+    let ok = false;
+    if (this.native) {
+      ok = await this.nativeDraw(n, canvas, { width: W }).catch(() => false);
     }
-    if (!this.native) {
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      entry.canvas = canvas;
+    if (!ok) {
       const ctx = canvas.getContext('2d', { alpha: false })!;
-      entry.task = page.render({ canvas, canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
-      try { await entry.task.promise; } catch { return; }
-      if (this.destroyed || !this.rendered.has(n)) return;
-      el.appendChild(canvas); swap();
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+      const task = page.render({ canvas, canvasContext: ctx, viewport: page.getViewport({ scale: k }) });
+      this.running = { n, cancel: () => task.cancel() };
+      try { await task.promise; ok = true; } catch { ok = false; } finally { this.running = null; }
     }
-    const textDiv = h('div', { class: 'textLayer' });
-    el.appendChild(textDiv);
+    if (!ok || this.destroyed || this.shown.get(n) !== s || scale !== this.scale) { this.give(canvas); if (!ok && this.shown.get(n) === s && !s.pic) this.shown.delete(n); return; }
+    const old = s.pic;
+    el.insertBefore(canvas, el.firstChild);
+    s.pic = canvas; s.level = level; s.at = scale;
+    if (old !== canvas) this.give(old);
+    el.classList.remove('loading');
+    el.dataset.res = level === 2 && !this.sizeFor(n, 2).tiled ? 'full' : 'low';
+    if (!s.seen) { s.seen = true; this.opts.onPageRender?.(n); }
+  }
+
+  /** Draw with Android's renderer: written to a file by it and read here as bytes (no text encoding, no bridge
+   *  copy of a megabyte string), decoded off the main thread. */
+  private async nativeDraw(n: number, canvas: HTMLCanvasElement, o: { width: number; tileX?: number; tileY?: number; tileW?: number; tileH?: number }): Promise<boolean> {
+    const nat = this.native!;
+    const cap = (window as unknown as { Capacitor?: { convertFileSrc?(p: string): string } }).Capacitor;
+    let res: { data?: string; path?: string };
+    try { res = await nat.pdfRender({ page: n, quality: 90, toFile: !!cap?.convertFileSrc, ...o }); }
+    catch { this.native = null; return false; }
+    let blob: Blob;
+    if (res.path && cap?.convertFileSrc) blob = await (await fetch(`${cap.convertFileSrc(`file://${res.path}`)}?v=${++this.fetchSeq}`, { cache: 'no-store' })).blob();
+    else { const bin = atob(res.data ?? ''); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); blob = new Blob([a], { type: 'image/jpeg' }); }
+    const bmp = await createImageBitmap(blob);
+    const g = canvas.getContext('2d', { alpha: false })!;
+    g.drawImage(bmp, 0, 0, canvas.width, canvas.height); bmp.close();
+    return true;
+  }
+
+  /* ---------- tiles: a zoomed page drawn sharp in pieces, only where it is seen ---------- */
+
+  private tileGrid(n: number): { full: number; cols: number; rows: number; W: number; H: number } {
+    const d = this.device();
+    const W = Math.round(this.baseWidths[n - 1] * this.scale * d), H = Math.round(this.baseHeights[n - 1] * this.scale * d);
+    return { full: W, cols: Math.ceil(W / TILE), rows: Math.ceil(H / TILE), W, H };
+  }
+
+  /** The next tile the page needs where it is seen (with half a tile around it), or null. */
+  private missingTile(n: number): { c: number; r: number } | null {
+    if (!this.sizeFor(n, 2).tiled) return null;
+    const s = this.shown.get(n); if (!s?.pic) return null;
+    const el = this.pages[n - 1]; const d = this.device();
+    const top = this.layoutTops()[n - 1], left = el.offsetLeft + (el.offsetParent === this.inner ? this.inner.offsetLeft : 0);
+    const g = this.tileGrid(n);
+    const x0 = (this.scroll.scrollLeft - left) * d - TILE / 2, x1 = (this.scroll.scrollLeft + this.scroll.clientWidth - left) * d + TILE / 2;
+    const y0 = (this.scroll.scrollTop - top) * d - TILE / 2, y1 = (this.scroll.scrollTop + this.scroll.clientHeight - top) * d + TILE / 2;
+    const c0 = Math.max(0, Math.floor(x0 / TILE)), c1 = Math.min(g.cols - 1, Math.floor(x1 / TILE));
+    const r0 = Math.max(0, Math.floor(y0 / TILE)), r1 = Math.min(g.rows - 1, Math.floor(y1 / TILE));
+    // (Middle of the screen first.)
+    const cy = ((this.scroll.scrollTop + this.scroll.clientHeight / 2 - top) * d) / TILE, cx = ((this.scroll.scrollLeft + this.scroll.clientWidth / 2 - left) * d) / TILE;
+    let best: { c: number; r: number } | null = null, bd = Infinity;
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      if (s.tiles?.has(`${this.scale}:${c}:${r}`)) continue;
+      const dd = (r + 0.5 - cy) ** 2 + (c + 0.5 - cx) ** 2; if (dd < bd) { bd = dd; best = { c, r }; }
+    }
+    if (!best && s.at === this.scale && s.level === 2) this.pages[n - 1].dataset.res = 'full';
+    // Tiles well out of view are let go of.
+    if (s.tiles) for (const [key, cv] of s.tiles) { const [, c, r] = key.split(':').map(Number); if (c < c0 - 1 || c > c1 + 1 || r < r0 - 1 || r > r1 + 1) { cv.remove(); s.tiles.delete(key); } }
+    return best;
+  }
+
+  private async drawTile(n: number, t: { c: number; r: number }): Promise<void> {
+    const s = this.shown.get(n); if (!s) return;
+    const scale = this.scale; const g = this.tileGrid(n); const d = this.device();
+    const x = t.c * TILE, y = t.r * TILE, w = Math.min(TILE, g.W - x), hh = Math.min(TILE, g.H - y);
+    const key = `${scale}:${t.c}:${t.r}`;
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = hh; canvas.className = 'pdf-tile';
+    Object.assign(canvas.style, { left: `${x / d}px`, top: `${y / d}px`, width: `${w / d}px`, height: `${hh / d}px` });
+    let ok = false;
+    if (this.native) ok = await this.nativeDraw(n, canvas, { width: g.W, tileX: x, tileY: y, tileW: w, tileH: hh }).catch(() => false);
+    if (!ok) {
+      let page: PDFPageProxy; try { page = await this.doc.getPage(n); } catch { return; }
+      const ctx = canvas.getContext('2d', { alpha: false })!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hh);
+      const task = page.render({ canvas, canvasContext: ctx, viewport: page.getViewport({ scale: scale * d, offsetX: -x, offsetY: -y }) });
+      this.running = { n, cancel: () => task.cancel() };
+      try { await task.promise; ok = true; } catch { ok = false; } finally { this.running = null; }
+    }
+    if (!ok || this.destroyed || this.shown.get(n) !== s || scale !== this.scale) return;
+    if (!s.tileLayer) { s.tileLayer = h('div', { class: 'pdf-tiles' }); s.pic?.after(s.tileLayer); }
+    (s.tiles ??= new Map()).set(key, canvas);
+    s.tileLayer.append(canvas);
+    if (!this.missingTile(n)) this.pages[n - 1].dataset.res = 'full';
+  }
+
+  private dropTiles(s: Shown): void { s.tiles?.forEach((c) => c.remove()); s.tiles?.clear(); }
+
+  private async buildText(n: number): Promise<void> {
+    const s = this.shown.get(n); if (!s) return;
+    s.text = 'building';
+    const el = this.pages[n - 1];
     try {
+      const page = await this.doc.getPage(n);
+      if (this.shown.get(n) !== s) return;
+      el.querySelector('.textLayer')?.remove();
+      const textDiv = h('div', { class: 'textLayer' });
+      el.appendChild(textDiv);
       // Our own layer: words in reading order, harakat inside their letters (see src/pdflayer.ts).
-      const pending = buildTextLayer(page, viewport, textDiv);
-      entry.text = { cancel: () => void pending.then((l) => l.cancel()) };
+      const pending = buildTextLayer(page, page.getViewport({ scale: this.scale }), textDiv);
+      s.textCancel = () => void pending.then((l) => l.cancel());
       await pending;
       textDiv.appendChild(h('div', { class: 'endOfContent' }));
-    } catch { /* text layer is optional */ }
-    this.opts.onPageRender?.(n);
+      s.text = 'done';
+    } catch { s.text = 'done'; /* text layer is optional */ }
   }
 
   private releasePage(n: number): void {
-    const entry = this.rendered.get(n);
-    if (!entry) return;
-    entry.task?.cancel();
-    entry.text?.cancel();
+    const s = this.shown.get(n);
+    if (!s) return;
+    if (this.running?.n === n) this.running.cancel();
+    s.textCancel?.();
     const el = this.pages[n - 1];
-    el.querySelectorAll('canvas, img.native-page, .textLayer').forEach((c) => c.remove());
-    this.rendered.delete(n);
+    this.give(s.pic); this.dropTiles(s); s.tileLayer?.remove();
+    el.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    el.classList.remove('loading'); delete el.dataset.res;
+    this.shown.delete(n);
+    // (pdf.js lets go of what it kept to draw the page.)
+    void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined);
   }
 
   private rescale(scale: number): void {
@@ -282,18 +514,19 @@ export class PdfViewer {
     const anchorPage = this.current;
     const rel = this.relativeOffset(anchorPage);
     this.scale = scale;
-    const shown = [...this.rendered.keys()];
-    for (const n of shown) { const e = this.rendered.get(n); e?.task?.cancel(); e?.text?.cancel(); this.rendered.delete(n); }
     this.pages.forEach((p, i) => this.sizePage(p, i + 1));
+    this.tops = null;
+    // Pictures stay (stretched) until redrawn; tiles and text layers belong to the old size.
+    for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
+    this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    this.running?.cancel();
     this.goTo(anchorPage, rel);
-    for (const n of shown) void this.renderPage(n, true);
-    this.pages.forEach((p) => { this.observer.unobserve(p); this.observer.observe(p); });
+    this.frame();
   }
 
   private relativeOffset(n: number): number {
-    const el = this.pages[n - 1];
-    if (!el) return 0;
-    return Math.max(0, (this.scroll.scrollTop - el.offsetTop) / Math.max(1, el.offsetHeight));
+    if (!this.pages[n - 1]) return 0;
+    return Math.max(0, (this.scroll.scrollTop - this.layoutTops()[n - 1]) / Math.max(1, this.pageHeight(n)));
   }
 
   /** Two-finger pinch: live CSS preview, then a real re-render at the new scale. */
@@ -340,22 +573,15 @@ export class PdfViewer {
 
   goTo(page: number, offset = 0): void {
     page = Math.min(this.total, Math.max(1, Math.round(page)));
-    const el = this.pages[page - 1];
-    if (!el) return;
-    this.scroll.scrollTop = el.offsetTop - 6 + offset * el.offsetHeight;
+    if (!this.pages[page - 1]) return;
+    this.scroll.scrollTop = this.layoutTops()[page - 1] - 6 + offset * this.pageHeight(page);
     this.current = page;
     this.opts.onPageChange(page, this.total);
+    this.onScroll();
   }
 
   private updateCurrent(): void {
-    const mid = this.scroll.scrollTop + this.scroll.clientHeight * 0.4;
-    let lo = 0, hi = this.pages.length - 1;
-    while (lo < hi) {
-      const m = (lo + hi) >> 1;
-      const el = this.pages[m];
-      if (el.offsetTop + el.offsetHeight < mid) lo = m + 1; else hi = m;
-    }
-    const n = lo + 1;
+    const n = this.pageAt(this.scroll.scrollTop + this.scroll.clientHeight * 0.4);
     if (n !== this.current) {
       this.current = n;
       this.opts.onPageChange(n, this.total);
@@ -507,9 +733,10 @@ export class PdfViewer {
 
   destroy(): void {
     this.destroyed = true;
-    this.observer?.disconnect();
+    window.clearTimeout(this.settleTimer);
     this.resizeObs?.disconnect();
-    for (const n of [...this.rendered.keys()]) this.releasePage(n);
+    for (const n of [...this.shown.keys()]) this.releasePage(n);
+    this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
     this.closeDoc();
     void this.native?.pdfClose().catch(() => undefined);
     this.root.remove();

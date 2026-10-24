@@ -36,9 +36,25 @@ function toCanvas(img: S.Img, c = document.createElement('canvas')): HTMLCanvasE
 const FULL: S.Quad = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
 const lookOf = (p: Look): Look => ({ quad: p.quad.map((c) => ({ ...c })) as S.Quad, curve: p.curve, flatten: p.flatten, turn: p.turn, filter: p.filter, adj: { ...p.adj } });
 
+/**
+ * A page's photo at working size. Only the last few used are held (each is megabytes: thirty of them held at once
+ * is what can bring a phone's app down); the others are read again from the photo when needed.
+ */
+const held: Page[] = [];
+function hold(p: Page): void {
+  const i = held.indexOf(p); if (i >= 0) held.splice(i, 1);
+  held.unshift(p);
+  while (held.length > 6) { const o = held.pop()!; o.preview = null; }
+}
+async function previewOf(p: Page): Promise<S.Img> {
+  if (!p.preview) p.preview = await scanWork<S.Img>({ op: 'decode', blob: p.file, maxSide: PREVIEW });
+  hold(p);
+  return p.preview;
+}
+
 async function makeThumb(p: Page): Promise<void> {
-  if (!p.preview) return;
-  const b = await scanWork<Blob>({ op: 'thumb', preview: p.preview, look: lookOf(p) });
+  if (p.pending) return;
+  const b = await scanWork<Blob>({ op: 'thumb', preview: await previewOf(p), look: lookOf(p) });
   if (p.thumb) URL.revokeObjectURL(p.thumb);
   p.thumb = URL.createObjectURL(b);
 }
@@ -75,7 +91,7 @@ export function scannerSheet(onDone?: () => void): void {
     await pooled(fresh, parallel(), async (p) => {
       try {
         const r = await scanWork<Prepared>({ op: 'prepare', blob: p.file, maxSide: PREVIEW, autoCrop: set.autoCrop, autoTurn: set.autoTurn, flatten: set.flatten, filter: set.filter, rtl: getLang() === 'ar' });
-        Object.assign(p, r.look); p.preview = r.preview; p.thumb = URL.createObjectURL(r.thumb); p.pending = false;
+        Object.assign(p, r.look); p.preview = r.preview; hold(p); p.thumb = URL.createObjectURL(r.thumb); p.pending = false;
       } catch (e) {
         console.error(e);
         const i = pages.indexOf(p); if (i >= 0) pages.splice(i, 1);
@@ -95,13 +111,15 @@ export function scannerSheet(onDone?: () => void): void {
     let tile = tiles.get(p);
     if (!tile) {
       tile = h('div', { class: 'page-tile', role: 'button', tabindex: 0,
-        onclick: (e: Event) => { if ((e.target as HTMLElement).closest('button, input') || p.pending) return; editor(pages.indexOf(p)); },
-        onkeydown: (e: KeyboardEvent) => { if ((e.key === 'Enter' || e.key === ' ') && !(e.target as HTMLElement).closest('input')) { e.preventDefault(); if (!p.pending) editor(pages.indexOf(p)); } } });
+        onclick: (e: Event) => { if ((e.target as HTMLElement).closest('button, input') || p.pending) return; void openEditor(pages.indexOf(p)); },
+        onkeydown: (e: KeyboardEvent) => { if ((e.key === 'Enter' || e.key === ' ') && !(e.target as HTMLElement).closest('input')) { e.preventDefault(); if (!p.pending) void openEditor(pages.indexOf(p)); } } });
       tiles.set(p, tile);
     }
     return tile;
   };
+  let stale = () => { /* set once the runner is made */ };
   const paintTile = (p: Page) => {
+    stale();
     const tile = tileFor(p); const k = pages.indexOf(p); if (k < 0) return;
     tile.dataset.k = String(k);
     tile.setAttribute('aria-label', t('scanEditPage', { n: localDigits(String(k + 1)) }));
@@ -114,6 +132,7 @@ export function scannerSheet(onDone?: () => void): void {
         h('button', { type: 'button', class: 'icon-btn small', title: t('removeItem'), 'aria-label': t('removeItem'), onclick: () => { if (p.thumb) URL.revokeObjectURL(p.thumb); tiles.delete(p); pages.splice(pages.indexOf(p), 1); draw(); } }, icon('trash'))));
   };
   const draw = () => {
+    stale();
     if (!pages.length) gridEl.replaceChildren(h('div', { class: 'scan-empty' }, icon('camera'), h('p', null, t('scanEmpty'))));
     else { const want = pages.map(tileFor); if (gridEl.children.length !== want.length || want.some((el, i) => gridEl.children[i] !== el)) gridEl.replaceChildren(...want); pages.forEach(paintTile); }
     go.disabled = !pages.length || pages.some((p) => p.pending);
@@ -132,10 +151,11 @@ export function scannerSheet(onDone?: () => void): void {
     h('div', { class: 'tool-bar' },
       h('button', { class: 'btn small primary', type: 'button', onclick: shoot }, icon('camera'), t('scanTakePhoto')),
       h('button', { class: 'btn small tonal', type: 'button', onclick: async () => add(await pickFiles('image/*', true)) }, icon('images'), t('scanPickPhotos')),
-      h('button', { class: 'icon-btn', type: 'button', title: t('scanSettings'), 'aria-label': t('scanSettings'), onclick: () => settingsSheet(set, (s) => { set = s; }) }, icon('settings')),
+      h('button', { class: 'icon-btn', type: 'button', title: t('scanSettings'), 'aria-label': t('scanSettings'), onclick: () => settingsSheet(set, (s) => { set = s; stale(); }) }, icon('settings')),
       count),
     status, gridEl, h('p', { class: 'hint' }, t('scanHint')));
   const r = runner(sh.body, onDone);
+  stale = () => r.stale();
   const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go], async () => {
     const side = SIDE[set.quality];
     const out: Blob[] = new Array(pages.length);
@@ -154,6 +174,12 @@ export function scannerSheet(onDone?: () => void): void {
   draw();
 
   /* ---------- one page, by hand ---------- */
+
+  async function openEditor(k: number): Promise<void> {
+    const p = pages[k]; if (!p) return;
+    try { await previewOf(p); } catch { toast(t('scanUndecodable', { name: (p.file as File).name ?? '' }), 'error'); return; }
+    editor(k);
+  }
 
   function editor(k: number): void {
     const p = pages[k];
@@ -225,7 +251,7 @@ export function scannerSheet(onDone?: () => void): void {
     const resultChip = h('button', { type: 'button', class: 'chip small', 'aria-pressed': 'false', onclick: () => setMode('result') }, h('span', null, t('scanResult')));
     const tools = h('div', { class: 'tool-bar' },
       cropChip, resultChip,
-      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { const f = S.detectPage(preview); work.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; place(); recurve(); toast(f.how === 'frame' ? t('scanNoEdges') : t('scanFound')); } }, icon('target'), t('scanAuto')),
+      h('button', { type: 'button', class: 'btn small tonal', onclick: async () => { const f = await scanWork<{ how: string; quad: S.Quad }>({ op: 'detect', preview }); work.quad = f.quad; place(); recurve(); toast(f.how === 'frame' ? t('scanNoEdges') : t('scanFound')); } }, icon('target'), t('scanAuto')),
       h('button', { type: 'button', class: 'btn small tonal', onclick: () => { work.quad = FULL.map((c) => ({ ...c })) as S.Quad; place(); recurve(); } }, icon('fullscreen'), t('scanWhole')),
       h('button', { type: 'button', class: 'icon-btn', title: t('rotateLeft'), 'aria-label': t('rotateLeft'), onclick: () => { work.turn = (work.turn + 3) % 4; if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', { class: 'flip-x' }, icon('rotate'))),
       h('button', { type: 'button', class: 'icon-btn', title: t('rotateRight'), 'aria-label': t('rotateRight'), onclick: () => { work.turn = (work.turn + 1) % 4; if (mode === 'crop') setMode('result'); else refresh(); } }, icon('rotate')));

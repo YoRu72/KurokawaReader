@@ -105,11 +105,18 @@ export function runner(body: HTMLElement, onDone?: () => void) {
   const panel = h('div', { class: 'runner-panel' }, status, track, result);
   const sheet = body.parentElement; const actions = sheet?.querySelector(':scope > .sheet-actions');
   if (sheet && actions) sheet.insertBefore(panel, actions); else body.append(panel);
+  // (Anything changed in the sheet — a field, a choice, the list — and the file made before is not this one.)
+  const changed = (e: Event) => { if (!(e.target as HTMLElement).closest?.('.organize-jump, .organize-slider, .page-pos-input')) api.stale(); };
+  for (const ev of ['input', 'change', 'kr-changed']) body.addEventListener(ev, changed);
   let report: ((pct: number) => void) | null = null;
-  return {
+  let running = false;
+  const api = {
+    /** What it was made from has changed: the file made before is no longer this one, so its buttons go. */
+    stale() { if (running || result.hidden) return; result.hidden = true; status.hidden = true; track.hidden = true; result.replaceChildren(); },
     progress(pct: number) { track.hidden = false; bar.style.width = `${Math.round(pct)}%`; report?.(pct); },
     async run(buttons: HTMLButtonElement[], work: () => Promise<{ blob: Blob; name: string } | null>) {
       buttons.forEach((b) => { b.disabled = true; });
+      running = true;
       status.hidden = false; status.textContent = t('working'); track.hidden = false; bar.style.width = '0%'; result.hidden = true;
       try {
         // A job: it goes on (with a notification) when this sheet is closed or the app is left.
@@ -130,10 +137,14 @@ export function runner(body: HTMLElement, onDone?: () => void) {
         const msg = String((err as Error).message ?? err);
         status.textContent = msg === 'unsupported-encryption' ? t('convertUnsupported') : `${t('convertFailed')} — ${msg}`;
         console.error(err);
-      } finally { buttons.forEach((b) => { b.disabled = false; }); }
+      } finally { running = false; buttons.forEach((b) => { b.disabled = false; }); }
     },
   };
+  return api;
 }
+
+/** Tell a sheet's runner that what it makes from has changed. */
+export const changedIn = (el: HTMLElement) => el.dispatchEvent(new Event('kr-changed', { bubbles: true }));
 
 export const pdfBlob = (bytes: Uint8Array) => new Blob([bytes as BlobPart], { type: 'application/pdf' });
 
@@ -176,6 +187,7 @@ function imagesSheet(onDone?: () => void): void {
       row.dataset.k = String(i); list.append(row);
     });
     go.disabled = !files.length;
+    changedIn(list);
   };
   const move = (a: number, b: number) => { const [x] = files.splice(a, 1); files.splice(b, 0, x); render(); };
   const add = h('button', { class: 'btn small tonal', type: 'button', onclick: async () => { for (const f of await pickFiles('image/*', true)) files.push({ file: f, url: URL.createObjectURL(f) }); render(); } }, icon('plus'), t('addImages'));
@@ -215,6 +227,7 @@ function docsSheet(books: Book[], onDone?: () => void): void {
       row.dataset.k = String(i); list.append(row);
     });
     go.disabled = !parts.length;
+    changedIn(list);
   };
   const move = (a: number, b: number) => { const [x] = parts.splice(a, 1); parts.splice(b, 0, x); render(); };
   const addFiles = async (files: File[]) => {
@@ -282,6 +295,7 @@ function mergeSheet(pdfs: Book[], preset: Book | undefined, onDone?: () => void)
       row.dataset.k = String(i); list.append(row);
     });
     go.disabled = parts.length < 2;
+    changedIn(list);
   };
   const move = (a: number, b: number) => { const [x] = parts.splice(a, 1); parts.splice(b, 0, x); render(); };
   const push = async (s: Source) => {
@@ -402,6 +416,7 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   const sync = () => {
     const k = pages.filter((p) => p.sel).length; count.textContent = t('selectedCount', { n: k });
     extract.disabled = del.disabled = moveSel.disabled = !k;
+    changedIn(gridEl);
     if (document.activeElement !== range) void tools().then(({ formatRanges }) => { range.value = formatRanges(pages.filter((p) => p.sel).map((p) => p.i)); });
     if (view === 'pages') paintViewer();
   };

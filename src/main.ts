@@ -39,6 +39,7 @@ registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 initPcShell();
+setTimeout(() => void import('./ui/share').then((m) => m.clearShareCache()), 8000);
 void loadFonts();
 initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);

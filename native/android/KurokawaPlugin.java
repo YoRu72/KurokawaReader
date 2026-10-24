@@ -606,6 +606,58 @@ public class KurokawaPlugin extends Plugin {
         return last == null ? "" : last;
     }
 
+    /**
+     * Copies a file the app wrote to its cache (`path`, a file:// URI or a path) into the device's Downloads
+     * folder, under `name` (Android numbers it when that name is taken). The file is streamed, never held whole.
+     */
+    @PluginMethod
+    public void saveToDownloads(PluginCall call) {
+        String path = call.getString("path", "");
+        String name = call.getString("name", "file");
+        String mime = call.getString("mime", "application/octet-stream");
+        try {
+            File src = new File(path.startsWith("file://") ? Uri.parse(path).getPath() : path);
+            if (!src.exists()) { call.reject("No such file"); return; }
+            String shown;
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                v.put(MediaStore.Downloads.IS_PENDING, 1);
+                Uri uri = getContext().getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) { call.reject("MediaStore insert failed"); return; }
+                try (InputStream in = new java.io.FileInputStream(src); OutputStream out = getContext().getContentResolver().openOutputStream(uri)) { copy(in, out); }
+                v.clear(); v.put(MediaStore.Downloads.IS_PENDING, 0);
+                getContext().getContentResolver().update(uri, v, null, null);
+                String shownName = name;
+                try (Cursor c = getContext().getContentResolver().query(uri, new String[]{ MediaStore.Downloads.DISPLAY_NAME }, null, null, null)) {
+                    if (c != null && c.moveToFirst()) shownName = c.getString(0);
+                } catch (Exception ignored) { }
+                shown = Environment.DIRECTORY_DOWNLOADS + "/" + shownName;
+            } else {
+                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                dir.mkdirs();
+                File f = new File(dir, name);
+                int dot = name.lastIndexOf('.');
+                String stem = dot > 0 ? name.substring(0, dot) : name, ext = dot > 0 ? name.substring(dot) : "";
+                for (int i = 1; f.exists(); i++) f = new File(dir, stem + " (" + i + ")" + ext);
+                try (InputStream in = new java.io.FileInputStream(src); OutputStream out = new FileOutputStream(f)) { copy(in, out); }
+                MediaScannerConnection.scanFile(getContext(), new String[]{ f.getAbsolutePath() }, new String[]{ mime }, null);
+                shown = Environment.DIRECTORY_DOWNLOADS + "/" + f.getName();
+            }
+            src.delete();
+            JSObject ret = new JSObject(); ret.put("path", shown); call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Save failed: " + e.getMessage(), e);
+        }
+    }
+
+    private static void copy(InputStream in, OutputStream out) throws java.io.IOException {
+        byte[] buf = new byte[1 << 16];
+        for (int n; (n = in.read(buf)) > 0;) out.write(buf, 0, n);
+    }
+
     /** Saves a PNG/JPEG (base64) into the device gallery under Pictures/<folder>. */
     @PluginMethod
     public void saveToGallery(PluginCall call) {
@@ -800,30 +852,61 @@ public class KurokawaPlugin extends Plugin {
         }
     }
 
+    private int renderSeq = 0;
+
+    /**
+     * One page, or one tile of it, as a JPEG. `width` is the whole page's width in pixels at the size wanted; with
+     * `tileW`/`tileH` only that part of it (from `tileX`, `tileY`) is drawn — a zoomed page is drawn in pieces, never
+     * as one huge picture. With `toFile` the picture is written to the cache and its path returned (the web view
+     * fetches it as bytes), else returned as base64.
+     */
     @PluginMethod
     public void pdfRender(PluginCall call) {
         int page = call.getInt("page", 1);
         int width = call.getInt("width", 1080);
         int quality = call.getInt("quality", 85);
+        int tileW = call.getInt("tileW", 0), tileH = call.getInt("tileH", 0);
+        int tileX = call.getInt("tileX", 0), tileY = call.getInt("tileY", 0);
+        boolean toFile = Boolean.TRUE.equals(call.getBoolean("toFile", false));
         try {
+            Bitmap bmp; int w, h;
             synchronized (lock) {
                 if (renderer == null) { call.reject("No PDF open"); return; }
                 PdfRenderer.Page p = renderer.openPage(page - 1);
-                int w = Math.max(64, Math.min(width, 4096));
-                int h = Math.max(1, (int) Math.round(w * (p.getHeight() / (double) p.getWidth())));
-                Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-                bmp.eraseColor(Color.WHITE);
-                p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
-                p.close();
+                try {
+                    if (tileW > 0 && tileH > 0) {
+                        w = Math.min(tileW, 4096); h = Math.min(tileH, 4096);
+                        float k = width / (float) p.getWidth();
+                        bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                        bmp.eraseColor(Color.WHITE);
+                        android.graphics.Matrix m = new android.graphics.Matrix();
+                        m.setScale(k, k); m.postTranslate(-tileX, -tileY);
+                        p.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                    } else {
+                        w = Math.max(64, Math.min(width, 4096));
+                        h = Math.max(1, (int) Math.round(w * (p.getHeight() / (double) p.getWidth())));
+                        bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                        bmp.eraseColor(Color.WHITE);
+                        p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                    }
+                } finally { p.close(); }
+            }
+            JSObject ret = new JSObject();
+            ret.put("width", w);
+            ret.put("height", h);
+            if (toFile) {
+                File dir = new File(getContext().getCacheDir(), "kr-pdfr"); dir.mkdirs();
+                File f = new File(dir, "r" + (renderSeq++ % 12) + ".jpg");
+                try (OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(f), 1 << 16)) { bmp.compress(Bitmap.CompressFormat.JPEG, quality, out); }
+                bmp.recycle();
+                ret.put("path", f.getAbsolutePath());
+            } else {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 bmp.compress(Bitmap.CompressFormat.JPEG, quality, out);
                 bmp.recycle();
-                JSObject ret = new JSObject();
                 ret.put("data", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
-                ret.put("width", w);
-                ret.put("height", h);
-                call.resolve(ret);
             }
+            call.resolve(ret);
         } catch (Exception e) {
             call.reject("Render failed: " + e.getMessage(), e);
         }

@@ -66,7 +66,10 @@ function noteDone(j: Job): void {
  */
 export async function runJob(title: string, work: (report: (pct: number) => void) => Promise<JobOut | null>, watched: () => boolean = () => false): Promise<JobOut | null> {
   const j: Job = { id: ++seq, title, pct: 0, state: 'running', watched };
-  jobs.unshift(j); while (jobs.length > 12) jobs.pop();
+  jobs.unshift(j);
+  // (Finished files are held in memory to be saved or shared: only the last few are kept — a phone has little.)
+  let kept = 0;
+  for (let i = 0; i < jobs.length; i++) if (jobs[i].state !== 'running' && ++kept > 3) jobs.splice(i--, 1);
   void notificationsAllowed(true).then((ok) => { if (ok) noteProgress(j); });
   keepAwake(true);
   changed();

@@ -313,6 +313,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   function applyLayoutMode(): void {
     const on = chapterMode();
+    scroll.classList.toggle('reader-continuous', !on);
     for (const doc of docs) {
       const multi = doc.chapters.length > 1;
       doc.chapters.forEach((c, i) => { c.hidden = on && multi && i !== doc.chapter; });
@@ -1150,6 +1151,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
   viewer.pinchZoom = getSettings().pdfPinchZoom;
+  (window as unknown as { __krPdfViewer?: unknown }).__krPdfViewer = viewer; // (for tests)
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
   onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); }));
   await viewer.load(file, book.id, book.source?.uri);

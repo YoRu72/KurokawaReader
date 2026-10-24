@@ -7,6 +7,8 @@ export type Look = { quad: S.Quad; curve: S.Curve | null; flatten: boolean; turn
 export type Prepared = { preview: S.Img; look: Look; thumb: Blob };
 export type Op =
   | { op: 'prepare'; blob: Blob; maxSide: number; autoCrop: boolean; autoTurn: boolean; flatten: boolean; filter: S.Filter; rtl: boolean }
+  | { op: 'decode'; blob: Blob; maxSide: number }
+  | { op: 'detect'; preview: S.Img }
   | { op: 'thumb'; preview: S.Img; look: Look }
   | { op: 'curve'; preview: S.Img; quad: S.Quad }
   | { op: 'view'; preview: S.Img; look: Look; side: number }
@@ -104,6 +106,8 @@ export async function handle(m: Op): Promise<{ res: unknown; transfer: Transfera
     const thumb = await encode(render(preview, look, 420), 'image/jpeg', 0.8);
     return { res: { preview, look, thumb } satisfies Prepared, transfer: [preview.data.buffer] };
   }
+  if (m.op === 'decode') { const img = await decodeScaled(m.blob, m.maxSide); return { res: img, transfer: [img.data.buffer] }; }
+  if (m.op === 'detect') { const f = S.detectPage(m.preview); return { res: { how: f.how, quad: f.quad.map((c) => ({ x: c.x / m.preview.width, y: c.y / m.preview.height })) }, transfer: [] }; }
   if (m.op === 'thumb') return { res: await encode(render(m.preview, m.look, 420), 'image/jpeg', 0.8), transfer: [] };
   if (m.op === 'curve') return { res: curveOf(m.preview, m.quad), transfer: [] };
   if (m.op === 'view') { const img = render(m.preview, m.look, m.side); return { res: img, transfer: [img.data.buffer] }; }
