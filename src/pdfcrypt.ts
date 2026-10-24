@@ -216,7 +216,8 @@ function decryptBytes(h: Handler, how: 'rc4' | 'aes' | 'none', ref: PDFRef, data
 
 /** Is this PDF encrypted? (A quick look at the bytes; the parser has the final word.) */
 export function looksEncrypted(bytes: Uint8Array): boolean {
-  const tail = new TextDecoder('latin1').decode(bytes.subarray(Math.max(0, bytes.length - 4096)));
+  // (The trailer — or the cross-reference stream that holds it, which can be long — is near the end.)
+  const tail = new TextDecoder('latin1').decode(bytes.subarray(Math.max(0, bytes.length - (1 << 20))));
   if (/\/Encrypt\s/.test(tail)) return true;
   const head = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 1 << 16)));
   return /\/Encrypt\s/.test(head);

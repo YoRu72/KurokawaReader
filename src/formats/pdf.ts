@@ -20,8 +20,10 @@ const RES = new URL('./pdfjs/', import.meta.url).href;
 async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () => void }> {
   const pdfjs = await loadPdfjs();
   const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({
-    data,
+  const { openPdfjs } = await import('../pdfkeys');
+  // Protected files: the password remembered for the file, else asked for (again when it was wrong) and
+  // remembered; a file pdf.js cannot open is read from a copy decrypted here.
+  const o = await openPdfjs(pdfjs, data, {
     // Android draws pages with its own renderer; elsewhere the bundled standard fonts keep
     // metrics consistent (system-font substitution misplaces glyphs for many PDFs).
     useSystemFonts: (window as unknown as { Capacitor?: { getPlatform?(): string } }).Capacitor?.getPlatform?.() === 'android',
@@ -29,14 +31,11 @@ async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () =
     standardFontDataUrl: `${RES}standard_fonts/`,
     wasmUrl: `${RES}wasm/`,
     iccUrl: `${RES}iccs/`,
-  } as Parameters<typeof pdfjs.getDocument>[0]);
-  // Protected files: ask for the password (again when it was wrong).
-  task.onPassword = (update: (pw: string) => void, reason: number) => {
-    const pw = window.prompt(reason === 2 ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'));
-    if (pw) update(pw); else throw new Error(t('cancelled'));
-  };
-  const doc = await task.promise;
-  return { doc, close: () => { void task.destroy(); } };
+  }, { ask: (wrong) => window.prompt(wrong ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')) }).catch((e) => {
+    if ((e as Error).message === 'cancelled' || (e as Error).message === 'password') throw new Error(t('cancelled'));
+    throw e;
+  });
+  return { doc: o.doc, close: o.destroy };
 }
 
 export async function pdfMeta(file: Blob, fileName: string): Promise<BookMeta> {

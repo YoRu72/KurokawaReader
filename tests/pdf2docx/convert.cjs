@@ -13,13 +13,16 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3])
   const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sheet');
   await page.click('.sheet button:has-text("Convert")'); await page.waitForSelector('.convert-target');
   const t0 = Date.now();
-  await page.click('.convert-target:has-text("Word")');
+  // TARGET picks another output (its label in the sheet: "Text", "EPUB", "PDF"…); the file is then only saved.
+  const target = process.env.TARGET || 'Word';
+  if (process.env.STAGES) console.log('stage: convert');
+  await page.click(`.convert-target:has-text("${target}")`);
   await page.waitForSelector('.convert-result:not([hidden]) button, .sheet .src:has-text("failed")', { timeout: 1500000 });
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('.convert-result button:has-text("Save")')]);
-  const docx = path.join(out, 'out.docx'); await dl.saveAs(docx);
+  const docx = path.join(out, target === 'Word' ? 'out.docx' : `out.${path.extname(dl.suggestedFilename()).slice(1) || 'bin'}`); await dl.saveAs(docx);
   console.log('docx', fs.statSync(docx).size, 'B in', Date.now() - t0, 'ms');
   await browser.close(); server.close();
-  if (process.env.NOLO) return;
+  if (process.env.NOLO || target !== 'Word') return;
   execSync(`cd ${out} && rm -f out.pdf && soffice --headless --convert-to pdf out.docx >/dev/null 2>&1`);
   console.log('docx pages', execSync(`pdfinfo ${out}/out.pdf | grep Pages`).toString().trim(), 'pdf pages', execSync(`pdfinfo ${pdf} | grep Pages`).toString().trim());
   execSync(`cd ${out} && rm -f a-*.png b-*.png && pdftoppm -r 60 -png ${pdf} a && pdftoppm -r 60 -png out.pdf b`);

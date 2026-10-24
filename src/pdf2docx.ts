@@ -1415,8 +1415,18 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
 export async function pdfToDocx(book: Book, file: Blob, progress: Progress, password?: string): Promise<Blob> {
   const pdfjs = await loadPdfjs();
   const RES = new URL('./pdfjs/', import.meta.url).href;
-  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), password, fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` } as Parameters<typeof pdfjs.getDocument>[0]);
-  let doc; try { doc = await task.promise; } catch (e) { if ((e as Error).name === 'PasswordException') throw new Error('password'); throw e; }
+  // A protected file opens with the password given or remembered for it; one whose text pdf.js cannot read
+  // (it comes out as control characters) is read from a copy decrypted here instead.
+  const { openPdfjs, reopenDecrypted, looksGarbled } = await import('./pdfkeys');
+  const jsOpts = { fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` };
+  let opened = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password });
+  if (opened.encrypted) {
+    const p1 = await opened.doc.getPage(1); const tc = await p1.getTextContent();
+    const text = (tc.items as { str?: string }[]).map((i) => i.str ?? '').join('');
+    if (looksGarbled(text, text.length)) opened = (await reopenDecrypted(pdfjs, opened, jsOpts)) ?? opened;
+  }
+  const task = { destroy: opened.destroy };
+  const doc = opened.doc;
   const fonts = new Map<string, FontInfo>();
   const store: UseStore = { seqs: [], seen: new Map() };
   const pages: PageModel[] = [];

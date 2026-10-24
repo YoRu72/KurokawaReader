@@ -69,8 +69,11 @@ async function chooseSource(pdfs: Book[], preset: Book | undefined, then: (s: So
 
 /** Run `fn` on a source, asking for its password when it needs one (and again when it was wrong). */
 async function withPassword<T>(src: Source, fn: (s: Source) => Promise<T>): Promise<T | null> {
+  const { fingerprint, knownPassword, rememberPassword } = await import('../pdfkeys');
+  const fp = fingerprint(src.bytes);
+  src.password ??= await knownPassword(fp);
   for (let wrong = false; ;) {
-    try { return await fn(src); } catch (err) {
+    try { const out = await fn(src); void rememberPassword(fp, src.password); return out; } catch (err) {
       const msg = String((err as Error).message ?? err);
       if (msg !== 'password') throw err;
       const pw = window.prompt(wrong || src.password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'));

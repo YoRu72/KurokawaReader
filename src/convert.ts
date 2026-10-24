@@ -75,8 +75,17 @@ export async function readDocument(book: Book, file: Blob, progress: Progress, p
 async function readPdf(book: Book, file: Blob, progress: Progress, password?: string): Promise<ConvDoc> {
   const pdfjs = await loadPdfjs();
   const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({ data, password, useSystemFonts: false, fontExtraProperties: true } as Parameters<typeof pdfjs.getDocument>[0]);
-  let doc; try { doc = await task.promise; } catch (e) { if ((e as Error).name === 'PasswordException') throw new Error('password'); throw e; }
+  // (Protected files: the password given or remembered; a copy decrypted here when pdf.js cannot read it.)
+  const { openPdfjs, reopenDecrypted, looksGarbled } = await import('./pdfkeys');
+  const jsOpts = { useSystemFonts: false, fontExtraProperties: true };
+  let opened = await openPdfjs(pdfjs, data, jsOpts, { password });
+  if (opened.encrypted) {
+    const tc = await (await opened.doc.getPage(1)).getTextContent();
+    const text = (tc.items as { str?: string }[]).map((i) => i.str ?? '').join('');
+    if (looksGarbled(text, text.length)) opened = (await reopenDecrypted(pdfjs, opened, jsOpts)) ?? opened;
+  }
+  const task = { destroy: opened.destroy };
+  const doc = opened.doc;
   const fonts = new Map<string, { blob: Blob; ext: string }>();
   const fontFamilies = new Map<string, string>();   // pdf.js font id → css family
   const paragraphs: { text: string; size: number; rtl: boolean; family?: string; heading: boolean; page: number }[] = [];
