@@ -20,14 +20,19 @@ const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not s
 type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
-type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number };
+type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
 type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string; cs?: number; spacing?: number };
 type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: number[] };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
-type Block = Para | Verse;
-type Note = { num: number; paras: Para[] };
+/** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
+ *  left to right — each spanning `span` columns, `cont` when it carries on the cell above (no rule between). */
+type GridCell = { c0: number; span: number; cont?: boolean; lines: Piece[][]; fill?: string };
+type GridSpec = { xs: number[]; ys: number[]; rows: GridCell[][]; rule: number };
+type Grid = { kind: 'grid'; rows: Run[][][]; cells: { span: number; vmerge?: 'restart' | 'continue'; align: Para['align']; vcenter: boolean; pitch: number }[][]; spec: GridSpec; colW: number[]; rowH: number[]; rtl: boolean; before: number; indStart: number; size: number; pitch: number };
+type Block = Para | Verse | Grid;
+type Note = { num: number; paras: Block[] };
 type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean };
 /** Part of a page: full width (one column) or set in columns (blocks per column in reading order, column edges in page x). */
 type Region = { cols: Block[][]; edges: [number, number][] };
@@ -118,6 +123,8 @@ function readOs2(bytes: Uint8Array): Os2 | null {
 }
 
 /** Code points a TrueType font's cmap covers (to decide whether embedding it can render the text). */
+const HONORIFICS: Record<string, string> = { 'صلى الله عليه وسلم': '\uFDFA', 'صلى الله عليه و سلم': '\uFDFA', 'جل جلاله': '\uFDFB', 'بسم الله الرحمن الرحيم': '\uFDFD' };
+
 function cmapCoverage(bytes: Uint8Array): Set<number> {
   const out = new Set<number>();
   try {
@@ -149,7 +156,7 @@ async function canvasPng(c: HTMLCanvasElement): Promise<Uint8Array> {
 type Pic = { png: Uint8Array; x: number; y: number; w: number; h: number };
 /** The page drawn without its text, cut into the pieces that carry ink (header ornament, frame, rules,
  *  pictures) — each cropped tight, so pieces that repeat from page to page are stored once. */
-async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>): Promise<Pic[]> {
+async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>, grids: GridSpec[] = []): Promise<Pic[]> {
   const vp = page.getViewport({ scale });
   const c = document.createElement('canvas') as HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> };
   c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); c.krNoText = true; c.krKeepFonts = keepFonts;
@@ -157,6 +164,25 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   await page.render({ canvas: c, canvasContext: ctx, viewport: vp, background: 'rgba(255,255,255,1)' } as Parameters<typeof page.render>[0]).promise;
   const W = c.width, H = c.height;
+  // Ruled tables become Word tables: their shading is read off the page here, and their rules and shading
+  // leave the picture.
+  const ph = page.view[3] - page.view[1];
+  for (const g of grids) {
+    const px = (x: number) => Math.round(x * scale), py = (y: number) => Math.round((ph - y) * scale);
+    g.rows.forEach((row, j) => row.forEach((cell) => {
+      if (cell.cont) return;
+      const l = g.xs[cell.c0], r = g.xs[cell.c0 + cell.span], t = g.ys[j], b = g.ys[j + 1];
+      const pts = [[l + 2.5, t - 2.5], [r - 2.5, t - 2.5], [l + 2.5, b + 2.5], [r - 2.5, b + 2.5]];
+      const cols = pts.map(([x, y]) => { const v = ctx.getImageData(Math.max(0, Math.min(W - 1, px(x))), Math.max(0, Math.min(H - 1, py(y))), 1, 1).data; return [v[0], v[1], v[2]]; });
+      const hex = (v: number[]) => v.map((n) => n.toString(16).padStart(2, '0')).join('');
+      const same = cols.filter((v) => Math.abs(v[0] - cols[0][0]) + Math.abs(v[1] - cols[0][1]) + Math.abs(v[2] - cols[0][2]) < 24).length;
+      if (same >= 3 && cols[0].some((n) => n < 245)) cell.fill = hex(cols[0]);
+    }));
+    ctx.fillStyle = '#fff';
+    const x0 = px(g.xs[0]) - Math.ceil(2 * scale), x1 = px(g.xs[g.xs.length - 1]) + Math.ceil(2 * scale);
+    const y0 = py(g.ys[0]) - Math.ceil(2 * scale), y1 = py(g.ys[g.ys.length - 1]) + Math.ceil(2 * scale);
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  }
   const img = ctx.getImageData(0, 0, W, H); const d = img.data;
   const ink = new Uint8Array(W * H);
   for (let i = 0, k = 0; i < d.length; i += 4, k++) {
@@ -202,7 +228,7 @@ function pullFormulas(lines: Line[], boxes: Box[]): Line[] {
   const out: Line[] = [];
   for (let i = 0; i < lines.length;) {
     let j = i;
-    while (j + 1 < lines.length && !lines[j].spacer && !lines[j + 1].spacer && lines[j].base - lines[j + 1].base < Math.max(lines[j].size, lines[j + 1].size) * 0.6) j++;
+    while (j + 1 < lines.length && !lines[j].spacer && !lines[j + 1].spacer && !lines[j].grid && !lines[j + 1].grid && lines[j].base - lines[j + 1].base < Math.max(lines[j].size, lines[j + 1].size) * 0.6) j++;
     if (j === i) { out.push(lines[i]); i++; continue; }
     const ls = lines.slice(i, j + 1);
     // A formula is made of short pieces; a line of prose with a note set close beside it is not one.
@@ -260,6 +286,144 @@ function findRules(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][]
       const x0 = Math.min(...pts.map((p) => p[0])), x1 = Math.max(...pts.map((p) => p[0])), y0 = Math.min(...pts.map((p) => p[1])), y1 = Math.max(...pts.map((p) => p[1]));
       if (y1 - y0 <= 2.5 && x1 - x0 >= 25) out.push({ x0, x1, y: (y0 + y1) / 2 });
     }
+  }
+  return out;
+}
+
+/** Closed shapes drawn on the page — the boxes of a chart, frames, cells — as their extents (y up). */
+function findShapes(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] }, thin = false): Box[] {
+  const { OPS } = pdfjs;
+  const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+  let ctm = [1, 0, 0, 1, 0, 0]; const st: number[][] = []; const out: Box[] = [];
+  for (let i = 0; i < ol.fnArray.length; i++) {
+    const fn = ol.fnArray[i], a = ol.argsArray[i] as unknown[];
+    if (fn === OPS.save) st.push(ctm); else if (fn === OPS.restore) ctm = st.pop() ?? ctm;
+    else if (fn === OPS.transform) ctm = mul(ctm, a as number[]);
+    else if (fn === OPS.paintFormXObjectBegin) { st.push(ctm); if (Array.isArray(a[0])) ctm = mul(ctm, a[0] as number[]); }
+    else if (fn === OPS.paintFormXObjectEnd) ctm = st.pop() ?? ctm;
+    else if (fn === OPS.constructPath) {
+      const mm = a[2] as number[] | null; if (!mm) continue;
+      const pts = [[mm[0], mm[1]], [mm[2], mm[1]], [mm[0], mm[3]], [mm[2], mm[3]]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
+      const l = Math.min(...pts.map((q) => q[0])), r = Math.max(...pts.map((q) => q[0])), bottom = Math.min(...pts.map((q) => q[1])), top = Math.max(...pts.map((q) => q[1]));
+      if ((r - l >= 8 && top - bottom >= 8) || (thin && Math.max(r - l, top - bottom) >= 6)) out.push({ l, r, top, bottom });
+    }
+  }
+  return out;
+}
+
+/** A chart — words set in drawn boxes joined by lines — cannot flow as paragraphs: its lines are scattered
+ *  over the boxes. Where several separate small boxes each hold a line or two of text, that part of the page
+ *  is kept as drawn (a picture of it, with an empty line of its height in the text), like a formula. */
+function pullDiagrams(lines: Line[], shapes: Box[], boxes: Box[], W: number, H: number): Line[] {
+  const small = shapes.filter((s) => (s.r - s.l) < W * 0.6 && (s.top - s.bottom) < H * 0.25);
+  if (small.length < 4) return lines;
+  const words = (l: Line) => l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009');
+  const holder = (p: Piece) => { const cx = (p.l + p.r) / 2, cy = p.y + p.h * 0.3; return small.find((s) => cx > s.l && cx < s.r && cy > s.bottom && cy < s.top && p.l > s.l - 2 && p.r < s.r + 2); };
+  const held = new Map<Box, Set<Line>>();
+  const boxed = lines.map((l) => {
+    if (l.spacer || l.grid) return false;
+    const ws = words(l); if (!ws.length) return false;
+    const hs = ws.map(holder);
+    hs.forEach((h) => { if (h) (held.get(h) ?? held.set(h, new Set()).get(h)!).add(l); });
+    return hs.filter(Boolean).length >= ws.length * 0.6;
+  });
+  // Boxes of a chart hold a word or two each and stand apart; a table's cells share their edges.
+  const text = [...held.entries()].filter(([, ls]) => ls.size <= 2).map(([b]) => b);
+  if (text.length < 4) return lines;
+  const touches = (a: Box, b: Box) => a !== b && Math.min(a.top, b.top) - Math.max(a.bottom, b.bottom) > 2 && (Math.abs(a.r - b.l) < 1.5 || Math.abs(b.r - a.l) < 1.5)
+    || a !== b && Math.min(a.r, b.r) - Math.max(a.l, b.l) > 2 && (Math.abs(a.top - b.bottom) < 1.5 || Math.abs(b.top - a.bottom) < 1.5);
+  if (text.filter((a) => text.some((b) => touches(a, b))).length > text.length * 0.4) return lines;
+  // The chart: its text boxes, and every other shape drawn among them (empty boxes, connectors).
+  const reg: Box = { l: Math.min(...text.map((b) => b.l)), r: Math.max(...text.map((b) => b.r)), top: Math.max(...text.map((b) => b.top)), bottom: Math.min(...text.map((b) => b.bottom)) };
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const s of shapes) {
+      if (s.r - s.l > W * 0.8 || s.top - s.bottom > H * 0.6) continue;
+      if (s.r < reg.l - 4 || s.l > reg.r + 4 || s.top < reg.bottom - 4 || s.bottom > reg.top + 4) continue;
+      if (s.l < reg.l || s.r > reg.r || s.top > reg.top || s.bottom < reg.bottom) { reg.l = Math.min(reg.l, s.l); reg.r = Math.max(reg.r, s.r); reg.top = Math.max(reg.top, s.top); reg.bottom = Math.min(reg.bottom, s.bottom); grew = true; }
+    }
+  }
+  // Lines of the chart: those in its band (whether in a box or beside one).
+  const inReg = (l: Line) => !l.spacer && !l.grid && l.base < reg.top && l.base > reg.bottom - l.size * 0.3 && l.r > reg.l - 2 && l.l < reg.r + 2;
+  const taken = lines.filter(inReg);
+  if (taken.filter((l) => boxed[lines.indexOf(l)]).length < taken.length * 0.6) return lines;
+  reg.l -= 2; reg.r += 2; reg.top += 2; reg.bottom -= 2;
+  for (const l of taken) { reg.top = Math.max(reg.top, l.base + l.size * 0.9); reg.bottom = Math.min(reg.bottom, l.base - l.size * 0.35); reg.l = Math.min(reg.l, l.l - 1); reg.r = Math.max(reg.r, l.r + 1); }
+  boxes.push(reg);
+  if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D diagram', text.length, taken.length, JSON.stringify(reg));
+  const h = reg.top - reg.bottom;
+  const at = lines.indexOf(taken[0]);
+  const out = lines.filter((l) => !taken.includes(l));
+  out.splice(at, 0, { pieces: [], base: reg.top - BASE * h, size: Math.max(...taken.map((l) => l.size)), l: reg.l, r: reg.r, rtl: taken.some((l) => l.rtl), spacer: h });
+  return out;
+}
+
+/** Ruled tables: rules drawn as thin lines or thin filled boxes (Word draws its borders so) that cross one
+ *  another into a grid. The lines of text inside become the table's cells; a line outside keeps its place. */
+function pullGrids(lines: Line[], shapes: Box[], W: number, H: number): Line[] {
+  const inPage = shapes.filter((s) => s.l > -2 && s.r < W + 2 && s.bottom > -2 && s.top < H + 2);
+  const hs = inPage.filter((s) => s.top - s.bottom <= 2 && s.r - s.l >= 6).map((s) => ({ x0: s.l, x1: s.r, y: (s.top + s.bottom) / 2, w: s.top - s.bottom }));
+  const vs = inPage.filter((s) => s.r - s.l <= 2 && s.top - s.bottom >= 6).map((s) => ({ y0: s.bottom, y1: s.top, x: (s.l + s.r) / 2, w: s.r - s.l }));
+  if (hs.length < 2 || vs.length < 2) return lines;
+  // Rules that meet belong to one table.
+  const n = hs.length + vs.length; const up = Array.from({ length: n }, (_, i) => i);
+  const find = (i: number): number => (up[i] === i ? i : (up[i] = find(up[i])));
+  hs.forEach((h, i) => vs.forEach((v, j) => { if (v.x > h.x0 - 2 && v.x < h.x1 + 2 && h.y > v.y0 - 2 && h.y < v.y1 + 2) up[find(i)] = find(hs.length + j); }));
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) (groups.get(find(i)) ?? groups.set(find(i), []).get(find(i))!).push(i);
+  const cluster = (vals: number[]) => { const out: number[] = []; for (const v of [...vals].sort((a, b) => a - b)) if (!out.length || v - out[out.length - 1] > 1.5) out.push(v); return out; };
+  let out = lines;
+  for (const idx of groups.values()) {
+    const gh = idx.filter((i) => i < hs.length).map((i) => hs[i]), gv = idx.filter((i) => i >= hs.length).map((i) => vs[i - hs.length]);
+    if (gh.length < 2 || gv.length < 2) continue;
+    const xs = cluster(gv.map((v) => v.x)), ys = cluster(gh.map((h) => h.y)).reverse();
+    if (xs.length < 2 || ys.length < 2 || xs[xs.length - 1] - xs[0] < 30) continue;
+    const vAt = (x: number, y: number) => gv.some((v) => Math.abs(v.x - x) < 1.6 && v.y0 <= y + 1 && v.y1 >= y - 1);
+    const hAt = (y: number, x: number) => gh.some((h) => Math.abs(h.y - y) < 1.6 && h.x0 <= x + 1 && h.x1 >= x - 1);
+    const rows: GridCell[][] = [];
+    for (let j = 0; j + 1 < ys.length; j++) {
+      const mid = (ys[j] + ys[j + 1]) / 2; const row: GridCell[] = [];
+      let c0 = 0;
+      for (let k = 1; k < xs.length; k++) {
+        if (k < xs.length - 1 && !vAt(xs[k], mid)) continue;
+        const cx = (xs[c0] + xs[k]) / 2;
+        row.push({ c0, span: k - c0, cont: j > 0 && !hAt(ys[j], cx), lines: [] });
+        c0 = k;
+      }
+      rows.push(row);
+    }
+    // A merge only carries on a cell of the same columns.
+    rows.forEach((row, j) => row.forEach((c) => { if (c.cont && !rows[j - 1].some((a) => a.c0 === c.c0 && a.span === c.span)) c.cont = false; }));
+    // The text: each piece to the cell it stands in, line by line.
+    const x0 = xs[0], x1 = xs[xs.length - 1], yTop = ys[0], yBot = ys[ys.length - 1];
+    let used = 0;
+    const kept: Line[] = [];
+    for (const l of out) {
+      if (l.spacer || l.grid) { kept.push(l); continue; }
+      const inside = l.pieces.filter((p) => { const cx = (p.l + p.r) / 2, cy = p.y + p.h * 0.3; return cx > x0 && cx < x1 && cy < yTop && cy > yBot; });
+      if (!inside.length) { kept.push(l); continue; }
+      used++;
+      const byCell = new Map<GridCell, Piece[]>();
+      for (const p of inside) {
+        const cx = (p.l + p.r) / 2, cy = p.y + p.h * 0.3;
+        const j = ys.findIndex((y, k) => k + 1 < ys.length && cy <= y && cy >= ys[k + 1]); if (j < 0) continue;
+        let cell = rows[j].find((c) => cx >= xs[c.c0] && cx <= xs[c.c0 + c.span]); if (!cell) continue;
+        for (let jj = j; cell.cont && jj > 0; jj--) cell = rows[jj - 1].find((a) => a.c0 === cell!.c0 && a.span === cell!.span) ?? cell;
+        (byCell.get(cell) ?? byCell.set(cell, []).get(cell)!).push(p);
+      }
+      for (const [c, ps] of byCell) c.lines.push(ps);
+      const rest = l.pieces.filter((p) => !inside.includes(p));
+      if (rest.some((p) => p.text.trim() && p.text !== '\u2009')) { const ws = rest.filter((p) => p.text !== '\u2009'); kept.push({ ...l, pieces: rest, l: Math.min(...ws.map((p) => p.l)), r: Math.max(...ws.map((p) => p.r)) }); }
+    }
+    if (!used || !rows.some((r) => r.some((c) => c.lines.length))) continue;
+    const rule = Math.max(0.25, median([...gh.map((h) => h.w), ...gv.map((v) => v.w)]));
+    const spec: GridSpec = { xs, ys, rows, rule };
+    // In the flow where the table stands: before the first line below its top.
+    const at = kept.findIndex((l) => l.base < yTop - 1);
+    const gridLine: Line = { pieces: [], base: yTop, size: median(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.h)))) || 10, l: x0, r: x1, rtl: isRtlText(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.text))).join('')), grid: spec };
+    kept.splice(at < 0 ? kept.length : at, 0, gridLine);
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D grid', xs.length - 1, ys.length - 1, used, JSON.stringify(xs.map((x) => +x.toFixed(1))), JSON.stringify(ys.map((y) => +y.toFixed(1))));
+    out = kept;
   }
   return out;
 }
@@ -558,6 +722,49 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     if (!near && !(stretched(h[0]) && stretched(h[1]))) splits[i] = null;
   });
   for (const [li, line] of lines.entries()) {
+    if (line.grid) {
+      closePara(); closeVerse();
+      const g = line.grid; const rtl = line.rtl;
+      const rowsRuns: Run[][][] = []; const cells: Grid['cells'] = [];
+      g.rows.forEach((row) => {
+        const rr: Run[][] = []; const cc: Grid['cells'][number] = [];
+        for (const c of row) {
+          const runs: Run[] = [];
+          const ls = [...c.lines].sort((a, b) => median(b.map((p) => p.y)) - median(a.map((p) => p.y)));
+          ls.forEach((ps, i) => { const rs = runsOf(ps, fonts, rtl); if (i > 0 && runs.length && rs.length) rs[0] = { ...rs[0], br: true }; runs.push(...rs); });
+          const cl = g.xs[c.c0], cr = g.xs[c.c0 + c.span];
+          const all = c.lines.flat().filter((p) => p.text.trim() && p.text !== '\u2009');
+          let align: Para['align'] = 'start'; let pitch = all.length ? median(all.map((p) => p.h)) * 1.25 : 12;
+          if (all.length) {
+            const lo = Math.min(...all.map((p) => p.l)), hi = Math.max(...all.map((p) => p.r));
+            const a = lo - cl, b = cr - hi;
+            if (Math.abs(a - b) < Math.max(3, (cr - cl) * 0.08) && a > 3) align = 'center';
+            else if (rtl ? b > a + 3 && a < 6 : a > b + 3 && b < 6) align = 'end';
+            if (ls.length > 1) pitch = median(ls.slice(1).map((l, i) => median(ls[i].map((p) => p.y)) - median(l.map((p) => p.y))));
+            // (One line fills its row exactly, or the row grows.)
+            else pitch = Math.min(pitch, g.ys[g.rows.indexOf(row)] - g.ys[g.rows.indexOf(row) + 1] - 0.3);
+          }
+          rr.push(c.cont ? [] : runs);
+          cc.push({ span: c.span, vmerge: c.cont ? 'continue' : g.rows.some((r2, j2) => j2 > g.rows.indexOf(row) && r2.some((x) => x.cont && x.c0 === c.c0 && x.span === c.span)) ? 'restart' : undefined, align, vcenter: false, pitch });
+        }
+        rowsRuns.push(rr); cells.push(cc);
+      });
+      // A cell's text sits in the middle of its row when it has room above and below alike.
+      g.rows.forEach((row, j) => row.forEach((c, k) => {
+        const ps = c.lines.flat().filter((p) => p.text.trim()); if (!ps.length || c.cont) return;
+        let bottomY = g.ys[j + 1]; for (let jj = j + 1; jj < g.rows.length && g.rows[jj].some((x) => x.cont && x.c0 === c.c0); jj++) bottomY = g.ys[jj + 1];
+        const top = Math.max(...ps.map((p) => p.y + p.h * 0.8)), bot = Math.min(...ps.map((p) => p.y - p.h * 0.25));
+        const above = g.ys[j] - top, below = bot - bottomY;
+        if (Math.abs(above - below) < Math.max(2, (g.ys[j] - bottomY) * 0.15)) cells[j][k].vcenter = true;
+      }));
+      const size = line.size; const pitch = pitchOf(size);
+      const before = prevBase === null ? 0 : Math.max(0, prevBase - (1 - BASE) * (prevPitch || pitch) - g.ys[0]);
+      const colW = g.xs.slice(1).map((x, i) => x - g.xs[i]);
+      const rowH = g.ys.slice(1).map((y, i) => g.ys[i] - y);
+      blocks.push({ kind: 'grid', rows: rowsRuns, cells, spec: g, colW, rowH, rtl, before, indStart: rtl ? R - g.xs[g.xs.length - 1] : g.xs[0] - L, size, pitch });
+      prevPitch = pitch; prevBase = g.ys[g.ys.length - 1] + (1 - BASE) * pitch;
+      continue;
+    }
     if (line.spacer) {
       closePara(); closeVerse();
       const pitch = line.spacer;
@@ -872,6 +1079,16 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       }
     }
   }
+  // An honorific drawn as one glyph ("ﷺ" read out as "صلى الله عليه وسلم"): its one character, or the words
+  // would take a phrase's room where the page has a sign's.
+  for (const p of pieces) {
+    const lig = HONORIFICS[p.text.replace(/[\s\u0640]+/g, ' ').trim()];
+    if (!lig || p.r - p.l > p.h * 2.5) continue;
+    const glyphs = p.codes?.filter((u) => u[5] > 0) ?? [];
+    if (p.codes && glyphs.length !== 1) continue;
+    p.text = lig;
+    if (glyphs.length === 1) { for (const u of p.codes!) u[1] = ''; glyphs[0][1] = lig; }
+  }
   // Text in a decorative font that carries no letters (private-use codes, or Latin codes standing for
   // Arabic word art on an Arabic page) is not text a reader could use: it stays in the picture.
   const pageRtl = isRtlText(pieces.map((p) => p.text).join(''));
@@ -1073,17 +1290,22 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
   const bodySize = median(body.flatMap((l) => Array(Math.max(1, l.pieces.reduce((n, p) => n + p.text.length, 0))).fill(l.size))) || 12;
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D page', JSON.stringify({ W, H, L, R, bodySize, rule, lines: textLines.map((l) => ({ b: +l.base.toFixed(1), s: +l.size.toFixed(1), l: +l.l.toFixed(1), r: +l.r.toFixed(1), z: header.includes(l) ? 'H' : footer.includes(l) ? 'F' : notesLines.includes(l) ? 'N' : 'B', t: l.pieces.map((p) => p.text).join('|').slice(0, 60), ps: l.pieces.map((p) => [p.text.slice(0, 12), +p.l.toFixed(0), +p.r.toFixed(0), +p.y.toFixed(1), +p.h.toFixed(1)]), gaps: l.pieces.filter((p) => p.text.trim()).sort((x, y) => x.l - y.l).map((p, i, a) => (i ? +(p.l - a[i - 1].r).toFixed(1) : 0)).filter((g) => g > 8) })) }));
   const formulas: Box[] = [];
-  const bodyBlocks = buildBlocks(pullFormulas(body, formulas), fonts, L, R, pitchOf, null);
+  const shapes = findShapes(pdfjs, ol, true);
+  if ((globalThis as { krDebugLine?: string }).krDebugLine === 'shapes') console.warn('P2D shapes', JSON.stringify(shapes.map((s) => [+s.l.toFixed(1), +s.r.toFixed(1), +s.bottom.toFixed(1), +s.top.toFixed(1)])));
+  const boxShapes = shapes.filter((s) => s.r - s.l >= 8 && s.top - s.bottom >= 8);
+  const bodyBlocks = buildBlocks(pullFormulas(pullDiagrams(pullGrids(body, shapes, W, H), boxShapes, formulas, W, H), formulas), fonts, L, R, pitchOf, null);
   const furniture = pinnedFurniture(header, footer, fonts, H);
   const headerBlocks: Block[] = [];
   const footerBlocks: Block[] = [];
   // Footnotes, split at their numbers (and kept whole, for pages whose notes cannot be Word footnotes).
   // In the page's flow the notes follow the text at the distance the page has between them.
+  notesLines = pullGrids(notesLines, shapes, W, H);
   const notesRaw = buildBlocks(notesLines, fonts, L, R, pitchOf, body.length ? body[body.length - 1].base : null);
   const notesBox = notesLines.length ? { top: H - (rule ? rule.y : notesLines[0].base + notesLines[0].size), bottom: H - notesLines[notesLines.length - 1].base + notesLines[notesLines.length - 1].size * 0.4, l: L, r: R } : null;
   const notes: Note[] = [];
   for (const b of buildBlocks(notesLines, fonts, L, R, pitchOf, null)) {
-    if (b.kind !== 'p') continue;
+    // (A table or verse in a note belongs to the note it follows.)
+    if (b.kind !== 'p') { if (notes.length) notes[notes.length - 1].paras.push(b); else notes.push({ num: -1, paras: [b] }); continue; }
     const first = b.runs[0];
     const m = first && (/^\s*[(（]?([0-9٠-٩۰-۹]+)[)）]?\s*/.exec(first.text));
     if (m) {
@@ -1112,7 +1334,8 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     left: Math.max(10, L - 3), right: Math.max(10, W - R - 3),
     header: 6, footer: 6,
   };
-  const pics = withGraphics ? await renderGraphics(page, 2, keepFonts).catch(() => [] as Pic[]) : [];
+  const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
+  const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)]).catch(() => [] as Pic[]) : [];
   if (withGraphics) pics.push(...await renderRegions(page, 3, formulas).catch(() => [] as Pic[]));
   page.cleanup();
   const lastBody = body[body.length - 1];
@@ -1148,6 +1371,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const stretched = new Set<string>();
   for (const pg of pages) for (const b of [...pg.body, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) {
     if (b.kind === 'verse') { for (const row of b.rows) for (const cell of row) for (const r of cell) stretched.add(r.font); }
+    else if (b.kind === 'grid') { for (const row of b.rows) for (const cell of row) for (const r of cell) if (r.text.includes('\u0640')) stretched.add(r.font); }
     else for (const r of b.runs) if (b.kashida || r.text.includes('\u0640')) stretched.add(r.font);
   }
   const alias = buildDocFonts(fonts, store, stretched);
@@ -1159,7 +1383,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   if (alias.size) for (const pg of pages) renameRuns(pg, alias);
 
   const docx = await import('docx');
-  const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak } = docx;
+  const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak, HeightRule, VerticalMergeType, VerticalAlign, ShadingType } = docx;
 
   const usedChars = new Map<string, Set<number>>();
   const runFor = (r: Run, footnotes: Map<number, number> | null) => {
@@ -1234,7 +1458,43 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       })),
     });
   };
-  const blocksFor = (bs: Block[], footnotes: Map<number, number> | null) => bs.map((b) => (b.kind === 'p' ? paraFor(b, footnotes) : verseFor(b, footnotes)));
+  // A ruled table: its columns and rows as the page draws them, each cell's lines as the page breaks them.
+  const gridFor = (g: Grid, footnotes: Map<number, number> | null) => {
+    const pad = 2; // points of room inside each cell
+    const order = <T,>(a: T[]) => (g.rtl ? [...a].reverse() : a);
+    const sz = Math.max(2, Math.min(24, Math.round(g.spec.rule * 8)));
+    const line = { style: BorderStyle.SINGLE, size: sz, color: '000000' };
+    const colTw = g.colW.map((w) => Math.round(w * PT));
+    const colsIn = (c0: number, span: number) => colTw.slice(c0, c0 + span).reduce((a, b) => a + b, 0);
+    return new Table({
+      visuallyRightToLeft: g.rtl,
+      layout: TableLayoutType.FIXED,
+      width: { size: colTw.reduce((a, b) => a + b, 0), type: WidthType.DXA },
+      columnWidths: order(colTw),
+      indent: { size: Math.round((g.indStart + 3 + pad) * PT), type: WidthType.DXA },
+      borders: { top: line, bottom: line, left: line, right: line, insideHorizontal: line, insideVertical: line },
+      rows: g.rows.map((row, i) => new TableRow({
+        height: { value: Math.round(g.rowH[i] * PT), rule: HeightRule.ATLEAST },
+        children: order(row.map((runs, k) => ({ runs, meta: g.cells[i][k], spec: g.spec.rows[i][k] }))).map(({ runs, meta, spec }) => new TableCell({
+          width: { size: colsIn(spec.c0, spec.span), type: WidthType.DXA },
+          ...(meta.span > 1 ? { columnSpan: meta.span } : {}),
+          ...(meta.vmerge ? { verticalMerge: meta.vmerge === 'restart' ? VerticalMergeType.RESTART : VerticalMergeType.CONTINUE } : {}),
+          verticalAlign: meta.vcenter ? VerticalAlign.CENTER : VerticalAlign.TOP,
+          ...(spec.fill ? { shading: { fill: spec.fill, type: ShadingType.CLEAR, color: 'auto' } } : {}),
+          margins: { top: 0, bottom: 0, left: Math.round(pad * PT), right: Math.round(pad * PT) },
+          children: [new Paragraph({
+            bidirectional: g.rtl, widowControl: false,
+            alignment: alignOf(meta.align),
+            spacing: { before: i === 0 ? 0 : 0, after: 0, line: Math.round(meta.pitch * PT), lineRule: LineRuleType.EXACT },
+            children: runs.map((r) => runFor(r, footnotes)),
+          })],
+        })),
+      })),
+    });
+  };
+  // (A table has no space above of its own: an empty line of that height goes before it.)
+  const gridBlock = (g: Grid, footnotes: Map<number, number> | null) => (g.before > 1 ? [new Paragraph({ spacing: { before: 0, after: 0, line: Math.round(g.before * PT), lineRule: LineRuleType.EXACT }, children: [new TextRun({ text: '', size: 2 })] }), gridFor(g, footnotes)] : [gridFor(g, footnotes)]);
+  const blocksFor = (bs: Block[], footnotes: Map<number, number> | null) => bs.flatMap((b) => (b.kind === 'p' ? [paraFor(b, footnotes)] : b.kind === 'grid' ? gridBlock(b, footnotes) : [verseFor(b, footnotes)]));
 
   const footnoteDefs: Record<number, { children: InstanceType<typeof Paragraph>[] }> = {};
   let noteId = 1;
@@ -1248,7 +1508,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       const referenced = pg.body.some((b) => (b.kind === 'p' ? [b.runs] : b.rows.flat()).some((rs) => rs.some((r) => r.note === n.num)));
       if (!referenced) continue;
       map.set(n.num, noteId);
-      footnoteDefs[noteId] = { children: n.paras.map((p) => paraFor(p, null, { before: 0 })) };
+      footnoteDefs[noteId] = { children: n.paras.flatMap((p) => (p.kind === 'p' ? [paraFor(p, null, { before: 0 })] : blocksFor([p], null))) as InstanceType<typeof Paragraph>[] };
       noteId++;
     }
     // Otherwise the note area stays in the page's flow, numbers and all, right where the page has it.
