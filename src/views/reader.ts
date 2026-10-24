@@ -1503,6 +1503,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('external', t('sharePage'), () => void savePage(true)),
         item('copy', t('copyPageImage'), () => void savePage('copy')),
         item('images', t('savePagesRange'), () => savePagesSheet()),
+        item('file', t('toolExtract'), () => void import('../ui/pdftools').then((m) => m.extractFromBook(book))),
+        item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
         item('type', t('visualOptions'), openPdfOptions),

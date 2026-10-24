@@ -497,7 +497,188 @@ export function uprightTurn(img: Img, rtl = false): 0 | 1 | 3 {
  * the page, both in fractions of the picture, from its middle), its upright rules as x = e + f(e)·y + g·y²,
  * and the margins to cut away (the book's edge, the next page beyond the fold), as fractions.
  */
-export type Curve = { b: [number, number, number]; c: [number, number, number]; aLo: number; aHi: number; f: [number, number]; g: number; eLo: number; eHi: number; crop: { l: number; r: number; t: number; b: number } };
+export type Curve = { b: [number, number, number]; c: [number, number, number]; aLo: number; aHi: number; f: [number, number]; g: number; eLo: number; eHi: number; crop: { l: number; r: number; t: number; b: number }; sheet?: Sheet };
+
+/**
+ * The page as a sheet in space, seen by the camera: flat across, bent along its width (a book's page curls
+ * toward the spine) as z = W·u(1−u)(c1 + c2·u + c3·u²), turned and placed by `rv`/`tv` and seen with focal
+ * length `f`. Coordinates are the flattened photo's, centred, in units of half its longer side; the page is
+ * cut from x0..x1 × y0..y1 of its own (flat) coordinates.
+ */
+export type Sheet = { rv: number[]; tv: number[]; c: number[]; W: number; f: number; x0: number; x1: number; y0: number; y1: number };
+
+function rodrigues(r: number[]): number[] {
+  const th = Math.hypot(r[0], r[1], r[2]);
+  if (th < 1e-12) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const kx = r[0] / th, ky = r[1] / th, kz = r[2] / th, c = Math.cos(th), s = Math.sin(th), v = 1 - c;
+  return [c + kx * kx * v, kx * ky * v - kz * s, kx * kz * v + ky * s, ky * kx * v + kz * s, c + ky * ky * v, ky * kz * v - kx * s, kz * kx * v - ky * s, kz * ky * v + kx * s, c + kz * kz * v];
+}
+/** Where a point of the sheet (X across, Y down) is seen in the photo. */
+function sheetProject(R: number[], tv: number[], c: number[], W: number, f: number, X: number, Y: number): [number, number] {
+  const u = X / W, v = Y / W; const Z = W * u * (1 - u) * (c[0] + c[1] * u + c[2] * u * u + v * (c[3] + c[4] * u));
+  const x = R[0] * X + R[1] * Y + R[2] * Z + tv[0], y = R[3] * X + R[4] * Y + R[5] * Z + tv[1], z = R[6] * X + R[7] * Y + R[8] * Z + tv[2];
+  const zz = Math.abs(z) < 1e-9 ? 1e-9 : z;
+  return [(f * x) / zz, (f * y) / zz];
+}
+
+/**
+ * Fit the sheet to the lines of print (each straight and level on the page: one Y for all its points) and the
+ * upright rules (one X for all theirs) — bundle adjustment with the points' own positions along their line
+ * eliminated (Schur complement), Levenberg–Marquardt. Points are in the photo's centred units.
+ */
+function fitSheet(lines: { pts: [number, number][] }[], rules: { pts: [number, number][] }[]): { sheet: Sheet; rms: number; lines: number; lineErr: number[]; ruleX: number[] } | null {
+  const f = 1.2;
+  // The direction of the lines, and each point's place along and across them, start the fit.
+  let sx = 0, sy = 0;
+  for (const l of lines) { const a = l.pts[0], b = l.pts[l.pts.length - 1]; let dx = b[0] - a[0], dy = b[1] - a[1]; if (dx < 0) { dx = -dx; dy = -dy; } sx += dx; sy += dy; }
+  const th = Math.atan2(sy, sx); const ca = Math.cos(th), sa = Math.sin(th);
+  const along = (p: [number, number]) => p[0] * ca + p[1] * sa, across = (p: [number, number]) => -p[0] * sa + p[1] * ca;
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const l of [...lines, ...rules]) for (const p of l.pts) { const a = along(p), b = across(p); if (a < xmin) xmin = a; if (a > xmax) xmax = a; if (b < ymin) ymin = b; if (b > ymax) ymax = b; }
+  const W = xmax - xmin; if (W <= 0.1) return null;
+  // (Globals: turn 3, place 3, bend 5 — the bend along the width, and how it changes down the page.)
+  const NP = 11;
+  const nL = lines.length, nR = rules.length, G = NP + nL + nR;
+  const g = new Float64Array(G);
+  g[2] = th; g[3] = xmin * ca - ymin * sa; g[4] = xmin * sa + ymin * ca; g[5] = f;
+  type Ob = { u: number; v: number; kind: 0 | 1; q: number; li: number };
+  const obs: Ob[] = []; const loc: number[] = [];
+  lines.forEach((l, i) => { let m = 0; for (const p of l.pts) m += across(p); g[NP + i] = m / l.pts.length - ymin; for (const p of l.pts) { obs.push({ u: p[0], v: p[1], kind: 0, q: NP + i, li: i }); loc.push(along(p) - xmin); } });
+  rules.forEach((l, i) => { let m = 0; for (const p of l.pts) m += along(p); g[NP + nL + i] = m / l.pts.length - xmin; for (const p of l.pts) { obs.push({ u: p[0], v: p[1], kind: 1, q: NP + nL + i, li: -1 }); loc.push(across(p) - ymin); } });
+  const M = obs.length; const L = Float64Array.from(loc);
+  const pointOf = (gg: Float64Array, ll: Float64Array, j: number): [number, number] => { const o = obs[j]; return o.kind === 0 ? [ll[j], gg[o.q]] : [gg[o.q], ll[j]]; };
+  const cost = (gg: Float64Array, ll: Float64Array) => { const R = rodrigues([gg[0], gg[1], gg[2]]); const tv = [gg[3], gg[4], gg[5]], c = [gg[6], gg[7], gg[8], gg[9], gg[10]]; let s = 0; for (let j = 0; j < M; j++) { const [X, Y] = pointOf(gg, ll, j); const p = sheetProject(R, tv, c, W, f, X, Y); s += (p[0] - obs[j].u) ** 2 + (p[1] - obs[j].v) ** 2; } return s; };
+  let lambda = 1e-3; let cur = cost(g, L);
+  const eps = 1e-6;
+  const A = new Float64Array(G * G), bg = new Float64Array(G);
+  const NB = NP + 1;
+  const Dj = new Float64Array(M), Bj = new Float64Array(M * NB), blj = new Float64Array(M);
+  const idxOf = (q: number) => { const a = new Array(NB); for (let i = 0; i < NP; i++) a[i] = i; a[NP] = q; return a; };
+  for (let it = 0; it < 40; it++) {
+    A.fill(0); bg.fill(0);
+    const R0 = rodrigues([g[0], g[1], g[2]]);
+    const Rs = [0, 1, 2].map((k) => { const r = [g[0], g[1], g[2]]; r[k] += eps; return rodrigues(r); });
+    const tv0 = [g[3], g[4], g[5]], c0 = [g[6], g[7], g[8], g[9], g[10]];
+    for (let j = 0; j < M; j++) {
+      const o = obs[j]; const [X, Y] = pointOf(g, L, j);
+      const p0 = sheetProject(R0, tv0, c0, W, f, X, Y); const ru = p0[0] - o.u, rv = p0[1] - o.v;
+      const J: number[] = new Array(2 * NB);
+      for (let k = 0; k < NP; k++) {
+        let p: [number, number];
+        if (k < 3) p = sheetProject(Rs[k], tv0, c0, W, f, X, Y);
+        else if (k < 6) { const t = tv0.slice(); t[k - 3] += eps; p = sheetProject(R0, t, c0, W, f, X, Y); }
+        else { const c = c0.slice(); c[k - 6] += eps; p = sheetProject(R0, tv0, c, W, f, X, Y); }
+        J[2 * k] = (p[0] - p0[0]) / eps; J[2 * k + 1] = (p[1] - p0[1]) / eps;
+      }
+      // (The distance stays put: a page twice as large twice as far looks almost the same, and left free the
+      // fit drifts along that line.)
+      J[10] = J[11] = 0;
+      const pq = o.kind === 0 ? sheetProject(R0, tv0, c0, W, f, X, Y + eps) : sheetProject(R0, tv0, c0, W, f, X + eps, Y);
+      J[2 * NP] = (pq[0] - p0[0]) / eps; J[2 * NP + 1] = (pq[1] - p0[1]) / eps;
+      const pl = o.kind === 0 ? sheetProject(R0, tv0, c0, W, f, X + eps, Y) : sheetProject(R0, tv0, c0, W, f, X, Y + eps);
+      const lu = (pl[0] - p0[0]) / eps, lv = (pl[1] - p0[1]) / eps;
+      const idx = idxOf(o.q);
+      for (let a = 0; a < NB; a++) {
+        const ja0 = J[2 * a], ja1 = J[2 * a + 1]; const ia = idx[a];
+        bg[ia] += ja0 * ru + ja1 * rv;
+        for (let b = 0; b < NB; b++) A[ia * G + idx[b]] += ja0 * J[2 * b] + ja1 * J[2 * b + 1];
+        Bj[j * NB + a] = ja0 * lu + ja1 * lv;
+      }
+      Dj[j] = lu * lu + lv * lv; blj[j] = lu * ru + lv * rv;
+    }
+    let improved = false;
+    for (let tries = 0; tries < 8 && !improved; tries++) {
+      const S = Float64Array.from(A); const rhs = Float64Array.from(bg);
+      for (let a = 0; a < G; a++) S[a * G + a] += lambda * (A[a * G + a] + 1e-9);
+      // (The bend's change down the page is held back a little: little print may say much about it.)
+      // (The bend is held back toward flat — gently across, more for its change down the page — so where the
+      // print says little, the sheet stays plain rather than inventing folds.)
+      for (let q = 6; q < NP; q++) { const mu = (q >= 9 ? 3e-3 : 3e-4) * M; S[q * G + q] += mu; rhs[q] += mu * g[q]; }
+      for (let j = 0; j < M; j++) {
+        const d = Dj[j] * (1 + lambda) + 1e-12; const q = obs[j].q;
+        const idx = idxOf(q);
+        for (let a = 0; a < NB; a++) { const ba = Bj[j * NB + a] / d; rhs[idx[a]] -= ba * blj[j]; for (let b = 0; b < NB; b++) S[idx[a] * G + idx[b]] -= ba * Bj[j * NB + b]; }
+      }
+      // Solve S δ = −rhs (Gaussian elimination with partial pivoting).
+      const n = G; const Mx = new Float64Array(n * (n + 1));
+      for (let a = 0; a < n; a++) { for (let b = 0; b < n; b++) Mx[a * (n + 1) + b] = S[a * G + b]; Mx[a * (n + 1) + n] = -rhs[a]; }
+      let ok = true;
+      for (let i = 0; i < n && ok; i++) {
+        let pv = i; for (let r = i + 1; r < n; r++) if (Math.abs(Mx[r * (n + 1) + i]) > Math.abs(Mx[pv * (n + 1) + i])) pv = r;
+        if (Math.abs(Mx[pv * (n + 1) + i]) < 1e-15) { ok = false; break; }
+        if (pv !== i) for (let c = 0; c <= n; c++) { const tmp = Mx[i * (n + 1) + c]; Mx[i * (n + 1) + c] = Mx[pv * (n + 1) + c]; Mx[pv * (n + 1) + c] = tmp; }
+        for (let r = 0; r < n; r++) if (r !== i) { const fct = Mx[r * (n + 1) + i] / Mx[i * (n + 1) + i]; if (fct) for (let c = i; c <= n; c++) Mx[r * (n + 1) + c] -= fct * Mx[i * (n + 1) + c]; }
+      }
+      if (!ok) { lambda *= 10; continue; }
+      const dg = new Float64Array(n); for (let i = 0; i < n; i++) dg[i] = Mx[i * (n + 1) + n] / Mx[i * (n + 1) + i];
+      const g2 = Float64Array.from(g); for (let i = 0; i < n; i++) g2[i] += dg[i];
+      const L2 = Float64Array.from(L);
+      for (let j = 0; j < M; j++) { const d = Dj[j] * (1 + lambda) + 1e-12; const q = obs[j].q; let s2 = blj[j]; for (let a = 0; a < NP; a++) s2 += Bj[j * NB + a] * dg[a]; s2 += Bj[j * NB + NP] * dg[q]; L2[j] -= s2 / d; }
+      const c2 = cost(g2, L2);
+      if (c2 < cur) { g.set(g2); L.set(L2); const gain = cur - c2; cur = c2; lambda = Math.max(1e-9, lambda / 3); improved = true; if (gain < 1e-12 * M) it = 1e9; }
+      else lambda *= 4;
+    }
+    if (!improved) break;
+  }
+  const rms = Math.sqrt(cur / M);
+  const lineErr = new Array(nL).fill(0), lineN = new Array(nL).fill(0);
+  { const R = rodrigues([g[0], g[1], g[2]]); for (let j = 0; j < M; j++) { const o = obs[j]; if (o.kind) continue; const [X, Y] = pointOf(g, L, j); const p = sheetProject(R, [g[3], g[4], g[5]], [g[6], g[7], g[8], g[9], g[10]], W, f, X, Y); lineErr[o.li] += (p[0] - o.u) ** 2 + (p[1] - o.v) ** 2; lineN[o.li]++; } }
+  for (let i = 0; i < nL; i++) lineErr[i] = Math.sqrt(lineErr[i] / Math.max(1, lineN[i]));
+  // The page: where its print is, with a margin; lines are their middles, so half a line more.
+  const Ys = Array.from(g.slice(NP, NP + nL)).sort((a, b) => a - b);
+  const gaps = Ys.slice(1).map((y, i) => y - Ys[i]).filter((d) => d > 1e-4).sort((a, b) => a - b);
+  const pitch = gaps.length ? gaps[gaps.length >> 1] : 0.03;
+  let x0 = Infinity, x1 = -Infinity, y0 = Ys[0] - pitch * 0.7, y1 = Ys[Ys.length - 1] + pitch * 0.7;
+  for (let j = 0; j < M; j++) { const [X, Y] = pointOf(g, L, j); if (X < x0) x0 = X; if (X > x1) x1 = X; if (obs[j].kind === 1) { if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; } }
+  const m = 0.035 * Math.max(x1 - x0, y1 - y0);
+  return { sheet: { rv: [g[0], g[1], g[2]], tv: [g[3], g[4], g[5]], c: [g[6], g[7], g[8], g[9], g[10]], W, f, x0: x0 - m, x1: x1 + m, y0: y0 - m, y1: y1 + m }, rms, lines: nL, lineErr, ruleX: Array.from(g.slice(NP + nL, NP + nL + nR)) };
+}
+
+/** The page cut from the photo as the sheet says, flat: each output pixel's place on the sheet seen through
+ *  the camera (exactly on a coarse grid, in between by interpolation). */
+/** Rows and columns along the edges that mostly fall outside the photo (alpha 0) cut off; what is left
+ *  outside within the page becomes paper (white). */
+function cropOutside(out: Uint8ClampedArray, ow: number, oh: number, frac: number): Img {
+  const bad = (x: number, y: number) => out[(y * ow + x) * 4 + 3] === 0;
+  const rowBad = (y: number) => { let c = 0; for (let x = 0; x < ow; x += 2) if (bad(x, y)) c++; return c > (ow / 2) * frac; };
+  const colBad = (x: number, y0: number, y1: number) => { let c = 0; for (let y = y0; y < y1; y += 2) if (bad(x, y)) c++; return c > ((y1 - y0) / 2) * Math.max(frac, 0.6); };
+  let top = 0, bot = oh; while (top < oh * 0.25 && rowBad(top)) top++; while (bot > oh * 0.75 && rowBad(bot - 1)) bot--;
+  // (Columns only when they are mostly outside: a page's side is not to be cut for a corner's sake.)
+  let left = 0, right = ow; while (left < ow * 0.25 && colBad(left, top, bot)) left++; while (right > ow * 0.75 && colBad(right - 1, top, bot)) right--;
+  const cw = right - left, ch = bot - top;
+  const res = new Uint8ClampedArray(cw * ch * 4);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const i = ((y + top) * ow + x + left) * 4, o = (y * cw + x) * 4; if (out[i + 3]) { res[o] = out[i]; res[o + 1] = out[i + 1]; res[o + 2] = out[i + 2]; } else res[o] = res[o + 1] = res[o + 2] = 255; res[o + 3] = 255; }
+  return { data: res, width: cw, height: ch };
+}
+
+function sheetUnwarp(img: Img, sh: Sheet): Img {
+  const { width: W, height: H, data: d } = img; const kp = Math.max(W, H) / 2;
+  const R = rodrigues(sh.rv); const step = 8;
+  // As many pixels as the page has in the photo: the projected area of the page over its own area.
+  let area = 0; { const nG = 12; const P = (i: number, j: number) => sheetProject(R, sh.tv, sh.c, sh.W, sh.f, sh.x0 + ((sh.x1 - sh.x0) * i) / nG, sh.y0 + ((sh.y1 - sh.y0) * j) / nG);
+    for (let j = 0; j < nG; j++) for (let i = 0; i < nG; i++) { const a = P(i, j), b = P(i + 1, j), c = P(i + 1, j + 1), e = P(i, j + 1); area += Math.abs((a[0] * b[1] - b[0] * a[1]) + (b[0] * c[1] - c[0] * b[1]) + (c[0] * e[1] - e[0] * c[1]) + (e[0] * a[1] - a[0] * e[1])) / 2; } }
+  const k = clamp(Math.sqrt((area * kp * kp) / ((sh.x1 - sh.x0) * (sh.y1 - sh.y0))), 10, 20000);
+  const ow = Math.max(1, Math.round((sh.x1 - sh.x0) * k)), oh = Math.max(1, Math.round((sh.y1 - sh.y0) * k));
+  const gw = Math.ceil(ow / step) + 1, gh = Math.ceil(oh / step) + 1; const gx = new Float32Array(gw * gh), gy = new Float32Array(gw * gh);
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) { const p = sheetProject(R, sh.tv, sh.c, sh.W, sh.f, sh.x0 + (i * step) / k, sh.y0 + (j * step) / k); gx[j * gw + i] = p[0] * kp + W / 2 - 0.5; gy[j * gw + i] = p[1] * kp + H / 2 - 0.5; }
+  const out = new Uint8ClampedArray(ow * oh * 4);
+  for (let y = 0; y < oh; y++) {
+    const fy = y / step, j0 = Math.min(gh - 2, Math.floor(fy)), ty = fy - j0;
+    for (let x = 0; x < ow; x++) {
+      const fx = x / step, i0 = Math.min(gw - 2, Math.floor(fx)), tx = fx - i0;
+      const a = j0 * gw + i0;
+      const sx = (gx[a] * (1 - tx) + gx[a + 1] * tx) * (1 - ty) + (gx[a + gw] * (1 - tx) + gx[a + gw + 1] * tx) * ty;
+      const sy = (gy[a] * (1 - tx) + gy[a + 1] * tx) * (1 - ty) + (gy[a + gw] * (1 - tx) + gy[a + gw + 1] * tx) * ty;
+      const o = (y * ow + x) * 4; out[o + 3] = 255;
+      if (sx < -1 || sy < -1 || sx > W || sy > H) { out[o] = out[o + 1] = out[o + 2] = 255; out[o + 3] = 0; continue; }
+      const x0 = clamp(Math.floor(sx), 0, W - 1), y0 = clamp(Math.floor(sy), 0, H - 1), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
+      const fx2 = clamp(sx - x0, 0, 1), fy2 = clamp(sy - y0, 0, 1);
+      const A2 = (y0 * W + x0) * 4, B2 = (y0 * W + x1) * 4, C2 = (y1 * W + x0) * 4, E2 = (y1 * W + x1) * 4;
+      for (let ch = 0; ch < 3; ch++) out[o + ch] = (d[A2 + ch] * (1 - fx2) + d[B2 + ch] * fx2) * (1 - fy2) + (d[C2 + ch] * (1 - fx2) + d[E2 + ch] * fx2) * fy2;
+    }
+  }
+  return cropOutside(out, ow, oh, 0.3);
+}
 
 /** Weighted least squares (normal equations, small systems). */
 function lsq(rows: number[][], ys: number[], ws: number[]): number[] | null {
@@ -535,13 +716,27 @@ export function findCurve(img: Img): Curve | null {
   }
   const ruleW = new Uint8Array(n); for (let i = 0; i < n; i++) if (rule[i]) { const x = i % w; for (let d = -3; d <= 3; d++) if (x + d >= 0 && x + d < w) ruleW[i + d] = 1; }
   for (let i = 0; i < n; i++) if (ruleW[i]) ink[i] = 0;
-  // Lines of print: ink smeared along the rows into bands.
-  const gapMax = Math.round(w / 45);
+  // Lines of print: ink smeared along the rows into bands, as far as the gap between words (from the size of
+  // the print: the usual height of a letter's ink).
+  let gapMax = Math.round(w / 45);
+  {
+    const hs: number[] = []; const seen = new Uint8Array(n); const st: number[] = [];
+    for (let s0 = 0; s0 < n && hs.length < 4000; s0 += 7) {
+      if (!ink[s0] || seen[s0]) continue;
+      let y0 = h, y1 = -1, cnt = 0; st.push(s0); seen[s0] = 1;
+      while (st.length && cnt < 4000) { const i = st.pop()!; cnt++; const x = i % w, y = (i / w) | 0; if (y < y0) y0 = y; if (y > y1) y1 = y; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && ink[j] && !seen[j]) { seen[j] = 1; st.push(j); } }
+      st.length = 0;
+      if (cnt >= 6 && y1 - y0 >= 3) hs.push(y1 - y0 + 1);
+    }
+    if (hs.length > 20) { hs.sort((a, b) => a - b); const charH = hs[Math.floor(hs.length * 0.7)]; gapMax = clamp(Math.round(charH * 1.3), 6, Math.round(w / 25)); }
+  }
   const band = new Uint8Array(n);
   for (let y = 0; y < h; y++) {
     let last = -1;
     for (let x = 0; x < w; x++) { const i = y * w + x; if (ruleW[i]) { last = -1; continue; } if (ink[i]) { if (last >= 0 && x - last <= gapMax) for (let k = last; k <= x; k++) band[y * w + k] = 1; band[i] = 1; last = x; } }
   }
+  // (Rows of one line that the letters' shapes leave apart are closed up: a small gap down each column.)
+  for (let x = 0; x < w; x++) { let last = -1; for (let y = 0; y < h; y++) { const i = y * w + x; if (band[i]) { if (last >= 0 && y - last <= 3) for (let k = last + 1; k < y; k++) band[k * w + x] = 1; last = y; } } }
   // Bands thinner than print (stray specks) or joined lines are sorted out by their shape below.
   const lab = new Int32Array(n).fill(-1); const stack: number[] = [];
   type Line = { xs: number[]; ys: number[]; wt: number; a: number };
@@ -561,12 +756,14 @@ export function findCurve(img: Img): Curve | null {
     const xs: number[] = [], ys: number[] = [];
     for (let x = 0; x < bw; x += 3) if (cnt[x]) { xs.push((x0 + x + 0.5) / w - 0.5); ys.push((sum[x] / cnt[x] + 0.5) / h - 0.5); }
     if (xs.length < 8) continue;
+    // A band that wanders (two lines joined at a slant, a picture) is no line.
+    { const r = lsq(xs.map((x) => [1, x, x * x]), ys, xs.map(() => 1)); if (!r) continue; let e = 0; xs.forEach((x, j) => { e += (ys[j] - r[0] - r[1] * x - r[2] * x * x) ** 2; }); if (Math.sqrt(e / xs.length) * h > Math.max(1.5, (thick / Math.max(1, tc)) * 0.4)) continue; }
     lines.push({ xs, ys, wt: bw / w, a: 0, thick: thick / Math.max(1, tc) } as Line & { thick: number });
   }
   if (lines.length < 5) return null;
   // Lines much thicker than most are two lines joined (or a picture): left out.
   const th = (lines as (Line & { thick: number })[]).map((l) => l.thick).sort((a, b) => a - b); const medT = th[th.length >> 1];
-  const good = (lines as (Line & { thick: number })[]).filter((l) => l.thick < medT * 1.8);
+  const good = (lines as (Line & { thick: number })[]).filter((l) => l.thick < medT * 3);
   if (good.length < 5) return null;
   // Each line's own fit first (its place a), then slope and bend as smooth functions of a, fitted together.
   for (const l of good) { const r = lsq(l.xs.map((x) => [1, x, x * x]), l.ys, l.xs.map(() => 1)) ?? [l.ys.reduce((s, v) => s + v, 0) / l.ys.length, 0, 0]; l.a = r[0]; }
@@ -600,7 +797,7 @@ export function findCurve(img: Img): Curve | null {
     if (disp < 0.004 || Math.sqrt(e1 / m) > Math.sqrt(e0 / m) * 0.6) { B = [0, 0, 0]; C = [0, 0, 0]; }
   }
   // Upright rules.
-  const rl = new Int32Array(n).fill(-1); const rules: { e: number; f: number; g: number; wt: number }[] = [];
+  const rl = new Int32Array(n).fill(-1); const rules: { e: number; f: number; g: number; wt: number }[] = []; const rulePts: [number, number][][] = [];
   for (let s = 0; s < n; s++) {
     if (!rule[s] || rl[s] >= 0) continue;
     const px: number[] = []; stack.push(s); rl[s] = s;
@@ -610,6 +807,7 @@ export function findCurve(img: Img): Curve | null {
     if (ys.length < 10 || (ys[ys.length - 1] - ys[0]) < 0.25) continue;
     const r = lsq(ys.map((y) => [1, y, y * y]), xs, ys.map(() => 1)); if (!r) continue;
     rules.push({ e: r[0], f: r[1], g: r[2], wt: ys[ys.length - 1] - ys[0] });
+    rulePts.push(xs.map((x, k) => [x, ys[k]]));
   }
   let F: [number, number] = [0, 0], G = 0;
   if (rules.length) {
@@ -617,8 +815,71 @@ export function findCurve(img: Img): Curve | null {
     if (rules.length >= 2 && Math.max(...rules.map((r) => r.e)) - Math.min(...rules.map((r) => r.e)) > 0.2) { const s = lsq(rules.map((r) => [1, r.e]), rules.map((r) => r.f), rules.map((r) => r.wt)); if (s) F = [s[0], s[1]]; }
     else F = [rules.reduce((s, r) => s + r.f * r.wt, 0) / tw, 0];
   }
-  if (!B.some((v) => v) && !rules.some((r) => Math.abs(r.f) > 0.008 || Math.abs(r.g) > 0.008)) return null;
-  const cv: Curve = { b: B as Curve['b'], c: C as Curve['c'], aLo: as[0], aHi: as[as.length - 1], f: F, g: G, eLo: rules.length ? Math.min(...rules.map((r) => r.e)) : 0, eHi: rules.length ? Math.max(...rules.map((r) => r.e)) : 0, crop: { l: 0, r: 0, t: 0, b: 0 } };
+  const bent = B.some((v) => v) || rules.some((r) => Math.abs(r.f) > 0.008 || Math.abs(r.g) > 0.008);
+  if (!bent) return null;
+  // The sheet in space, when it explains the print well: perspective and curl together, the page's width
+  // even across (the far side of a page is seen smaller).
+  let sheet: Sheet | undefined;
+  {
+    const k = 2 / Math.max(w, h);
+    const toN = (x: number, y: number): [number, number] => [x * w * k, y * h * k];
+    const pick = (xs: number[], ys: number[], most: number) => { const out: [number, number][] = []; const stp = Math.max(1, Math.floor(xs.length / most)); for (let j = 0; j < xs.length; j += stp) out.push(toN(xs[j], ys[j])); return out; };
+    const lns = use.map((l) => ({ pts: pick(l.xs, l.ys, 14) }));
+    const rls = rulePts.map((r) => ({ pts: pick(r.map((p) => p[0]), r.map((p) => p[1]), 20) }));
+    try {
+      let fit = fitSheet(lns, rls);
+      // Lines the sheet does not explain (joined, or part of a picture) are left out, and it is fitted again.
+      for (let round = 0; fit && round < 2; round++) {
+        const errs = [...fit.lineErr].sort((a, b) => a - b); const med = errs[errs.length >> 1];
+        const lim = Math.max(med * 2.5, 1.2 * k);
+        const keep = lns.filter((_, i) => fit!.lineErr[i] <= lim);
+        if (keep.length === lns.length || keep.length < 5) break;
+        lns.splice(0, lns.length, ...keep); fit = fitSheet(lns, rls);
+      }
+      // How much the sheet magnifies (area) at a point of it; NaN outside the photo.
+      const magnif = (sh: Sheet, R: number[], X: number, Y: number) => {
+        const e = 0.01; const p = sheetProject(R, sh.tv, sh.c, sh.W, sh.f, X, Y), px = sheetProject(R, sh.tv, sh.c, sh.W, sh.f, X + e, Y), py = sheetProject(R, sh.tv, sh.c, sh.W, sh.f, X, Y + e);
+        if (Math.abs(p[0] / k) > w / 2 || Math.abs(p[1] / k) > h / 2) return NaN;
+        return ((px[0] - p[0]) * (py[1] - p[1]) - (px[1] - p[1]) * (py[0] - p[0])) / (e * e);
+      };
+      // A sheet must be a plausible page where its print is: in front of the camera, not folded over, its
+      // scale across that part within reason.
+      let lo = Infinity, hi = 0;
+      if (fit) {
+        const sh = fit.sheet; const R = rodrigues(sh.rv); let ok = true;
+        for (let j = 0; j <= 8; j++) for (let i = 0; i <= 8; i++) {
+          const d = magnif(sh, R, sh.x0 + ((sh.x1 - sh.x0) * i) / 8, sh.y0 + ((sh.y1 - sh.y0) * j) / 8);
+          if (Number.isNaN(d)) continue; if (!(d > 0)) ok = false; lo = Math.min(lo, d); hi = Math.max(hi, d);
+        }
+        if (!ok || !(hi > 0) || hi > lo * 4 || Math.max(...sh.c.map(Math.abs)) > 1.5) fit = null;
+      }
+      // The page's extent: where its ink is, seen flat (the lines found may not reach every word) — but only as
+      // far as the sheet stays as plausible as where the print was.
+      if (fit) {
+        const sh = { ...fit.sheet }; const padX = (sh.x1 - sh.x0) * 0.5, padY = (sh.y1 - sh.y0) * 0.3;
+        sh.x0 -= padX; sh.x1 += padX; sh.y0 -= padY; sh.y1 += padY;
+        const R = rodrigues(sh.rv); const step = 0.006; let ex0 = Infinity, ex1 = -Infinity, ey0 = Infinity, ey1 = -Infinity;
+        for (let Y = sh.y0; Y <= sh.y1; Y += step) for (let X = sh.x0; X <= sh.x1; X += step) {
+          const p = sheetProject(R, sh.tv, sh.c, sh.W, sh.f, X, Y); const px = Math.round(p[0] / k + w / 2), py = Math.round(p[1] / k + h / 2);
+          if (px < 1 || py < 1 || px >= w - 1 || py >= h - 1) continue;
+          if (!ink[py * w + px] && !rule[py * w + px]) continue;
+          if (X < ex0 || X > ex1 || Y < ey0 || Y > ey1) { const d = magnif(sh, R, X, Y); if (!(d > lo / 2 && d < hi * 2)) continue; }
+          if (X < ex0) ex0 = X; if (X > ex1) ex1 = X; if (Y < ey0) ey0 = Y; if (Y > ey1) ey1 = Y;
+        }
+        if (ex1 > ex0) {
+          // A rule near a side is the page's frame: past it lies only the margin — or the next page beyond the fold.
+          const span = ex1 - ex0;
+          for (const X of fit.ruleX) {
+            if (X > ex0 + span * 0.8 && X < ex1) ex1 = Math.min(ex1, X + span * 0.025);
+            if (X < ex0 + span * 0.2 && X > ex0) ex0 = Math.max(ex0, X - span * 0.025);
+          }
+          const mg = 0.025 * Math.max(ex1 - ex0, ey1 - ey0); fit.sheet = { ...fit.sheet, x0: ex0 - mg, x1: ex1 + mg, y0: ey0 - mg, y1: ey1 + mg };
+        }
+      }
+      if (fit && fit.rms < 7 / Math.max(w, h)) sheet = fit.sheet;
+    } catch { /* the simpler model stands */ }
+  }
+  const cv: Curve = { sheet, b: B as Curve['b'], c: C as Curve['c'], aLo: as[0], aHi: as[as.length - 1], f: F, g: G, eLo: rules.length ? Math.min(...rules.map((r) => r.e)) : 0, eHi: rules.length ? Math.max(...rules.map((r) => r.e)) : 0, crop: { l: 0, r: 0, t: 0, b: 0 } };
   return cv;
 }
 
@@ -631,6 +892,7 @@ function curveSource(cv: Curve, u: number, v: number, bv: number, cvv: number, f
 
 /** The page with its lines straightened (and its margins cut as the curve says). */
 export function unwarp(img: Img, cv: Curve): Img {
+  if (cv.sheet) return sheetUnwarp(img, cv.sheet);
   const { width: W, height: H, data: d } = img;
   const { l, r, t, b } = cv.crop;
   const ow = Math.max(1, Math.round(W * (1 - l - r))), oh = Math.max(1, Math.round(H * (1 - t - b)));
@@ -670,7 +932,7 @@ export function unwarp(img: Img, cv: Curve): Img {
  * near the side (within 15%) clearly darker than the paper, with the picture cut where the paper is bright
  * again on the inside of it.
  */
-export function trimMargins(img: Img): Img {
+export function trimMargins(img: Img, sides: 'all' | 'lr' = 'all'): Img {
   const { width: W, height: H, data: d } = img;
   const lum = (x: number, y: number) => { const i = (y * W + x) * 4; return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; };
   const prof = (n: number, m: number, at: (i: number, j: number) => number) => {
@@ -687,7 +949,12 @@ export function trimMargins(img: Img): Img {
     let k = pm; while (k < band * 1.4 && p[fromEnd ? n - 1 - k : k] < paper * 0.9) k++;
     return k < band * 1.4 ? k + Math.round(n * 0.004) : 0;
   };
-  const l = cut(cols, false), r = cut(cols, true), t = cut(rows, false), b = cut(rows, true);
+  // What would be cut must not be print like the page's own: ink as dense there means it is the page.
+  const inkIn = (x0: number, x1: number, y0: number, y1: number) => { let c = 0, n = 0; for (let y = y0; y < y1; y += 3) for (let x = x0; x < x1; x += 3) { n++; if (lum(x, y) < 90) c++; } return n ? c / n : 0; };
+  const pageInk = inkIn(Math.floor(W * 0.2), Math.floor(W * 0.8), Math.floor(H * 0.2), Math.floor(H * 0.8));
+  const sane = (k: number, ink: number) => (k && ink < pageInk * 0.45 ? k : 0);
+  let l = cut(cols, false), r = cut(cols, true), t = sides === 'all' ? cut(rows, false) : 0, b = sides === 'all' ? cut(rows, true) : 0;
+  l = sane(l, inkIn(0, l, 0, H)); r = sane(r, inkIn(W - r, W, 0, H)); t = sane(t, inkIn(0, W, 0, t)); b = sane(b, inkIn(0, W, H - b, H));
   if (!l && !r && !t && !b) return img;
   const ow = W - l - r, oh = H - t - b; if (ow < W * 0.6 || oh < H * 0.6) return img;
   const out = new Uint8ClampedArray(ow * oh * 4);

@@ -62,7 +62,7 @@ function render(src: S.Img, p: Look, maxSide: number): S.Img {
   const q = S.orderQuad(scaleQuad(p.quad, src.width, src.height));
   let flat = S.warp(src, q, S.flatSize(q, maxSide));
   // A book's page: its lines straightened, the book's edge and the next page cut away.
-  if (p.flatten && p.curve) flat = S.trimMargins(S.unwarp(flat, p.curve));
+  if (p.flatten && p.curve) flat = S.trimMargins(S.unwarp(flat, p.curve), p.curve.sheet ? 'lr' : 'all');
   return S.rotate(S.applyFilter(flat, p.filter, p.adj), p.turn);
 }
 

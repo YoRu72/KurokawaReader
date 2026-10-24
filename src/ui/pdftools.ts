@@ -43,6 +43,11 @@ export function pdfToolsSheet(books: Book[], book?: Book, onDone?: () => void): 
   };
 }
 
+/** "Save pages as PDF" straight from a PDF being read. */
+export async function extractFromBook(book: Book): Promise<void> {
+  const s = await bookSource(book); if (s) await organizeSheet(s, undefined, true);
+}
+
 /* ---------- shared pieces ---------- */
 
 /** A library PDF's bytes as a source. */
