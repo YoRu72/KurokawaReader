@@ -12,7 +12,7 @@ import type { Book } from './db';
 import type { Progress } from './convert';
 
 type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
-type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
+type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; winCov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
 /** How the document uses its embedded fonts' glyphs: runs of glyphs along a line, cut where a word ends (each
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
 type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>> };
@@ -137,7 +137,7 @@ function editableFont(bytes: Uint8Array): boolean {
   } catch { return false; }
 }
 
-function cmapCoverage(bytes: Uint8Array): Set<number> {
+function cmapCoverage(bytes: Uint8Array, windowsOnly = false): Set<number> {
   const out = new Set<number>();
   try {
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -146,7 +146,7 @@ function cmapCoverage(bytes: Uint8Array): Set<number> {
     if (cm < 0) return out;
     for (let i = 0, nn = dv.getUint16(cm + 2); i < nn; i++) {
       const p = dv.getUint16(cm + 4 + i * 8), e = dv.getUint16(cm + 6 + i * 8), s = cm + dv.getUint32(cm + 8 + i * 8);
-      if (!(p === 3 && (e === 1 || e === 10) || p === 0)) continue;
+      if (!(p === 3 && (e === 1 || e === 10 || (windowsOnly && e === 0)) || (p === 0 && !windowsOnly))) continue;
       const fmt = dv.getUint16(s);
       if (fmt === 4) {
         const seg = dv.getUint16(s + 6) / 2, ends = s + 14, starts = ends + seg * 2 + 2;
@@ -490,6 +490,8 @@ function buildLines(all: Piece[]): Line[] {
     const big = Math.max(...g.map((p) => p.h));
     const host = g.filter((p) => p.h > big * 0.9); const hb = median(host.map((p) => p.y));
     for (const p of g) if (p.h < big * 0.85 && p.y - hb > big * 0.18 && /^[\s(\[]*[0-9\u0660-\u0669\u06F0-\u06F9*\u2020\u2021a-z]{1,3}[)\]]?\s*$/.test(p.text)) p.sup = true;
+    // (Its brackets drawn as pieces of their own go up with it.)
+    for (const q of g) if (!q.sup && /^\s*[()[\]]\s*$/.test(q.text)) for (const p of g) if (p.sup && Math.abs(q.y - p.y) < p.h * 0.2 && Math.abs(q.h - p.h) < p.h * 0.15 && Math.min(Math.abs(q.l - p.r), Math.abs(p.l - q.r)) < p.h * 0.6) { q.sup = true; break; }
   }
   for (const sp of spaces) {
     let best: Piece[] | null = null, bd = Infinity;
@@ -1093,7 +1095,8 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       { const sc = fo?.krSpaceCode ?? 32; const w = fo?.widths?.[sc]; if (w) info.spaceW = w * (fo?.fontMatrix?.[0] ?? 0.001); }
       // The font file says whether it is a bold (or italic) face.
       const os2 = fo?.krRaw ? readOs2(fo.krRaw) : null;
-      if (os2) { info.weight = os2.weight; if (os2.weight >= 600 || os2.bold) info.bold = true; if (os2.italic) info.italic = true; }
+      // (A face whose own tables say regular is regular, even named "… Bold": "AL-Mohanad Bold" is a family.)
+      if (os2) { info.weight = os2.weight; if (os2.weight >= 600 || os2.bold) info.bold = true; else if (os2.weight > 0 && os2.weight < 600 && /\bbold\b/i.test(info.family)) info.bold = false; if (os2.italic) info.italic = true; }
       // The font's own family name is what Word looks for ("KFGQPC Uthman Taha Naskh", not its PostScript name).
       const own = fo?.krRaw ? fontFamilyName(fo.krRaw) : null;
       if (own) info.family = own.replace(/\s+(Regular)$/i, '');
@@ -1147,9 +1150,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     // "رحمه الله"): kept as those codes in drawing order, set in that font, they show exactly as the page draws
     // them, in their line (copying gives the codes, as copying the PDF itself would).
     // (Only a font its maker lets be embedded for editing: a "preview & print" font is not loaded by editors.)
-    if ((pua || latinArt) && f.raw && editableFont(f.raw)) {
-      f.cov ??= cmapCoverage(f.raw);
-      if ([...p.text].every((c) => !c.trim() || f.cov!.has(c.codePointAt(0)!) || /[().:،؛\-]/.test(c))) {
+    // (Not under a system font's name: the document would get the system's font, which lacks these codes.)
+    if ((pua || latinArt) && f.raw && editableFont(f.raw) && !/^(Times New Roman|Arial|Calibri|Cambria|Tahoma|Verdana|Segoe UI|Courier New|Georgia|Traditional Arabic|Simplified Arabic|Arabic Typesetting|Sakkal Majalla|Liberation \w+|DejaVu \w+|Noto \w+|Wingdings|Webdings|Symbol|Marlett|MT Extra)\b/i.test(f.family)) {
+      // (Codes the font's Windows table maps — the one Word and LibreOffice look in.)
+      f.winCov ??= cmapCoverage(f.raw, true);
+      if ([...p.text].every((c) => !c.trim() || f.winCov!.has(c.codePointAt(0)!))) {
         p.raw = true;
         // (In drawing order, left to right: pdf.js may have turned an item round.)
         if (p.codes?.length && p.codes.every((u) => u[1])) p.text = [...p.codes].sort((x, y) => x[2] - y[2]).map((u) => u[1]).join('');
@@ -1663,7 +1668,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     if (!f.raw) continue;
     const face = faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic);
     const used = usedChars.get(`${f.family}|${face}`); if (!used?.size) continue;
-    const cov = (f.cov ??= cmapCoverage(f.raw));
+    // (Its symbol table too: codes kept as drawn — a sign font's — are looked up there.)
+    const cov = new Set([...(f.cov ??= cmapCoverage(f.raw)), ...(f.winCov ??= cmapCoverage(f.raw, true))]);
     let ok = 0, total = 0;
     for (const c of used) { if (c <= 0x20 || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D font', f.family, face, ok, '/', total, [...used].filter((c) => c > 0x20 && !COMBINING.test(String.fromCodePoint(c)) && !cov.has(c)).map((c) => c.toString(16)).join(' '));
