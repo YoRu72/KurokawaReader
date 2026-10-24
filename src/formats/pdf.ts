@@ -65,7 +65,7 @@ export async function pdfMeta(file: Blob, fileName: string): Promise<BookMeta> {
   }
 }
 
-export interface PdfSearchHit { page: number; excerpt: string; term: string }
+export interface PdfSearchHit { page: number; excerpt: string; term: string; before: string; after: string }
 
 export interface PdfViewerOptions {
   container: HTMLElement;
@@ -383,8 +383,10 @@ export class PdfViewer {
     if (this.textCache.has(n)) return this.textCache.get(n)!;
     try {
       const page = await this.doc.getPage(n);
-      const tc = await page.getTextContent();
-      const text = tc.items.map((it) => ('str' in it ? it.str + (it.hasEOL ? '\n' : '') : '')).join('');
+      // In reading order, as the text layer has it: right-to-left lines read right to left, harakat in their
+      // letters, vertical columns as paragraphs (pdf.js's own order is the order things were drawn).
+      const { pageReadingText } = await import('../pdflayer');
+      const text = await pageReadingText(page);
       this.textCache.set(n, text);
       return text;
     } catch { return ''; }
@@ -397,14 +399,22 @@ export class PdfViewer {
     if (!q) return hits;
     for (let n = 1; n <= this.total; n++) {
       if (signal?.cancelled) break;
-      const text = await this.pageText(n);
+      // (Lines run on: a phrase may continue on the next line. Private-use codes — ornaments a font draws — are
+      // no text to show.)
+      const text = (await this.pageText(n)).replace(/\s/g, ' ').replace(/[\uE000-\uF8FF]/g, ' ');
       const norm = normalizeForSearch(text);
       let idx = norm.text.indexOf(q);
       let count = 0;
       while (idx >= 0 && count < 20) {
         const start = norm.map[idx], end = norm.map[Math.min(norm.map.length - 1, idx + q.length)];
-        const excerpt = text.slice(Math.max(0, start - 50), Math.min(text.length, end + 50)).replace(/\s+/g, ' ');
-        hits.push({ page: n, excerpt, term: text.slice(start, end) });
+        // The context cut at word boundaries, about eight words each side.
+        let a = Math.max(0, start - 60); if (a > 0) { const sp = text.indexOf(' ', a); a = sp >= 0 && sp < start ? sp + 1 : a; }
+        let b = Math.min(text.length, end + 60); if (b < text.length) { const sp = text.lastIndexOf(' ', b); b = sp > end ? sp : b; }
+        const before = (a > 0 ? '… ' : '') + text.slice(a, start).replace(/\s+/g, ' ').trimStart();
+        const after = text.slice(end, b).replace(/\s+/g, ' ').trimEnd() + (b < text.length ? ' …' : '');
+        // (Shown without the tatweels that stretch the page's lines.)
+        const k = (x: string) => x.replace(/\u0640/g, '');
+        hits.push({ page: n, excerpt: k(before + text.slice(start, end) + after), term: k(text.slice(start, end)), before: k(before), after: k(after) });
         count++;
         idx = norm.text.indexOf(q, idx + q.length);
       }

@@ -1485,7 +1485,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         status.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
         for (const hit of hits) {
           list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { void viewer.highlightOnPage(hit.page, q); if (window.innerWidth < 900) panel.close(); } },
-            h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.excerpt))));
+            h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after))));
         }
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 350); });

@@ -8,7 +8,7 @@
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { findVertical, plainVerticalForms, type VPiece } from './pdfvertical';
-import { attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece } from './pdftext';
+import { ltrRunsForward, joinLine, attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
 type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean };
@@ -54,22 +54,22 @@ function wordsOf(line: Piece[]): Word[] {
     edge = rtl ? (split ? p.l : Math.min(edge, p.l)) : (split ? p.r : Math.max(edge, p.r));
     breakNext = false;
   }
-  return words.map((w) => ({ ...w, text: w.text.replace(/\s+/g, ' ').trim() })).filter((w) => w.text);
+  const clean = words.map((w) => ({ ...w, text: w.text.replace(/\s+/g, ' ').trim() })).filter((w) => w.text);
+  // (On a right-to-left line, Latin words and the numbers among them keep their own left-to-right order.)
+  return rtl ? ltrRunsForward(clean, (w) => w.text).seq : clean;
 }
 
 export interface PdfTextLayer { cancel(): void }
 
-/** Fill `container` (a .textLayer the size of the page) with the page's words. */
-export async function buildTextLayer(page: PDFPageProxy, viewport: { width: number; height: number; scale: number; transform: number[] }, container: HTMLElement): Promise<PdfTextLayer> {
-  let cancelled = false;
-  const handle = { cancel: () => { cancelled = true; } };
-  const tc = await page.getTextContent();
-  if (cancelled) return handle;
-  const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
-  if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
+type Turned = { text: string; tx: number[]; w: number; h: number; angle: number };
+type Laid = { lines: Piece[][]; vert: ReturnType<typeof findVertical>; turned: Turned[]; vTurned: Set<number> };
+
+/** The page's text as a reader sees it: lines (pieces by baseline, harakat back in their letters), vertical
+ *  columns in reading order, and text set at an angle. Positions are the viewport's. */
+function layText(items: Item[], viewport: { scale: number; transform: number[] }): Laid {
   const pieces: Piece[] = [];
-  const turned: { text: string; tx: number[]; w: number; h: number; angle: number }[] = [];
-  for (const raw of tc.items as Item[]) {
+  const turned: Turned[] = [];
+  for (const raw of items) {
     if (typeof raw.str !== 'string') continue;
     let text = cleanPdfText(raw.str);
     const tx = mul(viewport.transform, raw.transform);
@@ -100,6 +100,42 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     if (ln) ln.push(p); else lines.push([p]);
   }
   lines.sort((a, b) => a[0].y - b[0].y);
+  return { lines, vert, turned, vTurned };
+}
+
+/**
+ * A page's text in reading order — lines top to bottom, each line's words as they are read (right to left on
+ * Arabic lines, harakat in their letters), vertical columns as their paragraphs — for search and its excerpts.
+ */
+export async function pageReadingText(page: PDFPageProxy): Promise<string> {
+  const tc = await page.getTextContent();
+  const vp = page.getViewport({ scale: 1 });
+  const { lines, vert, turned, vTurned } = layText(tc.items as Item[], vp);
+  const blocks: { y: number; text: string }[] = [];
+  // Words regrouped into lines by their middles, as copying does: a verse number or a footnote mark set smaller
+  // (on its own baseline) stays in its line.
+  const words = lines.flatMap((line) => wordsOf(line)).map((w) => ({ text: w.text, l: w.l, r: w.r, h: w.h, y: w.y, mid: w.y - w.h * 0.35 }));
+  words.sort((a, b) => a.mid - b.mid);
+  const rows: (typeof words)[] = [];
+  for (const w of words) { const cur = rows[rows.length - 1]; if (cur && Math.abs(cur[0].mid - w.mid) < Math.max(cur[0].h, w.h) * 0.6) cur.push(w); else rows.push([w]); }
+  for (const row of rows) { const t = joinLine(row).text; if (t) blocks.push({ y: row[0].y, text: t }); }
+  let para = '', top = Infinity;
+  for (const g of vert.segments) { para += plainVerticalForms(g.text); top = Math.min(top, g.t); if (g.breakAfter) { blocks.push({ y: top, text: para }); para = ''; top = Infinity; } }
+  if (para) blocks.push({ y: top, text: para });
+  turned.forEach((t, k) => { if (!vTurned.has(k)) blocks.push({ y: t.tx[5], text: t.text }); });
+  blocks.sort((a, b) => a.y - b.y);
+  return blocks.map((b) => b.text).join('\n');
+}
+
+/** Fill `container` (a .textLayer the size of the page) with the page's words. */
+export async function buildTextLayer(page: PDFPageProxy, viewport: { width: number; height: number; scale: number; transform: number[] }, container: HTMLElement): Promise<PdfTextLayer> {
+  let cancelled = false;
+  const handle = { cancel: () => { cancelled = true; } };
+  const tc = await page.getTextContent();
+  if (cancelled) return handle;
+  const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
+  if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
+  const { lines, vert, turned, vTurned } = layText(tc.items as Item[], viewport);
   const frag = document.createDocumentFragment();
   const W = viewport.width, H = viewport.height;
   const span = (text: string, left: number, top: number, size: number, scaleX: number, rtl: boolean, angle = 0) => {

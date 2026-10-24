@@ -99,6 +99,26 @@ export function logicalRtlPiece(s: string, keep = false): string {
   return trail + [...core].reverse().join('') + lead;
 }
 
+/**
+ * On a right-to-left line read right to left, a run of left-to-right text (Latin words, with the numbers and
+ * punctuation between them) is still read left to right: "Acme Corp", not "Corp Acme". Returns the sequence
+ * with each such run turned round, and which items are in one.
+ */
+export function ltrRunsForward<T>(seq: T[], text: (x: T) => string): { seq: T[]; inRun: Set<T> } {
+  const kind = (s: string) => (/[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/.test(s) ? 'L' : /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(s) ? 'R' : /[0-9]/.test(s) ? 'N' : 'S');
+  const k = seq.map((x) => kind(text(x)));
+  const out = [...seq]; const inRun = new Set<T>();
+  const weak = (i: number) => k[i] === 'L' || k[i] === 'N';
+  for (let i = 0; i < k.length;) {
+    if (k[i] !== 'L') { i++; continue; }
+    let a = i; while (a > 0 && (weak(a - 1) || (k[a - 1] === 'S' && a - 2 >= 0 && weak(a - 2)))) a--;
+    let b = i; while (b + 1 < k.length && (weak(b + 1) || (k[b + 1] === 'S' && b + 2 < k.length && weak(b + 2)))) b++;
+    if (b > a) { const run = out.slice(a, b + 1).reverse(); out.splice(a, run.length, ...run); for (const x of run) inRun.add(x); }
+    i = b + 1;
+  }
+  return { seq: out, inRun };
+}
+
 /** One line of pieces (any order) → its text in reading order. */
 export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: boolean } {
   const rtl = isRtlText(line.map((p) => p.text).join(''));
@@ -106,21 +126,26 @@ export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: b
   const fixed = fixLoneBrackets(sorted, rtl);
   sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
   const marked = sorted.some((p) => p.text === '\u2009');
+  const { seq: ordered, inRun } = rtl ? ltrRunsForward(sorted, (p) => p.text) : { seq: sorted, inRun: new Set<T>() };
   let s = '';
-  let prev: LinePiece | null = null;
-  for (const p of sorted) {
+  let prev: LinePiece | null = null; let prevIn = false;
+  for (const p of ordered) {
     // (A drawn space, however narrow — a justified line squeezes it — is a word break.)
     if (p.text === '\u2009' || !p.text.trim()) { if (s && !/\s$/.test(s)) s += ' '; continue; }
     const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true)) : p.text;
     if (prev) {
       // (Where the page draws its spaces, a gap is still a word break when it is wide: a stretched line may
       // set some words apart by position alone.)
-      const gap = rtl ? prev.l - p.r : p.l - prev.r;
+      // (Within a left-to-right run the gap is measured left to right; across its ends, on the line's side.)
+      const fwd = !rtl || (prevIn && inRun.has(p));
+      const gap = fwd ? p.l - prev.r : prev.l - p.r;
       if (gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18) && !/\s$/.test(s) && !/^\s/.test(text) && !COMBINING.test(text[0])) s += ' ';
     }
     s += text;
     // A piece inside the previous one (a mark over its letter) must not move the edge back.
-    prev = prev && (rtl ? p.l > prev.l : p.r < prev.r) ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
+    const fwdNow = !rtl || inRun.has(p);
+    prev = prev && (fwdNow ? p.r < prev.r : p.l > prev.l) && prevIn === inRun.has(p) ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
+    prevIn = inRun.has(p);
   }
   // A haraka with no letter before it (at the start of the line) has lost its place: drop it.
   return { text: s.replace(/\s+/g, ' ').trim().replace(/^[\u064B-\u065F\u0670]+\s*/, ''), rtl };
