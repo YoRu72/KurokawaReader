@@ -810,6 +810,7 @@ export const en = {
   scanAutoTurnSub: "A page photographed lying on its side is turned so its lines run across.",
   scanFlatten: "Flatten book pages",
   scanFlattenSub: "A page photographed in a book has its curved lines straightened, and the book’s edge and the next page cut away.",
+  pagesPickHint: "Tap the pages you want, or type their numbers: 1-3, 7, 10- (to the end). Either way, the other follows.",
 };
 
 export type Strings = typeof en;

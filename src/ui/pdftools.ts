@@ -330,7 +330,12 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
     const url = c.toDataURL('image/jpeg', 0.7); thumbs.set(i, url); img.src = url;
   };
   const seen = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const img = e.target as HTMLImageElement; void draw(+img.dataset.i!, img); seen.unobserve(img); } }, { root: sh.body, rootMargin: '200px' });
-  const sync = () => { const k = pages.filter((p) => p.sel).length; count.textContent = t('selectedCount', { n: k }); extract.disabled = del.disabled = !k; };
+  // Two ways to choose, kept in step: tapping pages writes their numbers in the field, and numbers typed there
+  // select the pages.
+  const sync = () => {
+    const k = pages.filter((p) => p.sel).length; count.textContent = t('selectedCount', { n: k }); extract.disabled = del.disabled = !k;
+    if (document.activeElement !== range) void tools().then(({ formatRanges }) => { range.value = formatRanges(pages.filter((p) => p.sel).map((p) => p.i)); });
+  };
   // (Earlier is to the left in a left-to-right interface, to the right in a right-to-left one.)
   const rtlUi = document.documentElement.dir === 'rtl';
   const render = () => {
@@ -351,13 +356,15 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
     });
     sync();
   };
-  const range = h('input', { type: 'text', dir: 'ltr', class: 'tool-range', placeholder: '1-3, 7', 'aria-label': t('selectPages') }) as HTMLInputElement;
+  const range = h('input', { type: 'text', dir: 'ltr', class: 'tool-range', placeholder: '1-3, 7, 10-', 'aria-label': t('selectPages') }) as HTMLInputElement;
+  range.addEventListener('blur', () => sync());
   range.addEventListener('input', async () => { const { parseRanges } = await tools(); const want = new Set(parseRanges(range.value, n)); for (const p of pages) p.sel = want.has(p.i); render(); });
   sh.body.append(
     h('p', { class: 'src' }, h('bdi', null, src.name), ' · ', t('pageCount', { n })),
     h('div', { class: 'tool-bar' }, field(t('selectPages'), range),
       h('button', { class: 'chip small', type: 'button', onclick: () => { for (const p of pages) p.sel = true; render(); } }, h('span', null, t('selectAll'))),
       h('button', { class: 'chip small', type: 'button', onclick: () => { for (const p of pages) p.sel = false; range.value = ''; render(); } }, h('span', null, t('clearSelection'))), count),
+    h('p', { class: 'hint' }, t('pagesPickHint')),
     gridEl);
   const r = runner(sh.body, onDone);
   const save = (which: 'selected' | 'rest' | 'all') => r.run([extract, del, all], async () => {

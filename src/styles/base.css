@@ -835,3 +835,4 @@ html[dir='rtl'] .card.collapsed .card-title svg { transform: rotate(90deg); }
 .scan-check span { display: flex; flex-direction: column; gap: 2px; }
 .scan-check small { color: var(--md-on-surface-dim); font-size: 12.5px; line-height: 1.5; }
 .flip-x { display: inline-flex; transform: scaleX(-1); }
+.sheet-body .hint { font-family: var(--font-ui); font-size: 13px; line-height: 1.55; color: var(--md-on-surface-variant); margin: 6px 0; }

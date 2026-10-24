@@ -132,9 +132,17 @@ export async function unlockPdf(s: Source): Promise<Uint8Array> {
 }
 
 /** "1-3, 5, 8-" → 0-based page numbers (in that order), for a document of `count` pages. */
+/** Page indexes (0-based) written the short way: "1-3, 7, 10-12". */
+export function formatRanges(pages: number[]): string {
+  const ps = [...new Set(pages)].sort((a, b) => a - b); const out: string[] = [];
+  for (let i = 0; i < ps.length;) { let j = i; while (j + 1 < ps.length && ps[j + 1] === ps[j] + 1) j++; out.push(j > i ? `${ps[i] + 1}-${ps[j] + 1}` : `${ps[i] + 1}`); i = j + 1; }
+  return out.join(', ');
+}
+
 export function parseRanges(text: string, count: number): number[] {
   const out: number[] = [];
-  const norm = text.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x6f0)).replace(/[–—]/g, '-').replace(/[،؛]/g, ',');
+  const norm = text.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x6f0)).replace(/[０-９]/g, (d) => String(d.charCodeAt(0) - 0xff10))
+    .replace(/[–—~〜～－]/g, '-').replace(/[،؛，、；;]/g, ',');
   for (const part of norm.split(/[,\s]+/).filter(Boolean)) {
     const m = part.match(/^(\d*)\s*-\s*(\d*)$/);
     if (m) {
