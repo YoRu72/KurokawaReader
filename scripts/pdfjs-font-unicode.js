@@ -35,14 +35,13 @@ function krFontUnicode(bytes) {
             let g;
             if (ro === 0) g = (c + delta) & 0xffff;
             else { const gp = ros + k * 2 + ro + (c - start) * 2; if (gp + 2 > bytes.length) continue; g = u16(gp); if (g) g = (g + delta) & 0xffff; }
-            // (A symbol font's private-use codes say nothing about the text.)
-            if (g && !map.has(g) && !(c >= 0xe000 && c <= 0xf8ff)) map.set(g, String.fromCodePoint(c));
+            if (g && !map.has(g)) map.set(g, String.fromCodePoint(c));
           }
         }
       } else if (fmt === 12) {
         for (let k = 0, ng = u32(s + 12); k < ng; k++) {
           const st = u32(s + 16 + k * 12), en = u32(s + 20 + k * 12), sg = u32(s + 24 + k * 12);
-          for (let c = st; c <= en && c - st < 0x10000; c++) if (!map.has(sg + c - st) && !(c >= 0xe000 && c <= 0xf8ff)) map.set(sg + c - st, String.fromCodePoint(c));
+          for (let c = st; c <= en && c - st < 0x10000; c++) if (!map.has(sg + c - st)) map.set(sg + c - st, String.fromCodePoint(c));
         }
       }
     }

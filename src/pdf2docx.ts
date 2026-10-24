@@ -17,13 +17,13 @@ type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Arr
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
 type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>> };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number };
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
-type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string };
+type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string; cs?: number; spacing?: number };
 type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: number[] };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
 type Block = Para | Verse;
@@ -272,10 +272,11 @@ function buildLines(all: Piece[]): Line[] {
   // Drawn spaces join the line they separate words of once the lines are made: they decide nothing.
   const spaces = all.filter((p) => p.text === '\u2009');
   const pieces = all.filter((p) => p.text !== '\u2009').sort((a, b) => b.y - a.y);
-  const groups: Piece[][] = [];
+  // Each line is measured from its biggest piece so far: a raised note number met first is no baseline.
+  const groups: Piece[][] = []; const ref = new Map<Piece[], Piece>();
   for (const p of pieces) {
-    const g = groups.find((gr) => Math.abs(gr[0].y - p.y) < Math.max(gr[0].h, p.h) * 0.4);
-    if (g) g.push(p); else groups.push([p]);
+    const g = groups.find((gr) => { const o = ref.get(gr)!; return Math.abs(o.y - p.y) < Math.max(o.h, p.h) * 0.4; });
+    if (g) { g.push(p); if (p.h > ref.get(g)!.h * 1.05) ref.set(g, p); } else { const n = [p]; groups.push(n); ref.set(n, p); }
   }
   // (Harakat reported on their own were already put back into their words: see attachMarks.)
   // Raised, smaller pieces (note markers) belong to the line they sit on.
@@ -343,7 +344,11 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
     const span = (a: Piece[]) => (a.length ? Math.max(...a.map((p) => p.r)) - Math.min(...a.map((p) => p.l)) : 0);
     // A verse number stands apart: clear space on both sides (in prose, "ج ٣، ص" sits among words).
     const gapL = left.length ? nl - Math.max(...left.map((p) => p.r)) : 0, gapR = right.length ? Math.min(...right.map((p) => p.l)) - nr : 0;
-    if (left.length + right.length + midNums.length === ps.length && span(left) > width * 0.25 && span(right) > width * 0.25 && gapL > line.size * 0.6 && gapR > line.size * 0.6) {
+    // (Set tight, a number right at the centre between two stretched or centred halves still is one.)
+    const centred = Math.abs((nl + nr) / 2 - mid) < width * 0.03;
+    const stretched = [left, right].every((h) => h.some((p) => /\u0640/.test(p.text)));
+    const gap = centred || stretched ? 0.3 : 0.6;
+    if (left.length + right.length + midNums.length === ps.length && span(left) > width * 0.25 && span(right) > width * 0.25 && gapL > line.size * gap && gapR > line.size * gap) {
       const all = line.pieces;
       return [all.filter((p) => p.l >= nr - 1 && !midNums.includes(p)), all.filter((p) => p.r <= nl + 1 && !midNums.includes(p)), midNums];
     }
@@ -351,13 +356,13 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
   let best = -1, bestGap = 0;
   let edge = ps[0].r;
   for (let i = 1; i < ps.length; i++) { const gap = ps[i].l - edge; if (gap > bestGap) { bestGap = gap; best = i; } edge = Math.max(edge, ps[i].r); }
-  if (best < 0 || bestGap < line.size * 0.75) return null;
+  if (best < 0 || bestGap < line.size * 0.5) return null;
   const left = ps.slice(0, best), right = ps.slice(best);
   const gapMid = (Math.max(...left.map((p) => p.r)) + Math.min(...right.map((p) => p.l))) / 2;
   const lw = Math.max(...left.map((p) => p.r)) - Math.min(...left.map((p) => p.l)), rw = Math.max(...right.map((p) => p.r)) - Math.min(...right.map((p) => p.l));
   // A wide gap near the middle, or a narrower one right at the centre with two long halves.
   const wideGap = bestGap >= Math.max(line.size * 1.5, width * 0.045) && Math.abs(gapMid - mid) <= width * 0.18 && lw >= width * 0.3 && rw >= width * 0.3;
-  const centred = Math.abs(gapMid - mid) <= width * 0.03 && lw >= width * 0.35 && rw >= width * 0.35;
+  const centred = Math.abs(gapMid - mid) <= width * 0.03 && lw >= width * 0.35 && rw >= width * 0.35 && bestGap >= line.size * (0.75 - (/\u0640/.test(left.map((p) => p.text).join('')) && /\u0640/.test(right.map((p) => p.text).join('')) ? 0.25 : 0));
   if (!wideGap && !centred) return null;
   const all = line.pieces;
   const inLeft = (p: Piece) => p.r <= gapMid + 0.01;
@@ -369,47 +374,86 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
 
 function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean): Run[] {
   // Order and space the pieces like the copy text does, then merge neighbours with the same look.
-  const ordered: { p: Piece; space: boolean; tab?: number }[] = [];
+  const ordered: { p: Piece; space: boolean; tab?: number; blank?: number; trim?: number }[] = [];
   const marked = pieces.some((p) => p.text === '\u2009');
   const sorted = dropBuriedSpaces(pieces, (p) => p.text === '\u2009').sort((a, b) => (rtlLine ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
+  // Punctuation pieces read in the order their glyphs stand on the line (pdf.js gives them in drawing order,
+  // which on a right-to-left line may run either way).
+  sorted.forEach((p, i) => {
+    if (!p.codes || p.codes.length < 2 || p.raw || /[\p{L}\p{N}]/u.test(p.text)) return;
+    const t = [...p.codes].sort((a, b) => (rtlLine ? b[2] - a[2] : a[2] - b[2])).map((u) => u[1]).join('');
+    if (t.replace(/\s/g, '') === [...p.text.replace(/\s/g, '')].sort().join('') || [...t].sort().join('') === [...p.text].sort().join('')) sorted[i] = { ...p, text: t, ordered: true };
+  });
+  if ((globalThis as { krDebugLine?: string }).krDebugLine === 'mk') sorted.forEach((p) => { if (p.codes) console.warn('P2D mk', JSON.stringify([p.text, p.l, p.r, p.codes])); });
   // (Brackets drawn on their own: opening or closing by where their words are — see fixLoneBrackets.)
   fixLoneBrackets(sorted, rtlLine).forEach((t, i) => { if (t !== sorted[i].text) sorted[i] = { ...sorted[i], text: t }; });
-  let prev: Piece | null = null; let pendingSpace = false;
+  let prev: Piece | null = null; let pendingSpace = false; let pendingW = 0;
   // Word gaps of a stretched line are all wide: a tab is much wider than the line's usual gap.
   const gaps: number[] = [];
   for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim() || a.conn || b.conn) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
   const wideGap = gaps.length >= 3 ? median(gaps) * 2.5 : 0;
+  // Letter spacing the page applies (Word's "condensed" or "expanded", drawn as Tc): each glyph set nearer to
+  // (or further from) the next than its advance. Measured on the line's glyphs; Word gets the same spacing.
+  const extras: number[] = [];
+  for (const p of pieces) {
+    const gl = (p.codes ?? []).filter((u) => u[5] > 0 && u[1] && !/^\s+$/.test(u[1]) && !/\u0640/.test(u[1])).sort((a, b) => a[2] - b[2]);
+    for (let i = 1; i < gl.length; i++) { const a = gl[i - 1], b = gl[i]; const d = b[2] - (a[2] + a[5] * a[4]); if (Math.abs(d) < a[4] * 0.3) extras.push(d); }
+  }
+  const midCs = extras.length >= 8 ? median(extras) : 0;
+  // (Word's letter spacing would part joined Arabic letters: the same narrowing is given as a horizontal scale.)
+  const glyphs = pieces.flatMap((p) => (p.codes ?? []).filter((u) => u[5] > 0 && u[1] && !/^\s+$/.test(u[1])));
+  const avgAdv = glyphs.length ? glyphs.reduce((t, u) => t + u[5] * u[4], 0) / glyphs.length : 0;
+  if ((globalThis as { krDebugLine?: string }).krDebugLine === 'cs') { const all = pieces.flatMap((p) => p.codes ?? []); const adv = all.reduce((t, u) => t + u[5] * u[4], 0); const lo = Math.min(...pieces.map((p) => p.l)), hi = Math.max(...pieces.map((p) => p.r)); console.warn('P2D cs', JSON.stringify(pieces.map((p) => p.text).join('|').slice(0, 40)), (hi - lo).toFixed(1), adv.toFixed(1), all.length, extras.length, midCs.toFixed(2)); }
+  const lineCs = Math.abs(midCs) >= 0.05 && avgAdv > 0 ? Math.max(80, Math.min(110, Math.round(100 * (1 + midCs / avgAdv)))) : undefined;
   const normalY = pieces.filter((p) => !p.sup && p.text.trim()).map((p) => p.y);
   const lineBase = normalY.length ? median(normalY) : null;
   for (const p of sorted) {
-    if (p.text === '\u2009') { pendingSpace = true; continue; }
+    if (p.text === '\u2009') { pendingSpace = true; pendingW += p.r - p.l; continue; }
     if (p.conn) { const pv = prev as Piece | null; if (pv) prev = { ...pv, l: Math.min(pv.l, p.l), r: Math.max(pv.r, p.r) }; continue; }
-    if (!p.text.trim()) { pendingSpace = true; continue; }
+    if (!p.text.trim()) { pendingSpace = true; pendingW += p.r - p.l; continue; }
     let space = pendingSpace;
     const gap = prev ? (rtlLine ? prev.l - p.r : p.l - prev.r) : 0;
     if (prev && gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18)) space = true;
+    // A stretch drawn as overlapping tatweel pieces: as many tatweels as the overlap hides are not drawn width.
+    let trim = 0;
+    if (prev && rtlLine && gap < -0.5 && /^\u0640/.test(p.text)) {
+      const tu = p.codes?.find((u) => u[1] === '\u0640'); const tw = tu ? tu[5] * tu[4] : p.h * 0.28;
+      if (tw > 0) trim = Math.round(-gap / tw);
+    }
     // (A mark first in a piece stored in drawing order — "َأ" — is not a mark starting the piece.)
-    if (COMBINING.test(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text[0] ?? '')) space = false;
+    if (COMBINING.test(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }]).text[0] ?? '')) space = false;
     // A wide gap inside a line (a section number and its title, a list label, columns of figures) is a
     // tab to where the next piece starts.
     // A drawn space before it means a stretched (justified) word gap instead.
     // (With few gaps to compare, a gap of about an em — a section number before its title — already is one.)
-    const tab = prev && !pendingSpace && gap > Math.max(prev.h, p.h) * (gaps.length >= 3 ? 1.5 : 0.9) && gap > wideGap ? (rtlLine ? p.r : p.l) : undefined;
-    ordered.push({ p, space: space && ordered.length > 0 && tab === undefined, tab });
-    pendingSpace = false;
+    // (Unless the gap is mostly empty: something drawn there that is not text — a label kept in the picture.)
+    const wide = prev && gap > Math.max(prev.h, p.h) * (gaps.length >= 3 ? 1.5 : 0.9) && gap > wideGap;
+    // A wide gap the page leaves mostly empty — something drawn there that is not text (a label kept in the
+    // picture) — stays as wide: one space widened to it (a tab would end the line's justification).
+    const blank = wide && pendingSpace && pendingW < gap * 0.4 ? gap : undefined;
+    const tab = blank === undefined && prev && !pendingSpace && gap > Math.max(prev.h, p.h) * (gaps.length >= 3 ? 1.5 : 0.9) && gap > wideGap ? (rtlLine ? p.r : p.l) : undefined;
+    ordered.push({ p, space: space && ordered.length > 0 && tab === undefined && blank === undefined, tab, blank, trim });
+    pendingSpace = false; pendingW = 0;
     prev = prev && (rtlLine ? p.l > prev.l : p.r < prev.r) ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
   }
   const runs: Run[] = [];
-  for (const { p, space, tab } of ordered) {
+  for (const { p, space, tab, blank, trim } of ordered) {
     const f = fonts.get(p.font) ?? { family: 'Times New Roman', bold: false, italic: false };
     // A piece stored in drawing order (mark before its letter) reads in logical order through joinLine.
-    let text = logicalNeutral(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h }]).text, rtlLine);
-    if (rtlLine) text = balanceBrackets(text);
-    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text)), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined };
+    let text = p.ordered || p.raw ? p.text : logicalNeutral(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }]).text, rtlLine);
+    if (rtlLine && !p.raw) text = balanceBrackets(text);
+    if (trim) {
+      const lastText = runs.length ? runs[runs.length - 1].text : '';
+      const lead = text.match(/^\u0640+/)?.[0].length ?? 0;
+      const cut = Math.min(trim, /\u0640$/.test(lastText) ? lead : lead - 1);
+      if (cut > 0) text = text.slice(cut);
+    }
+    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, cs: lineCs };
     const last = runs[runs.length - 1];
     if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
+    if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank - p.h * 0.25) }); }
     if (space && last) last.text += ' ';
-    if (last && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl) last.text += text;
+    if (last && !last.spacing && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
     else if (space && last && last.text.endsWith(' ')) runs.push({ ...look, text });
     else runs.push({ ...look, text });
   }
@@ -439,6 +483,8 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     let align: Para['align'];
     if (ls.every(centered)) align = 'center';
     else if (ls.length > 1 && ls.slice(0, -1).every((l, i) => (i === 0 ? endGap(l) < tolOf(l) : full(l)))) align = 'both';
+    // (An indented block — a list item whose lines all start inside the margin — fills its own width.)
+    else if (ls.length > 2 && (() => { const rest = ls.slice(1, -1); const lo = Math.min(...ls.map((l) => l.l)), hi = Math.max(...rest.map((l) => l.r)); return endGap(first) < tolOf(first) && rest.every((l) => l.l - lo < tolOf(l) && hi - l.r < tolOf(l)); })()) align = 'both';
     else if (ls.length === 1 && full(first)) align = 'both';
     else if (ls.every((l) => startGap(l) < tolOf(l) * 1.5) || ls.some((l) => startGap(l) < tolOf(l))) align = 'start';
     else align = 'end';
@@ -471,6 +517,9 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     const stretches = (allText.match(/\u0640+/g) ?? []).length, words = allText.split(/\s+/).filter(Boolean).length;
     const kashida = align === 'both' && rtl && stretches > 0 && stretches >= Math.max(1, words * 0.12);
     if (!kashida && align === 'both' && rtl) for (const r of runs) r.text = r.text.replace(/\u0640+/g, '');
+    // Elsewhere a stretch drawn as overlapping tatweels would come out wider than the page drew it: it goes
+    // (a single tatweel — "بـ(" — is writing, not stretching, and stays).
+    else if (!kashida && rtl) for (const r of runs) r.text = r.text.replace(/(?<=[\u0620-\u064a][\u064b-\u0652]*)\u0640{2,}/g, '');
     if (kashida) for (const r of runs) { if (r.text.includes('\u0640')) r.kText = r.text; r.text = r.text.replace(/\u0640+/g, ''); }
     // A wide gap before a run that fills the rest of the line is a stretched word space, not a tab: a tab there
     // would leave the run no room and push it onto a line of its own.
@@ -504,7 +553,9 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
   lines.forEach((l, i) => {
     const h = splits[i]; if (!h || h.weak === undefined) return;
     const near = [splits[i - 1], splits[i + 1]].some((o) => o && Math.abs(gapAt(o) - h.weak!) < l.size * 1.5);
-    if (!near) splits[i] = null;
+    // (A lone verse shows itself by its halves: each stretched with tatweel to fill its half of the line.)
+    const stretched = (ps: Piece[]) => ps.some((p) => /\u0640/.test(p.text));
+    if (!near && !(stretched(h[0]) && stretched(h[1]))) splits[i] = null;
   });
   for (const [li, line] of lines.entries()) {
     if (line.spacer) {
@@ -544,7 +595,7 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       const brk = Math.abs(line.size - last.size) > last.size * 0.12
         || gap > pitch * 1.45
         || (endGap(last) > tolOf(last) * 1.2 && !centered(last))
-        || (startGap(line) > startGap(last) + tolOf(line) && full(last) && !(cur.lines.length === 1 && /^\s*[(（[]?[0-9\u0660-\u0669\u06F0-\u06F9]+[)）\].\-–]/.test(joinLine(last.pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, h: p.h }))).text)))
+        || (startGap(line) > startGap(last) + tolOf(line) && full(last) && !(cur.lines.length === 1 && /^\s*[(（[]?[0-9\u0660-\u0669\u06F0-\u06F9]+[)）\].\-–]/.test(joinLine(last.pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }))).text)))
         || (cur.lines.length > 1 && Math.abs(startGap(line) - startGap(cur.lines[cur.lines.length - 1])) > tolOf(line) && startGap(cur.lines[1]) - startGap(cur.lines[0]) > tolOf(line) && full(last))
         || centered(line) !== centered(last)
         || (centered(line) && centered(last));
@@ -740,7 +791,11 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
     for (let i = runs.length - 1; i > 0; i--) {
       const a = runs[i - 1], b = runs[i];
       if (a.font === b.font && a.size === b.size && a.bold === b.bold && a.italic === b.italic && a.color === b.color && a.sup === b.sup && a.rtl === b.rtl && a.raise === b.raise
-        && a.note === undefined && b.note === undefined && !a.br && !b.br && b.tab === undefined) { a.text += b.text; runs.splice(i, 1); }
+        && a.cs === b.cs && !a.spacing && !b.spacing
+        && a.note === undefined && b.note === undefined && !a.br && !b.br && b.tab === undefined) {
+        if (a.kText !== undefined || b.kText !== undefined) a.kText = (a.kText ?? a.text) + (b.kText ?? b.text);
+        a.text += b.text; runs.splice(i, 1);
+      }
     }
   };
   const block = (b: Block) => { if (b.kind === 'p') fix(b.runs); else for (const row of b.rows) for (const cell of row) fix(cell); };
@@ -754,7 +809,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
   const tc = await page.getTextContent();
   const pieces: Piece[] = [];
   let spanSeq = 0;
-  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number }[]) {
+  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean }[]) {
     if (typeof it.str !== 'string') continue;
     let text = cleanPdfText(it.str);
     if (/^\u2009+$/.test(text)) text = '\u2009'; else if (!text.trim()) continue;
@@ -766,7 +821,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const h = it.height || Math.hypot(a, b) || 10;
     // Fill+stroke "bold": Word's own synthetic bold strokes about 1/35 em; a much thinner stroke is
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
-    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}) });
+    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.krLead ? { keep: true } : {}) });
     if (it.fontName && !fonts.has(it.fontName)) {
       let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
@@ -815,6 +870,18 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     let foreign = false;
     if (!pua && !latinArt && f.noUnicode && f.raw) { f.cov ??= cmapCoverage(f.raw); foreign = f.cov.size > 0 && [...p.text].some((c) => c.trim() && !f.cov!.has(c.codePointAt(0)!)); }
     if (!pua && !latinArt && !foreign) continue;
+    // Private-use codes the embedded font itself draws (a heading font with a symbol cmap whose ToUnicode is
+    // wrong, e.g. AL-Mateen): kept as those codes in drawing order, set in that font, they show exactly as the
+    // page draws them, in their line (copying gives the codes, as copying the PDF itself would).
+    if (pua && f.raw) {
+      f.cov ??= cmapCoverage(f.raw);
+      if ([...p.text].every((c) => !c.trim() || f.cov!.has(c.codePointAt(0)!) || /[().:،؛\-]/.test(c))) {
+        p.raw = true;
+        // (In drawing order, left to right: pdf.js may have turned an item round.)
+        if (p.codes?.length && p.codes.every((u) => u[1])) p.text = [...p.codes].sort((x, y) => x[2] - y[2]).map((u) => u[1]).join('');
+        continue;
+      }
+    }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art', f.family, pua, latinArt, foreign, JSON.stringify(p.text.slice(0, 40)));
     keepFonts.add(p.font); pieces.splice(i, 1);
   }
@@ -976,6 +1043,12 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       const n = vals.filter((x) => Math.abs(x - v) <= tol).length;
       if (n > bestN || (n >= Math.max(2, bestN * 0.6) && outer(v, best) && n >= 2)) { if (n > bestN || outer(v, best)) { best = v; bestN = Math.max(n, bestN); } }
     }
+    // An outer edge that several full lines reach is the text's edge, even when more lines (notes set narrower,
+    // indented quotations) share an inner one: text set out to it must fit.
+    for (const v of vals) {
+      const n = vals.filter((x) => Math.abs(x - v) <= tol).length;
+      if (n >= 3 && outer(v, best) && Math.abs(v - best) > tol) best = v;
+    }
     const near = vals.filter((x) => Math.abs(x - best) <= tol);
     return outer(1, 0) ? Math.max(...near) : Math.min(...near);
   };
@@ -1084,6 +1157,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       break: r.br ? 1 : undefined,
       font: { ascii: r.font, hAnsi: r.font, cs: r.font, eastAsia: r.font },
       size: half, sizeComplexScript: half,
+      ...(r.cs && r.cs !== 100 ? { scale: r.cs } : {}),
+      ...(r.spacing ? { characterSpacing: Math.round(r.spacing * PT) } : {}),
       bold: r.bold, boldComplexScript: r.bold, italics: r.italic, italicsComplexScript: r.italic,
       color: r.color && r.color !== '000000' ? r.color : undefined,
       rightToLeft: r.rtl || undefined,
@@ -1137,7 +1212,9 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
             alignment: cols === 3 && c === 1 ? AlignmentType.CENTER : AlignmentType.DISTRIBUTE,
             widowControl: false,
             spacing: { before: i === 0 ? Math.round(v.before * PT) : 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
-            children: runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: r.text.replace(/\u0640+/g, '') }, footnotes)),
+            // (Set 3% narrow: a half-line has exactly its cell's width, and the least difference in the fonts'
+            // widths would break it onto two lines; the cell's distributed alignment takes up the slack.)
+            children: runs.map((r) => runFor({ ...(exact.has(r.font) ? r : { ...r, text: r.text.replace(/\u0640+/g, '') }), cs: Math.round((r.cs ?? 100) * 0.97) }, footnotes)),
           })],
         })),
       })),

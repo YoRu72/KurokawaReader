@@ -81,6 +81,101 @@ export async function buildPdfWorker(outFile) {
       g.visual[hit[0]] = mark + g.visual[hit[0]];
       return true;
     }
+    /** Where a mark glyph's ink stands, left and right in em from its origin (null when the font cannot tell). */
+    function krInkX(font, glyph) {
+      if (!font || glyph.fontChar === undefined || glyph.fontChar === null) return null;
+      const cache = (font.krInkCache ||= new Map());
+      if (cache.has(glyph.fontChar)) return cache.get(glyph.fontChar);
+      let res = null;
+      try {
+        const r = font.renderer;
+        const { glyphId } = lookupCmap(r.cmap, glyph.fontChar);
+        const p = r.compileGlyph(r.glyphs[glyphId], glyphId);
+        let lo = Infinity, hi = -Infinity;
+        for (let i = 0; i < p.length; ) {
+          const op = p[i++]; const n = op === 0 || op === 1 ? 2 : op === 2 ? 6 : op === 3 ? 4 : 0;
+          for (let k = 0; k < n; k += 2) { const x = p[i + k]; if (x < lo) lo = x; if (x > hi) hi = x; }
+          i += n;
+        }
+        if (lo < hi && hi - lo < 2) res = [lo, hi];
+      } catch { res = null; }
+      cache.set(glyph.fontChar, res);
+      return res;
+    }
+    /** Each mark of a right-to-left item goes after the letter its ink stands over (pdf.js puts it after the
+     *  glyph drawn next, which is that letter only when the page draws each mark just before its letter). A
+     *  mark over none of the item's letters stays where it is; one that then starts the item belongs to the
+     *  letter before the item (\`krLead\`: readers must not take it for a mark drawn before its own letter). */
+    function krPlaceMarks(it, g) {
+      if (!g) return;
+      const visual = g.visual, chars = [...it.str];
+      if (it.str !== [...visual.join("")].reverse().join("")) return;
+      const isMarks = (u) => !!u && /^[ؐ-ًؚ-ٰٟۖ-ۭ]+$/.test(u);
+      const ents = g.gx.map((e) => ({ s: visual[e[0]] || "", a: e[1], b: e[2], ink: e[3] || null }));
+      const bases = ents.filter((e) => e.s && !isMarks(e.s));
+      const marks = ents.filter((e) => isMarks(e.s));
+      if (!marks.length || !bases.length) return;
+      const rev = (u) => [...u].reverse().join("");
+      let moved = false;
+      for (const m of marks) {
+        m.host = null;
+        if (m.ink) {
+          const c = (m.ink[0] + m.ink[1]) / 2;
+          let best = null, bd = Infinity;
+          for (const q of bases) { if (c < q.a - 0.3 || c > q.b + 0.3) continue; const d = Math.abs(c - (q.a + q.b) / 2); if (d < bd) { bd = d; best = q; } }
+          m.host = best; m.c = c;
+        }
+        // Without ink to go by (or over none of these letters): the glyph drawn after it, as pdf.js reads it.
+        const k = ents.indexOf(m);
+        const next = ents.slice(k + 1).find((e) => bases.includes(e)) || null;
+        if (!m.ink || !m.host) m.host = m.ink ? null : next;
+        if (m.host !== next) moved = true;
+        if (m.host && m.c !== undefined) {
+          const n = [...m.host.s].filter((ch) => !isMarks(ch)).length;
+          if (n > 1) moved = true; // (a ligature: the ink picks the letter within it)
+        }
+      }
+      const lead = marks.filter((m) => !m.host);
+      // (A leading mark with ink over no letter here is the previous letter's; one without ink is judged by
+      // its origin, as before: past the far edge of the item's one letter.)
+      const inkLead = lead.length && lead.every((m) => m.ink);
+      if (!moved) {
+        if (inkLead) it.krLead = true;
+        else if (lead.length && bases.length === 1 && lead.every((m) => m.a >= bases[0].b - (bases[0].b - bases[0].a) * 0.05)) it.krLead = true;
+        return;
+      }
+      // Rebuild the text in reading order: bases right to left, each with its marks.
+      const out = []; const newVis = []; const newGx = [];
+      for (const m of lead) out.push(rev(m.s));
+      for (let i = bases.length - 1; i >= 0; i--) {
+        const q = bases[i];
+        const own = [...q.s].reverse(); // the glyph's text in reading order
+        const letters = []; own.forEach((ch, k) => { if (!isMarks(ch)) letters.push(k); });
+        const ins = own.map(() => []);
+        for (const m of marks) {
+          if (m.host !== q) continue;
+          let at = own.length - 1;
+          if (letters.length > 1 && m.c !== undefined) {
+            const f = Math.min(0.999, Math.max(0, (q.b - m.c) / Math.max(0.01, q.b - q.a)));
+            at = letters[Math.floor(f * letters.length)];
+            while (at + 1 < own.length && isMarks(own[at + 1])) at++;
+          }
+          ins[at].push(rev(m.s));
+        }
+        const word = own.map((ch, k) => ch + ins[k].join("")).join("");
+        out.push(word);
+      }
+      const str = out.join("");
+      if (str.length !== chars.length) return;
+      it.str = str;
+      for (let i = 0; i < bases.length; i++) {
+        const q = bases[i];
+        newGx.push([newVis.length, q.a, q.b]); newVis.push(rev(out[lead.length + bases.length - 1 - i]));
+      }
+      for (let i = lead.length - 1; i >= 0; i--) { newGx.push([newVis.length, lead[i].a, lead[i].b, lead[i].ink]); newVis.push(lead[i].s); }
+      g.visual = newVis; g.gx = newGx;
+      if (inkLead) it.krLead = true;
+    }
     let krPageAT = false; // this page uses /ActualText spans: real spaces are then marked where they are drawn
     const krMark = /^[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]/;
     // Fill colour and text render mode, carried on the (cloned per q/Q) text state.
@@ -217,8 +312,8 @@ export async function buildPdfWorker(outFile) {
             flushTextContentItem();
             const t0 = getCurrentTextTransform();
             // Where the mark shows: its origin plus the centre of its outline (when the font tells).
-            const gc = krGlyphCentre(font, originalCharCode);
-            const cx = gc === null ? null : mx;
+            const ik = krInkX(font, glyph);
+            const cx = ik ? mx + ((ik[0] + ik[1]) / 2) * em * textState.textHScale : null;
             // Word draws a line's harakat before its letters: hold the mark until the letters are in.
             krPending.push({ mark: glyph.unicode, x: cx ?? mx, y: t0[5], age: 0, item: { str: glyph.unicode, dir: "rtl", width: 0, height: Math.hypot(t0[2], t0[3]), transform: t0, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, krMark: true } });
             continue;
@@ -264,7 +359,10 @@ export async function buildPdfWorker(outFile) {
           const gw = Math.abs(glyph.width * textState.fontMatrix[0] * Math.hypot(gtr[0], gtr[1]) * textState.textHScale);
           if (textChunk.krMinX === undefined) { textChunk.krMinX = gx; textChunk.krMaxX = gx; }
           textChunk.krMinX = Math.min(textChunk.krMinX, gx); textChunk.krMaxX = Math.max(textChunk.krMaxX, gx + gw);
-          (textChunk.krGX ||= []).push([textChunk.str.length, Math.min(gx, gx + gw), Math.max(gx, gx + gw)]);
+          // A mark: where its ink is, to find the letter it stands over.
+          let krInk = null;
+          if (krMark.test(glyph.unicode || "") && !textState.font?.vertical) { const ik = krInkX(textState.font, glyph); if (ik) { const sc = Math.hypot(gtr[0], gtr[1]) * textState.textHScale; krInk = [gx + ik[0] * sc, gx + ik[1] * sc]; } }
+          (textChunk.krGX ||= []).push([textChunk.str.length, Math.min(gx, gx + gw), Math.max(gx, gx + gw), krInk]);
           // The glyph's code and text, for rebuilding a subset font that has no Unicode map.
           // A fatha stroke drawn well below the last letter's baseline is a kasra (legacy fonts have one stroke for both).
           krGlyphLow = false;
@@ -279,6 +377,7 @@ export async function buildPdfWorker(outFile) {
       textContentItem.initialized = false;`, `      const krItem = runBidiTransform(textContentItem);
       textContent.items.push(krItem);
       if (textContentItem.krGX) krGlyphs.set(krItem, { visual: textContentItem.str.slice(), gx: textContentItem.krGX });
+      if (textContentItem.krGX && krItem.dir === "rtl") krPlaceMarks(krItem, krGlyphs.get(krItem));
       textContentItem.initialized = false;
       textContentItem.krMinX = textContentItem.krMaxX = undefined;
       textContentItem.krGX = null;

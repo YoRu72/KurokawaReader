@@ -6,7 +6,7 @@
 // Word breaks come from the PDF's own drawn spaces when it marks them (U+2009, see
 // scripts/patch-pdfjs.mjs), otherwise from the gaps between pieces.
 
-export type LinePiece = { text: string; l: number; r: number; h: number };
+export type LinePiece = { text: string; l: number; r: number; h: number; keep?: boolean };
 
 const RTL_CHAR_G = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/g;
 // Arabic harakat, shadda, sukun, superscript alef, Quranic marks; Hebrew points.
@@ -62,7 +62,11 @@ export function fixLoneBrackets<T extends { text: string; l: number; r: number; 
   // (Only letters and digits tell: a bracket clings to punctuation either way — «».»، .)
   const word = (p: T | undefined) => !!p && /[\p{L}\p{N}]/u.test(p.text);
   for (let i = 0; i < seq.length; i++) {
-    const t = seq[i].text.trim(); const pair = BRACKETS[t];
+    const t0 = seq[i].text.trim();
+    // A bracket alone, or with punctuation only ("،(" — a closing bracket and the comma after it).
+    const bs = [...t0].filter((ch) => BRACKETS[ch]);
+    const t = bs.length === 1 && !/[\p{L}\p{N}]/u.test(t0) ? bs[0] : t0;
+    const pair = BRACKETS[t];
     if (!pair) {
       // (Brackets inside longer pieces count too: "[النور:" opens what a lone "]" later closes.)
       for (const ch of t) { const pr = BRACKETS[ch]; if (pr) depth.set(pr[0], Math.max(0, (depth.get(pr[0]) ?? 0) + (ch === pr[0] ? 1 : -1))); }
@@ -84,9 +88,11 @@ export function fixLoneBrackets<T extends { text: string; l: number; r: number; 
 }
 
 /** A right-to-left piece stored in drawing order (a mark before its letter, "ُه") is turned round to "هُ". */
-export function logicalRtlPiece(s: string): string {
+/** `keep`: the piece is known to read in logical order already (its first mark is the previous letter's: the
+ *  worker's `krLead`). */
+export function logicalRtlPiece(s: string, keep = false): string {
   const core = s.trim();
-  if (!core || !COMBINING.test(core[0]) || !/[\u0600-\u06FF]/.test(core)) return s;
+  if (keep || !core || !COMBINING.test(core[0]) || !/[\u0600-\u06FF]/.test(core)) return s;
   // Only a single cluster (marks + one letter) is in drawing order; longer text with a stray mark in front is not.
   if ([...core].filter((c) => !COMBINING.test(c)).length !== 1) return s;
   const lead = s.match(/^\s*/)![0], trail = s.match(/\s*$/)![0];
@@ -105,7 +111,7 @@ export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: b
   for (const p of sorted) {
     // (A drawn space, however narrow — a justified line squeezes it — is a word break.)
     if (p.text === '\u2009' || !p.text.trim()) { if (s && !/\s$/.test(s)) s += ' '; continue; }
-    const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text), true)) : p.text;
+    const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true)) : p.text;
     if (prev) {
       // (Where the page draws its spaces, a gap is still a word break when it is wide: a stretched line may
       // set some words apart by position alone.)

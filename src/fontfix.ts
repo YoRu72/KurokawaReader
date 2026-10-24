@@ -243,11 +243,11 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
         return { c, form: formOf(prevIn, nextIn) };
       });
       const lkey = `${lets.join(',')}|${comps.map((x) => x.form).join(',')}`;
-      // Marks between its letters: the ligature also forms across them (otherwise marks keep the letters apart).
-      // (Lam-alef always does: a shaper's lam-alef is a required ligature that never lets a haraka part them —
-      // لَا, الْإِ.)
-      const across = lets.some((c, k) => c === 0x644 && [0x622, 0x623, 0x625, 0x627, 0x671, 0x672, 0x673, 0x675].includes(lets[k + 1]))
-        || e.cps.some((c, k) => isMark(c) && k > 0 && k < e.cps.length - 1 && e.cps.slice(k).some((x) => !isMark(x)));
+      // Marks between its letters: the ligature forms across them. (The page draws a ligature's harakat as
+      // glyphs of their own, set over it, so its text has them between its letters — نِي drawn as one "ني"
+      // glyph and a kasra; a ligature that stopped at the mark would leave a letter with no glyph of its own.
+      // Lam-alef is the shaper's own required ligature: لَا, الْإِ.)
+      const across = true;
       ligs.set(lkey, { comps, gid: e.gid, across: across || ligs.get(lkey)?.across });
       ligCount.set(lkey, (ligCount.get(lkey) ?? 0) + 1);
       for (let k = 0; k < comps.length; k++) inLig.add(stream.length + k);

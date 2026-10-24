@@ -87,14 +87,14 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
     // Fonts are only loaded by rendering the operator list; after that commonObjs has them.
     try { await page.getOperatorList(); } catch { /* ignore */ }
     const tc = await page.getTextContent();
-    type It = { str: string; x: number; y: number; w: number; h: number; font: string; eol: boolean };
+    type It = { str: string; x: number; y: number; w: number; h: number; font: string; eol: boolean; keep: boolean };
     const items: It[] = [];
     for (const it of tc.items) {
       if (!('str' in it)) continue;
       const [a, b, , , e, f] = it.transform;
       const h = it.height || Math.hypot(a, b) || 10;
       const str = cleanPdfText(it.str);
-      items.push({ str: /^\u2009+$/.test(str) ? '\u2009' : str, x: e, y: f, w: it.width, h, font: it.fontName, eol: !!it.hasEOL });
+      items.push({ str: /^\u2009+$/.test(str) ? '\u2009' : str, x: e, y: f, w: it.width, h, font: it.fontName, eol: !!it.hasEOL, keep: !!(it as { krLead?: boolean }).krLead });
       if (it.fontName && !fontFamilies.has(it.fontName)) {
         try {
           const fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) as { name?: string; data?: Uint8Array; mimetype?: string; loadedName?: string } : null;
@@ -114,7 +114,7 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
     let prevBottom: number | null = null; let prevSize = 0; let buf = ''; let bufSize = 0; let bufFont: string | undefined; let bufRtl = false;
     const flush = () => { if (buf.trim()) { paragraphs.push({ text: buf.replace(/\s+/g, ' ').trim(), size: bufSize, rtl: bufRtl, family: bufFont, heading: false, page: p }); sizes.push(bufSize); } buf = ''; };
     for (const line of lines) {
-      const joinedLine = joinLine(line.map((i) => ({ text: i.str, l: i.x, r: i.x + i.w, h: i.h })));
+      const joinedLine = joinLine(line.map((i) => ({ text: i.str, l: i.x, r: i.x + i.w, h: i.h, keep: i.keep })));
       const rtl = joinedLine.rtl;
       let text = joinedLine.text;
       text = fixArabicLine(text.trim());

@@ -7,10 +7,10 @@
 //  - each line cut into words, every word one box exactly over its letters on the page,
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral } from './pdftext';
+import { attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece } from './pdftext';
 
-type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string };
-type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean };
+type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
+type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean };
 type Word = { text: string; l: number; r: number; y: number; h: number; rtl: boolean };
 
 const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
@@ -25,13 +25,6 @@ function measure(text: string, size: number): number {
   return measureCtx.measureText(text).width;
 }
 
-/** A right-to-left piece stored in drawing order (a mark before its letter) turned round. */
-function logical(s: string): string {
-  const core = s.trim();
-  if (!core || !COMBINING.test(core[0]) || !RTL_CHAR.test(core)) return s;
-  if ([...core].filter((c) => !COMBINING.test(c)).length !== 1) return s;
-  return [...core].reverse().join('');
-}
 
 /** The words of one line, in reading order. */
 function wordsOf(line: Piece[]): Word[] {
@@ -46,7 +39,7 @@ function wordsOf(line: Piece[]): Word[] {
   let curDir = '';
   for (const p of sorted) {
     if (p.space) { breakNext = true; continue; }
-    const text = rtl ? balanceBrackets(logicalNeutral(logical(p.text), true)) : p.text;
+    const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true)) : p.text;
     const d = dirOf(text);
     const gap = cur ? (rtl ? edge - p.r : p.l - edge) : 0;
     const split = !cur || breakNext || (gap > p.h * (marked ? 0.3 : 0.18) && !COMBINING.test(text[0])) || (d && curDir && d !== curDir);
@@ -86,7 +79,7 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     if (/^\u2009+$/.test(text)) { pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, space: true }); continue; }
     if (!text.trim() || !h) continue;
     if (Math.abs(angle) > 0.02) { turned.push({ text, tx, w, h, angle }); continue; }
-    pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h });
+    pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, keep: !!raw.krLead });
   }
   // Harakat drawn on their own go back into their letters; then lines by baseline, top to bottom.
   const kept = attachMarks(pieces.filter((p) => !p.space)).concat(pieces.filter((p) => p.space));
@@ -112,7 +105,7 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     frag.appendChild(s);
   };
   for (const line of lines) {
-    if (dbg && line.some((p) => p.text.includes(dbg))) console.warn('KR line', JSON.stringify(line.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), +p.y.toFixed(1), +p.h.toFixed(1), !!p.space])));
+    if (dbg && line.some((p) => p.text.includes(dbg))) console.warn('KR line', JSON.stringify(line.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), +p.y.toFixed(1), +p.h.toFixed(1), !!p.space, !!p.keep])));
     const words = wordsOf(line);
     words.forEach((wd, i) => {
       const last = i === words.length - 1;

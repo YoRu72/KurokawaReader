@@ -9,3 +9,4 @@ tests/shots/
 desktop/node_modules/
 desktop/out/
 native/android/*.keystore
+__pycache__/
