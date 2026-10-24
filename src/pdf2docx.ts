@@ -1197,13 +1197,13 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       const paras: VPage['paras'] = []; let cur: Run[] = []; let first = -1;
       for (const g of segs) {
         if (first < 0) first = Math.max(0, g.t - head);
-        for (const i of g.items) {
-          const p = pieces[i]; const f = fonts.get(p.font);
-          const look = { font: f?.family ?? 'MS Mincho', size: Math.round(p.h * 2) / 2, bold: !!(f?.bold || p.bold), italic: !!f?.italic, color: p.color, rtl: false, sup: false };
-          const text = plainVerticalForms(p.text);
-          const last = cur[cur.length - 1];
-          if (last && last.font === look.font && last.size === look.size && last.bold === look.bold && last.color === look.color) last.text += text; else cur.push({ text, ...look });
-        }
+        // (The column's text as read — its spaces and punctuation put right — in the look of its main characters.)
+        const main = pieces[g.items.find((i) => /[\p{L}\p{N}]/u.test(pieces[i].text)) ?? g.items[0]];
+        const f = fonts.get(main.font);
+        const look = { font: f?.family ?? 'MS Mincho', size: Math.round(main.h * 2) / 2, bold: !!(f?.bold || main.bold), italic: !!f?.italic, color: main.color, rtl: false, sup: false };
+        const text = plainVerticalForms(g.text);
+        const last = cur[cur.length - 1];
+        if (last && last.font === look.font && last.size === look.size && last.bold === look.bold && last.color === look.color) last.text += text; else cur.push({ text, ...look });
         if (g.breakAfter) { if (cur.length) paras.push({ runs: cur, firstLine: first }); cur = []; first = -1; }
       }
       if (cur.length) paras.push({ runs: cur, firstLine: Math.max(0, first) });
@@ -1684,7 +1684,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       // columns stand, the line pitch the distance between columns, a paragraph's first column set lower by its
       // indent.
       const v = pg.vert;
-      const vpage = { ...page, margin: { ...page.margin, top: Math.round(Math.max(18, v.top - v.size * 0.1) * PT), bottom: Math.round(Math.max(18, v.bottom - v.size * 0.05) * PT), left: Math.round(Math.max(18, v.left - v.pitch * 0.2) * PT), right: Math.round(Math.max(18, v.right - (v.pitch - v.size) / 2) * PT) }, textDirection: docx.PageTextDirectionType.TOP_TO_BOTTOM_RIGHT_TO_LEFT };
+      const vpage = { ...page, margin: { ...page.margin, top: Math.round(Math.max(18, v.top - v.size * 0.1) * PT), bottom: Math.round(Math.max(18, v.bottom - v.size * 0.05) * PT), left: Math.round(Math.max(18, v.left - v.pitch * 1.2) * PT), right: Math.round(Math.max(18, v.right - (v.pitch - v.size) / 2) * PT) }, textDirection: docx.PageTextDirectionType.TOP_TO_BOTTOM_RIGHT_TO_LEFT };
       const kids = v.paras.map((pp) => new Paragraph({
         widowControl: false,
         indent: pp.firstLine > v.size * 0.4 ? { firstLine: Math.round(pp.firstLine * PT) } : undefined,

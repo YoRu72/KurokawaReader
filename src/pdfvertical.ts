@@ -52,12 +52,18 @@ export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segment
     }
     if (below && !across) vert.add(i);
   });
-  // Characters wedged in a column (a digit pair set across, a word turned on its side) join it.
+  // Characters wedged in a column (a digit pair set across, a word turned on its side) join it, and so does
+  // punctuation set beside its character (a Korean full stop sits off the column's middle, at its end too).
+  const PUNCT = /^[.,!?;:'"’”)\]」』）、。，．！？…·・]+$/;
   pieces.forEach((p, i) => {
     if (vert.has(i) || !p.text.trim()) return;
-    let up = false, down = false;
-    for (const j of near(p)) { if (!vert.has(j)) continue; const q = pieces[j]; if (Math.abs(cx(q) - cx(p)) < Math.max(q.h, p.h) * 0.35) { if (q.y < p.y) up = true; else down = true; } }
-    if (up && down) vert.add(i);
+    let up = false, down = false, beside = false;
+    for (const j of near(p)) {
+      if (!vert.has(j)) continue; const q = pieces[j]; const h = Math.max(q.h, p.h);
+      if (Math.abs(cx(q) - cx(p)) < h * 0.35) { if (q.y < p.y) up = true; else down = true; }
+      if (PUNCT.test(p.text.trim()) && Math.abs(cx(q) - cx(p)) < h * 0.8 && Math.abs(q.y - p.y) < h * 1.5) beside = true;
+    }
+    if ((up && down) || beside) vert.add(i);
   });
   if (vert.size < 8) return none;
   // Columns: by their middle across the page.
@@ -75,12 +81,17 @@ export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segment
     for (const i of c.items) {
       const p = pieces[i];
       if (cur && top(p) - lastB > c.h * 1.6) { segs.push(cur); cur = null; }
+      // (A gap down the column is a space between words: Korean, and Latin words set upright, have them.)
+      const gapBefore = cur ? top(p) - lastB : 0;
       if (!cur) cur = { text: '', l: p.l, r: p.r, t: top(p), b: bottom(p), size: p.h, items: [], breakAfter: false };
+      else if (gapBefore > p.h * 0.3 && !/\s$/.test(cur.text) && /[\uac00-\ud7afA-Za-z0-9]/.test(cur.text.slice(-1) + p.text[0]) && !/^[.,!?;:)\]」』）、。，．！？]/.test(p.text)) cur.text += ' ';
       cur.text += p.text; cur.items.push(i); cur.l = Math.min(cur.l, p.l); cur.r = Math.max(cur.r, p.r); cur.t = Math.min(cur.t, top(p)); cur.b = Math.max(cur.b, bottom(p)); cur.size = Math.max(cur.size, p.h);
       lastB = bottom(p);
     }
     if (cur) segs.push(cur);
   }
+  // (A space drawn with the character before a full stop or comma that is set turned belongs after it.)
+  for (const g of segs) g.text = g.text.replace(/ +([.,!?;:])(?=\S)/g, '$1 ').replace(/ +([.,!?;:])(?= |$)/g, '$1');
   // Tiers: blocks of columns side by side (a page may have two or more, one above the other); read top tier
   // first, each tier's columns right to left (left to right for Mongolian).
   segs.sort((a, b) => a.t - b.t);
