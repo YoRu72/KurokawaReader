@@ -45,6 +45,11 @@ import android.content.Context;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Native helpers for the reader:
@@ -769,5 +774,103 @@ public class KurokawaPlugin extends Plugin {
         try { if (renderer != null) renderer.close(); } catch (Exception ignored) {}
         try { if (pfd != null) pfd.close(); } catch (Exception ignored) {}
         renderer = null; pfd = null;
+    }
+
+    // ---- Read aloud: the system's text-to-speech engine (the WebView has no speechSynthesis) ----
+
+    private TextToSpeech tts;
+    private boolean ttsReady = false;
+    private final List<Runnable> ttsWaiting = new ArrayList<>();
+
+    private void withTts(Runnable r) {
+        if (tts != null && ttsReady) { r.run(); return; }
+        synchronized (ttsWaiting) { ttsWaiting.add(r); }
+        if (tts != null) return;
+        tts = new TextToSpeech(getContext(), status -> {
+            ttsReady = status == TextToSpeech.SUCCESS;
+            if (ttsReady) {
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("ttsStart", o); }
+                    @Override public void onDone(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("ttsDone", o); }
+                    @Override @SuppressWarnings("deprecation") public void onError(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("ttsError", o); }
+                    @Override public void onError(String id, int code) { JSObject o = new JSObject(); o.put("id", id); o.put("code", code); notifyListeners("ttsError", o); }
+                });
+            }
+            List<Runnable> w;
+            synchronized (ttsWaiting) { w = new ArrayList<>(ttsWaiting); ttsWaiting.clear(); }
+            for (Runnable x : w) x.run();
+        });
+    }
+
+    @PluginMethod
+    public void ttsSpeak(PluginCall call) {
+        final String text = call.getString("text", "");
+        final String lang = call.getString("lang", "");
+        final String id = call.getString("id", "kr");
+        final String voiceName = call.getString("voice", "");
+        final double rate = call.getDouble("rate", 1.0);
+        withTts(() -> {
+            if (!ttsReady) { JSObject r = new JSObject(); r.put("ok", false); r.put("reason", "unavailable"); call.resolve(r); return; }
+            Locale loc = lang.isEmpty() ? Locale.getDefault() : Locale.forLanguageTag(lang);
+            int avail = tts.isLanguageAvailable(loc);
+            if (avail < TextToSpeech.LANG_AVAILABLE) {
+                JSObject r = new JSObject(); r.put("ok", false); r.put("reason", avail == TextToSpeech.LANG_MISSING_DATA ? "missing-data" : "not-supported"); call.resolve(r); return;
+            }
+            Voice chosen = null;
+            try {
+                Set<Voice> vs = tts.getVoices();
+                if (vs != null && !voiceName.isEmpty()) for (Voice v : vs) if (v.getName().equals(voiceName)) { chosen = v; break; }
+            } catch (Exception ignored) {}
+            if (chosen != null) tts.setVoice(chosen); else tts.setLanguage(loc);
+            tts.setSpeechRate((float) rate);
+            int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, new android.os.Bundle(), id);
+            JSObject r = new JSObject(); r.put("ok", res == TextToSpeech.SUCCESS); if (res != TextToSpeech.SUCCESS) r.put("reason", "unavailable"); call.resolve(r);
+        });
+    }
+
+    @PluginMethod
+    public void ttsStop(PluginCall call) {
+        if (tts != null) tts.stop();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void ttsVoices(PluginCall call) {
+        withTts(() -> {
+            JSArray a = new JSArray();
+            try {
+                Set<Voice> vs = ttsReady ? tts.getVoices() : null;
+                if (vs != null) for (Voice v : vs) {
+                    JSObject o = new JSObject();
+                    o.put("name", v.getName());
+                    o.put("lang", v.getLocale().toLanguageTag());
+                    o.put("network", v.isNetworkConnectionRequired());
+                    o.put("quality", v.getQuality());
+                    Set<String> f = v.getFeatures();
+                    o.put("installed", f == null || !f.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED));
+                    a.put(o);
+                }
+            } catch (Exception ignored) {}
+            JSObject r = new JSObject(); r.put("voices", a); call.resolve(r);
+        });
+    }
+
+    @PluginMethod
+    public void ttsInstallData(PluginCall call) {
+        try {
+            Intent i = new Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            try { Intent i = new Intent("com.android.settings.TTS_SETTINGS"); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); }
+            catch (Exception e2) { call.reject(e2.getMessage()); }
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (tts != null) { try { tts.shutdown(); } catch (Exception ignored) {} tts = null; ttsReady = false; }
+        super.handleOnDestroy();
     }
 }

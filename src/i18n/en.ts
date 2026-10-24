@@ -811,6 +811,9 @@ export const en = {
   scanFlatten: "Flatten book pages",
   scanFlattenSub: "A page photographed in a book has its curved lines straightened, and the book’s edge and the next page cut away.",
   pagesPickHint: "Tap the pages you want, or type their numbers: 1-3, 7, 10- (to the end). Either way, the other follows.",
+  noVoiceFor: "This device has no voice for {lang}. Add one in the system's text-to-speech settings (on Windows: Settings › Time & language › Speech; on Android: Text-to-speech output), or choose the AI voice.",
+  voiceDataMissing: "The voice for {lang} needs to be downloaded: the system's voice settings are opening.",
+  speechUnavailable: "Reading aloud is not available here: this system offers no text-to-speech voices.",
 };
 
 export type Strings = typeof en;

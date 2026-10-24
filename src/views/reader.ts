@@ -23,6 +23,7 @@ import { exportNotes } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
+import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
 import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
@@ -897,15 +898,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (cur.trim()) out.push(cur.trim());
     return out;
   }
-  const speechLang = (text: string, doc?: OpenDoc): string => {
-    if (/[\u3040-\u30ff]/.test(text)) return 'ja-JP';
-    if (/[\uac00-\ud7af]/.test(text)) return 'ko-KR';
-    if (/[\u4e00-\u9fff]/.test(text)) return (doc?.book.language ?? '').startsWith('ja') ? 'ja-JP' : 'zh-CN';
-    if (isRtlText(text)) return /[\u0600-\u06FF]/.test(text) ? 'ar-SA' : 'he-IL';
-    const l = doc?.book.language; return l && !/^(ar|ja|zh|ko|he)/.test(l) ? l : 'en-US';
+  /** When the device cannot read a language: say so, and how to get a voice (or use the AI voice). */
+  const noVoice = (lang: string, why: 'no-voice' | 'missing-data' | 'unavailable') => {
+    stopSpeaking();
+    if (why === 'missing-data') { toast(t('voiceDataMissing', { lang: languageName(lang) }), 'info', 7000); void installVoices(); return; }
+    toast(why === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
   };
   function speak(chunks: string[], startBlock?: { doc: OpenDoc; index: number }): void {
-    if (!('speechSynthesis' in window)) return;
+    if (!ttsAvailable() && !(getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady())) { toast(t('speechUnavailable'), 'error', 6000); return; }
     stopSpeaking();
     speaking = true;
     keepAwake(true);
@@ -963,18 +963,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         void play();
         return;
       }
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = speechLang(text, startBlock?.doc);
-      u.rate = getSettings().speechRate;
-      const vname = getSettings().speechVoice; const voice = vname ? speechSynthesis.getVoices().find((v) => v.name === vname) : undefined;
-      if (voice) u.voice = voice;
-      u.onend = next;
-      u.onerror = () => stopSpeaking();
-      speechSynthesis.speak(u);
+      // The device's voice for this passage's language (each passage in its own: an Arabic book's English
+      // quotation is read in English).
+      const lang = speechLangOf(text, startBlock?.doc.book.language);
+      void speakPassage(text, lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => { if (speaking) next(); }, () => stopSpeaking())
+        .then((r) => { if (r !== 'ok' && speaking) noVoice(lang, r); });
     };
     next();
   }
-  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); if ('speechSynthesis' in window) speechSynthesis.cancel(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
+  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); stopSpeech(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
   onDispose(stopSpeaking);
 
   // Sleep timer: stops read-aloud and auto-scroll after N minutes.
@@ -1153,7 +1150,14 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     search: (text) => openSearch(text),
     highlight: (range, text, color) => addPdfHighlight(range, text, color),
     note: (range, text) => addPdfNote(range, text),
-    speak: (text) => { if ('speechSynthesis' in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = isRtlText(text) ? 'ar-SA' : 'en-US'; u.rate = getSettings().speechRate; speechSynthesis.speak(u); } },
+    speak: (text) => {
+      stopSpeech();
+      const lang = speechLangOf(text, book.language);
+      void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => undefined, () => undefined).then((r) => {
+        if (r === 'missing-data') { toast(t('voiceDataMissing', { lang: languageName(lang) }), 'info', 7000); void installVoices(); }
+        else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
+      });
+    },
     textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '' }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();

@@ -1,5 +1,7 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
+import { ttsAvailable } from '../tts';
+import { aiTtsSupported } from '../ai';
 import { h, clear, icon, toast, pickButton } from './dom';
 import { colorField } from './colorpicker';
 import { isTouchDevice, t } from '../i18n';
@@ -154,7 +156,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('translatorChoice'), 'translator'], segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
 
   /* ----- Read aloud ----- */
-  if ('speechSynthesis' in window) {
+  if (ttsAvailable() || aiTtsSupported()) {
     grid.append(head('behaviour', t('readAloud')));
     grid.append(stepper([t('speechRate'), 'speechRate'], s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
   grid.append(section([t('speechScope'), 'speechScope'], segmented([['chapter', t('speechChapter')], ['book', t('speechBook')]], s.speechScope, (v) => updateSettings({ speechScope: v }))));
@@ -172,9 +174,16 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
       grid.append(section([t('aiTtsModel'), 'aiTtsModel'], tm));
       if (!aiReady()) grid.append(h('p', { class: 'src' }, t('aiNeedsKey')));
     }
-    const voices = speechSynthesis.getVoices();
-    if (voices.length && s.speechEngine === 'system') {
-      grid.append(section([t('speechVoice'), 'speechVoice'], pickButton(t('speechVoice'), [['', t('voiceDefault')] as [string, string], ...voices.map((v): [string, string] => [v.name, `${v.name} (${v.lang})`])], s.speechVoice, (v) => updateSettings({ speechVoice: v }), t('close'))));
+    if (s.speechEngine === 'system') {
+      // The device's voices, by language (a chosen voice is used for its own language; other languages keep
+      // their best voice). Filled in when the list arrives.
+      const slot = h('div');
+      grid.append(slot);
+      void import('../tts').then(async ({ voices, languageName }) => {
+        const list = (await voices()).sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+        if (!list.length) { slot.append(h('p', { class: 'src' }, t('speechUnavailable'))); return; }
+        slot.replaceWith(section([t('speechVoice'), 'speechVoice'], pickButton(t('speechVoice'), [['', t('voiceDefault')] as [string, string], ...list.map((v): [string, string] => [v.name, `${languageName(v.lang)} · ${v.name}`])], s.speechVoice, (v) => updateSettings({ speechVoice: v }), t('close'))));
+      });
     }
   }
 

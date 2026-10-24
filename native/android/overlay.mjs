@@ -75,8 +75,14 @@ if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
     <application`);
   if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 }
+// Text-to-speech engines must be visible to the app (Android 11+), or TextToSpeech finds none.
+if (!manifest.includes('android.intent.action.TTS_SERVICE')) {
+  if (manifest.includes('<queries>')) manifest = manifest.replace('<queries>', `<queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>`);
+  else manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>\n  </queries>\n</manifest>`);
+}
 if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
-  manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.PROCESS_TEXT" />\n      <data android:mimeType="text/plain" />\n    </intent>\n  </queries>\n</manifest>`);
+  const q = `    <intent>\n      <action android:name="android.intent.action.PROCESS_TEXT" />\n      <data android:mimeType="text/plain" />\n    </intent>`;
+  manifest = manifest.includes('<queries>') ? manifest.replace('<queries>', `<queries>\n${q}`) : manifest.replace('</manifest>', `  <queries>\n${q}\n  </queries>\n</manifest>`);
 }
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
