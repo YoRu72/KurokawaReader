@@ -58,11 +58,56 @@ import java.util.Set;
  *  - pdfOpen / pdfRender / pdfClose: render PDF pages with Android's own renderer, which
  *    substitutes system fonts for non-embedded fonts (pdf.js cannot shape Arabic in that case).
  */
-@CapacitorPlugin(name = "Kurokawa", permissions = { @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }) })
+@CapacitorPlugin(name = "Kurokawa", permissions = { @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }), @Permission(alias = "notifications", strings = { "android.permission.POST_NOTIFICATIONS" }) })
 public class KurokawaPlugin extends Plugin {
     private PdfRenderer renderer;
     private ParcelFileDescriptor pfd;
     private final Object lock = new Object();
+
+    /* ---------- long work (conversions): background service and notifications ---------- */
+
+    private boolean jobStarted = false;
+
+    @PluginMethod
+    public void notifyPermission(PluginCall call) {
+        boolean ask = Boolean.TRUE.equals(call.getBoolean("ask", false));
+        if (Build.VERSION.SDK_INT < 33 || getPermissionState("notifications") == PermissionState.GRANTED) {
+            JSObject r = new JSObject(); r.put("granted", androidx.core.app.NotificationManagerCompat.from(getContext()).areNotificationsEnabled()); call.resolve(r); return;
+        }
+        if (!ask) { JSObject r = new JSObject(); r.put("granted", false); call.resolve(r); return; }
+        requestPermissionForAlias("notifications", call, "notifyPermCallback");
+    }
+
+    @PermissionCallback
+    private void notifyPermCallback(PluginCall call) {
+        JSObject r = new JSObject(); r.put("granted", getPermissionState("notifications") == PermissionState.GRANTED); call.resolve(r);
+    }
+
+    @PluginMethod
+    public void jobProgress(PluginCall call) {
+        KrWebView.keepAwake = true;
+        try { KrJobService.progress(getContext(), call.getString("title", ""), call.getString("text", ""), call.getInt("pct", 0), jobStarted); jobStarted = true; }
+        catch (Exception e) { /* a service the system refuses to start now: the work goes on in the app */ }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void jobDone(PluginCall call) {
+        boolean stop = !Boolean.FALSE.equals(call.getBoolean("stop", true));
+        KrJobService.done(getContext(), call.getString("title", ""), call.getString("text", ""), Boolean.TRUE.equals(call.getBoolean("ok", true)), stop);
+        if (stop) {
+            jobStarted = false;
+            getActivity().runOnUiThread(() -> { android.webkit.WebView w = getBridge().getWebView(); if (w instanceof KrWebView) ((KrWebView) w).release(); else KrWebView.keepAwake = false; });
+        }
+        call.resolve();
+    }
+
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        // (While work runs, the page goes on at full speed behind other apps.)
+        if (KrWebView.keepAwake && getBridge() != null && getBridge().getWebView() != null) { android.webkit.WebView w = getBridge().getWebView(); w.postDelayed(() -> { if (KrWebView.keepAwake) { w.onResume(); w.resumeTimers(); } }, 150); }
+    }
 
     @PluginMethod
     public void processText(PluginCall call) {

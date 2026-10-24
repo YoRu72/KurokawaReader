@@ -384,8 +384,22 @@ export class PdfViewer {
     return out;
   }
 
+  /** Page texts read before (kept on the device by the search across books): page n is texts[n - 1]. */
+  seedTexts(texts: string[]): void { if (texts.length !== this.total) return; texts.forEach((x, i) => { if (!this.textCache.has(i + 1)) this.textCache.set(i + 1, x); }); }
+  /** Every page's text, once all have been read (to keep for next time); else null. */
+  allTexts(): string[] | null { if (this.textCache.size < this.total) return null; return Array.from({ length: this.total }, (_, i) => this.textCache.get(i + 1) ?? ''); }
+  private textPending = new Map<number, Promise<string>>();
+  private normCache = new Map<number, { text: string; norm: ReturnType<typeof normalizeForSearch> }>();
+
   async pageText(n: number): Promise<string> {
     if (this.textCache.has(n)) return this.textCache.get(n)!;
+    const pending = this.textPending.get(n); if (pending) return pending;
+    const job = this.readPageText(n).finally(() => this.textPending.delete(n));
+    this.textPending.set(n, job);
+    return job;
+  }
+
+  private async readPageText(n: number): Promise<string> {
     try {
       const page = await this.doc.getPage(n);
       // In reading order, as the text layer has it: right-to-left lines read right to left, harakat in their
@@ -397,17 +411,32 @@ export class PdfViewer {
     } catch { return ''; }
   }
 
+  /** Read every page's text a little at a time while the reader is idle, so a search later starts with all of
+   *  it at hand; `done` gets the texts once all are read. Stops when the book is closed. */
+  async readAllWhenIdle(done: (texts: string[]) => void): Promise<void> {
+    const idle = () => new Promise<void>((r) => { const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (ric) ric(() => r(), { timeout: 1500 }); else setTimeout(r, 60); });
+    for (let n = 1; n <= this.total; n++) {
+      if (this.destroyed) return;
+      if (!this.textCache.has(n)) { await idle(); if (this.destroyed) return; await this.pageText(n); }
+    }
+    const all = this.allTexts(); if (all && !this.destroyed) done(all);
+  }
+
   /** Search every page; reports progress; returns hits with excerpts. */
-  async search(query: string, onProgress?: (done: number, total: number) => void, signal?: { cancelled: boolean }): Promise<PdfSearchHit[]> {
+  async search(query: string, onProgress?: (done: number, total: number) => void, signal?: { cancelled: boolean }, onHits?: (hits: PdfSearchHit[]) => void): Promise<PdfSearchHit[]> {
     const hits: PdfSearchHit[] = [];
     const q = normalizeForSearch(query.trim()).text;
     if (!q) return hits;
+    let shown = 0, lastShow = performance.now();
     for (let n = 1; n <= this.total; n++) {
       if (signal?.cancelled) break;
+      // (The next pages are asked of the worker now, so it reads them while this one is searched.)
+      for (let k = n + 1; k <= Math.min(this.total, n + 4); k++) if (!this.textCache.has(k)) void this.pageText(k);
       // (Lines run on: a phrase may continue on the next line. Private-use codes — ornaments a font draws — are
-      // no text to show.)
-      const text = (await this.pageText(n)).replace(/\s/g, ' ').replace(/[\uE000-\uF8FF]/g, ' ');
-      const norm = normalizeForSearch(text);
+      // no text to show.) Each page is prepared for searching once, and kept for the next search.
+      let prep = this.normCache.get(n);
+      if (!prep) { const text = (await this.pageText(n)).replace(/\s/g, ' ').replace(/[\uE000-\uF8FF]/g, ' '); prep = { text, norm: normalizeForSearch(text) }; this.normCache.set(n, prep); }
+      const { text, norm } = prep;
       let idx = norm.text.indexOf(q);
       let count = 0;
       while (idx >= 0 && count < 20) {
@@ -424,7 +453,11 @@ export class PdfViewer {
         idx = norm.text.indexOf(q, idx + q.length);
       }
       onProgress?.(n, this.total);
+      // Results shown as they are found (every few tenths of a second), not only at the end.
+      if (onHits && hits.length > shown && performance.now() - lastShow > 250) { onHits(hits.slice(shown)); shown = hits.length; lastShow = performance.now(); }
+      if (n % 25 === 0) await new Promise((r) => setTimeout(r, 0));
     }
+    if (onHits && hits.length > shown && !signal?.cancelled) onHits(hits.slice(shown));
     return hits;
   }
 

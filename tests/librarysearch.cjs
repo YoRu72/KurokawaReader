@@ -12,7 +12,7 @@ const [out, query, ...files] = process.argv.slice(2); fs.mkdirSync(out, { recurs
   await p.goto('http://localhost:5190/'); await p.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }, process.env.LANG2 || 'ar'); await p.reload(); await p.waitForSelector('.library-view');
   await p.setInputFiles('input[type=file]', files.map((f) => path.resolve(f))); await p.waitForFunction((n) => document.querySelectorAll('.book-card').length >= n, files.length, { timeout: 120000 }); await p.waitForTimeout(800);
   await p.screenshot({ path: path.join(out, '1-library.png') });
-  await p.click('.library-tools .tool-btn:last-child'); await p.waitForSelector('.libsearch-sheet .ls-input');
+  await p.click('.library-tools .tool-btn[data-icon="search"]'); await p.waitForSelector('.libsearch-sheet .ls-input');
   await p.fill('.ls-input', query); const t0 = Date.now(); await p.click('.ls-go.primary');
   await p.waitForTimeout(300); await p.waitForFunction(() => !!document.querySelector('.libsearch-sheet .btn.tonal.ls-go[hidden]'), null, { timeout: 600000 });
   console.log('first search ms', Date.now() - t0, '|', await p.textContent('.ls-status'));

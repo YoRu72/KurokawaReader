@@ -75,6 +75,15 @@ if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
   if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 }
 // Text-to-speech engines must be visible to the app (Android 11+), or TextToSpeech finds none.
+// Conversions go on behind other apps: a foreground service ("data sync") with a progress notification.
+if (!manifest.includes('KrJobService')) {
+  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <application`);
+  manifest = manifest.replace('</application>', `    <service android:name=".KrJobService" android:exported="false" android:foregroundServiceType="dataSync" />
+    </application>`);
+}
 if (!manifest.includes('android.intent.action.TTS_SERVICE')) {
   if (manifest.includes('<queries>')) manifest = manifest.replace('<queries>', `<queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>`);
   else manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>\n  </queries>\n</manifest>`);
@@ -141,6 +150,7 @@ await fs.mkdir(pkgDir, { recursive: true });
 await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.join(pkgDir, 'KurokawaPlugin.java'));
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
 await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));
+await fs.copyFile(path.join(root, 'native/android/KrJobService.java'), path.join(pkgDir, 'KrJobService.java'));
 // Swap Capacitor's WebView for ours (suppresses the system selection menu). BridgeActivity
 // inflates the library's bridge_layout_main; an app resource of the same name overrides it.
 await fs.writeFile(path.join(app, 'src/main/res/layout/bridge_layout_main.xml'), `<?xml version="1.0" encoding="utf-8"?>

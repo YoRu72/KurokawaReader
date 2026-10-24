@@ -2,6 +2,8 @@
 // fonts and absolute paths behave exactly as on the web) and forwards files the
 // OS asks us to open (double-click, "Open with", drag onto the icon).
 const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage } = require('electron');
+// (Windows shows the app's notifications under its own name only with this.)
+if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.reader');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -210,6 +212,14 @@ ipcMain.handle('kr:http', async (_e, o) => {
   const buf = Buffer.from(await res.arrayBuffer());
   const headers = {}; res.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   return { status: res.status, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
+});
+// Long work under way (a conversion): its progress on the taskbar icon, and full speed while the window is
+// minimised or behind others (Chromium slows a hidden page's timers).
+ipcMain.on('kr:progress', (e, p) => {
+  const w = BrowserWindow.fromWebContents(e.sender); if (!w) return;
+  const busy = typeof p === 'number' && p >= 0;
+  w.setProgressBar(busy ? Math.min(1, p) : -1);
+  e.sender.setBackgroundThrottling(!busy);
 });
 ipcMain.handle('kr:folder-pick', async () => { const { dialog } = require('electron'); const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('fs/promises').readFile(String(p), 'utf8'); } catch { return null; } });

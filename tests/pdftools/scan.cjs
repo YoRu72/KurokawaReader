@@ -12,7 +12,7 @@ fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: Number(process.env.W || 420), height: 860 }, deviceScaleFactor: 2, acceptDownloads: true, hasTouch: true }); const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('pageerror', e.message)); page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text().slice(0, 300)); });
   await page.goto('http://localhost:5198/'); await page.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }, lang); await page.reload(); await page.waitForSelector('.library-view');
-  await page.click('.library-tools .tool-btn:last-child'); await page.waitForSelector('.sheet .convert-target');
+  await page.click('.library-tools .tool-btn[data-icon="file"]'); await page.waitForSelector('.sheet .convert-target');
   await page.click('.sheet .convert-targets .convert-target:nth-child(2)'); await page.waitForSelector('.scan-sheet'); await page.waitForTimeout(600);
   await page.screenshot({ path: path.join(out, '1-empty.png') });
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.scan-sheet .tool-bar .btn.tonal')]); await chooser.setFiles(photos.map((p) => path.resolve(p)));

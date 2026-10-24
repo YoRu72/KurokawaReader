@@ -60,6 +60,8 @@ export interface VisualSettings {
   /* Library */
   libraryView: 'cards' | 'chips';
   autoUpdateCheck: boolean;
+  /** Long work (conversions) shows its progress in notifications. */
+  jobNotify: boolean;
   tapToTurn: boolean;
   showStatusLine: boolean;
   importButton: 'chips' | 'top' | 'fab';
@@ -161,6 +163,7 @@ export const DEFAULTS: VisualSettings = {
   hideSystemBars: true,
   libraryView: 'cards',
   autoUpdateCheck: true,
+  jobNotify: true,
   tapToTurn: true,
   showStatusLine: false,
   importButton: 'chips',

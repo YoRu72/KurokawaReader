@@ -55,11 +55,15 @@ async function pdfUnits(file: Blob, onPage?: (n: number, total: number) => void)
   catch (e) { if (String((e as Error).message) === 'password') return 'protected'; throw e; }
   try {
     const out: Unit[] = [];
-    for (let n = 1; n <= o.doc.numPages; n++) {
-      const page = await o.doc.getPage(n);
-      out.push({ label: String(n), text: await pageReadingText(page) });
-      page.cleanup();
-      onPage?.(n, o.doc.numPages);
+    // (A few pages asked of the worker ahead, so it reads them while the one before is laid out here.)
+    const N = o.doc.numPages;
+    const ask = (n: number) => o.doc.getPage(n).then(async (page) => { const text = await pageReadingText(page); page.cleanup(); return text; });
+    const ahead = new Map<number, Promise<string>>();
+    for (let n = 1; n <= N; n++) {
+      for (let k = n; k <= Math.min(N, n + 3); k++) if (!ahead.has(k)) ahead.set(k, ask(k));
+      out.push({ label: String(n), text: await ahead.get(n)! });
+      ahead.delete(n);
+      onPage?.(n, N);
       if (n % 10 === 0) await new Promise((r) => setTimeout(r, 0));
     }
     return out;
@@ -141,4 +145,20 @@ export type Return = { q: string; scope: { kind: 'all' } | { kind: 'folder'; id:
 export function setReturn(r: Return): void { try { sessionStorage.setItem('kr.searchReturn', JSON.stringify(r)); } catch { /* private mode */ } }
 export function takeReturn(): Return | null {
   try { const raw = sessionStorage.getItem('kr.searchReturn'); if (!raw) return null; sessionStorage.removeItem('kr.searchReturn'); return JSON.parse(raw) as Return; } catch { return null; }
+}
+
+/** A PDF's page texts kept from an earlier reading (by this search or the reader's own), or null. */
+export async function storedPages(book: Book): Promise<string[] | null> {
+  const m = memo.get(book.id); if (m) return m.map((u) => u.text);
+  const stored = await db.getText(book.id).catch(() => null);
+  if (!stored || stored.key !== keyOf(book)) return null;
+  memo.set(book.id, stored.units);
+  return stored.units.map((u) => u.text);
+}
+/** Keep a PDF's page texts once the reader has read them all (its search across books is then quick too). */
+export async function storePages(book: Book, texts: string[]): Promise<void> {
+  if (memo.has(book.id)) return;
+  const units = texts.map((text, i) => ({ label: String(i + 1), text }));
+  memo.set(book.id, units);
+  await db.putText(book.id, { key: keyOf(book), units }).catch(() => undefined);
 }

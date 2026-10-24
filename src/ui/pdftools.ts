@@ -1,6 +1,7 @@
 // PDF tools: pictures into a PDF, PDFs merged, pages organised (deleted, extracted, reordered, turned),
 // protection removed, pages saved as pictures. Every tool makes a new file; the ones it starts from are
 // left as they are. The work itself is in ../pdftools.ts (pdf-lib) and ../pdfcrypt.ts.
+import { runJob } from '../jobs';
 import { h, icon, openSheet, toast, pickButton } from './dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { db, type Book } from '../db';
@@ -99,13 +100,16 @@ export function runner(body: HTMLElement, onDone?: () => void) {
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const result = h('div', { class: 'convert-result', hidden: true });
   body.append(status, track, result);
+  let report: ((pct: number) => void) | null = null;
   return {
-    progress(pct: number) { track.hidden = false; bar.style.width = `${Math.round(pct)}%`; },
+    progress(pct: number) { track.hidden = false; bar.style.width = `${Math.round(pct)}%`; report?.(pct); },
     async run(buttons: HTMLButtonElement[], work: () => Promise<{ blob: Blob; name: string } | null>) {
       buttons.forEach((b) => { b.disabled = true; });
       status.hidden = false; status.textContent = t('working'); track.hidden = false; bar.style.width = '0%'; result.hidden = true;
       try {
-        const out = await work();
+        // A job: it goes on (with a notification) when this sheet is closed or the app is left.
+        const title = body.closest('.sheet')?.querySelector('.sheet-head h3')?.textContent ?? t('convertFile');
+        const out = await runJob(title, (r) => { report = r; return work(); }, () => body.isConnected).finally(() => { report = null; });
         if (!out) { status.textContent = t('cancelled'); return; }
         const { blob, name } = out;
         bar.style.width = '100%';

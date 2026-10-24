@@ -77,7 +77,7 @@ export function libraryView(): HTMLElement {
   const importTopBtn = iconButton('import', t('importBooks'), () => importMenu());
   const syncTopBtn = iconButton('cloud', t('sync'), () => void import('../ui/syncsheet').then((m) => m.syncSheet()));
   const topbar = h('header', { class: 'topbar' },
-    h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), t('appName')),
+    h('div', { class: 'brand title' }, h('img', { src: '/icons/icon.svg', alt: '' }), h('span', { class: 'brand-name' }, t('appName'))),
     importTopBtn,
     syncTopBtn,
     iconButton('chart', t('readingStats'), () => void import('../ui/stats').then((m) => m.showStats())),

@@ -12,10 +12,20 @@ const [pdf, query, shot] = [path.resolve(process.argv[2]), process.argv[3], proc
   await page.goto('http://localhost:5193/'); await page.evaluate(() => { localStorage.setItem('kr.lang', 'ar'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [pdf]); await page.waitForSelector('.book-card', { timeout: 60000 });
   await page.click('.book-card'); await page.waitForSelector('.pdf-page canvas', { timeout: 60000 });
+  if (process.env.WAIT) await page.waitForTimeout(+process.env.WAIT);
   await page.keyboard.press('Control+f').catch(() => {}); await page.waitForTimeout(300);
   if (!(await page.$('input[type=search]'))) { const btns = await page.$$('.reader-view button[aria-label]'); for (const b of btns) { const l = await b.getAttribute('aria-label'); if (/بحث|Search/.test(l)) { await b.click(); break; } } }
-  await page.waitForSelector('input[type=search]'); await page.fill('input[type=search]', query);
-  await page.waitForFunction(() => /نتيج|لا نتائج|result/i.test(document.querySelector('.panel, .sheet, body')?.textContent ?? '') && document.querySelectorAll('li.hit').length > 0, null, { timeout: 120000 }).catch(() => {});
+  await page.waitForSelector('input[type=search]'); const cdp = process.env.PROF ? await page.context().newCDPSession(page) : null;
+  if (cdp) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 500 }); await cdp.send('Profiler.start'); }
+  const t0 = Date.now(); await page.fill('input[type=search]', query);
+  // (Done when the panel's status says how many results there are; checked twice a second, cheaply.)
+  await page.waitForFunction(() => { const st = [...document.querySelectorAll('.panel div[style]')].find((d) => /النتائج|لا نتائج|result/i.test(d.textContent ?? '')); return !!st && !/…/.test(st.textContent ?? ''); }, null, { timeout: 600000, polling: 500 }).catch(() => {});
+  console.log('search ms', Date.now() - t0, '|', await page.evaluate(() => document.querySelector('.panel')?.querySelector('div[style]')?.textContent));
+  if (cdp) {
+    const { profile } = await cdp.send('Profiler.stop'); const dt = {}; const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+    for (let i = 0; i < profile.samples.length; i++) { const n = byId.get(profile.samples[i]); const k = `${n.callFrame.functionName || '(anon)'} ${path.basename(n.callFrame.url)}:${n.callFrame.lineNumber}`; dt[k] = (dt[k] || 0) + (profile.timeDeltas[i] || 0); }
+    for (const [k, v] of Object.entries(dt).sort((a, b) => b[1] - a[1]).slice(0, 22)) console.log((v / 1000).toFixed(0).padStart(7), 'ms', k);
+  }
   await page.waitForTimeout(500);
   if (process.env.DBG) await page.screenshot({ path: process.env.DBG });
   for (const t of await page.$$eval('li.hit', (els) => els.slice(0, 12).map((e) => e.innerText.replace(/\s*\n\s*/g, ' | ')))) console.log(t);

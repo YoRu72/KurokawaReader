@@ -6,6 +6,7 @@ import { TARGETS, convertBook, convertible, type Target } from '../convert';
 import { db, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob } from './share';
+import { runJob } from '../jobs';
 
 /** Choose which book to convert (library tools button), then open the sheet for it. */
 export async function convertPicker(books: Book[], pickFile: () => void): Promise<void> {
@@ -32,7 +33,11 @@ export function convertSheet(book: Book, onDone?: () => void): void {
     track.hidden = false; result.hidden = true;
     const progress = (msg: string, pct?: number) => { status.textContent = t(`conv_${msg}` as 'loading') || msg; if (pct !== undefined) bar.style.width = `${pct}%`; };
     try {
-      const { blob, name } = await convertBook(book, target, progress, password);
+      const label = TARGETS.find((x) => x.id === target)?.label ?? target;
+      // A job: it goes on (with a notification) when this sheet is closed or the app is left.
+      const out = await runJob(`${book.title} → ${label}`, (report) => convertBook(book, target, (msg, pct) => { if (sh.el.isConnected) progress(msg, pct); if (pct !== undefined) report(pct); }, password), () => sh.el.isConnected);
+      if (!out) return;
+      const { blob, name } = out;
       status.textContent = t('convertDone', { name, size: formatBytes(blob.size) });
       result.replaceChildren(
         h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name, book.title) }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),

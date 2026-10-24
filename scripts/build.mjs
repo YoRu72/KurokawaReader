@@ -94,7 +94,7 @@ const buildOptions = {
   splitting: true,
   chunkNames: 'chunk-[name]-[hash]',
   assetNames: 'fonts/[name]-[hash]',
-  minify: !watch,
+  minify: !watch && !process.env.NOMINIFY,
   sourcemap: true,
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' },
   logLevel: 'info',

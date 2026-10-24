@@ -4,6 +4,7 @@
 // spacing and line pitch, runs with their font, size, weight and colour, two-column verse as a
 // borderless table, the running head in the page header, and footnotes as Word footnotes.
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
+import { yieldNow } from './jobs';
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
@@ -173,15 +174,44 @@ async function canvasPng(c: HTMLCanvasElement): Promise<Uint8Array> {
 }
 
 type Pic = { png: Uint8Array; x: number; y: number; w: number; h: number };
+
+/** Pictures still being encoded (the browser encodes them off this thread): the pages go on meanwhile, and the
+ *  document is built once they are all in. */
+let pendingPngs: Promise<void>[] = [];
+function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array }): void {
+  pendingPngs.push(canvasPng(c).then((b) => { into.png = b; }));
+}
 /** The page drawn without its text, cut into the pieces that carry ink (header ornament, frame, rules,
  *  pictures) — each cropped tight, so pieces that repeat from page to page are stored once. */
-async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>, grids: GridSpec[] = [], arts: Piece[] = []): Promise<Pic[]> {
+/** Whether a page draws anything besides text: pictures, shadings, filled or stroked paths. A page of text alone
+ *  has no graphics to render (and rendering it was a good part of the time a long book took). */
+function drawsGraphics(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] }): boolean {
+  const O = pdfjs.OPS as unknown as Record<string, number>;
+  const pictures = new Set(['paintImageXObject', 'paintInlineImageXObject', 'paintImageMaskXObject', 'paintImageMaskXObjectGroup', 'paintImageXObjectRepeat', 'paintImageMaskXObjectRepeat', 'paintSolidColorImageMask', 'paintInlineImageXObjectGroup', 'shadingFill', 'paintJpegXObject'].map((k) => O[k]).filter((x) => x !== undefined));
+  const paints = new Set(['stroke', 'closeStroke', 'fill', 'eoFill', 'fillStroke', 'eoFillStroke', 'closeFillStroke', 'closeEOFillStroke'].map((k) => O[k]).filter((x) => x !== undefined));
+  for (let i = 0; i < ol.fnArray.length; i++) {
+    const fn = ol.fnArray[i];
+    if (pictures.has(fn) || paints.has(fn)) return true;
+    // (A path's own paint operator travels with it; one that only clips draws nothing.)
+    if (fn === O.constructPath) { const op = (ol.argsArray[i] as unknown[] | null)?.[0]; if (typeof op !== 'number' || paints.has(op)) return true; }
+  }
+  return false;
+}
+
+// One canvas for every page's graphics (a new one each page left megabytes for the collector).
+let graphicsCanvas: (HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> }) | null = null;
+
+async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>, grids: GridSpec[] = [], arts: Piece[] = [], textOnly = false): Promise<Pic[]> {
+  if (textOnly && !keepFonts.size && !arts.length && !grids.length) return [];
   const vp = page.getViewport({ scale });
-  const c = document.createElement('canvas') as HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> };
+  const c = (graphicsCanvas ??= document.createElement('canvas') as HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> });
   c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); c.krNoText = true; c.krKeepFonts = keepFonts;
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  const TG = (globalThis as { krTiming?: Record<string, number> }).krTiming; let tg = performance.now();
+  const lapG = (k: string) => { if (TG) { const n = performance.now(); TG[k] = (TG[k] ?? 0) + n - tg; tg = n; } };
   await page.render({ canvas: c, canvasContext: ctx, viewport: vp, background: 'rgba(255,255,255,1)' } as Parameters<typeof page.render>[0]).promise;
+  lapG('g.render');
   const W = c.width, H = c.height;
   // Ruled tables become Word tables: their shading is read off the page here, and their rules and shading
   // leave the picture.
@@ -218,14 +248,24 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
     p.pic = { png: await canvasPng(cc), w: cw / scale, h: chh / scale, drop: ph - (y0 + u + 1) / scale - p.y };
     ctx.fillStyle = '#fff'; ctx.fillRect(x0 + a, y0 + t, cw, chh);
   }
-  const img = ctx.getImageData(0, 0, W, H); const d = img.data;
-  const ink = new Uint8Array(W * H);
-  for (let i = 0, k = 0; i < d.length; i += 4, k++) {
-    if (d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250) d[i + 3] = 0; // white → transparent
-    else ink[k] = 1;
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const ink = new Uint8Array(W * H); const rowHas = new Uint8Array(H);
+  // (Read as whole pixels: most of a page is pure white, settled by one comparison.)
+  const px32 = new Uint32Array(d.buffer, d.byteOffset, W * H);
+  const WHITE = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 4 ? 0x00ffffff : 0xffffff00;
+  for (let y = 0, k = 0; y < H; y++) {
+    let any = 0;
+    for (let x = 0; x < W; x++, k++) {
+      const v = px32[k];
+      if ((v & WHITE) === WHITE) continue;
+      const i = k * 4;
+      if (!(d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250)) { ink[k] = 1; any = 1; }
+    }
+    rowHas[y] = any;
   }
-  ctx.putImageData(img, 0, 0);
-  const rowInk = (y: number, x0: number, x1: number) => { for (let x = x0; x < x1; x++) if (ink[y * W + x]) return true; return false; };
+  lapG('g.scan');
+  if (!rowHas.some((v) => v)) return [];
+  const rowInk = (y: number, x0: number, x1: number) => { if (x0 === 0 && x1 === W) return rowHas[y] === 1; for (let x = x0; x < x1; x++) if (ink[y * W + x]) return true; return false; };
   const colInk = (x: number, y0: number, y1: number) => { for (let y = y0; y < y1; y++) if (ink[y * W + x]) return true; return false; };
   // Bands of rows with ink (small gaps bridged), then clusters of columns within each band.
   const boxes: [number, number, number, number][] = [];
@@ -250,9 +290,16 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
   const out: Pic[] = [];
   for (const [x0, y0, x1, y1] of parts) {
     const cc = document.createElement('canvas'); cc.width = x1 - x0; cc.height = y1 - y0;
-    cc.getContext('2d')!.drawImage(c, x0, y0, cc.width, cc.height, 0, 0, cc.width, cc.height);
-    out.push({ png: await canvasPng(cc), x: x0 / scale, y: y0 / scale, w: cc.width / scale, h: cc.height / scale });
+    const cx = cc.getContext('2d')!;
+    cx.drawImage(c, x0, y0, cc.width, cc.height, 0, 0, cc.width, cc.height);
+    // White → transparent, in the picture only (not over the whole page).
+    const im = cx.getImageData(0, 0, cc.width, cc.height); const q = im.data;
+    for (let i = 0; i < q.length; i += 4) if (q[i] > 250 && q[i + 1] > 250 && q[i + 2] > 250) q[i + 3] = 0;
+    cx.putImageData(im, 0, 0);
+    const pic: Pic = { png: new Uint8Array(0), x: x0 / scale, y: y0 / scale, w: cc.width / scale, h: cc.height / scale };
+    encodeLater(cc, pic); out.push(pic);
   }
+  lapG('g.png');
   return out;
 }
 
@@ -484,16 +531,24 @@ function buildLines(all: Piece[]): Line[] {
   }
   // (Harakat reported on their own were already put back into their words: see attachMarks.)
   // Raised, smaller pieces (note markers) belong to the line they sit on.
-  const sizeOf = (g: Piece[]) => median(g.map((p) => p.h));
+  // (Each line's size and extent measured once, and again only when pieces join it: measured afresh for every
+  // pair of lines, a page of many lines took seconds.)
+  const stats = new Map<Piece[], { size: number; lo: number; hi: number }>();
+  const st = (g: Piece[]) => {
+    let v = stats.get(g);
+    if (!v) { let lo = Infinity, hi = -Infinity; for (const p of g) { if (p.l < lo) lo = p.l; if (p.r > hi) hi = p.r; } v = { size: median(g.map((p) => p.h)), lo, hi }; stats.set(g, v); }
+    return v;
+  };
+  const sizeOf = (g: Piece[]) => st(g).size;
   for (let i = groups.length - 1; i >= 0; i--) {
     const g = groups[i]; const sz = sizeOf(g);
-    const host = groups.find((o) => o !== g && sizeOf(o) > sz * 1.15 && g[0].y > o[0].y && g[0].y - o[0].y < sizeOf(o) * 0.75 && g.every((p) => p.r > Math.min(...o.map((q) => q.l)) - sizeOf(o) * 3 && p.l < Math.max(...o.map((q) => q.r)) + sizeOf(o) * 3));
-    if (host) { g.forEach((p) => { p.sup = true; }); host.push(...g); groups.splice(i, 1); continue; }
+    const host = groups.find((o) => { if (o === g) return false; const so = st(o); return so.size > sz * 1.15 && g[0].y > o[0].y && g[0].y - o[0].y < so.size * 0.75 && g.every((p) => p.r > so.lo - so.size * 3 && p.l < so.hi + so.size * 3); });
+    if (host) { g.forEach((p) => { p.sup = true; }); host.push(...g); stats.delete(host); groups.splice(i, 1); continue; }
     // Smaller print set a little low in a gap of a bigger line (a verse citation after the verse, beside a
     // Quran font whose words sit on their own baseline) is part of that line.
-    const inGap = (o: Piece[]) => g.every((p) => p.l >= Math.min(...o.map((q) => q.l)) - 1 && p.r <= Math.max(...o.map((q) => q.r)) + 1 && !o.some((q) => q.text.trim() && q.text !== '\u2009' && q.l < p.r - 0.5 && q.r > p.l + 0.5));
+    const inGap = (o: Piece[]) => { const so = st(o); return g.every((p) => p.l >= so.lo - 1 && p.r <= so.hi + 1 && !o.some((q) => q.text.trim() && q.text !== '\u2009' && q.l < p.r - 0.5 && q.r > p.l + 0.5)); };
     const low = groups.find((o) => o !== g && sizeOf(o) > sz * 1.15 && g[0].y < o[0].y && o[0].y - g[0].y < sizeOf(o) * 0.6 && inGap(o));
-    if (low && !(globalThis as { krNoLow?: boolean }).krNoLow) { low.push(...g); groups.splice(i, 1); }
+    if (low && !(globalThis as { krNoLow?: boolean }).krNoLow) { low.push(...g); stats.delete(low); groups.splice(i, 1); }
   }
   // A smaller piece raised above the others of its line is a superscript (a note number on a line of
   // running text), even when it sits close enough to be grouped with them.
@@ -505,16 +560,22 @@ function buildLines(all: Piece[]): Line[] {
     // (Its brackets drawn as pieces of their own go up with it.)
     for (const q of g) if (!q.sup && /^\s*[()[\]]\s*$/.test(q.text)) for (const p of g) if (p.sup && Math.abs(q.y - p.y) < p.h * 0.2 && Math.abs(q.h - p.h) < p.h * 0.15 && Math.min(Math.abs(q.l - p.r), Math.abs(p.l - q.r)) < p.h * 0.6) { q.sup = true; break; }
   }
+  // (Each line measured once, and again only when a space joins it.)
+  const measure = (g: Piece[]) => {
+    const words = g.filter((p) => !p.sup); if (!words.length) return null;
+    let h = 0, lo = Infinity, hi = -Infinity; for (const p of words) { if (p.h > h) h = p.h; if (p.l < lo) lo = p.l; if (p.r > hi) hi = p.r; }
+    return { y: median(words.map((p) => p.y)), h, lo, hi };
+  };
+  const wordStats = groups.map(measure);
   for (const sp of spaces) {
-    let best: Piece[] | null = null, bd = Infinity;
-    for (const g of groups) {
-      const words = g.filter((p) => !p.sup); if (!words.length) continue;
-      const y = median(words.map((p) => p.y)), h = Math.max(...words.map((p) => p.h));
-      const lo = Math.min(...words.map((p) => p.l)), hi = Math.max(...words.map((p) => p.r));
+    let best: Piece[] | null = null, bd = Infinity, bi = -1;
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi]; const ws = wordStats[gi]; if (!ws) continue;
+      const { y, h, lo, hi } = ws;
       const d = Math.abs(y - sp.y);
-      if (d < h * 0.5 && sp.l >= lo - 0.5 && sp.r <= hi + 0.5 && d < bd) { bd = d; best = g; }
+      if (d < h * 0.5 && sp.l >= lo - 0.5 && sp.r <= hi + 0.5 && d < bd) { bd = d; best = g; bi = gi; }
     }
-    best?.push(sp);
+    if (best) { best.push(sp); wordStats[bi] = measure(best); }
   }
   // Drawn spaces only separate words: a line of nothing else is no line, and one at either end of a line is
   // not part of it.
@@ -782,7 +843,8 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
         const rr: Run[][] = []; const cc: Grid['cells'][number] = [];
         for (const c of row) {
           const runs: Run[] = [];
-          const ls = [...c.lines].sort((a, b) => median(b.map((p) => p.y)) - median(a.map((p) => p.y)));
+          const lineY = new Map(c.lines.map((l) => [l, median(l.map((p) => p.y))]));
+          const ls = [...c.lines].sort((a, b) => lineY.get(b)! - lineY.get(a)!);
           ls.forEach((ps, i) => { const rs = runsOf(ps, fonts, rtl); if (i > 0 && runs.length && rs.length) rs[0] = { ...rs[0], br: true }; runs.push(...rs); });
           const cl = g.xs[c.c0], cr = g.xs[c.c0 + c.span];
           const all = c.lines.flat().filter((p) => p.text.trim() && p.text !== '\u2009');
@@ -792,7 +854,7 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
             const a = lo - cl, b = cr - hi;
             if (Math.abs(a - b) < Math.max(3, (cr - cl) * 0.08) && a > 3) align = 'center';
             else if (rtl ? b > a + 3 && a < 6 : a > b + 3 && b < 6) align = 'end';
-            if (ls.length > 1) pitch = median(ls.slice(1).map((l, i) => median(ls[i].map((p) => p.y)) - median(l.map((p) => p.y))));
+            if (ls.length > 1) pitch = median(ls.slice(1).map((l, i) => lineY.get(ls[i])! - lineY.get(l)!));
             // (One line fills its row exactly, or the row grows.)
             else pitch = Math.min(pitch, g.ys[g.rows.indexOf(row)] - g.ys[g.rows.indexOf(row) + 1] - 0.3);
           }
@@ -1083,10 +1145,16 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
   for (const pp of pg.vert?.paras ?? []) fix(pp.runs);
 }
 
+/** Text already asked of the worker for a page (the next page's, fetched while this one is being laid out). */
+const prefetched = new WeakMap<object, Promise<Awaited<ReturnType<import('pdfjs-dist').PDFPageProxy['getTextContent']>>>>();
+
 async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: [], seen: new Map() }): Promise<PageModel> {
   const [, , W, H] = page.view;
-  const ol = await page.getOperatorList();
-  const tc = await page.getTextContent();
+  const T = (globalThis as { krTiming?: Record<string, number> }).krTiming; let t0 = performance.now();
+  const lap = (k: string) => { if (T) { const n = performance.now(); T[k] = (T[k] ?? 0) + n - t0; t0 = n; } };
+  const ol = await page.getOperatorList(); lap('ops');
+  const tc = await (prefetched.get(page) ?? page.getTextContent()); lap('text');
+  prefetched.delete(page);
   const pieces: Piece[] = [];
   let spanSeq = 0;
   for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean }[]) {
@@ -1344,7 +1412,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
     };
     const gridsC = [...new Set(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])).flat().filter((l) => l.grid).map((l) => l.grid!))];
-    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts).catch(() => [] as Pic[]) : [];
+    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
     if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
     page.cleanup();
     return { vert, w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
@@ -1433,8 +1501,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     header: 6, footer: 6,
   };
   const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
-  const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts).catch(() => [] as Pic[]) : [];
+  lap('layout');
+  const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
+  lap('graphics');
   if (withGraphics) pics.push(...await renderRegions(page, 3, formulas).catch(() => [] as Pic[]));
+  lap('regions');
   page.cleanup();
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
@@ -1463,14 +1534,21 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const fonts = new Map<string, FontInfo>();
   const store: UseStore = { seqs: [], seen: new Map() };
   const pages: PageModel[] = [];
+  pendingPngs = [];
+  // The worker reads the next page (its drawing and its text) while this one is laid out here.
+  const ask = (n: number) => doc.getPage(n).then((pg) => { void pg.getOperatorList(); prefetched.set(pg, pg.getTextContent()); return pg; });
+  let next = ask(1);
   for (let p = 1; p <= doc.numPages; p++) {
     progress('pdfPage', Math.round((p / doc.numPages) * 80));
-    const page = await doc.getPage(p);
+    const page = await next;
+    if (p < doc.numPages) next = ask(p + 1);
     pages.push(await analysePage(pdfjs, page, fonts, true, store));
-    if (p % 8 === 0) await new Promise((r) => setTimeout(r, 0));
+    if (p % 8 === 0) await yieldNow();
   }
   await task.destroy();
+  await Promise.all(pendingPngs); pendingPngs = [];
   progress('build', 85);
+  const TT = (globalThis as { krTiming?: Record<string, number> }).krTiming; const tb = performance.now();
 
   // The PDF's embedded fonts, rebuilt as TrueType fonts Word can carry (subsets of one face merged, and the
   // several fonts a legacy Arabic book spreads its letter forms over made one), then runs renamed to them.
@@ -1785,7 +1863,9 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     sections,
   });
   progress('build', 92);
+  if (TT) TT.build = performance.now() - tb;
   let blob = await Packer.toBlob(d);
+  if (TT) TT.pack = performance.now() - tb - TT.build;
   // Fonts that are neither carried in the file nor common: named after a common font of the same kind.
   const subs = new Map<string, { latin: string; cs: string; ea: string }>();
   for (const key of usedChars.keys()) {
@@ -1838,7 +1918,7 @@ async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string
   }
   const docXml = await zip.file('word/document.xml')!.async('string');
   let eaId = 1;
-  const fixed = docXml.replace(/<w:r>(<w:rPr>[\s\S]*?)<\/w:rPr>(<w:t[^>]*>)\uE000([^<]*)<\/w:t>/g, (_m, pr: string, t: string, txt: string) => `<w:r>${pr}<w:eastAsianLayout w:id="${eaId++}" w:vert="1" w:vertCompress="1"/></w:rPr>${t}${txt}</w:t>`)
+  const fixed = (!docXml.includes('\uE000') ? docXml : docXml.replace(/<w:r>(<w:rPr>(?:(?!<\/w:rPr>)[\s\S])*)<\/w:rPr>(<w:t[^>]*>)\uE000([^<]*)<\/w:t>/g, (_m, pr: string, t: string, txt: string) => `<w:r>${pr}<w:eastAsianLayout w:id="${eaId++}" w:vert="1" w:vertCompress="1"/></w:rPr>${t}${txt}</w:t>`))
     .replace(/<w:sectPr([^>]*)>/g, (m) => `${m}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
     .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<\/w:sectPr>)/g, (m, a: string, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${b}` : m));
   zip.file('word/document.xml', fixed);

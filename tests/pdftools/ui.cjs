@@ -15,7 +15,7 @@ fs.mkdirSync(out, { recursive: true });
   await page.goto('http://localhost:5199/'); await page.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }, lang); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [a, b]); await page.waitForFunction(() => document.querySelectorAll('.book-card').length >= 2, null, { timeout: 60000 }); await page.waitForTimeout(500);
   const save = async (name) => { const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), page.click('.sheet:last-of-type .convert-result button:nth-child(2)')]); const f = path.join(out, name); await dl.saveAs(f); console.log('saved', name, fs.statSync(f).size); };
-  const openTools = async () => { await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((s) => s.remove())); await page.click('.library-tools .tool-btn:last-child'); await page.waitForSelector('.sheet .convert-target'); };
+  const openTools = async () => { await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((s) => s.remove())); await page.click('.library-tools .tool-btn[data-icon="file"]'); await page.waitForSelector('.sheet .convert-target'); };
   const tool = async (i) => { await page.click(`.sheet .convert-targets .convert-target:nth-child(${i})`); };
   const waitResult = async () => { await page.waitForSelector('.sheet:last-of-type .convert-result:not([hidden]) button', { timeout: 120000 }); };
   // Merge: both library PDFs, the second cut to its first page.

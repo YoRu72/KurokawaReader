@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   writeBinary(p, b64, append) { return ipcRenderer.invoke('kr:write-binary', p, b64, !!append); },
   onOpenUrl(cb) { ipcRenderer.on('kr:open-url', (_e, u) => cb(u)); },
   onCommand(cb) { ipcRenderer.on('kr:command', (_e, c) => cb(c)); },
+  setProgress(p) { ipcRenderer.send('kr:progress', p); },
 });

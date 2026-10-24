@@ -15,6 +15,21 @@ import com.getcapacitor.CapacitorWebView;
 public class KrWebView extends CapacitorWebView {
     public KrWebView(Context c, AttributeSet a) { super(c, a); }
 
+    /** While long work runs (a conversion), the page is kept "visible" when the app is left, so its timers and
+     *  rendering are not slowed to a crawl; the foreground service keeps the app itself alive. */
+    static volatile boolean keepAwake = false;
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(keepAwake ? android.view.View.VISIBLE : visibility);
+    }
+
+    /** The work is done: the page learns the app's real visibility again. */
+    void release() {
+        keepAwake = false;
+        super.onWindowVisibilityChanged(getWindowVisibility());
+    }
+
     @Override
     public ActionMode startActionMode(ActionMode.Callback callback) {
         return super.startActionMode(wrap(callback));

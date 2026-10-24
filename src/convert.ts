@@ -358,6 +358,10 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: P
   document.body.appendChild(frame);
   try {
     const fdoc = frame.contentDocument!; fdoc.open(); fdoc.write(html.replace('<style>', `<style>html,body{margin:0}body{max-width:none;padding:1px 56px;width:${W - 112}px}`)); fdoc.close();
+    // Every picture loaded before anything is measured: a book's lazy pictures, never shown in this hidden frame,
+    // would otherwise be measured as nothing, and the pages cut and the words placed for a book without them.
+    fdoc.querySelectorAll('img').forEach((im) => { im.removeAttribute('loading'); (im as HTMLImageElement).loading = 'eager'; });
+    await Promise.race([Promise.all(Array.from(fdoc.images).map((im) => im.decode().catch(() => undefined))), new Promise((r) => setTimeout(r, 15000))]);
     await new Promise((r) => setTimeout(r, 300));
     await (fdoc as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready;
     const total = fdoc.documentElement.scrollHeight;
@@ -383,22 +387,57 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: P
     const pdf = await PDFDocument.create();
     pdf.setTitle(d.title); if (d.author) pdf.setAuthor(d.author);
     // What goes into each page picture: the page's CSS (CDATA-wrapped for XML) and the body as XHTML.
-    const cssText = Array.from(fdoc.querySelectorAll('style')).map((st) => st.textContent ?? '').join('\n');
-    const bodyX = new XMLSerializer().serializeToString(fdoc.body).replace(/^<body[^>]*>|<\/body>$/g, '');
+    // (A page picture is drawn in an image, where the viewport units of the book's CSS (a full-page figure at
+    // 98vh) would measure the app's window instead of the page: they are set in pixels of the page laid out here.)
+    // (Only in CSS: style sheets and style attributes, outside url(…), whose data may hold anything.)
+    const unitsIn = (css: string) => css.split(/(url\([^)]*\))/).map((part, i) => (i % 2 ? part : part.replace(/(^|[^\w.-])(-?\d*\.?\d+)(vh|vw|vmin|vmax)\b/g, (_m, pre: string, n: string, u: string) => `${pre}${((+n) * (u === 'vh' ? H : u === 'vw' ? W : u === 'vmin' ? Math.min(W, H) : Math.max(W, H)) / 100).toFixed(2)}px`))).join('');
+    const fixedUnits = (html: string) => html.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/g, (_m, a: string, css: string, b: string) => a + unitsIn(css) + b).replace(/(\sstyle=")([^"]*)(")/g, (_m, a: string, css: string, b: string) => a + unitsIn(css) + b);
+    const cssText = unitsIn(Array.from(fdoc.querySelectorAll('style')).map((st) => st.textContent ?? '').join('\n'));
+    // Each page picture is the whole document laid out again (that is how a page of HTML becomes a picture), so
+    // every block away from the page is emptied first — kept at its exact size, so nothing moves — and only the
+    // page's own blocks carry their words and pictures. (Laying out the whole book for every page made a long
+    // book take minutes.)
+    if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR measured', pages, 'pages', all.length, 'words');
+    const leaves = pageLeaves(fdoc);
+    const near = 40;
+    leaves.forEach(emptyLeaf);
+    const filled = new Set<Leaf>();
+    if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) { let n = 0; for (const l of leaves) { const r = l.el.getBoundingClientRect(); if (Math.abs(r.top - l.top) > 1 && n++ < 8) console.warn('KR leaf moved', l.el.tagName, l.el.className, Math.round(l.top), '→', Math.round(r.top), Math.round(l.h), '→', Math.round(r.height), (l.el.outerHTML || '').slice(0, 120)); } }
+    const T = (globalThis as { krTiming?: Record<string, number> }).krTiming; let t0 = performance.now();
+    const lap = (k: string) => { if (T) { const n = performance.now(); T[k] = (T[k] ?? 0) + n - t0; t0 = n; } };
+    if (T) { T.pages = pages; T.leaves = leaves.length; }
+    // (Pages are encoded to JPEG a few at a time while the next ones are drawn.)
+    const encoding: Promise<Uint8Array>[] = [];
+    const embedDone = async (n: number) => { const image = await pdf.embedJpg(await encoding[n]); const page = pdf.addPage([PW, PH]); page.drawImage(image, { x: 0, y: 0, width: PW, height: PH }); };
+    let embedded = 0;
     for (let p = 0; p < pages; p++) {
+      lap('between');
+      if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves && p % 20 === 0) console.warn('KR page', p, '/', pages, JSON.stringify(T));
       progress('pdfPage', 65 + Math.round((p / pages) * 32));
       const top = cuts[p], tall = cuts[p + 1] - top;
+      // The page's blocks get their content back; those of the pages before are emptied again.
+      const want = new Set<Leaf>();
+      for (let i = 0; i < leaves.length && leaves[i].top < top + tall + near; i++) if (leaves[i].bottom >= top - near) want.add(leaves[i]);
+      for (const l of filled) if (!want.has(l)) { emptyLeaf(l); filled.delete(l); }
+      for (const l of want) if (!filled.has(l)) { fillLeaf(l); filled.add(l); }
+      const bodyX = fixedUnits(new XMLSerializer().serializeToString(fdoc.body).replace(/^<body[^>]*>|<\/body>$/g, ''));
+      if (T) T.bodyChars = Math.max(T.bodyChars ?? 0, bodyX.length);
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:#fff"><style><![CDATA[${cssText.replace(/\]\]>/g, '')}]]></style><div style="position:relative;top:${M}px;height:${Math.ceil(tall)}px;overflow:hidden"><div style="transform:translateY(-${top}px)"><body${d.rtl ? ' dir="rtl"' : ''} style="display:block">${bodyX}</body></div></div></div></foreignObject></svg>`;
       const img = new Image(); img.decoding = 'async';
       // A data: URL (not blob:) keeps the canvas untainted so it can be exported.
+      if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves && p === 3) (globalThis as { krDebugSvg?: string }).krDebugSvg = svg;
+      lap('svg');
       await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => { const perr = new DOMParser().parseFromString(svg, 'image/svg+xml').querySelector('parsererror')?.textContent; rej(new Error('page render' + (perr ? ': ' + perr.slice(0, 200) : ''))); }; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+      lap('load');
       const c = document.createElement('canvas'); c.width = W * SCALE; c.height = H * SCALE;
       const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
-      const jpg = await new Promise<Blob>((res) => c.toBlob((b) => res(b!), 'image/jpeg', 0.8));
-      const image = await pdf.embedJpg(new Uint8Array(await jpg.arrayBuffer()));
-      const page = pdf.addPage([PW, PH]);
-      page.drawImage(image, { x: 0, y: 0, width: PW, height: PH });
+      lap('draw');
+      encoding.push(new Promise<Blob>((res) => c.toBlob((b) => res(b!), 'image/jpeg', 0.8)).then(async (b) => new Uint8Array(await b.arrayBuffer())));
+      while (encoding.length - embedded > 3) await embedDone(embedded++);
+      lap('jpeg');
     }
+    while (embedded < encoding.length) await embedDone(embedded++);
+    lap('embed');
     await addInvisibleText(pdf, words, PW / W);
     const bytes = await pdf.save();
     return new Blob([bytes as BlobPart], { type: 'application/pdf' });
@@ -406,6 +445,42 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: P
 }
 
 type WordBox = { page: number; text: string; x: number; y: number; w: number; h: number };
+
+/** A smallest block of a laid-out document (a paragraph, a heading, a list item, a table, a picture), with its
+ *  place, and while it is emptied, what it held. */
+type Leaf = { el: HTMLElement; top: number; bottom: number; w: number; h: number; style: string | null; kids: Node[] | null; src: string | null };
+
+function pageLeaves(doc: Document): Leaf[] {
+  const win = doc.defaultView!;
+  const blockish = (e: Element) => { const d = win.getComputedStyle(e).display; return d !== 'none' && d !== 'contents' && !d.startsWith('inline'); };
+  const out: Leaf[] = [];
+  const visit = (el: Element) => {
+    for (const ch of Array.from(el.children)) {
+      if (!(ch instanceof win.HTMLElement) || !blockish(ch)) continue;
+      const atomic = /^(TABLE|FIGURE|PRE|IMG|HR|VIDEO|CANVAS)$/.test(ch.tagName);
+      const ownText = Array.from(ch.childNodes).some((n) => n.nodeType === 3 && (n.textContent ?? '').trim());
+      if (!atomic && !ownText && Array.from(ch.children).some(blockish)) { visit(ch); continue; }
+      const r = ch.getBoundingClientRect();
+      out.push({ el: ch, top: r.top, bottom: r.bottom, w: r.width, h: r.height, style: ch.getAttribute('style'), kids: null, src: null });
+    }
+  };
+  visit(doc.body);
+  return out.sort((a, b) => a.top - b.top);
+}
+function emptyLeaf(l: Leaf): void {
+  if (l.kids) return;
+  l.kids = Array.from(l.el.childNodes); l.el.replaceChildren();
+  if (l.el.tagName === 'IMG') { l.src = l.el.getAttribute('src'); l.el.removeAttribute('src'); l.el.removeAttribute('srcset'); }
+  const st = l.el.style;
+  st.setProperty('box-sizing', 'border-box', 'important'); st.setProperty('width', `${l.w}px`, 'important'); st.setProperty('height', `${l.h}px`, 'important');
+  st.setProperty('min-height', '0', 'important'); st.setProperty('max-height', 'none', 'important');
+}
+function fillLeaf(l: Leaf): void {
+  if (!l.kids) return;
+  l.el.replaceChildren(...l.kids); l.kids = null;
+  if (l.src !== null) { l.el.setAttribute('src', l.src); l.src = null; }
+  if (l.style === null) l.el.removeAttribute('style'); else l.el.setAttribute('style', l.style);
+}
 
 /** Every word of a laid-out document with its box (CSS px, in the document). */
 function wordBoxes(doc: Document): WordBox[] {
@@ -468,15 +543,19 @@ async function addInvisibleText(pdf: import('pdf-lib').PDFDocument, words: WordB
 async function readerFontCss(d: ConvDoc): Promise<string> {
   let css = '';
   for (const [family, f] of d.fonts) css += `@font-face{font-family:'${family}';src:url(${await blobToDataUrl(f.blob)})}\n`;
-  const want = new Set<string>(['Lora', 'Uthman TN1', 'Inter']);
+  // (Only the faces the document uses: every page picture carries them again.)
+  const all = d.chapters.map((c) => c.html).join('');
+  const want = new Set<string>(['Lora', ...(/[\u0600-\u06ff]/.test(all + d.title) ? ['Uthman TN1'] : [])]);
+  const italic = /<(i|em|cite|var|dfn)[\s>]|font-style:\s*italic/i.test(all);
   for (const sheet of Array.from(document.styleSheets)) {
     let rules: CSSRuleList; try { rules = sheet.cssRules; } catch { continue; }
     for (const r of Array.from(rules)) {
       if (!(r instanceof CSSFontFaceRule)) continue;
       const fam = r.style.getPropertyValue('font-family').replace(/['"]/g, '').trim();
-      if (!want.has(fam)) continue;
+      if (!want.has(fam) || (!italic && /italic/i.test(r.style.getPropertyValue('font-style')))) continue;
       const m = /url\(["']?([^"')]+)["']?\)/.exec(r.style.getPropertyValue('src')); if (!m) continue;
-      try { const blob = await (await fetch(m[1])).blob(); css += `@font-face{font-family:'${fam}';src:url(${await blobToDataUrl(blob)});font-weight:${r.style.getPropertyValue('font-weight') || 'normal'};font-style:${r.style.getPropertyValue('font-style') || 'normal'}}\n`; } catch { /* skip */ }
+      // (Relative to the stylesheet, not the page; and only a font, never a page served in its place.)
+      try { const res = await fetch(new URL(m[1], sheet.href ?? document.baseURI)); const blob = await res.blob(); if (!res.ok || /html/.test(blob.type)) continue; css += `@font-face{font-family:'${fam}';src:url(${await blobToDataUrl(blob)});font-weight:${r.style.getPropertyValue('font-weight') || 'normal'};font-style:${r.style.getPropertyValue('font-style') || 'normal'}}\n`; } catch { /* skip */ }
     }
   }
   return css;

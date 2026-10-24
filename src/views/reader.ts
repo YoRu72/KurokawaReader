@@ -23,7 +23,7 @@ import { exportNotes } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
-import { takeJump as takeSearchJump } from '../booksearch';
+import { takeJump as takeSearchJump, storedPages, storePages } from '../booksearch';
 import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
 import { attachPinyin } from '../readings';
@@ -1163,6 +1163,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   // Opened from a search across books: at the found page, the words marked.
   { const sj = takeSearchJump(book.id); if (sj) void viewer.highlightOnPage(sj.unit + 1, sj.q); }
   onDispose(() => viewer.destroy());
+  // The pages' text, read once and kept (from an earlier reading, or now, in idle moments), for quick searching.
+  setTimeout(() => void storedPages(book).then((stored) => { if (stored) viewer.seedTexts(stored); else void viewer.readAllWhenIdle((all) => void storePages(book, all)); }), 3000);
   onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   onDispose(attachSelectionToolbar(reader, {
     search: (text) => openSearch(text),
@@ -1497,14 +1499,20 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         clear(list);
         const q = input.value.trim();
         if (q.length < 2) { status.textContent = ''; return; }
-        let hits: PdfSearchHit[] = [];
-        hits = await viewer.search(q, (done, total) => { if (!token.cancelled) status.textContent = t('pdfSearching', { n: done, total }); }, token);
+        // Pages read before (here, or by the search across books) are not read again.
+        if (!viewer.allTexts()) { const stored = await storedPages(book); if (stored) viewer.seedTexts(stored); }
+        if (token.cancelled) return;
+        const show = (found: PdfSearchHit[]) => {
+          if (token.cancelled) return;
+          for (const hit of found) {
+            list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { void viewer.highlightOnPage(hit.page, q); if (window.innerWidth < 900) panel.close(); } },
+              h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after))));
+          }
+        };
+        const hits = await viewer.search(q, (done, total) => { if (!token.cancelled) status.textContent = t('pdfSearching', { n: done, total }); }, token, show);
         if (token.cancelled) return;
         status.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
-        for (const hit of hits) {
-          list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { void viewer.highlightOnPage(hit.page, q); if (window.innerWidth < 900) panel.close(); } },
-            h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after))));
-        }
+        const all = viewer.allTexts(); if (all) void storePages(book, all);
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 350); });
       if (initial) void run();
