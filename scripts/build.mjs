@@ -84,13 +84,13 @@ self.addEventListener('fetch', (e) => {
 }
 
 const buildOptions = {
-  entryPoints: [path.join(root, 'src/main.ts')],
+  entryPoints: { app: path.join(root, 'src/main.ts'), scanworker: path.join(root, 'src/scanworker.ts') },
   bundle: true,
   format: 'esm',
   platform: 'browser',
   target: ['es2022', 'chrome100', 'safari16', 'firefox110'],
   outdir: path.join(dist, 'assets'),
-  entryNames: 'app',
+  entryNames: '[name]',
   splitting: true,
   chunkNames: 'chunk-[name]-[hash]',
   assetNames: 'fonts/[name]-[hash]',

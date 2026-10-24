@@ -7,6 +7,7 @@ import { t, formatBytes, localDigits } from '../i18n';
 import { db, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob } from './share';
+import { sortable, placeNumber } from './sortable';
 import type { Source, PageSize } from '../pdftools';
 
 type Tool = 'docs' | 'images' | 'scan' | 'merge' | 'extract' | 'organize' | 'unlock' | 'toImages';
@@ -99,7 +100,11 @@ export function runner(body: HTMLElement, onDone?: () => void) {
   const status = h('p', { class: 'src', hidden: true });
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const result = h('div', { class: 'convert-result', hidden: true });
-  body.append(status, track, result);
+  // Progress and the finished file's buttons stay in view above the sheet's own buttons, however long its list
+  // of pages is (they used to come after it, a thousand pages down).
+  const panel = h('div', { class: 'runner-panel' }, status, track, result);
+  const sheet = body.parentElement; const actions = sheet?.querySelector(':scope > .sheet-actions');
+  if (sheet && actions) sheet.insertBefore(panel, actions); else body.append(panel);
   let report: ((pct: number) => void) | null = null;
   return {
     progress(pct: number) { track.hidden = false; bar.style.width = `${Math.round(pct)}%`; report?.(pct); },
@@ -137,9 +142,9 @@ const field = (label: string, input: HTMLInputElement) => h('label', { class: 't
 
 /** Up / down / remove buttons for one row of an ordered list. */
 function rowControls(i: number, n: number, move: (from: number, to: number) => void, remove: () => void): HTMLElement {
+  // Its place, to tap and type over (or hold the row and drag it), and a button to take it out.
   return h('span', { class: 'tool-row-actions' },
-    h('button', { type: 'button', class: 'icon-btn small', title: t('moveUp'), 'aria-label': t('moveUp'), disabled: i === 0, onclick: () => move(i, i - 1) }, icon('chevronUp')),
-    h('button', { type: 'button', class: 'icon-btn small', title: t('moveDown'), 'aria-label': t('moveDown'), disabled: i === n - 1, onclick: () => move(i, i + 1) }, icon('chevronDown')),
+    placeNumber(i, n, move),
     h('button', { type: 'button', class: 'icon-btn small', title: t('removeItem'), 'aria-label': t('removeItem'), onclick: remove }, icon('close')));
 }
 
@@ -160,6 +165,7 @@ function imagesSheet(onDone?: () => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const files: { file: File; url: string }[] = [];
   const list = h('div', { class: 'tool-list' });
+  sortable(list, '.tool-row', (a, b) => move(a, b), sh.body);
   let size: PageSize = 'fit'; let margin = 0;
   const render = () => {
     list.replaceChildren();
@@ -167,7 +173,7 @@ function imagesSheet(onDone?: () => void): void {
     files.forEach((f, i) => {
       const row = h('div', { class: 'tool-row' }, h('img', { class: 'tool-thumb', src: f.url, alt: '' }), h('span', { class: 'name', dir: 'auto' }, f.file.name),
         rowControls(i, files.length, move, () => { URL.revokeObjectURL(f.url); files.splice(i, 1); render(); }));
-      draggable(row, i, move); list.append(row);
+      row.dataset.k = String(i); list.append(row);
     });
     go.disabled = !files.length;
   };
@@ -197,6 +203,7 @@ function docsSheet(books: Book[], onDone?: () => void): void {
   type Part = { name: string; file: Blob; format?: Book['format'] };
   const parts: Part[] = [];
   const list = h('div', { class: 'tool-list' });
+  sortable(list, '.tool-row', (a, b) => move(a, b), sh.body);
   let paper: 'a4' | 'letter' = 'a4';
   const render = () => {
     list.replaceChildren();
@@ -205,7 +212,7 @@ function docsSheet(books: Book[], onDone?: () => void): void {
       const row = h('div', { class: 'tool-row' }, icon(p.format === 'image' ? 'images' : p.format === 'pdf' ? 'file' : 'note'),
         h('span', { class: 'name' }, h('bdi', null, p.name), p.format ? h('small', null, ` · ${p.format.toUpperCase()}`) : null),
         rowControls(i, parts.length, move, () => { parts.splice(i, 1); render(); }));
-      draggable(row, i, move); list.append(row);
+      row.dataset.k = String(i); list.append(row);
     });
     go.disabled = !parts.length;
   };
@@ -265,13 +272,14 @@ function mergeSheet(pdfs: Book[], preset: Book | undefined, onDone?: () => void)
   sh.body.style.fontFamily = 'var(--font-ui)';
   const parts: (Source & { range: string; count?: number })[] = [];
   const list = h('div', { class: 'tool-list' });
+  sortable(list, '.tool-row', (a, b) => move(a, b), sh.body);
   const render = () => {
     list.replaceChildren();
     if (!parts.length) list.append(h('p', { class: 'hint' }, t('nothingAdded')));
     parts.forEach((p, i) => {
       const range = field(t('pagesOptional'), h('input', { type: 'text', dir: 'ltr', class: 'tool-range', placeholder: '1-3, 7', value: p.range, oninput: (e: Event) => { p.range = (e.target as HTMLInputElement).value; } }) as HTMLInputElement);
       const row = h('div', { class: 'tool-row' }, icon('file'), h('span', { class: 'name' }, h('bdi', null, p.name), p.count ? h('small', null, ' · ', t('pageCount', { n: p.count })) : null), rowControls(i, parts.length, move, () => { parts.splice(i, 1); render(); }), range);
-      draggable(row, i, move); list.append(row);
+      row.dataset.k = String(i); list.append(row);
     });
     go.disabled = parts.length < 2;
   };
@@ -308,68 +316,187 @@ function mergeSheet(pdfs: Book[], preset: Book | undefined, onDone?: () => void)
 
 /* ---------- organise pages ---------- */
 
+/**
+ * Pages of a PDF to choose, put in order, turn, delete or save as a new PDF. Two views: all pages as small
+ * pictures (tap to choose, hold and drag to move, tap a number to type a new place), and one page at a time,
+ * large, like the reader — leafed through, or jumped to by number or with the slider — to choose it there.
+ * Made for long books: a thousand tiles are built once and only repainted; pictures are drawn as they come into
+ * view; the buttons and the finished file stay in sight.
+ */
 async function organizeSheet(src: Source, onDone?: () => void, extractOnly = false): Promise<void> {
   const sh = openSheet(t(extractOnly ? 'toolExtract' : 'toolOrganize'), t('close'), { stack: true });
   sh.body.style.fontFamily = 'var(--font-ui)';
+  sh.el.classList.add('organize-sheet');
   const { pageCount } = await tools();
   const n = await withPassword(src, pageCount).catch((e) => { toast(String((e as Error).message ?? e), 'error'); return null; });
   if (!n) { sh.close(); return; }
-  // The pages in their new order, each with its turn and whether it is selected.
-  const pages = Array.from({ length: n }, (_, i) => ({ i, rot: 0, sel: false }));
-  const gridEl = h('div', { class: 'page-grid' });
-  const count = h('span', { class: 'src' });
+  // The pages in their new order, each with its turn and whether it is chosen.
+  type P = { i: number; rot: number; sel: boolean };
+  const pages: P[] = Array.from({ length: n }, (_, i) => ({ i, rot: 0, sel: false }));
+  const gridEl = h('div', { class: 'page-grid organize-grid' });
+  const count = h('span', { class: 'src organize-count' });
   const thumbs = new Map<number, string>();
-  // Thumbnails drawn by pdf.js as they come into view.
   const { loadPdfjs } = await import('../formats/pdf');
   const pdfjs = await loadPdfjs();
   const task = pdfjs.getDocument({ data: src.bytes.slice(), password: src.password } as Parameters<typeof pdfjs.getDocument>[0]);
   const doc = await task.promise.catch(() => null);
-  const drawn = new Set<number>();
-  const draw = async (i: number, img: HTMLImageElement) => {
-    if (!doc || drawn.has(i)) return; drawn.add(i);
-    const page = await doc.getPage(i + 1);
-    const vp0 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 160 / Math.max(vp0.width, vp0.height) });
-    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
-    await page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp } as Parameters<typeof page.render>[0]).promise;
-    const url = c.toDataURL('image/jpeg', 0.7); thumbs.set(i, url); img.src = url;
+  // Thumbnails drawn one after another as they come into view (the newest asked first: those are on screen).
+  const want: number[] = []; const asked = new Set<number>(); let drawing = false;
+  const pump = async () => {
+    if (drawing || !doc) return; drawing = true;
+    while (want.length && sh.el.isConnected) {
+      const i = want.pop()!;
+      try {
+        const page = await doc.getPage(i + 1);
+        const vp0 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 180 / Math.max(vp0.width, vp0.height) });
+        const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        await page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp } as Parameters<typeof page.render>[0]).promise;
+        const url = await new Promise<string>((res) => c.toBlob((bl) => res(bl ? URL.createObjectURL(bl) : ''), 'image/jpeg', 0.72));
+        thumbs.set(i, url); page.cleanup();
+        gridEl.querySelectorAll<HTMLImageElement>(`img[data-i="${i}"]`).forEach((im) => { im.src = url; });
+      } catch { /* left blank */ }
+    }
+    drawing = false;
   };
-  const seen = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const img = e.target as HTMLImageElement; void draw(+img.dataset.i!, img); seen.unobserve(img); } }, { root: sh.body, rootMargin: '200px' });
+  const seen = new IntersectionObserver((es) => {
+    for (const e of es) {
+      const i = +(e.target as HTMLElement).dataset.i!;
+      if (e.isIntersecting && !thumbs.has(i) && !asked.has(i)) { asked.add(i); want.push(i); }
+      else if (!e.isIntersecting && asked.has(i) && !thumbs.has(i)) { asked.delete(i); const at = want.indexOf(i); if (at >= 0) want.splice(at, 1); }
+    }
+    void pump();
+  }, { root: sh.body, rootMargin: '300px' });
+
+  // Tiles: made once each, repainted in place.
+  const tiles = new Map<P, HTMLElement>();
+  const tileOf = (p: P) => {
+    let tile = tiles.get(p); if (tile) return tile;
+    const img = h('img', { class: 'page-thumb', alt: '', 'data-i': String(p.i), draggable: false }) as HTMLImageElement;
+    if (thumbs.has(p.i)) img.src = thumbs.get(p.i)!; else seen.observe(img);
+    tile = h('div', { class: 'page-tile', role: 'checkbox', tabindex: 0,
+      onclick: (e: Event) => { if ((e.target as HTMLElement).closest('button, input')) return; p.sel = !p.sel; paint(p); sync(); },
+      onkeydown: (e: KeyboardEvent) => { if ((e.key === ' ' || e.key === 'Enter') && !(e.target as HTMLElement).closest('input, button')) { e.preventDefault(); p.sel = !p.sel; paint(p); sync(); } } },
+      h('div', { class: 'page-frame' }, img, h('span', { class: 'page-check' }, icon('check'))),
+      h('div', { class: 'page-meta' }));
+    tiles.set(p, tile);
+    return tile;
+  };
+  const paint = (p: P) => {
+    const tile = tileOf(p); const k = pages.indexOf(p);
+    tile.dataset.k = String(k);
+    tile.classList.toggle('on', p.sel); tile.setAttribute('aria-checked', String(p.sel));
+    tile.setAttribute('aria-label', t('pageN', { n: localDigits(String(p.i + 1)) }));
+    (tile.querySelector('.page-thumb') as HTMLElement).style.transform = p.rot ? `rotate(${p.rot}deg)` : '';
+    tile.querySelector('.page-meta')!.replaceChildren(...[
+      placeNumber(k, pages.length, moveTo),
+      // (The page's own number, when it no longer stands at its place.)
+      p.i !== k ? h('small', { class: 'page-orig', title: t('pageN', { n: localDigits(String(p.i + 1)) }) }, localDigits(String(p.i + 1))) : null,
+      h('button', { type: 'button', class: 'icon-btn small', title: t('rotatePage'), 'aria-label': t('rotatePage'), onclick: () => { p.rot = (p.rot + 90) % 360; paint(p); } }, icon('rotate'))].filter((x): x is HTMLElement => !!x));
+  };
+  const order = () => { gridEl.replaceChildren(...pages.map(tileOf)); pages.forEach(paint); sync(); };
+  const moveTo = (a: number, b: number) => { if (a === b) return; pages.splice(b, 0, pages.splice(a, 1)[0]); order(); };
+  sortable(gridEl, '.page-tile', moveTo, sh.body);
+
   // Two ways to choose, kept in step: tapping pages writes their numbers in the field, and numbers typed there
-  // select the pages.
+  // choose the pages.
   const sync = () => {
-    const k = pages.filter((p) => p.sel).length; count.textContent = t('selectedCount', { n: k }); extract.disabled = del.disabled = !k;
+    const k = pages.filter((p) => p.sel).length; count.textContent = t('selectedCount', { n: k });
+    extract.disabled = del.disabled = moveSel.disabled = !k;
     if (document.activeElement !== range) void tools().then(({ formatRanges }) => { range.value = formatRanges(pages.filter((p) => p.sel).map((p) => p.i)); });
+    if (view === 'pages') paintViewer();
   };
-  // (Earlier is to the left in a left-to-right interface, to the right in a right-to-left one.)
-  const rtlUi = document.documentElement.dir === 'rtl';
-  const render = () => {
-    gridEl.replaceChildren();
-    pages.forEach((p, k) => {
-      const img = h('img', { class: 'page-thumb', alt: '', 'data-i': String(p.i), style: { transform: `rotate(${p.rot}deg)` } }) as HTMLImageElement;
-      if (thumbs.has(p.i)) img.src = thumbs.get(p.i)!; else seen.observe(img);
-      const tile = h('div', { class: 'page-tile' + (p.sel ? ' on' : ''), role: 'checkbox', 'aria-checked': String(p.sel), tabindex: 0,
-        onclick: (e: Event) => { if ((e.target as HTMLElement).closest('button')) return; p.sel = !p.sel; tile.classList.toggle('on', p.sel); tile.setAttribute('aria-checked', String(p.sel)); sync(); } },
-        h('div', { class: 'page-frame' }, img),
-        h('div', { class: 'page-meta' },
-          h('b', null, localDigits(String(p.i + 1))),
-          h('button', { type: 'button', class: 'icon-btn small', title: t('moveEarlier'), 'aria-label': t('moveEarlier'), disabled: k === 0, onclick: () => { pages.splice(k - 1, 0, pages.splice(k, 1)[0]); render(); } }, icon(rtlUi ? 'chevronRight' : 'chevronLeft')),
-          h('button', { type: 'button', class: 'icon-btn small', title: t('rotatePage'), 'aria-label': t('rotatePage'), onclick: () => { p.rot = (p.rot + 90) % 360; img.style.transform = `rotate(${p.rot}deg)`; } }, icon('rotate')),
-          h('button', { type: 'button', class: 'icon-btn small', title: t('moveLater'), 'aria-label': t('moveLater'), disabled: k === pages.length - 1, onclick: () => { pages.splice(k + 1, 0, pages.splice(k, 1)[0]); render(); } }, icon(rtlUi ? 'chevronLeft' : 'chevronRight'))));
-      draggable(tile, k, (a, b) => { pages.splice(b, 0, pages.splice(a, 1)[0]); render(); });
-      gridEl.append(tile);
-    });
-    sync();
-  };
-  const range = h('input', { type: 'text', dir: 'ltr', class: 'tool-range', placeholder: '1-3, 7, 10-', 'aria-label': t('selectPages') }) as HTMLInputElement;
+  const range = h('input', { type: 'text', dir: 'ltr', class: 'tool-range organize-range', placeholder: '1-3, 7, 10-', 'aria-label': t('selectPages') }) as HTMLInputElement;
   range.addEventListener('blur', () => sync());
-  range.addEventListener('input', async () => { const { parseRanges } = await tools(); const want = new Set(parseRanges(range.value, n)); for (const p of pages) p.sel = want.has(p.i); render(); });
+  range.addEventListener('input', async () => { const { parseRanges } = await tools(); const chosen = new Set(parseRanges(range.value, n)); for (const p of pages) { if (p.sel !== chosen.has(p.i)) { p.sel = chosen.has(p.i); paint(p); } } sync(); });
+  const setAll = (v: boolean) => { for (const p of pages) if (p.sel !== v) { p.sel = v; paint(p); } if (!v) range.value = ''; sync(); };
+  // Many pages moved at once: the chosen ones, in their order, to the place typed.
+  const moveSel = h('button', { class: 'chip small', type: 'button', onclick: () => {
+    const to = window.prompt(t('moveChosenTo', { n: localDigits(String(pages.length)) }));
+    const v = parseInt((to ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10); if (!Number.isFinite(v)) return;
+    const chosen = pages.filter((p) => p.sel); const rest = pages.filter((p) => !p.sel);
+    const at = Math.max(0, Math.min(rest.length, rest.filter((p, idx) => idx < v - 1).length));
+    pages.splice(0, pages.length, ...rest.slice(0, at), ...chosen, ...rest.slice(at)); order();
+  } }, icon('sort'), h('span', null, t('moveChosen'))) as HTMLButtonElement;
+
+  // Jump to a page in the grid.
+  const jump = h('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', class: 'tool-range organize-jump', placeholder: t('goToPageShort'), 'aria-label': t('goToPage') }) as HTMLInputElement;
+  jump.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return; e.preventDefault();
+    const v = parseInt(jump.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10); if (!Number.isFinite(v)) return;
+    const p = pages.find((x) => x.i === v - 1) ?? pages[Math.max(0, Math.min(pages.length - 1, v - 1))];
+    if (view === 'pages') { cur = pages.indexOf(p); showPage(); return; }
+    const tile = tiles.get(p); tile?.scrollIntoView({ block: 'center' }); tile?.classList.add('flash'); setTimeout(() => tile?.classList.remove('flash'), 1200);
+  });
+
+  /* One page at a time, large. */
+  let view: 'grid' | 'pages' = 'grid'; let cur = 0; let viewTask: { cancel(): void } | null = null;
+  const vCanvas = h('canvas', { class: 'organize-page' }) as HTMLCanvasElement;
+  const vPos = h('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', class: 'tool-range organize-pos', 'aria-label': t('goToPage') }) as HTMLInputElement;
+  const vTotal = h('span', { class: 'src' });
+  const vSlider = h('input', { type: 'range', min: '1', max: String(n), value: '1', class: 'organize-slider', 'aria-label': t('goToPage') }) as HTMLInputElement;
+  const vSel = h('button', { type: 'button', class: 'btn organize-select' }) as HTMLButtonElement;
+  const step = (d: number) => { cur = Math.max(0, Math.min(pages.length - 1, cur + d)); showPage(); };
+  const paintViewer = () => {
+    const p = pages[cur]; if (!p) return;
+    vPos.value = String(cur + 1); vSlider.value = String(cur + 1); vTotal.textContent = `/ ${localDigits(String(pages.length))}`;
+    vSel.classList.toggle('primary', p.sel); vSel.classList.toggle('tonal', !p.sel);
+    vSel.replaceChildren(icon(p.sel ? 'check' : 'plus'), h('span', null, p.sel ? t('pageChosen') : t('choosePage')));
+    vCanvas.style.transform = p.rot ? `rotate(${p.rot}deg)` : '';
+  };
+  const showPage = async () => {
+    paintViewer();
+    if (!doc) return;
+    const p = pages[cur]; viewTask?.cancel();
+    const page = await doc.getPage(p.i + 1);
+    const box = viewer.getBoundingClientRect();
+    const vp0 = page.getViewport({ scale: 1 });
+    const fit = Math.min((box.width || 360) / vp0.width, ((box.height || 520) - 8) / vp0.height);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const vp = page.getViewport({ scale: fit * dpr });
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    const rt = page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp } as Parameters<typeof page.render>[0]);
+    viewTask = rt;
+    try { await rt.promise; } catch { return; }
+    if (pages[cur] !== p) return;
+    vCanvas.width = c.width; vCanvas.height = c.height; vCanvas.getContext('2d')!.drawImage(c, 0, 0);
+    vCanvas.style.width = `${c.width / dpr}px`; vCanvas.style.height = `${c.height / dpr}px`;
+  };
+  vSel.addEventListener('click', () => { const p = pages[cur]; p.sel = !p.sel; paint(p); sync(); });
+  vPos.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = parseInt(vPos.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10); if (Number.isFinite(v)) { cur = Math.max(0, Math.min(pages.length - 1, v - 1)); void showPage(); } } });
+  vSlider.addEventListener('input', () => { cur = +vSlider.value - 1; paintViewer(); });
+  vSlider.addEventListener('change', () => void showPage());
+  const rtlUi = document.documentElement.dir === 'rtl';
+  const viewer = h('div', { class: 'organize-viewer', hidden: true }, vCanvas);
+  // Swipes leaf through the pages (toward the next page as a book in the interface's direction turns).
+  { let x0 = 0, y0 = 0; viewer.addEventListener('pointerdown', (e) => { x0 = e.clientX; y0 = e.clientY; }); viewer.addEventListener('pointerup', (e) => { const dx = e.clientX - x0, dy = e.clientY - y0; if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) step((dx < 0) !== rtlUi ? 1 : -1); }); }
+  const vBar = h('div', { class: 'organize-vbar', hidden: true },
+    h('button', { type: 'button', class: 'icon-btn', title: t('previousPage'), 'aria-label': t('previousPage'), onclick: () => void step(-1) }, icon(rtlUi ? 'chevronRight' : 'chevronLeft')),
+    h('span', { class: 'organize-of' }, vPos, vTotal),
+    h('button', { type: 'button', class: 'icon-btn', title: t('nextPage'), 'aria-label': t('nextPage'), onclick: () => void step(1) }, icon(rtlUi ? 'chevronLeft' : 'chevronRight')),
+    h('button', { type: 'button', class: 'icon-btn', title: t('rotatePage'), 'aria-label': t('rotatePage'), onclick: () => { const p = pages[cur]; p.rot = (p.rot + 90) % 360; paint(p); paintViewer(); } }, icon('rotate')),
+    vSel);
+  const vFoot = h('div', { class: 'organize-vfoot', hidden: true }, vSlider);
+  sh.el.addEventListener('keydown', (e) => { if (view !== 'pages' || (e.target as HTMLElement).closest('input')) return; if (e.key === 'ArrowRight') { e.preventDefault(); step(rtlUi ? -1 : 1); } else if (e.key === 'ArrowLeft') { e.preventDefault(); step(rtlUi ? 1 : -1); } else if (e.key === ' ') { e.preventDefault(); vSel.click(); } });
+  const seg = h('div', { class: 'segmented organize-views', role: 'tablist' });
+  const setView = (v: typeof view) => {
+    view = v;
+    seg.replaceChildren(...([['grid', t('viewPagesGrid'), 'grid'], ['pages', t('viewOnePage'), 'file']] as [typeof view, string, string][]).map(([id, label, ic]) => h('button', { type: 'button', role: 'tab', 'aria-pressed': String(view === id), 'aria-selected': String(view === id), onclick: () => setView(id) }, icon(ic), h('span', null, label))));
+    gridEl.hidden = v !== 'grid'; hint.hidden = v !== 'grid';
+    viewer.hidden = vBar.hidden = vFoot.hidden = v !== 'pages';
+    if (v === 'pages') { requestAnimationFrame(() => void showPage()); }
+  };
+  const hint = h('p', { class: 'hint' }, t('organizeHint'));
   sh.body.append(
-    h('p', { class: 'src' }, h('bdi', null, src.name), ' · ', t('pageCount', { n })),
-    h('div', { class: 'tool-bar' }, field(t('selectPages'), range),
-      h('button', { class: 'chip small', type: 'button', onclick: () => { for (const p of pages) p.sel = true; render(); } }, h('span', null, t('selectAll'))),
-      h('button', { class: 'chip small', type: 'button', onclick: () => { for (const p of pages) p.sel = false; range.value = ''; render(); } }, h('span', null, t('clearSelection'))), count),
-    h('p', { class: 'hint' }, t('pagesPickHint')),
-    gridEl);
+    h('div', { class: 'organize-head' },
+      h('p', { class: 'src' }, h('bdi', null, src.name), ' · ', t('pageCount', { n })),
+      seg),
+    h('div', { class: 'organize-tools' },
+      h('div', { class: 'organize-row' }, range, jump),
+      h('div', { class: 'organize-row chips' },
+        h('button', { class: 'chip small', type: 'button', onclick: () => setAll(true) }, h('span', null, t('selectAll'))),
+        h('button', { class: 'chip small', type: 'button', onclick: () => setAll(false) }, h('span', null, t('clearSelection'))),
+        ...(extractOnly ? [] : [moveSel]), count)),
+    hint, gridEl, vBar, viewer, vFoot);
   const r = runner(sh.body, onDone);
   const save = (which: 'selected' | 'rest' | 'all') => r.run([extract, del, all], async () => {
     const { pickPages } = await tools();
@@ -383,8 +510,9 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   const del = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void save('rest') }, icon('trash'), t('deleteSelected')) as HTMLButtonElement;
   const all = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void save('all') }, icon('check'), t('saveChanges')) as HTMLButtonElement;
   if (extractOnly) sh.actions.append(extract); else sh.actions.append(all, del, extract);
-  render();
-  const obs = new MutationObserver(() => { if (!sh.el.isConnected) { seen.disconnect(); void task.destroy(); obs.disconnect(); } });
+  setView('grid');
+  order();
+  const obs = new MutationObserver(() => { if (!sh.el.isConnected) { seen.disconnect(); viewTask?.cancel(); thumbs.forEach((u) => URL.revokeObjectURL(u)); void task.destroy(); obs.disconnect(); } });
   obs.observe(document.body, { childList: true });
 }
 

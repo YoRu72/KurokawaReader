@@ -4,7 +4,10 @@
 import { h, icon, openSheet, toast, pickButton, debounce } from './dom';
 import { t, localDigits, getLang } from '../i18n';
 import * as S from '../scan';
-import { runner, pickFiles, pdfBlob, draggable } from './pdftools';
+import { runner, pickFiles, pdfBlob } from './pdftools';
+import { sortable, placeNumber } from './sortable';
+import { scanWork, parallel } from '../scanpool';
+import type { Look, Prepared } from '../scanops';
 
 type Quality = 'standard' | 'high' | 'max';
 type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean };
@@ -19,78 +22,32 @@ export function scanSettings(): Settings {
 function saveSettings(s: Settings): void { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* private mode */ } }
 
 /** One scanned page: the photo, where the page is in it (corners as fractions of the photo), how the page
- *  bends (a book's), and how it is to come out. */
-type Page = { file: Blob; preview: S.Img; quad: S.Quad; curve: S.Curve | null; flatten: boolean; turn: number; filter: S.Filter; adj: S.Adjust; thumb: string };
-type Look = Pick<Page, 'quad' | 'curve' | 'flatten' | 'turn' | 'filter' | 'adj'>;
+ *  bends (a book's), and how it is to come out. Until its photo has been read it is only `pending`. */
+type Page = Look & { file: Blob; preview: S.Img | null; thumb: string; pending: boolean; error?: string; key: number };
 
 /* ---------- pictures ---------- */
-
-async function decode(blob: Blob): Promise<{ src: CanvasImageSource; w: number; h: number; done: () => void }> {
-  try {
-    const b = await createImageBitmap(blob, { imageOrientation: 'from-image' } as ImageBitmapOptions);
-    return { src: b, w: b.width, h: b.height, done: () => b.close() };
-  } catch {
-    const url = URL.createObjectURL(blob); const im = new Image(); im.src = url;
-    await im.decode();
-    return { src: im, w: im.naturalWidth, h: im.naturalHeight, done: () => URL.revokeObjectURL(url) };
-  }
-}
-
-/** A photo's pixels, at most `maxSide` on its longer side (turned the way the camera held it). */
-async function loadImg(blob: Blob, maxSide: number): Promise<S.Img> {
-  const d = await decode(blob);
-  const k = Math.min(1, maxSide / Math.max(d.w, d.h));
-  const w = Math.max(1, Math.round(d.w * k)), hh = Math.max(1, Math.round(d.h * k));
-  const c = document.createElement('canvas'); c.width = w; c.height = hh;
-  const g = c.getContext('2d', { willReadFrequently: true })!; g.imageSmoothingQuality = 'high'; g.drawImage(d.src, 0, 0, w, hh); d.done();
-  const data = g.getImageData(0, 0, w, hh).data; c.width = c.height = 0;
-  return { data, width: w, height: hh };
-}
 
 function toCanvas(img: S.Img, c = document.createElement('canvas')): HTMLCanvasElement {
   c.width = img.width; c.height = img.height;
   c.getContext('2d')!.putImageData(new ImageData(img.data as unknown as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
   return c;
 }
-const toBlob = (img: S.Img, type: string, q?: number) => new Promise<Blob>((res, rej) => { const c = toCanvas(img); c.toBlob((b) => { c.width = c.height = 0; if (b) res(b); else rej(new Error('encode')); }, type, q); });
 
-const scaleQuad = (q: S.Quad, w: number, hh: number): S.Quad => q.map((p) => ({ x: p.x * w, y: p.y * hh })) as S.Quad;
 const FULL: S.Quad = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
-
-/** The page as it comes out of a picture of the photo: flattened, cleaned, turned upright. */
-function render(src: S.Img, p: Look, maxSide: number): S.Img {
-  const q = S.orderQuad(scaleQuad(p.quad, src.width, src.height));
-  let flat = S.warp(src, q, S.flatSize(q, maxSide));
-  // A book's page: its lines straightened, the book's edge and the next page cut away.
-  if (p.flatten && p.curve) flat = S.trimMargins(S.unwarp(flat, p.curve), p.curve.sheet ? 'lr' : 'all');
-  return S.rotate(S.applyFilter(flat, p.filter, p.adj), p.turn);
-}
-
-/** How the page within these corners bends (looked for in the photo's preview). */
-function curveOf(preview: S.Img, quad: S.Quad): S.Curve | null {
-  const q = S.orderQuad(scaleQuad(quad, preview.width, preview.height));
-  try { return S.findCurve(S.warp(preview, q, S.flatSize(q, 1100))); } catch { return null; }
-}
-
-/** Find the page in a new photo and decide which way up it goes. */
-function autoPlace(p: Page, set: Settings): void {
-  const { preview } = p;
-  if (set.autoCrop) { const f = S.detectPage(preview); p.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; }
-  p.curve = curveOf(preview, p.quad); p.flatten = set.flatten;
-  if (set.autoTurn) {
-    const flat = render(preview, { ...p, turn: 0, filter: 'gray', adj: {} }, 700);
-    p.turn = S.uprightTurn(flat, getLang() === 'ar');
-  }
-}
+const lookOf = (p: Look): Look => ({ quad: p.quad.map((c) => ({ ...c })) as S.Quad, curve: p.curve, flatten: p.flatten, turn: p.turn, filter: p.filter, adj: { ...p.adj } });
 
 async function makeThumb(p: Page): Promise<void> {
-  const img = render(p.preview, p, 420);
-  const b = await toBlob(img, 'image/jpeg', 0.8);
+  if (!p.preview) return;
+  const b = await scanWork<Blob>({ op: 'thumb', preview: p.preview, look: lookOf(p) });
   if (p.thumb) URL.revokeObjectURL(p.thumb);
   p.thumb = URL.createObjectURL(b);
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+/** Run `work` over `items`, `n` at a time, in order of starting. */
+async function pooled<T>(items: T[], n: number, work: (x: T, i: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const i = next++; await work(items[i], i); } }));
+}
 
 /* ---------- the scanner sheet ---------- */
 
@@ -104,43 +61,65 @@ export function scannerSheet(onDone?: () => void): void {
   const status = h('p', { class: 'src' });
   const rtlUi = document.documentElement.dir === 'rtl';
 
+  // Every photo gets its tile at once; the photos are read several at a time, in worker threads (the way a
+  // scanning app does it: decoded straight to a small working size, the page found there), and each tile fills
+  // in as its photo is ready.
+  let keySeq = 0;
   const add = async (files: File[]) => {
     const pics = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|avif)$/i.test(f.name));
-    let k = 0;
-    for (const f of pics) {
-      status.textContent = t('scanReading', { n: localDigits(String(++k)), total: localDigits(String(pics.length)) });
-      await tick();
+    if (!pics.length) return;
+    const fresh: Page[] = pics.map((f) => ({ file: f, preview: null, quad: FULL, curve: null, flatten: set.flatten, turn: 0, filter: set.filter, adj: {}, thumb: '', pending: true, key: ++keySeq }));
+    pages.push(...fresh); draw();
+    let done = 0;
+    status.textContent = t('scanReading', { n: localDigits('0'), total: localDigits(String(fresh.length)) });
+    await pooled(fresh, parallel(), async (p) => {
       try {
-        const preview = await loadImg(f, PREVIEW);
-        const p: Page = { file: f, preview, quad: FULL, curve: null, flatten: set.flatten, turn: 0, filter: set.filter, adj: {}, thumb: '' };
-        autoPlace(p, set); await makeThumb(p);
-        pages.push(p); draw();
-      } catch (e) { console.error(e); toast(t('scanUnreadable', { name: f.name }), 'error'); }
-    }
+        const r = await scanWork<Prepared>({ op: 'prepare', blob: p.file, maxSide: PREVIEW, autoCrop: set.autoCrop, autoTurn: set.autoTurn, flatten: set.flatten, filter: set.filter, rtl: getLang() === 'ar' });
+        Object.assign(p, r.look); p.preview = r.preview; p.thumb = URL.createObjectURL(r.thumb); p.pending = false;
+      } catch (e) {
+        console.error(e);
+        const i = pages.indexOf(p); if (i >= 0) pages.splice(i, 1);
+        toast(t(String((e as Error).message) === 'undecodable' ? 'scanUndecodable' : 'scanUnreadable', { name: (p.file as File).name ?? '' }), 'error', 5000);
+      }
+      status.textContent = t('scanReading', { n: localDigits(String(++done)), total: localDigits(String(fresh.length)) });
+      paintTile(p);
+    });
     status.textContent = '';
+    draw();
   };
 
+  // Tiles are kept and only refreshed: moving or editing one page does not rebuild the others.
+  const tiles = new Map<Page, HTMLElement>();
+  const moveTo = (a: number, b: number) => { if (a === b) return; pages.splice(b, 0, pages.splice(a, 1)[0]); draw(); };
+  const tileFor = (p: Page) => {
+    let tile = tiles.get(p);
+    if (!tile) {
+      tile = h('div', { class: 'page-tile', role: 'button', tabindex: 0,
+        onclick: (e: Event) => { if ((e.target as HTMLElement).closest('button, input') || p.pending) return; editor(pages.indexOf(p)); },
+        onkeydown: (e: KeyboardEvent) => { if ((e.key === 'Enter' || e.key === ' ') && !(e.target as HTMLElement).closest('input')) { e.preventDefault(); if (!p.pending) editor(pages.indexOf(p)); } } });
+      tiles.set(p, tile);
+    }
+    return tile;
+  };
+  const paintTile = (p: Page) => {
+    const tile = tileFor(p); const k = pages.indexOf(p); if (k < 0) return;
+    tile.dataset.k = String(k);
+    tile.setAttribute('aria-label', t('scanEditPage', { n: localDigits(String(k + 1)) }));
+    tile.classList.toggle('pending', p.pending);
+    tile.replaceChildren(
+      h('div', { class: 'page-frame' }, p.pending ? h('div', { class: 'spinner small' }) : h('img', { class: 'page-thumb', alt: '', src: p.thumb, draggable: false })),
+      h('div', { class: 'page-meta' },
+        placeNumber(k, pages.length, moveTo),
+        h('button', { type: 'button', class: 'icon-btn small', title: t('rotatePage'), 'aria-label': t('rotatePage'), disabled: p.pending, onclick: async () => { p.turn = (p.turn + 1) % 4; await makeThumb(p); paintTile(p); } }, icon('rotate')),
+        h('button', { type: 'button', class: 'icon-btn small', title: t('removeItem'), 'aria-label': t('removeItem'), onclick: () => { if (p.thumb) URL.revokeObjectURL(p.thumb); tiles.delete(p); pages.splice(pages.indexOf(p), 1); draw(); } }, icon('trash'))));
+  };
   const draw = () => {
-    gridEl.replaceChildren();
-    if (!pages.length) gridEl.append(h('div', { class: 'scan-empty' }, icon('camera'), h('p', null, t('scanEmpty'))));
-    pages.forEach((p, k) => {
-      const move = (a: number, b: number) => { pages.splice(b, 0, pages.splice(a, 1)[0]); draw(); };
-      const tile = h('div', { class: 'page-tile', role: 'button', tabindex: 0, 'aria-label': t('scanEditPage', { n: localDigits(String(k + 1)) }),
-        onclick: (e: Event) => { if ((e.target as HTMLElement).closest('button')) return; editor(k); },
-        onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editor(k); } } },
-        h('div', { class: 'page-frame' }, h('img', { class: 'page-thumb', alt: '', src: p.thumb })),
-        h('div', { class: 'page-meta' },
-          h('button', { type: 'button', class: 'icon-btn small', title: t('moveEarlier'), 'aria-label': t('moveEarlier'), disabled: k === 0, onclick: () => move(k, k - 1) }, icon(rtlUi ? 'chevronRight' : 'chevronLeft')),
-          h('b', null, localDigits(String(k + 1))),
-          h('button', { type: 'button', class: 'icon-btn small', title: t('rotatePage'), 'aria-label': t('rotatePage'), onclick: async () => { p.turn = (p.turn + 1) % 4; await makeThumb(p); draw(); } }, icon('rotate')),
-          h('button', { type: 'button', class: 'icon-btn small', title: t('removeItem'), 'aria-label': t('removeItem'), onclick: () => { URL.revokeObjectURL(p.thumb); pages.splice(k, 1); draw(); } }, icon('trash')),
-          h('button', { type: 'button', class: 'icon-btn small', title: t('moveLater'), 'aria-label': t('moveLater'), disabled: k === pages.length - 1, onclick: () => move(k, k + 1) }, icon(rtlUi ? 'chevronLeft' : 'chevronRight'))));
-      draggable(tile, k, move);
-      gridEl.append(tile);
-    });
-    go.disabled = !pages.length;
+    if (!pages.length) gridEl.replaceChildren(h('div', { class: 'scan-empty' }, icon('camera'), h('p', null, t('scanEmpty'))));
+    else { const want = pages.map(tileFor); if (gridEl.children.length !== want.length || want.some((el, i) => gridEl.children[i] !== el)) gridEl.replaceChildren(...want); pages.forEach(paintTile); }
+    go.disabled = !pages.length || pages.some((p) => p.pending);
     count.textContent = pages.length ? t('pageCount', { n: pages.length }) : '';
   };
+  sortable(gridEl, '.page-tile', moveTo, sh.body);
 
   // The camera: an ordinary file input asking for the back camera (phones open it; elsewhere it is a picker).
   const shoot = () => {
@@ -159,16 +138,13 @@ export function scannerSheet(onDone?: () => void): void {
   const r = runner(sh.body, onDone);
   const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go], async () => {
     const side = SIDE[set.quality];
-    const out: Blob[] = [];
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      await tick();
-      const src = await loadImg(p.file, Math.round(side * 1.25));
-      const img = render(src, p, side);
-      // (Black and white keeps its edges sharp as PNG; photographs are JPEG.)
-      out.push(await toBlob(img, p.filter === 'bw' ? 'image/png' : 'image/jpeg', 0.86));
-      r.progress(((i + 1) / (pages.length + 1)) * 100);
-    }
+    const out: Blob[] = new Array(pages.length);
+    let done = 0;
+    // (Two at a time: a page at full size takes some memory, and a phone has little.)
+    await pooled(pages.slice(), Math.min(2, parallel()), async (p, i) => {
+      out[i] = await scanWork<Blob>({ op: 'render', blob: p.file, look: lookOf(p), side, type: p.filter === 'bw' ? 'image/png' : 'image/jpeg', quality: 0.86 });
+      r.progress((++done / (pages.length + 1)) * 100);
+    });
     const { imagesToPdf } = await import('../pdftools');
     const bytes = await imagesToPdf(out, { size: set.size, margin: 0 });
     const d = new Date(); const pad = (n: number) => String(n).padStart(2, '0');
@@ -183,11 +159,11 @@ export function scannerSheet(onDone?: () => void): void {
     const p = pages[k];
     const work: Look = { quad: p.quad.map((c) => ({ ...c })) as S.Quad, curve: p.curve, flatten: p.flatten, turn: p.turn, filter: p.filter, adj: { ...p.adj } };
     // (Corners moved: how the page bends is looked for again, once they are let go.)
-    const recurve = debounce(() => { work.curve = curveOf(preview, S.orderQuad(work.quad.map((c) => ({ ...c })))); syncFlat(); refresh(); }, 250);
+    const recurve = debounce(() => { void scanWork<S.Curve | null>({ op: 'curve', preview, quad: S.orderQuad(work.quad.map((c) => ({ ...c }))) }).then((c) => { work.curve = c; syncFlat(); refresh(); }); }, 250);
     const ed = openSheet(t('scanEditPage', { n: localDigits(String(k + 1)) }), t('close'), { stack: true });
     ed.body.style.fontFamily = 'var(--font-ui)';
     ed.el.classList.add('scan-editor');
-    const { preview } = p;
+    const preview = p.preview!;
     let mode: 'crop' | 'result' = 'crop';
     // Crop view: the photo, the page's outline and its four corners to drag.
     const photo = toCanvas(preview); photo.className = 'scan-photo';
@@ -236,7 +212,9 @@ export function scannerSheet(onDone?: () => void): void {
         work.quad[i] = { x: Math.min(1, Math.max(0, c.x + m[e.key][0])), y: Math.min(1, Math.max(0, c.y + m[e.key][1])) }; place(); recurve();
       });
     });
-    const refresh = debounce(() => { if (mode === 'result') toCanvas(render(preview, work, 1100), result); }, 120);
+    // (The latest change wins: a picture still being made for an earlier one is not shown.)
+    let viewSeq = 0;
+    const refresh = debounce(() => { if (mode !== 'result') return; const my = ++viewSeq; void scanWork<S.Img>({ op: 'view', preview, look: lookOf(work), side: 1100 }).then((img) => { if (my === viewSeq) toCanvas(img, result); }); }, 120);
     const setMode = (m: typeof mode) => {
       mode = m; stage.hidden = m !== 'crop'; result.hidden = m !== 'result';
       cropChip.classList.toggle('on', m === 'crop'); resultChip.classList.toggle('on', m === 'result');
@@ -267,9 +245,15 @@ export function scannerSheet(onDone?: () => void): void {
       h('div', { class: 'scan-sliders' }, slider(t('brightness'), 'brightness', -0.4, 0.4), slider(t('contrast'), 'contrast', -0.4, 0.6)));
     const apply = async (all: boolean) => {
       Object.assign(p, { quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), curve: work.curve, flatten: work.flatten, turn: work.turn, filter: work.filter, adj: { ...work.adj } });
-      if (all) for (const o of pages) if (o !== p) { o.filter = work.filter; o.adj = { ...work.adj }; await makeThumb(o); }
-      await makeThumb(p); ed.close(); draw();
+      ed.close();
+      // (Its place: moved when another number was typed.)
+      const to = Math.max(1, Math.min(pages.length, parseInt(pos.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10) || k + 1)) - 1;
+      if (to !== pages.indexOf(p)) moveTo(pages.indexOf(p), to);
+      await makeThumb(p); paintTile(p);
+      if (all) await pooled(pages.filter((o) => o !== p && !o.pending), parallel(), async (o) => { o.filter = work.filter; o.adj = { ...work.adj }; await makeThumb(o); paintTile(o); });
     };
+    const pos = h('input', { type: 'text', inputmode: 'numeric', class: 'tool-range scan-pos', dir: 'ltr', value: String(k + 1), 'aria-label': t('moveToPlace') }) as HTMLInputElement;
+    ed.actions.append(h('label', { class: 'scan-pos-field' }, h('span', null, t('placeOf', { n: localDigits(String(pages.length)) })), pos));
     ed.actions.append(
       h('button', { class: 'btn small tonal', type: 'button', onclick: () => void apply(true) }, t('scanApplyAll')),
       h('button', { class: 'btn small primary', type: 'button', onclick: () => void apply(false) }, icon('check'), t('done')));

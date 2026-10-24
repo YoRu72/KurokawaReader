@@ -30,13 +30,14 @@ fs.mkdirSync(out, { recursive: true });
   // Organise: the first PDF, pages 1 and 3 selected; extract, delete, and reorder (last page first, turned).
   await openTools(); await tool(6); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
   await page.waitForSelector('.sheet:last-of-type .page-tile'); await page.waitForTimeout(1500);
-  await page.fill('.sheet:last-of-type .tool-bar .tool-range', '1, 3'); await page.waitForTimeout(500);
+  await page.fill('.sheet:last-of-type .organize-range', '1, 3'); await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(out, 'organize.png') });
   await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('extract.pdf');
   await page.click('.sheet:last-of-type .sheet-actions button:nth-child(2)'); await waitResult(); await save('deleted.pdf');
   const tiles = await page.$$('.sheet:last-of-type .page-tile');
-  const last = tiles[tiles.length - 1]; await (await last.$('button[aria-label] >> nth=1')).click();
-  for (let k = 0; k < tiles.length - 1; k++) { const tl = await page.$$('.sheet:last-of-type .page-tile'); await (await tl[tiles.length - 1 - k].$('button >> nth=0')).click(); }
+  // The last page turned, then moved to the front by typing its new place.
+  const last = tiles[tiles.length - 1]; await (await last.$('.icon-btn')).click();
+  await (await last.$('.page-pos')).click(); await page.fill('.page-pos-input', '1'); await page.keyboard.press('Enter'); await page.waitForTimeout(300);
   await page.click('.sheet:last-of-type .sheet-actions button:nth-child(1)'); await waitResult(); await save('reordered.pdf');
   // Pictures → PDF.
   await openTools(); await tool(3); await page.waitForSelector('.sheet:last-of-type .tool-bar');
