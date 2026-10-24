@@ -17,13 +17,13 @@ type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Arr
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
 type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>> };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; w: number; h: number; drop: number } };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
-type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string; cs?: number; spacing?: number };
+type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece };
 type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: number[] };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
 /** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
@@ -125,6 +125,18 @@ function readOs2(bytes: Uint8Array): Os2 | null {
 /** Code points a TrueType font's cmap covers (to decide whether embedding it can render the text). */
 const HONORIFICS: Record<string, string> = { 'صلى الله عليه وسلم': '\uFDFA', 'صلى الله عليه و سلم': '\uFDFA', 'جل جلاله': '\uFDFB', 'بسم الله الرحمن الرحيم': '\uFDFD' };
 
+/** Whether a font's embedding permissions (OS/2 fsType) allow it in a document that can be edited. */
+function editableFont(bytes: Uint8Array): boolean {
+  try {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0, n = dv.getUint16(4); i < n; i++) {
+      const r = 12 + i * 16;
+      if (String.fromCharCode(...bytes.subarray(r, r + 4)) === 'OS/2') { const t = dv.getUint16(dv.getUint32(r + 8) + 8); return (t & 0x6) === 0; }
+    }
+    return true;
+  } catch { return false; }
+}
+
 function cmapCoverage(bytes: Uint8Array): Set<number> {
   const out = new Set<number>();
   try {
@@ -156,7 +168,7 @@ async function canvasPng(c: HTMLCanvasElement): Promise<Uint8Array> {
 type Pic = { png: Uint8Array; x: number; y: number; w: number; h: number };
 /** The page drawn without its text, cut into the pieces that carry ink (header ornament, frame, rules,
  *  pictures) — each cropped tight, so pieces that repeat from page to page are stored once. */
-async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>, grids: GridSpec[] = []): Promise<Pic[]> {
+async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>, grids: GridSpec[] = [], arts: Piece[] = []): Promise<Pic[]> {
   const vp = page.getViewport({ scale });
   const c = document.createElement('canvas') as HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> };
   c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); c.krNoText = true; c.krKeepFonts = keepFonts;
@@ -182,6 +194,22 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
     const x0 = px(g.xs[0]) - Math.ceil(2 * scale), x1 = px(g.xs[g.xs.length - 1]) + Math.ceil(2 * scale);
     const y0 = py(g.ys[0]) - Math.ceil(2 * scale), y1 = py(g.ys[g.ys.length - 1]) + Math.ceil(2 * scale);
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  }
+  // Text kept as drawn goes into its line as a picture of its own: cut out here, tight to its ink.
+  for (const p of arts) {
+    const x0 = Math.max(0, Math.floor((p.l - p.h * 0.15) * scale)), x1 = Math.min(W, Math.ceil((p.r + p.h * 0.15) * scale));
+    const y0 = Math.max(0, Math.floor((ph - (p.y + p.h * 1.15)) * scale)), y1 = Math.min(H, Math.ceil((ph - (p.y - p.h * 0.5)) * scale));
+    if (x1 <= x0 || y1 <= y0) continue;
+    const px = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data; const w = x1 - x0;
+    let a = Infinity, b = -1, t = Infinity, u = -1;
+    for (let i = 0, k = 0; i < px.length; i += 4, k++) if (!(px[i] > 250 && px[i + 1] > 250 && px[i + 2] > 250)) { const x = k % w, y = (k / w) | 0; if (x < a) a = x; if (x > b) b = x; if (y < t) t = y; if (y > u) u = y; }
+    if (b < 0) continue;
+    const cw = b - a + 1, chh = u - t + 1;
+    const cc = document.createElement('canvas'); cc.width = cw; cc.height = chh;
+    const cx = cc.getContext('2d')!; cx.drawImage(c, x0 + a, y0 + t, cw, chh, 0, 0, cw, chh);
+    const im = cx.getImageData(0, 0, cw, chh); for (let i = 0; i < im.data.length; i += 4) if (im.data[i] > 250 && im.data[i + 1] > 250 && im.data[i + 2] > 250) im.data[i + 3] = 0; cx.putImageData(im, 0, 0);
+    p.pic = { png: await canvasPng(cc), w: cw / scale, h: chh / scale, drop: ph - (y0 + u + 1) / scale - p.y };
+    ctx.fillStyle = '#fff'; ctx.fillRect(x0 + a, y0 + t, cw, chh);
   }
   const img = ctx.getImageData(0, 0, W, H); const d = img.data;
   const ink = new Uint8Array(W * H);
@@ -484,8 +512,9 @@ function buildLines(all: Piece[]): Line[] {
     return g.filter((p) => !isMark(p) || (p.l >= lo - 0.5 && p.r <= hi + 0.5));
   }).filter((g) => g.length);
   return kept.map((g) => {
-    const normal = g.filter((p) => !p.sup && !isMark(p));
-    const ext = g.filter((p) => !isMark(p));
+    const normal0 = g.filter((p) => !p.sup && !isMark(p) && !p.art); const normal = normal0.length ? normal0 : g.filter((p) => !p.sup && !isMark(p));
+    // (A stand-in for text left in the picture keeps its place among the words but sets no edge.)
+    const ext0 = g.filter((p) => !isMark(p) && !p.art); const ext = ext0.length ? ext0 : g.filter((p) => !isMark(p));
     const base = median(normal.map((p) => p.y));
     const size = median(normal.flatMap((p) => Array(Math.max(1, Math.round(p.text.length))).fill(p.h)));
     const text = g.map((p) => p.text).join('');
@@ -554,7 +583,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   let prev: Piece | null = null; let pendingSpace = false; let pendingW = 0;
   // Word gaps of a stretched line are all wide: a tab is much wider than the line's usual gap.
   const gaps: number[] = [];
-  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim() || a.conn || b.conn) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
+  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim() || a.conn || b.conn || a.art || b.art) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
   const wideGap = gaps.length >= 3 ? median(gaps) * 2.5 : 0;
   // Letter spacing the page applies (Word's "condensed" or "expanded", drawn as Tc): each glyph set nearer to
   // (or further from) the next than its advance. Measured on the line's glyphs; Word gets the same spacing.
@@ -604,6 +633,14 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   for (const { p, space, tab, blank, trim } of ordered) {
     const f = fonts.get(p.font) ?? { family: 'Times New Roman', bold: false, italic: false };
     // A piece stored in drawing order (mark before its letter) reads in logical order through joinLine.
+    if (p.art) {
+      // Text left as drawn (a sign in a font that cannot travel): its picture, in its place among the words.
+      const lastA = runs[runs.length - 1];
+      if (space && lastA && !lastA.art) lastA.text += ' ';
+      if (tab !== undefined && lastA) lastA.text = lastA.text.replace(/\s+$/, '');
+      runs.push({ text: '', font: lastA?.font ?? 'Times New Roman', size: Math.round(p.h * 2) / 2, bold: false, italic: false, color: '000000', rtl: rtlLine, sup: false, art: p });
+      continue;
+    }
     let text = p.ordered || p.raw ? p.text : logicalNeutral(joinLine([{ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }]).text, rtlLine);
     if (rtlLine && !p.raw) text = balanceBrackets(text);
     if (trim) {
@@ -616,13 +653,14 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     const last = runs[runs.length - 1];
     if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
     if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank - p.h * 0.25) }); }
-    if (space && last) last.text += ' ';
-    if (last && !last.spacing && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
+    if (space && last?.art) text = ` ${text}`;
+    else if (space && last) last.text += ' ';
+    if (last && !last.spacing && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
     else if (space && last && last.text.endsWith(' ')) runs.push({ ...look, text });
     else runs.push({ ...look, text });
   }
   for (const r of runs) r.text = r.text.replace(/\s+(?=[\u064B-\u065F\u0670])/g, '').replace(/([\u060C\u061B\u061F.,:;!)(»«\]\[]+)([\u064B-\u065F\u0670]+)/g, '$2$1').replace(/\s{2,}/g, ' ');
-  return runs.filter((r) => r.text.length);
+  return runs.filter((r) => r.text.length || r.art);
 }
 
 function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: number, pitchOf: (size: number) => number, prevBaseStart: number | null): Block[] {
@@ -1014,7 +1052,7 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
     for (let i = runs.length - 1; i > 0; i--) {
       const a = runs[i - 1], b = runs[i];
       if (a.font === b.font && a.size === b.size && a.bold === b.bold && a.italic === b.italic && a.color === b.color && a.sup === b.sup && a.rtl === b.rtl && a.raise === b.raise
-        && a.cs === b.cs && !a.spacing && !b.spacing
+        && a.cs === b.cs && !a.spacing && !b.spacing && !a.art && !b.art
         && a.note === undefined && b.note === undefined && !a.br && !b.br && b.tab === undefined) {
         if (a.kText !== undefined || b.kText !== undefined) a.kText = (a.kText ?? a.text) + (b.kText ?? b.text);
         a.text += b.text; runs.splice(i, 1);
@@ -1104,9 +1142,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     if (!pua && !latinArt && f.noUnicode && f.raw) { f.cov ??= cmapCoverage(f.raw); foreign = f.cov.size > 0 && [...p.text].some((c) => c.trim() && !f.cov!.has(c.codePointAt(0)!)); }
     if (!pua && !latinArt && !foreign) continue;
     // Private-use codes the embedded font itself draws (a heading font with a symbol cmap whose ToUnicode is
-    // wrong, e.g. AL-Mateen): kept as those codes in drawing order, set in that font, they show exactly as the
-    // page draws them, in their line (copying gives the codes, as copying the PDF itself would).
-    if (pua && f.raw) {
+    // wrong, e.g. AL-Mateen), or Latin codes of a font that draws Arabic word signs under them ("$" for
+    // "رحمه الله"): kept as those codes in drawing order, set in that font, they show exactly as the page draws
+    // them, in their line (copying gives the codes, as copying the PDF itself would).
+    // (Only a font its maker lets be embedded for editing: a "preview & print" font is not loaded by editors.)
+    if ((pua || latinArt) && f.raw && editableFont(f.raw)) {
       f.cov ??= cmapCoverage(f.raw);
       if ([...p.text].every((c) => !c.trim() || f.cov!.has(c.codePointAt(0)!) || /[().:،؛\-]/.test(c))) {
         p.raw = true;
@@ -1116,8 +1156,10 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       }
     }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art', f.family, pua, latinArt, foreign, JSON.stringify(p.text.slice(0, 40)));
-    keepFonts.add(p.font); pieces.splice(i, 1);
+    // (Its place stays taken: a stand-in that sets nothing keeps the line's extent and its gaps true.)
+    keepFonts.add(p.font); pieces[i] = { ...p, text: '\uFFFC', art: true, codes: undefined };
   }
+  const arts = pieces.filter((p) => p.art);
   const lines = buildLines(attachMarks(pieces).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
   // How embedded fonts are used: their glyphs along each line, in drawing order, cut where a word ends (a gap,
   // a space) so each glyph's joining form can be told.
@@ -1246,7 +1288,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
       left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
     };
-    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts).catch(() => [] as Pic[]) : [];
+    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, [], arts).catch(() => [] as Pic[]) : [];
     if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
     page.cleanup();
     return { w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
@@ -1335,7 +1377,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     header: 6, footer: 6,
   };
   const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
-  const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)]).catch(() => [] as Pic[]) : [];
+  const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts).catch(() => [] as Pic[]) : [];
   if (withGraphics) pics.push(...await renderRegions(page, 3, formulas).catch(() => [] as Pic[]));
   page.cleanup();
   const lastBody = body[body.length - 1];
@@ -1387,6 +1429,11 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
 
   const usedChars = new Map<string, Set<number>>();
   const runFor = (r: Run, footnotes: Map<number, number> | null) => {
+    if (r.art) {
+      const pic = r.art.pic;
+      if (!pic) return new TextRun({ text: '' });
+      return new ImageRun({ type: 'png', data: pic.png, transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) } });
+    }
     if (r.note !== undefined && footnotes?.has(r.note) && !r.br) return new FootnoteReferenceRun(footnotes.get(r.note)!);
     const key = `${r.font}|${r.bold && r.italic ? 'BoldItalic' : r.bold ? 'Bold' : r.italic ? 'Italic' : 'Regular'}`;
     let set = usedChars.get(key); if (!set) usedChars.set(key, set = new Set());
