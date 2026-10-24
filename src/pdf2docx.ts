@@ -30,7 +30,7 @@ type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pit
  *  left to right — each spanning `span` columns, `cont` when it carries on the cell above (no rule between). */
 type GridCell = { c0: number; span: number; cont?: boolean; lines: Piece[][]; fill?: string };
 type GridSpec = { xs: number[]; ys: number[]; rows: GridCell[][]; rule: number };
-type Grid = { kind: 'grid'; rows: Run[][][]; cells: { span: number; vmerge?: 'restart' | 'continue'; align: Para['align']; vcenter: boolean; pitch: number }[][]; spec: GridSpec; colW: number[]; rowH: number[]; rtl: boolean; before: number; indStart: number; size: number; pitch: number };
+type Grid = { kind: 'grid'; pad: number; rows: Run[][][]; cells: { span: number; vmerge?: 'restart' | 'continue'; align: Para['align']; vcenter: boolean; pitch: number }[][]; spec: GridSpec; colW: number[]; rowH: number[]; rtl: boolean; before: number; indStart: number; size: number; pitch: number };
 type Block = Para | Verse | Grid;
 type Note = { num: number; paras: Block[] };
 type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean };
@@ -401,6 +401,9 @@ function pullGrids(lines: Line[], shapes: Box[], W: number, H: number): Line[] {
   const n = hs.length + vs.length; const up = Array.from({ length: n }, (_, i) => i);
   const find = (i: number): number => (up[i] === i ? i : (up[i] = find(up[i])));
   hs.forEach((h, i) => vs.forEach((v, j) => { if (v.x > h.x0 - 2 && v.x < h.x1 + 2 && h.y > v.y0 - 2 && h.y < v.y1 + 2) up[find(i)] = find(hs.length + j); }));
+  // (A rule drawn in pieces — one per row, as TeX does — is one rule.)
+  vs.forEach((v, j) => vs.forEach((w, k) => { if (k > j && Math.abs(v.x - w.x) < 1.5 && v.y0 < w.y1 + 2 && w.y0 < v.y1 + 2) up[find(hs.length + j)] = find(hs.length + k); }));
+  hs.forEach((g, j) => hs.forEach((w, k) => { if (k > j && Math.abs(g.y - w.y) < 1.5 && g.x0 < w.x1 + 2 && w.x0 < g.x1 + 2) up[find(j)] = find(k); }));
   const groups = new Map<number, number[]>();
   for (let i = 0; i < n; i++) (groups.get(find(i)) ?? groups.set(find(i), []).get(find(i))!).push(i);
   const cluster = (vals: number[]) => { const out: number[] = []; for (const v of [...vals].sort((a, b) => a - b)) if (!out.length || v - out[out.length - 1] > 1.5) out.push(v); return out; };
@@ -452,7 +455,9 @@ function pullGrids(lines: Line[], shapes: Box[], W: number, H: number): Line[] {
     const spec: GridSpec = { xs, ys, rows, rule };
     // In the flow where the table stands: before the first line below its top.
     const at = kept.findIndex((l) => l.base < yTop - 1);
-    const gridLine: Line = { pieces: [], base: yTop, size: median(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.h)))) || 10, l: x0, r: x1, rtl: isRtlText(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.text))).join('')), grid: spec };
+    const gsize = median(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.h)))) || 10;
+    // (Its "baseline" where a line's would be for its top to be the table's top.)
+    const gridLine: Line = { pieces: [], base: yTop - BASE * gsize * 1.2, size: median(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.h)))) || 10, l: x0, r: x1, rtl: isRtlText(rows.flatMap((r) => r.flatMap((c) => c.lines.flat().map((p) => p.text))).join('')), grid: spec };
     kept.splice(at < 0 ? kept.length : at, 0, gridLine);
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D grid', xs.length - 1, ys.length - 1, used, JSON.stringify(xs.map((x) => +x.toFixed(1))), JSON.stringify(ys.map((y) => +y.toFixed(1))));
     out = kept;
@@ -804,8 +809,12 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       const size = line.size; const pitch = pitchOf(size);
       const before = prevBase === null ? 0 : Math.max(0, prevBase - (1 - BASE) * (prevPitch || pitch) - g.ys[0]);
       const colW = g.xs.slice(1).map((x, i) => x - g.xs[i]);
+      // Room inside the cells: as much as the page leaves before the text starts.
+      const insets = g.rows.flatMap((row) => row.flatMap((c) => { const ps = c.lines.flat().filter((p) => p.text.trim()); if (!ps.length) return []; const cl = g.xs[c.c0], cr = g.xs[c.c0 + c.span]; return [Math.min(Math.min(...ps.map((p) => p.l)) - cl, cr - Math.max(...ps.map((p) => p.r)))]; }));
+      const room = g.rows.flatMap((row) => row.flatMap((c) => { const ps = c.lines.flat().filter((p) => p.text.trim()); if (!ps.length) return []; return [(g.xs[c.c0 + c.span] - g.xs[c.c0] - (Math.max(...ps.map((p) => p.r)) - Math.min(...ps.map((p) => p.l)))) / 2]; }));
+      const pad = insets.length ? Math.max(0.5, Math.min(6, median(insets), Math.min(...room) * 0.6)) : 2;
       const rowH = g.ys.slice(1).map((y, i) => g.ys[i] - y);
-      blocks.push({ kind: 'grid', rows: rowsRuns, cells, spec: g, colW, rowH, rtl, before, indStart: rtl ? R - g.xs[g.xs.length - 1] : g.xs[0] - L, size, pitch });
+      blocks.push({ kind: 'grid', pad, rows: rowsRuns, cells, spec: g, colW, rowH, rtl, before, indStart: rtl ? R - g.xs[g.xs.length - 1] : g.xs[0] - L, size, pitch });
       prevPitch = pitch; prevBase = g.ys[g.ys.length - 1] + (1 - BASE) * pitch;
       continue;
     }
@@ -1260,7 +1269,10 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const regroup = (ls: Line[]) => buildLines(ls.flatMap((l) => l.pieces.map((p) => ({ ...p, sup: undefined }))));
     for (const r of raw) if (!r.full) { r.left = regroup(r.left!); r.right = regroup(r.right!); }
     const formulasC: Box[] = [];
-    for (const r of raw) { if (r.full) r.full = pullFormulas(r.full, formulasC); else { r.left = pullFormulas(r.left!, formulasC); r.right = pullFormulas(r.right!, formulasC); } }
+    const shapesC = findShapes(pdfjs, ol, true);
+    if ((globalThis as { krDebugLine?: string }).krDebugLine === 'shapes') console.warn('P2D shapes', JSON.stringify(shapesC.map((s) => [+s.l.toFixed(1), +s.r.toFixed(1), +s.bottom.toFixed(1), +s.top.toFixed(1)])));
+    const tidy = (ls: Line[]) => pullFormulas(pullGrids(ls, shapesC, W, H), formulasC);
+    for (const r of raw) { if (r.full) r.full = tidy(r.full); else { r.left = tidy(r.left!); r.right = tidy(r.right!); } }
     const rtlPage = body.filter((l) => l.rtl).length > body.length / 2;
     // Pitches measured within each column (lines of two columns interleave on the page).
     const pitchCol = pitchTable(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])));
@@ -1298,7 +1310,8 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
       left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
     };
-    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, [], arts).catch(() => [] as Pic[]) : [];
+    const gridsC = [...new Set(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])).flat().filter((l) => l.grid).map((l) => l.grid!))];
+    const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts).catch(() => [] as Pic[]) : [];
     if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
     page.cleanup();
     return { w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
@@ -1517,7 +1530,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   };
   // A ruled table: its columns and rows as the page draws them, each cell's lines as the page breaks them.
   const gridFor = (g: Grid, footnotes: Map<number, number> | null) => {
-    const pad = 2; // points of room inside each cell
+    const pad = g.pad; // points of room inside each cell
     const order = <T,>(a: T[]) => (g.rtl ? [...a].reverse() : a);
     const sz = Math.max(2, Math.min(24, Math.round(g.spec.rule * 8)));
     const line = { style: BorderStyle.SINGLE, size: sz, color: '000000' };
@@ -1550,7 +1563,9 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     });
   };
   // (A table has no space above of its own: an empty line of that height goes before it.)
-  const gridBlock = (g: Grid, footnotes: Map<number, number> | null) => (g.before > 1 ? [new Paragraph({ spacing: { before: 0, after: 0, line: Math.round(g.before * PT), lineRule: LineRuleType.EXACT }, children: [new TextRun({ text: '', size: 2 })] }), gridFor(g, footnotes)] : [gridFor(g, footnotes)]);
+  // (As space before a hairline paragraph, so it goes where a paragraph's space before would — none at the top
+  // of a column.)
+  const gridBlock = (g: Grid, footnotes: Map<number, number> | null) => (g.before > 1 ? [new Paragraph({ spacing: { before: Math.round((g.before - 1) * PT), after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new TextRun({ text: '', size: 2 })] }), gridFor(g, footnotes)] : [gridFor(g, footnotes)]);
   const blocksFor = (bs: Block[], footnotes: Map<number, number> | null) => bs.flatMap((b) => (b.kind === 'p' ? [paraFor(b, footnotes)] : b.kind === 'grid' ? gridBlock(b, footnotes) : [verseFor(b, footnotes)]));
 
   const footnoteDefs: Record<number, { children: InstanceType<typeof Paragraph>[] }> = {};
@@ -1631,6 +1646,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
           // The second column starts with a column break inside its first paragraph (a paragraph of its own
           // would add its height to the column).
           if (c > 0 && bs[0]?.kind === 'p') { kids.push(paraFor(bs[0], null, { colBreak: true }), ...blocksFor(bs.slice(1), null)); return; }
+          // (A table first in its column: the break goes in the hairline paragraph that sets its space above.)
+          if (c > 0 && bs[0]?.kind === 'grid') { const g = bs[0]; kids.push(new Paragraph({ spacing: { before: Math.round(Math.max(0, g.before - 1) * PT), after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new ColumnBreak()] }), gridFor(g, null), ...blocksFor(bs.slice(1), null)); return; }
           if (c > 0) kids.push(new Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new ColumnBreak()] }));
           kids.push(...blocksFor(bs, null));
         });
