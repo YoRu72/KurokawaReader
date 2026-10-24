@@ -572,7 +572,23 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       const rtl = line.rtl;
       const midRuns = halves[2].length ? runsOf(halves[2], fonts, rtl) : null;
       const first = rtl ? halves[0] : halves[1], second = rtl ? halves[1] : halves[0];
-      const row: Run[][] = midRuns ? [runsOf(first, fonts, rtl), midRuns, runsOf(second, fonts, rtl)] : [runsOf(first, fonts, rtl), runsOf(second, fonts, rtl)];
+      // A half-line has exactly its cell's width: when its letters and word spaces (at a common space's width)
+      // would not fit there — the page set its spaces narrower — it is set that much narrower, or it would
+      // break onto two lines.
+      const fit = (ps: Piece[], runs: Run[]) => {
+        const iv = ps.filter((p) => p.text.trim() && p.text !== '\u2009').map((p) => [p.l, p.r]).sort((a, b) => a[0] - b[0]);
+        if (!iv.length) return runs;
+        let ink = 0, a = iv[0][0], b = iv[0][1];
+        for (const [l, r] of iv.slice(1)) { if (l > b) { ink += b - a; a = l; b = r; } else b = Math.max(b, r); }
+        ink += b - a;
+        const span = Math.max(...iv.map((x) => x[1])) - iv[0][0];
+        const spaces = runs.reduce((n, r) => n + (r.text.trim().match(/\s+/g)?.length ?? 0), 0);
+        const need = ink + spaces * line.size * 0.3;
+        if (need <= span * 0.99) return runs;
+        const k = Math.max(0.8, (span * 0.99) / need);
+        return runs.map((r) => ({ ...r, cs: Math.round((r.cs ?? 100) * k) }));
+      };
+      const row: Run[][] = midRuns ? [fit(first, runsOf(first, fonts, rtl)), midRuns, fit(second, runsOf(second, fonts, rtl))] : [fit(first, runsOf(first, fonts, rtl)), fit(second, runsOf(second, fonts, rtl))];
       const midW = halves[2].length ? Math.max(...halves[2].map((p) => p.r)) - Math.min(...halves[2].map((p) => p.l)) + line.size : 0;
       const ext = (a0: Piece[]) => { const a = a0.filter((p) => p.text.trim() && p.text !== '\u2009'); return a.length ? [Math.min(...a.map((p) => p.l)), Math.max(...a.map((p) => p.r))] : [0, 0]; };
       const gap = halves[2].length ? 0 : Math.max(0, ext(halves[0])[0] - ext(halves[1])[1]);
@@ -1212,9 +1228,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
             alignment: cols === 3 && c === 1 ? AlignmentType.CENTER : AlignmentType.DISTRIBUTE,
             widowControl: false,
             spacing: { before: i === 0 ? Math.round(v.before * PT) : 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
-            // (Set 3% narrow: a half-line has exactly its cell's width, and the least difference in the fonts'
-            // widths would break it onto two lines; the cell's distributed alignment takes up the slack.)
-            children: runs.map((r) => runFor({ ...(exact.has(r.font) ? r : { ...r, text: r.text.replace(/\u0640+/g, '') }), cs: Math.round((r.cs ?? 100) * 0.97) }, footnotes)),
+            children: runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: r.text.replace(/\u0640+/g, '') }, footnotes)),
           })],
         })),
       })),
