@@ -12,6 +12,7 @@ import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
 import { scheduleAutoCheck } from './updates';
+import { initPcShell } from './ui/pcshell';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
@@ -37,6 +38,7 @@ function mount(route: Route): void {
 registerNativePlugins();
 applyDocumentLang();
 applyChrome();
+initPcShell();
 void loadFonts();
 initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);

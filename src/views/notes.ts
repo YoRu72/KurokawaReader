@@ -10,7 +10,7 @@ import { markDeleted } from '../sync';
 
 export function notesView(): HTMLElement {
   const body = h('div', { class: 'library-body notes-view' });
-  const root = h('div', { class: 'view' },
+  const root = h('div', { class: 'view notes-view' },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title' }, t('allNotes'))),
     body);
   let filter: 'all' | 'bookmarks' | 'notes' = 'all';

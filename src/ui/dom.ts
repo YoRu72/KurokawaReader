@@ -107,7 +107,7 @@ export function icon(name: keyof typeof PATHS | string): SVGElement {
 }
 
 export function iconButton(name: string, label: string, onClick?: (e: MouseEvent) => void, opts: { pressed?: boolean; text?: boolean } = {}): HTMLButtonElement {
-  const b = h('button', { class: 'icon-btn' + (opts.text ? ' has-label' : ''), type: 'button', title: label, 'aria-label': label }, icon(name), opts.text ? h('span', null, label) : null);
+  const b = h('button', { class: 'icon-btn' + (opts.text ? ' has-label' : ''), type: 'button', title: label, 'aria-label': label, 'data-icon': name }, icon(name), opts.text ? h('span', null, label) : null);
   if (opts.pressed !== undefined) b.setAttribute('aria-pressed', String(opts.pressed));
   if (onClick) b.addEventListener('click', onClick);
   // A mouse click must not leave the button focused, or Enter/Space would fire it again later.

@@ -42,7 +42,7 @@ export async function checkForUpdate(ignoreSkipped = false): Promise<ReleaseInfo
 export function scheduleAutoCheck(): void {
   if (!getSettings().autoUpdateCheck || !navigator.onLine) return;
   if (Date.now() - lastChecked() < CHECK_EVERY_MS) return;
-  setTimeout(() => { checkForUpdate().then((rel) => { if (rel) showUpdateSheet(rel); }).catch(() => undefined); }, 3000);
+  setTimeout(() => { checkForUpdate().then((rel) => { if (!rel) return; showUpdateSheet(rel); void import('./ui/pcshell').then((m) => m.railUpdate(() => showUpdateSheet(rel))); }).catch(() => undefined); }, 3000);
 }
 
 function offerUpdate(rel: ReleaseInfo): void {
@@ -148,56 +148,89 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
   }
 }
 
+/** Seconds as a short duration ("40 s", "3 min"). */
+function shortTime(sec: number): string {
+  return sec < 60 ? t('secShort', { n: Math.max(1, Math.round(sec)) }) : t('minShort', { n: Math.round(sec / 60) });
+}
+
+/** The update dialog: what is new, the file for this device, and one button to fetch and install it. A
+ *  wavy indicator shows the download — speed and time left with it — and the dialog says what happens next. */
 export function showUpdateSheet(rel: ReleaseInfo): void {
   const s = openSheet(t('updateAvailable', { v: rel.version }), t('close'));
   s.body.style.fontFamily = 'var(--font-ui)';
   s.el.classList.add('update-sheet');
   const platform = nativePlatform();
-  // Header: version chips, date
   const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString(getLang() === 'ar' ? 'ar-SA-u-nu-arab-ca-gregory' : 'en-GB', { dateStyle: 'medium' }) : '';
-  s.body.append(h('div', { class: 'upd-head' },
-    h('span', { class: 'upd-chip' }, APP_VERSION), h('span', { class: 'upd-arrow' }, icon('arrowRight')), h('span', { class: 'upd-chip new' }, rel.version),
-    date ? h('span', { class: 'upd-date' }, date) : null));
-  // What's new: bullet lines from the release notes (the install table is left out)
+  // Hero: the app's icon in an expressive shape, the headline, the versions.
+  s.body.append(h('div', { class: 'upd-hero' },
+    h('div', { class: 'upd-badge' }, h('img', { src: '/icons/icon.svg', alt: '' })),
+    h('div', { class: 'upd-hero-text' },
+      h('h2', null, t('updateHeadline')),
+      h('p', null, t('updateReadySub', { v: rel.version })),
+      h('div', { class: 'upd-head' },
+        h('span', { class: 'upd-chip', dir: 'ltr' }, APP_VERSION), h('span', { class: 'upd-arrow' }, icon('arrowRight')), h('span', { class: 'upd-chip new', dir: 'ltr' }, rel.version),
+        date ? h('span', { class: 'upd-date' }, date) : null))));
+  // What's new: bullet lines from the release notes (the install table is left out).
   const section = /## What's new\s*([\s\S]*?)(?:\n## |$)/.exec(rel.notes)?.[1] ?? '';
-  const lines = section.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('-') || l.startsWith('*')).slice(0, 20);
-  if (lines.length) s.body.append(h('h4', { class: 'upd-title' }, t('whatsNew')), h('ul', { class: 'upd-notes' }, ...lines.map((l) => h('li', { dir: 'auto' }, l.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '')))));
-  // Download block
-  const fileLine = h('p', { class: 'upd-file' });
-  const status = h('p', { class: 'src upd-status' });
-  const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
-  const barFill = bar.firstElementChild as HTMLElement;
-  s.body.append(fileLine, bar, status);
+  const lines = section.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('-') || l.startsWith('*')).slice(0, 30);
+  if (lines.length) s.body.append(h('section', { class: 'upd-card' }, h('h4', { class: 'upd-title' }, t('whatsNew')), h('ul', { class: 'upd-notes' }, ...lines.map((l) => h('li', { dir: 'auto' }, l.replace(/^[-*•]\s*/, '').replace(/\*\*/g, ''))))));
+  // The download: the file, a wavy progress indicator, and its numbers.
+  const fileName = h('span', { class: 'upd-file-name', dir: 'ltr' });
+  const fileSize = h('span', { class: 'upd-file-size' });
+  const status = h('p', { class: 'upd-status', 'aria-live': 'polite' });
+  const wave = h('div', { class: 'wave-progress', hidden: true, role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i'));
   let asset: Asset | undefined;
   let ctl: AbortController | null = null;
-  const describe = () => { fileLine.replaceChildren(icon('download'), h('span', null, asset ? `${asset.name} · ${fmtMB(asset.size)}` : t('noFileForPlatform'))); };
-  void suitableAsset(rel).then((a) => { asset = a; describe(); install.disabled = !a && platform !== 'web'; });
-
-  const onProgress = (p: Progress) => {
-    bar.hidden = false; barFill.style.width = `${p.pct}%`;
-    const parts = [`${p.pct}%`];
-    if (p.total) parts.push(`${fmtMB(p.got)} / ${fmtMB(p.total)}`);
-    if (p.speed) parts.push(`${fmtMB(p.speed)}/s`);
-    status.textContent = parts.join(' · ');
+  const choose = h('button', { class: 'btn small text', type: 'button', onclick: () => {
+    pickSheet(t('chooseFile'), rel.assets.map((a): [string, string, string] => [a.name, `${a.name} · ${fmtMB(a.size)}`, 'download']), asset?.name ?? '', (name) => { asset = rel.assets.find((a) => a.name === name); describe(); install.disabled = !asset; }, t('close'));
+  } }, t('change')) as HTMLButtonElement;
+  const dl = h('section', { class: 'upd-card upd-dl' },
+    h('div', { class: 'upd-file' }, h('span', { class: 'upd-file-icon' }, icon('download')), h('div', { class: 'upd-file-text' }, fileName, fileSize), choose),
+    wave, status);
+  s.body.append(dl);
+  if (platform === 'ios') s.body.append(h('p', { class: 'src' }, t('iosUpdateHint')));
+  const describe = () => {
+    fileName.textContent = asset ? asset.name : t('noFileForPlatform');
+    fileSize.textContent = asset ? `\u2066${fmtMB(asset.size)}\u2069` : '';
   };
-  const install = h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+  describe();
+  void suitableAsset(rel).then((a) => { asset = a; describe(); install.disabled = !a && platform !== 'web'; if (platform === 'web') choose.hidden = true; });
+
+  const setPct = (pct: number) => { wave.style.setProperty('--p', `${pct}%`); wave.setAttribute('aria-valuenow', String(pct)); };
+  const onProgress = (p: Progress) => {
+    wave.hidden = false; dl.classList.add('busy');
+    wave.classList.toggle('indet', !p.total && !p.pct);
+    setPct(p.pct);
+    const parts = [p.total || p.pct ? `${p.pct}%` : ''];
+    if (p.total && p.got) parts.push(`\u2066${fmtMB(p.got)} / ${fmtMB(p.total)}\u2069`);
+    if (p.speed) parts.push(`\u2066${fmtMB(p.speed)}/s\u2069`);
+    if (p.speed && p.total > p.got) parts.push(t('timeLeft', { t: shortTime((p.total - p.got) / p.speed) }));
+    // (Each part isolated, so numbers and units keep their order inside Arabic text.)
+    status.textContent = parts.filter(Boolean).map((x) => `\u2068${x}\u2069`).join(' · ');
+  };
+  const later = h('button', { class: 'btn outlined', type: 'button', onclick: () => s.close() }, t('later'));
+  const install = h('button', { class: 'btn primary upd-go', type: 'button', onclick: async () => {
     if (platform === 'web') { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); location.reload(); return; }
     if (!asset) return;
     if (platform === 'ios') { location.href = `altstore://install?url=${encodeURIComponent(asset.url)}`; return; }
-    install.disabled = true; cancel.hidden = false; ctl = new AbortController();
-    try { await installAsset(asset, onProgress, ctl.signal); status.textContent = t('installStarted'); barFill.style.width = '100%'; }
-    catch (err) { bar.hidden = true; status.textContent = (err as Error).name === 'AbortError' ? t('cancelled') : `${t('updateFailed')} — ${String((err as Error).message ?? err)}`; install.disabled = false; }
-    finally { cancel.hidden = true; ctl = null; }
+    install.hidden = true; choose.disabled = true; later.hidden = true; cancel.hidden = false; ctl = new AbortController();
+    status.textContent = t('preparing'); wave.hidden = false; wave.classList.add('indet'); setPct(0);
+    try {
+      await installAsset(asset, onProgress, ctl.signal);
+      setPct(100); wave.classList.remove('indet'); wave.classList.add('done'); dl.classList.add('ok');
+      status.textContent = t('installStarted');
+    } catch (err) {
+      wave.hidden = true; dl.classList.remove('busy');
+      status.textContent = (err as Error).name === 'AbortError' ? t('cancelled') : `${t('updateFailed')} — ${String((err as Error).message ?? err)}`;
+      install.hidden = false; choose.disabled = false;
+    } finally { cancel.hidden = true; later.hidden = false; ctl = null; }
   } }, icon('download'), platform === 'web' ? t('reloadToUpdate') : platform === 'ios' ? t('installWithAltStore') : t('downloadInstall')) as HTMLButtonElement;
-  const cancel = h('button', { class: 'btn small', type: 'button', hidden: true, onclick: () => ctl?.abort() }, t('cancel'));
-  const choose = h('button', { class: 'btn small', type: 'button', onclick: () => {
-    pickSheet(t('chooseFile'), rel.assets.map((a): [string, string, string] => [a.name, `${a.name} · ${fmtMB(a.size)}`, 'download']), asset?.name ?? '', (name) => { asset = rel.assets.find((a) => a.name === name); describe(); install.disabled = !asset; }, t('close'));
-  } }, icon('folder'), t('chooseFile'));
-  const link = h('a', { class: 'btn small outlined', href: rel.url, target: '_blank', rel: 'noopener' }, icon('external'), t('openReleasePage'));
-  if (platform === 'ios' ) s.body.append(h('p', { class: 'src' }, t('iosUpdateHint')));
-  s.actions.append(install, cancel, choose, link,
-    h('button', { class: 'btn small', type: 'button', onclick: () => { localStorage.setItem('kr.update.skip', rel.version); s.close(); toast(t('versionSkipped', { v: rel.version })); } }, t('skipVersion')));
-  if (platform === 'ios' && asset === undefined) void suitableAsset(rel).then((a) => { if (a) s.actions.insertBefore(h('a', { class: 'btn small tonal', href: `sidestore://install?url=${encodeURIComponent(a.url)}` }, icon('download'), t('installWithSideStore')), cancel); });
+  const cancel = h('button', { class: 'btn outlined', type: 'button', hidden: true, onclick: () => ctl?.abort() }, t('cancel'));
+  const link = h('a', { class: 'btn small text', href: rel.url, target: '_blank', rel: 'noopener' }, icon('external'), t('openReleasePage'));
+  const skip = h('button', { class: 'btn small text', type: 'button', onclick: () => { localStorage.setItem('kr.update.skip', rel.version); s.close(); toast(t('versionSkipped', { v: rel.version })); } }, t('skipVersion'));
+  s.actions.classList.add('upd-actions');
+  s.actions.append(h('div', { class: 'upd-minor' }, skip, link), h('div', { class: 'upd-major' }, later, cancel, install));
+  if (platform === 'ios') void suitableAsset(rel).then((a) => { if (a) s.actions.querySelector('.upd-major')?.insertBefore(h('a', { class: 'btn tonal', href: `sidestore://install?url=${encodeURIComponent(a.url)}` }, icon('download'), t('installWithSideStore')), install); });
 }
 
 export function renderUpdateCard(container: HTMLElement): void {

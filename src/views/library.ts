@@ -136,6 +136,13 @@ export function libraryView(): HTMLElement {
   const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (!root.isConnected) return; if (c === 'import') void pickFiles(); else if (c === 'scan') openScan(); };
   document.addEventListener('kr:command', onCommand);
   const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
+  // The PC's navigation rail asks for an import or a search across books.
+  const onAsk = (e: Event) => {
+    if (!root.isConnected) { window.removeEventListener('kr:library', onAsk); return; }
+    const what = (e as CustomEvent<string>).detail;
+    if (what === 'import') importMenu(); else if (what === 'search') searchBooksBtn.click();
+  };
+  window.addEventListener('kr:library', onAsk);
   const FINE_POINTER = matchMedia('(hover: hover) and (pointer: fine)').matches;
   const endDrag = () => root.classList.remove('dragging-book');
   for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.addEventListener(ev, endDrag, { passive: true });
