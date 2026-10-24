@@ -2,7 +2,7 @@
 // and put in order, then saved as one PDF. Every page can be adjusted by hand — its four corners, its turn,
 // its look — and the defaults are the reader's settings. The picture work is in ../scan.ts.
 import { h, icon, openSheet, toast, pickButton, debounce } from './dom';
-import { t, localDigits, getLang } from '../i18n';
+import { t, localDigits, getLang, countPages } from '../i18n';
 import * as S from '../scan';
 import { runner, pickFiles, pdfBlob } from './pdftools';
 import { sortable, placeNumber } from './sortable';
@@ -10,8 +10,8 @@ import { scanWork, parallel } from '../scanpool';
 import type { Look, Prepared } from '../scanops';
 
 type Quality = 'standard' | 'high' | 'max';
-type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean; ocr: boolean };
-const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true, ocr: true };
+type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean; split: boolean };
+const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true, split: true };
 const KEY = 'kr.scan';
 const SIDE: Record<Quality, number> = { standard: 1700, high: 2400, max: 3300 };
 const PREVIEW = 1200;
@@ -90,8 +90,14 @@ export function scannerSheet(onDone?: () => void): void {
     status.textContent = t('scanReading', { n: localDigits('0'), total: localDigits(String(fresh.length)) });
     await pooled(fresh, parallel(), async (p) => {
       try {
-        const r = await scanWork<Prepared>({ op: 'prepare', blob: p.file, maxSide: PREVIEW, autoCrop: set.autoCrop, autoTurn: set.autoTurn, flatten: set.flatten, filter: set.filter, rtl: getLang() === 'ar' });
-        Object.assign(p, r.look); p.preview = r.preview; hold(p); p.thumb = URL.createObjectURL(r.thumb); p.pending = false;
+        const r = await scanWork<Prepared>({ op: 'prepare', blob: p.file, maxSide: PREVIEW, autoCrop: set.autoCrop, autoTurn: set.autoTurn, flatten: set.flatten, split: set.split, filter: set.filter, rtl: getLang() === 'ar' });
+        Object.assign(p, r.looks[0]); p.preview = r.preview; hold(p); p.thumb = URL.createObjectURL(r.thumbs[0]); p.pending = false;
+        // A book open on two pages became two pages: the second one goes right after the first.
+        for (let k = 1; k < r.looks.length; k++) {
+          const q: Page = { ...r.looks[k], file: p.file, preview: null, thumb: URL.createObjectURL(r.thumbs[k]), pending: false, key: ++keySeq };
+          pages.splice(pages.indexOf(p) + k, 0, q);
+        }
+        if (r.looks.length > 1) draw();
       } catch (e) {
         console.error(e);
         const i = pages.indexOf(p); if (i >= 0) pages.splice(i, 1);
@@ -135,13 +141,20 @@ export function scannerSheet(onDone?: () => void): void {
     stale();
     if (!pages.length) gridEl.replaceChildren(h('div', { class: 'scan-empty' }, icon('camera'), h('p', null, t('scanEmpty'))));
     else { const want = pages.map(tileFor); if (gridEl.children.length !== want.length || want.some((el, i) => gridEl.children[i] !== el)) gridEl.replaceChildren(...want); pages.forEach(paintTile); }
-    go.disabled = asImages.disabled = asText.disabled = !pages.length || pages.some((p) => p.pending);
-    count.textContent = pages.length ? t('pageCount', { n: pages.length }) : '';
+    go.disabled = asImages.disabled = !pages.length || pages.some((p) => p.pending);
+    count.textContent = pages.length ? countPages(pages.length) : '';
   };
   sortable(gridEl, '.page-tile', moveTo, sh.body);
 
-  // The camera: an ordinary file input asking for the back camera (phones open it; elsewhere it is a picker).
-  const shoot = () => {
+  // The camera: the scanner's own (the page outlined as it is found, taken by itself when held steady), each
+  // photo read as it is taken; where that cannot be had, the system's camera — a file input asking for the back
+  // camera (phones open it; elsewhere it is a picker).
+  const shoot = async () => {
+    const { openCamera } = await import('./camera');
+    if (await openCamera((f) => void add([f]))) return;
+    systemCamera();
+  };
+  const systemCamera = () => {
     const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' } }) as HTMLInputElement;
     input.addEventListener('change', () => { const fs = [...(input.files ?? [])]; input.remove(); void add(fs); });
     document.body.append(input); input.click();
@@ -149,7 +162,7 @@ export function scannerSheet(onDone?: () => void): void {
   const count = h('span', { class: 'src' });
   sh.body.append(
     h('div', { class: 'tool-bar' },
-      h('button', { class: 'btn small primary', type: 'button', onclick: shoot }, icon('camera'), t('scanTakePhoto')),
+      h('button', { class: 'btn small primary', type: 'button', onclick: () => void shoot() }, icon('camera'), t('scanTakePhoto')),
       h('button', { class: 'btn small tonal', type: 'button', onclick: async () => add(await pickFiles('image/*', true)) }, icon('images'), t('scanPickPhotos')),
       h('button', { class: 'icon-btn', type: 'button', title: t('scanSettings'), 'aria-label': t('scanSettings'), onclick: () => settingsSheet(set, (s) => { set = s; stale(); }) }, icon('settings')),
       count),
@@ -170,35 +183,16 @@ export function scannerSheet(onDone?: () => void): void {
     });
     return { blobs: out, types };
   };
-  /** Each page's text read (Arabic or English, whichever it is), with a PDF page of it to lay over the picture. */
-  // (A page read once is not read again while it stays as it is: extracting its text, then making the PDF.)
-  const readCache = new WeakMap<Page, { sig: string; text: string; pdf?: Uint8Array }>();
-  const readPages = async (blobs: Blob[], pdf: boolean, which: Page[]) => {
-    const { recognizeAuto } = await import('../ocr');
-    const prefer = getLang() === 'ar' ? 'ara' : 'eng';
-    const out: { text: string; pdf?: Uint8Array }[] = [];
-    for (const [i, b] of blobs.entries()) {
-      const pg = which[i]; const sig = JSON.stringify([lookOf(pg), set.quality]); const hit = readCache.get(pg);
-      if (hit && hit.sig === sig && (!pdf || hit.pdf)) { out.push(hit); step(); continue; }
-      try { const r2 = await recognizeAuto(b, { pdf: true, prefer }); out.push(r2); readCache.set(pg, { sig, text: r2.text, pdf: r2.pdf }); } catch (e) { console.warn('[kurokawa] OCR failed', e); out.push({ text: '' }); }
-      step();
-    }
-    return out;
-  };
   const stamp = () => { const d = new Date(); const pad = (n: number) => String(n).padStart(2, '0'); return `${t('scanFileName')} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`; };
-  const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go, asImages, asText], async () => {
-    const { ocrAvailable } = await import('../ocr');
-    const ocr = set.ocr && await ocrAvailable();
-    steps = pages.length * (ocr ? 2 : 1) + 1; stepsDone = 0;
-    const which = pages.slice(); const { blobs } = await makePages();
-    // The text laid invisibly over each page: the PDF can be searched, and its text selected and copied.
-    const overlays = ocr ? (await readPages(blobs, true, which)).map((x) => x.pdf) : undefined;
+  const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go, asImages], async () => {
+    steps = pages.length + 1; stepsDone = 0;
+    const { blobs } = await makePages();
     const { imagesToPdf } = await import('../pdftools');
-    const bytes = await imagesToPdf(blobs, { size: set.size, margin: 0, overlays });
+    const bytes = await imagesToPdf(blobs, { size: set.size, margin: 0 });
     return { blob: pdfBlob(bytes), name: `${stamp()}.pdf` };
   }) }, icon('file'), t('createPdf')) as HTMLButtonElement;
   // Or the pages as pictures: one page, one picture; several, a ZIP of them in order.
-  const asImages = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void r.run([go, asImages, asText], async () => {
+  const asImages = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void r.run([go, asImages], async () => {
     steps = pages.length + 1; stepsDone = 0;
     const { blobs, types } = await makePages();
     const ext = (k: number) => (types[k] === 'image/png' ? 'png' : 'jpg');
@@ -208,21 +202,7 @@ export function scannerSheet(onDone?: () => void): void {
     blobs.forEach((b, k) => zip.file(`${String(k + 1).padStart(digits, '0')}.${ext(k)}`, b));
     return { blob: await zip.generateAsync({ type: 'blob', compression: 'STORE' }), name: `${stamp()}.zip` };
   }) }, icon('images'), t('scanSaveImages')) as HTMLButtonElement;
-  // Or the pages' text: read on the device, shown to copy, change, share or keep.
-  const asText = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void (async () => {
-    const { ocrAvailable } = await import('../ocr');
-    if (!(await ocrAvailable())) { toast(t('ocrUnavailable'), 'error'); return; }
-    let text = '';
-    await r.run([go, asImages, asText], async () => {
-      steps = pages.length * 2; stepsDone = 0;
-      const which = pages.slice(); const { blobs } = await makePages();
-      const read = await readPages(blobs, false, which);
-      text = read.map((x) => x.text).filter(Boolean).join('\n\n');
-      return { blob: new Blob([text], { type: 'text/plain;charset=utf-8' }), name: `${stamp()}.txt` };
-    });
-    if (sh.el.isConnected) textSheet(text);
-  })() }, icon('type'), t('scanExtractText')) as HTMLButtonElement;
-  sh.actions.append(asText, asImages, go);
+  sh.actions.append(asImages, go);
   draw();
 
   /* ---------- one page, by hand ---------- */
@@ -346,7 +326,7 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const s = { ...cur };
   const commit = () => { saveSettings(s); onChange({ ...s }); };
-  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten' | 'ocr', sub: string) => {
+  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten' | 'split', sub: string) => {
     const input = h('input', { type: 'checkbox', checked: s[key] }) as HTMLInputElement;
     input.addEventListener('change', () => { s[key] = input.checked; commit(); });
     return h('label', { class: 'scan-check' }, input, h('span', null, h('b', null, label), h('small', null, sub)));
@@ -358,21 +338,7 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
     check(t('scanAutoCrop'), 'autoCrop', t('scanAutoCropSub')),
     check(t('scanFlatten'), 'flatten', t('scanFlattenSub')),
     check(t('scanAutoTurn'), 'autoTurn', t('scanAutoTurnSub')),
-    check(t('scanOcr'), 'ocr', t('scanOcrSub')));
+    check(t('scanSplit'), 'split', t('scanSplitSub')));
   sh.actions.append(h('button', { class: 'btn small primary', type: 'button', onclick: sh.close }, t('done')));
 }
 
-/** The text read from the pages: to look over and correct, copy, share or keep as a file. */
-function textSheet(text: string): void {
-  const sh = openSheet(t('ocrTitle'), t('close'), { stack: true });
-  sh.body.style.fontFamily = 'var(--font-ui)';
-  if (!text.trim()) { sh.body.append(h('p', { class: 'src' }, t('ocrNone'))); return; }
-  const ta = h('textarea', { class: 'ocr-text', dir: 'auto', spellcheck: false }) as HTMLTextAreaElement;
-  ta.value = text;
-  sh.body.append(h('p', { class: 'hint' }, t('ocrHint')), ta);
-  const name = () => `${t('scanFileName')}.txt`;
-  sh.actions.append(
-    h('button', { class: 'btn small tonal', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(ta.value); toast(t('copied')); } catch { ta.select(); document.execCommand('copy'); toast(t('copied')); } } }, icon('copy'), t('copySelected')),
-    h('button', { class: 'btn small tonal', type: 'button', onclick: () => void import('./share').then((m) => m.shareText(ta.value)) }, icon('external'), t('shareText')),
-    h('button', { class: 'btn small primary', type: 'button', onclick: () => void import('./share').then((m) => m.downloadBlob(new Blob([ta.value], { type: 'text/plain;charset=utf-8' }), name())) }, icon('download'), t('saveAsText')));
-}

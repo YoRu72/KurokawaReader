@@ -74,6 +74,12 @@ if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
     <application`);
   if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 }
+// The scanner's own camera (the web view asks for it; Capacitor turns that into the permission prompt).
+if (!manifest.includes('android.permission.CAMERA')) {
+  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <application`);
+}
 // Text-to-speech engines must be visible to the app (Android 11+), or TextToSpeech finds none.
 // Conversions go on behind other apps: a foreground service ("data sync") with a progress notification.
 if (!manifest.includes('KrJobService')) {

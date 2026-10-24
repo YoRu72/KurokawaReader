@@ -74,7 +74,6 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 
 // For tests: one PDF page's text items (as the patched pdf.js gives them) and its reading text.
-(window as unknown as { krOcr?: unknown }).krOcr = () => import('./ocr'); // (for tests)
 (window as unknown as { krPdfDebug?: unknown }).krPdfDebug = async (bytes: Uint8Array, n: number) => {
   const { loadPdfjs } = await import('./formats/pdf');
   const { pageReadingText } = await import('./pdflayer');

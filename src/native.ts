@@ -152,8 +152,10 @@ export function initNativeBridges(): void {
   if (cap?.isNativePlatform?.() && cap.Plugins?.App) {
     void cap.Plugins.App.addListener('appUrlOpen', (d) => void handleUrl(d.url));
     void cap.Plugins.App.getLaunchUrl().then((d) => { if (d?.url) void handleUrl(d.url); }).catch(() => undefined);
-    // Android back: close whatever is open first (sheet, side panel, lightbox), then go back a view, then minimise.
+    // Android back: close whatever is open first (the camera, a sheet, side panel, lightbox), then go back a view, then minimise.
     void cap.Plugins.App.addListener('backButton', () => {
+      const cam = document.querySelector('.cam-view .cam-close') as HTMLButtonElement | null;
+      if (cam) { cam.click(); return; }
       const sheets = document.querySelectorAll('.sheet .sheet-head button');
       if (sheets.length) { (sheets[sheets.length - 1] as HTMLButtonElement).click(); return; }
       const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;

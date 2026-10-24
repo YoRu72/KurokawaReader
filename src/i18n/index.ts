@@ -132,6 +132,12 @@ export function arCount(n: number, f: { one: string; two: string; few: string; m
   return `${localDigits(n)} ${f.many}`;
 }
 
+/** "1 page / 2 pages" — in Arabic: صفحة واحدة · صفحتان · ٣–١٠ صفحات · ١١–٩٩ صفحةً · ١٠٠ صفحةٍ. */
+export function countPages(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'page' : 'pages'}`;
+  return arCount(n, { one: 'صفحة واحدة', two: 'صفحتان', few: 'صفحات', many: 'صفحةً', hundred: 'صفحةٍ' });
+}
+
 /** "1 file / 2 files" — and the Arabic rules for the counted noun (تمييز العدد):
  *  كتاب · كتابان · ٣–١٠ كتب (جمعٌ مجرور) · ١١–٩٩ كتابًا (مفردٌ منصوب) · ١٠٠ و٢٠٠… كتابٍ (مفردٌ مجرور). */
 export function countBooks(n: number): string {

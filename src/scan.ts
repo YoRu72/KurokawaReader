@@ -404,6 +404,12 @@ export function flatSize(q: Quad, maxSide: number): { w: number; h: number } {
   return { w: Math.max(1, w), h: Math.max(1, h) };
 }
 
+/** Where the point (u, v) of the straightened page (fractions across and down) is in the photo. */
+export function quadPoint(q: Quad, u: number, v: number): Pt {
+  const m = homography(1, 1, q); const z = m[6] * u + m[7] * v + 1;
+  return { x: (m[0] * u + m[1] * v + m[2]) / z, y: (m[3] * u + m[4] * v + m[5]) / z };
+}
+
 /** Projective transform taking the rectangle (0,0)-(w,h) to the quad. */
 function homography(w: number, h: number, q: Quad): number[] {
   const src = [[0, 0], [w, 0], [w, h], [0, h]], dst = q.map((p) => [p.x, p.y]);
@@ -490,35 +496,57 @@ function paperLight(lum: Float32Array, w: number, h: number): Float32Array {
 }
 
 /**
- * What is left of the background around the page once it is flattened (the table, the book's edge, the dark
- * beyond a curled corner): dark regions reaching in from the picture's edge — not print, which is thin — painted
- * over with the paper's colour.
+ * What is left around the page once it is flattened — the table, the shadow under a curled edge, the dark of the
+ * spine, the next page: from each side of the picture inwards, whatever is not paper (clearly darker than the
+ * paper, or coloured where the paper is not) is measured as a depth along that side, the depth smoothed into a
+ * clean line, and everything up to it painted with the paper's colour, its edge feathered.
  */
 export function cleanBorders(img: Img): Img {
   const { width: W, height: H, data: d } = img;
   const k = Math.max(1, Math.max(W, H) / 500); const w = Math.max(1, Math.round(W / k)), h = Math.max(1, Math.round(H / k)); const n = w * h;
-  const L = new Float32Array(n);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; L[y * w + x] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; }
-  // Print removed (it is thinner than this), so only large dark areas stay dark.
-  const Lc = closeGray(L, w, h, Math.max(2, Math.round(Math.min(w, h) / 60)));
-  const sorted = Float32Array.from(Lc).sort(); const paper = sorted[Math.floor(n * 0.75)];
+  const L = new Float32Array(n), C = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; L[y * w + x] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; C[y * w + x] = Math.max(d[i], d[i + 1], d[i + 2]) - Math.min(d[i], d[i + 1], d[i + 2]); }
+  // Print removed (it is thinner than this), so only shadows, background and the like stay dark.
+  const Lc = closeGray(L, w, h, Math.max(2, Math.round(Math.min(w, h) / 70)));
+  // The paper, from the middle of the page: its lightness and colour.
+  const mid: number[] = [], midC: number[] = [];
+  for (let y = Math.round(h * 0.2); y < h * 0.8; y += 2) for (let x = Math.round(w * 0.2); x < w * 0.8; x += 2) { mid.push(Lc[y * w + x]); midC.push(C[y * w + x]); }
+  mid.sort((a, b) => a - b); midC.sort((a, b) => a - b);
+  const paper = mid[Math.floor(mid.length * 0.7)] ?? 255, paperC = midC[Math.floor(midC.length * 0.5)] ?? 0;
   if (paper < 80) return img; // (A dark page: nothing to tell.)
-  const dark = new Uint8Array(n); for (let i = 0; i < n; i++) dark[i] = Lc[i] < paper * 0.62 ? 1 : 0;
-  const mask = new Uint8Array(n); const st: number[] = [];
-  for (let x = 0; x < w; x++) for (const y of [0, h - 1]) { const i = y * w + x; if (dark[i] && !mask[i]) { mask[i] = 1; st.push(i); } }
-  for (let y = 0; y < h; y++) for (const x of [0, w - 1]) { const i = y * w + x; if (dark[i] && !mask[i]) { mask[i] = 1; st.push(i); } }
-  while (st.length) { const i = st.pop()!; const x = i % w, y = (i / w) | 0; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && dark[j] && !mask[j]) { mask[j] = 1; st.push(j); } }
-  let cnt = 0; for (let i = 0; i < n; i++) cnt += mask[i];
-  if (cnt < n * 0.002 || cnt > n * 0.5) return img;
-  // (A little wider: the soft edge between the paper and what is beyond it.)
-  for (let r = 0; r < 2; r++) { const m2 = mask.slice(); for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (mask[i - 1] || mask[i + 1] || mask[i - w] || mask[i + w]) m2[i] = 1; } mask.set(m2); }
-  // The paper's colour: the median of the bright part.
+  const notPaper = (i: number) => Lc[i] < paper * 0.88 || C[i] > paperC + 45;
+  // Print: strokes clearly darker than what is around them. Cleaning stops at print — a shadow over the page's
+  // own text (at the spine) is evened by the look, not painted over.
+  const ink = (i: number) => L[i] < Lc[i] * 0.72 && Lc[i] > paper * 0.45;
+  // Depth of what is not paper, from each side, along it (allowing a pixel or two of paper inside it).
+  const maxD = (len: number) => Math.round(len * 0.16);
+  const depthAlong = (len: number, across: number, at: (along: number, depth: number) => number) => {
+    const dep = new Float32Array(len);
+    for (let a = 0; a < len; a++) { let dd = 0, gap = 0; for (let t = 0; t < maxD(across); t++) { const i = at(a, t); if (ink(i)) break; if (notPaper(i)) { dd = t + 1; gap = 0; } else if (++gap > 2) break; } dep[a] = dd; }
+    // Smoothed into a clean line (a median, then a little wider so nothing dark is left along it).
+    const r = Math.max(2, Math.round(len / 60)); const sm = new Float32Array(len);
+    for (let a = 0; a < len; a++) { const win: number[] = []; for (let j = Math.max(0, a - r); j <= Math.min(len - 1, a + r); j++) win.push(dep[j]); win.sort((p, q) => p - q); sm[a] = Math.min(win[win.length >> 1], dep[a] + 2); }
+    const out = new Float32Array(len); for (let a = 0; a < len; a++) { let m = 0; for (let j = Math.max(0, a - 2); j <= Math.min(len - 1, a + 2); j++) m = Math.max(m, sm[j]); out[a] = m > 0 ? m + 1.5 : 0; }
+    return out;
+  };
+  const top = depthAlong(w, h, (x, t) => t * w + x), bot = depthAlong(w, h, (x, t) => (h - 1 - t) * w + x);
+  const lef = depthAlong(h, w, (y, t) => y * w + t), rig = depthAlong(h, w, (y, t) => y * w + (w - 1 - t));
+  const any = [top, bot, lef, rig].some((a) => a.some((v) => v > 0));
+  if (!any) return img;
+  // The paper's colour: the median of the page's middle (at full size).
   const rs: number[] = [], gs: number[] = [], bs: number[] = [];
-  for (let i = 0; i < n; i += 3) if (!mask[i] && Lc[i] >= paper * 0.9) { const x = i % w, y = (i / w) | 0; const o = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; rs.push(d[o]); gs.push(d[o + 1]); bs.push(d[o + 2]); }
+  for (let y = Math.round(H * 0.2); y < H * 0.8; y += 7) for (let x = Math.round(W * 0.2); x < W * 0.8; x += 7) { const o = (y * W + x) * 4; const l = 0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2]; if (l >= paper * 0.92) { rs.push(d[o]); gs.push(d[o + 1]); bs.push(d[o + 2]); } }
   const med = (a: number[]) => a.sort((p, q) => p - q)[a.length >> 1] ?? 255;
   const pr = med(rs), pg = med(gs), pb = med(bs);
-  const out = new Uint8ClampedArray(d);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (!mask[Math.min(h - 1, Math.floor(y / k)) * w + Math.min(w - 1, Math.floor(x / k))]) continue; const o = (y * W + x) * 4; out[o] = pr; out[o + 1] = pg; out[o + 2] = pb; }
+  const out = new Uint8ClampedArray(d); const feather = 3 * k;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const sx = Math.min(w - 1, Math.floor(x / k)), sy = Math.min(h - 1, Math.floor(y / k));
+    // How far inside the cleaned border this point is (> 0: inside it), in full-size pixels.
+    const inside = Math.max(top[sx] * k - y, bot[sx] * k - (H - 1 - y), lef[sy] * k - x, rig[sy] * k - (W - 1 - x));
+    if (inside <= -feather) continue;
+    const t = clamp((inside + feather) / (2 * feather), 0, 1); const o = (y * W + x) * 4;
+    out[o] = d[o] + (pr - d[o]) * t; out[o + 1] = d[o + 1] + (pg - d[o + 1]) * t; out[o + 2] = d[o + 2] + (pb - d[o + 2]) * t;
+  }
   return { data: out, width: W, height: H };
 }
 
@@ -577,6 +605,73 @@ export type Adjust = { brightness?: number; contrast?: number };
 
 /** A filter applied: `auto` evens the light and whitens the paper keeping colour; `color` does so with livelier
  *  colour; `gray` in greys; `bw` as clean black on white (for text); `original` leaves it. */
+/**
+ * The light a lamp's glare adds, pixel by pixel (null when there is none). Glare is where the paper is much
+ * brighter than the paper all around it (its typical light over half the page — light falling off gently
+ * across the page is not glare). There the print is washed out, and where the paper is blown out to white its own
+ * light is lost, so the glare is measured from the print: the light that, taken off, gives the print there the
+ * same darkness against its paper as print has elsewhere on the page. Places under glare with no print take it
+ * from those around them.
+ */
+function glareOf(lum: Float32Array, light: Float32Array, w: number, h: number): Float32Array | null {
+  const bs = Math.max(8, Math.round(Math.max(w, h) / 48)); const gw = Math.ceil(w / bs), gh = Math.ceil(h / bs), nb = gw * gh;
+  const g = new Float32Array(nb), dark = new Float32Array(nb); const vals: number[] = [];
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+    g[y * gw + x] = light[Math.min(h - 1, y * bs + (bs >> 1)) * w + Math.min(w - 1, x * bs + (bs >> 1))];
+    vals.length = 0;
+    for (let yy = y * bs; yy < Math.min(h, (y + 1) * bs); yy += 2) for (let xx = x * bs; xx < Math.min(w, (x + 1) * bs); xx += 2) vals.push(lum[yy * w + xx]);
+    vals.sort((a, b) => a - b); dark[y * gw + x] = vals[Math.floor(vals.length * 0.03)] ?? 255;
+  }
+  // The typical light around each block: low in what is over a wide window (a lamp's glare can be big).
+  const R = Math.max(3, Math.round(Math.max(gw, gh) / 2)); const typ = new Float32Array(nb);
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+    vals.length = 0;
+    for (let yy = Math.max(0, y - R); yy <= Math.min(gh - 1, y + R); yy++) for (let xx = Math.max(0, x - R); xx <= Math.min(gw - 1, x + R); xx++) vals.push(g[yy * gw + xx]);
+    vals.sort((a, b) => a - b); typ[y * gw + x] = vals[Math.floor(vals.length * 0.35)];
+  }
+  const wgt = new Float32Array(nb); let any = false;
+  for (let i = 0; i < nb; i++) { wgt[i] = clamp((g[i] / Math.max(1, typ[i]) - 1.07) / 0.1, 0, 1); if (wgt[i] > 0) any = true; }
+  if (!any) return null;
+  // Print's darkness against its paper away from glare (blocks with print in them).
+  const ratios: number[] = [];
+  for (let i = 0; i < nb; i++) if (!wgt[i] && g[i] - dark[i] > 40) ratios.push(dark[i] / Math.max(1, g[i]));
+  if (ratios.length < 4) return null;
+  ratios.sort((a, b) => a - b); const r0 = ratios[ratios.length >> 1];
+  // Under glare: the light to take off so the print there is as dark (a = (D − r0·L) / (1 − r0)), where there is print.
+  const G = new Float32Array(nb), has = new Uint8Array(nb);
+  for (let i = 0; i < nb; i++) {
+    if (!wgt[i]) { has[i] = 1; continue; }
+    // (Real print only: a faint mark — print showing through from the back, a stain — must not be made print.)
+    if (g[i] - dark[i] > Math.max(24, g[i] * 0.12)) { G[i] = clamp((dark[i] - r0 * g[i]) / (1 - r0), 0, g[i] - 40) * wgt[i]; has[i] = 1; }
+  }
+  // Blocks under glare with no print: from their neighbours, ring by ring.
+  for (let pass = 0; pass < gw + gh; pass++) {
+    let missing = false;
+    for (let i = 0; i < nb; i++) if (!has[i]) {
+      const y = Math.floor(i / gw), x = i % gw; let s = 0, c = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= gh || xx >= gw) continue; const k = yy * gw + xx; if (has[k] === 1) { s += G[k]; c++; } }
+      // (At least the paper's excess light: glare adds at least that much, more where the paper is blown out.)
+      if (c) { G[i] = Math.min(Math.max(s / c, g[i] - typ[i]), g[i] - 40) * wgt[i]; has[i] = 2; } else missing = true;
+    }
+    for (let i = 0; i < nb; i++) if (has[i] === 2) has[i] = 1;
+    if (!missing) break;
+  }
+  // Smoothed, and spread to every pixel (bilinear between block centres).
+  const sm = new Float32Array(nb);
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0, c = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= gh || xx >= gw) continue; s += G[yy * gw + xx]; c++; } sm[y * gw + x] = s / c; }
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const fy = clamp((y - bs / 2) / bs, 0, gh - 1); const y0 = Math.floor(fy), y1 = Math.min(gh - 1, y0 + 1), ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = clamp((x - bs / 2) / bs, 0, gw - 1); const x0 = Math.floor(fx), x1 = Math.min(gw - 1, x0 + 1), tx = fx - x0;
+      const v = (sm[y0 * gw + x0] * (1 - tx) + sm[y0 * gw + x1] * tx) * (1 - ty) + (sm[y1 * gw + x0] * (1 - tx) + sm[y1 * gw + x1] * tx) * ty;
+      out[y * w + x] = Math.max(0, Math.min(v, light[y * w + x] - 30));
+    }
+  }
+  if ((globalThis as { KR_GLARE_DEBUG?: boolean }).KR_GLARE_DEBUG) { let mx = 0; for (const v of sm) mx = Math.max(mx, v); console.log('glare', { r0: +r0.toFixed(2), max: Math.round(mx), blocks: Array.from(wgt).filter((v) => v > 0).length, of: nb }); }
+  return out;
+}
+
 export function applyFilter(img: Img, f: Filter, adj: Adjust = {}): Img {
   const { width: w, height: h } = img; const n = w * h; const d = img.data;
   const out = new Uint8ClampedArray(d.length);
@@ -589,9 +684,13 @@ export function applyFilter(img: Img, f: Filter, adj: Adjust = {}): Img {
     return { data: out, width: w, height: h };
   }
   const light = paperLight(lum, w, h);
+  // Glare (a lamp caught by glossy paper) is light added, not light multiplied: where the paper is much brighter
+  // than the paper all around it, the excess is taken off before the page is evened — dividing by it instead
+  // would leave the print under the glare washed out.
+  const glare = glareOf(lum, light, w, h);
   // Ink level: the dark end of the evened page, so faint print gets darker too.
   const norm = new Float32Array(n);
-  for (let i = 0; i < n; i++) norm[i] = clamp((lum[i] / Math.max(30, light[i])) * 255, 0, 255);
+  for (let i = 0; i < n; i++) { const g = glare ? glare[i] : 0; norm[i] = clamp(((lum[i] - g) / Math.max(30, light[i] - g)) * 255, 0, 255); }
   const hist = new Uint32Array(256); for (let i = 0; i < n; i += 3) hist[norm[i] | 0]++;
   let acc = 0, black = 0; const want = (n / 3) * 0.02; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= want) { black = v; break; } }
   black = Math.min(black, 150);
@@ -623,10 +722,87 @@ export function applyFilter(img: Img, f: Filter, adj: Adjust = {}): Img {
     const o = i * 4; const L = clamp(tone(stretch(clamp(norm[i] + (norm[i] - blurN[i]) * 0.7, 0, 255))), 0, 255);
     if (f === 'gray') { out[o] = out[o + 1] = out[o + 2] = finish(L); out[o + 3] = 255; continue; }
     // Colour: each channel lifted by the same factor as the light, then its distance from grey widened.
-    const k = L / Math.max(1, lum[i]);
-    const r = d[o] * k, g = d[o + 1] * k, b = d[o + 2] * k; const m = (r + g + b) / 3;
+    const gl = glare ? glare[i] : 0; const k = L / Math.max(1, lum[i] - gl);
+    const r = (d[o] - gl) * k, g = (d[o + 1] - gl) * k, b = (d[o + 2] - gl) * k; const m = (r + g + b) / 3;
     out[o] = finish(m + (r - m) * sat); out[o + 1] = finish(m + (g - m) * sat); out[o + 2] = finish(m + (b - m) * sat); out[o + 3] = 255;
   }
+  return { data: out, width: w, height: h };
+}
+
+/* ---------------------------------------------------------------- light: moiré and glare */
+
+/** A separable Gaussian blur of one plane (σ in pixels), edges held. */
+function gaussPlane(v: Float32Array, w: number, h: number, sigma: number): Float32Array {
+  const r = Math.max(1, Math.ceil(sigma * 2.5)); const k = new Float32Array(2 * r + 1); let ks = 0;
+  for (let i = -r; i <= r; i++) { k[i + r] = Math.exp(-(i * i) / (2 * sigma * sigma)); ks += k[i + r]; }
+  for (let i = 0; i < k.length; i++) k[i] /= ks;
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) { const o = y * w; for (let x = 0; x < w; x++) { let s = 0; for (let i = -r; i <= r; i++) s += v[o + Math.min(w - 1, Math.max(0, x + i))] * k[i + r]; tmp[o + x] = s; } }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0; for (let i = -r; i <= r; i++) s += tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x] * k[i + r]; out[y * w + x] = s; }
+  return out;
+}
+
+/** The paper's fine texture: mean |v − blur(v)| on bare paper (`paper` marks it), for each plane given. */
+function paperTexture(planes: Float32Array[], paper: Uint8Array, w: number, h: number, sigma = 1.2): number[] {
+  return planes.map((v) => {
+    const b = gaussPlane(v, w, h, sigma); let s = 0, c = 0;
+    for (let y = 4; y < h - 4; y += 2) for (let x = 4; x < w - 4; x += 2) { const i = y * w + x; if (paper[i]) { s += Math.abs(v[i] - b[i]); c++; } }
+    return c ? s / c : 0;
+  });
+}
+
+function planesOf(img: Img): { L: Float32Array; C1: Float32Array; C2: Float32Array; paper: Uint8Array } {
+  const { width: w, height: h, data: d } = img; const n = w * h;
+  const L = new Float32Array(n), C1 = new Float32Array(n), C2 = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2]; L[i] = 0.299 * r + 0.587 * g + 0.114 * b; C1[i] = r - g; C2[i] = (r + g) / 2 - b; }
+  // Paper: near the paper's light, with no print within a few pixels (print's own edges are not texture).
+  const light = closeGray(L, w, h, Math.max(3, Math.round(Math.max(w, h) / 150)));
+  const near = gaussPlane(L, w, h, 3); const paper = new Uint8Array(n);
+  for (let i = 0; i < n; i++) paper[i] = near[i] >= light[i] * 0.9 && L[i] >= light[i] * 0.8 ? 1 : 0;
+  return { L, C1, C2, paper };
+}
+
+function cropOf(img: Img, x0: number, y0: number, cw: number, ch: number): Img {
+  const out = new Uint8ClampedArray(cw * ch * 4);
+  for (let y = 0; y < ch; y++) out.set(img.data.subarray(((y0 + y) * img.width + x0) * 4, ((y0 + y) * img.width + x0 + cw) * 4), y * cw * 4);
+  return { data: out, width: cw, height: ch };
+}
+
+/**
+ * How much fine, regular texture the bare paper carries (luminance, colour): a page photographed off a screen
+ * carries the screen's grid of red, green and blue cells — many times a camera's noise. Measured on the middle of
+ * the page (the texture covers all of it).
+ */
+export function moireLevel(img: Img): { lum: number; chroma: number } {
+  const cw = Math.min(img.width, 640), ch = Math.min(img.height, 640);
+  const c = cropOf(img, (img.width - cw) >> 1, (img.height - ch) >> 1, cw, ch);
+  const P = planesOf(c); const [lum, c1, c2] = paperTexture([P.L, P.C1, P.C2], P.paper, cw, ch);
+  return { lum, chroma: c1 + c2 };
+}
+
+/**
+ * A page photographed off a screen, its moiré taken away: the screen's grid is finer than any print, so the
+ * least blur that leaves the paper as smooth as a camera's photo of paper takes it (the sharpening that follows
+ * gives print its edges back); its colour fringes — the rainbow bands — are blurred much more, colour on a page
+ * being broad. Pages without moiré come back as they are.
+ */
+export function removeMoire(img: Img): Img {
+  const m = moireLevel(img);
+  if (m.chroma < 3 && m.lum < 4) return img;
+  const { width: w, height: h } = img; const n = w * h;
+  // The least blur that smooths the paper (found on the middle of the page).
+  const cw = Math.min(w, 640), chh = Math.min(h, 640);
+  const P0 = planesOf(cropOf(img, (w - cw) >> 1, (h - chh) >> 1, cw, chh));
+  let sigma = 2.6;
+  for (const s2 of [0.7, 0.9, 1.2, 1.6, 2.1]) { if (paperTexture([gaussPlane(P0.L, cw, chh, s2)], P0.paper, cw, chh)[0] < 1.2) { sigma = s2; break; } }
+  const P = planesOf(img);
+  const L = gaussPlane(P.L, w, h, sigma), C1 = gaussPlane(P.C1, w, h, Math.max(3, sigma * 2.5)), C2 = gaussPlane(P.C2, w, h, Math.max(3, sigma * 2.5));
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) {
+    const g = L[i] - 0.356 * C1[i] + 0.114 * C2[i]; const r = g + C1[i], b = g + C1[i] / 2 - C2[i];
+    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 255;
+  }
+  if ((globalThis as { KR_MOIRE_DEBUG?: boolean }).KR_MOIRE_DEBUG) console.log('moire', m, 'sigma', sigma);
   return { data: out, width: w, height: h };
 }
 
@@ -755,6 +931,89 @@ export function pageTurn(img: Img): 0 | 1 | 2 | 3 {
   if (across === 'rows') return up > 0 ? 0 : 2;
   // (Made horizontal by turning a quarter clockwise; upside down: the other way.)
   return up > 0 ? 1 : 3;
+}
+
+/**
+ * A book photographed open on two pages: where the spine runs between them, as a fraction across the (upright,
+ * flattened) picture — a band down the middle with no print, between two pages of print — or null when this is
+ * one page.
+ */
+export function findGutter(img: Img): { top: number; bottom: number } | null {
+  if (img.width < img.height * 1.1) return null; // (Two pages side by side are wider than tall.)
+  const { w, h, L } = small(img, 900);
+  // Print against the paper around it: closing takes away what is thin (print) and keeps what is broad (the
+  // spine's shadow, the light falling off), so a deep fold does not count as print.
+  const light = closeGray(L, w, h, Math.max(3, Math.round(w / 90)));
+  const y0 = Math.round(h * 0.08), y1 = Math.round(h * 0.92);
+  const ink = new Float64Array(w);
+  for (let y = y0; y < y1; y++) for (let x = 0; x < w; x++) if (L[y * w + x] < light[y * w + x] * 0.78) ink[x]++;
+  // Smoothed across a little (the gaps between words are not the gap between pages).
+  const r = Math.max(2, Math.round(w * 0.012)); const ik = new Float64Array(w);
+  for (let x = 0; x < w; x++) { let s2 = 0, c = 0; for (let k = Math.max(0, x - r); k <= Math.min(w - 1, x + r); k++) { s2 += ink[k]; c++; } ik[x] = s2 / c / (y1 - y0); }
+  const mean = (a: number, b: number, f: Float64Array) => { let s2 = 0, c = 0; for (let x = Math.max(0, Math.round(a)); x < Math.min(w, b); x++) { s2 += f[x]; c++; } return c ? s2 / c : 0; };
+  const leftInk = mean(w * 0.05, w * 0.45, ik), rightInk = mean(w * 0.55, w * 0.95, ik);
+  const less = Math.min(leftInk, rightInk);
+  const dbg = (globalThis as { KR_GUTTER_DEBUG?: boolean }).KR_GUTTER_DEBUG;
+  if (dbg) console.log('gutter', { w, h, leftInk: +leftInk.toFixed(3), rightInk: +rightInk.toFixed(3), prof: Array.from({ length: 20 }, (_, i) => +ik[Math.round((i + 0.5) * w / 20)].toFixed(3)).join(' ') });
+  if (less < 0.004) return null; // (Print on both sides, or it is no spread.)
+  // The emptiest column in the middle part, and the run of near-empty columns around it.
+  let best = -1, bv = Infinity;
+  for (let x = Math.round(w * 0.3); x < w * 0.7; x++) if (ik[x] < bv) { bv = ik[x]; best = x; }
+  if (best < 0 || bv > less * 0.2) return null;
+  let a = best; while (a > 0 && ik[a - 1] <= less * 0.3) a--;
+  let b = best; while (b < w - 1 && ik[b + 1] <= less * 0.3) b++;
+  if (b - a < w * 0.012 || b - a > w * 0.35) return null;
+  // The paper's brightness down each column (its median: print is little of it).
+  const B = new Float64Array(w); const col: number[] = [];
+  for (let x = 0; x < w; x++) { col.length = 0; for (let y = y0; y < y1; y += 3) col.push(L[y * w + x]); col.sort((p, q) => p - q); B[x] = col[col.length >> 1]; }
+  // A fold shows: as a shadow down the gap (darker than the paper either side of it), or as two pages lit
+  // differently (a step from one to the other). Two columns of print on one flat landscape sheet show neither.
+  // (The paper's own brightness: the gap's brightest, since next to the gap is print.)
+  const gapB = Array.from(B.subarray(a, b + 1)).sort((p, q) => p - q);
+  const paper = gapB[Math.floor(gapB.length * 0.9)], dv = gapB[0];
+  const third = Math.max(1, Math.round((b - a) / 3));
+  const lp = mean(a, a + third, B), rp = mean(b + 1 - third, b + 1, B);
+  const shadow = dv < paper * 0.92;
+  const step = Math.abs(lp - rp) > Math.max(lp, rp) * 0.08;
+  if (dbg) console.log('gutter gap', { a, b, dv: Math.round(dv), lp: Math.round(lp), rp: Math.round(rp), shadow, step });
+  if (!shadow && !step) return null;
+  // The spine, band by band down the page (a book is seldom photographed square to its spine): the shadow's
+  // darkest column, or where the brightness steps; then a straight line through them.
+  const lo = a, hi = b;
+  const pts: [number, number][] = [];
+  const NB = 6;
+  for (let k = 0; k < NB; k++) {
+    const ya = Math.round(y0 + ((y1 - y0) * k) / NB), yb = Math.round(y0 + ((y1 - y0) * (k + 1)) / NB);
+    const Bb = new Float64Array(w);
+    for (let x = lo; x <= hi; x++) { col.length = 0; for (let y = ya; y < yb; y += 2) col.push(L[y * w + x]); col.sort((p, q) => p - q); Bb[x] = col[col.length >> 1]; }
+    let at = -1;
+    if (shadow) {
+      // The middle of the shadow's dark (a fold's shadow is a V, often flat at its foot: its darkest column wanders).
+      let v = Infinity; for (let x = lo; x <= hi; x++) v = Math.min(v, Bb[x]);
+      let ref = 0; for (let x = lo; x <= hi; x++) ref = Math.max(ref, Bb[x]);
+      const cut = v + (ref - v) * 0.35; let sw = 0, sx = 0;
+      for (let x = lo; x <= hi; x++) if (Bb[x] < cut) { const wt = cut - Bb[x]; sw += wt; sx += wt * x; }
+      if (sw > 0) at = sx / sw;
+    }
+    else { let bestD = 0; for (let x = lo + 1; x <= hi; x++) { const d = Math.abs(Bb[x] - Bb[x - 1]); if (d > bestD) { bestD = d; at = x; } } }
+    if (at >= 0) pts.push([(ya + yb) / 2 / h, (at + 0.5) / w]);
+  }
+  const fit = (P: [number, number][]) => {
+    const n = P.length, my = P.reduce((s2, p) => s2 + p[0], 0) / n, mx = P.reduce((s2, p) => s2 + p[1], 0) / n;
+    let sxy = 0, syy = 0; for (const [y, x] of P) { sxy += (y - my) * (x - mx); syy += (y - my) ** 2; }
+    const k = syy > 1e-9 ? sxy / syy : 0; return { k, c: mx - k * my };
+  };
+  let line = fit(pts);
+  // (One band can be fooled — a picture, a heading across the gap: the worst is let go once.)
+  if (pts.length > 3) {
+    let wi = 0, wd = -1; pts.forEach(([y, x], i) => { const d = Math.abs(x - (line.c + line.k * y)); if (d > wd) { wd = d; wi = i; } });
+    if (wd > 0.01) { pts.splice(wi, 1); line = fit(pts); }
+  }
+  const k = clamp(line.k, -0.12, 0.12);
+  const top = line.c, bottom = line.c + k;
+  if (dbg) console.log('gutter line', { top: +top.toFixed(3), bottom: +bottom.toFixed(3), pts: pts.map(([y, x]) => `${y.toFixed(2)}:${x.toFixed(3)}`).join(' ') });
+  if (Math.min(top, bottom) < 0.25 || Math.max(top, bottom) > 0.75) return null;
+  return { top, bottom };
 }
 
 /* ---------------------------------------------------------------- curved pages */
@@ -1387,7 +1646,8 @@ function gridUnwarp(img: Img, gr: Grid): Img {
       const u = u0 + gr.mx[k] * a + gr.mx[k + 1] * bq + gr.mx[k + gr.gx] * cq + gr.mx[k + gr.gx + 1] * dq;
       const v = v0 + gr.my[k] * a + gr.my[k + 1] * bq + gr.my[k + gr.gx] * cq + gr.my[k + gr.gx + 1] * dq;
       const sx = u * W - 0.5, sy = v * H - 0.5; const o = (y * OW + x) * 4;
-      if (sx < -1 || sy < -1 || sx > W || sy > H) { out[o] = out[o + 1] = out[o + 2] = 255; out[o + 3] = 255; continue; }
+      // (Beyond the photo: dark, as the background around a page is — cleaned away with it afterwards.)
+      if (sx < -1 || sy < -1 || sx > W || sy > H) { out[o] = out[o + 1] = out[o + 2] = 0; out[o + 3] = 255; continue; }
       const x0 = clamp(Math.floor(sx), 0, W - 1), y0 = clamp(Math.floor(sy), 0, H - 1), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
       const fx = clamp(sx - x0, 0, 1), fy = clamp(sy - y0, 0, 1);
       const A = (y0 * W + x0) * 4, B = (y0 * W + x1) * 4, C = (y1 * W + x0) * 4, E = (y1 * W + x1) * 4;

@@ -4,9 +4,9 @@
 import * as S from './scan';
 
 export type Look = { quad: S.Quad; curve: S.Curve | null; flatten: boolean; turn: number; filter: S.Filter; adj: S.Adjust };
-export type Prepared = { preview: S.Img; look: Look; thumb: Blob };
+export type Prepared = { preview: S.Img; looks: Look[]; thumbs: Blob[] };
 export type Op =
-  | { op: 'prepare'; blob: Blob; maxSide: number; autoCrop: boolean; autoTurn: boolean; flatten: boolean; filter: S.Filter; rtl: boolean }
+  | { op: 'prepare'; blob: Blob; maxSide: number; autoCrop: boolean; autoTurn: boolean; flatten: boolean; split: boolean; filter: S.Filter; rtl: boolean }
   | { op: 'decode'; blob: Blob; maxSide: number }
   | { op: 'detect'; preview: S.Img }
   | { op: 'thumb'; preview: S.Img; look: Look }
@@ -88,14 +88,33 @@ export function render(src: S.Img, p: Look, maxSide: number): S.Img {
   const q = S.orderQuad(scaleQuad(p.quad, src.width, src.height));
   let flat = S.rotate(S.warp(src, q, S.flatSize(q, maxSide)), p.turn);
   if (p.flatten && p.curve) flat = S.trimMargins(S.unwarp(flat, p.curve), p.curve.sheet ? 'lr' : 'all');
-  // (Fingers holding the page go with every look but the photo as it was.)
-  if (p.filter !== 'original') flat = S.cleanBorders(S.removeFingers(flat));
-  return S.applyFilter(flat, p.filter, p.adj);
+  // (Fingers holding the page go with every look but the photo as it was; and what is left of the background
+  // around the page is painted over once the page's light is evened, so the paint matches the paper.)
+  if (p.filter === 'original') return S.applyFilter(flat, p.filter, p.adj);
+  return S.cleanBorders(S.applyFilter(S.removeFingers(S.removeMoire(flat)), p.filter, p.adj));
 }
 
 export function curveOf(preview: S.Img, quad: S.Quad, turn = 0): S.Curve | null {
   const q = S.orderQuad(scaleQuad(quad, preview.width, preview.height));
   try { return S.findCurve(S.rotate(S.warp(preview, q, S.flatSize(q, 1100)), turn)); } catch { return null; }
+}
+
+/**
+ * A spread's corners cut in two along its spine — the line from `cut.top` across the top of the upright,
+ * straightened page to `cut.bottom` across its bottom — as the left page's corners and the right page's, in the
+ * photo (fractions of it, `w`×`h` pixels), to be turned as the spread is.
+ */
+export function splitQuad(q: S.Quad, turn: number, cut: { top: number; bottom: number }, w: number, h: number): [S.Quad, S.Quad] {
+  const Q = S.orderQuad(scaleQuad(q, w, h));
+  const t = ((turn % 4) + 4) % 4;
+  // A point of the upright page → the point of the page as warped (before its turn) → the photo.
+  const at = (u: number, v: number): S.Pt => {
+    const [x, y] = t === 0 ? [u, v] : t === 1 ? [v, 1 - u] : t === 2 ? [1 - u, 1 - v] : [1 - v, u];
+    const p = S.quadPoint(Q, x, y); return { x: p.x / w, y: p.y / h };
+  };
+  const left: S.Quad = [at(0, 0), at(cut.top, 0), at(cut.bottom, 1), at(0, 1)];
+  const right: S.Quad = [at(cut.top, 0), at(1, 0), at(1, 1), at(cut.bottom, 1)];
+  return [left, right];
 }
 
 /** Run one message's work; returns the answer and what in it can be handed over rather than copied. */
@@ -106,12 +125,19 @@ export async function handle(m: Op): Promise<{ res: unknown; transfer: Transfera
     if (m.autoCrop) { const f = S.detectPage(preview); look.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; }
     // Which way up first (on the page as found, flat), then the bend of its lines.
     if (m.autoTurn) { const flat = render(preview, { ...look, curve: null, turn: 0, filter: 'original', adj: {} }, 900); look.turn = S.pageTurn(flat); }
-    look.curve = curveOf(preview, look.quad, look.turn);
-    const thumb = await encode(render(preview, look, 420), 'image/jpeg', 0.8);
-    return { res: { preview, look, thumb } satisfies Prepared, transfer: [preview.data.buffer] };
+    // A book open on two pages: two pages, each its own (in reading order).
+    let looks: Look[] = [look];
+    if (m.split) {
+      const g = S.findGutter(render(preview, { ...look, curve: null, filter: 'original', adj: {} }, 900));
+      if (g !== null) { const [a, b] = splitQuad(look.quad, look.turn, g, preview.width, preview.height); looks = (m.rtl ? [b, a] : [a, b]).map((q) => ({ ...look, quad: q })); }
+    }
+    for (const l of looks) l.curve = curveOf(preview, l.quad, l.turn);
+    const thumbs: Blob[] = [];
+    for (const l of looks) thumbs.push(await encode(render(preview, l, 420), 'image/jpeg', 0.8));
+    return { res: { preview, looks, thumbs } satisfies Prepared, transfer: [preview.data.buffer] };
   }
   if (m.op === 'decode') { const img = await decodeScaled(m.blob, m.maxSide); return { res: img, transfer: [img.data.buffer] }; }
-  if (m.op === 'detect') { const f = S.detectPage(m.preview); return { res: { how: f.how, quad: f.quad.map((c) => ({ x: c.x / m.preview.width, y: c.y / m.preview.height })) }, transfer: [] }; }
+  if (m.op === 'detect') { const f = S.detectPage(m.preview); return { res: { how: f.how, score: f.score, quad: f.quad.map((c) => ({ x: c.x / m.preview.width, y: c.y / m.preview.height })) }, transfer: [] }; }
   if (m.op === 'thumb') return { res: await encode(render(m.preview, m.look, 420), 'image/jpeg', 0.8), transfer: [] };
   if (m.op === 'curve') return { res: curveOf(m.preview, m.quad, m.turn), transfer: [] };
   if (m.op === 'view') { const img = render(m.preview, m.look, m.side); return { res: img, transfer: [img.data.buffer] }; }
