@@ -60,9 +60,11 @@ export function libraryView(): HTMLElement {
   const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub, heroGoal);
   const convertBtn = iconButton('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertPicker(books, () => void pickFiles())));
   convertBtn.classList.add('tool-btn');
+  const pdfToolsBtn = iconButton('file', t('pdfTools'), () => void import('../ui/pdftools').then((m) => m.pdfToolsSheet(books, undefined, () => void refresh())));
+  pdfToolsBtn.classList.add('tool-btn');
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn),
     chips,
     tagChips,
     fmtChips,
@@ -268,6 +270,7 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
         ...(!['image', 'cbz', 'anki', 'audio', 'unknown'].includes(book.format) ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/convert').then((m) => m.convertSheet(book, () => void refresh())); } }, icon('convert'), t('convertFile'))] : []),
+        ...(book.format === 'pdf' ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book, () => void refresh())); } }, icon('file'), t('pdfTools'))] : []),
         h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
