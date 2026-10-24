@@ -22,7 +22,7 @@ interface ScanFile { uri: string; tree?: string; name: string; path: string; mim
 interface KrScan {
   storageAccess(): Promise<{ granted: boolean; needsSettings: boolean }>;
   requestStorageAccess(): Promise<{ granted: boolean }>;
-  scanDevice(o: { exts: string[] }): Promise<{ files: ScanFile[]; truncated: boolean }>;
+  scanDevice(o: { exts: string[]; root?: string }): Promise<{ files: ScanFile[]; truncated: boolean }>;
   pickTree(): Promise<{ uri: string; name: string }>;
   listTree(o: { uri: string; exts: string[] }): Promise<{ files: ScanFile[]; truncated: boolean }>;
   readDocument(o: { uri: string; tree?: string }): Promise<{ data: string }>;
@@ -57,12 +57,14 @@ export function canScan(): boolean {
 }
 /** Whole-device scanning: Android with storage access, or the desktop app. */
 let androidSdk = 0;
-/** Android 11+ cannot read the whole shared storage without "All files access", which the app no longer asks for. */
+/** Whole device (and Download): Android with storage access — "All files access" from Android 11, granted by the
+ *  reader in settings when they ask for it — or the desktop app. */
 export function canScanWhole(): boolean {
   const c = cap();
-  if (c?.getPlatform?.() === 'android') return !!c.Plugins?.Kurokawa?.scanDevice && androidSdk > 0 && androidSdk < 30;
+  if (c?.getPlatform?.() === 'android') return !!c.Plugins?.Kurokawa?.scanDevice;
   return !!desktop()?.scanDevice;
 }
+void androidSdk;
 
 function base64ToBlob(b64: string, mime: string): Blob {
   const bin = atob(b64); const bytes = new Uint8Array(bin.length);
@@ -80,15 +82,30 @@ function toEntries(plugin: KrScan, files: ScanFile[]): ScanEntry[] {
 }
 
 /** Android: every readable file on shared storage (needs "All files access" on Android 11+). Returns 'denied' when the grant is missing. */
-async function scanAndroidWhole(exts: string[]): Promise<ScanResult | 'denied'> {
+async function scanAndroidWhole(exts: string[], root?: 'Download'): Promise<ScanResult | 'denied'> {
   const plugin = cap()!.Plugins!.Kurokawa as KrScan;
   const access = await plugin.storageAccess();
   if (!access.granted) {
+    // (Android's own page asks; first, why: Download and the device as a whole are out of the folder picker's reach.)
+    if (access.needsSettings && !(await explainAllFiles())) return 'denied';
     const r = await plugin.requestStorageAccess().catch(() => ({ granted: false }));
     if (!r.granted) return 'denied';
   }
-  const res = await plugin.scanDevice({ exts });
-  return { folderName: t('wholeDevice'), truncated: res.truncated, files: toEntries(plugin, res.files) };
+  const res = await plugin.scanDevice({ exts, ...(root ? { root } : {}) });
+  return { folderName: root ? t('downloadFolder') : t('wholeDevice'), truncated: res.truncated, files: toEntries(plugin, res.files) };
+}
+
+/** Why "All files access" is asked for, and the reader's yes or no. */
+function explainAllFiles(): Promise<boolean> {
+  return new Promise((res) => {
+    const sh = openSheet(t('allFilesTitle'), t('close'), { stack: true });
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    sh.body.append(h('p', null, t('allFilesBody')), h('p', { class: 'hint' }, t('allFilesPrivacy')));
+    let answered = false;
+    const done = (v: boolean) => { if (answered) return; answered = true; sh.close(); res(v); };
+    sh.actions.append(h('button', { class: 'btn small', type: 'button', onclick: () => done(false) }, t('cancel')), h('button', { class: 'btn small primary', type: 'button', onclick: () => done(true) }, icon('settings'), t('allFilesOpen')));
+    new MutationObserver((_, o) => { if (!sh.el.isConnected) { o.disconnect(); done(false); } }).observe(document.body, { childList: true });
+  });
 }
 
 async function scanDesktopWhole(exts: string[]): Promise<ScanResult | null> {
@@ -164,7 +181,10 @@ export function openScanSheet(o: ScanSheetOptions): void {
   const list = h('div', { class: 'scan-list' });
   const pickBtn = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void scan('folder') }, icon('folder'), t('pickFolder'));
   const wholeBtn = canScanWhole() ? h('button', { class: 'btn small primary', type: 'button', onclick: () => void scan('whole') }, icon('search'), t('wholeDevice')) : null;
-  sheet.body.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('filterFormats')), typeRow), status, h('div', { class: 'actions-row' }, wholeBtn, pickBtn), list);
+  const isAndroid = cap()?.getPlatform?.() === 'android';
+  const dlBtn = isAndroid && canScanWhole() ? h('button', { class: 'btn small tonal', type: 'button', onclick: () => void scan('downloads') }, icon('download'), t('downloadFolder')) : null;
+  sheet.body.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('filterFormats')), typeRow), status, h('div', { class: 'actions-row' }, wholeBtn, dlBtn, pickBtn),
+    ...(isAndroid ? [h('p', { class: 'hint' }, t('pickFolderAndroidHint'))] : []), list);
 
   let result: ScanResult | null = null;
   const selected = new Set<string>();
@@ -200,15 +220,16 @@ export function openScanSheet(o: ScanSheetOptions): void {
     }
   }
 
-  async function scan(mode: 'folder' | 'whole') {
-    pickBtn.disabled = true; if (wholeBtn) wholeBtn.disabled = true;
+  async function scan(mode: 'folder' | 'whole' | 'downloads') {
+    pickBtn.disabled = true; if (wholeBtn) wholeBtn.disabled = true; if (dlBtn) dlBtn.disabled = true;
     status.textContent = t('scanning');
     const exts = ALL_EXTS;
     try {
       const plat = cap()?.getPlatform?.();
       const mobile = plat === 'android' || plat === 'ios';
       let r: ScanResult | 'denied' | null;
-      if (mode === 'whole') r = plat === 'android' ? await scanAndroidWhole(exts) : await scanDesktopWhole(exts);
+      if (mode === 'downloads') r = await scanAndroidWhole(exts, 'Download');
+      else if (mode === 'whole') r = plat === 'android' ? await scanAndroidWhole(exts) : await scanDesktopWhole(exts);
       else r = mobile ? await scanAndroid(exts) : await scanWeb(exts);
       if (r === 'denied') { status.textContent = t('storageDenied'); result = null; return; }
       result = r;
@@ -217,7 +238,7 @@ export function openScanSheet(o: ScanSheetOptions): void {
       result.files.forEach((f) => { if (!o.existing.has(`${f.name}:${f.size}`)) selected.add(f.path); });
       renderList();
     } catch (err) { status.textContent = String((err as Error).message ?? err); }
-    finally { pickBtn.disabled = false; if (wholeBtn) wholeBtn.disabled = false; }
+    finally { pickBtn.disabled = false; if (wholeBtn) wholeBtn.disabled = false; if (dlBtn) dlBtn.disabled = false; }
   }
 
   async function run(all: boolean) {

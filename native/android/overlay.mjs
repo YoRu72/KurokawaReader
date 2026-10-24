@@ -67,9 +67,8 @@ if (!manifest.includes('android:mimeType="application/pdf"')) {
 }
 if (!manifest.includes('REQUEST_INSTALL_PACKAGES')) {
   manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Whole-device scanning uses the ordinary read permission on Android 10 and older. "All files access"
-         (MANAGE_EXTERNAL_STORAGE) is deliberately not requested: Play Protect treats it as high-risk for
-         apps installed outside the Play Store. From Android 11 the reader picks folders instead. -->
+    <!-- Whole-device scanning uses the ordinary read permission on Android 10 and older; from Android 11,
+         "All files access", which the reader grants in system settings only if they choose to. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <application`);
@@ -108,7 +107,10 @@ if (!manifest.includes('android:name=".LauncherAuto"')) {
   ].join('');
   manifest = manifest.replace('</application>', `${aliases}\n    </application>`);
 }
-manifest = manifest.replace(/\s*<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"[^>]*\/>/g, '');
+// "All files access" (Android 11+), asked for only when the reader chooses to find books on the whole device
+// or in Download — the folder Android's picker refuses to hand out.
+if (!manifest.includes('MANAGE_EXTERNAL_STORAGE')) manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />\n    <application`);
+if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 await fs.writeFile(manifestPath, manifest);
 
 // App name follows the system language: KurokawaReader by default, قارئ كروكاوا on Arabic devices.

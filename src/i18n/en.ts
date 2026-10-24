@@ -814,6 +814,12 @@ export const en = {
   noVoiceFor: "This device has no voice for {lang}. Add one in the system's text-to-speech settings (on Windows: Settings › Time & language › Speech; on Android: Text-to-speech output), or choose the AI voice.",
   voiceDataMissing: "The voice for {lang} needs to be downloaded: the system's voice settings are opening.",
   speechUnavailable: "Reading aloud is not available here: this system offers no text-to-speech voices.",
+  downloadFolder: "Download folder",
+  allFilesTitle: "Access to your files",
+  allFilesBody: "Android does not let apps open the Download folder (or the whole device) through the folder picker. To find your books there, allow KurokawaReader “All files access” on the page that opens next.",
+  allFilesPrivacy: "The app only reads the books you choose to add. Nothing leaves your device, and you can turn the access off at any time in the system settings.",
+  allFilesOpen: "Open settings",
+  pickFolderAndroidHint: "Android does not allow choosing Download itself in the folder picker: choose a folder inside it, or use “Download folder”.",
 };
 
 export type Strings = typeof en;

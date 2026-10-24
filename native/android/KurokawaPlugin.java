@@ -426,8 +426,19 @@ public class KurokawaPlugin extends Plugin {
         List<String> exts = new ArrayList<>();
         try { if (extsArr != null) for (int i = 0; i < extsArr.length(); i++) exts.add(extsArr.getString(i).toLowerCase()); } catch (Exception ignored) {}
         List<File> roots = new ArrayList<>();
-        roots.add(Environment.getExternalStorageDirectory());
-        for (File f : getContext().getExternalFilesDirs(null)) {
+        // A named shared folder only ("Download", "Documents"), or everything.
+        String only = call.getString("root", "");
+        if (only != null && !only.isEmpty()) {
+            File d = Environment.getExternalStoragePublicDirectory(only.equals("Documents") ? Environment.DIRECTORY_DOCUMENTS : Environment.DIRECTORY_DOWNLOADS);
+            if (d != null && d.canRead()) roots.add(d);
+        } else roots.add(Environment.getExternalStorageDirectory());
+        if ((only == null || only.isEmpty()) && Build.VERSION.SDK_INT >= 30) {
+            try {
+                android.os.storage.StorageManager sm = (android.os.storage.StorageManager) getContext().getSystemService(Context.STORAGE_SERVICE);
+                for (android.os.storage.StorageVolume v : sm.getStorageVolumes()) { File d = v.getDirectory(); if (d != null && d.canRead() && !roots.contains(d)) roots.add(d); }
+            } catch (Exception ignored) {}
+        }
+        if (only == null || only.isEmpty()) for (File f : getContext().getExternalFilesDirs(null)) {
             // /storage/XXXX-XXXX/Android/data/<pkg>/files → /storage/XXXX-XXXX
             if (f == null) continue;
             File p = f;
@@ -437,15 +448,24 @@ public class KurokawaPlugin extends Plugin {
         JSArray out = new JSArray();
         ArrayDeque<File> queue = new ArrayDeque<>(roots);
         int visited = 0;
-        while (!queue.isEmpty() && visited < 20000 && out.length() < 8000) {
+        // (Wide: every shared folder, apps' shared media — WhatsApp and Telegram keep received documents under
+        // Android/media — and every mounted card or drive; apps' private data and caches left out.)
+        java.util.HashSet<String> seenDirs = new java.util.HashSet<>();
+        while (!queue.isEmpty() && visited < 80000 && out.length() < 30000) {
             File dir = queue.poll();
             visited++;
+            try { if (!seenDirs.add(dir.getCanonicalPath())) continue; } catch (Exception ignored) {}
             File[] kids = dir.listFiles();
             if (kids == null) continue;
             for (File k : kids) {
                 String name = k.getName();
                 if (k.isDirectory()) {
-                    if (!name.startsWith(".") && !name.equals("Android") && !name.equalsIgnoreCase("LOST.DIR")) queue.add(k);
+                    boolean inAndroid = dir.getName().equals("Android") && dir.getParentFile() != null && roots.contains(dir.getParentFile());
+                    if (name.equals("Android")) { queue.add(k); continue; }            // only its media folder (below)
+                    if (inAndroid && !name.equals("media")) continue;                    // data, obb: private to apps
+                    if (name.startsWith(".") && !name.equalsIgnoreCase(".Telegram")) continue;
+                    if (name.equalsIgnoreCase("LOST.DIR") || name.equalsIgnoreCase(".thumbnails") || name.equalsIgnoreCase("cache")) continue;
+                    queue.add(k);
                     continue;
                 }
                 int dot = name.lastIndexOf('.');
@@ -463,7 +483,7 @@ public class KurokawaPlugin extends Plugin {
         }
         JSObject ret = new JSObject();
         ret.put("files", out);
-        ret.put("truncated", !queue.isEmpty() || out.length() >= 8000);
+        ret.put("truncated", !queue.isEmpty() || out.length() >= 30000);
         call.resolve(ret);
     }
 
