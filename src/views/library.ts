@@ -62,9 +62,12 @@ export function libraryView(): HTMLElement {
   convertBtn.classList.add('tool-btn');
   const pdfToolsBtn = iconButton('file', t('pdfTools'), () => void import('../ui/pdftools').then((m) => m.pdfToolsSheet(books, undefined, () => void refresh())));
   pdfToolsBtn.classList.add('tool-btn');
+  // Search across books: a word or phrase in many books at once.
+  const searchBooksBtn = iconButton('search', t('searchBooks'), () => void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder)));
+  searchBooksBtn.classList.add('tool-btn');
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn),
     chips,
     tagChips,
     fmtChips,

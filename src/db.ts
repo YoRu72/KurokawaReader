@@ -91,7 +91,7 @@ export interface Book {
 }
 
 const DB_NAME = 'kurokawa-reader';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -108,6 +108,8 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files');
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+      // Each book's text, read once for searching across the library.
+      if (!db.objectStoreNames.contains('texts')) db.createObjectStore('texts');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -176,6 +178,14 @@ export const db = {
   async deleteBook(id: string): Promise<void> {
     await tx('books', 'readwrite', (s) => s.delete(id));
     await tx('files', 'readwrite', (s) => s.delete(id));
+    await tx('texts', 'readwrite', (s) => s.delete(id)).catch(() => undefined);
+  },
+  /** A book's searchable text (its pages or chapters), keyed by the book and the file it was read from. */
+  async getText(id: string): Promise<{ key: string; units: { label: string; text: string }[] } | undefined> {
+    return tx<{ key: string; units: { label: string; text: string }[] } | undefined>('texts', 'readonly', (s) => s.get(id)).catch(() => undefined);
+  },
+  async putText(id: string, value: { key: string; units: { label: string; text: string }[] }): Promise<void> {
+    await tx('texts', 'readwrite', (s) => s.put(value, id)).catch(() => undefined);
   },
   async putFile(id: string, blob: Blob): Promise<void> {
     await tx('files', 'readwrite', (s) => s.put(blob, id));
@@ -200,6 +210,7 @@ export const db = {
   async clearAll(): Promise<void> {
     await tx('books', 'readwrite', (s) => s.clear());
     await tx('files', 'readwrite', (s) => s.clear());
+    await tx('texts', 'readwrite', (s) => s.clear()).catch(() => undefined);
   },
 };
 

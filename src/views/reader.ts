@@ -23,6 +23,7 @@ import { exportNotes } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
+import { takeJump as takeSearchJump } from '../booksearch';
 import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
 import { attachPinyin } from '../readings';
@@ -221,6 +222,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   for (const doc of docs) { await renderDoc(doc); if (doc === docs[0]) { const tr = performance.now(); root.querySelector('#kr-loading')?.remove(); restore(); performance.measure('kr:restore', { start: tr }); } }
   const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
+  // Opened from a search across books: at the found passage (its chapter, its place among the chapter's
+  // matches), the matches marked.
+  {
+    const sj = takeSearchJump(docs[0].book.id);
+    if (sj) {
+      const hits = searchFlow(sj.q);
+      const chapters = [...(docs[0].render?.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter') ?? [])];
+      const inUnit = hits.filter((hh) => { const el = hh.range.startContainer.parentElement; const c = el?.closest('.kr-chapter'); return c ? chapters.indexOf(c as HTMLElement) === sj.unit : sj.unit === 0; });
+      const hit = inUnit[Math.min(sj.nth, inUnit.length - 1)] ?? hits[0];
+      if (hit) goToHit(hit);
+    }
+  }
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
   const sample = docs.map((d) => d.wrapper.textContent?.slice(0, 4000) ?? '').join('\n');
@@ -792,6 +805,24 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     return hits;
   }
 
+  /** Scroll to a search hit (showing its chapter first when hidden) and mark it. */
+  function goToHit(hit: SearchHit): void {
+    const el = (hit.range.startContainer.parentElement ?? hit.range.startContainer) as HTMLElement;
+    const block = (el.closest(BLOCK_SELECTOR) as HTMLElement | null) ?? el;
+    revealElement(block);
+    requestAnimationFrame(() => {
+      const sr = scroll.getBoundingClientRect();
+      const r = hit.range.getBoundingClientRect();
+      const rect = r.height ? r : block.getBoundingClientRect();
+      scroll.scrollTop += rect.top - sr.top - sr.height * 0.3;
+      const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+      const HL = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+      if (reg && HL) reg.set('kr-search-current', new HL(hit.range));
+      block.classList.add('kr-flash'); setTimeout(() => block.classList.remove('kr-flash'), 1600);
+      scheduleSave();
+    });
+  }
+
   function openSearch(initial = ''): void {
     panel.open(t('searchInBook'), [{ id: 'search', label: t('search'), render: (body) => {
       const input = h('input', { type: 'search', placeholder: t('searchPlaceholder'), value: initial, 'aria-label': t('searchInBook'), style: { width: '100%' } }) as HTMLInputElement;
@@ -809,23 +840,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         for (const hit of hits) {
           if (docs.length > 1 && hit.bookId !== lastBook) { lastBook = hit.bookId; list.append(h('div', { class: 'toc-book', dir: 'auto' }, docs.find((d) => d.book.id === hit.bookId)?.book.title)); }
           list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => {
-            const el = (hit.range.startContainer.parentElement ?? hit.range.startContainer) as HTMLElement;
-            const block = (el.closest(BLOCK_SELECTOR) as HTMLElement | null) ?? el;
             if (window.innerWidth < 900) panel.close();
-            // The hit may sit in a hidden chapter or another book: show it first, then measure.
-            revealElement(block);
-            const jump = () => {
-              const sr = scroll.getBoundingClientRect();
-              const r = hit.range.getBoundingClientRect();
-              const rect = r.height ? r : block.getBoundingClientRect();
-              scroll.scrollTop += rect.top - sr.top - sr.height * 0.3;
-              const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-              const HL = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
-              if (reg && HL) reg.set('kr-search-current', new HL(hit.range));
-              block.classList.add('kr-flash'); setTimeout(() => block.classList.remove('kr-flash'), 1600);
-              scheduleSave();
-            };
-            requestAnimationFrame(jump);
+            goToHit(hit);
           } },
             h('span', { class: 'meta', dir: 'auto' }, hit.label, h('b', { class: 'hit-pct' }, localDigits(hit.pct.toFixed(1)) + '%')),
             h('span', { class: 'ctx', dir: 'auto' }, (hit.before ? '…' : '') + hit.before, h('mark', null, hit.match), hit.after + (hit.after ? '…' : '')))));
@@ -1144,6 +1160,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   else if (jump?.kind === 'pin') { const pin = (book.pins ?? []).find((x) => x.id === jump.id); if (pin) viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); }
   else if (jump?.kind === 'hl') { const hl = (book.pdfHighlights ?? []).find((x) => x.id === jump.id); if (hl) viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); }
   else if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
+  // Opened from a search across books: at the found page, the words marked.
+  { const sj = takeSearchJump(book.id); if (sj) void viewer.highlightOnPage(sj.unit + 1, sj.q); }
   onDispose(() => viewer.destroy());
   onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   onDispose(attachSelectionToolbar(reader, {
