@@ -37,6 +37,20 @@ export function selectionText(sel: Selection): string {
   const layer = (anc.nodeType === 1 ? (anc as Element) : anc.parentElement)?.closest('.textLayer, .pdf-page, .pdf-inner, .pdf-scroll');
   if (!layer) return sel.toString();
   const spans = Array.from(layer.querySelectorAll<HTMLElement>('.textLayer > span')).filter((el) => el.firstChild && range.intersectsNode(el));
+  // Columns of vertical writing are laid in reading order already: taken as they come, a paragraph's columns
+  // run on and paragraphs end lines.
+  const cut = (el: HTMLElement) => {
+    const node = el.firstChild!; let text = el.textContent ?? '';
+    if (node === range.startContainer && node === range.endContainer) text = text.slice(range.startOffset, range.endOffset);
+    else if (node === range.startContainer) text = text.slice(range.startOffset);
+    else if (node === range.endContainer) text = text.slice(0, range.endOffset);
+    return text;
+  };
+  const vSpans = spans.filter((el) => el.dataset.v);
+  let vText = '';
+  for (const el of vSpans) vText += cut(el) + (el.dataset.br ? '\n' : '');
+  vText = vText.trim();
+  if (vSpans.length === spans.length) return vText;
   // Geometry decides the order: pieces are grouped into lines by their vertical position, and
   // within a line read right-to-left when the line is mostly Arabic/Hebrew, else left-to-right.
   // Pieces are joined by the gap between them (not with a space each): PDFs made by Word and the
@@ -44,6 +58,7 @@ export function selectionText(sel: Selection): string {
   type Piece = LinePiece & { y: number };
   const pieces: Piece[] = [];
   for (const el of spans) {
+    if (el.dataset.v) continue;
     const node = el.firstChild!;
     let text = el.textContent ?? '';
     if (node === range.startContainer && node === range.endContainer) text = text.slice(range.startOffset, range.endOffset);
@@ -60,7 +75,8 @@ export function selectionText(sel: Selection): string {
   const lines: Piece[][] = [];
   for (const p of kept) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
   const out = lines.map((line) => joinLine(line).text).filter(Boolean).join('\n');
-  return fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
+  const flat = fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
+  return vText ? [flat, vText].filter(Boolean).join('\n') : flat;
 }
 
 const COMMON_AR = /\b(في|من|على|إلى|الى|أن|ان|كان|هذا|هذه|التي|الذي|ما|لا|قال|عن|ثم|أو|او|كل|بين|عند|حتى|إذا|اذا|لم|قد|هو|هي|ذلك|بعد|قبل|غير|مع|يا|إن|لكن)\b/g;

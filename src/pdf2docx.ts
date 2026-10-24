@@ -4,6 +4,7 @@
 // spacing and line pitch, runs with their font, size, weight and colour, two-column verse as a
 // borderless table, the running head in the page header, and footnotes as Word footnotes.
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
+import { findVertical, plainVerticalForms } from './pdfvertical';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
 import { loadPdfjs } from './formats/pdf';
@@ -36,7 +37,9 @@ type Note = { num: number; paras: Block[] };
 type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean };
 /** Part of a page: full width (one column) or set in columns (blocks per column in reading order, column edges in page x). */
 type Region = { cols: Block[][]; edges: [number, number][] };
-type PageModel = { w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number } };
+/** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
+type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
+type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -1077,6 +1080,7 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
   const block = (b: Block) => { if (b.kind === 'p') fix(b.runs); else for (const row of b.rows) for (const cell of row) fix(cell); };
   for (const b of [...pg.body, ...pg.header, ...pg.footer, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) block(b);
   for (const f of pg.furniture) fix(f.runs);
+  for (const pp of pg.vert?.paras ?? []) fix(pp.runs);
 }
 
 async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: [], seen: new Map() }): Promise<PageModel> {
@@ -1113,7 +1117,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       // The font's own family name is what Word looks for ("KFGQPC Uthman Taha Naskh", not its PostScript name).
       const own = fo?.krRaw ? fontFamilyName(fo.krRaw) : null;
       if (own) info.family = own.replace(/\s+(Regular)$/i, '');
-      else if (!/\s/.test(info.family)) info.family = info.family.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+      else if (!/\s/.test(info.family)) info.family = info.family.replace(/CJK(jp|kr|sc|tc|hk)$/i, (_m, r: string) => `CJK ${r.toUpperCase()}`).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D fontname', fo?.name, '→', info.family, '| own:', own);
       fonts.set(it.fontName, info);
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) { const x = fo as unknown as { data?: Uint8Array; type?: string; subtype?: string; toFontChar?: Record<string, number>; mimetype?: string; composite?: boolean }; console.warn('P2D fontdata', info.family, x?.type, x?.subtype, x?.mimetype, x?.composite, x?.data?.length, x?.data ? String.fromCharCode(...x.data.subarray(0, 4)).replace(/[^\x20-\x7e]/g, '.') : '', JSON.stringify(Object.entries(x?.toFontChar ?? {}).slice(0, 5))); }
@@ -1177,6 +1181,35 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art', f.family, pua, latinArt, foreign, JSON.stringify(p.text.slice(0, 40)));
     // (Its place stays taken: a stand-in that sets nothing keeps the line's extent and its gaps true.)
     keepFonts.add(p.font); pieces[i] = { ...p, text: '\uFFFC', art: true, codes: undefined };
+  }
+  // Vertical writing (tategaki): its columns are read as paragraphs, set in a section whose text runs top
+  // to bottom, columns right to left, as Word and LibreOffice set Japanese and Chinese; the pieces leave the
+  // line reading below (a running head or folio across the page stays as it is).
+  let vert: VPage | undefined;
+  {
+    const solid = pieces.filter((p) => p.text.trim() && p.text !== '\u2009').length;
+    const vf = findVertical(pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, y: H - p.y, h: p.h })));
+    if (vf.vertical.size >= 8 && vf.vertical.size >= solid * 0.5) {
+      const segs = vf.segments; const cxs = (g: { l: number; r: number }) => (g.l + g.r) / 2;
+      const steps: number[] = []; for (let k = 0; k + 1 < segs.length; k++) { const d = Math.abs(cxs(segs[k]) - cxs(segs[k + 1])); if (d > segs[k].size * 0.8 && d < segs[k].size * 4) steps.push(d); }
+      const size = median(segs.map((g) => g.size)) || 10;
+      const head = Math.min(...segs.map((g) => g.t)), foot = Math.max(...segs.map((g) => g.b));
+      const paras: VPage['paras'] = []; let cur: Run[] = []; let first = -1;
+      for (const g of segs) {
+        if (first < 0) first = Math.max(0, g.t - head);
+        for (const i of g.items) {
+          const p = pieces[i]; const f = fonts.get(p.font);
+          const look = { font: f?.family ?? 'MS Mincho', size: Math.round(p.h * 2) / 2, bold: !!(f?.bold || p.bold), italic: !!f?.italic, color: p.color, rtl: false, sup: false };
+          const text = plainVerticalForms(p.text);
+          const last = cur[cur.length - 1];
+          if (last && last.font === look.font && last.size === look.size && last.bold === look.bold && last.color === look.color) last.text += text; else cur.push({ text, ...look });
+        }
+        if (g.breakAfter) { if (cur.length) paras.push({ runs: cur, firstLine: first }); cur = []; first = -1; }
+      }
+      if (cur.length) paras.push({ runs: cur, firstLine: Math.max(0, first) });
+      vert = { paras, pitch: steps.length ? median(steps) : size * 1.7, size, top: head, bottom: H - foot, left: Math.min(...segs.map((g) => g.l)), right: W - Math.max(...segs.map((g) => g.r)) };
+      for (let i = pieces.length - 1; i >= 0; i--) if (vf.vertical.has(i)) pieces.splice(i, 1);
+    }
   }
   const arts = pieces.filter((p) => p.art);
   const lines = buildLines(attachMarks(pieces).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
@@ -1314,7 +1347,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts).catch(() => [] as Pic[]) : [];
     if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
     page.cleanup();
-    return { w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
+    return { vert, w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
   }
   // Footnotes: below a short rule in the lower part of the page, in a smaller size.
   let notesLines: Line[] = [];
@@ -1405,7 +1438,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
   page.cleanup();
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
-  return { w: W, h: H, pics, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
+  return { vert, w: W, h: H, pics, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1646,6 +1679,22 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const page = { size: { width: Math.round(pg.w * PT), height: Math.round(pg.h * PT) }, margin: { top: Math.round(pg.m.top * PT), bottom: Math.round(bottom * PT), left: Math.round(pg.m.left * PT), right: Math.round(pg.m.right * PT), header: Math.round(pg.m.header * PT), footer: Math.round(footerDist * PT), gutter: 0 } };
     const headers = { default: new Header({ children: headerChildren.length ? headerChildren : [new Paragraph({ children: [] })] }) };
     const footers = { default: new Footer({ children: footerChildren.length ? footerChildren : [new Paragraph({ children: [] })] }) };
+    if (pg.vert) {
+      // Vertical writing: the page's text flows top to bottom, columns right to left; the margins are where its
+      // columns stand, the line pitch the distance between columns, a paragraph's first column set lower by its
+      // indent.
+      const v = pg.vert;
+      const vpage = { ...page, margin: { ...page.margin, top: Math.round(Math.max(18, v.top - v.size * 0.1) * PT), bottom: Math.round(Math.max(18, v.bottom - v.size * 0.05) * PT), left: Math.round(Math.max(18, v.left - v.pitch * 0.2) * PT), right: Math.round(Math.max(18, v.right - (v.pitch - v.size) / 2) * PT) }, textDirection: docx.PageTextDirectionType.TOP_TO_BOTTOM_RIGHT_TO_LEFT };
+      const kids = v.paras.map((pp) => new Paragraph({
+        widowControl: false,
+        indent: pp.firstLine > v.size * 0.4 ? { firstLine: Math.round(pp.firstLine * PT) } : undefined,
+        spacing: { before: 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
+        // (Two or three digits or letters stand across in their column, as the page sets them: tate-chu-yoko.)
+        children: pp.runs.flatMap((r) => r.text.split(/([0-9A-Za-z]{1,3}(?![0-9A-Za-z]))/).filter(Boolean).map((t) => runFor({ ...r, text: /^[0-9A-Za-z]{1,3}$/.test(t) && /[0-9A-Za-z]/.test(t) ? `\uE000${t}` : t }, null))),
+      }));
+      const rest = [...blocksFor(pg.body, map), ...blocksFor(flowNotes, null)];
+      return [{ properties: { type: SectionType.NEXT_PAGE, page: vpage }, headers, footers: footerChildren.length ? footers : undefined, children: kids.length || rest.length ? [...kids, ...rest] : [new Paragraph({ children: [] })] }];
+    }
     if (pg.regions?.length) {
       // A page in columns: one continuous section per region, each with its own column layout; the columns'
       // widths and gap follow the page, and a column break starts each column after the first.
@@ -1788,9 +1837,15 @@ async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string
     zip.file('word/_rels/fontTable.xml.rels', rels);
   }
   const docXml = await zip.file('word/document.xml')!.async('string');
-  const fixed = docXml.replace(/<w:sectPr([^>]*)>/g, (m) => `${m}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
+  let eaId = 1;
+  const fixed = docXml.replace(/<w:r>(<w:rPr>[\s\S]*?)<\/w:rPr>(<w:t[^>]*>)\uE000([^<]*)<\/w:t>/g, (_m, pr: string, t: string, txt: string) => `<w:r>${pr}<w:eastAsianLayout w:id="${eaId++}" w:vert="1" w:vertCompress="1"/></w:rPr>${t}${txt}</w:t>`)
+    .replace(/<w:sectPr([^>]*)>/g, (m) => `${m}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
     .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<\/w:sectPr>)/g, (m, a: string, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${b}` : m));
   zip.file('word/document.xml', fixed);
+  // Full-width punctuation keeps its full width (as the PDF sets it): no squeezing that would fit more
+  // characters into a line or column than the page has.
+  const st = zip.file('word/settings.xml');
+  if (st) { const x = await st.async('string'); if (!x.includes('characterSpacingControl')) zip.file('word/settings.xml', x.replace(/(<w:compat>)/, '<w:characterSpacingControl w:val="doNotCompress"/>$1')); }
   // A raised run's position in half-points (docx writes "4pt", which LibreOffice and older Words ignore).
   for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes)\.xml$/.test(n))) {
     const xml = await zip.file(name)!.async('string');

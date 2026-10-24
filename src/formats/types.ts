@@ -87,6 +87,8 @@ export function normalizeForSearch(s: string): { text: string; map: Int32Array }
     // Arabic diacritics (harakat, shadda, sukun, superscript alef) and tatweel
     if ((code >= 0x064b && code <= 0x0652) || code === 0x0670 || code === 0x0640 || code === 0x0653 || code === 0x0654 || code === 0x0655) continue;
     let n = c.toLowerCase();
+    // Vertical presentation forms (︒ ﹁ …) and full-width Latin letters and digits match their plain forms.
+    if ((code >= 0xfe10 && code <= 0xfe19) || (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff01 && code <= 0xff5e)) { const k = c.normalize('NFKC'); if (k.length === 1) n = k.toLowerCase(); }
     if (n === 'أ' || n === 'إ' || n === 'آ' || n === 'ٱ') n = 'ا';
     else if (n === 'ى') n = 'ي';
     else if (n === 'ة') n = 'ه';

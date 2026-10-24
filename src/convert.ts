@@ -7,6 +7,7 @@
 // from the spacing, headings from the font size — and the fonts the PDF embeds are
 // carried over, so an Arabic, Japanese or Chinese PDF keeps its look in the EPUB.
 import { joinLine, cleanPdfText } from './pdftext';
+import { findVertical, plainVerticalForms } from './pdfvertical';
 import JSZip from 'jszip';
 import { db, type Book } from './db';
 import { flowHandlerFor } from './formats';
@@ -116,8 +117,15 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
         } catch { fontFamilies.set(it.fontName, cleanFamily(it.fontName)); }
       }
     }
+    // Vertical writing (columns of Japanese, Chinese, Korean; Mongolian): its columns in reading order become
+    // paragraphs of their own; the rest is read in lines.
+    const vh = page.getViewport({ scale: 1 }).height;
+    const vert = findVertical(items.map((i) => ({ text: i.str, l: i.x, r: i.x + i.w, y: vh - i.y, h: i.h })));
+    const vParas: { text: string; size: number; family?: string }[] = [];
+    { let t = '', size = 0, fam: string | undefined; for (const g of vert.segments) { t += plainVerticalForms(g.text); size = Math.max(size, g.size); fam ??= fontFamilies.get(items[g.items[0]]?.font ?? ''); if (g.breakAfter) { if (t.trim()) vParas.push({ text: t.trim(), size, family: fam }); t = ''; size = 0; fam = undefined; } } if (t.trim()) vParas.push({ text: t.trim(), size, family: fam }); }
+    const flatItems = vert.vertical.size ? items.filter((_, i) => !vert.vertical.has(i)) : items;
     // Lines by vertical position (PDF y grows upwards).
-    const sorted = items.filter((i) => i.str.trim() || i.str === '\u2009' || i.eol).sort((a, b) => b.y - a.y || a.x - b.x);
+    const sorted = flatItems.filter((i) => i.str.trim() || i.str === '\u2009' || i.eol).sort((a, b) => b.y - a.y || a.x - b.x);
     const lines: It[][] = [];
     for (const it of sorted) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - it.y) < Math.max(cur[0].h, it.h) * 0.5) cur.push(it); else lines.push([it]); }
     let prevBottom: number | null = null; let prevSize = 0; let buf = ''; let bufSize = 0; let bufFont: string | undefined; let bufRtl = false;
@@ -133,10 +141,13 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
       const gap = prevBottom === null ? 0 : prevBottom - top;
       const newPara = prevBottom === null || gap > size * 0.9 || Math.abs(size - prevSize) > prevSize * 0.25 || /[.!?؟。！？]["»”]?$/.test(buf.trim()) && /^[؀-ۿA-Z一-鿿"«“]/.test(text) && gap > size * 0.3;
       if (newPara) { flush(); bufSize = size; bufFont = fontFamilies.get(line[0].font); bufRtl = rtl; }
-      buf += (buf ? ' ' : '') + text;
+      // (Lines of Chinese or Japanese run on without a space where they wrap.)
+      const cjkJoin = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]$/.test(buf) && /^[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/.test(text);
+      buf += (buf && !cjkJoin ? ' ' : '') + text;
       prevBottom = bottom; prevSize = size;
     }
     flush();
+    for (const v of vParas) { paragraphs.push({ text: v.text, size: v.size, rtl: false, family: v.family, heading: false, page: p }); sizes.push(v.size); }
     page.cleanup();
   }
   await task.destroy();

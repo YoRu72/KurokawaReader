@@ -7,6 +7,7 @@
 //  - each line cut into words, every word one box exactly over its letters on the page,
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { findVertical, plainVerticalForms, type VPiece } from './pdfvertical';
 import { attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
@@ -81,8 +82,16 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     if (Math.abs(angle) > 0.02) { turned.push({ text, tx, w, h, angle }); continue; }
     pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, keep: !!raw.krLead });
   }
+  // Vertical writing (Japanese, Chinese, Korean set in columns; Mongolian): its columns are found first and
+  // laid as columns; the rest is read in lines. A word turned on its side within a column joins it.
+  const vp: VPiece[] = pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, y: p.y, h: p.h }));
+  const turnedV: number[] = [];
+  turned.forEach((t, k) => { if (Math.abs(t.angle - Math.PI / 2) < 0.05) { vp.push({ text: t.text, l: t.tx[4] - t.h * 0.12, r: t.tx[4] + t.h * 0.88, y: t.tx[5] + t.w, h: t.h, t: t.tx[5], b: t.tx[5] + t.w }); turnedV.push(k); } });
+  const vert = findVertical(vp);
+  const vTurned = new Set(turnedV.filter((_, j) => vert.vertical.has(pieces.length + j)));
+  const flat = vert.vertical.size ? pieces.filter((_, i) => !vert.vertical.has(i)) : pieces;
   // Harakat drawn on their own go back into their letters; then lines by baseline, top to bottom.
-  const kept = attachMarks(pieces.filter((p) => !p.space)).concat(pieces.filter((p) => p.space));
+  const kept = attachMarks(flat.filter((p) => !p.space)).concat(flat.filter((p) => p.space));
   kept.sort((a, b) => a.y - b.y);
   const lines: Piece[][] = [];
   for (const p of kept) {
@@ -118,11 +127,37 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
       span(text, left, wd.y - wd.h * 0.82, wd.h, k, wd.rtl);
     });
   }
-  for (const t of turned) {
+  // Columns: one box each, set vertically, in reading order; a paragraph's end is marked for copying.
+  for (const g of vert.segments) {
+    const s = document.createElement('span');
+    const text = plainVerticalForms(g.text);
+    s.textContent = text; s.dataset.v = '1'; if (g.breakAfter) s.dataset.br = '1';
+    s.style.writingMode = 'vertical-rl';
+    const size = Math.max(1, g.r - g.l);
+    const natural = Math.max(1, [...text].length * size);
+    s.style.left = `${(100 * g.l / W).toFixed(3)}%`;
+    s.style.top = `${(100 * g.t / H).toFixed(3)}%`;
+    s.style.fontSize = `${size.toFixed(2)}px`;
+    s.style.lineHeight = '1';
+    s.style.fontFamily = 'sans-serif';
+    s.style.transform = `scaleY(${Math.max(0.05, (g.b - g.t) / natural).toFixed(4)})`;
+    s.dataset.len = String(g.b - g.t);
+    frag.appendChild(s);
+  }
+  for (const [k, t] of turned.entries()) {
+    if (vTurned.has(k)) continue;
     const natural = Math.max(1, measure(t.text, t.h));
     span(t.text, t.tx[4] + t.h * 0.82 * Math.sin(t.angle), t.tx[5] - t.h * 0.82 * Math.cos(t.angle), t.h, Math.max(0.05, t.w / natural), isRtlText(t.text), t.angle);
   }
   if (cancelled) return handle;
   container.appendChild(frag);
+  // A column's length as laid out (fonts differ in how they set punctuation and digits upright): measured
+  // once in place, and each column scaled to the length it has on the page.
+  const cols = Array.from(container.querySelectorAll<HTMLElement>('span[data-len]'));
+  if (cols.length) {
+    // (offsetHeight is the layout size, before any transform, in the same units as the font size.)
+    const lens = cols.map((el) => el.offsetHeight);
+    cols.forEach((el, i) => { if (lens[i] > 0) el.style.transform = `scaleY(${Math.max(0.05, +el.dataset.len! / lens[i]).toFixed(4)})`; delete el.dataset.len; });
+  }
   return handle;
 }
