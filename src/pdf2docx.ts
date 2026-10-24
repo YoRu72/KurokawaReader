@@ -123,6 +123,10 @@ function readOs2(bytes: Uint8Array): Os2 | null {
 }
 
 /** Code points a TrueType font's cmap covers (to decide whether embedding it can render the text). */
+/** Text without the tatweels that stretch its words; a tatweel standing alone between spaces is a dash
+ *  ("أي شجاع ـ تحمّل") and stays. */
+const dropStretch = (s: string) => s.replace(/\u0640+/g, (m, at: number) => (/[^\s(\[«"'-]/.test(s[at - 1] ?? ' ') || /[^\s)\]»"'.,،؛:-]/.test(s[at + m.length] ?? ' ') ? '' : m));
+
 const HONORIFICS: Record<string, string> = { 'صلى الله عليه وسلم': '\uFDFA', 'صلى الله عليه و سلم': '\uFDFA', 'جل جلاله': '\uFDFB', 'بسم الله الرحمن الرحيم': '\uFDFD' };
 
 /** Whether a font's embedding permissions (OS/2 fsType) allow it in a document that can be edited. */
@@ -720,11 +724,11 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     const allText = runs.map((r) => r.text).join('');
     const stretches = (allText.match(/\u0640+/g) ?? []).length, words = allText.split(/\s+/).filter(Boolean).length;
     const kashida = align === 'both' && rtl && stretches > 0 && stretches >= Math.max(1, words * 0.12);
-    if (!kashida && align === 'both' && rtl) for (const r of runs) r.text = r.text.replace(/\u0640+/g, '');
+    if (!kashida && align === 'both' && rtl) for (const r of runs) r.text = dropStretch(r.text);
     // Elsewhere a stretch drawn as overlapping tatweels would come out wider than the page drew it: it goes
     // (a single tatweel — "بـ(" — is writing, not stretching, and stays).
     else if (!kashida && rtl) for (const r of runs) r.text = r.text.replace(/(?<=[\u0620-\u064a][\u064b-\u0652]*)\u0640{2,}/g, '');
-    if (kashida) for (const r of runs) { if (r.text.includes('\u0640')) r.kText = r.text; r.text = r.text.replace(/\u0640+/g, ''); }
+    if (kashida) for (const r of runs) { if (r.text.includes('\u0640')) r.kText = r.text; r.text = dropStretch(r.text); }
     // A wide gap before a run that fills the rest of the line is a stretched word space, not a tab: a tab there
     // would leave the run no room and push it onto a line of its own.
     for (const r of runs) if (r.tab !== undefined) {
@@ -1505,7 +1509,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
             alignment: cols === 3 && c === 1 ? AlignmentType.CENTER : AlignmentType.DISTRIBUTE,
             widowControl: false,
             spacing: { before: i === 0 ? Math.round(v.before * PT) : 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
-            children: runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: r.text.replace(/\u0640+/g, '') }, footnotes)),
+            children: runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: dropStretch(r.text) }, footnotes)),
           })],
         })),
       })),
