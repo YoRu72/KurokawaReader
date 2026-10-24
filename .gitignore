@@ -10,3 +10,4 @@ desktop/node_modules/
 desktop/out/
 native/android/*.keystore
 __pycache__/
+vendor/

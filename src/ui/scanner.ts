@@ -10,8 +10,8 @@ import { scanWork, parallel } from '../scanpool';
 import type { Look, Prepared } from '../scanops';
 
 type Quality = 'standard' | 'high' | 'max';
-type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean };
-const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true };
+type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean; ocr: boolean };
+const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true, ocr: true };
 const KEY = 'kr.scan';
 const SIDE: Record<Quality, number> = { standard: 1700, high: 2400, max: 3300 };
 const PREVIEW = 1200;
@@ -128,14 +128,14 @@ export function scannerSheet(onDone?: () => void): void {
       h('div', { class: 'page-frame' }, p.pending ? h('div', { class: 'spinner small' }) : h('img', { class: 'page-thumb', alt: '', src: p.thumb, draggable: false })),
       h('div', { class: 'page-meta' },
         placeNumber(k, pages.length, moveTo),
-        h('button', { type: 'button', class: 'icon-btn small', title: t('rotatePage'), 'aria-label': t('rotatePage'), disabled: p.pending, onclick: async () => { p.turn = (p.turn + 1) % 4; await makeThumb(p); paintTile(p); } }, icon('rotate')),
+        h('button', { type: 'button', class: 'icon-btn small', title: t('rotatePage'), 'aria-label': t('rotatePage'), disabled: p.pending, onclick: async () => { p.turn = (p.turn + 1) % 4; if (p.flatten) p.curve = await scanWork<S.Curve | null>({ op: 'curve', preview: await previewOf(p), quad: p.quad, turn: p.turn }); await makeThumb(p); paintTile(p); } }, icon('rotate')),
         h('button', { type: 'button', class: 'icon-btn small', title: t('removeItem'), 'aria-label': t('removeItem'), onclick: () => { if (p.thumb) URL.revokeObjectURL(p.thumb); tiles.delete(p); pages.splice(pages.indexOf(p), 1); draw(); } }, icon('trash'))));
   };
   const draw = () => {
     stale();
     if (!pages.length) gridEl.replaceChildren(h('div', { class: 'scan-empty' }, icon('camera'), h('p', null, t('scanEmpty'))));
     else { const want = pages.map(tileFor); if (gridEl.children.length !== want.length || want.some((el, i) => gridEl.children[i] !== el)) gridEl.replaceChildren(...want); pages.forEach(paintTile); }
-    go.disabled = !pages.length || pages.some((p) => p.pending);
+    go.disabled = asImages.disabled = asText.disabled = !pages.length || pages.some((p) => p.pending);
     count.textContent = pages.length ? t('pageCount', { n: pages.length }) : '';
   };
   sortable(gridEl, '.page-tile', moveTo, sh.body);
@@ -156,21 +156,73 @@ export function scannerSheet(onDone?: () => void): void {
     status, gridEl, h('p', { class: 'hint' }, t('scanHint')));
   const r = runner(sh.body, onDone);
   stale = () => r.stale();
-  const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go], async () => {
+  // The pages made at full size (two at a time: a page at full size takes some memory, and a phone has little).
+  // Progress in steps: each page made, each page read (when the text is recognised), the file put together.
+  let steps = 1, stepsDone = 0;
+  const step = () => r.progress((++stepsDone / steps) * 100);
+  const makePages = async (): Promise<{ blobs: Blob[]; types: string[] }> => {
     const side = SIDE[set.quality];
-    const out: Blob[] = new Array(pages.length);
-    let done = 0;
-    // (Two at a time: a page at full size takes some memory, and a phone has little.)
+    const out: Blob[] = new Array(pages.length); const types: string[] = new Array(pages.length);
     await pooled(pages.slice(), Math.min(2, parallel()), async (p, i) => {
-      out[i] = await scanWork<Blob>({ op: 'render', blob: p.file, look: lookOf(p), side, type: p.filter === 'bw' ? 'image/png' : 'image/jpeg', quality: 0.86 });
-      r.progress((++done / (pages.length + 1)) * 100);
+      types[i] = p.filter === 'bw' ? 'image/png' : 'image/jpeg';
+      out[i] = await scanWork<Blob>({ op: 'render', blob: p.file, look: lookOf(p), side, type: types[i], quality: 0.86 });
+      step();
     });
+    return { blobs: out, types };
+  };
+  /** Each page's text read (Arabic or English, whichever it is), with a PDF page of it to lay over the picture. */
+  // (A page read once is not read again while it stays as it is: extracting its text, then making the PDF.)
+  const readCache = new WeakMap<Page, { sig: string; text: string; pdf?: Uint8Array }>();
+  const readPages = async (blobs: Blob[], pdf: boolean, which: Page[]) => {
+    const { recognizeAuto } = await import('../ocr');
+    const prefer = getLang() === 'ar' ? 'ara' : 'eng';
+    const out: { text: string; pdf?: Uint8Array }[] = [];
+    for (const [i, b] of blobs.entries()) {
+      const pg = which[i]; const sig = JSON.stringify([lookOf(pg), set.quality]); const hit = readCache.get(pg);
+      if (hit && hit.sig === sig && (!pdf || hit.pdf)) { out.push(hit); step(); continue; }
+      try { const r2 = await recognizeAuto(b, { pdf: true, prefer }); out.push(r2); readCache.set(pg, { sig, text: r2.text, pdf: r2.pdf }); } catch (e) { console.warn('[kurokawa] OCR failed', e); out.push({ text: '' }); }
+      step();
+    }
+    return out;
+  };
+  const stamp = () => { const d = new Date(); const pad = (n: number) => String(n).padStart(2, '0'); return `${t('scanFileName')} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`; };
+  const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go, asImages, asText], async () => {
+    const { ocrAvailable } = await import('../ocr');
+    const ocr = set.ocr && await ocrAvailable();
+    steps = pages.length * (ocr ? 2 : 1) + 1; stepsDone = 0;
+    const which = pages.slice(); const { blobs } = await makePages();
+    // The text laid invisibly over each page: the PDF can be searched, and its text selected and copied.
+    const overlays = ocr ? (await readPages(blobs, true, which)).map((x) => x.pdf) : undefined;
     const { imagesToPdf } = await import('../pdftools');
-    const bytes = await imagesToPdf(out, { size: set.size, margin: 0 });
-    const d = new Date(); const pad = (n: number) => String(n).padStart(2, '0');
-    return { blob: pdfBlob(bytes), name: `${t('scanFileName')} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.pdf` };
+    const bytes = await imagesToPdf(blobs, { size: set.size, margin: 0, overlays });
+    return { blob: pdfBlob(bytes), name: `${stamp()}.pdf` };
   }) }, icon('file'), t('createPdf')) as HTMLButtonElement;
-  sh.actions.append(go);
+  // Or the pages as pictures: one page, one picture; several, a ZIP of them in order.
+  const asImages = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void r.run([go, asImages, asText], async () => {
+    steps = pages.length + 1; stepsDone = 0;
+    const { blobs, types } = await makePages();
+    const ext = (k: number) => (types[k] === 'image/png' ? 'png' : 'jpg');
+    if (blobs.length === 1) return { blob: blobs[0], name: `${stamp()}.${ext(0)}` };
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip(); const digits = String(blobs.length).length;
+    blobs.forEach((b, k) => zip.file(`${String(k + 1).padStart(digits, '0')}.${ext(k)}`, b));
+    return { blob: await zip.generateAsync({ type: 'blob', compression: 'STORE' }), name: `${stamp()}.zip` };
+  }) }, icon('images'), t('scanSaveImages')) as HTMLButtonElement;
+  // Or the pages' text: read on the device, shown to copy, change, share or keep.
+  const asText = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void (async () => {
+    const { ocrAvailable } = await import('../ocr');
+    if (!(await ocrAvailable())) { toast(t('ocrUnavailable'), 'error'); return; }
+    let text = '';
+    await r.run([go, asImages, asText], async () => {
+      steps = pages.length * 2; stepsDone = 0;
+      const which = pages.slice(); const { blobs } = await makePages();
+      const read = await readPages(blobs, false, which);
+      text = read.map((x) => x.text).filter(Boolean).join('\n\n');
+      return { blob: new Blob([text], { type: 'text/plain;charset=utf-8' }), name: `${stamp()}.txt` };
+    });
+    if (sh.el.isConnected) textSheet(text);
+  })() }, icon('type'), t('scanExtractText')) as HTMLButtonElement;
+  sh.actions.append(asText, asImages, go);
   draw();
 
   /* ---------- one page, by hand ---------- */
@@ -185,7 +237,7 @@ export function scannerSheet(onDone?: () => void): void {
     const p = pages[k];
     const work: Look = { quad: p.quad.map((c) => ({ ...c })) as S.Quad, curve: p.curve, flatten: p.flatten, turn: p.turn, filter: p.filter, adj: { ...p.adj } };
     // (Corners moved: how the page bends is looked for again, once they are let go.)
-    const recurve = debounce(() => { void scanWork<S.Curve | null>({ op: 'curve', preview, quad: S.orderQuad(work.quad.map((c) => ({ ...c }))) }).then((c) => { work.curve = c; syncFlat(); refresh(); }); }, 250);
+    const recurve = debounce(() => { void scanWork<S.Curve | null>({ op: 'curve', preview, quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), turn: work.turn }).then((c) => { work.curve = c; syncFlat(); refresh(); }); }, 250);
     const ed = openSheet(t('scanEditPage', { n: localDigits(String(k + 1)) }), t('close'), { stack: true });
     ed.body.style.fontFamily = 'var(--font-ui)';
     ed.el.classList.add('scan-editor');
@@ -253,8 +305,8 @@ export function scannerSheet(onDone?: () => void): void {
       cropChip, resultChip,
       h('button', { type: 'button', class: 'btn small tonal', onclick: async () => { const f = await scanWork<{ how: string; quad: S.Quad }>({ op: 'detect', preview }); work.quad = f.quad; place(); recurve(); toast(f.how === 'frame' ? t('scanNoEdges') : t('scanFound')); } }, icon('target'), t('scanAuto')),
       h('button', { type: 'button', class: 'btn small tonal', onclick: () => { work.quad = FULL.map((c) => ({ ...c })) as S.Quad; place(); recurve(); } }, icon('fullscreen'), t('scanWhole')),
-      h('button', { type: 'button', class: 'icon-btn', title: t('rotateLeft'), 'aria-label': t('rotateLeft'), onclick: () => { work.turn = (work.turn + 3) % 4; if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', { class: 'flip-x' }, icon('rotate'))),
-      h('button', { type: 'button', class: 'icon-btn', title: t('rotateRight'), 'aria-label': t('rotateRight'), onclick: () => { work.turn = (work.turn + 1) % 4; if (mode === 'crop') setMode('result'); else refresh(); } }, icon('rotate')));
+      h('button', { type: 'button', class: 'icon-btn', title: t('rotateLeft'), 'aria-label': t('rotateLeft'), onclick: () => { work.turn = (work.turn + 3) % 4; recurve(); if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', { class: 'flip-x' }, icon('rotate'))),
+      h('button', { type: 'button', class: 'icon-btn', title: t('rotateRight'), 'aria-label': t('rotateRight'), onclick: () => { work.turn = (work.turn + 1) % 4; recurve(); if (mode === 'crop') setMode('result'); else refresh(); } }, icon('rotate')));
     const flatChip = h('button', { type: 'button', class: 'chip small', 'aria-pressed': 'false', title: t('scanFlattenSub'), onclick: () => { work.flatten = !work.flatten; syncFlat(); if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', null, t('scanFlatten')));
     function syncFlat() { const on = work.flatten && !!work.curve; flatChip.classList.toggle('on', on); flatChip.setAttribute('aria-pressed', String(on)); flatChip.disabled = !work.curve; }
     tools.append(flatChip); syncFlat();
@@ -294,7 +346,7 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const s = { ...cur };
   const commit = () => { saveSettings(s); onChange({ ...s }); };
-  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten', sub: string) => {
+  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten' | 'ocr', sub: string) => {
     const input = h('input', { type: 'checkbox', checked: s[key] }) as HTMLInputElement;
     input.addEventListener('change', () => { s[key] = input.checked; commit(); });
     return h('label', { class: 'scan-check' }, input, h('span', null, h('b', null, label), h('small', null, sub)));
@@ -305,6 +357,22 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
     h('label', null, h('span', null, t('scanQuality')), pickButton(t('scanQuality'), [['standard', t('scanQualityStandard')], ['high', t('scanQualityHigh')], ['max', t('scanQualityMax')]], s.quality, (v) => { s.quality = v; commit(); }, t('close')))),
     check(t('scanAutoCrop'), 'autoCrop', t('scanAutoCropSub')),
     check(t('scanFlatten'), 'flatten', t('scanFlattenSub')),
-    check(t('scanAutoTurn'), 'autoTurn', t('scanAutoTurnSub')));
+    check(t('scanAutoTurn'), 'autoTurn', t('scanAutoTurnSub')),
+    check(t('scanOcr'), 'ocr', t('scanOcrSub')));
   sh.actions.append(h('button', { class: 'btn small primary', type: 'button', onclick: sh.close }, t('done')));
+}
+
+/** The text read from the pages: to look over and correct, copy, share or keep as a file. */
+function textSheet(text: string): void {
+  const sh = openSheet(t('ocrTitle'), t('close'), { stack: true });
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  if (!text.trim()) { sh.body.append(h('p', { class: 'src' }, t('ocrNone'))); return; }
+  const ta = h('textarea', { class: 'ocr-text', dir: 'auto', spellcheck: false }) as HTMLTextAreaElement;
+  ta.value = text;
+  sh.body.append(h('p', { class: 'hint' }, t('ocrHint')), ta);
+  const name = () => `${t('scanFileName')}.txt`;
+  sh.actions.append(
+    h('button', { class: 'btn small tonal', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(ta.value); toast(t('copied')); } catch { ta.select(); document.execCommand('copy'); toast(t('copied')); } } }, icon('copy'), t('copySelected')),
+    h('button', { class: 'btn small tonal', type: 'button', onclick: () => void import('./share').then((m) => m.shareText(ta.value)) }, icon('external'), t('shareText')),
+    h('button', { class: 'btn small primary', type: 'button', onclick: () => void import('./share').then((m) => m.downloadBlob(new Blob([ta.value], { type: 'text/plain;charset=utf-8' }), name())) }, icon('download'), t('saveAsText')));
 }

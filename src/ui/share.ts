@@ -1,7 +1,7 @@
 // Sharing and saving. Native share sheets (Capacitor Share plugin) on
 // Android/iOS, the Web Share API where it exists, downloads otherwise; images
 // go to the device gallery on Android (Pictures/<folder>).
-import { toast } from './dom';
+import { toast, h } from './dom';
 import { t } from '../i18n';
 import { getSettings } from '../settings';
 
@@ -158,3 +158,21 @@ export async function clearShareCache(): Promise<void> {
   const fs = cap()?.Plugins?.Filesystem as (FsPlugin & { rmdir?(o: { path: string; directory: string; recursive: boolean }): Promise<void> }) | undefined;
   try { await fs?.rmdir?.({ path: 'kr-share', directory: 'CACHE', recursive: true }); } catch { /* nothing there */ }
 }
+
+/** A field for the made file's name: empty, the name made for it is used (shown greyed); typed, the typed one with
+ *  the made name's extension. */
+export function fileNameField(): { el: HTMLElement; input: HTMLInputElement; name(auto: string): string; suggest(auto: string): void } {
+  const input = h('input', { type: 'text', class: 'run-name-input', dir: 'auto', placeholder: t('fileNameAuto'), 'aria-label': t('fileNameLabel'), enterkeyhint: 'done' }) as HTMLInputElement;
+  const el = h('label', { class: 'run-name' }, h('span', null, t('fileNameLabel')), input);
+  return {
+    el, input,
+    name(auto: string) {
+      const typed = input.value.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+/, '');
+      if (!typed) return auto;
+      const ext = auto.match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? '';
+      return typed.toLowerCase().endsWith(ext.toLowerCase()) ? typed : typed + ext;
+    },
+    suggest(auto: string) { input.placeholder = auto.replace(/\.[A-Za-z0-9]{1,5}$/, ''); },
+  };
+}
+

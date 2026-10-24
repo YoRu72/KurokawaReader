@@ -6,7 +6,7 @@ import { h, icon, openSheet, toast, pickButton } from './dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { db, type Book } from '../db';
 import { importFiles } from '../library';
-import { shareFile, downloadBlob } from './share';
+import { shareFile, downloadBlob, fileNameField } from './share';
 import { sortable, placeNumber } from './sortable';
 import type { Source, PageSize } from '../pdftools';
 
@@ -102,7 +102,12 @@ export function runner(body: HTMLElement, onDone?: () => void) {
   const result = h('div', { class: 'convert-result', hidden: true });
   // Progress and the finished file's buttons stay in view above the sheet's own buttons, however long its list
   // of pages is (they used to come after it, a thousand pages down).
-  const panel = h('div', { class: 'runner-panel' }, status, track, result);
+  // The file's name: the user's own, or else one made for it. It can be changed after the file is made too — Save
+  // and Share take the name as it is then.
+  const nf = fileNameField(); const nameField = nf.el, nameInput = nf.input;
+  let autoName = '';
+  const finalName = () => nf.name(autoName);
+  const panel = h('div', { class: 'runner-panel' }, nameField, status, track, result);
   const sheet = body.parentElement; const actions = sheet?.querySelector(':scope > .sheet-actions');
   if (sheet && actions) sheet.insertBefore(panel, actions); else body.append(panel);
   // (Anything changed in the sheet — a field, a choice, the list — and the file made before is not this one.)
@@ -123,14 +128,16 @@ export function runner(body: HTMLElement, onDone?: () => void) {
         const title = body.closest('.sheet')?.querySelector('.sheet-head h3')?.textContent ?? t('convertFile');
         const out = await runJob(title, (r) => { report = r; return work(); }, () => body.isConnected).finally(() => { report = null; });
         if (!out) { status.textContent = t('cancelled'); return; }
-        const { blob, name } = out;
+        const { blob } = out;
+        autoName = out.name; nf.suggest(autoName);
         bar.style.width = '100%';
-        status.textContent = t('convertDone', { name, size: formatBytes(blob.size) });
-        const isPdf = /\.pdf$/i.test(name);
+        const tell = () => { status.textContent = t('convertDone', { name: `\u2068${finalName()}\u2069`, size: `\u2068${formatBytes(blob.size)}\u2069` }); };
+        tell(); nameInput.oninput = () => { if (!result.hidden) tell(); };
+        const isPdf = /\.pdf$/i.test(autoName);
         result.replaceChildren(
-          h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name, name) }, icon('external'), t('shareFile')),
-          h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, name) }, icon('download'), t('saveFile')),
-          ...(isPdf ? [h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; await importFiles([new File([blob], name, { type: 'application/pdf' })]); toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary'))] : []),
+          h('button', { class: 'btn small primary', type: 'button', onclick: () => { const n = finalName(); void shareFile(blob, n, n); } }, icon('external'), t('shareFile')),
+          h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, finalName()) }, icon('download'), t('saveFile')),
+          ...(isPdf ? [h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; await importFiles([new File([blob], finalName(), { type: 'application/pdf' })]); toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary'))] : []),
         );
         result.hidden = false;
       } catch (err) {

@@ -10,7 +10,7 @@ export type Op =
   | { op: 'decode'; blob: Blob; maxSide: number }
   | { op: 'detect'; preview: S.Img }
   | { op: 'thumb'; preview: S.Img; look: Look }
-  | { op: 'curve'; preview: S.Img; quad: S.Quad }
+  | { op: 'curve'; preview: S.Img; quad: S.Quad; turn: number }
   | { op: 'view'; preview: S.Img; look: Look; side: number }
   | { op: 'render'; blob: Blob; look: Look; side: number; type: string; quality: number };
 
@@ -82,17 +82,20 @@ export function encode(img: S.Img, type: string, quality?: number): Promise<Blob
 
 /* ---------- the work ---------- */
 
-/** The page as it comes out of a picture of the photo: flattened, cleaned, turned upright. */
+/** The page as it comes out of a picture of the photo: flattened, turned upright, its bend undone, cleaned.
+ *  (The bend is found and undone on the upright page: lines of print run across it.) */
 export function render(src: S.Img, p: Look, maxSide: number): S.Img {
   const q = S.orderQuad(scaleQuad(p.quad, src.width, src.height));
-  let flat = S.warp(src, q, S.flatSize(q, maxSide));
+  let flat = S.rotate(S.warp(src, q, S.flatSize(q, maxSide)), p.turn);
   if (p.flatten && p.curve) flat = S.trimMargins(S.unwarp(flat, p.curve), p.curve.sheet ? 'lr' : 'all');
-  return S.rotate(S.applyFilter(flat, p.filter, p.adj), p.turn);
+  // (Fingers holding the page go with every look but the photo as it was.)
+  if (p.filter !== 'original') flat = S.cleanBorders(S.removeFingers(flat));
+  return S.applyFilter(flat, p.filter, p.adj);
 }
 
-export function curveOf(preview: S.Img, quad: S.Quad): S.Curve | null {
+export function curveOf(preview: S.Img, quad: S.Quad, turn = 0): S.Curve | null {
   const q = S.orderQuad(scaleQuad(quad, preview.width, preview.height));
-  try { return S.findCurve(S.warp(preview, q, S.flatSize(q, 1100))); } catch { return null; }
+  try { return S.findCurve(S.rotate(S.warp(preview, q, S.flatSize(q, 1100)), turn)); } catch { return null; }
 }
 
 /** Run one message's work; returns the answer and what in it can be handed over rather than copied. */
@@ -101,15 +104,16 @@ export async function handle(m: Op): Promise<{ res: unknown; transfer: Transfera
     const preview = await decodeScaled(m.blob, m.maxSide);
     const look: Look = { quad: FULL, curve: null, flatten: m.flatten, turn: 0, filter: m.filter, adj: {} };
     if (m.autoCrop) { const f = S.detectPage(preview); look.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; }
-    look.curve = curveOf(preview, look.quad);
-    if (m.autoTurn) look.turn = S.uprightTurn(render(preview, { ...look, turn: 0, filter: 'gray', adj: {} }, 700), m.rtl);
+    // Which way up first (on the page as found, flat), then the bend of its lines.
+    if (m.autoTurn) { const flat = render(preview, { ...look, curve: null, turn: 0, filter: 'original', adj: {} }, 900); look.turn = S.pageTurn(flat); }
+    look.curve = curveOf(preview, look.quad, look.turn);
     const thumb = await encode(render(preview, look, 420), 'image/jpeg', 0.8);
     return { res: { preview, look, thumb } satisfies Prepared, transfer: [preview.data.buffer] };
   }
   if (m.op === 'decode') { const img = await decodeScaled(m.blob, m.maxSide); return { res: img, transfer: [img.data.buffer] }; }
   if (m.op === 'detect') { const f = S.detectPage(m.preview); return { res: { how: f.how, quad: f.quad.map((c) => ({ x: c.x / m.preview.width, y: c.y / m.preview.height })) }, transfer: [] }; }
   if (m.op === 'thumb') return { res: await encode(render(m.preview, m.look, 420), 'image/jpeg', 0.8), transfer: [] };
-  if (m.op === 'curve') return { res: curveOf(m.preview, m.quad), transfer: [] };
+  if (m.op === 'curve') return { res: curveOf(m.preview, m.quad, m.turn), transfer: [] };
   if (m.op === 'view') { const img = render(m.preview, m.look, m.side); return { res: img, transfer: [img.data.buffer] }; }
   // The finished page, from the photo decoded once at the size the PDF needs.
   const src = await decodeScaled(m.blob, Math.round(m.side * 1.25));

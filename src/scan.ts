@@ -143,7 +143,7 @@ function blur3(v: Float32Array, w: number, h: number): Float32Array {
 }
 
 /** Edges of the photo with print removed: strength, direction (of the gradient) and thin edge pixels. */
-type Edges = { w: number; h: number; mag: Float32Array; ang: Float32Array; on: Uint8Array; Lc: Float32Array };
+type Edges = { w: number; h: number; mag: Float32Array; ang: Float32Array; on: Uint8Array; Lc: Float32Array; c1: Float32Array; c2: Float32Array };
 function edgesOf(sm: ReturnType<typeof small>): Edges {
   const { w, h } = sm, n = w * h;
   const r = Math.max(2, Math.round(Math.min(w, h) / 90));
@@ -178,7 +178,7 @@ function edgesOf(sm: ReturnType<typeof small>): Edges {
     const o = a < 22.5 || a >= 157.5 ? 1 : a < 67.5 ? w + 1 : a < 112.5 ? w : w - 1;
     if (m >= mag[i - o] && m >= mag[i + o]) on[i] = 1;
   }
-  return { w, h, mag, ang, on, Lc };
+  return { w, h, mag, ang, on, Lc, c1, c2 };
 }
 
 /**
@@ -187,7 +187,7 @@ function edgesOf(sm: ReturnType<typeof small>): Edges {
  * larger quads; sides with paper on both sides (a line printed on the page) do not count.
  */
 function quadScore(E: Edges, q: Pt[]): number {
-  const { w, h, on, ang, Lc } = E;
+  const { w, h, on, ang, Lc, c1, c2 } = E;
   let sum = 0, weak = 0, steps = 0, inside = 0;
   const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4, cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
   for (let e = 0; e < 4; e++) {
@@ -197,7 +197,7 @@ function quadScore(E: Edges, q: Pt[]): number {
     const sgn = (cx - (a.x + b.x) / 2) * nx + (cy - (a.y + b.y) / 2) * ny > 0 ? 1 : -1;
     const sideAng = Math.atan2(ny, nx);
     const N = Math.max(12, Math.min(80, Math.round(len / 3)));
-    let hit = 0, cnt = 0, border = 0, din = 0, dout = 0, dc = 0;
+    let hit = 0, cnt = 0, border = 0, din = 0, dout = 0, dc = 0, ain = 0, aout = 0, bin = 0, bout = 0;
     for (let k = 0; k <= N; k++) {
       const t = 0.04 + (0.92 * k) / N;
       const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
@@ -214,13 +214,15 @@ function quadScore(E: Edges, q: Pt[]): number {
       hit += ok;
       const off = 4;
       const xi = Math.round(x + sgn * nx * off), yi = Math.round(y + sgn * ny * off), xo = Math.round(x - sgn * nx * off), yo = Math.round(y - sgn * ny * off);
-      if (xo >= 0 && yo >= 0 && xo < w && yo < h && xi >= 0 && yi >= 0 && xi < w && yi < h) { din += Lc[yi * w + xi]; dout += Lc[yo * w + xo]; dc++; }
+      if (xo >= 0 && yo >= 0 && xo < w && yo < h && xi >= 0 && yi >= 0 && xi < w && yi < h) { const ii = yi * w + xi, oo = yo * w + xo; din += Lc[ii]; dout += Lc[oo]; ain += c1[ii]; aout += c1[oo]; bin += c2[ii]; bout += c2[oo]; dc++; }
     }
     const total = cnt + border;
     if (border > total * 0.6) { sum += 0.5; continue; } // along the photo's edge: the page goes on past it
     const cov = cnt ? hit / cnt : 0;
     sum += cov; if (cov < 0.35) weak++;
-    if (dc > 4) { inside++; if (Math.abs(din - dout) / dc > 5) steps++; }
+    // A sheet's edge: paper on one side, something else on the other — clearly lighter or darker, or another colour.
+    // (A line printed on the page, a column rule, has paper on both sides.)
+    if (dc > 4) { inside++; if (Math.max(Math.abs(din - dout), 0.8 * Math.abs(ain - aout), 0.8 * Math.abs(bin - bout)) / dc > 8) steps++; }
   }
   if (inside >= 2 && steps < inside - 1) return 0;
   const A = area(q) / (w * h);
@@ -242,7 +244,9 @@ export function detectPage(img: Img, debug?: (c: Found[]) => void): Found {
   if (byShape) cands.push({ quad: up(byShape.q), how: 'shape', score: Math.max(quadScore(E, byShape.q), byShape.score >= 0.9 && frac(byShape.q) < 0.95 ? 0.5 : 0) });
   if (byEdges) cands.push({ quad: up(byEdges.q), how: 'edges', score: byEdges.score });
   debug?.(cands);
-  const good = cands.filter((c) => { const f = area(c.quad) / (img.width * img.height); return c.score > 0.42 && f > 0.08 && f < 0.97; });
+  // A page seen in perspective still has no corner much sharper or flatter than a right angle.
+  const sane = (q: Pt[]) => q.every((p, i) => { const a = q[(i + 3) % 4], b = q[(i + 1) % 4]; const ax = a.x - p.x, ay = a.y - p.y, bx = b.x - p.x, by = b.y - p.y; const c = (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1); return Math.abs(c) < 0.72; }) && (() => { const w1 = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y) + Math.hypot(q[2].x - q[3].x, q[2].y - q[3].y), h1 = Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y) + Math.hypot(q[2].x - q[1].x, q[2].y - q[1].y); return Math.min(w1, h1) / Math.max(w1, h1) > 0.2; })();
+  const good = cands.filter((c) => { const f = area(c.quad) / (img.width * img.height); return c.score > 0.42 && f > 0.08 && f < 0.97 && sane(c.quad); });
   if (!good.length) return { quad: full, how: 'frame', score: 0 };
   good.sort((a, b) => b.score - a.score);
   return good[0];
@@ -485,6 +489,90 @@ function paperLight(lum: Float32Array, w: number, h: number): Float32Array {
   return out;
 }
 
+/**
+ * What is left of the background around the page once it is flattened (the table, the book's edge, the dark
+ * beyond a curled corner): dark regions reaching in from the picture's edge — not print, which is thin — painted
+ * over with the paper's colour.
+ */
+export function cleanBorders(img: Img): Img {
+  const { width: W, height: H, data: d } = img;
+  const k = Math.max(1, Math.max(W, H) / 500); const w = Math.max(1, Math.round(W / k)), h = Math.max(1, Math.round(H / k)); const n = w * h;
+  const L = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; L[y * w + x] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; }
+  // Print removed (it is thinner than this), so only large dark areas stay dark.
+  const Lc = closeGray(L, w, h, Math.max(2, Math.round(Math.min(w, h) / 60)));
+  const sorted = Float32Array.from(Lc).sort(); const paper = sorted[Math.floor(n * 0.75)];
+  if (paper < 80) return img; // (A dark page: nothing to tell.)
+  const dark = new Uint8Array(n); for (let i = 0; i < n; i++) dark[i] = Lc[i] < paper * 0.62 ? 1 : 0;
+  const mask = new Uint8Array(n); const st: number[] = [];
+  for (let x = 0; x < w; x++) for (const y of [0, h - 1]) { const i = y * w + x; if (dark[i] && !mask[i]) { mask[i] = 1; st.push(i); } }
+  for (let y = 0; y < h; y++) for (const x of [0, w - 1]) { const i = y * w + x; if (dark[i] && !mask[i]) { mask[i] = 1; st.push(i); } }
+  while (st.length) { const i = st.pop()!; const x = i % w, y = (i / w) | 0; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && dark[j] && !mask[j]) { mask[j] = 1; st.push(j); } }
+  let cnt = 0; for (let i = 0; i < n; i++) cnt += mask[i];
+  if (cnt < n * 0.002 || cnt > n * 0.5) return img;
+  // (A little wider: the soft edge between the paper and what is beyond it.)
+  for (let r = 0; r < 2; r++) { const m2 = mask.slice(); for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (mask[i - 1] || mask[i + 1] || mask[i - w] || mask[i + w]) m2[i] = 1; } mask.set(m2); }
+  // The paper's colour: the median of the bright part.
+  const rs: number[] = [], gs: number[] = [], bs: number[] = [];
+  for (let i = 0; i < n; i += 3) if (!mask[i] && Lc[i] >= paper * 0.9) { const x = i % w, y = (i / w) | 0; const o = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; rs.push(d[o]); gs.push(d[o + 1]); bs.push(d[o + 2]); }
+  const med = (a: number[]) => a.sort((p, q) => p - q)[a.length >> 1] ?? 255;
+  const pr = med(rs), pg = med(gs), pb = med(bs);
+  const out = new Uint8ClampedArray(d);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (!mask[Math.min(h - 1, Math.floor(y / k)) * w + Math.min(w - 1, Math.floor(x / k))]) continue; const o = (y * W + x) * 4; out[o] = pr; out[o + 1] = pg; out[o + 2] = pb; }
+  return { data: out, width: W, height: H };
+}
+
+/**
+ * Fingers holding the page, taken off: skin-coloured patches reaching in from an edge of the page (the paper is
+ * not skin-coloured, even cream paper is much less red) are painted over with the paper around them.
+ */
+export function removeFingers(img: Img): Img {
+  const { width: W, height: H, data: d } = img;
+  const k = Math.max(1, Math.max(W, H) / 400); const w = Math.max(1, Math.round(W / k)), h = Math.max(1, Math.round(H / k));
+  const skin = new Uint8Array(w * h);
+  // The paper's own colour, for comparison: the median of the page.
+  const crs: number[] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; const r = d[i], g = d[i + 1], b = d[i + 2];
+    const Y = 0.299 * r + 0.587 * g + 0.114 * b, Cb = 128 - 0.1687 * r - 0.3313 * g + 0.5 * b, Cr = 128 + 0.5 * r - 0.4187 * g - 0.0813 * b;
+    if ((y * w + x) % 7 === 0) crs.push(Cr);
+    skin[y * w + x] = Y > 50 && Cr > 138 && Cr < 185 && Cb > 80 && Cb < 128 && r > g && g >= b * 0.8 ? 1 : 0;
+  }
+  crs.sort((a, b) => a - b); const paperCr = crs[crs.length >> 1] ?? 128;
+  if (paperCr > 142) return img; // (A reddish page all over: nothing to tell fingers by.)
+  // Patches of skin touching the edge, of a finger's size.
+  const lab = new Int32Array(w * h).fill(-1); const st: number[] = []; const take: number[] = [];
+  for (let s0 = 0; s0 < w * h; s0++) {
+    if (!skin[s0] || lab[s0] >= 0) continue;
+    const px: number[] = []; st.push(s0); lab[s0] = s0; let edge = false;
+    while (st.length) { const i = st.pop()!; px.push(i); const x = i % w, y = (i / w) | 0; if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) edge = true; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && skin[j] && lab[j] < 0) { lab[j] = s0; st.push(j); } }
+    if (edge && px.length > w * h * 0.002 && px.length < w * h * 0.15) take.push(...px);
+  }
+  if (!take.length) return img;
+  const mask = new Uint8Array(w * h); for (const i of take) mask[i] = 1;
+  // (A little wider: the finger's shadow and soft edge.)
+  for (let r = 0; r < 4; r++) { const m2 = mask.slice(); for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (mask[i - 1] || mask[i + 1] || mask[i - w] || mask[i + w]) m2[i] = 1; } mask.set(m2); }
+  // The paper around: for each masked point, the average of unmasked points nearby (grown inward a ring at a time).
+  const col = new Float32Array(w * h * 3); const known = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) if (!mask[i]) { const x = i % w, y = (i / w) | 0; const s = (Math.min(H - 1, Math.round(y * k)) * W + Math.min(W - 1, Math.round(x * k))) * 4; col[i * 3] = d[s]; col[i * 3 + 1] = d[s + 1]; col[i * 3 + 2] = d[s + 2]; known[i] = 1; }
+  for (let round = 0; round < Math.max(w, h); round++) {
+    let left = 0; const add: [number, number, number, number][] = [];
+    for (let i = 0; i < w * h; i++) {
+      if (known[i]) continue; const x = i % w, y = (i / w) | 0; let r = 0, g = 0, b = 0, c = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const j = yy * w + xx; if (!known[j]) continue; r += col[j * 3]; g += col[j * 3 + 1]; b += col[j * 3 + 2]; c++; }
+      if (c) add.push([i, r / c, g / c, b / c]); else left++;
+    }
+    for (const [i, r, g, b] of add) { col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b; known[i] = 1; }
+    if (!left || !add.length) break;
+  }
+  const out = new Uint8ClampedArray(d);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const sx = Math.min(w - 1, Math.floor(x / k)), sy = Math.min(h - 1, Math.floor(y / k)); const i = sy * w + sx; if (!mask[i]) continue;
+    const o = (y * W + x) * 4; out[o] = col[i * 3]; out[o + 1] = col[i * 3 + 1]; out[o + 2] = col[i * 3 + 2];
+  }
+  return { data: out, width: W, height: H };
+}
+
 export type Adjust = { brightness?: number; contrast?: number };
 
 /** A filter applied: `auto` evens the light and whitens the paper keeping colour; `color` does so with livelier
@@ -524,8 +612,15 @@ export function applyFilter(img: Img, f: Filter, adj: Adjust = {}): Img {
     return { data: out, width: w, height: h };
   }
   const sat = f === 'color' ? 1.35 : 1.1;
+  // Print made crisp (unsharp mask on the evened page: the page less a little blur of itself, a little), and the
+  // paper made clean: tones just below paper white — print showing through from the back, a faint stain — go to
+  // white; print stays as it is.
+  const blurN = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s2 = 0, c = 0; for (let dy = -1; dy <= 1; dy++) { const yy = y + dy; if (yy < 0 || yy >= h) continue; for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx < 0 || xx >= w) continue; s2 += norm[yy * w + xx]; c++; } } blurN[y * w + x] = s2 / c; }
+  const knee = f === 'color' ? 255 : 172; // ('color' keeps every tone: it is for pictures.)
+  const tone = (v: number) => (v <= knee ? v : knee + (v - knee) * (255 - knee) / Math.max(1, 222 - knee));
   for (let i = 0; i < n; i++) {
-    const o = i * 4; const L = stretch(norm[i]);
+    const o = i * 4; const L = clamp(tone(stretch(clamp(norm[i] + (norm[i] - blurN[i]) * 0.7, 0, 255))), 0, 255);
     if (f === 'gray') { out[o] = out[o + 1] = out[o + 2] = finish(L); out[o + 3] = 255; continue; }
     // Colour: each channel lifted by the same factor as the light, then its distance from grey widened.
     const k = L / Math.max(1, lum[i]);
@@ -583,6 +678,85 @@ export function uprightTurn(img: Img, rtl = false): 0 | 1 | 3 {
   return startTop !== rtl ? 3 : 1;
 }
 
+/**
+ * Quarter turns (clockwise, as `rotate` takes them) that stand the page upright, from its print alone: which way
+ * its lines run (the ink profile across lines swings between full and empty, along them it evens out), then which
+ * way is up — in Arabic as in Latin script a line's ink is densest at its baseline, in the lower part of the line
+ * (the dots, harakat and tall letters above thin out). 0 when the print does not say.
+ */
+export function pageTurn(img: Img): 0 | 1 | 2 | 3 {
+  const sm = small(img, 900); const { w, h, L } = sm; const n = w * h;
+  const light = paperLight(L, w, h);
+  const ink = new Uint8Array(n); let inked = 0;
+  for (let i = 0; i < n; i++) if (L[i] < light[i] * 0.66) { ink[i] = 1; inked++; }
+  if (inked < n * 0.003) return 0;
+  // Away from the photo's edges (the book's edge, the next page are no print).
+  const mx = Math.round(w * 0.04), my = Math.round(h * 0.04);
+  // Profiles across the rows and across the columns, each at the small slant that makes it sharpest (a photo is
+  // rarely square to the print).
+  const profile = (alongX: boolean, k: number) => {
+    const n2 = alongX ? h : w; const p = new Float64Array(n2);
+    for (let y = my; y < h - my; y++) for (let x = mx; x < w - mx; x++) {
+      if (!ink[y * w + x]) continue;
+      const at = alongX ? Math.round(y - k * (x - w / 2)) : Math.round(x - k * (y - h / 2));
+      if (at >= 0 && at < n2) p[at]++;
+    }
+    return p;
+  };
+  const alt = (p: Float64Array) => {
+    let a = 0; while (a < p.length && !p[a]) a++; let b = p.length - 1; while (b > a && !p[b]) b--;
+    if (b - a < 8) return 0;
+    // (Each value against its neighbourhood: a page's large-scale changes — a picture, a margin — do not count.)
+    let s = 0, c = 0;
+    for (let i = a + 6; i <= b - 6; i++) { let m = 0; for (let k = -6; k <= 6; k++) m += p[i + k]; m /= 13; if (m > 0) { s += Math.abs(p[i] - m) / m; c++; } }
+    return c ? s / c : 0;
+  };
+  let rA = 0, cA = 0;
+  for (let k = -0.16; k <= 0.161; k += 0.04) { rA = Math.max(rA, alt(profile(true, k))); cA = Math.max(cA, alt(profile(false, k))); }
+  const across = rA > cA * 1.25 ? 'rows' : cA > rA * 1.25 ? 'cols' : null;
+  if (!across) return 0;
+  // Lines made horizontal (for upright or turned a quarter clockwise), then the baseline's place in each line.
+  const W = across === 'rows' ? w : h, H = across === 'rows' ? h : w;
+  // (Turned a quarter clockwise, as `rotate(img, 1)` does: the new (x, y) is the old (y, h − 1 − x).)
+  const at = (x: number, y: number) => (across === 'rows' ? ink[y * w + x] : ink[(h - 1 - x) * w + y]);
+  const prof = new Float64Array(H);
+  for (let y = 0; y < H; y++) { let c = 0; for (let x = Math.round(W * 0.04); x < W * 0.96; x++) c += at(x, y); prof[y] = c; }
+  // Bands of print between near-empty rows.
+  const sorted = Array.from(prof).filter((v) => v > 0).sort((a, b) => a - b);
+  const floor = (sorted[Math.floor(sorted.length * 0.5)] ?? 0) * 0.18;
+  const bands: { hh: number; top: number; rel: number; mass: number }[] = [];
+  for (let y = 0; y < H;) {
+    if (prof[y] <= floor) { y++; continue; }
+    let y1 = y; while (y1 < H && prof[y1] > floor) y1++;
+    const hh = y1 - y;
+    if (hh >= 4 && hh < H * 0.2) {
+      let pk = y, mass = 0, cm = 0; for (let k = y; k < y1; k++) { if (prof[k] > prof[pk]) pk = k; mass += prof[k]; cm += prof[k] * k; }
+      // Where the densest row and the ink's middle sit in the band: below its middle when upright.
+      bands.push({ hh, top: y, rel: ((pk + 0.5 - y) / hh) * 0.6 + ((cm / mass + 0.5 - y) / hh) * 0.4, mass });
+    }
+    y = y1;
+  }
+  if (bands.length < 3) return 0;
+  // Only bands of a line's usual height (a dark margin, a picture, a rule are not lines), each with one say; and
+  // lines of print are tall for their spacing — ruled lines on writing paper are thin, and say nothing.
+  const hs = bands.map((b) => b.hh).sort((a, b) => a - b); const med = hs[hs.length >> 1];
+  const kept = bands.filter((b) => b.hh >= med * 0.55 && b.hh <= med * 1.8);
+  if (kept.length < 3) return 0;
+  const tops = bands.map((b) => b.top).sort((a, b) => a - b); const gaps: number[] = []; for (let i = 1; i < tops.length; i++) gaps.push(tops[i] - tops[i - 1]);
+  gaps.sort((a, b) => a - b); const spacing = gaps[gaps.length >> 1] ?? H;
+  if (med < spacing * 0.3) return 0;
+  const lines = kept.map((b) => b.rel - 0.5).sort((a, b) => a - b);
+  const up = lines[lines.length >> 1]; // > 0: upright (as made horizontal); < 0: upside down
+  // (Most lines must agree.)
+  const agree = lines.filter((v) => Math.sign(v) === Math.sign(up)).length / lines.length;
+  if ((globalThis as { KR_TURN_DEBUG?: boolean }).KR_TURN_DEBUG) console.log('turn: up', up.toFixed(3), 'agree', agree.toFixed(2), 'lines', lines.length, across);
+  // (Sure enough: most lines agree on a small lean, or many on a clear one.)
+  if (!((agree >= 0.75 && Math.abs(up) >= 0.02) || (agree >= 0.58 && Math.abs(up) >= 0.08))) return 0;
+  if (across === 'rows') return up > 0 ? 0 : 2;
+  // (Made horizontal by turning a quarter clockwise; upside down: the other way.)
+  return up > 0 ? 1 : 3;
+}
+
 /* ---------------------------------------------------------------- curved pages */
 
 /**
@@ -590,7 +764,7 @@ export function uprightTurn(img: Img, rtl = false): 0 | 1 | 3 {
  * the page, both in fractions of the picture, from its middle), its upright rules as x = e + f(e)·y + g·y²,
  * and the margins to cut away (the book's edge, the next page beyond the fold), as fractions.
  */
-export type Curve = { b: [number, number, number]; c: [number, number, number]; aLo: number; aHi: number; f: [number, number]; g: number; eLo: number; eHi: number; crop: { l: number; r: number; t: number; b: number }; sheet?: Sheet };
+export type Curve = { b: [number, number, number]; c: [number, number, number]; aLo: number; aHi: number; f: [number, number]; g: number; eLo: number; eHi: number; crop: { l: number; r: number; t: number; b: number }; sheet?: Sheet; grid?: Grid };
 
 /**
  * The page as a sheet in space, seen by the camera: flat across, bent along its width (a book's page curls
@@ -787,6 +961,438 @@ function lsq(rows: number[][], ys: number[], ws: number[]): number[] | null {
   return A.map((r, i) => r[n] / r[i]);
 }
 
+/**
+ * Where each point of the flattened page comes from in the photo of it: the offset (in fractions of the page's
+ * width `mx` and height `my`) from the point to its source, on a gx × gy grid over the page, read between by
+ * bilinear interpolation. Made so that every line of print runs level and upright rules (a frame, a column's line)
+ * run straight down; this follows any bend — a book's curl at the spine, a page that waves — where one formula for
+ * the whole page cannot.
+ */
+export type Grid = { gx: number; gy: number; mx: number[]; my: number[]; wScale?: number };
+
+/** Bilinear weights of point (u, v) in [0,1]² on a gx × gy grid: four (node, weight) pairs. */
+function gridW(gx: number, gy: number, u: number, v: number): [number, number][] {
+  const fx = clamp(u, 0, 1) * (gx - 1), fy = clamp(v, 0, 1) * (gy - 1);
+  const x0 = Math.min(gx - 2, Math.floor(fx)), y0 = Math.min(gy - 2, Math.floor(fy)); const tx = fx - x0, ty = fy - y0;
+  return [[y0 * gx + x0, (1 - tx) * (1 - ty)], [y0 * gx + x0 + 1, tx * (1 - ty)], [(y0 + 1) * gx + x0, (1 - tx) * ty], [(y0 + 1) * gx + x0 + 1, tx * ty]];
+}
+const gridAt = (g: number[], gx: number, gy: number, u: number, v: number) => { let s = 0; for (const [k, w] of gridW(gx, gy, u, v)) s += g[k] * w; return s; };
+
+/**
+ * Fit one displacement field: each curve (points along it, (along, across) in [0,1]) must come out at one
+ * `across` value of its own once the field is taken off; the field as smooth as can be between them.
+ * Returns the field and how well it explains the curves (rms, in the same units), or null.
+ */
+type SlopeObs = { u1: number; u2: number; v: number; d: number; wt: number };
+function fitField(curves: [number, number][][], gx: number, gy: number, alongIsU: boolean, slopes: SlopeObs[] = []): { g: number[]; rms: number; rms0: number } | null {
+  const N = gx * gy, L = curves.length, n = N + L;
+  if (L < 3 && slopes.length < 20) return null;
+  const A = Array.from({ length: n }, () => new Float64Array(n)); const b = new Float64Array(n);
+  let m = 0;
+  const add = (idx: number[], ws: number[], y: number, wt: number) => {
+    for (let i = 0; i < idx.length; i++) { b[idx[i]] += wt * ws[i] * y; for (let j = 0; j < idx.length; j++) A[idx[i]][idx[j]] += wt * ws[i] * ws[j]; }
+  };
+  // Data: across_i − field(u_i, v_i) − t_c = 0 for every point of curve c.
+  curves.forEach((pts, c) => { for (const [al, ac] of pts) { const [u, v] = alongIsU ? [al, ac] : [ac, al]; const gw = gridW(gx, gy, u, v); add([...gw.map((q) => q[0]), N + c], [...gw.map((q) => q[1]), 1], ac, 1); m++; } });
+  // Slopes: the field rises between two points as the print does there (field(u2, v) − field(u1, v) = d).
+  for (const o of slopes) { const a = gridW(gx, gy, o.u1, o.v), b2 = gridW(gx, gy, o.u2, o.v); add([...b2.map((q) => q[0]), ...a.map((q) => q[0])], [...b2.map((q) => q[1]), ...a.map((q) => -q[1])], o.d, o.wt); }
+  // Smoothness: second differences across the grid, both ways, and the mixed one; a little pull to zero.
+  const lam = Math.max(1, m + slopes.length * 0.5) * (Number((globalThis as { KR_LAM?: number }).KR_LAM) || 0.02);
+  for (let y = 0; y < gy; y++) for (let x = 0; x < gx; x++) {
+    const k = y * gx + x;
+    // (Along the lines a page may bend sharply — a book curls fast at its spine; down the page it changes slowly.)
+    if (x > 0 && x < gx - 1) add([k - 1, k, k + 1], [1, -2, 1], 0, lam * (Number((globalThis as { KR_LX?: number }).KR_LX) || 1));
+    if (y > 0 && y < gy - 1) add([k - gx, k, k + gx], [1, -2, 1], 0, lam);
+    if (x < gx - 1 && y < gy - 1) add([k, k + 1, k + gx, k + gx + 1], [1, -1, -1, 1], 0, lam * 0.5);
+    add([k], [1], 0, lam * 1e-3);
+    // (A little resistance to any change at all: where there is no print — the margins, past the last line — the
+    // map stays as it is at the print's edge instead of swinging on.)
+    if (y < gy - 1) add([k, k + gx], [1, -1], 0, lam * (Number((globalThis as { KR_L1?: number }).KR_L1) || 0.08));
+  }
+  // Solve (symmetric, positive definite): Cholesky.
+  for (let i = 0; i < n; i++) A[i][i] += 1e-9;
+  for (let j = 0; j < n; j++) {
+    let d = A[j][j]; for (let k = 0; k < j; k++) d -= A[j][k] * A[j][k]; if (!(d > 0)) return null; d = Math.sqrt(d); A[j][j] = d;
+    for (let i = j + 1; i < n; i++) { let s2 = A[i][j]; for (let k = 0; k < j; k++) s2 -= A[i][k] * A[j][k]; A[i][j] = s2 / d; }
+  }
+  const z = new Float64Array(n); for (let i = 0; i < n; i++) { let s2 = b[i]; for (let k = 0; k < i; k++) s2 -= A[i][k] * z[k]; z[i] = s2 / A[i][i]; }
+  const x = new Float64Array(n); for (let i = n - 1; i >= 0; i--) { let s2 = z[i]; for (let k = i + 1; k < n; k++) s2 -= A[k][i] * x[k]; x[i] = s2 / A[i][i]; }
+  const g = Array.from(x.slice(0, N));
+  let e = 0, e0 = 0;
+  curves.forEach((pts, c) => { const mean = pts.reduce((s2, p) => s2 + p[1], 0) / pts.length; for (const [al, ac] of pts) { const [u, v] = alongIsU ? [al, ac] : [ac, al]; e += (ac - gridAt(g, gx, gy, u, v) - x[N + c]) ** 2; e0 += (ac - mean) ** 2; } });
+  return { g, rms: Math.sqrt(e / m), rms0: Math.sqrt(e0 / m) };
+}
+
+/** Solve the normal equations A x = b (symmetric, positive definite) in place: Cholesky. Null when singular. */
+function cholSolve(A: Float64Array[], b: Float64Array): Float64Array | null {
+  const n = b.length;
+  for (let i = 0; i < n; i++) A[i][i] += 1e-9;
+  for (let j = 0; j < n; j++) {
+    let d = A[j][j]; for (let k = 0; k < j; k++) d -= A[j][k] * A[j][k]; if (!(d > 0)) return null; d = Math.sqrt(d); A[j][j] = d;
+    for (let i = j + 1; i < n; i++) { let s2 = A[i][j]; for (let k = 0; k < j; k++) s2 -= A[i][k] * A[j][k]; A[i][j] = s2 / d; }
+  }
+  const z = new Float64Array(n); for (let i = 0; i < n; i++) { let s2 = b[i]; for (let k = 0; k < i; k++) s2 -= A[i][k] * z[k]; z[i] = s2 / A[i][i]; }
+  const x = new Float64Array(n); for (let i = n - 1; i >= 0; i--) { let s2 = z[i]; for (let k = i + 1; k < n; k++) s2 -= A[k][i] * x[k]; x[i] = s2 / A[i][i]; }
+  return x;
+}
+
+/**
+ * The page's vertical displacement as a book page bends: curled about an axis along the spine (down the page), so
+ * the displacement is a function of the position across the page, scaled with the height on the page (the camera
+ * sees the near and far ends of a curl from different angles): dy(u, v) = A(u) + B(u)·(v − ½) + C(u)·(v − ½)²,
+ * each of A, B, C a fine curve across the page (so a sharp curl at the spine is followed), plus a coarse, very smooth
+ * free-form remainder for pages that wave. Fitted to the lines of print (each must come out level) and to the
+ * print's slope where lines could not be followed.
+ */
+function fitCurl(curves: [number, number][][], slopes: SlopeObs[]): { at: (u: number, v: number) => number; scale: (u: number) => number; rms: number; rms0: number } | null {
+  const G = globalThis as { KR_K?: number; KR_LA?: number; KR_LR?: number };
+  const K = Number(G.KR_K) || 41, RX = 6, RY = 8;
+  const L = curves.length, nA = 3 * K, nR = RX * RY, n = nA + nR + L;
+  if (L < 3) return null;
+  const A = Array.from({ length: n }, () => new Float64Array(n)); const b = new Float64Array(n);
+  const add = (idx: number[], ws: number[], y: number, wt: number) => {
+    for (let i = 0; i < idx.length; i++) { b[idx[i]] += wt * ws[i] * y; const Ai = A[idx[i]]; for (let j = 0; j < idx.length; j++) Ai[idx[j]] += wt * ws[i] * ws[j]; }
+  };
+  // The field at (u, v) as weights on the unknowns.
+  const basis = (u: number, v: number): [number[], number[]] => {
+    const f = clamp(u, 0, 1) * (K - 1), k0 = Math.min(K - 2, Math.floor(f)), t = f - k0; const dv = v - 0.5;
+    const idx = [k0, k0 + 1, K + k0, K + k0 + 1, 2 * K + k0, 2 * K + k0 + 1], ws = [1 - t, t, (1 - t) * dv, t * dv, (1 - t) * dv * dv, t * dv * dv];
+    for (const [r, wr] of gridW(RX, RY, u, v)) { idx.push(nA + r); ws.push(wr); }
+    return [idx, ws];
+  };
+  let m = 0;
+  curves.forEach((pts, c) => { for (const [u, v] of pts) { const [idx, ws] = basis(u, v); idx.push(nA + nR + c); ws.push(1); add(idx, ws, v, 1); m++; } });
+  for (const o of slopes) { const [i2, w2] = basis(o.u2, o.v), [i1, w1] = basis(o.u1, o.v); add([...i2, ...i1], [...w2, ...w1.map((q) => -q)], o.d, o.wt); }
+  // Smooth: the curves across the page bend gently (the curl itself may be sharp, its change is not), the scale
+  // and bow terms more so; the remainder very smooth; all pulled a little towards nothing where nothing says.
+  const lamA = Math.max(1, m) * (Number(G.KR_LA) || 0.004), lamR = Math.max(1, m) * (Number(G.KR_LR) || 0.2);
+  for (let part = 0; part < 3; part++) for (let k = 0; k < K; k++) {
+    const i = part * K + k; const mul = part === 0 ? 1 : part === 1 ? 3 : 10;
+    if (k > 0 && k < K - 1) add([i - 1, i, i + 1], [1, -2, 1], 0, lamA * mul);
+    add([i], [1], 0, lamA * 1e-3 * mul);
+  }
+  for (let y = 0; y < RY; y++) for (let x = 0; x < RX; x++) {
+    const k = nA + y * RX + x;
+    if (x > 0 && x < RX - 1) add([k - 1, k, k + 1], [1, -2, 1], 0, lamR);
+    if (y > 0 && y < RY - 1) add([k - RX, k, k + RX], [1, -2, 1], 0, lamR);
+    add([k], [1], 0, lamR * 0.05);
+  }
+  const x = cholSolve(A, b); if (!x) return null;
+  const at = (u: number, v: number) => { const [idx, ws] = basis(u, v); let s2 = 0; for (let i = 0; i < idx.length; i++) s2 += x[idx[i]] * ws[i]; return s2; };
+  let e = 0, e0 = 0;
+  curves.forEach((pts, c) => { const mean = pts.reduce((s2, p) => s2 + p[1], 0) / pts.length; for (const [u, v] of pts) { e += (v - at(u, v) - x[nA + nR + c]) ** 2; e0 += (v - mean) ** 2; } });
+  // How much the page is magnified across its height at each place across it (B: the curl's nearness to the camera).
+  const scale = (u: number) => { const f = clamp(u, 0, 1) * (K - 1), k0 = Math.min(K - 2, Math.floor(f)), t = f - k0; return x[K + k0] * (1 - t) + x[K + k0 + 1] * t; };
+  return { at, scale, rms: Math.sqrt(e / m), rms0: Math.sqrt(e0 / m) };
+}
+
+/**
+ * The direction the print runs at points across the page, from the ink's texture (the structure tensor: lines of
+ * print make the ink change fastest across them); used where lines are too steep or faint to follow one by one, as
+ * at a book's spine. Returned as slope observations for the field, with how clear each is.
+ */
+function printSlopes(ink: Uint8Array, w: number, h: number, P: number): SlopeObs[] {
+  const n = w * h;
+  const box = (v: Float32Array, r: number) => {
+    const t = new Float32Array(n), o = new Float32Array(n);
+    for (let y = 0; y < h; y++) { let s2 = 0; const b = y * w; for (let x = -r; x < w; x++) { if (x + r < w) s2 += v[b + x + r]; if (x - r - 1 >= 0) s2 -= v[b + x - r - 1]; if (x >= 0) t[b + x] = s2 / (2 * r + 1); } }
+    for (let x = 0; x < w; x++) { let s2 = 0; for (let y = -r; y < h; y++) { if (y + r < h) s2 += t[(y + r) * w + x]; if (y - r - 1 >= 0) s2 -= t[(y - r - 1) * w + x]; if (y >= 0) o[y * w + x] = s2 / (2 * r + 1); } }
+    return o;
+  };
+  let I = new Float32Array(n); for (let i = 0; i < n; i++) I[i] = ink[i];
+  const r1 = Math.max(1, Math.round(P / 6)); I = box(box(I, r1), r1);
+  const xx = new Float32Array(n), xy = new Float32Array(n), yy = new Float32Array(n);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; const gx = (I[i + 1] - I[i - 1]) / 2, gy = (I[i + w] - I[i - w]) / 2; xx[i] = gx * gx; xy[i] = gx * gy; yy[i] = gy * gy; }
+  const r2 = Math.max(2, Math.round(P * (Number((globalThis as { KR_R2?: number }).KR_R2) || 0.35)));
+  const Jxx = box(box(xx, r2), r2), Jxy = box(box(xy, r2), r2), Jyy = box(box(yy, r2), r2);
+  const D = box(box(I, r2), r2);
+  const out: SlopeObs[] = []; const stp = Math.max(3, Math.round(P / 2));
+  let eMax = 0; for (let i = 0; i < n; i += 5) eMax = Math.max(eMax, Jxx[i] + Jyy[i]);
+  for (let y = stp; y < h - stp; y += stp) for (let x = stp; x < w - stp; x += stp) {
+    const i = y * w + x; const e = Jxx[i] + Jyy[i]; if (e < eMax * 0.05 || D[i] < 0.04 || D[i] > 0.5) continue;
+    const coh = Math.hypot(Jxx[i] - Jyy[i], 2 * Jxy[i]) / e; if (coh < 0.35) continue;
+    // The gradient's main direction φ; the print runs across it: slope −cot φ.
+    const phi = 0.5 * Math.atan2(2 * Jxy[i], Jxx[i] - Jyy[i]); const sn = Math.sin(phi); if (Math.abs(sn) < 0.6) continue;
+    const slope = -Math.cos(phi) / sn;
+    const du = stp / w;
+    out.push({ u1: (x + 0.5) / w - du, u2: (x + 0.5) / w + du, v: (y + 0.5) / h, d: (slope * 2 * stp) / h, wt: coh * (Number((globalThis as { KR_SW?: number }).KR_SW) || 0.6) });
+  }
+  return out;
+}
+
+/**
+ * The lines of print as curves, followed strip by strip down the page: in each narrow upright strip the ink's
+ * profile, smoothed to the size of a line, peaks once per line (dots, harakat and the letters' shapes all fall in
+ * the same hump); the peaks of neighbouring strips are joined into lines. No shape is assumed, so a line that runs
+ * level and then curls down at the spine is followed as it is.
+ */
+let lastSpacing = 0; let lastSlopes: SlopeObs[] = [];
+function linePieces(ink: Uint8Array, w: number, h: number): { pts: [number, number][]; thick: number }[] {
+  // The spacing of lines: the repeat (autocorrelation) of the row profile, in several narrow upright strips (lines
+  // that slant or bend stay sharp in a narrow strip), the middle value of their answers.
+  const spacingIn = (x0: number, x1: number) => {
+    const rows = new Float64Array(h);
+    for (let y = 0; y < h; y++) { let c = 0; for (let x = x0; x < x1; x++) c += ink[y * w + x]; rows[y] = c; }
+    let mean = 0; for (let y = 0; y < h; y++) mean += rows[y]; mean /= h;
+    if (mean < 0.3) return 0;
+    const maxLag = Math.floor(h / 5); const ac = new Float64Array(maxLag + 1);
+    for (let lag = 1; lag <= maxLag; lag++) { let sum = 0; for (let y = 0; y + lag < h; y++) sum += (rows[y] - mean) * (rows[y + lag] - mean); ac[lag] = sum / (h - lag); }
+    // Past the first dip (neighbouring rows alike), the strongest repeat is the line spacing (its multiples are weaker).
+    let dip = 2; while (dip < maxLag && ac[dip + 1] < ac[dip]) dip++;
+    let P0 = 0, best = 0; for (let lag = dip; lag <= maxLag; lag++) if (ac[lag] > best) { best = ac[lag]; P0 = lag; }
+    // (The first clear repeat, not a multiple of it that happens to be a little stronger.)
+    for (let lag = dip + 1; lag < P0; lag++) if (ac[lag] >= best * 0.6 && ac[lag] >= ac[lag - 1] && ac[lag] >= ac[lag + 1]) { P0 = lag; break; }
+    return best > 0 && P0 >= 4 ? P0 : 0;
+  };
+  const ests: number[] = []; const sw0 = Math.max(16, Math.round(w / 10));
+  for (let x0 = Math.round(w * 0.05); x0 + sw0 <= w * 0.95; x0 += sw0) { const e = spacingIn(x0, x0 + sw0); if (e) ests.push(e); }
+  ests.sort((a2, b2) => a2 - b2);
+  let P = ests.length ? ests[ests.length >> 1] : 0;
+  if (!P) return [];
+  if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('lines: spacing', P);
+  lastSpacing = P;
+  // The print's local direction (from its texture), so each strip's ink is gathered along the lines' own slope —
+  // a slanted line then still makes one sharp hump.
+  const sl = printSlopes(ink, w, h, P); lastSlopes = sl;
+  const cs = Math.max(3, Math.round(P / 2)); const cw = Math.ceil(w / cs), ch = Math.ceil(h / cs);
+  const sg = new Float32Array(cw * ch).fill(NaN);
+  for (const o of sl) { const cx = Math.min(cw - 1, Math.floor(((o.u1 + o.u2) / 2) * w / cs)), cy = Math.min(ch - 1, Math.floor(o.v * h / cs)); sg[cy * cw + cx] = (o.d * h) / ((o.u2 - o.u1) * w); }
+  // (Gaps filled from around: a few rounds of averaging the known neighbours.)
+  for (let round = 0; round < 12; round++) { let left = 0; const nx = sg.slice(); for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const i = y * cw + x; if (!Number.isNaN(sg[i])) continue; let s2 = 0, c = 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= cw || yy >= ch) continue; const v = sg[yy * cw + xx]; if (!Number.isNaN(v)) { s2 += v; c++; } } if (c) nx[i] = s2 / c; else left++; } sg.set(nx); if (!left) break; }
+  const slopeAt = (x: number, y: number) => { const v = sg[Math.min(ch - 1, Math.floor(y / cs)) * cw + Math.min(cw - 1, Math.floor(x / cs))]; return Number.isNaN(v) ? 0 : v; };
+  // (Strips about a line tall and half overlapping: wide enough to gather a line's ink, narrow enough to follow it.)
+  const sw = Math.max(8, Math.round(P * 1.2)), step = Math.max(4, Math.round(sw / 2)), sigma = Math.max(1.5, P / 5);
+  const ker: number[] = []; const R = Math.ceil(sigma * 2.5); for (let k = -R; k <= R; k++) ker.push(Math.exp(-(k * k) / (2 * sigma * sigma)));
+  type Peak = { x: number; y: number; v: number; chain: number };
+  const strips: Peak[][] = [];
+  for (let x0 = 0; x0 + sw <= w; x0 += step) {
+    const xc = x0 + sw / 2;
+    const pr = new Float64Array(h);
+    for (let y = 0; y < h; y++) { const sl0 = slopeAt(xc, y); for (let x = x0; x < x0 + sw; x++) { if (!ink[y * w + x]) continue; const yy = Math.round(y - sl0 * (x - xc)); if (yy >= 0 && yy < h) pr[yy]++; } }
+    const sm = new Float64Array(h); for (let y = 0; y < h; y++) { let s2 = 0, ws = 0; for (let k = -R; k <= R; k++) { const yy = y + k; if (yy < 0 || yy >= h) continue; s2 += pr[yy] * ker[k + R]; ws += ker[k + R]; } sm[y] = s2 / ws; }
+    // (Less what the strip has everywhere — a shadow, the book's edge running down it: only the lines' humps count.)
+    { const sorted = Array.from(sm).sort((a, b) => a - b); const base = sorted[Math.floor(h * 0.2)]; for (let y = 0; y < h; y++) sm[y] = Math.max(0, sm[y] - base); }
+    // Humps a line tall (a wide dark area — the book's edge, a picture — is none), then those clearly above the
+    // strip's usual hump (stray marks between lines are not lines).
+    const humps: Peak[] = [];
+    for (let y = 1; y < h - 1; y++) {
+      if (sm[y] <= 0.3 || sm[y] < sm[y - 1] || sm[y] < sm[y + 1]) continue;
+      let a = y; while (a > 0 && sm[a] > sm[y] * 0.5) a--; let b2 = y; while (b2 < h - 1 && sm[b2] > sm[y] * 0.5) b2++;
+      if (b2 - a > P * 1.2) continue;
+      const d = sm[y - 1] - 2 * sm[y] + sm[y + 1]; const off = d < 0 ? clamp((sm[y - 1] - sm[y + 1]) / (2 * d), -0.5, 0.5) : 0;
+      humps.push({ x: xc, y: y + off + 0.5, v: sm[y], chain: -1 });
+    }
+    const vs = humps.map((p0) => p0.v).sort((a, b) => a - b); const typ = vs[Math.floor(vs.length * 0.75)] ?? 0;
+    const peaks: Peak[] = [];
+    for (const pk of humps) {
+      if (pk.v < typ * 0.25) continue;
+      if (peaks.length && pk.y - peaks[peaks.length - 1].y < P * 0.5) { if (pk.v > peaks[peaks.length - 1].v) peaks[peaks.length - 1] = pk; continue; }
+      peaks.push(pk);
+    }
+    const mx = typ;
+    strips.push(peaks);
+    if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG && x0 > w * 0.55) { let rej = 0; for (let y = 1; y < h - 1; y++) if (sm[y] >= mx * 0.2 && sm[y] >= sm[y - 1] && sm[y] >= sm[y + 1]) rej++; console.log('strip', x0, 'mx', mx.toFixed(1), 'humps', rej, 'peaks', peaks.length); }
+  }
+  (globalThis as { KR_PEAKS?: unknown[] }).KR_PEAKS = strips.flat().map((q) => [q.x / w, q.y / h]);
+  // Join: each peak to the nearest of the last few strips' chain ends, within a third of a line.
+  const chains: Peak[][] = [];
+  const ends: { s: number; p: Peak }[] = [];
+  strips.forEach((peaks, s) => {
+    for (const pk of peaks) {
+      let bestE = -1, bd = P * 0.33;
+      for (let e = 0; e < ends.length; e++) {
+        const en = ends[e]; if (s - en.s > 4) continue;
+        // Where the chain heads: on along its own slope (a line curling at the spine climbs fast).
+        const c = chains[en.p.chain]; const q = c.length >= 2 ? c[Math.max(0, c.length - 3)] : null;
+        const slope = q && en.p.x > q.x ? clamp((en.p.y - q.y) / (en.p.x - q.x), -1, 1) : 0;
+        const d = Math.abs(en.p.y + slope * (pk.x - en.p.x) - pk.y); if (d < bd) { bd = d; bestE = e; }
+      }
+      if (bestE >= 0) { const c = ends[bestE].p.chain; pk.chain = c; chains[c].push(pk); ends[bestE] = { s, p: pk }; }
+      else { pk.chain = chains.length; chains.push([pk]); ends.push({ s, p: pk }); }
+    }
+  });
+  return chains.filter((c) => c.length >= 4).map((c) => ({ pts: c.map((p) => [p.x / w, p.y / h] as [number, number]), thick: P }));
+}
+
+/** The displacement fields of a page from its lines (and upright rules), at source positions; null when they run
+ *  straight. */
+type Fields = { dy: (u: number, v: number) => number; dx: (u: number, v: number) => number; scale?: (u: number) => number };
+function fieldsOf(ink: Uint8Array, rule: Uint8Array, w: number, h: number): Fields | null {
+  const pieces = linePieces(ink, w, h);
+  (globalThis as { KR_GRID_DUMP?: (b: Uint8Array, w: number, h: number, p: unknown) => void }).KR_GRID_DUMP?.(ink, w, h, pieces);
+  // (Lines enough to say how the page lies: a few words of handwriting, a drawing do not.)
+  if (pieces.length < 8 || pieces.reduce((a, p) => a + p.pts.length, 0) < 60) return null;
+  // (Each piece thinned to at most ~40 points: long lines do not outweigh the rest.)
+  const curves = pieces.map((p) => { const k = Math.max(1, Math.floor(p.pts.length / 40)); return p.pts.filter((_, i) => i % k === 0); });
+  const gx = Number((globalThis as { KR_GX?: number }).KR_GX) || 14, gy = Math.round(gx * 1.3);
+  // (The print's slope counts only among the lines followed — not in a drawing, a picture or the margins.)
+  const near = new Uint8Array(Math.ceil(w / 8) * Math.ceil(h / 8)); const nw = Math.ceil(w / 8), nh = Math.ceil(h / 8);
+  const rad = Math.max(1, Math.round(lastSpacing / 8));
+  for (const c of curves) for (const [u, v] of c) { const cx = Math.floor(u * w / 8), cy = Math.floor(v * h / 8); for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad * 2; dx <= rad * 2; dx++) { const x = cx + dx, y = cy + dy; if (x >= 0 && y >= 0 && x < nw && y < nh) near[y * nw + x] = 1; } }
+  const slopes = lastSlopes.filter((o) => near[Math.min(nh - 1, Math.floor(o.v * h / 8)) * nw + Math.min(nw - 1, Math.floor(((o.u1 + o.u2) / 2) * w / 8))]);
+  if (!(globalThis as { KR_SLOPES?: unknown }).KR_SLOPES) (globalThis as { KR_SLOPES?: unknown }).KR_SLOPES = slopes;
+  if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) { const hist = new Array(10).fill(0), sl = new Array(10).fill(0); for (const o of slopes) { const b = Math.min(9, Math.floor(o.u1 * 10)); hist[b]++; sl[b] += o.d / (o.u2 - o.u1) * h / w; } console.log('slopes by u:', hist.join(' '), '| mean slope', sl.map((v, i) => (hist[i] ? v / hist[i] : 0).toFixed(2)).join(' ')); const ph = new Array(10).fill(0); for (const c of curves) for (const [u] of c) ph[Math.min(9, Math.floor(u * 10))]++; console.log('line pts by u:', ph.join(' ')); }
+  // The book-curl model first; the free-form grid when it is asked for (tests).
+  const useGrid = (globalThis as { KR_MODEL?: string }).KR_MODEL === 'grid';
+  type Fit = { at: (u: number, v: number) => number; scale?: (u: number) => number; rms: number; rms0: number };
+  const fit = (cs: [number, number][][]): Fit | null => {
+    if (!useGrid) return fitCurl(cs, slopes);
+    const f = fitField(cs, gx, gy, true, slopes); if (!f) return null;
+    return { at: (u, v) => gridAt(f.g, gx, gy, u, v), rms: f.rms, rms0: f.rms0 };
+  };
+  let fy = fit(curves);
+  if (!fy) return null;
+  // Pieces the field does not explain (a heading set at a slant, a picture's edge) are left out once.
+  {
+    const errs = curves.map((pts) => { let e = 0; for (const [u, v] of pts) e += v - fy!.at(u, v); const t = e / pts.length; let r = 0; for (const [u, v] of pts) r += (v - fy!.at(u, v) - t) ** 2; return Math.sqrt(r / pts.length); });
+    const med = [...errs].sort((a, b) => a - b)[errs.length >> 1];
+    const keep = curves.filter((_, c) => errs[c] <= Math.max(med * 3, 1.5 / h));
+    if (keep.length >= 6 && keep.length < curves.length) fy = fit(keep) ?? fy;
+  }
+  if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('field: pieces', pieces.length, 'rms', (fy.rms * h).toFixed(2), 'px, flat', (fy.rms0 * h).toFixed(2), 'px');
+  // Only when the lines really are not level and the field explains them.
+  let lo = Infinity, hi = -Infinity; for (let j = 0; j <= 10; j++) for (let i = 0; i <= 20; i++) { const d = fy.at(i / 20, j / 10); if (d < lo) lo = d; if (d > hi) hi = d; }
+  if (fy.rms0 * h < 0.9 || fy.rms > fy.rms0 * 0.6 || (hi - lo) * h < 2) return null;
+  // Sideways: upright rules, as curves down the page.
+  let dx = new Array(gx * gy).fill(0);
+  {
+    const n = w * h; const lab = new Int32Array(n).fill(-1); const st: number[] = []; const rcurves: [number, number][][] = [];
+    for (let s0 = 0; s0 < n; s0++) {
+      if (!rule[s0] || lab[s0] >= 0) continue;
+      const px: number[] = []; st.push(s0); lab[s0] = s0;
+      while (st.length) { const i = st.pop()!; px.push(i); const x = i % w, y = (i / w) | 0; for (let dy = -1; dy <= 1; dy++) for (let dxx = -1; dxx <= 1; dxx++) { const yy = y + dy, xx = x + dxx; if (yy < 0 || xx < 0 || yy >= h || xx >= w) continue; const j = yy * w + xx; if (rule[j] && lab[j] < 0) { lab[j] = s0; st.push(j); } } }
+      const sum = new Float64Array(h), cnt = new Float64Array(h); for (const i of px) { const y = (i / w) | 0; sum[y] += i % w; cnt[y]++; }
+      const pts: [number, number][] = []; for (let y = 0; y < h; y += 4) if (cnt[y]) pts.push([(y + 0.5) / h, (sum[y] / cnt[y] + 0.5) / w]);
+      if (pts.length >= 10) rcurves.push(pts);
+    }
+    if (rcurves.length >= 2) { const fx = fitField(rcurves, gx, gy, false); if (fx && fx.rms < fx.rms0) dx = fx.g; }
+  }
+  const fyAt = fy.at;
+  return { dy: fyAt, dx: (u, v) => gridAt(dx, gx, gy, u, v), scale: fy.scale };
+}
+
+/** The fields turned into a map from the flattened page back to the photo (each node found by fixed-point steps). */
+function inverseMap(f: Fields, gx = 61, gy = 41): Grid {
+  const mx: number[] = [], my: number[] = [];
+  for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) {
+    const u0 = i / (gx - 1), v0 = j / (gy - 1); let u = u0, v = v0;
+    for (let k = 0; k < 6; k++) { const nu = u0 + f.dx(u, v), nv = v0 + f.dy(u, v); u = nu; v = nv; }
+    mx.push(u - u0); my.push(v - v0);
+  }
+  return { gx, gy, mx, my };
+}
+
+/** Where the map sends (u, v): its source point. */
+function mapAt(g: Grid, u: number, v: number): [number, number] {
+  const fx = clamp(u, 0, 1) * (g.gx - 1), fy = clamp(v, 0, 1) * (g.gy - 1);
+  const x0 = Math.min(g.gx - 2, Math.floor(fx)), y0 = Math.min(g.gy - 2, Math.floor(fy)); const tx = fx - x0, ty = fy - y0;
+  const k = y0 * g.gx + x0, a = (1 - tx) * (1 - ty), b = tx * (1 - ty), c = (1 - tx) * ty, d = tx * ty;
+  return [u + g.mx[k] * a + g.mx[k + 1] * b + g.mx[k + g.gx] * c + g.mx[k + g.gx + 1] * d, v + g.my[k] * a + g.my[k + 1] * b + g.my[k + g.gx] * c + g.my[k + g.gx + 1] * d];
+}
+
+/**
+ * The part of a page that curls away from the camera (at a book's spine) is seen foreshortened: its print squeezed
+ * across. From how much the page is magnified across its height at each place (the curl's `scale`: nearer the
+ * camera, larger), its height above the flat is known (z/f = magnification − 1, for a camera at about the page's
+ * longer side away), and the page's true width along its surface (the arc's length) is laid out flat again.
+ */
+function unfold(g: Grid, scale: (u: number) => number, w: number, h: number): Grid {
+  const N = 200; const f = Math.max(w, h);
+  // Magnification relative to the page's flattest part (the median: most of a page lies flat).
+  const sc: number[] = []; for (let i = 0; i <= N; i++) sc.push(scale(i / N));
+  const ref = [...sc].sort((a, b) => a - b)[N >> 1];
+  // (A page that is merely tilted — what the corners found did not quite straighten — makes the magnification change
+  // evenly across; only what bends is the curl: an even change is taken out.)
+  let su = 0, suu = 0, sm = 0, sum = 0; for (let i = 0; i <= N; i++) { const u = i / N; su += u; suu += u * u; sm += sc[i]; sum += u * sc[i]; }
+  const slope = ((N + 1) * sum - su * sm) / Math.max(1e-9, (N + 1) * suu - su * su), icpt = (sm - slope * su) / (N + 1);
+  const curl = sc.map((v, i) => v - (icpt + slope * (i / N)));
+  const ref2 = [...curl].sort((a, b) => a - b)[N >> 1];
+  const xs: number[] = [], zs: number[] = [];
+  for (let i = 0; i <= N; i++) {
+    const m = clamp((1 + curl[i] - ref2), 0.75, 1.25); const z = (1 - 1 / m) * f; // z > 0: nearer the camera
+    const xi = (i / N - 0.5) * w; xs.push(xi / m); zs.push(z); // (seen at x, it lies at x / m from the axis)
+  }
+  void ref;
+  const S = [0]; for (let i = 1; i <= N; i++) S.push(S[i - 1] + Math.hypot(xs[i] - xs[i - 1], zs[i] - zs[i - 1]));
+  const total = S[N]; const flatW = xs[N] - xs[0];
+  if (!(total > 0) || total / Math.max(1, flatW) < 1.003) return g;
+  // (A curl the lines barely show is no reason to widen the page: only a clear one, up to a seventh.)
+  if (total / Math.max(1, flatW) > 1.15) return g;
+  // For a place along the unfolded page (fraction of its length), the place in the picture.
+  const uOf = (t: number) => { const target = t * total; let lo = 0, hi = N; while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (S[mid] < target) lo = mid; else hi = mid; } const fr = (target - S[lo]) / Math.max(1e-9, S[hi] - S[lo]); return (lo + fr) / N; };
+  const mx: number[] = [], my: number[] = [];
+  for (let j = 0; j < g.gy; j++) for (let i = 0; i < g.gx; i++) { const u = i / (g.gx - 1), v = j / (g.gy - 1); const [su, sv] = mapAt(g, uOf(u), v); mx.push(su - u); my.push(sv - v); }
+  return { gx: g.gx, gy: g.gy, mx, my, wScale: (g.wScale ?? 1) * total / Math.max(1, w) };
+}
+
+/**
+ * The map that makes the page's lines level, found in passes: each pass follows the lines of the page as the
+ * passes before have flattened it, so lines that curl too steeply to follow at first (at the spine) are followed
+ * once the rest of the page is straight; the maps are chained.
+ */
+function findGrid(ink: Uint8Array, rule: Uint8Array, w: number, h: number): Grid | null {
+  let total: Grid | null = null;
+  let cur = ink, curRule = rule; let scale: ((u: number) => number) | undefined;
+  for (let pass = 0; pass < 3; pass++) {
+    const f = fieldsOf(cur, curRule, w, h);
+    if (!f) break;
+    if (!pass) scale = f.scale;
+    const g = inverseMap(f);
+    if (!total) total = g;
+    else {
+      // total ∘ g: a point goes through g first (it was found on the already flattened page), then the earlier map.
+      const t: Grid = total; const mx: number[] = [], my: number[] = [];
+      for (let j = 0; j < g.gy; j++) for (let i = 0; i < g.gx; i++) { const u = i / (g.gx - 1), v = j / (g.gy - 1); const [u1, v1] = mapAt(g, u, v); const [u2, v2] = mapAt(t, u1, v1); mx.push(u2 - u); my.push(v2 - v); }
+      total = { gx: g.gx, gy: g.gy, mx, my };
+    }
+    // The ink as flattened so far, for the next pass.
+    const nx = new Uint8Array(w * h), nr = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const [su, sv] = mapAt(total, (x + 0.5) / w, (y + 0.5) / h); const sx = Math.floor(su * w), sy = Math.floor(sv * h);
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) continue; nx[y * w + x] = ink[sy * w + sx]; nr[y * w + x] = rule[sy * w + sx];
+    }
+    cur = nx; curRule = nr;
+  }
+  if (total && scale && !(globalThis as { KR_NOARC?: boolean }).KR_NOARC) total = unfold(total, scale, w, h);
+  // A map that folds the page over, tears it or moves it far is a mistake (a drawing taken for lines): none then.
+  if (total) {
+    const g = total; let bad = ''; let maxMy = 0, minDu = 9, maxDu = 0, maxSh = 0, minDv = 9, maxDv = 0;
+    const ij0 = Math.floor(g.gx * 0.1), ij1 = Math.ceil(g.gx * 0.9) - 1, jj0 = Math.floor(g.gy * 0.1), jj1 = Math.ceil(g.gy * 0.9) - 1;
+    for (let j = jj0; j <= jj1; j++) for (let i = ij0; i <= ij1; i++) {
+      const k = j * g.gx + i; maxMy = Math.max(maxMy, Math.abs(g.my[k]));
+      if (i < g.gx - 1) { const du = 1 / (g.gx - 1); const dd = 1 + (g.mx[k + 1] - g.mx[k]) / du; minDu = Math.min(minDu, dd); maxDu = Math.max(maxDu, dd); maxSh = Math.max(maxSh, Math.abs((g.my[k + 1] - g.my[k]) / du)); }
+      if (j < g.gy - 1) { const dv = 1 / (g.gy - 1); const dd = 1 + (g.my[k + g.gx] - g.my[k]) / dv; minDv = Math.min(minDv, dd); maxDv = Math.max(maxDv, dd); }
+    }
+    // (In the page's inner part: the outermost rows and columns may stretch more, where nothing is printed.)
+    if (maxMy > 0.2) bad = 'moves'; else if (minDu < 0.4 || maxDu > 2.2) bad = 'stretches across'; else if (maxSh > 0.9) bad = 'shears'; else if (minDv < 0.45 || maxDv > 2) bad = 'stretches down';
+    if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('field: check', bad || 'ok', 'my', maxMy.toFixed(3), 'du', minDu.toFixed(2), maxDu.toFixed(2), 'shear', maxSh.toFixed(2), 'dv', minDv.toFixed(2), maxDv.toFixed(2));
+    if (bad) return null;
+  }
+  return total;
+}
+
+/** A page with its print made level and its rules straight, the same size. */
+function gridUnwarp(img: Img, gr: Grid): Img {
+  const { width: W, height: H, data: d } = img;
+  // (The page unfolded may be wider than it was seen.)
+  const OW = Math.max(1, Math.round(W * clamp(gr.wScale ?? 1, 1, 1.15)));
+  const out = new Uint8ClampedArray(OW * H * 4);
+  for (let y = 0; y < H; y++) {
+    const v0 = (y + 0.5) / H;
+    for (let x = 0; x < OW; x++) {
+      const [u, v] = mapAt(gr, (x + 0.5) / OW, v0);
+      const sx = u * W - 0.5, sy = v * H - 0.5; const o = (y * OW + x) * 4;
+      if (sx < -1 || sy < -1 || sx > W || sy > H) { out[o] = out[o + 1] = out[o + 2] = 255; out[o + 3] = 255; continue; }
+      const x0 = clamp(Math.floor(sx), 0, W - 1), y0 = clamp(Math.floor(sy), 0, H - 1), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
+      const fx = clamp(sx - x0, 0, 1), fy = clamp(sy - y0, 0, 1);
+      const A = (y0 * W + x0) * 4, B = (y0 * W + x1) * 4, C = (y1 * W + x0) * 4, E = (y1 * W + x1) * 4;
+      for (let ch = 0; ch < 3; ch++) out[o + ch] = (d[A + ch] * (1 - fx) + d[B + ch] * fx) * (1 - fy) + (d[C + ch] * (1 - fx) + d[E + ch] * fx) * fy;
+      out[o + 3] = 255;
+    }
+  }
+  return { data: out, width: OW, height: H };
+}
+
 /** Find how a (flattened) page bends, from its lines of print and its ruled lines; null when there is too
  *  little print to tell, or it does not bend. */
 export function findCurve(img: Img): Curve | null {
@@ -830,6 +1436,28 @@ export function findCurve(img: Img): Curve | null {
   }
   // (Rows of one line that the letters' shapes leave apart are closed up: a small gap down each column.)
   for (let x = 0; x < w; x++) { let last = -1; for (let y = 0; y < h; y++) { const i = y * w + x; if (band[i]) { if (last >= 0 && y - last <= 3) for (let k = last + 1; k < y; k++) band[k * w + x] = 1; last = y; } } }
+  // First the lines as they are, a smooth field making them level (any bend); else the formulas below.
+  {
+    // (A more generous ink mask than below: thin, faint print still counts for following lines.)
+    const ink2 = new Uint8Array(n); for (let i = 0; i < n; i++) ink2[i] = !ruleW[i] && L[i] < light[i] * 0.78 ? 1 : 0;
+    const grid = findGrid(ink2, rule, w, h);
+    if (grid) {
+      // The page flattened, its own edges are straight now: where they show (the next page beyond the spine, the
+      // table), the page is cut to them.
+      const crop = { l: 0, r: 0, t: 0, b: 0 };
+      try {
+        const flat = gridUnwarp(img, grid); const fp = detectPage(flat);
+        if (fp.how !== 'frame') {
+          const q = fp.quad, W2 = flat.width, H2 = flat.height;
+          const l = Math.max(q[0].x, q[3].x) / W2, r = 1 - Math.min(q[1].x, q[2].x) / W2, t = Math.max(q[0].y, q[1].y) / H2, b = 1 - Math.min(q[2].y, q[3].y) / H2;
+          // (Only a clear page, most of the picture, its sides nearly upright and level.)
+          const square = Math.abs(q[0].x - q[3].x) / W2 < 0.04 && Math.abs(q[1].x - q[2].x) / W2 < 0.04 && Math.abs(q[0].y - q[1].y) / H2 < 0.04 && Math.abs(q[3].y - q[2].y) / H2 < 0.04;
+          if (square && (1 - l - r) * (1 - t - b) > 0.45 && l >= 0 && r >= 0 && t >= 0 && b >= 0) Object.assign(crop, { l, r, t, b });
+        }
+      } catch { /* the whole flattened picture */ }
+      return { grid, b: [0, 0, 0], c: [0, 0, 0], aLo: 0, aHi: 0, f: [0, 0], g: 0, eLo: 0, eHi: 0, crop };
+    }
+  }
   // Bands thinner than print (stray specks) or joined lines are sorted out by their shape below.
   const lab = new Int32Array(n).fill(-1); const stack: number[] = [];
   type Line = { xs: number[]; ys: number[]; wt: number; a: number };
@@ -853,6 +1481,7 @@ export function findCurve(img: Img): Curve | null {
     { const r = lsq(xs.map((x) => [1, x, x * x]), ys, xs.map(() => 1)); if (!r) continue; let e = 0; xs.forEach((x, j) => { e += (ys[j] - r[0] - r[1] * x - r[2] * x * x) ** 2; }); if (Math.sqrt(e / xs.length) * h > Math.max(1.5, (thick / Math.max(1, tc)) * 0.4)) continue; }
     lines.push({ xs, ys, wt: bw / w, a: 0, thick: thick / Math.max(1, tc) } as Line & { thick: number });
   }
+  if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('curve: lines', lines.length, 'gapMax', gapMax, 'w', w, 'h', h);
   if (lines.length < 5) return null;
   // Lines much thicker than most are two lines joined (or a picture): left out.
   const th = (lines as (Line & { thick: number })[]).map((l) => l.thick).sort((a, b) => a - b); const medT = th[th.length >> 1];
@@ -887,6 +1516,7 @@ export function findCurve(img: Img): Curve | null {
       l.xs.forEach((x, j) => { e0 += (l.ys[j] - mean) ** 2; e1 += (l.ys[j] - l.a - bOf(l.a) * x - cOf(l.a) * x * x) ** 2; m++; });
       for (const x of [-0.5, 0.5]) disp = Math.max(disp, Math.abs(bOf(l.a) * x + cOf(l.a) * x * x));
     }
+    if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('curve: used', use.length, 'disp', disp.toFixed(4), 'rms model', Math.sqrt(e1 / m).toFixed(5), 'rms flat', Math.sqrt(e0 / m).toFixed(5));
     if (disp < 0.004 || Math.sqrt(e1 / m) > Math.sqrt(e0 / m) * 0.6) { B = [0, 0, 0]; C = [0, 0, 0]; }
   }
   // Upright rules.
@@ -909,6 +1539,7 @@ export function findCurve(img: Img): Curve | null {
     else F = [rules.reduce((s, r) => s + r.f * r.wt, 0) / tw, 0];
   }
   const bent = B.some((v) => v) || rules.some((r) => Math.abs(r.f) > 0.008 || Math.abs(r.g) > 0.008);
+  if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('curve: bent', bent, 'rules', rules.length);
   if (!bent) return null;
   // The sheet in space, when it explains the print well: perspective and curl together, the page's width
   // even across (the far side of a page is seen smaller).
@@ -969,6 +1600,7 @@ export function findCurve(img: Img): Curve | null {
           const mg = 0.025 * Math.max(ex1 - ex0, ey1 - ey0); fit.sheet = { ...fit.sheet, x0: ex0 - mg, x1: ex1 + mg, y0: ey0 - mg, y1: ey1 + mg };
         }
       }
+      if ((globalThis as { KR_CURVE_DEBUG?: boolean }).KR_CURVE_DEBUG) console.log('curve: sheet fit', !!fit, fit ? (fit.rms * Math.max(w, h)).toFixed(2) : '');
       if (fit && fit.rms < 7 / Math.max(w, h)) sheet = fit.sheet;
     } catch { /* the simpler model stands */ }
   }
@@ -985,6 +1617,14 @@ function curveSource(cv: Curve, u: number, v: number, bv: number, cvv: number, f
 
 /** The page with its lines straightened (and its margins cut as the curve says). */
 export function unwarp(img: Img, cv: Curve): Img {
+  if (cv.grid) {
+    const out = gridUnwarp(img, cv.grid); const { l, r, t, b } = cv.crop;
+    if (!(l || r || t || b)) return out;
+    const x0 = Math.round(l * out.width), x1 = Math.round((1 - r) * out.width), y0 = Math.round(t * out.height), y1 = Math.round((1 - b) * out.height);
+    const cw = Math.max(1, x1 - x0), ch = Math.max(1, y1 - y0); const res = new Uint8ClampedArray(cw * ch * 4);
+    for (let y = 0; y < ch; y++) res.set(out.data.subarray(((y + y0) * out.width + x0) * 4, ((y + y0) * out.width + x0 + cw) * 4), y * cw * 4);
+    return { data: res, width: cw, height: ch };
+  }
   if (cv.sheet) return sheetUnwarp(img, cv.sheet);
   const { width: W, height: H, data: d } = img;
   const { l, r, t, b } = cv.crop;

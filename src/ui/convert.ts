@@ -5,7 +5,7 @@ import { t, formatBytes } from '../i18n';
 import { TARGETS, convertBook, convertible, type Target } from '../convert';
 import { db, type Book } from '../db';
 import { importFiles } from '../library';
-import { shareFile, downloadBlob } from './share';
+import { shareFile, downloadBlob, fileNameField } from './share';
 import { runJob } from '../jobs';
 
 /** Choose which book to convert (library tools button), then open the sheet for it. */
@@ -25,6 +25,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
   const status = h('p', { class: 'src' }, t('convertBody', { title: book.title, format: book.format.toUpperCase() }));
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const result = h('div', { class: 'convert-result', hidden: true });
+  const nf = fileNameField(); nf.el.hidden = true;
   const grid = h('div', { class: 'convert-targets' });
   let busy = false;
   const run = async (target: Target, password?: string) => {
@@ -37,12 +38,16 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       // A job: it goes on (with a notification) when this sheet is closed or the app is left.
       const out = await runJob(`${book.title} → ${label}`, (report) => convertBook(book, target, (msg, pct) => { if (sh.el.isConnected) progress(msg, pct); if (pct !== undefined) report(pct); }, password), () => sh.el.isConnected);
       if (!out) return;
-      const { blob, name } = out;
-      status.textContent = t('convertDone', { name, size: formatBytes(blob.size) });
+      const { blob } = out;
+      // (Its name can be chosen: the field shows the one made for it.)
+      nf.suggest(out.name); nf.el.hidden = false;
+      const name = () => nf.name(out.name);
+      const tell = () => { status.textContent = t('convertDone', { name: `\u2068${name()}\u2069`, size: `\u2068${formatBytes(blob.size)}\u2069` }); };
+      tell(); nf.input.oninput = tell;
       result.replaceChildren(
-        h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name, book.title) }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
-        h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, name) }, icon('download'), t('saveFile')),
-        h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name, { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name(), book.title) }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, name()) }, icon('download'), t('saveFile')),
+        h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
       );
       result.hidden = false;
       if (target === 'kindle') result.append(h('p', { class: 'hint', style: { marginTop: '8px' } }, t('kindleHint')));
@@ -63,7 +68,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       h('b', null, tg.label),
       h('small', null, `.${tg.ext}`)));
   }
-  sh.body.append(status, track, grid, result);
+  sh.body.append(status, track, grid, nf.el, result);
   if (book.format === 'pdf') sh.body.append(h('p', { class: 'hint', style: { marginTop: '10px' } }, t('pdfConvertHint')));
   if (!('kurokawaDesktop' in window) && targets.some((x) => x.id === 'pdf')) sh.body.append(h('p', { class: 'hint' }, t('pdfImageHint')));
 }

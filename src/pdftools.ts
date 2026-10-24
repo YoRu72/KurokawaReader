@@ -52,31 +52,37 @@ export function jpegOrientation(b: Uint8Array): number {
 
 /** Pictures, in the order given, one per page. `fit`: each page the picture's own size; otherwise the paper
  *  size, turned to the picture's orientation, with the picture centred within the margin (points). */
-export async function imagesToPdf(files: Blob[], opts: { size: PageSize; margin: number }, progress?: (done: number) => void): Promise<Uint8Array> {
+/** Pictures as a PDF, a page each. `overlays`: for each picture, a PDF page of its text alone (invisible, from
+ *  OCR) laid exactly over it, so the PDF can be searched and its text selected. */
+export async function imagesToPdf(files: Blob[], opts: { size: PageSize; margin: number; overlays?: (Uint8Array | null | undefined)[] }, progress?: (done: number) => void): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   let n = 0;
-  for (const f of files) {
+  for (const [fi, f] of files.entries()) {
     const p = await pictureBytes(f);
     const img = p.kind === 'jpg' ? await doc.embedJpg(p.bytes) : await doc.embedPng(p.bytes);
     // A picture is placed at 72 dpi-equivalent of its pixels at most 96 dpi: screenshots keep their size.
     const iw = p.w * 0.75, ih = p.h * 0.75;
     let page: PDFPage;
+    let at: { x: number; y: number; width: number; height: number };
     if (opts.size === 'page') {
       // (A photographed page: a page's size whatever the camera's resolution.)
       const land = p.w > p.h; const k = (land ? 841.89 : 595.28) / p.w;
       page = doc.addPage([p.w * k + 2 * opts.margin, p.h * k + 2 * opts.margin]);
-      page.drawImage(img, { x: opts.margin, y: opts.margin, width: p.w * k, height: p.h * k });
+      at = { x: opts.margin, y: opts.margin, width: p.w * k, height: p.h * k };
     } else if (opts.size === 'fit') {
       page = doc.addPage([iw + 2 * opts.margin, ih + 2 * opts.margin]);
-      page.drawImage(img, { x: opts.margin, y: opts.margin, width: iw, height: ih });
+      at = { x: opts.margin, y: opts.margin, width: iw, height: ih };
     } else {
       const [a, b] = SIZES[opts.size]; const land = p.w > p.h;
       const W = land ? b : a, H = land ? a : b;
       page = doc.addPage([W, H]);
       const k = Math.min((W - 2 * opts.margin) / iw, (H - 2 * opts.margin) / ih);
       const w = iw * k, h = ih * k;
-      page.drawImage(img, { x: (W - w) / 2, y: (H - h) / 2, width: w, height: h });
+      at = { x: (W - w) / 2, y: (H - h) / 2, width: w, height: h };
     }
+    page.drawImage(img, at);
+    const ov = opts.overlays?.[fi];
+    if (ov) { try { const [text] = await doc.embedPdf(ov); page.drawPage(text, at); } catch { /* the picture alone */ } }
     progress?.(++n);
   }
   return doc.save();
