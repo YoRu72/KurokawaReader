@@ -83,7 +83,11 @@ export interface VisualSettings {
   openLastOnLaunch: boolean;  // reopen the last book when the app starts
   coverSize: 'small' | 'medium' | 'large';
   // AI (chapter translation, AI voices)
-  aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+  aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
+  localEngine: 'device' | 'server';
+  localModel: string;
+  localServer: string;
+  localServerModel: string;
   aiKey: string;
   aiModel: string;
   aiBaseUrl: string;
@@ -180,6 +184,10 @@ export const DEFAULTS: VisualSettings = {
   openLastOnLaunch: false,
   coverSize: 'medium',
   aiProvider: 'gemini',
+  localEngine: 'device',
+  localModel: '',
+  localServer: '',
+  localServerModel: '',
   aiKey: '',
   aiModel: '',
   aiBaseUrl: '',

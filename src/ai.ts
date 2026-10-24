@@ -3,7 +3,7 @@
 // Keys live in the visual settings (localStorage) and are excluded from backups.
 import { getSettings } from './settings';
 
-export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
 
 export const DEFAULT_PROMPT_AR = 'ترجم النصّ ترجمةً سليمةً صحيحةً غير حرفية إلى العربية الفصيحة، ملتزمًا قواعد النحو والصرف كما قرّرها ابن مالك في ألفيته: صحّة الإعراب، وسلامة التراكيب، وحسن اختيار اللفظ، مع الحفاظ على المعنى والنبرة. لا تشرح ولا تعلّق؛ أخرج الترجمة وحدها.';
 export const DEFAULT_PROMPT_EN = 'Translate the text into natural, accurate, idiomatic {lang}. Preserve meaning and tone; do not explain or comment — output only the translation.';
@@ -30,11 +30,22 @@ export const PROVIDERS: { id: AiProvider; label: string; model: string; baseUrl:
   { id: 'anthropic', label: 'Anthropic Claude', model: 'claude-haiku-4-5', baseUrl: 'https://api.anthropic.com/v1', keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openrouter', label: 'OpenRouter', model: 'google/gemini-3.5-flash', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys' },
   { id: 'custom', label: 'OpenAI-compatible (custom URL)', model: 'gpt-4o-mini', baseUrl: 'http://localhost:11434/v1', keyUrl: '' },
+  { id: 'local', label: 'Local model (on this device or your computer)', model: '', baseUrl: '', keyUrl: '' },
 ];
 
 export function providerInfo(id: AiProvider = getSettings().aiProvider) { return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0]; }
-export function aiReady(): boolean { const s = getSettings(); return !!s.aiKey || s.aiProvider === 'custom'; }
-export function effectiveModel(): string { return getSettings().aiModel.trim() || providerInfo().model; }
+export function aiReady(): boolean { const s = getSettings(); if (s.aiProvider === 'local') return localReadyCached(); return !!s.aiKey || s.aiProvider === 'custom'; }
+export function effectiveModel(): string {
+  const s = getSettings();
+  if (s.aiProvider === 'local') return s.localEngine === 'server' ? s.localServerModel || 'local' : s.localModel || 'local';
+  return s.aiModel.trim() || providerInfo().model;
+}
+// (Whether a local model is set up, read without loading the local engine's module.)
+function localReadyCached(): boolean {
+  const s = getSettings();
+  if (s.localEngine === 'server') return !!s.localServer;
+  try { return !!s.localModel && (JSON.parse(localStorage.getItem('kr.localModels') ?? '[]') as { id: string }[]).some((m) => m.id === s.localModel); } catch { return false; }
+}
 export function effectiveBaseUrl(): string { return (getSettings().aiBaseUrl.trim() || providerInfo().baseUrl).replace(/\/+$/, ''); }
 export function effectivePrompt(): string {
   const s = getSettings();
@@ -64,6 +75,10 @@ const FORMAT = 'You will receive a JSON array of strings (paragraphs). Return ON
 
 async function chat(system: string, user: string, json = true): Promise<string> {
   const s = getSettings();
+  if (s.aiProvider === 'local') {
+    const L = await import('./localai');
+    return s.localEngine === 'server' ? L.serverChat(system, user, json) : L.deviceChat(system, user);
+  }
   const key = s.aiKey.trim();
   const model = effectiveModel();
   const base = effectiveBaseUrl();
@@ -119,6 +134,13 @@ function parseArray(raw: string, n: number): string[] {
 /** Translate several paragraphs in one request. */
 export async function translateBatch(texts: string[]): Promise<string[]> {
   if (!texts.length) return [];
+  // A small model on the device does better with one paragraph at a time and plain text back.
+  const s = getSettings();
+  if (s.aiProvider === 'local' && s.localEngine === 'device') {
+    const out: string[] = [];
+    for (const t of texts) out.push(t.trim() ? (await chat(effectivePrompt(), t, false)).replace(/^["“«]|["”»]$/g, '').trim() : t);
+    return out;
+  }
   const system = `${effectivePrompt()}\n\n${FORMAT}`;
   const raw = await chat(system, JSON.stringify(texts));
   return parseArray(raw, texts.length);
@@ -164,7 +186,7 @@ export const AI_VOICES: Record<string, string[]> = {
   gemini: ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat'],
   openai: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'],
 };
-export function aiTtsSupported(): boolean { const p = getSettings().aiProvider; return p === 'gemini' || p === 'openai' || p === 'custom' || p === 'openrouter'; }
+export function aiTtsSupported(): boolean { const s = getSettings(); const p = s.aiProvider; return p === 'gemini' || p === 'openai' || p === 'custom' || p === 'openrouter' || (p === 'local' && s.localEngine === 'server'); }
 
 function pcmToWav(pcm: Uint8Array, sampleRate = 24000, channels = 1, bits = 16): Blob {
   const header = new ArrayBuffer(44); const v = new DataView(header);
@@ -178,6 +200,7 @@ function pcmToWav(pcm: Uint8Array, sampleRate = 24000, channels = 1, bits = 16):
 /** Synthesise speech for one passage; returns an audio blob. */
 export async function aiSpeak(text: string): Promise<Blob> {
   const s = getSettings();
+  if (s.aiProvider === 'local') return (await import('./localai')).serverSpeak(text, s.aiVoice.trim());
   const key = s.aiKey.trim();
   const base = effectiveBaseUrl();
   const voice = s.aiVoice.trim();

@@ -40,8 +40,11 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
   prefill();
   const modelLine = h('p', { class: 'src' }, `${t('aiModel')}: ${effectiveModel()}`);
 
-  const prov = pickButton<AiProvider>(t('aiProvider'), PROVIDERS.map((p) => [p.id, p.label]), s.aiProvider, (v) => {
-    updateSettings({ aiProvider: v });
+  const local = localPanel();
+  const cloudFields: HTMLElement[] = [];
+  const syncLocal = () => { const on = getSettings().aiProvider === 'local'; local.hidden = !on; for (const f of cloudFields) f.hidden = on; };
+  const prov = pickButton<AiProvider>(t('aiProvider'), PROVIDERS.map((p) => [p.id, p.id === 'local' ? t('localModelProvider') : p.label]), s.aiProvider, (v) => {
+    updateSettings({ aiProvider: v }); syncLocal();
     model.placeholder = providerInfo().model; url.placeholder = providerInfo().baseUrl;
     keyLink.hidden = !providerInfo().keyUrl; keyLink.href = providerInfo().keyUrl;
     modelLine.textContent = `${t('aiModel')}: ${effectiveModel()}`;
@@ -68,9 +71,11 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     h('p', { class: 'src' }, t('aiTranslateBody')),
     field(t('aiTask'), task),
     field(t('aiProvider'), prov),
-    field('API key', h('div', { style: { display: 'flex', gap: '8px' } }, key, keyLink)),
-    field(t('aiModel'), h('div', { style: { display: 'flex', gap: '8px' } }, model, modelsBtn), t('aiModelHint')),
-    field(t('aiBaseUrl'), url),
+    local,
+    ...(cloudFields.push(
+      field('API key', h('div', { style: { display: 'flex', gap: '8px' } }, key, keyLink)),
+      field(t('aiModel'), h('div', { style: { display: 'flex', gap: '8px' } }, model, modelsBtn), t('aiModelHint')),
+      field(t('aiBaseUrl'), url)), cloudFields),
     langField,
     promptField,
     modelLine,
@@ -81,7 +86,87 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     voiceField,
     ttsField,
   );
+  syncLocal();
   sh.actions.append(
     h('button', { class: 'btn small', type: 'button', onclick: () => { prompt.value = defaultPrompt(getSettings().aiTarget); updateSettings({ aiPrompt: '' }); promptDir(); prompt.focus(); } }, icon('type'), t('insertDefaultPrompt')),
     h('button', { class: 'btn small primary', type: 'button', onclick: () => { sh.close(); onDone?.(); } }, icon('check'), t('done')));
+}
+
+/* ---------- local models ---------- */
+
+/** Local AI: a model run inside the app on this device, or a server on this computer or the network. */
+function localPanel(): HTMLElement {
+  const wrap = h('div', { class: 'local-ai' });
+  const draw = async () => {
+    const L = await import('../localai');
+    const s = getSettings();
+    const seg = h('div', { class: 'segmented' }, ...([['device', t('localOnDevice')], ['server', t('localServer')]] as ['device' | 'server', string][]).map(([v, l]) => h('button', { type: 'button', 'aria-pressed': String(s.localEngine === v), onclick: () => { updateSettings({ localEngine: v }); void draw(); } }, l)));
+    const body = h('div', { class: 'local-body' });
+    if (s.localEngine === 'device') {
+      if (!L.deviceSupported()) body.append(h('p', { class: 'hint' }, t('localNoDevice')));
+      const list = h('div', { class: 'local-models' });
+      const inst = L.installed();
+      const row = (id: string, name: string, meta: string, isIn: boolean, imported = false) => {
+        const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
+        const status = h('small', { class: 'local-status' });
+        const use = h('input', { type: 'radio', name: 'kr-local-model', checked: getSettings().localModel === id, disabled: !isIn, onchange: () => updateSettings({ localModel: id }) }) as HTMLInputElement;
+        const act = isIn
+          ? h('button', { class: 'icon-btn small', type: 'button', title: t('delete'), 'aria-label': t('delete'), onclick: async () => { await L.removeModel(id); void draw(); } }, icon('trash'))
+          : h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => {
+            const b = e.currentTarget as HTMLButtonElement; b.disabled = true; bar.hidden = false;
+            const fill = bar.firstElementChild as HTMLElement;
+            try {
+              await L.downloadModel(id, (d, tot) => { fill.style.width = tot ? `${(d / tot) * 100}%` : '30%'; status.textContent = tot ? `${Math.round(d / 1048576)} / ${Math.round(tot / 1048576)} MB` : t('working'); });
+              if (!getSettings().localModel) updateSettings({ localModel: id });
+              toast(t('localModelReady', { name }));
+              void draw();
+            } catch (err) { status.textContent = String((err as Error).message ?? err); b.disabled = false; bar.hidden = true; }
+          } }, icon('download'), t('download'));
+        return h('label', { class: 'local-row' + (isIn ? ' in' : '') }, use, h('span', { class: 'local-name' }, h('b', { dir: 'ltr' }, name), h('small', null, meta), status, bar), imported ? h('span', { class: 'chip small' }, t('localImported')) : null, act);
+      };
+      // (Sizes kept left to right inside a right-to-left line: "398 MB", not "MB 398".)
+      const iso = (x: string) => `\u2066${x}\u2069`;
+      for (const m of L.CATALOG) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id)));
+      for (const m of inst.filter((x) => x.imported)) list.append(row(m.id, m.name, iso(`${m.sizeMB} MB`), true, true));
+      const importBtn = h('button', { class: 'btn small', type: 'button', onclick: () => {
+        const input = h('input', { type: 'file', accept: '.gguf', style: { display: 'none' } }) as HTMLInputElement;
+        input.addEventListener('change', async () => {
+          const f = input.files?.[0]; input.remove(); if (!f) return;
+          importBtn.disabled = true; const label = importBtn.textContent;
+          try { const id = await L.importModel(f, (d, tot) => { importBtn.textContent = `${Math.round((d / tot) * 100)}%`; }); updateSettings({ localModel: id }); toast(t('localModelReady', { name: f.name })); void draw(); }
+          catch (err) { toast(String((err as Error).message) === 'gguf' ? t('localNeedsGguf') : String((err as Error).message ?? err), 'error', 5000); }
+          finally { importBtn.disabled = false; importBtn.textContent = label; }
+        });
+        document.body.append(input); input.click();
+      } }, icon('folder'), t('localImport'));
+      body.append(list, h('div', { class: 'tool-bar' }, importBtn), h('p', { class: 'hint' }, t('localDeviceHint')));
+    } else {
+      const url = h('input', { type: 'text', dir: 'ltr', spellcheck: 'false', value: s.localServer, placeholder: 'http://localhost:11434/v1', onchange: () => updateSettings({ localServer: url.value.trim() }) }) as HTMLInputElement;
+      const found = h('div', { class: 'local-models' });
+      const findBtn = h('button', { class: 'btn small tonal', type: 'button', onclick: async () => {
+        findBtn.disabled = true; found.replaceChildren(h('p', { class: 'src' }, t('localSearching')));
+        try {
+          const host = /^https?:\/\/([^/:]+)/.exec(url.value.trim())?.[1] ?? 'localhost';
+          const list = [...await L.findServers('localhost'), ...(host !== 'localhost' && host !== '127.0.0.1' ? await L.findServers(host) : [])];
+          found.replaceChildren(...(list.length ? list.map((sv) => h('button', { type: 'button', class: 'local-row', onclick: () => { url.value = sv.url; updateSettings({ localServer: sv.url, localServerModel: sv.models[0] ?? '' }); void draw(); } }, icon('target'), h('span', { class: 'local-name' }, h('b', null, sv.name), h('small', { dir: 'ltr' }, `${sv.url} · ${t('localModelsN', { n: sv.models.length })}`)))) : [h('p', { class: 'hint' }, t('localNoServers'))]));
+        } finally { findBtn.disabled = false; }
+      } }, icon('search'), t('localFind'));
+      const modelBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
+        try { const names = await L.serverModels(getSettings().localServer || url.value.trim()); if (!names.length) { toast(t('noModelsFound'), 'error'); return; }
+          pickSheet(t('browseModels'), names.map((n): [string, string] => [n, n]), getSettings().localServerModel, (v) => { updateSettings({ localServerModel: v }); void draw(); }, t('close')); }
+        catch (err) { toast(String((err as Error).message ?? err), 'error', 5000); }
+      } }, icon('search'), getSettings().localServerModel || t('browseModels'));
+      body.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiBaseUrl')), h('div', { style: { display: 'flex', gap: '8px' } }, url, findBtn)), found,
+        h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiModel')), modelBtn), h('p', { class: 'hint' }, t('localServerHint')));
+    }
+    const tryBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
+      tryBtn.disabled = true; const label = tryBtn.textContent; tryBtn.textContent = t('working');
+      try { const { translateOne } = await import('../ai'); const out = await translateOne('The book is on the table.'); toast(out || '—', 'info', 6000); }
+      catch (err) { toast(String((err as Error).message ?? err), 'error', 6000); }
+      finally { tryBtn.disabled = false; tryBtn.textContent = label; }
+    } }, icon('play'), t('localTry'));
+    wrap.replaceChildren(h('div', { class: 'field' }, h('span', { class: 'label' }, t('localWhere')), seg), body, h('div', { class: 'tool-bar' }, tryBtn));
+  };
+  void draw();
+  return wrap;
 }
