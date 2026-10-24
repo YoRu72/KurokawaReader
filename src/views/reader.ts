@@ -1530,8 +1530,6 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       case 'c': openContents('toc'); break;
       case 'v': openPdfOptions(); break;
       case 'g': pageInput.focus(); break;
-      case '+': case '=': viewer.zoom(0.15); break;
-      case '-': viewer.zoom(-0.15); break;
       case 'f': void toggleFullscreen(root); break;
       default: return;
     }
