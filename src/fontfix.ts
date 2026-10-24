@@ -87,7 +87,8 @@ export type GlyphUse = [code: number, text: string, x: number, y: number, em: nu
 const MIRROR: Record<number, number> = { 0x28: 0x29, 0x29: 0x28, 0x5b: 0x5d, 0x5d: 0x5b, 0x7b: 0x7d, 0x7d: 0x7b, 0xab: 0xbb, 0xbb: 0xab, 0x3c: 0x3e, 0x3e: 0x3c };
 /** Canonical combining class of the Arabic marks (the order a shaper sorts them into). */
 const ccc = (c: number) => ({ 0x64b: 27, 0x64c: 28, 0x64d: 29, 0x64e: 30, 0x64f: 31, 0x650: 32, 0x651: 33, 0x652: 34, 0x653: 230, 0x654: 230, 0x655: 220, 0x670: 35 } as Record<number, number>)[c] ?? 0;
-const norm = (s: string) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s);
+// (Word signs — ﷺ, ﷻ, ﷽, ﷲ — stay themselves: the text carries them as one character, and their glyph is that sign.)
+const norm = (s: string) => (/^[\ufdf0-\ufdfd]$/.test(s) ? s : /[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s);
 const isMark = (c: number) => joining(c) === 'T';
 
 /** One use of a glyph (by its number across all sources: source × 65536 + glyph) along a line. */

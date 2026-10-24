@@ -1123,9 +1123,10 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const lig = HONORIFICS[p.text.replace(/[\s\u0640]+/g, ' ').trim()];
     if (!lig || p.r - p.l > p.h * 2.5) continue;
     const glyphs = p.codes?.filter((u) => u[5] > 0) ?? [];
-    if (p.codes && glyphs.length !== 1) continue;
+    // (Only where its own glyph will carry the character: a font rebuilt from the page's glyph uses.)
+    if (glyphs.length !== 1) continue;
     p.text = lig;
-    if (glyphs.length === 1) { for (const u of p.codes!) u[1] = ''; glyphs[0][1] = lig; }
+    for (const u of p.codes!) u[1] = ''; glyphs[0][1] = lig;
   }
   // Text in a decorative font that carries no letters (private-use codes, or Latin codes standing for
   // Arabic word art on an Arabic page) is not text a reader could use: it stays in the picture.
