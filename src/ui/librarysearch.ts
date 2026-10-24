@@ -3,11 +3,11 @@
 // or as the in-book search does — harakat and letter variants aside), and the results grouped by book, each
 // opening the book at its place.
 import { h, icon, openSheet, toast } from './dom';
-import { t, localDigits } from '../i18n';
+import { t, localDigits, getLang, arCount } from '../i18n';
 import { navigate } from '../router';
 import type { Book, Folder } from '../db';
 import { coverUrl } from '../library';
-import { searchable, unitsOf, searchUnits, setJump, type Mode, type Options, type BookResult } from '../booksearch';
+import { searchable, unitsOf, searchUnits, setJump, setReturn, type Mode, type Options, type BookResult, type Return } from '../booksearch';
 
 type Scope = { kind: 'all' } | { kind: 'folder'; id: string } | { kind: 'picked'; ids: Set<string>; leaveOut: boolean };
 const KEY = 'kr.libsearch';
@@ -18,13 +18,28 @@ const save = (s: Saved) => { try { localStorage.setItem(KEY, JSON.stringify(s));
 
 const FORMAT_LABEL: Record<string, string> = { pdf: 'PDF', epub: 'EPUB', docx: 'Word', odt: 'ODT', fb2: 'FB2', txt: 'TXT', md: 'Markdown', html: 'HTML', mobi: 'Kindle', xlsx: 'Excel', csv: 'CSV', pptx: 'PowerPoint' };
 
-export function librarySearchSheet(books: Book[], folders: Folder[], activeFolder?: string | null): void {
+/** "12 results in 3 books" — in Arabic with each noun counted as the grammar has it, the books after «في» genitive:
+ *  «نتيجةٌ واحدة في كتابٍ واحد»، «١٠ نتائج في كتابين»، «١٢ نتيجةً في ٣ كتب». */
+function foundText(found: number, books: number): string {
+  if (getLang() !== 'ar') return t('foundInBooks', { n: localDigits(found), books: localDigits(books) });
+  const res = arCount(found, { one: 'نتيجةٌ واحدة', two: 'نتيجتان', few: 'نتائج', many: 'نتيجةً', hundred: 'نتيجةٍ' });
+  const bk = arCount(books, { one: 'كتابٍ واحد', two: 'كتابين', few: 'كتب', many: 'كتابًا', hundred: 'كتابٍ' });
+  return `${res} في ${bk}`;
+}
+function skippedText(n: number): string {
+  if (getLang() !== 'ar') return t('skippedBooks', { n: localDigits(n) });
+  return `لم يُبحث في ${arCount(n, { one: 'كتابٍ واحد', two: 'كتابين', few: 'كتب', many: 'كتابًا', hundred: 'كتابٍ' })}`;
+}
+
+export function librarySearchSheet(books: Book[], folders: Folder[], activeFolder?: string | null, back?: Return): void {
   const sh = openSheet(t('searchBooks'), t('close'));
   sh.body.style.fontFamily = 'var(--font-ui)';
   sh.el.classList.add('libsearch-sheet');
   const st = load();
   const pool = books.filter(searchable);
-  let scope: Scope = activeFolder ? { kind: 'folder', id: activeFolder } : { kind: 'all' };
+  let scope: Scope = back ? (back.scope.kind === 'picked' ? { kind: 'picked', ids: new Set(back.scope.ids), leaveOut: back.scope.leaveOut } : back.scope) : activeFolder ? { kind: 'folder', id: activeFolder } : { kind: 'all' };
+  // How many hits each book's list shows (kept for coming back from a result).
+  const shownOf = new Map<string, number>(Object.entries(back?.shown ?? {}));
   // Kinds and tags: each left alone, kept to (only these), or left out — a tap goes through the three.
   const formats = new Map<string, 'in' | 'out'>([...st.formats.map((f): [string, 'in'] => [f, 'in']), ...st.noFormats.map((f): [string, 'out'] => [f, 'out'])].filter(([f]) => pool.some((b) => b.format === f)));
   const tags = new Map<string, 'in' | 'out'>([...st.tags.map((x): [string, 'in'] => [x, 'in']), ...st.noTags.map((x): [string, 'out'] => [x, 'out'])]);
@@ -106,7 +121,12 @@ export function librarySearchSheet(books: Book[], folders: Folder[], activeFolde
   const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
   const results = h('div', { class: 'ls-results' });
   sh.body.append(h('div', { class: 'ls-bar' }, input, go, stop), recent, filters, status, bar, results);
-  setTimeout(() => input.focus(), 60);
+  if (back) {
+    // Back from a result: the same search again (the books' text is kept, so it is quick), and the list
+    // scrolled to where it was.
+    input.value = back.q;
+    void run().then(() => { sh.body.scrollTop = back.scroll; });
+  } else setTimeout(() => input.focus(), 60);
 
   function targets(): Book[] {
     let list = pool;
@@ -128,7 +148,7 @@ export function librarySearchSheet(books: Book[], folders: Folder[], activeFolde
     st.recent = [q, ...st.recent.filter((x) => x !== q)].slice(0, 12); save(st); drawRecent();
     const list = targets();
     const opts: Options = { mode: st.mode, wholeWord: st.wholeWord, exact: st.exact };
-    results.replaceChildren(); go.hidden = true; stop.hidden = false; bar.hidden = false;
+    results.replaceChildren(); go.hidden = true; if (!back || q !== back.q) shownOf.clear(); stop.hidden = false; bar.hidden = false;
     const fill = bar.firstElementChild as HTMLElement;
     let found = 0, inBooks = 0; const skipped: string[] = [];
     for (let i = 0; i < list.length && !my.cancelled; i++) {
@@ -145,7 +165,7 @@ export function librarySearchSheet(books: Book[], folders: Folder[], activeFolde
       await new Promise((res) => setTimeout(res, 0));
     }
     fill.style.width = '100%'; go.hidden = false; stop.hidden = true; setTimeout(() => { bar.hidden = true; }, 400);
-    status.textContent = (my.cancelled ? `${t('cancelled')} · ` : '') + (found ? t('foundInBooks', { n: localDigits(found), books: localDigits(inBooks) }) : t('noResults')) + (skipped.length ? ` · ${t('skippedBooks', { n: localDigits(skipped.length) })}` : '');
+    status.textContent = (my.cancelled ? `${t('cancelled')} · ` : '') + (found ? foundText(found, inBooks) : t('noResults')) + (skipped.length ? ` · ${skippedText(skipped.length)}` : '');
     if (skipped.length) status.title = skipped.join('\n');
   }
 
@@ -153,23 +173,27 @@ export function librarySearchSheet(books: Book[], folders: Folder[], activeFolde
   function group(r: BookResult, q: string): HTMLElement {
     const cover = coverUrl(r.book);
     const list = h('ol', { class: 'ls-hits' });
-    const SHOW = 8; let shown = 0;
+    const SHOW = 8; let shown = 0; const want = shownOf.get(r.book.id) ?? SHOW;
     const more = h('button', { type: 'button', class: 'btn small tonal ls-more' });
     const drawMore = () => {
       for (const hit of r.hits.slice(shown, shown + (shown ? 40 : SHOW))) {
         list.append(h('li', null, h('button', { type: 'button', class: 'ls-hit', onclick: () => {
           setJump({ id: r.book.id, q, unit: hit.unit, nth: hit.nth, pdf: r.book.format === 'pdf' });
+          setReturn({ q, scope: scope.kind === 'picked' ? { kind: 'picked', ids: [...scope.ids], leaveOut: scope.leaveOut } : scope, scroll: sh.body.scrollTop, shown: Object.fromEntries(shownOf) });
           sh.close(); navigate(`/read/${r.book.id}`);
         } },
           h('span', { class: 'ls-where' }, r.book.format === 'pdf' ? t('pageN', { n: localDigits(hit.label) }) : h('bdi', null, hit.label)),
           h('span', { class: 'ls-ctx', dir: 'auto' }, hit.before, h('mark', null, hit.match), hit.after))));
       }
       shown = Math.min(r.hits.length, shown + (shown ? 40 : SHOW));
+      shownOf.set(r.book.id, shown);
       more.hidden = shown >= r.hits.length;
-      more.textContent = t('showMoreN', { n: localDigits(r.hits.length - shown) });
+      const left = r.hits.length - shown;
+      more.textContent = getLang() === 'ar' ? `عرض ${arCount(left, { one: 'نتيجةٍ أخرى', two: 'نتيجتين أخريين', few: 'نتائج أخرى', many: 'نتيجةً أخرى', hundred: 'نتيجةٍ أخرى' })}` : t('showMoreN', { n: localDigits(left) });
     };
     more.addEventListener('click', drawMore);
     drawMore();
+    while (shown < Math.min(want, r.hits.length)) drawMore();
     const head = h('summary', { class: 'ls-book' },
       cover ? h('img', { class: 'ls-cover', src: cover, alt: '' }) : h('span', { class: 'ls-cover blank' }, icon('books')),
       h('span', { class: 'ls-title' }, h('b', { dir: 'auto' }, r.book.title), h('small', null, `${FORMAT_LABEL[r.book.format] ?? r.book.format}${r.book.author ? ' · ' : ''}`, r.book.author ? h('bdi', null, r.book.author) : '')),

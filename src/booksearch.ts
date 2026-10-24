@@ -17,7 +17,10 @@ export const SEARCHABLE: Book['format'][] = ['pdf', 'epub', 'docx', 'odt', 'fb2'
 export const searchable = (b: Book) => SEARCHABLE.includes(b.format);
 
 const memo = new Map<string, Unit[]>();
-const keyOf = (b: Book) => `${b.size ?? 0}:${b.fileName ?? ''}`;
+// (The version goes up whenever the way text is read changes, so books are read again rather than searched
+// in text kept from before.)
+const TEXT_VERSION = 3;
+const keyOf = (b: Book) => `v${TEXT_VERSION}:${b.size ?? 0}:${b.fileName ?? ''}`;
 
 /** A book's text units: from the device's store when read before, else read now (and stored). */
 export async function unitsOf(book: Book, onPage?: (n: number, total: number) => void): Promise<Unit[] | 'protected' | 'unreadable'> {
@@ -68,6 +71,7 @@ async function flowUnits(book: Book, file: Blob): Promise<Unit[]> {
   if (!handler) throw new Error('unsupported');
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;left:-99999px;top:0;width:800px;visibility:hidden';
+  host.className = 'kr-content'; // (the reader's own layout, so verses and tables are laid out as they are read)
   document.body.appendChild(host);
   const render = await handler.render(file, { bookId: book.id, bookTitle: book.title, publisherStyles: false, id: (s) => `bs-${s}` });
   try {
@@ -78,6 +82,8 @@ async function flowUnits(book: Book, file: Blob): Promise<Unit[]> {
       el.querySelectorAll('style, script').forEach((x) => x.remove());
       // Blocks on lines of their own, so excerpts do not run paragraphs together.
       el.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, tr, div, br, blockquote, pre').forEach((x) => x.append('\n'));
+      // Pieces laid side by side (a verse's two halves, table cells) are words apart too.
+      el.querySelectorAll('span, td, th, a, em, b, i').forEach((x) => { const d = getComputedStyle(x).display; if (d !== 'inline' && d !== 'contents' && d !== 'none') x.append(' '); });
       const label = render.toc.find((tI) => el.querySelector(`#${CSS.escape(tI.anchor)}`) || el.id === tI.anchor)?.label?.trim() || el.querySelector('h1, h2, h3')?.textContent?.trim() || String(i + 1);
       return { label, text: (el.textContent ?? '').replace(/[ \t ]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim() };
     });
@@ -127,4 +133,12 @@ export type Jump = { id: string; q: string; unit: number; nth: number; pdf: bool
 export function setJump(j: Jump): void { try { sessionStorage.setItem('kr.searchJump', JSON.stringify(j)); } catch { /* private mode */ } }
 export function takeJump(id: string): Jump | null {
   try { const raw = sessionStorage.getItem('kr.searchJump'); if (!raw) return null; const j = JSON.parse(raw) as Jump; if (j.id !== id) return null; sessionStorage.removeItem('kr.searchJump'); return j; } catch { return null; }
+}
+
+/** Where to come back to from a result: the search as it was (query, which books, how far down the list), so
+ *  going back from the book opens it again with its results. */
+export type Return = { q: string; scope: { kind: 'all' } | { kind: 'folder'; id: string } | { kind: 'picked'; ids: string[]; leaveOut: boolean }; scroll: number; shown: Record<string, number> };
+export function setReturn(r: Return): void { try { sessionStorage.setItem('kr.searchReturn', JSON.stringify(r)); } catch { /* private mode */ } }
+export function takeReturn(): Return | null {
+  try { const raw = sessionStorage.getItem('kr.searchReturn'); if (!raw) return null; sessionStorage.removeItem('kr.searchReturn'); return JSON.parse(raw) as Return; } catch { return null; }
 }

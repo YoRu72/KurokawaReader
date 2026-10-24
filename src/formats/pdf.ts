@@ -16,6 +16,11 @@ export function loadPdfjs(): Promise<PdfJs> {
 }
 
 const RES = new URL('./pdfjs/', import.meta.url).href;
+/** A PDF's Author unless it is a placeholder its writer left ("Un-named", "user", "Administrator"…). */
+function realAuthor(a?: string): string | undefined {
+  const s = a?.trim();
+  return s && !/^(un-?named|unknown|anonymous|user|admin(istrator)?|owner|author|none|n\/?a|-+|\?+)$/i.test(s) ? s : undefined;
+}
 
 async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () => void }> {
   const pdfjs = await loadPdfjs();
@@ -59,7 +64,7 @@ export async function pdfMeta(file: Blob, fileName: string): Promise<BookMeta> {
       canvas.toBlob((b) => fin(b), 'image/jpeg', 0.82);
     });
     const title = info?.Title?.trim();
-    return { title: title && title.toLowerCase() !== 'untitled' ? title : titleFromFileName(fileName), author: info?.Author?.trim() || undefined, pageCount: doc.numPages, cover };
+    return { title: title && title.toLowerCase() !== 'untitled' ? title : titleFromFileName(fileName), author: realAuthor(info?.Author), pageCount: doc.numPages, cover };
   } finally {
     close();
   }

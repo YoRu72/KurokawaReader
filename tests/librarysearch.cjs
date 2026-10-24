@@ -21,6 +21,14 @@ const [out, query, ...files] = process.argv.slice(2); fs.mkdirSync(out, { recurs
   // Again (from the stored text): quick.
   const t1 = Date.now(); await p.click('.ls-go.primary'); await p.waitForTimeout(300); await p.waitForFunction(() => !!document.querySelector('.libsearch-sheet .btn.tonal.ls-go[hidden]'), null, { timeout: 600000 }); console.log('second search ms', Date.now() - t1);
   await p.click('.ls-filters > summary'); await p.waitForTimeout(300); await p.screenshot({ path: path.join(out, '3-filters.png') });
-  await p.click('.ls-hit'); await p.waitForTimeout(4000); await p.screenshot({ path: path.join(out, '4-opened.png') });
+  await p.click('.ls-filters > summary'); await p.waitForTimeout(200);
+  // Scrolled down a little, open a hit; going back from the book opens the search again where it was.
+  const hits = await p.$$('.ls-hit'); const pick = hits[Math.min(3, hits.length - 1)];
+  await pick.scrollIntoViewIfNeeded(); const scrolled = await p.$eval('.libsearch-sheet .sheet-body', (e) => e.scrollTop);
+  await pick.click(); await p.waitForTimeout(4000); await p.screenshot({ path: path.join(out, '4-opened.png') });
+  await p.click('.reader-view .topbar .icon-btn[data-icon="back"]');
+  await p.waitForSelector('.libsearch-sheet .ls-hit', { timeout: 60000 }); await p.waitForTimeout(800);
+  console.log('back: query', await p.$eval('.ls-input', (e) => e.value), '| scroll', scrolled, '->', await p.$eval('.libsearch-sheet .sheet-body', (e) => e.scrollTop), '|', await p.textContent('.ls-status'));
+  await p.screenshot({ path: path.join(out, '5-back.png') });
   await b.close(); server.close();
 })().catch((e) => { console.error(e); process.exit(1); });

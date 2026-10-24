@@ -709,6 +709,12 @@ export function libraryView(): HTMLElement {
     if (files.length) { const added = await importFiles(files); await refresh(); if (added.length) navigate(`/read/${added.map((b) => b.id).join(',')}`); }
   });
 
-  void refresh();
+  // Back from a book opened from the search across books: that search opens again, as it was.
+  void refresh().then(async () => {
+    try { if (!sessionStorage.getItem('kr.searchReturn')) return; } catch { return; }
+    const { takeReturn } = await import('../booksearch');
+    const back = takeReturn();
+    if (back && root.isConnected) void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder, back));
+  });
   return root;
 }

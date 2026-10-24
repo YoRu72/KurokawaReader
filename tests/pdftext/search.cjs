@@ -13,7 +13,7 @@ const [pdf, query, shot] = [path.resolve(process.argv[2]), process.argv[3], proc
   await page.setInputFiles('input[type=file]', [pdf]); await page.waitForSelector('.book-card', { timeout: 60000 });
   await page.click('.book-card'); await page.waitForSelector('.pdf-page canvas', { timeout: 60000 });
   await page.keyboard.press('Control+f').catch(() => {}); await page.waitForTimeout(300);
-  if (!(await page.$('input[type=search]'))) { const btns = await page.$$('button[aria-label]'); for (const b of btns) { const l = await b.getAttribute('aria-label'); if (/بحث|Search/.test(l)) { await b.click(); break; } } }
+  if (!(await page.$('input[type=search]'))) { const btns = await page.$$('.reader-view button[aria-label]'); for (const b of btns) { const l = await b.getAttribute('aria-label'); if (/بحث|Search/.test(l)) { await b.click(); break; } } }
   await page.waitForSelector('input[type=search]'); await page.fill('input[type=search]', query);
   await page.waitForFunction(() => /نتيج|لا نتائج|result/i.test(document.querySelector('.panel, .sheet, body')?.textContent ?? '') && document.querySelectorAll('li.hit').length > 0, null, { timeout: 120000 }).catch(() => {});
   await page.waitForTimeout(500);

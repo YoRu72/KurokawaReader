@@ -120,6 +120,18 @@ export function localDigits(n: number | string): string {
   return current === 'ar' ? s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]) : s;
 }
 
+/** A counted noun in Arabic (تمييز العدد), as the case requires: `one` and `two` are the noun alone (واحد
+ *  and the dual, nominative or genitive), `few` the plural for 3–10, `many` the singular for 11–99
+ *  (accusative), `hundred` the singular for 100, 200… (genitive). */
+export function arCount(n: number, f: { one: string; two: string; few: string; many: string; hundred: string }): string {
+  if (n === 1) return f.one;
+  if (n === 2) return f.two;
+  const r = n % 100;
+  if (r === 0 || r === 1 || r === 2) return `${localDigits(n)} ${f.hundred}`;
+  if (r >= 3 && r <= 10) return `${localDigits(n)} ${f.few}`;
+  return `${localDigits(n)} ${f.many}`;
+}
+
 /** "1 file / 2 files" — and the Arabic rules for the counted noun (تمييز العدد):
  *  كتاب · كتابان · ٣–١٠ كتب (جمعٌ مجرور) · ١١–٩٩ كتابًا (مفردٌ منصوب) · ١٠٠ و٢٠٠… كتابٍ (مفردٌ مجرور). */
 export function countBooks(n: number): string {
