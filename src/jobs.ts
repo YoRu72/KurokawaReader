@@ -111,7 +111,8 @@ function drawChip(): void {
   if (!running.length) { chip.replaceChildren(icon('check'), h('span', { dir: 'auto' }, t('jobReady', { name: ready[0].out!.name }))); chip.classList.add('ready'); return; }
   chip.classList.remove('ready');
   const pct = Math.round(running.reduce((a, j) => a + j.pct, 0) / running.length);
-  chip.replaceChildren(h('span', { class: 'job-ring', style: { '--p': `${pct}%` } }), h('span', null, running.length > 1 ? t('jobsRunning', { n: localDigits(running.length) }) : running[0].title), h('b', null, `${localDigits(pct)}%`));
+  const ring = h('span', { class: 'job-ring' }); ring.style.setProperty('--p', `${pct}%`);
+  chip.replaceChildren(ring, h('span', null, running.length > 1 ? t('jobsRunning', { n: localDigits(running.length) }) : running[0].title), h('b', null, `${localDigits(pct)}%`));
 }
 
 /** The jobs of this session: those still running, and the results of those done. */
@@ -124,7 +125,7 @@ export function jobsSheet(): void {
   const draw = () => {
     if (!s.el.isConnected) { off(); return; }
     list.replaceChildren(...(jobs.length ? jobs.map((j) => h('div', { class: 'job-row' },
-      h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? `${localDigits(Math.round(j.pct))}%` : j.state === 'done' ? `${j.out!.name} · ${formatBytes(j.out!.blob.size)}` : t('convertFailed'))),
+      h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? `${localDigits(Math.round(j.pct))}%` : j.state === 'done' ? h('span', null, h('bdi', null, j.out!.name), ' · ', h('bdi', null, formatBytes(j.out!.blob.size))) : t('convertFailed'))),
       j.state === 'running' ? h('div', { class: 'progress-bar' }, h('span', { style: { width: `${j.pct}%` } })) : null,
       j.state === 'done' ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => void import('./ui/share').then((m) => m.shareFile(j.out!.blob, j.out!.name, j.out!.name)) }, icon('external'), t('shareFile')),
@@ -134,6 +135,7 @@ export function jobsSheet(): void {
   };
   const off = onJobs(draw);
   draw();
-  const toggle = h('input', { type: 'checkbox', checked: getSettings().jobNotify, onchange: async () => { updateSettings({ jobNotify: toggle.checked }); if (toggle.checked && !(await notificationsAllowed(true))) toast(t('notifyDenied'), 'info', 5000); } }) as HTMLInputElement;
+  const toggle = h('input', { type: 'checkbox', onchange: async () => { updateSettings({ jobNotify: toggle.checked }); if (toggle.checked && !(await notificationsAllowed(true))) toast(t('notifyDenied'), 'info', 5000); } }) as HTMLInputElement;
+  toggle.checked = getSettings().jobNotify;
   s.body.append(list, h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '14px' } }, h('span', { class: 'switch' }, toggle, h('i')), h('span', null, t('notifyJobs'))), h('p', { class: 'hint' }, t('notifyJobsHint')));
 }

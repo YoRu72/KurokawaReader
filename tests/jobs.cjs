@@ -16,7 +16,7 @@ const [out, pdf] = process.argv.slice(2); fs.mkdirSync(out, { recursive: true })
   const card = await p.$('.book-card'); await card.dispatchEvent('contextmenu'); await p.waitForSelector('.sheet');
   await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /تحويل|Convert/.test(x.textContent)); b?.click(); });
   await p.waitForSelector('.convert-target');
-  await p.click('.convert-target >> nth=0'); await p.waitForTimeout(600);
+  await p.click(process.env.T ? `.convert-target:has-text("${process.env.T}")` : '.convert-target >> nth=0'); await p.waitForTimeout(600);
   await p.keyboard.press('Escape'); await p.waitForTimeout(400);
   await p.waitForSelector('.job-chip', { timeout: 10000 }); await p.waitForTimeout(1200);
   console.log('chip while running:', await p.textContent('.job-chip'));

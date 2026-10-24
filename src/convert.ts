@@ -308,7 +308,7 @@ export async function buildDocx(d: ConvDoc, progress: Progress): Promise<Blob> {
 
 export function buildHtml(d: ConvDoc, inlineImages: Map<string, string>): string {
   const body = d.chapters.map((ch) => { let html = ch.html; for (const [url, data] of inlineImages) html = html.split(`src="${url}"`).join(`src="${data}"`); return `<section${ch.rtl ? ' dir="rtl"' : ''}>${d.chapters.length > 1 && !/<h[1-3][\s>]/i.test(html.slice(0, 600)) ? `<h2>${esc(ch.title)}</h2>` : ''}${html}</section>`; }).join('\n');
-  return `<!doctype html>\n<html${d.lang ? ` lang="${esc(d.lang)}"` : ''}${d.rtl ? ' dir="rtl"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(d.title)}</title><style>body{max-width:760px;margin:2em auto;padding:0 1em;line-height:1.7;font-family:Georgia,'Noto Naskh Arabic',serif;font-size:18px}img{max-width:100%;height:auto}h1,h2,h3{line-height:1.3}[dir=rtl]{text-align:right}</style></head><body><h1>${esc(d.title)}</h1>${d.author ? `<p><i>${esc(d.author)}</i></p>` : ''}${body}</body></html>`;
+  return `<!doctype html>\n<html${d.lang ? ` lang="${esc(d.lang)}"` : ''}${d.rtl ? ' dir="rtl"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(d.title)}</title><style>body{max-width:760px;margin:2em auto;padding:0 1em;line-height:1.7;font-family:Georgia,'Noto Naskh Arabic',serif;font-size:18px}img{max-width:100%;height:auto}h1,h2,h3{line-height:1.3}[dir=rtl]{text-align:right}.verse{display:flex;justify-content:space-between;gap:2em;margin:.2em 0}.verse>span{flex:1 1 0}.verse>.h2{text-align:end}</style></head><body><h1>${esc(d.title)}</h1>${d.author ? `<p><i>${esc(d.author)}</i></p>` : ''}${body}</body></html>`;
 }
 
 export function buildText(d: ConvDoc, markdown: boolean): string {
@@ -340,7 +340,9 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: P
   const paper = PAPER[opts.paper ?? 'a4'];
   const inline = new Map<string, string>();
   for (const [url, blob] of d.images) inline.set(url, await blobToDataUrl(blob));
+  if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage start', d.chapters.length, 'chapters');
   const fontCss = await readerFontCss(d);
+  if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage fonts', fontCss.length);
   const desk = (window as unknown as { kurokawaDesktop?: { printToPdf?(html: string, o?: { pageSize?: string }): Promise<string> } }).kurokawaDesktop;
   const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Lora','Uthman TN1','Noto Naskh Arabic',Georgia,serif}@page{size:${paper.css};margin:16mm}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
   if (desk?.printToPdf) {
@@ -363,12 +365,15 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: P
     fdoc.querySelectorAll('img').forEach((im) => { im.removeAttribute('loading'); (im as HTMLImageElement).loading = 'eager'; });
     await Promise.race([Promise.all(Array.from(fdoc.images).map((im) => im.decode().catch(() => undefined))), new Promise((r) => setTimeout(r, 15000))]);
     await new Promise((r) => setTimeout(r, 300));
+    if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage pictures', fdoc.images.length);
     await (fdoc as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready;
+    if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage laid out', fdoc.documentElement.scrollHeight);
     const total = fdoc.documentElement.scrollHeight;
     // Pages are cut between lines, never through a line, a picture or a table row, and a new section starts a
     // new page; each page keeps a margin above and below.
     const M = 48, CH = H - 2 * M;
     const all = wordBoxes(fdoc);
+    if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage words', all.length);
     const solid: [number, number][] = all.map((w) => [w.y, w.y + w.h]);
     fdoc.querySelectorAll('img, svg, canvas, video, tr, hr, pre, figure, blockquote > p').forEach((el) => { const r = el.getBoundingClientRect(); if (r.height > 0 && r.height < CH * 0.9) solid.push([r.top, r.bottom]); });
     const forced: number[] = [];
@@ -482,18 +487,27 @@ function fillLeaf(l: Leaf): void {
   if (l.style === null) l.el.removeAttribute('style'); else l.el.setAttribute('style', l.style);
 }
 
-/** Every word of a laid-out document with its box (CSS px, in the document). */
+/** Every word of a laid-out document with its box (CSS px, in the document). Each word is wrapped in a span of its
+ *  own first and the spans measured after one layout: measuring words as ranges inside long text nodes made the
+ *  browser shape a whole paragraph again for every word (minutes for an Arabic book). */
 function wordBoxes(doc: Document): WordBox[] {
-  const out: WordBox[] = [];
-  const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-  const range = doc.createRange();
-  for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
-    const s = n.data; const re = /\S+/g;
-    for (let m = re.exec(s); m; m = re.exec(s)) {
-      range.setStart(n, m.index); range.setEnd(n, m.index + m[0].length);
-      const r = range.getClientRects()[0]; if (!r || !r.width || !r.height) continue;
-      out.push({ page: 0, text: m[0], x: r.left, y: r.top, w: r.width, h: r.height });
+  const spans: HTMLElement[] = [];
+  const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement && /^(STYLE|SCRIPT)$/.test(n.parentElement.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+  const nodes: Text[] = [];
+  for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) if (/\S/.test(n.data)) nodes.push(n);
+  for (const n of nodes) {
+    const frag = doc.createDocumentFragment();
+    for (const part of n.data.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) { frag.appendChild(doc.createTextNode(part)); continue; }
+      const sp = doc.createElement('span'); sp.className = 'krw'; sp.textContent = part; frag.appendChild(sp); spans.push(sp);
     }
+    n.replaceWith(frag);
+  }
+  const out: WordBox[] = [];
+  for (const sp of spans) {
+    const r = sp.getClientRects()[0]; if (!r || !r.width || !r.height) continue;
+    out.push({ page: 0, text: sp.textContent ?? '', x: r.left, y: r.top, w: r.width, h: r.height });
   }
   return out;
 }
