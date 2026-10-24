@@ -3,7 +3,7 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   onOpenFile(cb) { ipcRenderer.on('kr:open-file', (_e, payload) => cb(payload)); ipcRenderer.invoke('kr:ready'); },
   platform: process.platform,
   installUpdate(url) { return ipcRenderer.invoke('kr:install-update', url); },
-  onUpdateProgress(cb) { ipcRenderer.on('kr:update-progress', (_e, p) => cb(p)); },
+  onUpdateProgress(cb) { ipcRenderer.removeAllListeners('kr:update-progress'); ipcRenderer.on('kr:update-progress', (_e, p) => cb(p)); },
   isPortable() { return ipcRenderer.invoke('kr:is-portable'); },
   scanDevice(exts) { return ipcRenderer.invoke('kr:scan-device', exts); },
   readFile(p) { return ipcRenderer.invoke('kr:read-file', p); },

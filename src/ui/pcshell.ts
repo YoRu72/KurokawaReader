@@ -7,7 +7,9 @@ import { t, onLangChange } from '../i18n';
 import { navigate, onRoute, parseRoute, type Route } from '../router';
 
 const wide = matchMedia('(min-width: 1024px) and (pointer: fine)');
-export const isPc = (): boolean => !!window.kurokawaDesktop || wide.matches;
+// (The desktop app's window can be made narrow; below this it keeps the phone layout.)
+const roomy = matchMedia('(min-width: 720px)');
+export const isPc = (): boolean => (!!window.kurokawaDesktop && roomy.matches) || wide.matches;
 
 let rail: HTMLElement | null = null;
 let updateOpen: (() => void) | null = null;
@@ -76,6 +78,7 @@ function onKey(e: KeyboardEvent): void {
 export function initPcShell(): void {
   apply();
   wide.addEventListener('change', apply);
+  roomy.addEventListener('change', apply);
   onRoute(mark);
   onLangChange(() => { if (rail) { rail.remove(); rail = null; apply(); } });
   window.addEventListener('keydown', onKey);
