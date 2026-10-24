@@ -203,7 +203,7 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
     const px = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data; const w = x1 - x0;
     let a = Infinity, b = -1, t = Infinity, u = -1;
     for (let i = 0, k = 0; i < px.length; i += 4, k++) if (!(px[i] > 250 && px[i + 1] > 250 && px[i + 2] > 250)) { const x = k % w, y = (k / w) | 0; if (x < a) a = x; if (x > b) b = x; if (y < t) t = y; if (y > u) u = y; }
-    if (b < 0) continue;
+    if (b < 0) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art-noink', p.font, p.l.toFixed(1), p.y.toFixed(1), p.h.toFixed(1)); continue; }
     const cw = b - a + 1, chh = u - t + 1;
     const cc = document.createElement('canvas'); cc.width = cw; cc.height = chh;
     const cx = cc.getContext('2d')!; cx.drawImage(c, x0 + a, y0 + t, cw, chh, 0, 0, cw, chh);
@@ -652,7 +652,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, cs: lineCs };
     const last = runs[runs.length - 1];
     if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
-    if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank - p.h * 0.25) }); }
+    if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank * 0.92 - p.h * 0.3) }); }
     if (space && last?.art) text = ` ${text}`;
     else if (space && last) last.text += ' ';
     if (last && !last.spacing && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
@@ -1431,7 +1431,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const runFor = (r: Run, footnotes: Map<number, number> | null) => {
     if (r.art) {
       const pic = r.art.pic;
-      if (!pic) return new TextRun({ text: '' });
+      if (!pic) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art-nopic', r.art.font, r.art.l.toFixed(1), r.art.y.toFixed(1)); return new TextRun({ text: '' }); }
       return new ImageRun({ type: 'png', data: pic.png, transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) } });
     }
     if (r.note !== undefined && footnotes?.has(r.note) && !r.br) return new FootnoteReferenceRun(footnotes.get(r.note)!);
