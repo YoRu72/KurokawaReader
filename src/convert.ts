@@ -322,29 +322,53 @@ export function buildText(d: ConvDoc, markdown: boolean): string {
 }
 
 /** PDF: real text on the desktop (Chromium's printer), pictures of pages elsewhere. */
-export async function buildPdf(d: ConvDoc, progress: Progress): Promise<Blob> {
+export type PdfPaper = 'a4' | 'letter';
+const PAPER: Record<PdfPaper, { css: string; pt: [number, number] }> = { a4: { css: 'A4', pt: [595.28, 841.89] }, letter: { css: 'Letter', pt: [612, 792] } };
+
+export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: PdfPaper } = {}): Promise<Blob> {
+  const paper = PAPER[opts.paper ?? 'a4'];
   const inline = new Map<string, string>();
   for (const [url, blob] of d.images) inline.set(url, await blobToDataUrl(blob));
   const fontCss = await readerFontCss(d);
   const desk = (window as unknown as { kurokawaDesktop?: { printToPdf?(html: string, o?: { pageSize?: string }): Promise<string> } }).kurokawaDesktop;
-  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Lora','Uthman TN1','Noto Naskh Arabic',Georgia,serif}@page{size:A4;margin:16mm}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
+  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Lora','Uthman TN1','Noto Naskh Arabic',Georgia,serif}@page{size:${paper.css};margin:16mm}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
   if (desk?.printToPdf) {
     progress('build', 70);
-    const b64 = await desk.printToPdf(html, { pageSize: 'A4' });
+    const b64 = await desk.printToPdf(html, { pageSize: paper.css });
     return b64ToBlob(b64, 'application/pdf');
   }
-  // Pictures of pages: lay the HTML out at A4 width, slice by page height, rasterise each slice.
+  // Pictures of pages: lay the HTML out at the paper's width, slice by page height, rasterise each slice; the
+  // words go on each page as invisible text where they stand, so the PDF can be searched, selected and copied.
   const { PDFDocument } = await import('pdf-lib');
-  const W = 794, H = 1123, SCALE = 1.5;
+  const [PW, PH] = paper.pt;
+  const W = Math.round(PW * 96 / 72), H = Math.round(PH * 96 / 72), SCALE = 2;
   const frame = document.createElement('iframe');
   frame.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:${H}px;visibility:hidden;border:0`;
   document.body.appendChild(frame);
   try {
-    const fdoc = frame.contentDocument!; fdoc.open(); fdoc.write(html.replace('<style>', `<style>html,body{margin:0}body{max-width:none;padding:48px 56px;width:${W - 112}px}`)); fdoc.close();
+    const fdoc = frame.contentDocument!; fdoc.open(); fdoc.write(html.replace('<style>', `<style>html,body{margin:0}body{max-width:none;padding:1px 56px;width:${W - 112}px}`)); fdoc.close();
     await new Promise((r) => setTimeout(r, 300));
     await (fdoc as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready;
     const total = fdoc.documentElement.scrollHeight;
-    const pages = Math.max(1, Math.ceil(total / H));
+    // Pages are cut between lines, never through a line, a picture or a table row, and a new section starts a
+    // new page; each page keeps a margin above and below.
+    const M = 48, CH = H - 2 * M;
+    const all = wordBoxes(fdoc);
+    const solid: [number, number][] = all.map((w) => [w.y, w.y + w.h]);
+    fdoc.querySelectorAll('img, svg, canvas, video, tr, hr, pre, figure, blockquote > p').forEach((el) => { const r = el.getBoundingClientRect(); if (r.height > 0 && r.height < CH * 0.9) solid.push([r.top, r.bottom]); });
+    const forced: number[] = [];
+    fdoc.querySelectorAll('section').forEach((el, i) => { if (i) forced.push(el.getBoundingClientRect().top); });
+    const cuts: number[] = [0];
+    for (let st = 0; st < total - 1;) {
+      let e = st + CH;
+      if (e >= total) { cuts.push(total); break; }
+      const f = forced.find((y) => y > st + 4 && y < e); if (f !== undefined) e = f;
+      for (let moved = true; moved;) { moved = false; for (const [a, b] of solid) if (a < e - 0.5 && b > e + 0.5 && a > st + 4) { e = a; moved = true; } }
+      if (e <= st + CH * 0.15) e = st + CH;
+      cuts.push(e); st = e;
+    }
+    const pages = cuts.length - 1;
+    const words = all.flatMap((w) => { const c = w.y + w.h / 2; const page = cuts.findIndex((y, i) => i < pages && c >= y && c < cuts[i + 1]); return page < 0 ? [] : [{ ...w, page, y: w.y - cuts[page] + M }]; });
     const pdf = await PDFDocument.create();
     pdf.setTitle(d.title); if (d.author) pdf.setAuthor(d.author);
     // What goes into each page picture: the page's CSS (CDATA-wrapped for XML) and the body as XHTML.
@@ -352,7 +376,8 @@ export async function buildPdf(d: ConvDoc, progress: Progress): Promise<Blob> {
     const bodyX = new XMLSerializer().serializeToString(fdoc.body).replace(/^<body[^>]*>|<\/body>$/g, '');
     for (let p = 0; p < pages; p++) {
       progress('pdfPage', 65 + Math.round((p / pages) * 32));
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:#fff"><style><![CDATA[${cssText.replace(/\]\]>/g, '')}]]></style><div style="transform:translateY(-${p * H}px)"><body${d.rtl ? ' dir="rtl"' : ''} style="display:block">${bodyX}</body></div></div></foreignObject></svg>`;
+      const top = cuts[p], tall = cuts[p + 1] - top;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:#fff"><style><![CDATA[${cssText.replace(/\]\]>/g, '')}]]></style><div style="position:relative;top:${M}px;height:${Math.ceil(tall)}px;overflow:hidden"><div style="transform:translateY(-${top}px)"><body${d.rtl ? ' dir="rtl"' : ''} style="display:block">${bodyX}</body></div></div></div></foreignObject></svg>`;
       const img = new Image(); img.decoding = 'async';
       // A data: URL (not blob:) keeps the canvas untainted so it can be exported.
       await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => { const perr = new DOMParser().parseFromString(svg, 'image/svg+xml').querySelector('parsererror')?.textContent; rej(new Error('page render' + (perr ? ': ' + perr.slice(0, 200) : ''))); }; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
@@ -360,12 +385,72 @@ export async function buildPdf(d: ConvDoc, progress: Progress): Promise<Blob> {
       const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
       const jpg = await new Promise<Blob>((res) => c.toBlob((b) => res(b!), 'image/jpeg', 0.8));
       const image = await pdf.embedJpg(new Uint8Array(await jpg.arrayBuffer()));
-      const page = pdf.addPage([595.28, 841.89]);
-      page.drawImage(image, { x: 0, y: 0, width: 595.28, height: 841.89 });
+      const page = pdf.addPage([PW, PH]);
+      page.drawImage(image, { x: 0, y: 0, width: PW, height: PH });
     }
+    await addInvisibleText(pdf, words, PW / W);
     const bytes = await pdf.save();
     return new Blob([bytes as BlobPart], { type: 'application/pdf' });
   } finally { frame.remove(); }
+}
+
+type WordBox = { page: number; text: string; x: number; y: number; w: number; h: number };
+
+/** Every word of a laid-out document with its box (CSS px, in the document). */
+function wordBoxes(doc: Document): WordBox[] {
+  const out: WordBox[] = [];
+  const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const range = doc.createRange();
+  for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
+    const s = n.data; const re = /\S+/g;
+    for (let m = re.exec(s); m; m = re.exec(s)) {
+      range.setStart(n, m.index); range.setEnd(n, m.index + m[0].length);
+      const r = range.getClientRects()[0]; if (!r || !r.width || !r.height) continue;
+      out.push({ page: 0, text: m[0], x: r.left, y: r.top, w: r.width, h: r.height });
+    }
+  }
+  return out;
+}
+
+/** Words as invisible text (render mode 3) over the page pictures: a font with no outlines of its own — every
+ *  character its own code, read back through its ToUnicode map — stretched to each word's box. A
+ *  right-to-left word is written in drawing order, as readers expect of a PDF. */
+async function addInvisibleText(pdf: import('pdf-lib').PDFDocument, words: WordBox[], k: number): Promise<void> {
+  if (!words.length) return;
+  const { PDFName, PDFString } = await import('pdf-lib');
+  const ctx = pdf.context; const pages = pdf.getPages();
+  const cid = new Map<number, number>();
+  const code = (c: number) => { let v = cid.get(c); if (v === undefined) { v = cid.size + 1; cid.set(c, v); } return v.toString(16).padStart(4, '0'); };
+  const ops: string[][] = pages.map(() => []);
+  for (const w of words) {
+    if (w.page < 0 || w.page >= pages.length) continue;
+    const ph = pages[w.page].getHeight();
+    let chars = [...w.text];
+    if (/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/.test(w.text) && !/[A-Za-z0-9]/.test(w.text)) chars = chars.reverse();
+    const size = Math.max(1, w.h * k * 0.8);
+    const tz = Math.max(1, Math.min(1000, (w.w * k) / (chars.length * size) * 100));
+    const x = w.x * k, y = ph - (w.y + w.h * 0.78) * k;
+    ops[w.page].push(`BT 3 Tr /KRInv ${size.toFixed(2)} Tf ${tz.toFixed(1)} Tz 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm <${chars.map((c) => code(c.codePointAt(0)!)).join('')}> Tj ET`);
+  }
+  // ToUnicode: each code the character it stands for.
+  const entries = [...cid.entries()];
+  let cmap = '/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /KRInv-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n';
+  for (let i = 0; i < entries.length; i += 100) {
+    const part = entries.slice(i, i + 100);
+    cmap += `${part.length} beginbfchar\n`;
+    for (const [c, v] of part) { const u = String.fromCodePoint(c); let hex = ''; for (let j = 0; j < u.length; j++) hex += u.charCodeAt(j).toString(16).padStart(4, '0'); cmap += `<${v.toString(16).padStart(4, '0')}> <${hex}>\n`; }
+    cmap += 'endbfchar\n';
+  }
+  cmap += 'endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n';
+  const toUnicode = ctx.register(ctx.flateStream(cmap));
+  const descriptor = ctx.register(ctx.obj({ Type: 'FontDescriptor', FontName: 'KRInvisible', Flags: 4, FontBBox: [0, -200, 1000, 800], ItalicAngle: 0, Ascent: 800, Descent: -200, CapHeight: 700, StemV: 80 }));
+  const cidFont = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'CIDFontType2', BaseFont: 'KRInvisible', CIDSystemInfo: { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('Identity'), Supplement: 0 }, FontDescriptor: descriptor, DW: 1000, CIDToGIDMap: 'Identity' }));
+  const font = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type0', BaseFont: 'KRInvisible', Encoding: 'Identity-H', DescendantFonts: [cidFont], ToUnicode: toUnicode }));
+  pages.forEach((page, i) => {
+    if (!ops[i].length) return;
+    page.node.setFontDictionary(PDFName.of('KRInv'), font);
+    page.node.addContentStream(ctx.register(ctx.flateStream(ops[i].join('\n'))));
+  });
 }
 
 /** The reader's own fonts (and the source's) inlined, so the printed page looks like the app. */

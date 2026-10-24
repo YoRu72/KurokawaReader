@@ -30,8 +30,11 @@ ${types.map(([name, utis]) => `    <dict>
   <key>CFBundleURLTypes</key>
   <array><dict><key>CFBundleURLName</key><string>app.kurokawa.reader</string><key>CFBundleURLSchemes</key><array><string>kurokawareader</string></array></dict></array>
   <key>NSPhotoLibraryAddUsageDescription</key><string>Saves text snapshots and PDF pages to your Photos.</string>
+  <key>NSCameraUsageDescription</key><string>Photographs pages to scan them into PDFs.</string>
+  <key>NSPhotoLibraryUsageDescription</key><string>Picks photos of pages to scan them into PDFs, and pictures to make PDFs from.</string>
 `;
 if (!plist.includes('CFBundleDocumentTypes')) plist = plist.replace(/<dict>\n/, `<dict>\n${docTypes}`);
+if (!plist.includes('NSCameraUsageDescription')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>NSCameraUsageDescription</key><string>Photographs pages to scan them into PDFs.</string>\n  <key>NSPhotoLibraryUsageDescription</key><string>Picks photos of pages to scan them into PDFs, and pictures to make PDFs from.</string>\n');
 plist = plist.replace(/<key>CFBundleDisplayName<\/key>\s*<string>[^<]*<\/string>/, '<key>CFBundleDisplayName</key>\n  <string>KurokawaReader</string>');
 if (!plist.includes('CFBundleDisplayName')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>CFBundleDisplayName</key>\n  <string>KurokawaReader</string>\n');
 if (!plist.includes('UIViewControllerBasedStatusBarAppearance')) plist = plist.replace(/<dict>\n/, '<dict>\n  <key>UIViewControllerBasedStatusBarAppearance</key><true/>\n  <key>UIStatusBarHidden</key><false/>\n');

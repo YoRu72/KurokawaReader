@@ -4,8 +4,9 @@
 import { PDFDocument, degrees, type PDFPage } from 'pdf-lib';
 import { openPdf } from './pdfcrypt';
 
-export type PageSize = 'fit' | 'a4' | 'letter';
-const SIZES: Record<Exclude<PageSize, 'fit'>, [number, number]> = { a4: [595.28, 841.89], letter: [612, 792] };
+/** `fit`: the picture's own size; `page`: as wide as A4 (or as tall, lying), its height following the picture. */
+export type PageSize = 'fit' | 'page' | 'a4' | 'letter';
+const SIZES: Record<Exclude<PageSize, 'fit' | 'page'>, [number, number]> = { a4: [595.28, 841.89], letter: [612, 792] };
 
 /** Bytes of a picture as JPEG or PNG (the two formats a PDF embeds directly), upright. */
 async function pictureBytes(file: Blob): Promise<{ bytes: Uint8Array; kind: 'jpg' | 'png'; w: number; h: number }> {
@@ -60,7 +61,12 @@ export async function imagesToPdf(files: Blob[], opts: { size: PageSize; margin:
     // A picture is placed at 72 dpi-equivalent of its pixels at most 96 dpi: screenshots keep their size.
     const iw = p.w * 0.75, ih = p.h * 0.75;
     let page: PDFPage;
-    if (opts.size === 'fit') {
+    if (opts.size === 'page') {
+      // (A photographed page: a page's size whatever the camera's resolution.)
+      const land = p.w > p.h; const k = (land ? 841.89 : 595.28) / p.w;
+      page = doc.addPage([p.w * k + 2 * opts.margin, p.h * k + 2 * opts.margin]);
+      page.drawImage(img, { x: opts.margin, y: opts.margin, width: p.w * k, height: p.h * k });
+    } else if (opts.size === 'fit') {
       page = doc.addPage([iw + 2 * opts.margin, ih + 2 * opts.margin]);
       page.drawImage(img, { x: opts.margin, y: opts.margin, width: iw, height: ih });
     } else {

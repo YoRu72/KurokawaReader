@@ -20,7 +20,7 @@ fs.mkdirSync(out, { recursive: true });
   const waitResult = async () => { await page.waitForSelector('.sheet:last-of-type .convert-result:not([hidden]) button', { timeout: 120000 }); };
   // Merge: both library PDFs, the second cut to its first page.
   await openTools(); await page.screenshot({ path: path.join(out, 'tools.png') });
-  await tool(2); await page.waitForSelector('.sheet.stacked .tool-bar');
+  await tool(5); await page.waitForSelector('.sheet.stacked .tool-bar');
   await page.click('.sheet.stacked .tool-bar button:first-child'); await page.waitForSelector('.sheet.stacked input[type=checkbox]');
   for (const c of await page.$$('.sheet:last-of-type input[type=checkbox]')) await c.check();
   await page.click('.sheet:last-of-type .sheet-actions button'); await page.waitForFunction(() => document.querySelectorAll('.sheet:last-of-type .tool-row').length >= 2);
@@ -28,7 +28,7 @@ fs.mkdirSync(out, { recursive: true });
   await page.waitForTimeout(800); await page.screenshot({ path: path.join(out, 'merge.png') });
   await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('merged.pdf');
   // Organise: the first PDF, pages 1 and 3 selected; extract, delete, and reorder (last page first, turned).
-  await openTools(); await tool(3); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
+  await openTools(); await tool(6); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
   await page.waitForSelector('.sheet:last-of-type .page-tile'); await page.waitForTimeout(1500);
   await page.fill('.sheet:last-of-type .tool-bar .tool-range', '1, 3'); await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(out, 'organize.png') });
@@ -39,12 +39,12 @@ fs.mkdirSync(out, { recursive: true });
   for (let k = 0; k < tiles.length - 1; k++) { const tl = await page.$$('.sheet:last-of-type .page-tile'); await (await tl[tiles.length - 1 - k].$('button >> nth=0')).click(); }
   await page.click('.sheet:last-of-type .sheet-actions button:nth-child(1)'); await waitResult(); await save('reordered.pdf');
   // Pictures → PDF.
-  await openTools(); await tool(1); await page.waitForSelector('.sheet:last-of-type .tool-bar');
+  await openTools(); await tool(3); await page.waitForSelector('.sheet:last-of-type .tool-bar');
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.sheet:last-of-type .tool-bar button')]); await chooser.setFiles([pic, pic]);
   await page.waitForSelector('.sheet:last-of-type .tool-row'); await page.waitForTimeout(500); await page.screenshot({ path: path.join(out, 'images.png') });
   await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('pictures.pdf');
   // Pages → pictures (pages 1-2 of the first PDF).
-  await openTools(); await tool(5); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
+  await openTools(); await tool(8); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
   await page.waitForSelector('.sheet:last-of-type .tool-range'); await page.fill('.sheet:last-of-type .tool-range', '1-2');
   await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('pages.zip');
   await browser.close(); server.close();

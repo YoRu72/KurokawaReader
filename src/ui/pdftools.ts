@@ -8,9 +8,12 @@ import { importFiles } from '../library';
 import { shareFile, downloadBlob } from './share';
 import type { Source, PageSize } from '../pdftools';
 
-type Tool = 'images' | 'merge' | 'organize' | 'unlock' | 'toImages';
-const TOOLS: [Tool, string, 'images' | 'books' | 'grid' | 'target' | 'download', string][] = [
+type Tool = 'docs' | 'images' | 'scan' | 'merge' | 'extract' | 'organize' | 'unlock' | 'toImages';
+const TOOLS: [Tool, string, string, string][] = [
+  ['docs', 'toolDocsToPdf', 'note', 'toolDocsToPdfSub'],
+  ['scan', 'toolScan', 'camera', 'toolScanSub'],
   ['images', 'toolImagesToPdf', 'images', 'toolImagesToPdfSub'],
+  ['extract', 'toolExtract', 'file', 'toolExtractSub'],
   ['merge', 'toolMerge', 'books', 'toolMergeSub'],
   ['organize', 'toolOrganize', 'grid', 'toolOrganizeSub'],
   ['unlock', 'toolUnlock', 'target', 'toolUnlockSub'],
@@ -18,7 +21,7 @@ const TOOLS: [Tool, string, 'images' | 'books' | 'grid' | 'target' | 'download',
 ];
 
 const tools = () => import('../pdftools');
-const baseName = (name: string) => name.replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 60) || 'document';
+export const baseName = (name: string) => name.replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 60) || 'document';
 
 /** The tools sheet. `book`: a PDF of the library the tools start from (its context menu). */
 export function pdfToolsSheet(books: Book[], book?: Book, onDone?: () => void): void {
@@ -26,15 +29,17 @@ export function pdfToolsSheet(books: Book[], book?: Book, onDone?: () => void): 
   sh.body.style.fontFamily = 'var(--font-ui)';
   const grid = h('div', { class: 'convert-targets' });
   for (const [id, label, ic, sub] of TOOLS) {
-    if (book && id === 'images') continue;
+    if (book && (id === 'images' || id === 'docs' || id === 'scan')) continue;
     grid.append(h('button', { class: 'convert-target', type: 'button', onclick: () => open(id) }, icon(ic), h('b', null, t(label as 'pdfTools')), h('small', null, t(sub as 'pdfTools'))));
   }
   sh.body.append(h('p', { class: 'src' }, t('pdfToolsBody')), grid, h('p', { class: 'hint' }, t('pdfToolsHint')));
   const open = (id: Tool) => {
     const pdfs = books.filter((b) => b.format === 'pdf');
     if (id === 'images') imagesSheet(onDone);
+    else if (id === 'docs') docsSheet(books, onDone);
+    else if (id === 'scan') void import('./scanner').then((m) => m.scannerSheet(onDone));
     else if (id === 'merge') mergeSheet(pdfs, book, onDone);
-    else void chooseSource(pdfs, book, (src) => (id === 'organize' ? organizeSheet(src, onDone) : id === 'unlock' ? unlockSheet(src, onDone) : toImagesSheet(src)));
+    else void chooseSource(pdfs, book, (src) => (id === 'organize' || id === 'extract' ? organizeSheet(src, onDone, id === 'extract') : id === 'unlock' ? unlockSheet(src, onDone) : toImagesSheet(src)));
   };
 }
 
@@ -47,7 +52,7 @@ async function bookSource(b: Book): Promise<Source | null> {
 }
 
 /** Files picked from the device. */
-function pickFiles(accept: string, multiple: boolean): Promise<File[]> {
+export function pickFiles(accept: string, multiple: boolean): Promise<File[]> {
   return new Promise((res) => {
     const input = h('input', { type: 'file', accept, multiple, style: { display: 'none' } }) as HTMLInputElement;
     input.addEventListener('change', () => { res([...(input.files ?? [])]); input.remove(); });
@@ -84,7 +89,7 @@ async function withPassword<T>(src: Source, fn: (s: Source) => Promise<T>): Prom
 }
 
 /** Progress line, bar and the finished file's actions, in a sheet. */
-function runner(body: HTMLElement, onDone?: () => void) {
+export function runner(body: HTMLElement, onDone?: () => void) {
   const status = h('p', { class: 'src', hidden: true });
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const result = h('div', { class: 'convert-result', hidden: true });
@@ -116,7 +121,7 @@ function runner(body: HTMLElement, onDone?: () => void) {
   };
 }
 
-const pdfBlob = (bytes: Uint8Array) => new Blob([bytes as BlobPart], { type: 'application/pdf' });
+export const pdfBlob = (bytes: Uint8Array) => new Blob([bytes as BlobPart], { type: 'application/pdf' });
 
 /** A labelled input (the label in the interface's language, the input left to right for page numbers). */
 const field = (label: string, input: HTMLInputElement) => h('label', { class: 'tool-field' }, h('span', null, label), input);
@@ -130,7 +135,7 @@ function rowControls(i: number, n: number, move: (from: number, to: number) => v
 }
 
 /** Rows that can also be dragged into place (mouse or touch). */
-function draggable(row: HTMLElement, i: number, move: (from: number, to: number) => void): void {
+export function draggable(row: HTMLElement, i: number, move: (from: number, to: number) => void): void {
   row.draggable = true;
   row.addEventListener('dragstart', (e) => { e.dataTransfer?.setData('text/plain', String(i)); row.classList.add('dragging'); });
   row.addEventListener('dragend', () => row.classList.remove('dragging'));
@@ -168,6 +173,77 @@ function imagesSheet(onDone?: () => void): void {
     const { imagesToPdf } = await tools();
     const bytes = await imagesToPdf(files.map((f) => f.file), { size, margin }, (n) => r.progress((n / files.length) * 100));
     return { blob: pdfBlob(bytes), name: `${baseName(files[0].file.name.replace(/\.\w+$/, ''))}.pdf` };
+  }) }, icon('file'), t('createPdf')) as HTMLButtonElement;
+  sh.actions.append(go);
+  render();
+}
+
+/* ---------- documents → PDF ---------- */
+
+/** Documents of any kind the app reads (Word, EPUB, text, Markdown, web pages, spreadsheets, slides,
+ *  pictures, comics, PDFs) into one PDF, in the order given. */
+function docsSheet(books: Book[], onDone?: () => void): void {
+  const sh = openSheet(t('toolDocsToPdf'), t('close'), { stack: true });
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  type Part = { name: string; file: Blob; format?: Book['format'] };
+  const parts: Part[] = [];
+  const list = h('div', { class: 'tool-list' });
+  let paper: 'a4' | 'letter' = 'a4';
+  const render = () => {
+    list.replaceChildren();
+    if (!parts.length) list.append(h('p', { class: 'hint' }, t('nothingAdded')));
+    parts.forEach((p, i) => {
+      const row = h('div', { class: 'tool-row' }, icon(p.format === 'image' ? 'images' : p.format === 'pdf' ? 'file' : 'note'),
+        h('span', { class: 'name' }, h('bdi', null, p.name), p.format ? h('small', null, ` · ${p.format.toUpperCase()}`) : null),
+        rowControls(i, parts.length, move, () => { parts.splice(i, 1); render(); }));
+      draggable(row, i, move); list.append(row);
+    });
+    go.disabled = !parts.length;
+  };
+  const move = (a: number, b: number) => { const [x] = parts.splice(a, 1); parts.splice(b, 0, x); render(); };
+  const addFiles = async (files: File[]) => {
+    const { sniffFormat } = await import('../formats');
+    for (const f of files) { const format = await sniffFormat(f, f.name).catch(() => 'unknown' as const); if (format === 'unknown' || format === 'audio' || format === 'anki') { toast(t('convertUnsupported')); continue; } parts.push({ name: f.name, file: f, format }); }
+    render();
+  };
+  const fromDev = h('button', { class: 'btn small tonal', type: 'button', onclick: async () => addFiles(await pickFiles('', true)) }, icon('folder'), t('fromDevice'));
+  const fromLib = h('button', { class: 'btn small tonal', type: 'button', onclick: () => {
+    const usable = books.filter((b) => !['audio', 'anki', 'unknown'].includes(b.format));
+    const pick = openSheet(t('fromLibrary'), t('close'), { stack: true }); pick.body.style.fontFamily = 'var(--font-ui)';
+    const chosen = new Set<Book>();
+    pick.body.append(usable.length ? h('div', { class: 'dest-list' }, ...usable.map((b) => h('label', { class: 'dest-row' }, h('input', { type: 'checkbox', onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(b); else chosen.delete(b); } }), icon('books'), h('span', { class: 'name' }, h('bdi', null, b.title), h('small', null, ` · ${b.format.toUpperCase()}`))))) : h('p', { class: 'hint' }, t('nothingAdded')));
+    pick.actions.append(h('button', { class: 'btn small primary', type: 'button', onclick: async () => { pick.close(); for (const b of usable.filter((x) => chosen.has(x))) { const f = await db.getFile(b.id); if (f) parts.push({ name: b.title, file: f, format: b.format }); } render(); } }, icon('check'), t('addPdfs')));
+  } }, icon('books'), t('fromLibrary'));
+  sh.body.append(h('p', { class: 'src' }, t('toolDocsBody')), h('div', { class: 'tool-bar' }, fromDev, fromLib), list,
+    h('div', { class: 'tool-opts' }, h('label', null, h('span', null, t('pageSize')), pickButton(t('pageSize'), [['a4', t('sizeA4')], ['letter', t('sizeLetter')]], paper, (v) => { paper = v; }, t('close')))));
+  const r = runner(sh.body, onDone);
+  const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go], async () => {
+    const { imagesToPdf, mergePdfs } = await tools();
+    const { readDocument, buildPdf } = await import('../convert');
+    const pdfs: Source[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]; const base = (n: number) => r.progress(((i + n) / parts.length) * 100);
+      if (p.format === 'pdf') pdfs.push({ name: p.name, bytes: new Uint8Array(await p.file.arrayBuffer()) });
+      else if (p.format === 'image') {
+        // (Pictures next to each other share one run of pages.)
+        const run: Blob[] = [p.file]; while (parts[i + 1]?.format === 'image') run.push(parts[++i].file);
+        pdfs.push({ name: p.name, bytes: await imagesToPdf(run, { size: paper, margin: 0 }) });
+      } else if (p.format === 'cbz') {
+        const JSZip = (await import('jszip')).default; const zip = await JSZip.loadAsync(p.file);
+        const names = Object.keys(zip.files).filter((n) => /\.(jpe?g|png|webp|gif|bmp)$/i.test(n) && !zip.files[n].dir).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        const pics: Blob[] = []; for (const n of names) pics.push(await zip.files[n].async('blob'));
+        if (pics.length) pdfs.push({ name: p.name, bytes: await imagesToPdf(pics, { size: 'fit', margin: 0 }) });
+      } else {
+        const temp = { id: `tmp-${Date.now()}-${i}`, title: p.name.replace(/\.[^.]+$/, ''), format: p.format!, fileName: p.name, size: p.file.size, addedAt: Date.now(), bookmarks: [], highlights: [] } as Book;
+        const d = await readDocument(temp, p.file, (_m, pct) => base((pct ?? 0) / 200));
+        const blob = await buildPdf(d, (_m, pct) => base(0.5 + (pct ?? 0) / 200), { paper });
+        pdfs.push({ name: p.name, bytes: new Uint8Array(await blob.arrayBuffer()) });
+      }
+      base(1);
+    }
+    if (!pdfs.length) return null;
+    const bytes = pdfs.length === 1 ? pdfs[0].bytes : await mergePdfs(pdfs);
+    return { blob: pdfBlob(bytes), name: `${baseName(parts[0].name.replace(/\.[^.]+$/, ''))}${parts.length > 1 ? ` +${parts.length - 1}` : ''}.pdf` };
   }) }, icon('file'), t('createPdf')) as HTMLButtonElement;
   sh.actions.append(go);
   render();
@@ -223,8 +299,8 @@ function mergeSheet(pdfs: Book[], preset: Book | undefined, onDone?: () => void)
 
 /* ---------- organise pages ---------- */
 
-async function organizeSheet(src: Source, onDone?: () => void): Promise<void> {
-  const sh = openSheet(t('toolOrganize'), t('close'), { stack: true });
+async function organizeSheet(src: Source, onDone?: () => void, extractOnly = false): Promise<void> {
+  const sh = openSheet(t(extractOnly ? 'toolExtract' : 'toolOrganize'), t('close'), { stack: true });
   sh.body.style.fontFamily = 'var(--font-ui)';
   const { pageCount } = await tools();
   const n = await withPassword(src, pageCount).catch((e) => { toast(String((e as Error).message ?? e), 'error'); return null; });
@@ -290,7 +366,7 @@ async function organizeSheet(src: Source, onDone?: () => void): Promise<void> {
   const extract = h('button', { class: 'btn small primary', type: 'button', onclick: () => void save('selected') }, icon('file'), t('saveSelected')) as HTMLButtonElement;
   const del = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void save('rest') }, icon('trash'), t('deleteSelected')) as HTMLButtonElement;
   const all = h('button', { class: 'btn small tonal', type: 'button', onclick: () => void save('all') }, icon('check'), t('saveChanges')) as HTMLButtonElement;
-  sh.actions.append(all, del, extract);
+  if (extractOnly) sh.actions.append(extract); else sh.actions.append(all, del, extract);
   render();
   const obs = new MutationObserver(() => { if (!sh.el.isConnected) { seen.disconnect(); void task.destroy(); obs.disconnect(); } });
   obs.observe(document.body, { childList: true });
