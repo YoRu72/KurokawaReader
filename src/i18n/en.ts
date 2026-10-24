@@ -808,6 +808,8 @@ export const en = {
   scanAutoCropSub: "Each new photo is cropped to its page and straightened.",
   scanAutoTurn: "Stand sideways pages upright",
   scanAutoTurnSub: "A page photographed lying on its side is turned so its lines run across.",
+  scanFlatten: "Flatten book pages",
+  scanFlattenSub: "A page photographed in a book has its curved lines straightened, and the book’s edge and the next page cut away.",
 };
 
 export type Strings = typeof en;

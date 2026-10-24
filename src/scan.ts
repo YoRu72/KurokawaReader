@@ -489,3 +489,208 @@ export function uprightTurn(img: Img, rtl = false): 0 | 1 | 3 {
   const startTop = st < sb;
   return startTop !== rtl ? 3 : 1;
 }
+
+/* ---------------------------------------------------------------- curved pages */
+
+/**
+ * How a page photographed in a book bends: its lines of print as curves y = a + b(a)·x + c(a)·x² (x across
+ * the page, both in fractions of the picture, from its middle), its upright rules as x = e + f(e)·y + g·y²,
+ * and the margins to cut away (the book's edge, the next page beyond the fold), as fractions.
+ */
+export type Curve = { b: [number, number, number]; c: [number, number, number]; aLo: number; aHi: number; f: [number, number]; g: number; eLo: number; eHi: number; crop: { l: number; r: number; t: number; b: number } };
+
+/** Weighted least squares (normal equations, small systems). */
+function lsq(rows: number[][], ys: number[], ws: number[]): number[] | null {
+  const n = rows[0]?.length ?? 0; if (!n || rows.length < n) return null;
+  const A = Array.from({ length: n }, () => new Float64Array(n + 1));
+  rows.forEach((r, k) => { const w = ws[k]; for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] += w * r[i] * r[j]; A[i][n] += w * r[i] * ys[k]; } });
+  for (let i = 0; i < n; i++) A[i][i] += 1e-9;
+  for (let i = 0; i < n; i++) {
+    let p = i; for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+    [A[i], A[p]] = [A[p], A[i]]; const d = A[i][i]; if (Math.abs(d) < 1e-14) return null;
+    for (let r = 0; r < n; r++) if (r !== i) { const f = A[r][i] / d; for (let c = i; c <= n; c++) A[r][c] -= f * A[i][c]; }
+  }
+  return A.map((r, i) => r[n] / r[i]);
+}
+
+/** Find how a (flattened) page bends, from its lines of print and its ruled lines; null when there is too
+ *  little print to tell, or it does not bend. */
+export function findCurve(img: Img): Curve | null {
+  const sm = small(img, 1000); const { w, h, L } = sm; const n = w * h;
+  const light = paperLight(L, w, h);
+  const ink = new Uint8Array(n); for (let i = 0; i < n; i++) ink[i] = L[i] < light[i] * 0.62 ? 1 : 0;
+  // Upright rules: thin, tall strokes of ink (a little slanted, as photographed). They are set aside (and
+  // measured), so they do not join the lines of the two columns of print they divide.
+  const rule = new Uint8Array(n);
+  {
+    const seen = new Int32Array(n).fill(-1); const st: number[] = [];
+    for (let s0 = 0; s0 < n; s0++) {
+      if (!ink[s0] || seen[s0] >= 0) continue;
+      const px: number[] = []; st.push(s0); seen[s0] = s0; let y0 = h, y1 = -1, x0 = w, x1 = -1;
+      while (st.length) { const i = st.pop()!; px.push(i); const x = i % w, y = (i / w) | 0; if (y < y0) y0 = y; if (y > y1) y1 = y; if (x < x0) x0 = x; if (x > x1) x1 = x; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= h || xx >= w) continue; const j = yy * w + xx; if (ink[j] && seen[j] < 0) { seen[j] = s0; st.push(j); } } }
+      const bh = y1 - y0 + 1, bw = x1 - x0 + 1;
+      // (The photo's own edge is not a rule.)
+      if (bh >= h * 0.2 && bw <= Math.max(8, bh * 0.15) && px.length <= bh * 8 && x0 > 2 && x1 < w - 3) for (const i of px) rule[i] = 1;
+    }
+  }
+  const ruleW = new Uint8Array(n); for (let i = 0; i < n; i++) if (rule[i]) { const x = i % w; for (let d = -3; d <= 3; d++) if (x + d >= 0 && x + d < w) ruleW[i + d] = 1; }
+  for (let i = 0; i < n; i++) if (ruleW[i]) ink[i] = 0;
+  // Lines of print: ink smeared along the rows into bands.
+  const gapMax = Math.round(w / 45);
+  const band = new Uint8Array(n);
+  for (let y = 0; y < h; y++) {
+    let last = -1;
+    for (let x = 0; x < w; x++) { const i = y * w + x; if (ruleW[i]) { last = -1; continue; } if (ink[i]) { if (last >= 0 && x - last <= gapMax) for (let k = last; k <= x; k++) band[y * w + k] = 1; band[i] = 1; last = x; } }
+  }
+  // Bands thinner than print (stray specks) or joined lines are sorted out by their shape below.
+  const lab = new Int32Array(n).fill(-1); const stack: number[] = [];
+  type Line = { xs: number[]; ys: number[]; wt: number; a: number };
+  const lines: Line[] = [];
+  for (let s = 0; s < n; s++) {
+    if (!band[s] || lab[s] >= 0) continue;
+    const px: number[] = []; stack.push(s); lab[s] = s;
+    let x0 = w, x1 = -1, y0 = h, y1 = -1;
+    while (stack.length) { const i = stack.pop()!; px.push(i); const x = i % w, y = (i / w) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && band[j] && lab[j] < 0) { lab[j] = s; stack.push(j); } }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bw < w * 0.12 || bh > bw / 3 || px.length < bw * 2) continue;
+    // Its middle down each column.
+    const sum = new Float64Array(bw), cnt = new Float64Array(bw);
+    for (const i of px) { const x = i % w - x0; sum[x] += (i / w) | 0; cnt[x]++; }
+    // Thickness: a band two lines tall is two lines joined, not one.
+    let thick = 0, tc = 0; for (let x = 0; x < bw; x++) if (cnt[x]) { thick += cnt[x]; tc++; }
+    const xs: number[] = [], ys: number[] = [];
+    for (let x = 0; x < bw; x += 3) if (cnt[x]) { xs.push((x0 + x + 0.5) / w - 0.5); ys.push((sum[x] / cnt[x] + 0.5) / h - 0.5); }
+    if (xs.length < 8) continue;
+    lines.push({ xs, ys, wt: bw / w, a: 0, thick: thick / Math.max(1, tc) } as Line & { thick: number });
+  }
+  if (lines.length < 5) return null;
+  // Lines much thicker than most are two lines joined (or a picture): left out.
+  const th = (lines as (Line & { thick: number })[]).map((l) => l.thick).sort((a, b) => a - b); const medT = th[th.length >> 1];
+  const good = (lines as (Line & { thick: number })[]).filter((l) => l.thick < medT * 1.8);
+  if (good.length < 5) return null;
+  // Each line's own fit first (its place a), then slope and bend as smooth functions of a, fitted together.
+  for (const l of good) { const r = lsq(l.xs.map((x) => [1, x, x * x]), l.ys, l.xs.map(() => 1)) ?? [l.ys.reduce((s, v) => s + v, 0) / l.ys.length, 0, 0]; l.a = r[0]; }
+  let B = [0, 0, 0], C = [0, 0, 0];
+  let use = good;
+  for (let it = 0; it < 6; it++) {
+    const rows: number[][] = [], ys: number[] = [], ws: number[] = [];
+    for (const l of use) { const a = l.a; l.xs.forEach((x, j) => { rows.push([x, a * x, a * a * x, x * x, a * x * x, a * a * x * x]); ys.push(l.ys[j] - a); ws.push(l.wt); }); }
+    const sol = lsq(rows, ys, ws); if (!sol) return null;
+    B = sol.slice(0, 3); C = sol.slice(3, 6);
+    const bOf = (a: number) => B[0] + B[1] * a + B[2] * a * a, cOf = (a: number) => C[0] + C[1] * a + C[2] * a * a;
+    for (const l of use) { let s = 0; l.xs.forEach((x, j) => { s += l.ys[j] - bOf(l.a) * x - cOf(l.a) * x * x; }); l.a = s / l.xs.length; }
+    // Lines that do not follow the rest (a picture's edge, a heading set at a slant) are dropped.
+    const err = use.map((l) => { let s = 0; l.xs.forEach((x, j) => { const d = l.ys[j] - l.a - bOf(l.a) * x - cOf(l.a) * x * x; s += d * d; }); return Math.sqrt(s / l.xs.length); });
+    const med = [...err].sort((a, b) => a - b)[err.length >> 1];
+    const keep = use.filter((_, k) => err[k] <= Math.max(med * 3, 0.002));
+    if (keep.length < 5) break;
+    use = keep;
+  }
+  const as = use.map((l) => l.a).sort((a, b) => a - b);
+  // Only a page whose lines really bend or slope is reshaped: the model must explain them clearly better than
+  // straight level lines do.
+  {
+    const bOf = (a: number) => B[0] + B[1] * a + B[2] * a * a, cOf = (a: number) => C[0] + C[1] * a + C[2] * a * a;
+    let e0 = 0, e1 = 0, m = 0, disp = 0;
+    for (const l of use) {
+      const mean = l.ys.reduce((s2, v) => s2 + v, 0) / l.ys.length;
+      l.xs.forEach((x, j) => { e0 += (l.ys[j] - mean) ** 2; e1 += (l.ys[j] - l.a - bOf(l.a) * x - cOf(l.a) * x * x) ** 2; m++; });
+      for (const x of [-0.5, 0.5]) disp = Math.max(disp, Math.abs(bOf(l.a) * x + cOf(l.a) * x * x));
+    }
+    if (disp < 0.004 || Math.sqrt(e1 / m) > Math.sqrt(e0 / m) * 0.6) { B = [0, 0, 0]; C = [0, 0, 0]; }
+  }
+  // Upright rules.
+  const rl = new Int32Array(n).fill(-1); const rules: { e: number; f: number; g: number; wt: number }[] = [];
+  for (let s = 0; s < n; s++) {
+    if (!rule[s] || rl[s] >= 0) continue;
+    const px: number[] = []; stack.push(s); rl[s] = s;
+    while (stack.length) { const i = stack.pop()!; px.push(i); const x = i % w, y = (i / w) | 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= h || xx >= w) continue; const j = yy * w + xx; if (rule[j] && rl[j] < 0) { rl[j] = s; stack.push(j); } } }
+    const sum = new Float64Array(h), cnt = new Float64Array(h); for (const i of px) { const y = (i / w) | 0; sum[y] += i % w; cnt[y]++; }
+    const ys: number[] = [], xs: number[] = []; for (let y = 0; y < h; y += 3) if (cnt[y]) { ys.push((y + 0.5) / h - 0.5); xs.push((sum[y] / cnt[y] + 0.5) / w - 0.5); }
+    if (ys.length < 10 || (ys[ys.length - 1] - ys[0]) < 0.25) continue;
+    const r = lsq(ys.map((y) => [1, y, y * y]), xs, ys.map(() => 1)); if (!r) continue;
+    rules.push({ e: r[0], f: r[1], g: r[2], wt: ys[ys.length - 1] - ys[0] });
+  }
+  let F: [number, number] = [0, 0], G = 0;
+  if (rules.length) {
+    const tw = rules.reduce((s, r) => s + r.wt, 0); G = rules.reduce((s, r) => s + r.g * r.wt, 0) / tw;
+    if (rules.length >= 2 && Math.max(...rules.map((r) => r.e)) - Math.min(...rules.map((r) => r.e)) > 0.2) { const s = lsq(rules.map((r) => [1, r.e]), rules.map((r) => r.f), rules.map((r) => r.wt)); if (s) F = [s[0], s[1]]; }
+    else F = [rules.reduce((s, r) => s + r.f * r.wt, 0) / tw, 0];
+  }
+  if (!B.some((v) => v) && !rules.some((r) => Math.abs(r.f) > 0.008 || Math.abs(r.g) > 0.008)) return null;
+  const cv: Curve = { b: B as Curve['b'], c: C as Curve['c'], aLo: as[0], aHi: as[as.length - 1], f: F, g: G, eLo: rules.length ? Math.min(...rules.map((r) => r.e)) : 0, eHi: rules.length ? Math.max(...rules.map((r) => r.e)) : 0, crop: { l: 0, r: 0, t: 0, b: 0 } };
+  return cv;
+}
+
+/** Sample source position for an output point, in fractions from the middle. */
+function curveSource(cv: Curve, u: number, v: number, bv: number, cvv: number, fu: number): [number, number] {
+  let x = u, y = v;
+  for (let k = 0; k < 4; k++) { y = v + bv * x + cvv * x * x; x = u + fu * y + cv.g * y * y; }
+  return [x, y];
+}
+
+/** The page with its lines straightened (and its margins cut as the curve says). */
+export function unwarp(img: Img, cv: Curve): Img {
+  const { width: W, height: H, data: d } = img;
+  const { l, r, t, b } = cv.crop;
+  const ow = Math.max(1, Math.round(W * (1 - l - r))), oh = Math.max(1, Math.round(H * (1 - t - b)));
+  const out = new Uint8ClampedArray(ow * oh * 4);
+  const clampA = (a: number) => clamp(a, cv.aLo, cv.aHi), clampE = (e: number) => clamp(e, cv.eLo, cv.eHi);
+  const bRow = new Float64Array(oh), cRow = new Float64Array(oh), fCol = new Float64Array(ow);
+  for (let y = 0; y < oh; y++) { const v = (y + 0.5) / H + t - 0.5; const a = clampA(v); bRow[y] = cv.b[0] + cv.b[1] * a + cv.b[2] * a * a; cRow[y] = cv.c[0] + cv.c[1] * a + cv.c[2] * a * a; }
+  for (let x = 0; x < ow; x++) { const u = (x + 0.5) / W + l - 0.5; fCol[x] = cv.f[0] + cv.f[1] * clampE(u); }
+  for (let y = 0; y < oh; y++) {
+    const v = (y + 0.5) / H + t - 0.5;
+    for (let x = 0; x < ow; x++) {
+      const u = (x + 0.5) / W + l - 0.5;
+      const [sxn, syn] = curveSource(cv, u, v, bRow[y], cRow[y], fCol[x]);
+      const sx = (sxn + 0.5) * W - 0.5, sy = (syn + 0.5) * H - 0.5;
+      if (sx < -1 || sy < -1 || sx > W || sy > H) { const o = (y * ow + x) * 4; out[o] = out[o + 1] = out[o + 2] = 0; out[o + 3] = 0; continue; }
+      const x0 = clamp(Math.floor(sx), 0, W - 1), y0 = clamp(Math.floor(sy), 0, H - 1), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
+      const fx = clamp(sx - x0, 0, 1), fy = clamp(sy - y0, 0, 1);
+      const o = (y * ow + x) * 4, A = (y0 * W + x0) * 4, Bq = (y0 * W + x1) * 4, Cq = (y1 * W + x0) * 4, E = (y1 * W + x1) * 4;
+      for (let ch = 0; ch < 3; ch++) out[o + ch] = (d[A + ch] * (1 - fx) + d[Bq + ch] * fx) * (1 - fy) + (d[Cq + ch] * (1 - fx) + d[E + ch] * fx) * fy;
+      out[o + 3] = 255;
+    }
+  }
+  // Rows and columns along the edges that fall outside the photo are cut off; any left inside become paper.
+  const bad = (x: number, y: number) => out[(y * ow + x) * 4 + 3] === 0;
+  const rowBad = (y: number) => { let c = 0; for (let x = 0; x < ow; x += 2) if (bad(x, y)) c++; return c > ow * 0.15; };
+  const colBad = (x: number, y0: number, y1: number) => { let c = 0; for (let y = y0; y < y1; y += 2) if (bad(x, y)) c++; return c > (y1 - y0) * 0.15; };
+  let top = 0, bot = oh; while (top < oh * 0.2 && rowBad(top)) top++; while (bot > oh * 0.8 && rowBad(bot - 1)) bot--;
+  let left = 0, right = ow; while (left < ow * 0.2 && colBad(left, top, bot)) left++; while (right > ow * 0.8 && colBad(right - 1, top, bot)) right--;
+  const cw = right - left, ch = bot - top;
+  const res = new Uint8ClampedArray(cw * ch * 4);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const i = ((y + top) * ow + x + left) * 4, o = (y * cw + x) * 4; if (out[i + 3]) { res[o] = out[i]; res[o + 1] = out[i + 1]; res[o + 2] = out[i + 2]; } else res[o] = res[o + 1] = res[o + 2] = 255; res[o + 3] = 255; }
+  return { data: res, width: cw, height: ch };
+}
+
+/**
+ * A book's own edge or the next page beyond the fold, left along a side of the picture, cut away: a band
+ * near the side (within 15%) clearly darker than the paper, with the picture cut where the paper is bright
+ * again on the inside of it.
+ */
+export function trimMargins(img: Img): Img {
+  const { width: W, height: H, data: d } = img;
+  const lum = (x: number, y: number) => { const i = (y * W + x) * 4; return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; };
+  const prof = (n: number, m: number, at: (i: number, j: number) => number) => {
+    const out = new Float32Array(n); const vals: number[] = [];
+    for (let i = 0; i < n; i++) { vals.length = 0; for (let j = Math.floor(m * 0.1); j < m * 0.9; j += 4) vals.push(at(i, j)); vals.sort((a, b) => a - b); out[i] = vals[Math.floor(vals.length * 0.75)] ?? 255; }
+    return out;
+  };
+  const cols = prof(W, H, (x, y) => lum(x, y)), rows = prof(H, W, (y, x) => lum(x, y));
+  const cut = (p: Float32Array, fromEnd: boolean): number => {
+    const n = p.length; const mid = Array.from(p.slice(Math.floor(n * 0.25), Math.ceil(n * 0.75))).sort((a, b) => a - b); const paper = mid[mid.length >> 1];
+    const band = Math.floor(n * 0.15); let pm = -1, mv = Infinity;
+    for (let k = 0; k < band; k++) { const i = fromEnd ? n - 1 - k : k; if (p[i] < mv) { mv = p[i]; pm = k; } }
+    if (pm < 0 || mv > paper * 0.8) return 0;
+    let k = pm; while (k < band * 1.4 && p[fromEnd ? n - 1 - k : k] < paper * 0.9) k++;
+    return k < band * 1.4 ? k + Math.round(n * 0.004) : 0;
+  };
+  const l = cut(cols, false), r = cut(cols, true), t = cut(rows, false), b = cut(rows, true);
+  if (!l && !r && !t && !b) return img;
+  const ow = W - l - r, oh = H - t - b; if (ow < W * 0.6 || oh < H * 0.6) return img;
+  const out = new Uint8ClampedArray(ow * oh * 4);
+  for (let y = 0; y < oh; y++) out.set(d.subarray(((y + t) * W + l) * 4, ((y + t) * W + l + ow) * 4), y * ow * 4);
+  return { data: out, width: ow, height: oh };
+}

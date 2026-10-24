@@ -7,8 +7,8 @@ import * as S from '../scan';
 import { runner, pickFiles, pdfBlob, draggable } from './pdftools';
 
 type Quality = 'standard' | 'high' | 'max';
-type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean };
-const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true };
+type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean };
+const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true };
 const KEY = 'kr.scan';
 const SIDE: Record<Quality, number> = { standard: 1700, high: 2400, max: 3300 };
 const PREVIEW = 1200;
@@ -18,9 +18,10 @@ export function scanSettings(): Settings {
 }
 function saveSettings(s: Settings): void { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* private mode */ } }
 
-/** One scanned page: the photo, where the page is in it (corners as fractions of the photo), and how it is
- *  to come out. */
-type Page = { file: Blob; preview: S.Img; quad: S.Quad; turn: number; filter: S.Filter; adj: S.Adjust; thumb: string };
+/** One scanned page: the photo, where the page is in it (corners as fractions of the photo), how the page
+ *  bends (a book's), and how it is to come out. */
+type Page = { file: Blob; preview: S.Img; quad: S.Quad; curve: S.Curve | null; flatten: boolean; turn: number; filter: S.Filter; adj: S.Adjust; thumb: string };
+type Look = Pick<Page, 'quad' | 'curve' | 'flatten' | 'turn' | 'filter' | 'adj'>;
 
 /* ---------- pictures ---------- */
 
@@ -57,16 +58,25 @@ const scaleQuad = (q: S.Quad, w: number, hh: number): S.Quad => q.map((p) => ({ 
 const FULL: S.Quad = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
 
 /** The page as it comes out of a picture of the photo: flattened, cleaned, turned upright. */
-function render(src: S.Img, p: Pick<Page, 'quad' | 'turn' | 'filter' | 'adj'>, maxSide: number): S.Img {
+function render(src: S.Img, p: Look, maxSide: number): S.Img {
   const q = S.orderQuad(scaleQuad(p.quad, src.width, src.height));
-  const flat = S.warp(src, q, S.flatSize(q, maxSide));
+  let flat = S.warp(src, q, S.flatSize(q, maxSide));
+  // A book's page: its lines straightened, the book's edge and the next page cut away.
+  if (p.flatten && p.curve) flat = S.trimMargins(S.unwarp(flat, p.curve));
   return S.rotate(S.applyFilter(flat, p.filter, p.adj), p.turn);
+}
+
+/** How the page within these corners bends (looked for in the photo's preview). */
+function curveOf(preview: S.Img, quad: S.Quad): S.Curve | null {
+  const q = S.orderQuad(scaleQuad(quad, preview.width, preview.height));
+  try { return S.findCurve(S.warp(preview, q, S.flatSize(q, 1100))); } catch { return null; }
 }
 
 /** Find the page in a new photo and decide which way up it goes. */
 function autoPlace(p: Page, set: Settings): void {
   const { preview } = p;
   if (set.autoCrop) { const f = S.detectPage(preview); p.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; }
+  p.curve = curveOf(preview, p.quad); p.flatten = set.flatten;
   if (set.autoTurn) {
     const flat = render(preview, { ...p, turn: 0, filter: 'gray', adj: {} }, 700);
     p.turn = S.uprightTurn(flat, getLang() === 'ar');
@@ -102,7 +112,7 @@ export function scannerSheet(onDone?: () => void): void {
       await tick();
       try {
         const preview = await loadImg(f, PREVIEW);
-        const p: Page = { file: f, preview, quad: FULL, turn: 0, filter: set.filter, adj: {}, thumb: '' };
+        const p: Page = { file: f, preview, quad: FULL, curve: null, flatten: set.flatten, turn: 0, filter: set.filter, adj: {}, thumb: '' };
         autoPlace(p, set); await makeThumb(p);
         pages.push(p); draw();
       } catch (e) { console.error(e); toast(t('scanUnreadable', { name: f.name }), 'error'); }
@@ -171,7 +181,9 @@ export function scannerSheet(onDone?: () => void): void {
 
   function editor(k: number): void {
     const p = pages[k];
-    const work: Pick<Page, 'quad' | 'turn' | 'filter' | 'adj'> = { quad: p.quad.map((c) => ({ ...c })) as S.Quad, turn: p.turn, filter: p.filter, adj: { ...p.adj } };
+    const work: Look = { quad: p.quad.map((c) => ({ ...c })) as S.Quad, curve: p.curve, flatten: p.flatten, turn: p.turn, filter: p.filter, adj: { ...p.adj } };
+    // (Corners moved: how the page bends is looked for again, once they are let go.)
+    const recurve = debounce(() => { work.curve = curveOf(preview, S.orderQuad(work.quad.map((c) => ({ ...c })))); syncFlat(); refresh(); }, 250);
     const ed = openSheet(t('scanEditPage', { n: localDigits(String(k + 1)) }), t('close'), { stack: true });
     ed.body.style.fontFamily = 'var(--font-ui)';
     ed.el.classList.add('scan-editor');
@@ -214,14 +226,14 @@ export function scannerSheet(onDone?: () => void): void {
         work.quad[i] = { x: Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), y: Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)) };
         place(); showLoupe(i);
       });
-      const end = () => { drag = false; loupe.hidden = true; };
+      const end = () => { if (drag) recurve(); drag = false; loupe.hidden = true; };
       hd.addEventListener('pointerup', end); hd.addEventListener('pointercancel', end);
       // Arrow keys move a focused corner a little.
       hd.addEventListener('keydown', (e) => {
         const d = e.shiftKey ? 0.02 : 0.004; const c = work.quad[i];
         const m: Record<string, [number, number]> = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] };
         if (!m[e.key]) return; e.preventDefault();
-        work.quad[i] = { x: Math.min(1, Math.max(0, c.x + m[e.key][0])), y: Math.min(1, Math.max(0, c.y + m[e.key][1])) }; place();
+        work.quad[i] = { x: Math.min(1, Math.max(0, c.x + m[e.key][0])), y: Math.min(1, Math.max(0, c.y + m[e.key][1])) }; place(); recurve();
       });
     });
     const refresh = debounce(() => { if (mode === 'result') toCanvas(render(preview, work, 1100), result); }, 120);
@@ -235,10 +247,13 @@ export function scannerSheet(onDone?: () => void): void {
     const resultChip = h('button', { type: 'button', class: 'chip small', 'aria-pressed': 'false', onclick: () => setMode('result') }, h('span', null, t('scanResult')));
     const tools = h('div', { class: 'tool-bar' },
       cropChip, resultChip,
-      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { const f = S.detectPage(preview); work.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; place(); refresh(); toast(f.how === 'frame' ? t('scanNoEdges') : t('scanFound')); } }, icon('target'), t('scanAuto')),
-      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { work.quad = FULL.map((c) => ({ ...c })) as S.Quad; place(); refresh(); } }, icon('fullscreen'), t('scanWhole')),
+      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { const f = S.detectPage(preview); work.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; place(); recurve(); toast(f.how === 'frame' ? t('scanNoEdges') : t('scanFound')); } }, icon('target'), t('scanAuto')),
+      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { work.quad = FULL.map((c) => ({ ...c })) as S.Quad; place(); recurve(); } }, icon('fullscreen'), t('scanWhole')),
       h('button', { type: 'button', class: 'icon-btn', title: t('rotateLeft'), 'aria-label': t('rotateLeft'), onclick: () => { work.turn = (work.turn + 3) % 4; if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', { class: 'flip-x' }, icon('rotate'))),
       h('button', { type: 'button', class: 'icon-btn', title: t('rotateRight'), 'aria-label': t('rotateRight'), onclick: () => { work.turn = (work.turn + 1) % 4; if (mode === 'crop') setMode('result'); else refresh(); } }, icon('rotate')));
+    const flatChip = h('button', { type: 'button', class: 'chip small', 'aria-pressed': 'false', title: t('scanFlattenSub'), onclick: () => { work.flatten = !work.flatten; syncFlat(); if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', null, t('scanFlatten')));
+    function syncFlat() { const on = work.flatten && !!work.curve; flatChip.classList.toggle('on', on); flatChip.setAttribute('aria-pressed', String(on)); flatChip.disabled = !work.curve; }
+    tools.append(flatChip); syncFlat();
     const FILTERS: [S.Filter, string][] = [['auto', t('scanFilterAuto')], ['color', t('scanFilterColor')], ['gray', t('scanFilterGray')], ['bw', t('scanFilterBw')], ['original', t('scanFilterOriginal')]];
     const chips = h('div', { class: 'scan-filters', role: 'radiogroup', 'aria-label': t('scanFilter') });
     const drawChips = () => chips.replaceChildren(...FILTERS.map(([f, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(work.filter === f), class: 'chip small' + (work.filter === f ? ' on' : ''), onclick: () => { work.filter = f; drawChips(); if (mode === 'crop') setMode('result'); else refresh(); } }, h('span', null, label))));
@@ -251,7 +266,7 @@ export function scannerSheet(onDone?: () => void): void {
     ed.body.append(tools, h('div', { class: 'scan-view' }, stage, result), chips,
       h('div', { class: 'scan-sliders' }, slider(t('brightness'), 'brightness', -0.4, 0.4), slider(t('contrast'), 'contrast', -0.4, 0.6)));
     const apply = async (all: boolean) => {
-      Object.assign(p, { quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), turn: work.turn, filter: work.filter, adj: { ...work.adj } });
+      Object.assign(p, { quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), curve: work.curve, flatten: work.flatten, turn: work.turn, filter: work.filter, adj: { ...work.adj } });
       if (all) for (const o of pages) if (o !== p) { o.filter = work.filter; o.adj = { ...work.adj }; await makeThumb(o); }
       await makeThumb(p); ed.close(); draw();
     };
@@ -269,7 +284,7 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const s = { ...cur };
   const commit = () => { saveSettings(s); onChange({ ...s }); };
-  const check = (label: string, key: 'autoCrop' | 'autoTurn', sub: string) => {
+  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten', sub: string) => {
     const input = h('input', { type: 'checkbox', checked: s[key] }) as HTMLInputElement;
     input.addEventListener('change', () => { s[key] = input.checked; commit(); });
     return h('label', { class: 'scan-check' }, input, h('span', null, h('b', null, label), h('small', null, sub)));
@@ -279,6 +294,7 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
     h('label', null, h('span', null, t('scanFilter')), pickButton(t('scanFilter'), [['auto', t('scanFilterAuto')], ['color', t('scanFilterColor')], ['gray', t('scanFilterGray')], ['bw', t('scanFilterBw')], ['original', t('scanFilterOriginal')]], s.filter, (v) => { s.filter = v; commit(); }, t('close'))),
     h('label', null, h('span', null, t('scanQuality')), pickButton(t('scanQuality'), [['standard', t('scanQualityStandard')], ['high', t('scanQualityHigh')], ['max', t('scanQualityMax')]], s.quality, (v) => { s.quality = v; commit(); }, t('close')))),
     check(t('scanAutoCrop'), 'autoCrop', t('scanAutoCropSub')),
+    check(t('scanFlatten'), 'flatten', t('scanFlattenSub')),
     check(t('scanAutoTurn'), 'autoTurn', t('scanAutoTurnSub')));
   sh.actions.append(h('button', { class: 'btn small primary', type: 'button', onclick: sh.close }, t('done')));
 }
