@@ -25,8 +25,11 @@ for pi, path in enumerate(a.pages):
         N = 400; Xs = np.linspace(0, W, N)
         d = Xs if spine_left else (W - Xs)
         theta = th0 * np.exp(-d / s) * (1 if spine_left else -1)
+        # (And the whole page bowed a little, as an open book's page is: a gentle arc across.)
+        bow = math.radians(rnd.uniform(4, 14)) * (1 if variant else 0.5)
+        theta = theta + bow * (Xs / W - 0.5) * 2 * (1 if spine_left else -1)
         # Arc length along X → position (x, z) in space (z < 0: away from the camera, into the gutter).
-        dx = np.gradient(Xs); xs = np.cumsum(np.cos(theta) * dx); xs -= xs[0]; zs = -np.cumsum(np.abs(np.sin(theta)) * dx)
+        dx = np.gradient(Xs); xs = np.cumsum(np.cos(theta) * dx); xs -= xs[0]; zs = -np.cumsum(np.sin(theta) * dx) * (1 if spine_left else -1)
         zs -= zs[np.argmin(np.abs(theta))] if not spine_left else zs[-1]
         # Grid of page points → 3D → camera.
         gx, gy = 80, 110
@@ -36,7 +39,7 @@ for pi, path in enumerate(a.pages):
         Z = np.tile(pz, gy)
         pts = np.column_stack([P[:, 0], P[:, 1], Z])
         R = rot(math.radians(rnd.uniform(-12, 12)), math.radians(rnd.uniform(-12, 12)), math.radians(rnd.uniform(-6, 6)))
-        f = 1.0; D = 1.25 * max(W, H)
+        f = 1.0; D = rnd.uniform(0.95, 1.3) * max(W, H)
         cam = pts @ R.T + np.array([0, 0, D])
         OW, OH = (1200, 1600) if rnd.random() < 0.7 else (1600, 1200)
         fpx = max(OW, OH) * 0.95

@@ -1379,8 +1379,13 @@ function gridUnwarp(img: Img, gr: Grid): Img {
   const out = new Uint8ClampedArray(OW * H * 4);
   for (let y = 0; y < H; y++) {
     const v0 = (y + 0.5) / H;
+    // (The map read between its nodes, written out: this runs for every pixel of the finished page.)
+    const fy0 = v0 * (gr.gy - 1), j0 = Math.min(gr.gy - 2, Math.floor(fy0)), ty = fy0 - j0;
     for (let x = 0; x < OW; x++) {
-      const [u, v] = mapAt(gr, (x + 0.5) / OW, v0);
+      const u0 = (x + 0.5) / OW, fx0 = u0 * (gr.gx - 1), i0 = Math.min(gr.gx - 2, Math.floor(fx0)), tx = fx0 - i0;
+      const k = j0 * gr.gx + i0, a = (1 - tx) * (1 - ty), bq = tx * (1 - ty), cq = (1 - tx) * ty, dq = tx * ty;
+      const u = u0 + gr.mx[k] * a + gr.mx[k + 1] * bq + gr.mx[k + gr.gx] * cq + gr.mx[k + gr.gx + 1] * dq;
+      const v = v0 + gr.my[k] * a + gr.my[k + 1] * bq + gr.my[k + gr.gx] * cq + gr.my[k + gr.gx + 1] * dq;
       const sx = u * W - 0.5, sy = v * H - 0.5; const o = (y * OW + x) * 4;
       if (sx < -1 || sy < -1 || sx > W || sy > H) { out[o] = out[o + 1] = out[o + 2] = 255; out[o + 3] = 255; continue; }
       const x0 = clamp(Math.floor(sx), 0, W - 1), y0 = clamp(Math.floor(sy), 0, H - 1), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
