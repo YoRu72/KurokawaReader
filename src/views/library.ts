@@ -612,7 +612,7 @@ export function libraryView(): HTMLElement {
       h('div', { class: 'resume-meta' },
         h('div', { class: 'eyebrow' }, t('continueReading')),
         h('div', { class: 'bt', dir: 'auto' }, last.title),
-        h('div', { class: 'sub' }, [last.author, `${localDigits(pct)}%`].filter(Boolean).join(' · ')),
+        h('div', { class: 'sub' }, last.author ? h('bdi', null, last.author) : null, last.author ? ' · ' : null, h('bdi', null, `${localDigits(pct)}%`)),
         h('div', { class: 'bar' }, h('span', { style: { width: `${pct}%` } }))),
       h('button', { class: 'btn primary small', type: 'button', onclick: () => navigate(`/read/${last.id}`) }, icon('play'), t('open')));
   }
