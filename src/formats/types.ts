@@ -27,6 +27,7 @@ export interface BookMeta {
   language?: string;
   cover?: Blob;
   pageCount?: number;
+  description?: string;
 }
 
 export interface RenderContext {

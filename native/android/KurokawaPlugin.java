@@ -532,6 +532,23 @@ public class KurokawaPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** Opens a file in another app of the user's choosing (a PDF in a printing or viewing app, say). */
+    @PluginMethod
+    public void openWith(PluginCall call) {
+        String uriStr = call.getString("uri");
+        String mime = call.getString("mime", "*/*");
+        if (uriStr == null) { call.reject("uri required"); return; }
+        try {
+            Uri uri = Uri.parse(uriStr);
+            if ("file".equals(uri.getScheme())) uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", new File(uri.getPath()));
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, mime);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION));
+            call.resolve();
+        } catch (Exception e) { call.reject("open failed: " + e.getMessage(), e); }
+    }
+
     /** Puts a PNG (base64) on the clipboard as an image. */
     @PluginMethod
     public void copyImage(PluginCall call) {

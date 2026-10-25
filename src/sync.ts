@@ -5,7 +5,7 @@
 // Dropbox already keep in sync. Runs at launch, when the device comes back
 // online, and a minute after reading progress changes (automatically, or after
 // asking — a setting).
-import { db, type Book, type Folder, type Bookmark, type Highlight, type PdfNote, type Locator } from './db';
+import { db, type Book, type Folder, type Bookmark, type Highlight, type PdfNote, type InkStroke, type Locator } from './db';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 import { t } from './i18n';
@@ -14,7 +14,7 @@ import { toast } from './ui/dom';
 export type SyncProvider = 'none' | 'dropbox' | 'webdav' | 'folder';
 const FILE = 'kurokawa-sync.json';
 
-interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats']; done?: boolean; doneAt?: number; rating?: number; ratingAt?: number; review?: string; reviewAt?: number }
+interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; ink?: InkStroke[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats']; done?: boolean; doneAt?: number; rating?: number; ratingAt?: number; review?: string; reviewAt?: number; track?: Book['track'] }
 interface SyncState { app: 'KurokawaReader'; version: 1; updatedAt: number; device: string; folders: { name: string; createdAt: number }[]; tags?: { name: string; createdAt: number }[]; books: Record<string, BookState>; deleted: Record<string, number> }
 
 const keyOf = (b: { fileName: string; size: number }) => `${b.fileName}:${b.size}`;
@@ -34,7 +34,7 @@ async function localState(): Promise<SyncState> {
   const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
   const deleted = (await db.getMeta<Record<string, number>>('sync.deleted')) ?? {};
   const out: SyncState = { app: 'KurokawaReader', version: 1, updatedAt: Date.now(), device: deviceId(), folders: folders.map((f) => ({ name: f.name, createdAt: f.createdAt })), tags: (await db.getMeta<{ name: string; createdAt: number }[]>('tags')) ?? [], books: {}, deleted };
-  for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats, done: b.done, doneAt: b.doneAt, rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt };
+  for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], ink: b.ink ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats, done: b.done, doneAt: b.doneAt, rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, track: b.track };
   return out;
 }
 
@@ -72,9 +72,11 @@ async function applyRemote(remote: SyncState): Promise<number> {
       for (const rh of r.highlights ?? []) { const lh = mergedHl.find((y) => y.id === rh.id); if (lh && rh.note !== lh.note && (rh.noteAt ?? 0) > (lh.noteAt ?? 0)) { lh.note = rh.note; lh.noteAt = rh.noteAt; dirty = true; } }
       x.highlights = mergedHl;
       x.pins = merge(x.pins ?? [], r.pins ?? []);
+      x.ink = merge(x.ink ?? [], r.ink ?? []);
       x.pdfHighlights = merge(x.pdfHighlights ?? [], r.pdfHighlights ?? []);
       if (r.progress && (r.progressAt ?? 0) > (x.progressAt ?? x.lastOpenedAt ?? 0)) { x.progress = { ...r.progress, bookId: x.id }; x.progressAt = r.progressAt; x.lastOpenedAt = Math.max(x.lastOpenedAt ?? 0, r.lastOpenedAt ?? 0); dirty = true; }
       if (r.folderName && !x.folderId) { const f = folders.find((y) => y.name === r.folderName); if (f) { x.folderId = f.id; dirty = true; } }
+      if (r.track && (r.track.updatedAt ?? 0) > (x.track?.updatedAt ?? 0)) { x.track = r.track; dirty = true; }
       if ((r.reviewAt ?? 0) > (x.reviewAt ?? 0)) { if (r.review) x.review = r.review; else delete x.review; x.reviewAt = r.reviewAt; dirty = true; }
       if ((r.ratingAt ?? 0) > (x.ratingAt ?? 0)) { if (r.rating) x.rating = r.rating; else delete x.rating; x.ratingAt = r.ratingAt; dirty = true; }
       if ((r.doneAt ?? 0) > (x.doneAt ?? 0)) { if (r.done === undefined) delete x.done; else x.done = r.done; x.doneAt = r.doneAt; dirty = true; }
@@ -97,7 +99,7 @@ function mergeStates(local: SyncState, remote: SyncState | null): SyncState {
     const tags = (l.tagsAt ?? 0) >= (r.tagsAt ?? 0) ? l : r;
     out.books[k] = {
       ...(l.progressAt >= (r.progressAt ?? 0) ? l : r),
-      bookmarks: uniq(l.bookmarks, r.bookmarks ?? []), highlights: uniq(l.highlights, r.highlights ?? []), pins: uniq(l.pins, r.pins ?? []),
+      bookmarks: uniq(l.bookmarks, r.bookmarks ?? []), highlights: uniq(l.highlights, r.highlights ?? []), pins: uniq(l.pins, r.pins ?? []), ink: uniq(l.ink ?? [], r.ink ?? []),
       pdfHighlights: uniq(l.pdfHighlights ?? [], r.pdfHighlights ?? []),
       folderName: l.folderName ?? r.folderName,
       tags: tags.tags ?? [], tagsAt: tags.tagsAt,
@@ -105,6 +107,7 @@ function mergeStates(local: SyncState, remote: SyncState | null): SyncState {
       ...((l.doneAt ?? 0) >= (r.doneAt ?? 0) ? { done: l.done, doneAt: l.doneAt } : { done: r.done, doneAt: r.doneAt }),
       ...((l.ratingAt ?? 0) >= (r.ratingAt ?? 0) ? { rating: l.rating, ratingAt: l.ratingAt } : { rating: r.rating, ratingAt: r.ratingAt }),
       ...((l.reviewAt ?? 0) >= (r.reviewAt ?? 0) ? { review: l.review, reviewAt: l.reviewAt } : { review: r.review, reviewAt: r.reviewAt }),
+      track: (l.track?.updatedAt ?? 0) >= (r.track?.updatedAt ?? 0) ? l.track : r.track,
     };
   }
   return out;

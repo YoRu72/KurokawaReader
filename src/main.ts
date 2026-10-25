@@ -6,6 +6,7 @@ import { applyDocumentLang, onLangChange } from './i18n';
 import { onRoute, parseRoute, navigate, type Route } from './router';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
+import { bookView } from './views/book';
 import { settingsView } from './views/settings';
 import { notesView } from './views/notes';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
@@ -28,6 +29,7 @@ function mount(route: Route): void {
   document.querySelectorAll('.sheet, .sheet-scrim, .sel-toolbar, .lightbox').forEach((e) => e.remove());
   switch (route.name) {
     case 'read': current = readerView(route.ids); break;
+    case 'book': current = bookView(route.id); break;
     case 'settings': current = settingsView(); break;
     case 'notes': current = notesView(); break;
     default: current = libraryView();

@@ -160,3 +160,24 @@ export function parseRanges(text: string, count: number): number[] {
   }
   return out;
 }
+
+/** The reader's ink drawn into the pages themselves (points are fractions of the page as shown, so a page's
+ *  /Rotate is undone first). */
+export async function flattenInk(bytes: Uint8Array, strokes: { page: number; color: string; w: number; pts: number[] }[]): Promise<Uint8Array> {
+  const { rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const pages = doc.getPages();
+  const hex = (c: string) => { const m = /^#?([0-9a-f]{6})$/i.exec(c); const v = m ? parseInt(m[1], 16) : 0; return rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255); };
+  for (const s of strokes) {
+    const page = pages[s.page - 1]; if (!page || s.pts.length < 2) continue;
+    const { width: W, height: H } = page.getSize(); const rot = ((page.getRotation().angle % 360) + 360) % 360;
+    // Shown fractions → unrotated fractions.
+    const un = (x: number, y: number): [number, number] => rot === 90 ? [y, 1 - x] : rot === 180 ? [1 - x, 1 - y] : rot === 270 ? [1 - y, x] : [x, y];
+    const shownW = rot === 90 || rot === 270 ? H : W;
+    let d = '';
+    for (let i = 0; i < s.pts.length; i += 2) { const [u, v] = un(s.pts[i], s.pts[i + 1]); d += `${i ? ' L' : 'M'}${(u * W).toFixed(2)} ${(v * H).toFixed(2)}`; }
+    if (s.pts.length === 2) d += ' l0.01 0';
+    page.drawSvgPath(d, { x: 0, y: H, borderColor: hex(s.color), borderWidth: Math.max(0.3, s.w * shownW), borderLineCap: 1, borderOpacity: 1 });
+  }
+  return doc.save();
+}

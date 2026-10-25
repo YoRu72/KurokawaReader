@@ -135,6 +135,35 @@ export function settingsView(): HTMLElement {
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup')))));
 
+  // Tracking (AniList) and the book page
+  const trackCard = h('section', { class: 'card' });
+  const renderTrack = async () => {
+    const al = await import('../anilist'); const cur = getSettings(); const u = al.user();
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('tracking')), h('p', null, t('trackingBody')),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('bookPagePref')), h('div', { class: 'segmented' }, ...([['chaptered', t('bookPageChaptered')], ['always', t('bookPageAlways')], ['never', t('bookPageNever')]] as ['chaptered' | 'always' | 'never', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.bookPage === id), onclick: () => { updateSettings({ bookPage: id }); void renderTrack(); } }, label)))),
+      h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistEnable')), (() => { const c = h('input', { type: 'checkbox', checked: cur.anilistEnabled, onchange: () => { updateSettings({ anilistEnabled: c.checked }); void renderTrack(); } }) as HTMLInputElement; return c; })()),
+    ];
+    if (cur.anilistEnabled) {
+      if (u) {
+        parts.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })),
+          h('button', { class: 'btn small', onclick: () => { al.unlink(); void renderTrack(); } }, icon('close'), t('anilistUnlink'))),
+          h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistAutoProgress')), (() => { const c = h('input', { type: 'checkbox', checked: cur.anilistAutoProgress, onchange: () => updateSettings({ anilistAutoProgress: c.checked }) }) as HTMLInputElement; return c; })()));
+      } else {
+        const id = h('input', { type: 'text', value: cur.anilistClientId, placeholder: '12345', inputmode: 'numeric', dir: 'ltr', style: { width: '120px' } }) as HTMLInputElement;
+        id.addEventListener('change', () => updateSettings({ anilistClientId: id.value.trim() }));
+        const tk = h('textarea', { rows: 3, placeholder: t('anilistTokenPlaceholder'), dir: 'ltr', style: { width: '100%', fontFamily: 'monospace', fontSize: '12px' } }) as HTMLTextAreaElement;
+        parts.push(h('p', { class: 'hint' }, t('anilistHowTo'), ' ', h('a', { href: 'https://anilist.co/settings/developer', target: '_blank', rel: 'noopener' }, 'anilist.co/settings/developer')),
+          h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistClientId')), id),
+          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn tonal small', onclick: () => { updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; } window.open(al.authUrl(), '_blank', 'noopener'); } }, icon('external'), t('anilistSignIn'))),
+          tk,
+          h('div', null, h('button', { class: 'btn primary small', onclick: async () => { try { const user = await al.link(tk.value); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } } }, icon('check'), t('anilistLink'))));
+      }
+    }
+    trackCard.replaceChildren(...parts.filter((x): x is HTMLElement => x !== null));
+  };
+  void renderTrack();
+  body.append(trackCard);
+
   // Account & sync
   body.append(h('section', { class: 'card' }, h('h3', null, t('sync')), h('p', null, t('syncBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'), t('sync')))));

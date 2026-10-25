@@ -32,6 +32,14 @@ function cachedPackage(file: Blob, bookId: string): Promise<Package> {
   return pkg;
 }
 
+/** What a book's page shows before the book is opened: its blurb and its contents (labels and depths). */
+export async function epubOutline(file: Blob, bookId: string): Promise<{ description?: string; language?: string; toc: { label: string; depth: number }[] }> {
+  const pkg = await cachedPackage(file, bookId);
+  const raw = await readToc(pkg);
+  const desc = pkg.meta.description ? pkg.meta.description.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim() : undefined;
+  return { description: desc, language: pkg.meta.language, toc: raw.map((r) => ({ label: r.label, depth: r.depth })) };
+}
+
 /** Parse a book's package ahead of time (the library does this for the book most likely to be opened next). */
 export function prewarmEpub(file: Blob, bookId: string): void { void cachedPackage(file, bookId).catch(() => {}); }
 
@@ -89,7 +97,7 @@ async function loadPackage(file: Blob): Promise<Package> {
   return {
     zip, opfPath, manifest, spine, navItem, ncxItem,
     rtlProgression: spineEl?.getAttribute('page-progression-direction') === 'rtl',
-    meta: { title: dc('title') ?? '', author: dc('creator'), language: dc('language'), cover },
+    meta: { title: dc('title') ?? '', author: dc('creator'), language: dc('language'), cover, description: dc('description') },
   };
 }
 

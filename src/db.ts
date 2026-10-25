@@ -19,6 +19,8 @@ export interface Locator {
   page?: number;
   /** Chapter index inside the book (chapter-by-chapter mode). */
   chapter?: number;
+  /** Index of the contents entry the position is under. */
+  toc?: number;
   /** Overall fraction through the document, for the progress bar. */
   pct: number;
 }
@@ -36,6 +38,9 @@ export interface Bookmark {
   locator: Locator;
   createdAt: number;
 }
+
+/** A stroke of ink on a PDF page: points as fractions of the page (x, y, x, y…), the width as a fraction of its width. */
+export interface InkStroke { id: string; page: number; color: string; w: number; pts: number[]; createdAt: number }
 
 /** A note pinned to a point on a PDF page (x, y as fractions of the page). */
 export interface PdfNote { id: string; page: number; x: number; y: number; note: string; color: Highlight['color']; createdAt: number }
@@ -89,9 +94,14 @@ export interface Book {
   /** The reader's own words about the book. */
   review?: string;
   reviewAt?: number;
+  /** The book's entry on a tracking service (AniList), kept with it. */
+  track?: import('./anilist').Track;
+  /** The publisher's blurb, when the file carries one. */
+  description?: string;
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];
+  ink?: InkStroke[];
   /** Where the file lives when it is linked instead of copied into the app (scan import). */
   source?: FileSource;
   pdfHighlights?: PdfHighlight[];

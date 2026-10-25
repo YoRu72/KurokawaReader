@@ -3,6 +3,7 @@
 export type Route =
   | { name: 'library' }
   | { name: 'read'; ids: string[] }
+  | { name: 'book'; id: string }
   | { name: 'settings' }
   | { name: 'notes' };
 
@@ -12,6 +13,8 @@ export function parseRoute(hash = location.hash): Route {
   const path = hash.replace(/^#/, '') || '/';
   const m = /^\/read\/([^/?]+)/.exec(path);
   if (m) return { name: 'read', ids: m[1].split(',').filter(Boolean) };
+  const b = /^\/book\/([^/?]+)/.exec(path);
+  if (b) return { name: 'book', id: b[1] };
   if (path.startsWith('/settings')) return { name: 'settings' };
   if (path.startsWith('/notes')) return { name: 'notes' };
   return { name: 'library' };

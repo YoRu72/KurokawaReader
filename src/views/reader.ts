@@ -3,7 +3,7 @@
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
 import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
-import { db, uid, type PdfNote, type PdfHighlight, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
+import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
@@ -462,7 +462,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const first = doc.allBlocks.indexOf(blocks[0]);
       pct = doc.allBlocks.length ? Math.min(1, Math.max(0, (Math.max(0, first) + within * blocks.length) / doc.allBlocks.length)) : (doc.chapter + within) / doc.chapters.length;
     }
-    return { doc, loc: { bookId: doc.book.id, block: globalIdx >= 0 ? globalIdx : lo, offset, pct, chapter: doc.chapter } };
+    const tocIdx = block ? tocIndexFor(doc, block) : -1;
+    return { doc, loc: { bookId: doc.book.id, block: globalIdx >= 0 ? globalIdx : lo, offset, pct, chapter: doc.chapter, ...(tocIdx >= 0 ? { toc: tocIdx } : {}) } };
   }
 
   function scrollToLocator(loc: Locator): void {
@@ -511,12 +512,22 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (jump) {
       const doc = docs.find((d) => d.book.id === jump.bookId) ?? first;
       if (jump.kind === 'bm') { const bm = doc.book.bookmarks.find((x) => x.id === jump.id); if (bm) { scrollToLocator(bm.locator); return; } }
+      if (jump.kind === 'toc') { const i = Number(jump.id); const item = doc.render?.toc?.[i]; if (item) { setTimeout(() => scrollToAnchor(item.anchor, false), 30); return; } }
       if (jump.kind === 'hl') { setTimeout(() => { const m = doc.wrapper.querySelector(`mark[data-hl="${jump.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${jump.id}`; scrollToAnchor(m.id); } }, 50); return; }
     }
     const p = first.book.progress;
     if (p && p.bookId === first.book.id) scrollToLocator(p);
   }
 
+  /** Which contents entry a block falls under (the last one that starts at or before it). */
+  function tocIndexFor(doc: OpenDoc, block: Element): number {
+    const toc = doc.render?.toc ?? []; let best = -1;
+    for (let i = 0; i < toc.length; i++) {
+      const el = document.getElementById(toc[i].anchor); if (!el) continue;
+      if (el.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING || el === block || el.contains(block)) best = i; else break;
+    }
+    return best;
+  }
   function labelFor(doc: OpenDoc, blockIdx: number): string {
     const toc = doc.render?.toc ?? [];
     if (!toc.length) return doc.book.title;
@@ -569,6 +580,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const cur = currentLocator();
     if (!cur) return;
     await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; b.progressAt = Date.now(); });
+    if (cur.doc.book.track && cur.loc.toc !== undefined) void import('../ui/track').then((m) => m.pushProgress(cur.doc.book, cur.loc.toc! + 1));
     scheduleSync();
     cur.doc.book.progress = cur.loc;
     // Books fully scrolled past count as finished.
@@ -1135,7 +1147,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 /* ------------------------------------------------------------------ */
 
 /** Toggle the favourite mark on a book (the reserved ★ tag). */
-async function toggleFavorite(book: Book): Promise<boolean> {
+export async function toggleFavorite(book: Book): Promise<boolean> {
   const has = (book.tags ?? []).includes(FAV_TAG);
   const tags = has ? (book.tags ?? []).filter((x) => x !== FAV_TAG) : [...(book.tags ?? []), FAV_TAG];
   await db.updateBook(book.id, (b) => { if (tags.length) b.tags = tags; else delete b.tags; b.tagsAt = Date.now(); });
@@ -1146,7 +1158,7 @@ async function toggleFavorite(book: Book): Promise<boolean> {
 }
 
 /** A one-shot jump target set by the Bookmarks & notes view before opening a book. */
-export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin'; id: string }
+export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin' | 'toc'; id: string }
 export function setJump(j: Jump): void { sessionStorage.setItem('kr.jump', JSON.stringify(j)); }
 function takeJump(): Jump | null { const raw = sessionStorage.getItem('kr.jump'); if (!raw) return null; sessionStorage.removeItem('kr.jump'); try { return JSON.parse(raw) as Jump; } catch { return null; } }
 
@@ -1168,6 +1180,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const slider = h('input', { type: 'range', min: '1', value: '1', 'aria-label': t('page') }) as HTMLInputElement;
   const count = h('span', { class: 'pcount' });
   let viewer: PdfViewer;
+  let ink: import('../ui/ink').Ink | null = null;
+  let strip: import('../ui/pagestrip').PageStrip | null = null;
 
   // The page bar: the page's place (arrows, slider, count) and the tools (go to, zoom, fit) — two rows when
   // the screen is upright, one when it is wide, or down one side, as set.
@@ -1184,7 +1198,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     h('form', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, onsubmit: (e: Event) => { e.preventDefault(); const n = Number(pageInput.value); if (n) viewer.goTo(n); pageInput.blur(); } }, pageInput, h('button', { class: 'btn small', type: 'submit' }, t('go'))),
     iconButton('zoomOut', t('zoomOut'), () => viewer.zoom(-0.15)),
     iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
-    iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth())),
+    iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth()),
+    iconButton('highlight', t('inkNotes'), () => ink?.setOn(!ink.on)),
+    iconButton('images', t('pageStrip'), () => strip?.toggle())),
   );
   const relayout = () => { bar.dataset.layout = barLayout(); bar.dataset.side = getSettings().pdfBarSide; bar.dataset.row = getSettings().pdfBarRow; };
   relayout();
@@ -1207,7 +1223,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer = new PdfViewer({
     container: reader,
     invert: getSettings().pdfInvert,
-    onPageRender: (n) => renderHighlights(n),
+    onPageRender: (n) => { renderHighlights(n); ink?.render(n); strip?.sync(); },
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
@@ -1543,6 +1559,39 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   renderPins();
   onDispose(onSettingsChange(() => renderPins()));
 
+  // Ink: strokes kept with the book, drawn over the pages, and put into the file when exported.
+  const { inkLayer } = await import('../ui/ink');
+  let inkTimer = 0;
+  ink = inkLayer({
+    viewer,
+    strokes: () => book.ink ?? [],
+    save: (list: InkStroke[], removed?: string[]) => {
+      book.ink = list; removed?.forEach((id) => void markDeleted(id));
+      window.clearTimeout(inkTimer); inkTimer = window.setTimeout(() => { void db.updateBook(book.id, (b) => { b.ink = list; }); scheduleSync(); }, 400);
+    },
+  });
+  reader.append(ink.toolbar); ink.render();
+  { const i = ink; onDispose(() => i.dispose()); }
+  const { pageStrip } = await import('../ui/pagestrip');
+  strip = pageStrip(viewer, reader);
+  { const st = strip; onDispose(() => st.dispose()); }
+  async function bytesWithInk(): Promise<Uint8Array> {
+    const bytes = new Uint8Array(await file!.arrayBuffer());
+    if (!(book.ink ?? []).length) return bytes;
+    const { flattenInk } = await import('../pdftools');
+    return flattenInk(bytes, book.ink!);
+  }
+  const pdfName = () => (book.fileName?.replace(/\.pdf$/i, '') || book.title).slice(0, 60);
+  async function exportWithInk(): Promise<void> {
+    try { const b = new Blob([await bytesWithInk() as BlobPart], { type: 'application/pdf' }); await shareFile(b, `${pdfName()} — ${t('inkNotes')}.pdf`, book.title); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  }
+  async function printBook(): Promise<void> {
+    try { const { printPdf } = await import('../ui/share'); await printPdf(new Blob([await bytesWithInk() as BlobPart], { type: 'application/pdf' }), `${pdfName()}.pdf`); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  }
+  async function openWithApp(): Promise<void> {
+    try { const { openWith } = await import('../ui/share'); await openWith(new Blob([await bytesWithInk() as BlobPart], { type: 'application/pdf' }), `${pdfName()}.pdf`, 'application/pdf'); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  }
+
   async function addBookmark() {
     const page = viewer.current;
     const excerpt = (await viewer.pageText(page)).trim().replace(/\s+/g, ' ').slice(0, 120);
@@ -1601,6 +1650,11 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('external', t('sharePage'), () => void savePage(true)),
         item('copy', t('copyPageImage'), () => void savePage('copy')),
         item('images', t('savePagesRange'), () => savePagesSheet()),
+        item('highlight', t('inkNotes'), () => ink?.setOn(true)),
+        item('images', t('pageStrip'), () => strip?.toggle()),
+        ...((book.ink ?? []).length ? [item('download', t('exportWithInk'), () => void exportWithInk())] : []),
+        item('file', t('print'), () => void printBook()),
+        ...(nativePlatform() === 'android' ? [item('external', t('openWithApp'), () => void openWithApp())] : []),
         item('file', t('toolExtract'), () => void import('../ui/pdftools').then((m) => m.extractFromBook(book))),
         item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),

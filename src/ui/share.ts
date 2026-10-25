@@ -7,7 +7,7 @@ import { getSettings } from '../settings';
 
 export interface FsPlugin { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }>; appendFile?(o: { path: string; data: string; directory: string }): Promise<void>; rmdir?(o: { path: string; directory: string; recursive?: boolean }): Promise<void> }
 interface SharePlugin { share(o: { title?: string; text?: string; url?: string; files?: string[]; dialogTitle?: string }): Promise<unknown> }
-interface KrPlugin { processText(o: { text: string; readonly?: boolean }): Promise<void>; saveToGallery?(o: { data: string; name: string; folder: string }): Promise<{ path: string }>; saveToDownloads?(o: { path: string; name: string; mime: string }): Promise<{ path: string }> }
+interface KrPlugin { processText(o: { text: string; readonly?: boolean }): Promise<void>; openWith?(o: { uri: string; mime: string }): Promise<void>; saveToGallery?(o: { data: string; name: string; folder: string }): Promise<{ path: string }>; saveToDownloads?(o: { path: string; name: string; mime: string }): Promise<{ path: string }> }
 interface Cap { getPlatform?(): string; isNativePlatform?(): boolean; Plugins?: { Filesystem?: FsPlugin; Share?: SharePlugin; Kurokawa?: KrPlugin } }
 const cap = (): Cap | undefined => (window as unknown as { Capacitor?: Cap }).Capacitor;
 const platform = (): string => cap()?.getPlatform?.() ?? 'web';
@@ -182,3 +182,26 @@ export function fileNameField(): { el: HTMLElement; input: HTMLInputElement; nam
   };
 }
 
+
+/** Hand a file to another app on the device to open (Android's chooser); elsewhere the file is shared or saved. */
+export async function openWith(blob: Blob, filename: string, mime: string): Promise<void> {
+  const c = cap();
+  if (platform() === 'android' && c?.Plugins?.Kurokawa?.openWith) {
+    try {
+      const dir = `open-${Date.now() % 100000}`;
+      const uri = await writeCache(blob, dir, filename);
+      if (uri) { await c.Plugins.Kurokawa.openWith({ uri, mime }); window.setTimeout(() => void c.Plugins!.Filesystem?.rmdir?.({ path: `kr-share/${dir}`, directory: 'CACHE', recursive: true }).catch(() => undefined), 120_000); return; }
+    } catch (e) { console.warn('[kurokawa] open with failed', e); }
+  }
+  await shareFile(blob, filename);
+}
+
+/** Print a PDF: the system's print dialogue (desktop and browsers); on phones the file is handed to another app. */
+export async function printPdf(blob: Blob, filename: string): Promise<void> {
+  if (platform() === 'android' || platform() === 'ios') { await openWith(blob, filename, 'application/pdf'); return; }
+  const url = URL.createObjectURL(blob);
+  const frame = h('iframe', { src: url, style: { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' } }) as HTMLIFrameElement;
+  document.body.append(frame);
+  const done = () => { window.setTimeout(() => { frame.remove(); URL.revokeObjectURL(url); }, 60_000); };
+  frame.addEventListener('load', () => { try { frame.contentWindow?.focus(); frame.contentWindow?.print(); } catch { window.open(url, '_blank'); } done(); });
+}

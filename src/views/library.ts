@@ -281,7 +281,7 @@ export function libraryView(): HTMLElement {
         if (selected.has(book.id)) selected.delete(book.id); else selected.add(book.id);
         el.setAttribute('aria-selected', String(selected.has(book.id)));
         renderSelBar();
-      } else navigate(`/read/${book.id}`);
+      } else void import('./book').then((m) => navigate(m.wantsBookPage(book) ? `/book/${book.id}` : `/read/${book.id}`));
     });
     return el;
   }
@@ -304,7 +304,7 @@ export function libraryView(): HTMLElement {
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
       // The reader's own stars (tap a star again to take the rating away).
       const stars = h('div', { class: 'stars', role: 'radiogroup', 'aria-label': t('rating') });
-      const paint = () => { stars.replaceChildren(...[1, 2, 3, 4, 5].map((n) => h('button', { type: 'button', class: 'star' + ((book.rating ?? 0) >= n ? ' on' : ''), 'aria-label': `${n}`, onclick: async () => { const v = book.rating === n ? undefined : n; const at = Date.now(); await db.updateBook(book.id, (b) => { if (v) b.rating = v; else delete b.rating; b.ratingAt = at; }); if (v) book.rating = v; else delete book.rating; book.ratingAt = at; paint(); renderGrid(); } }, '★'))); };
+      const paint = () => { stars.replaceChildren(...[1, 2, 3, 4, 5].map((n) => h('button', { type: 'button', class: 'star' + ((book.rating ?? 0) >= n ? ' on' : ''), 'aria-label': `${n}`, onclick: async () => { const v = book.rating === n ? undefined : n; const at = Date.now(); await db.updateBook(book.id, (b) => { if (v) b.rating = v; else delete b.rating; b.ratingAt = at; }); if (v) book.rating = v; else delete book.rating; book.ratingAt = at; paint(); renderGrid(); void import('../ui/track').then((m) => m.pushStars(book, v ?? 0)); } }, '★'))); };
       paint();
       s.body.append(h('div', { class: 'row', style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' } }, h('span', { style: { color: 'var(--text-dim)' } }, t('rating')), stars));
       if (book.review) s.body.append(h('p', { class: 'review-quote', dir: 'auto' }, book.review));

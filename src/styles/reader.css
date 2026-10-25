@@ -369,3 +369,23 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 @keyframes turn-next { from { transform: translateY(24px); opacity: .4; } }
 @keyframes turn-prev { from { transform: translateY(-24px); opacity: .4; } }
 @keyframes turn-fade { from { opacity: 0; } }
+
+/* ---- ink on PDF pages ---- */
+.pdf-page > svg.pdf-ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+.pdf-view.inking .pdf-page { touch-action: none; cursor: crosshair; }
+.pdf-view.inking .textLayer, .pdf-view.inking .pdf-pin, .pdf-view.inking .pdf-hl { pointer-events: none; }
+.pdf-view[data-ink="erase"] .pdf-page { cursor: cell; }
+.ink-bar { position: absolute; top: calc(var(--topbar-h, 56px) + 8px); left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: var(--md-surface-container-high); box-shadow: 0 4px 18px rgb(0 0 0 / .3); max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
+.ink-bar .icon-btn[aria-pressed="true"] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.ink-colors, .ink-widths { display: inline-flex; gap: 6px; align-items: center; }
+.ink-color { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
+.ink-color[aria-checked="true"] { border-color: var(--md-on-surface); box-shadow: 0 0 0 2px var(--md-surface-container-high); }
+.ink-width { width: 30px; height: 28px; border: 0; background: none; display: grid; place-items: center; border-radius: 8px; cursor: pointer; }
+.ink-width i { display: block; width: 20px; border-radius: 4px; background: var(--md-on-surface); opacity: .7; }
+.ink-width[aria-checked="true"] { background: var(--md-secondary-container); }
+.ink-width[aria-checked="true"] i { opacity: 1; }
+/* ---- the page strip ---- */
+.pdf-strip { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; gap: 8px; overflow-x: auto; padding: 8px 10px; background: color-mix(in srgb, var(--md-surface) 88%, transparent); backdrop-filter: blur(10px); scrollbar-width: thin; }
+.strip-cell { flex: none; width: 56px; border: 2px solid transparent; border-radius: 8px; padding: 2px; background: none; display: grid; gap: 2px; justify-items: center; cursor: pointer; color: var(--text-dim); font-size: 10px; }
+.strip-cell img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 4px; background: var(--md-surface-container-highest); }
+.strip-cell.current { border-color: var(--md-primary); color: var(--text); }

@@ -148,6 +148,7 @@ export function reviewSheet(book: Book, onChange: () => void): void {
     await db.updateBook(book.id, (b) => { if (rating) b.rating = rating; else delete b.rating; b.ratingAt = at; if (text.trim()) b.review = text.trim(); else delete b.review; b.reviewAt = at; });
     if (rating) book.rating = rating; else delete book.rating; book.ratingAt = at; if (text.trim()) book.review = text.trim(); else delete book.review; book.reviewAt = at;
     onChange();
+    void import('./track').then((m) => m.pushStars(book, rating));
   };
   s.actions.append(
     h('button', { class: 'btn small tonal', type: 'button', onclick: async () => { await save(); reviewCardSheet(book); } }, icon('images'), t('reviewCard')),
