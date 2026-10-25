@@ -674,8 +674,18 @@ export function libraryView(): HTMLElement {
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, tagFilter && !query ? t('noTaggedBooks') : activeFolder && !query ? t('emptyFolder') : t('noResults')),
       tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
     if (getSettings().libraryView === 'cards' && !activeFolder && !query && !tagFilter) folders.forEach((f) => grid.appendChild(folderCard(f)));
-    list.forEach((b) => grid.appendChild(card(b)));
+    // A big library's cards come in batches as the grid is scrolled (a thousand cards at once would hold the
+    // page for seconds); the first batch fills the screen and more.
+    const BATCH = 60;
+    let at = 0;
+    const more = () => { const end = Math.min(list.length, at + BATCH); for (; at < end; at++) grid.appendChild(card(list[at])); if (at < list.length) grid.appendChild(sentinel); else sentinel.remove(); };
+    const sentinel = h('div', { class: 'grid-more', 'aria-hidden': 'true' });
+    gridMore?.disconnect();
+    gridMore = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) more(); }, { rootMargin: '150% 0px' });
+    more();
+    if (at < list.length) gridMore.observe(sentinel);
   }
+  let gridMore: IntersectionObserver | null = null;
 
   async function addSamples() {
     toast(t('addingSamples'), 'info', 60000);

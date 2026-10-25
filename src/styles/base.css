@@ -1179,3 +1179,4 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .cam-shutter:active { transform: scale(.94); }
 .cam-shutter:focus-visible { outline: 3px solid var(--cam-accent); outline-offset: 4px; }
 .cam-done { background: var(--cam-accent); color: var(--cam-on-accent); }
+.grid-more { grid-column: 1 / -1; height: 2px; }
