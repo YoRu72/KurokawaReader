@@ -98,6 +98,7 @@ export interface VisualSettings {
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   calendar: 'gregory' | 'hijri' | 'both';
+  darkTone: 'dim' | 'grey' | 'black'; // the dark interface's surfaces: near-black, Material grey, or pure black (OLED)
   arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 123 for data and ١٢٣ in prose, or one of them throughout
   sizeUnits: 'latin' | 'arabic'; // KB/MB/GB, or كيلوبايت/ميغابايت/قيقابايت in Arabic
   bookPage: 'chaptered' | 'always' | 'never'; // open a book's own page (chapters, tracking) before the reader
@@ -223,6 +224,7 @@ export const DEFAULTS: VisualSettings = {
   statusFilter: [],
   readingGoalMinutes: 0,
   calendar: 'gregory',
+  darkTone: 'dim',
   arDigits: 'auto',
   sizeUnits: 'latin',
   bookPage: 'chaptered',
@@ -395,13 +397,14 @@ export function applyChrome(s: VisualSettings = current): void {
   const light = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : s.uiMode === 'page' ? pageIsLight(s) : !!mql?.matches;
   const html = document.documentElement;
   html.dataset.ui = light ? 'light' : 'dark';
+  html.dataset.dark = s.darkTone;
   html.dataset.accent = s.accent;
   for (const [k, v] of Object.entries(s.highlightPalette ?? {})) html.style.setProperty(`--hl-${k}`, v);
   html.style.setProperty('--cover-min', s.coverSize === 'small' ? '104px' : s.coverSize === 'large' ? '176px' : '136px');
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light);
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', light ? '#f7f8fa' : '#121314');
+  if (meta) meta.setAttribute('content', light ? '#f7f8fa' : s.darkTone === 'black' ? '#000000' : s.darkTone === 'grey' ? '#1c1b1f' : '#121314');
 }
 
 function hexToHsl(hex: string): [number, number, number] {

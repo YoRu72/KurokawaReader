@@ -138,6 +138,9 @@ html[data-accent='mono'][data-ui='light'] { --md-primary: #2b2b2b; --md-on-prima
 
 /* Neutral (cool-grey) surfaces replace the warm brown base */
 :root { --md-surface: #121314; --md-surface-container-lowest: #0c0d0e; --md-surface-container-low: #1a1b1d; --md-surface-container: #1e2022; --md-surface-container-high: #282a2d; --md-surface-container-highest: #323437; --md-on-surface: #e4e4e6; --md-on-surface-variant: #c6c8cc; --md-on-surface-dim: #9a9ca1; --md-outline: #8e9196; --md-outline-variant: #44474c; --md-inverse-surface: #e4e4e6; --md-inverse-on-surface: #2e3033; }
+/* The dark interface's tone, as set: Material's grey, or pure black for OLED screens */
+html[data-dark='grey']:not([data-ui='light']) { --md-surface: #1c1b1f; --md-surface-container-lowest: #0f0e11; --md-surface-container-low: #232227; --md-surface-container: #28272b; --md-surface-container-high: #323135; --md-surface-container-highest: #3d3c41; --md-outline-variant: #4b4a4f; }
+html[data-dark='black']:not([data-ui='light']) { --md-surface: #000000; --md-surface-container-lowest: #000000; --md-surface-container-low: #0e0f10; --md-surface-container: #151617; --md-surface-container-high: #1f2022; --md-surface-container-highest: #2a2b2e; }
 html[data-ui='light'] { --md-surface: #f7f8fa; --md-surface-container-lowest: #ffffff; --md-surface-container-low: #f1f3f5; --md-surface-container: #eaedf0; --md-surface-container-high: #e3e6ea; --md-surface-container-highest: #dcdfe4; --md-on-surface: #1a1c1e; --md-on-surface-variant: #43474c; --md-on-surface-dim: #6b7077; --md-outline: #767a80; --md-outline-variant: #c5c8cd; --md-inverse-surface: #2e3033; --md-inverse-on-surface: #f0f1f3; }
 
 /* ---------- base ---------- */

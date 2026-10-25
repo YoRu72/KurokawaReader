@@ -43,6 +43,7 @@ export function settingsView(): HTMLElement {
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
     const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')),
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
+      document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
       cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), colorField(cur.accentCustom, (v) => updateSettings({ accentCustom: v }), t('accentCustom'))) : null,
       h('div', { class: 'field' }, resettable(t('orientation'), 'orientation', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
@@ -140,10 +141,11 @@ export function settingsView(): HTMLElement {
       h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup')))));
 
   // Tracking (AniList) and the book page
-  const trackCard = h('section', { class: 'card' });
+  // (Its title is set now, so the card folds and sits in the headings like the others; the rest fills in.)
+  const trackCard = h('section', { class: 'card' }, h('h3', null, t('tracking')));
   const renderTrack = async () => {
     const al = await import('../anilist'); const cur = getSettings(); const u = al.user();
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('tracking')), h('p', null, t('trackingBody')),
+    const parts: (HTMLElement | null)[] = [h('p', null, t('trackingBody')),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('bookPagePref')), h('div', { class: 'segmented' }, ...([['chaptered', t('bookPageChaptered')], ['always', t('bookPageAlways')], ['never', t('bookPageNever')]] as ['chaptered' | 'always' | 'never', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.bookPage === id), onclick: () => { updateSettings({ bookPage: id }); void renderTrack(); } }, label)))),
       h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistEnable')), (() => { const c = h('input', { type: 'checkbox', checked: cur.anilistEnabled, onchange: () => { updateSettings({ anilistEnabled: c.checked }); void renderTrack(); } }) as HTMLInputElement; return c; })()),
     ];
@@ -163,7 +165,8 @@ export function settingsView(): HTMLElement {
           h('div', null, h('button', { class: 'btn primary small', onclick: async () => { try { const user = await al.link(tk.value); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } } }, icon('check'), t('anilistLink'))));
       }
     }
-    trackCard.replaceChildren(...parts.filter((x): x is HTMLElement => x !== null));
+    Array.from(trackCard.children).forEach((c) => { if (!c.matches('h3')) c.remove(); });
+    trackCard.append(...parts.filter((x): x is HTMLElement => x !== null));
   };
   void renderTrack();
   body.append(trackCard);
