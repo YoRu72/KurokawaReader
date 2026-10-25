@@ -20,8 +20,6 @@ export interface VisualSettings {
   nightFrom: string;
   nightTo: string;
   nightTheme: Theme;
-  /** Two pages side by side when the screen is wide. */
-  twoPages: boolean;
   /** A reminder to rest the eyes every so many minutes of reading (0: none). */
   eyeRestMinutes: number;
   latinFont: LatinFont;
@@ -149,7 +147,6 @@ export const DEFAULTS: VisualSettings = {
   nightFrom: '22:00',
   nightTo: '06:30',
   nightTheme: 'dark',
-  twoPages: false,
   eyeRestMinutes: 0,
   latinFont: 'lora',
   arabicFont: 'uthman',
@@ -436,7 +433,6 @@ export async function applyOrientation(s: VisualSettings = current): Promise<voi
 /** Write the settings onto a reader root element as CSS variables. */
 export function applySettings(root: HTMLElement, s: VisualSettings = current): void {
   root.dataset.theme = themeNow(s);
-  root.dataset.twoPages = String(s.twoPages);
   root.dataset.dimImages = String(s.dimImages);
   root.dataset.invertLineart = String(s.invertLineArt);
   root.dataset.texture = s.texture;

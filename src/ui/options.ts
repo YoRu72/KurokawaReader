@@ -4,7 +4,7 @@ import { ttsAvailable } from '../tts';
 import { aiTtsSupported } from '../ai';
 import { h, clear, icon, toast, pickButton, pickSheet } from './dom';
 import { colorField } from './colorpicker';
-import { isTouchDevice, t } from '../i18n';
+import { isTouchDevice, t, countMinutes } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
@@ -29,6 +29,14 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   ];
   grid.append(head('theme', t('theme')), h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
     h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
+  // A night theme between two hours.
+  grid.append(toggle([t('nightSchedule'), 'nightSchedule'], s.nightSchedule, (v) => { updateSettings({ nightSchedule: v }); rerender(); }));
+  if (s.nightSchedule) {
+    const timeIn = (v: string, on: (v: string) => void) => { const i = h('input', { type: 'time', value: v, class: 'tool-range', style: { width: '110px' } }) as HTMLInputElement; i.addEventListener('change', () => { if (i.value) on(i.value); }); return i; };
+    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('nightFrom')), timeIn(s.nightFrom, (v) => updateSettings({ nightFrom: v })), h('span', { class: 'label' }, t('nightTo')), timeIn(s.nightTo, (v) => updateSettings({ nightTo: v }))));
+    const dark = themes.filter(([id]) => !['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'].includes(id));
+    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('nightTheme')), h('div', { class: 'theme-swatches small' }, ...dark.map(([id, label, bg, fg]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.nightTheme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ nightTheme: id }); rerender(); } }, 'A')))));
+  }
   if (s.theme === 'custom') {
     grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => updateSettings({ customFg: v }))),
       h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => updateSettings({ customBg: v }))));
@@ -155,6 +163,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   }
   grid.append(toggle([t('showStatusLine'), 'showStatusLine'], s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
   if (s.showStatusLine) grid.append(toggle([t('showTimeLeft'), 'showTimeLeft'], s.showTimeLeft, (v) => updateSettings({ showTimeLeft: v })));
+  grid.append(stepper([t('eyeRest'), 'eyeRestMinutes'], s.eyeRestMinutes, 0, 120, 5, (v) => updateSettings({ eyeRestMinutes: v }), (v) => v ? countMinutes(v) : t('goalOff')));
   grid.append(stepper([t('dailyGoal'), 'readingGoalMinutes'], s.readingGoalMinutes, 0, 240, 15, (v) => updateSettings({ readingGoalMinutes: v }), (v) => v ? t('goalValue', { n: v }) : t('goalOff')));
   if (isTouchDevice()) grid.append(toggle([t('pinchText'), 'pinchText'], s.pinchText, (v) => updateSettings({ pinchText: v })));
   grid.append(toggle([t('keepAwake'), 'keepAwake'], s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));

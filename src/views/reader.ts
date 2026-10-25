@@ -298,6 +298,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     lastTracked = { doc: cur.doc, block };
   };
   onDispose(() => { trackers.forEach((tr) => void tr.stop()); });
+  // The eye-rest reminder: every so many minutes with the book open on screen.
+  { let read = 0, last = Date.now(); const tick = window.setInterval(() => { const n = getSettings().eyeRestMinutes; const now = Date.now(); if (!document.hidden) read += now - last; last = now; if (n && read >= n * 60000) { read = 0; toast(t('eyeRestNow'), 'info', 8000); } }, 15000); onDispose(() => window.clearInterval(tick)); }
   // Mobile systems may kill the app without warning: flush position and statistics when the page hides.
   const flushAll = () => { hooks.save(); trackers.forEach((tr) => void tr.save()); };
   window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
