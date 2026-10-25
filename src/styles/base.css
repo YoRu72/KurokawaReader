@@ -1185,7 +1185,7 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .stars { display: inline-flex; gap: 2px; }
 .stars .star { background: none; border: 0; font-size: 26px; line-height: 1; color: var(--md-outline); cursor: pointer; padding: 2px; }
 .stars .star.on { color: #e9b949; }
-.cover .badge.new { right: auto; left: 10px; top: 42px; background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); letter-spacing: 0; }
+.cover .badge.new { background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); letter-spacing: 0; }
 .book-meta .stars-badge { font-size: 11px; letter-spacing: 1px; color: #d9a53a; line-height: 1.4; }
 
 .stats-cal-head { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 8px; }
@@ -1200,3 +1200,17 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .stats-cal i.l2 { background: color-mix(in srgb, var(--md-primary) 45%, var(--md-surface)); color: var(--text); }
 .stats-cal i.l3 { background: color-mix(in srgb, var(--md-primary) 70%, var(--md-surface)); color: var(--md-on-primary); }
 .stats-cal i.l4 { background: var(--md-primary); color: var(--md-on-primary); }
+
+.scan-result-box { position: relative; display: inline-block; max-width: 100%; }
+.scan-result-box .scan-result { position: relative; }
+.scan-mark { position: absolute; touch-action: none; cursor: move; outline: 1.5px dashed var(--md-primary); outline-offset: 2px; }
+.scan-mark img { display: block; width: 100%; height: auto; }
+.scan-mark-size { position: absolute; right: -8px; bottom: -8px; width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; background: var(--md-primary); cursor: nwse-resize; padding: 0; }
+.scan-mark-x { position: absolute; left: -10px; top: -10px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: var(--md-error); color: var(--md-on-error); display: grid; place-items: center; padding: 0; }
+.scan-mark-x svg { width: 12px; height: 12px; }
+.sign-pad { display: block; width: 100%; aspect-ratio: 2.5; background: #fff; border-radius: 12px; touch-action: none; cursor: crosshair; box-shadow: inset 0 0 0 1px var(--md-outline-variant); }
+.sign-colors { display: inline-flex; gap: 8px; }
+.sign-color { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
+.sign-color[aria-checked="true"] { border-color: var(--md-on-surface); box-shadow: 0 0 0 2px var(--md-surface); }
+.stats-cal i.two { grid-template-rows: auto auto; line-height: 1.1; }
+.stats-cal i small { font-size: 9px; opacity: .75; }

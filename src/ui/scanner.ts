@@ -10,8 +10,8 @@ import { scanWork, parallel } from '../scanpool';
 import type { Look, Prepared } from '../scanops';
 
 type Quality = 'standard' | 'high' | 'max';
-type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean; split: boolean };
-const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true, split: true };
+type Settings = { size: 'page' | 'a4' | 'letter'; filter: S.Filter; quality: Quality; autoCrop: boolean; autoTurn: boolean; flatten: boolean; split: boolean; idCard: boolean };
+const DEFAULTS: Settings = { size: 'page', filter: 'auto', quality: 'high', autoCrop: true, autoTurn: true, flatten: true, split: true, idCard: false };
 const KEY = 'kr.scan';
 const SIDE: Record<Quality, number> = { standard: 1700, high: 2400, max: 3300 };
 const PREVIEW = 1200;
@@ -23,7 +23,10 @@ function saveSettings(s: Settings): void { try { localStorage.setItem(KEY, JSON.
 
 /** One scanned page: the photo, where the page is in it (corners as fractions of the photo), how the page
  *  bends (a book's), and how it is to come out. Until its photo has been read it is only `pending`. */
-type Page = Look & { file: Blob; preview: S.Img | null; thumb: string; pending: boolean; error?: string; key: number };
+type Page = Look & { file: Blob; preview: S.Img | null; thumb: string; pending: boolean; error?: string; key: number; mark?: Mark };
+/** Something the reader puts on a page — their own signature, drawn by hand, or a picture of their stamp —
+ *  at a place and width given as fractions of the finished page. (Never anything of the app's.) */
+type Mark = { img: ImageBitmap; x: number; y: number; w: number };
 
 /* ---------- pictures ---------- */
 
@@ -84,18 +87,19 @@ export function scannerSheet(onDone?: () => void): void {
   // scanning app does it: decoded straight to a small working size, the page found there), and each tile fills
   // in as its photo is ready.
   let keySeq = 0;
-  const add = async (files: File[]) => {
+  const add = async (files: File[], into?: Page) => {
     const pics = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|avif)$/i.test(f.name));
     if (!pics.length) return;
-    const fresh: Page[] = pics.map((f) => ({ file: f, preview: null, quad: FULL, curve: null, flatten: set.flatten, turn: 0, filter: set.filter, adj: {}, thumb: '', pending: true, key: ++keySeq }));
-    pages.push(...fresh); draw();
+    const fresh: Page[] = into ? [into] : pics.map((f) => ({ file: f, preview: null, quad: FULL, curve: null, flatten: set.flatten, turn: 0, filter: set.filter, adj: {}, thumb: '', pending: true, key: ++keySeq }));
+    if (!into) pages.push(...fresh);
+    draw();
     let done = 0;
     status.textContent = t('scanReading', { n: localDigits('0'), total: localDigits(String(fresh.length)) });
     await pooled(fresh, parallel(), async (p) => {
       try {
         const r = await scanWork<Prepared>({ op: 'prepare', blob: p.file, maxSide: PREVIEW, autoCrop: set.autoCrop, autoTurn: set.autoTurn, flatten: set.flatten, split: set.split, filter: set.filter, rtl: getLang() === 'ar' });
         const at = pages.indexOf(p); if (at < 0) return; // (Removed while its photo was being read.)
-        Object.assign(p, r.looks[0]); p.preview = r.preview; hold(p); p.thumb = URL.createObjectURL(r.thumbs[0]); p.pending = false;
+        Object.assign(p, r.looks[0]); p.preview = r.preview; hold(p); if (p.thumb) URL.revokeObjectURL(p.thumb); p.thumb = URL.createObjectURL(r.thumbs[0]); p.pending = false;
         // A book open on two pages became two pages: the second one goes right after the first.
         for (let k = 1; k < r.looks.length; k++) {
           const q: Page = { ...r.looks[k], file: p.file, preview: null, thumb: URL.createObjectURL(r.thumbs[k]), pending: false, key: ++keySeq };
@@ -160,9 +164,16 @@ export function scannerSheet(onDone?: () => void): void {
     if (await openCamera((f) => void add([f]))) return;
     systemCamera();
   };
-  const systemCamera = () => {
+  /** The same page photographed again: the new photo takes the old one's place, read afresh. */
+  const retake = async (p: Page) => {
+    const swap = (f: File) => { const at = pages.indexOf(p); if (at < 0) return; p.file = f; p.preview = null; p.pending = true; p.quad = FULL; p.curve = null; p.turn = 0; paintTile(p); void add([f], p); };
+    const { openCamera } = await import('./camera');
+    if (await openCamera(swap, { single: true })) return;
+    systemCamera(swap);
+  };
+  const systemCamera = (onShot?: (f: File) => void) => {
     const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' } }) as HTMLInputElement;
-    input.addEventListener('change', () => { const fs = [...(input.files ?? [])]; input.remove(); void add(fs); });
+    input.addEventListener('change', () => { const fs = [...(input.files ?? [])]; input.remove(); if (onShot) { if (fs[0]) onShot(fs[0]); } else void add(fs); });
     input.addEventListener('cancel', () => input.remove());
     document.body.append(input); input.click();
   };
@@ -186,9 +197,28 @@ export function scannerSheet(onDone?: () => void): void {
     await pooled(pages.slice(), Math.min(2, parallel()), async (p, i) => {
       types[i] = p.filter === 'bw' ? 'image/png' : 'image/jpeg';
       out[i] = await scanWork<Blob>({ op: 'render', blob: p.file, look: lookOf(p), side, type: types[i], quality: 0.86 });
+      if (p.mark) out[i] = await stampOn(out[i], p.mark, types[i]);
       step();
     });
+    if (set.idCard) return { blobs: await asCards(out), types: out.map(() => 'image/jpeg') };
     return { blobs: out, types };
+  };
+  /** A card's two sides on one sheet: each pair of pictures laid one above the other on a white page. */
+  const asCards = async (blobs: Blob[]): Promise<Blob[]> => {
+    const res: Blob[] = [];
+    for (let i = 0; i < blobs.length; i += 2) {
+      const pics = await Promise.all(blobs.slice(i, i + 2).map((b) => createImageBitmap(b)));
+      const W = SIDE[set.quality], H = Math.round(W * 1.4142);
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d')!; g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+      const margin = W * 0.08, slotH = (H - margin * 3) / 2, slotW = W - margin * 2;
+      pics.forEach((im, k) => {
+        const s = Math.min(slotW / im.width, slotH / im.height, 1.2); const w = im.width * s, hh = im.height * s;
+        g.drawImage(im, (W - w) / 2, margin + k * (slotH + margin) + (slotH - hh) / 2, w, hh); im.close();
+      });
+      res.push(await new Promise<Blob>((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error('toBlob'))), 'image/jpeg', 0.9)));
+    }
+    return res;
   };
   const stamp = () => { const d = new Date(); const pad = (n: number) => String(n).padStart(2, '0'); return `${t('scanFileName')} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`; };
   const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go, asImages], async () => {
@@ -287,7 +317,7 @@ export function scannerSheet(onDone?: () => void): void {
     let viewSeq = 0;
     const refresh = debounce(() => { if (mode !== 'result' || closed) return; const my = ++viewSeq; void scanWork<S.Img>({ op: 'view', preview, look: lookOf(work), side: 1100 }).then((img) => { if (my === viewSeq) toCanvas(img, result); }); }, 120);
     const setMode = (m: typeof mode) => {
-      mode = m; stage.hidden = m !== 'crop'; result.hidden = m !== 'result';
+      mode = m; stage.hidden = m !== 'crop'; result.hidden = m !== 'result'; box.hidden = m !== 'result'; placeMark();
       cropChip.classList.toggle('on', m === 'crop'); resultChip.classList.toggle('on', m === 'result');
       cropChip.setAttribute('aria-pressed', String(m === 'crop')); resultChip.setAttribute('aria-pressed', String(m === 'result'));
       refresh();
@@ -312,13 +342,33 @@ export function scannerSheet(onDone?: () => void): void {
       input.addEventListener('input', () => { work.adj[key] = +input.value; if (mode === 'crop') setMode('result'); else refresh(); });
       return h('label', { class: 'scan-slider' }, h('span', null, label), input);
     };
-    ed.body.append(tools, h('div', { class: 'scan-view' }, stage, result), chips,
+    // The reader's own mark on the page, dragged about and sized on the result view.
+    let mark: Mark | undefined = p.mark ? { ...p.mark } : undefined;
+    const markEl = h('div', { class: 'scan-mark', hidden: true }, h('img', { alt: '', draggable: false }), h('button', { type: 'button', class: 'scan-mark-size', 'aria-label': t('resize') }), h('button', { type: 'button', class: 'scan-mark-x', 'aria-label': t('removeItem'), onclick: () => { mark = undefined; placeMark(); } }, icon('close')));
+    const placeMark = () => {
+      markEl.hidden = !mark || mode !== 'result';
+      if (!mark) return;
+      const im = markEl.querySelector('img')!; if (!im.src) { const c = document.createElement('canvas'); c.width = mark.img.width; c.height = mark.img.height; c.getContext('2d')!.drawImage(mark.img, 0, 0); im.src = c.toDataURL(); }
+      markEl.style.left = `${mark.x * 100}%`; markEl.style.top = `${mark.y * 100}%`; markEl.style.width = `${mark.w * 100}%`;
+    };
+    const box = h('div', { class: 'scan-result-box', hidden: true }, result, markEl);
+    {
+      let drag: { x: number; y: number; mx: number; my: number; w: number; size: boolean } | null = null;
+      markEl.addEventListener('pointerdown', (e) => { if (!mark || (e.target as HTMLElement).closest('.scan-mark-x')) return; e.preventDefault(); markEl.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, mx: mark.x, my: mark.y, w: mark.w, size: !!(e.target as HTMLElement).closest('.scan-mark-size') }; });
+      markEl.addEventListener('pointermove', (e) => { if (!drag || !mark) return; const b = result.getBoundingClientRect(); const dx = (e.clientX - drag.x) / b.width, dy = (e.clientY - drag.y) / b.height; if (drag.size) mark.w = Math.min(0.9, Math.max(0.05, drag.w + dx)); else { mark.x = Math.min(0.98, Math.max(0, drag.mx + dx)); mark.y = Math.min(0.98, Math.max(0, drag.my + dy)); } placeMark(); });
+      const end = () => { drag = null; }; markEl.addEventListener('pointerup', end); markEl.addEventListener('pointercancel', end);
+    }
+    tools.append(
+      h('button', { type: 'button', class: 'btn small tonal', onclick: async () => { const im = await signatureSheet(); if (!im) return; mark = { img: im, x: 0.6, y: 0.8, w: 0.3 }; const old = markEl.querySelector('img')!; old.removeAttribute('src'); setMode('result'); placeMark(); } }, icon('note'), t('scanSign')),
+      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { closed = true; ed.close(); void retake(p); } }, icon('camera'), t('scanRetake')));
+    ed.body.append(tools, h('div', { class: 'scan-view' }, stage, box), chips,
       h('div', { class: 'scan-sliders' }, slider(t('brightness'), 'brightness', -0.4, 0.4), slider(t('contrast'), 'contrast', -0.4, 0.6)));
     const apply = async (all: boolean) => {
       if (curveDue) findCurve();
       await curveJob;
       closed = true;
       Object.assign(p, { quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), curve: work.curve, flatten: work.flatten, turn: work.turn, filter: work.filter, adj: { ...work.adj } });
+      p.mark = mark;
       ed.close();
       // (Its place: moved when another number was typed.)
       const to = Math.max(1, Math.min(pages.length, parseInt(pos.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10) || k + 1)) - 1;
@@ -342,7 +392,7 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const s = { ...cur };
   const commit = () => { saveSettings(s); onChange({ ...s }); };
-  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten' | 'split', sub: string) => {
+  const check = (label: string, key: 'autoCrop' | 'autoTurn' | 'flatten' | 'split' | 'idCard', sub: string) => {
     const input = h('input', { type: 'checkbox', checked: s[key] }) as HTMLInputElement;
     input.addEventListener('change', () => { s[key] = input.checked; commit(); });
     return h('label', { class: 'scan-check' }, input, h('span', null, h('b', null, label), h('small', null, sub)));
@@ -354,7 +404,50 @@ function settingsSheet(cur: Settings, onChange: (s: Settings) => void): void {
     check(t('scanAutoCrop'), 'autoCrop', t('scanAutoCropSub')),
     check(t('scanFlatten'), 'flatten', t('scanFlattenSub')),
     check(t('scanAutoTurn'), 'autoTurn', t('scanAutoTurnSub')),
-    check(t('scanSplit'), 'split', t('scanSplitSub')));
+    check(t('scanSplit'), 'split', t('scanSplitSub')),
+    check(t('scanIdCard'), 'idCard', t('scanIdCardSub')));
   sh.actions.append(h('button', { class: 'btn small primary', type: 'button', onclick: sh.close }, t('done')));
 }
 
+
+/* ---------- the reader's own mark ---------- */
+
+/** The finished page with the mark drawn on it. */
+async function stampOn(page: Blob, m: Mark, type: string): Promise<Blob> {
+  const im = await createImageBitmap(page);
+  const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+  const g = c.getContext('2d')!; g.drawImage(im, 0, 0); im.close();
+  const w = m.w * c.width, hh = w * (m.img.height / m.img.width);
+  g.drawImage(m.img, m.x * c.width, m.y * c.height, w, hh);
+  return new Promise<Blob>((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error('toBlob'))), type, 0.88));
+}
+
+/** A signature drawn by hand (ink on a clear ground), or a picture of a stamp from the reader's files. */
+function signatureSheet(): Promise<ImageBitmap | null> {
+  return new Promise((resolve) => {
+    const sh = openSheet(t('scanSign'), t('close'), { stack: true });
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    let settled = false; const finish = (v: ImageBitmap | null) => { if (settled) return; settled = true; resolve(v); sh.close(); };
+    onSheetClosed(sh.el, () => finish(null));
+    const pad = h('canvas', { class: 'sign-pad', width: 900, height: 360 }) as HTMLCanvasElement;
+    const g = pad.getContext('2d')!; g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = 5; g.strokeStyle = '#1a237e';
+    let inked = false; let last: { x: number; y: number } | null = null;
+    const at = (e: PointerEvent) => { const b = pad.getBoundingClientRect(); return { x: ((e.clientX - b.left) / b.width) * pad.width, y: ((e.clientY - b.top) / b.height) * pad.height }; };
+    pad.addEventListener('pointerdown', (e) => { e.preventDefault(); pad.setPointerCapture(e.pointerId); last = at(e); g.beginPath(); g.arc(last.x, last.y, 2.5, 0, 7); g.fillStyle = g.strokeStyle; g.fill(); inked = true; });
+    pad.addEventListener('pointermove', (e) => { if (!last) return; const q = at(e); g.lineWidth = 3 + 4 * (e.pressure || 0.5); g.beginPath(); g.moveTo(last.x, last.y); g.lineTo(q.x, q.y); g.stroke(); last = q; });
+    const up = () => { last = null; }; pad.addEventListener('pointerup', up); pad.addEventListener('pointercancel', up);
+    const colors = ['#1a237e', '#000000', '#b71c1c', '#1b5e20'];
+    const swatches = h('div', { class: 'sign-colors', role: 'radiogroup' }, ...colors.map((c) => h('button', { type: 'button', role: 'radio', class: 'sign-color', style: { background: c }, 'aria-checked': String(c === g.strokeStyle), 'aria-label': c, onclick: () => { g.strokeStyle = c; swatches.querySelectorAll('.sign-color').forEach((b) => b.setAttribute('aria-checked', String(b.getAttribute('aria-label') === c))); } })));
+    sh.body.append(h('p', { class: 'hint' }, t('scanSignHint')), pad, h('div', { class: 'tool-bar' }, swatches,
+      h('button', { type: 'button', class: 'btn small tonal', onclick: () => { g.clearRect(0, 0, pad.width, pad.height); inked = false; } }, icon('undo'), t('clear')),
+      h('button', { type: 'button', class: 'btn small tonal', onclick: async () => { const [f] = await pickFiles('image/*', false); if (!f) return; try { finish(await createImageBitmap(f)); } catch { toast(t('scanUndecodable', { name: f.name }), 'error'); } } }, icon('images'), t('scanStampPicture'))));
+    sh.actions.append(h('button', { type: 'button', class: 'btn small primary', onclick: async () => {
+      if (!inked) { finish(null); return; }
+      // Trimmed to the ink, with a little room around it.
+      const d = g.getImageData(0, 0, pad.width, pad.height).data; let x0 = pad.width, y0 = pad.height, x1 = 0, y1 = 0;
+      for (let y = 0; y < pad.height; y++) for (let x = 0; x < pad.width; x++) if (d[(y * pad.width + x) * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      const m = 8; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(pad.width, x1 + m); y1 = Math.min(pad.height, y1 + m);
+      finish(await createImageBitmap(pad, x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)));
+    } }, icon('check'), t('done')));
+  });
+}

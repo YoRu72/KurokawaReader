@@ -17,7 +17,7 @@ const AUTO_KEY = 'kr.scan.auto';
  * Open the camera; each photo taken is given to `onShot` as it is taken. Resolves false at once when the camera
  * cannot be opened (the caller then uses the system's camera), true when the camera view is closed.
  */
-export async function openCamera(onShot: (f: File) => void): Promise<boolean> {
+export async function openCamera(onShot: (f: File) => void, opts: { single?: boolean } = {}): Promise<boolean> {
   if (!navigator.mediaDevices?.getUserMedia) return false;
   let stream: MediaStream;
   try {
@@ -148,7 +148,7 @@ export async function openCamera(onShot: (f: File) => void): Promise<boolean> {
       navigator.vibrate?.(25);
       try {
         const b = await grab();
-        if (b) { shots++; showCount(); onShot(new File([b], `scan-${Date.now()}.jpg`, { type: b.type || 'image/jpeg' })); }
+        if (b) { shots++; showCount(); onShot(new File([b], `scan-${Date.now()}.jpg`, { type: b.type || 'image/jpeg' })); if (opts.single) close(); }
       } finally { taking = false; prev = null; }
     }
 

@@ -1,7 +1,7 @@
 // Library-wide reading statistics: time today and in total, sessions, pages,
 // streak, the daily goal and the last two weeks, plus the most-read books.
 import { h, openSheet, pickSheet } from './dom';
-import { t, formatDuration, formatDate, localDigits, countMinutes, dateLocale } from '../i18n';
+import { t, formatDuration, formatDate, localDigits, countMinutes, dateLocale, calendarPref, formatHijri } from '../i18n';
 import { db, type ReadingDay } from '../db';
 import { getSettings, updateSettings } from '../settings';
 import { todayKey, liveStatsOf } from '../stats';
@@ -85,7 +85,12 @@ export async function showStats(): Promise<void> {
   const calTitle = h('b', null);
   const weekStart = (() => { try { const l = new Intl.Locale(dateLocale()) as Intl.Locale & { weekInfo?: { firstDay: number }; getWeekInfo?: () => { firstDay: number } }; return (l.getWeekInfo?.() ?? l.weekInfo)?.firstDay ?? 1; } catch { return 1; } })() % 7;
   const paintCal = () => {
-    calTitle.textContent = shown.toLocaleDateString(dateLocale(), { month: 'long', year: 'numeric' });
+    const kind = calendarPref();
+    const civilTitle = shown.toLocaleDateString(dateLocale(), { month: 'long', year: 'numeric' });
+    // (A civil month spans two Hijri months: both are named.)
+    const lastDay = new Date(shown.getFullYear(), shown.getMonth() + 1, 0);
+    const hijriTitle = () => { const a = formatHijri(shown, { month: 'long', year: 'numeric' }), b = formatHijri(lastDay, { month: 'long', year: 'numeric' }); return a === b ? a : `${formatHijri(shown, { month: 'long' })} – ${b}`; };
+    calTitle.textContent = kind === 'gregory' ? civilTitle : kind === 'hijri' ? hijriTitle() : `${hijriTitle()} · ${civilTitle}`;
     const first = new Date(shown); const lead = (first.getDay() - weekStart + 7) % 7;
     const count = new Date(shown.getFullYear(), shown.getMonth() + 1, 0).getDate();
     const monthMax = Math.max(MIN_DAY_MS * 2, ...Array.from({ length: count }, (_, i) => days[keyOf(new Date(shown.getFullYear(), shown.getMonth(), i + 1))]?.ms ?? 0));
@@ -95,7 +100,8 @@ export async function showStats(): Promise<void> {
     for (let d = 1; d <= count; d++) {
       const date = new Date(shown.getFullYear(), shown.getMonth(), d); const key = keyOf(date);
       const v = days[key]?.ms ?? 0; const level = v < MIN_DAY_MS ? 0 : Math.min(4, 1 + Math.floor((v / monthMax) * 3.99));
-      cells.push(h('i', { class: `l${level}${key === todayKey() ? ' today' : ''}${date > now ? ' future' : ''}`, title: `${formatDate(date.getTime())} · ${formatDuration(v)}` }, h('span', null, localDigits(d))));
+      const hijriDay = kind !== 'gregory' ? formatHijri(date, { day: 'numeric' }) : '';
+      cells.push(h('i', { class: `l${level}${key === todayKey() ? ' today' : ''}${date > now ? ' future' : ''}${hijriDay ? ' two' : ''}`, title: `${formatDate(date.getTime())} · ${formatDuration(v)}` }, h('span', null, kind === 'hijri' ? hijriDay : localDigits(d)), kind === 'both' ? h('small', null, hijriDay) : null));
     }
     cal.replaceChildren(...cells);
   };

@@ -13,7 +13,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   await page.setInputFiles('input[type=file]', fs.readdirSync(FIX).slice(0, 3).map((f) => path.join(FIX, f)));
   await page.waitForFunction(() => document.querySelectorAll('.book-card').length >= 3, null, { timeout: 60000 }); await page.waitForTimeout(500);
   // Leave and come back: books added since the last visit carry «جديد».
-  await page.evaluate(() => localStorage.setItem('kr.libraryVisit', '1'));
+  await page.evaluate(() => { localStorage.setItem('kr.libraryVisit', '1'); const v = JSON.parse(localStorage.getItem('kr.visual') ?? '{}'); v.calendar = 'both'; localStorage.setItem('kr.visual', JSON.stringify(v)); });
   await page.reload(); await page.waitForSelector('.book-card');
   console.log('new marks', await page.$$eval('.badge.new', (b) => b.length));
   await page.evaluate(() => { const c = document.querySelector('.book-card'); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); });

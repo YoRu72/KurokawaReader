@@ -97,6 +97,7 @@ export interface VisualSettings {
   doneMark: 'beside' | 'below' | 'topLeft' | 'bottom';   // where that mark sits
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
+  calendar: 'gregory' | 'hijri' | 'both'; // how dates are written: the civil calendar, the Hijri (Umm al-Qura), or both
   keepAwake: boolean;         // screen wake lock while reading
   edgeBrightness: boolean;    // left-edge swipe adjusts dimming
   brightnessMode: 'app' | 'device';   // what the swipe (and dimming) controls: the reader's overlay or the screen itself
@@ -215,6 +216,7 @@ export const DEFAULTS: VisualSettings = {
   doneMark: 'beside',
   statusFilter: [],
   readingGoalMinutes: 0,
+  calendar: 'gregory',
   keepAwake: true,
   edgeBrightness: false,
   brightnessMode: 'device',

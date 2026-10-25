@@ -89,9 +89,22 @@ export function formatNumber(v: string | number): string {
 const DATE_LOCALE: Record<Lang, string> = { ar: 'ar-SA-u-nu-arab-ca-gregory', en: 'en-GB', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR' };
 /** The locale dates are written in for the current language. */
 export const dateLocale = (): string => DATE_LOCALE[current];
+/** The calendar dates are written in (read from the saved settings, so this file needs nothing of settings.ts). */
+export function calendarPref(): 'gregory' | 'hijri' | 'both' {
+  try { const v = (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as { calendar?: string }).calendar; return v === 'hijri' || v === 'both' ? v : 'gregory'; } catch { return 'gregory'; }
+}
+/** A date in the Hijri (Umm al-Qura) calendar, in the current language. */
+export function formatHijri(d: Date, opts: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }): string {
+  const base = DATE_LOCALE[current].split('-u-')[0];
+  return new Intl.DateTimeFormat(`${base}-u-ca-islamic-umalqura${current === 'ar' ? '-nu-arab' : ''}`, opts).format(d);
+}
 export function formatDate(ts: number | undefined): string {
   if (!ts) return t('never');
-  return new Intl.DateTimeFormat(DATE_LOCALE[current], { dateStyle: 'medium' }).format(new Date(ts));
+  const civil = new Intl.DateTimeFormat(DATE_LOCALE[current], { dateStyle: 'medium' }).format(new Date(ts));
+  const cal = calendarPref();
+  if (cal === 'gregory') return civil;
+  const hijri = formatHijri(new Date(ts));
+  return cal === 'hijri' ? hijri : `${hijri} · ${civil}`;
 }
 
 /** Reading time as "2h 5m" (localised digits and unit). */
