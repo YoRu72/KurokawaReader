@@ -86,6 +86,9 @@ export interface Book {
   /** The reader's own rating, 1–5 stars. */
   rating?: number;
   ratingAt?: number;
+  /** The reader's own words about the book. */
+  review?: string;
+  reviewAt?: number;
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];

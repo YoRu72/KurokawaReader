@@ -1214,3 +1214,11 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .sign-color[aria-checked="true"] { border-color: var(--md-on-surface); box-shadow: 0 0 0 2px var(--md-surface); }
 .stats-cal i.two { grid-template-rows: auto auto; line-height: 1.1; }
 .stats-cal i small { font-size: 9px; opacity: .75; }
+
+.stars.big .star { font-size: 34px; }
+.review-head { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.review-cover { width: 64px; border-radius: 6px; box-shadow: 0 2px 8px rgb(0 0 0 / .3); }
+.review-text { width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; line-height: 1.6; padding: 12px; border-radius: 12px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--text); resize: vertical; }
+.review-quote { margin: 10px 0 0; padding: 10px 14px; border-inline-start: 3px solid var(--md-primary); color: var(--text); white-space: pre-wrap; font-size: 14px; }
+.chip.check { gap: 6px; }
+.chip.check input { margin: 0; }

@@ -189,6 +189,7 @@ export function libraryView(): HTMLElement {
       h('div', { class: 'sel-actions' },
         act('heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })),
         act('check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))),
+        n === 1 ? act('note', t('reviewBook'), () => { const b = books.find((x) => x.id === [...selected][0]); if (b) void import('../ui/review').then((m) => m.reviewSheet(b, () => renderGrid())); }) : null,
         act('tag', t('tags'), () => tagsSheet([...selected])),
         act('folder', t('moveToFolder'), () => moveSheet([...selected])),
         act('external', t('shareFile'), () => void shareBooks([...selected])),
@@ -306,9 +307,11 @@ export function libraryView(): HTMLElement {
       const paint = () => { stars.replaceChildren(...[1, 2, 3, 4, 5].map((n) => h('button', { type: 'button', class: 'star' + ((book.rating ?? 0) >= n ? ' on' : ''), 'aria-label': `${n}`, onclick: async () => { const v = book.rating === n ? undefined : n; const at = Date.now(); await db.updateBook(book.id, (b) => { if (v) b.rating = v; else delete b.rating; b.ratingAt = at; }); if (v) book.rating = v; else delete book.rating; book.ratingAt = at; paint(); renderGrid(); } }, '★'))); };
       paint();
       s.body.append(h('div', { class: 'row', style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' } }, h('span', { style: { color: 'var(--text-dim)' } }, t('rating')), stars));
+      if (book.review) s.body.append(h('p', { class: 'review-quote', dir: 'auto' }, book.review));
       s.actions.append(
         (() => { const isFav = (book.tags ?? []).includes(FAV_TAG); return h('button', { class: 'btn small' + (isFav ? ' tonal' : ''), onclick: async () => { await setTag([book.id], FAV_TAG, !isFav); s.close(); await refresh(); toast(isFav ? t('removedFromFavorites') : t('addedToFavorites')); } }, icon(isFav ? 'heartFill' : 'heart'), isFav ? t('unfavorite') : t('favorite')); })(),
         (() => { const d = isDone(book); return h('button', { class: 'btn small' + (d ? ' tonal' : ''), onclick: async () => { await setDone([book.id], !d); s.close(); toast(d ? t('markedNotDone') : t('markedDone')); } }, icon(d ? 'undo' : 'check'), d ? t('markNotDone') : t('markDone')); })(),
+        h('button', { class: 'btn small', onclick: () => { void import('../ui/review').then((m) => m.reviewSheet(book, () => { renderGrid(); paint(); })); } }, icon('note'), t('reviewBook')),
         h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
