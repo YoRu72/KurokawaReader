@@ -1269,3 +1269,7 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .track-field input, .track-field select { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); padding: 8px 10px; border-radius: 10px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); }
 .track-user { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
 .track-user img { width: 32px; height: 32px; border-radius: 50%; }
+.book-tile { position: relative; -webkit-touch-callout: none; user-select: none; }
+.book-tile .tile-more { position: absolute; top: 6px; inset-inline-end: 6px; opacity: .45; }
+.book-tile .tile-more svg { width: 14px; height: 14px; }
+.book-tile span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

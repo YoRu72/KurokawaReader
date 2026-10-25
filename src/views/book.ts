@@ -11,7 +11,7 @@ import { liveStatsOf } from '../stats';
 import { setJump } from './reader';
 import { anilistOn, linked } from '../anilist';
 
-const CHAPTERED = new Set(['epub', 'fb2', 'mobi', 'azw', 'azw3', 'kf8', 'docx']);
+const CHAPTERED = new Set(['epub', 'fb2', 'mobi', 'azw', 'azw3', 'kf8']);
 /** Whether tapping this book opens its page first. */
 export function wantsBookPage(book: Book): boolean {
   const s = getSettings().bookPage;
@@ -49,9 +49,14 @@ export function bookView(id: string): HTMLElement {
           book.author ? h('p', { class: 'who', dir: 'auto' }, icon('type'), book.author) : null,
           h('p', { class: 'src' }, icon('clock'), `${status} · ${book.format.toUpperCase()} · ${formatBytes(book.size)}${book.pageCount ? ' · ' + localDigits(String(book.pageCount)) + ' ' + t('pages').toLowerCase() : ''}`))));
 
-    const tile = (name: string, label: string, on: boolean, fn: () => void) => h('button', { type: 'button', class: 'book-tile' + (on ? ' on' : ''), onclick: fn }, icon(name), h('span', null, label));
+    const tile = (name: string, label: string, on: boolean, fn: () => void, more?: string) => h('button', { type: 'button', class: 'book-tile' + (on ? ' on' : '') + (more ? ' has-more' : ''), title: more, onclick: fn }, icon(name), h('span', null, label), more ? h('i', { class: 'tile-more', 'aria-hidden': 'true' }, icon('chevronDown')) : null);
+    const others = (book.tags ?? []).filter((x) => x !== FAV_TAG);
+    const favTile = tile(isFav ? 'heartFill' : 'heart', isFav ? t('inLibraryFav') : t('favorite'), isFav, async () => { const { toggleFavorite } = await import('./reader'); await toggleFavorite(book); render(book); }, t('holdForTags'));
+    // Held, or right-clicked: the book's tags, not just the one heart.
+    void import('../ui/tags').then((m) => m.onHoldOrContext(favTile, () => m.tagsSheetFor(book, () => render(book))));
+    if (others.length) favTile.querySelector('span')!.textContent = `${isFav ? t('inLibraryFav') + ' · ' : ''}${others.slice(0, 2).join('، ')}${others.length > 2 ? '…' : ''}`;
     const tiles = h('div', { class: 'book-tiles' },
-      tile(isFav ? 'heartFill' : 'heart', isFav ? t('inLibraryFav') : t('favorite'), isFav, async () => { const { toggleFavorite } = await import('./reader'); await toggleFavorite(book); render(book); }),
+      favTile,
       tile('clock', stats?.ms ? formatDuration(stats.ms) : t('notStarted'), false, async () => { const { showBookInfo } = await import('../ui/bookinfo'); showBookInfo({ book, stats: stats ?? { ms: 0, words: 0, days: {} }, speed: null, pages: book.pageCount, pct: book.progress?.pct ?? 0 }); }),
       anilistOn() ? tile('cloud', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
       tile('note', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }));

@@ -442,6 +442,7 @@ export const ar: Strings = {
   startReading: 'ابدأ القراءة',
   chaptersCount: '{n} من الفصول',
   alProgress: 'الفصول',
+  holdForTags: 'اضغط مطوَّلًا أو بالزر الأيمن للوسوم',
   sortRating: 'التقييم',
   reviewBook: 'تقييم ومراجعة',
   reviewPlaceholder: 'كلماتٌ من عندك في الكتاب…',

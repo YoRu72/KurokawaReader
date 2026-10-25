@@ -437,6 +437,7 @@ export const en = {
   startReading: 'Start reading',
   chaptersCount: '{n} chapters',
   alProgress: 'Chapters',
+  holdForTags: 'Hold or right-click for tags',
   sortRating: 'Rating',
   reviewBook: 'Rate & review',
   reviewPlaceholder: 'A few words of your own about the book…',

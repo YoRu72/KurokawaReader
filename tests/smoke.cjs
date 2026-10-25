@@ -104,7 +104,9 @@ const server = http.createServer((req, res) => {
 
   async function openBook(title, shot, waitSel) {
     await page.click(`.book-card:has-text("${title}")`);
-    await page.waitForSelector(waitSel, { timeout: 30000 });
+    // (A chaptered book opens on its own page first: «resume» takes it on into the reader.)
+    const resume = await page.waitForSelector('.book-resume, ' + waitSel, { timeout: 30000 });
+    if (await resume.evaluate((e) => e.classList.contains('book-resume'))) { await resume.click(); await page.waitForSelector(waitSel, { timeout: 30000 }); }
     await page.waitForTimeout(900);
     await page.screenshot({ path: `${SHOTS}/${lang}-${shot}.png` });
     await page.goto('http://localhost:5180/#/');
@@ -161,6 +163,7 @@ const server = http.createServer((req, res) => {
   await mp.waitForTimeout(500);
   await mp.screenshot({ path: `${SHOTS}/${lang}-m1-library.png` });
   await mp.click('.book-card:has-text("مقامات")');
+  await mp.waitForSelector('.book-resume'); await mp.waitForTimeout(600); await mp.screenshot({ path: `${SHOTS}/${lang}-m1b-bookpage.png` }); await mp.click('.book-resume');
   await mp.waitForSelector('.kr-content');
   await mp.waitForTimeout(800);
   await mp.screenshot({ path: `${SHOTS}/${lang}-m2-arabic-epub.png` });

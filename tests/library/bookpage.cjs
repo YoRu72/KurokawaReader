@@ -39,5 +39,13 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   console.log('entry', JSON.stringify(entry), 'tile', await page.$eval('.book-tile.on span', (e) => e.textContent).catch(() => '-'));
   console.log('facts', await page.$eval('.book-facts', (e) => e.innerText.replace(/\n/g, ' | ')));
   await page.screenshot({ path: `${SHOTS}/bookpage-4-tracked.png` });
+  // Right-click the heart: the tags sheet; tick a new tag.
+  await page.click('.book-tile.has-more', { button: 'right' }); await page.waitForSelector('.dest-row'); await page.fill('.sheet input[type=text]', 'قصص'); await page.keyboard.press('Enter'); await page.waitForTimeout(500);
+  console.log('tag rows', await page.$$eval('.dest-row', (r) => r.length), 'tile', await page.$eval('.book-tile.has-more span', (e) => e.textContent));
+  await page.screenshot({ path: `${SHOTS}/bookpage-5-tags.png` });
+  await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  // A long press does the same on touch.
+  const tileEl = await page.$('.book-tile.has-more'); await tileEl.scrollIntoViewIfNeeded(); const tb = await tileEl.boundingBox(); await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2); await page.mouse.down(); await page.waitForTimeout(700); await page.mouse.up(); await page.waitForTimeout(300);
+  console.log('held opens sheet', !!(await page.$('.dest-row')), 'sheets', await page.$$eval('.sheet', (x) => x.length), 'tiles', await page.$$eval('.book-tile.has-more', (x) => x.length));
   console.log('errors', errors); await browser.close(); server.close();
 })().catch((e) => { console.error(e); process.exit(1); });
