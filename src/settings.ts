@@ -73,6 +73,8 @@ export interface VisualSettings {
   invertLineArt: boolean;
   snapFolder: string;
   formatFilter: string[];
+  showProgress: boolean;      // a book's progress on its cover
+  showDone: boolean;          // the 'read' mark on its cover
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   keepAwake: boolean;         // screen wake lock while reading
@@ -175,6 +177,8 @@ export const DEFAULTS: VisualSettings = {
   invertLineArt: false,
   snapFolder: 'Screenshots',
   formatFilter: [],
+  showProgress: true,
+  showDone: true,
   statusFilter: [],
   readingGoalMinutes: 0,
   keepAwake: true,

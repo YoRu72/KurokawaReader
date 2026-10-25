@@ -138,6 +138,18 @@ export function countPages(n: number): string {
   return arCount(n, { one: 'صفحة واحدة', two: 'صفحتان', few: 'صفحات', many: 'صفحةً', hundred: 'صفحةٍ' });
 }
 
+/** "3 min" — in Arabic: دقيقة واحدة · دقيقتان · ٣–١٠ دقائق · ١١–٩٩ دقيقةً · ١٠٠ دقيقةٍ. */
+export function countMinutes(n: number): string {
+  if (current !== 'ar') return `${n} min`;
+  return arCount(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: 'دقائق', many: 'دقيقةً', hundred: 'دقيقةٍ' });
+}
+
+/** "12 cards" — in Arabic: بطاقة واحدة · بطاقتان · ٣–١٠ بطاقات · ١١–٩٩ بطاقةً · ١٠٠ بطاقةٍ. */
+export function countCards(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'card' : 'cards'}`;
+  return arCount(n, { one: 'بطاقة واحدة', two: 'بطاقتان', few: 'بطاقات', many: 'بطاقةً', hundred: 'بطاقةٍ' });
+}
+
 /** "1 file / 2 files" — and the Arabic rules for the counted noun (تمييز العدد):
  *  كتاب · كتابان · ٣–١٠ كتب (جمعٌ مجرور) · ١١–٩٩ كتابًا (مفردٌ منصوب) · ١٠٠ و٢٠٠… كتابٍ (مفردٌ مجرور). */
 export function countBooks(n: number): string {

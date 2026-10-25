@@ -1,7 +1,7 @@
 // "Book information" sheet — the Moon+-style summary: file facts, position,
 // reading time and speed, per-day history, size of the text, time left.
 import { h, openSheet, append } from './dom';
-import { t, formatBytes, formatDate, formatDuration } from '../i18n';
+import { t, formatBytes, formatDate, formatDuration, countMinutes } from '../i18n';
 import type { Book, ReadingStats } from '../db';
 import { coverUrl } from '../library';
 import { getSettings } from '../settings';
@@ -62,11 +62,11 @@ export function showBookInfo(i: BookInfoInput): void {
     h('div', { class: 'goal-line' },
       h('span', null, `${t('today')}: ${formatDuration(todayMs)}`),
       goal ? h('div', { class: 'bar' }, h('span', { style: { width: `${Math.min(100, (todayMs / (goal * 60000)) * 100)}%` } })) : null,
-      goal ? h('span', null, t('goalValue', { n: goal })) : null),
+      goal ? h('span', null, countMinutes(goal)) : null),
     h('div', { style: { height: '12px' } }),
     stats.bookChars != null ? row(t('charsInBook'), stats.bookChars.toLocaleString('en-US')) : null,
     stats.bookWords != null ? row(t('wordsInBook'), stats.bookWords.toLocaleString('en-US')) : null,
-    leftChapter != null ? h('p', { style: { fontStyle: 'italic', color: 'var(--md-on-surface-dim)', margin: '12px 0 0' } }, t('minsLeftChapter', { n: leftChapter })) : null,
-    leftBook != null ? h('p', { style: { fontStyle: 'italic', color: 'var(--md-on-surface-dim)', margin: '2px 0 0' } }, t('minsLeftBook', { n: leftBook })) : null,
+    leftChapter != null ? h('p', { style: { fontStyle: 'italic', color: 'var(--md-on-surface-dim)', margin: '12px 0 0' } }, t('minsLeftChapter', { n: countMinutes(leftChapter) })) : null,
+    leftBook != null ? h('p', { style: { fontStyle: 'italic', color: 'var(--md-on-surface-dim)', margin: '2px 0 0' } }, t('minsLeftBook', { n: countMinutes(leftBook) })) : null,
   ]);
 }

@@ -2,7 +2,7 @@
 // Again / Hard / Good / Easy), and a card browser. Cards render inside a shadow root
 // so each note type's own CSS applies without touching the app.
 import { h, icon, iconButton, toast, clear, openSheet, pickSheet } from '../ui/dom';
-import { t, localDigits } from '../i18n';
+import { t, localDigits, countCards } from '../i18n';
 import { db, type Book } from '../db';
 import { navigate } from '../router';
 import { getSettings, pageIsLight } from '../settings';
@@ -32,7 +32,17 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
   onDispose(() => { urls.forEach((u) => URL.revokeObjectURL(u)); audio?.pause(); });
   const night = () => !pageIsLight(getSettings()) || document.documentElement.dataset.ui === 'dark';
   let audio: HTMLAudioElement | null = null;
-  const play = async (name: string) => { const u = await soundUrl(deck, name, urls); if (!u) return; audio?.pause(); audio = new Audio(u); void audio.play().catch(() => {}); };
+  // A card's sounds play one after another, as Anki plays them; starting a new one stops what was playing.
+  let playRun = 0;
+  const play = async (...names: string[]) => {
+    const run = ++playRun; audio?.pause();
+    for (const name of names) {
+      if (run !== playRun) return;
+      const u = await soundUrl(deck, name, urls); if (!u || run !== playRun) continue;
+      const a = audio = new Audio(u);
+      await new Promise<void>((done) => { a.onended = a.onerror = () => done(); a.play().catch(() => done()); });
+    }
+  };
 
   const persist = async () => {
     await saveProgress(book.id, p);
@@ -61,7 +71,7 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
       h('button', { class: 'btn primary anki-study', type: 'button', disabled: nothing, onclick: () => study() }, icon('play'), t('ankiStudy')),
       subdecks.length > 1 ? h('button', { class: 'btn small', type: 'button', onclick: () => pickSheet(t('ankiSubdeck'), [['all', deck.name, 'library'], ...subdecks.map((id): [string, string, string] => [String(id), deck.decks.get(id)!.split('::').slice(1).join(' › ') || deck.decks.get(id)!, 'books'])], p.deckFilter == null ? 'all' : String(p.deckFilter), (v) => { p.deckFilter = v === 'all' ? null : Number(v); void saveProgress(book.id, p); overview(); }, t('close')) }, icon('folder'), t('ankiSubdeck')) : null,
       h('div', { class: 'anki-stats' },
-        h('span', null, t('ankiTotal', { n: deck.cards.length })),
+        h('span', null, countCards(deck.cards.length)),
         h('span', null, t('ankiStudied', { n: studied })),
         h('span', null, t('ankiMature', { n: mature }))),
     ));
@@ -87,7 +97,11 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
       await attachMedia(deck, shadow, urls);
       shadow.querySelectorAll<HTMLButtonElement>('.anki-sound').forEach((b) => b.addEventListener('click', () => void play(b.dataset.sound!)));
       shadow.querySelectorAll<HTMLAnchorElement>('a.hint').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); const t2 = shadow.getElementById(a.dataset.hint!); if (t2) { t2.hidden = false; a.remove(); } }));
-      if (p.autoplay && r.sounds.length) void play(side === 'q' ? r.sounds[0] : (r.sounds.find((s) => !renderCard(deck, card!, 'q', false).sounds.includes(s)) ?? r.sounds[0]));
+      if (p.autoplay && r.sounds.length) {
+        const q = side === 'q' ? [] : renderCard(deck, card!, 'q', false).sounds;
+        const fresh = r.sounds.filter((x) => !q.includes(x));
+        void play(...(fresh.length ? fresh : r.sounds));
+      }
       paintBar();
       host.scrollTop = 0;
     };
@@ -123,7 +137,7 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
       if (side === 'q' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); side = 'a'; void show(); return; }
       if (side === 'a' && /^[1-4]$/.test(e.key)) { e.preventDefault(); void answer(Number(e.key) as Grade); return; }
       if (side === 'a' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); void answer(3); return; }
-      if (e.key === 'r' && card) { const r = renderCard(deck, card, side, false); if (r.sounds[0]) void play(r.sounds[0]); }
+      if (e.key === 'r' && card) { const r = renderCard(deck, card, side, false); if (r.sounds.length) void play(...r.sounds); }
       if (e.key === 'Escape') { window.removeEventListener('keydown', onKey); overview(); }
     };
     window.addEventListener('keydown', onKey);

@@ -80,6 +80,9 @@ export interface Book {
   pageCount?: number;
   progress?: Locator;
   progressAt?: number;
+  /** Marked read (or marked not read though its progress is at the end); unset: by progress. */
+  done?: boolean;
+  doneAt?: number;
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];

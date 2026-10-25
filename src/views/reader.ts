@@ -2,7 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
-import { t, isRtlText, isTouchDevice, getLang, localDigits } from '../i18n';
+import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
 import { db, uid, type PdfNote, type PdfHighlight, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -999,7 +999,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     sh.body.append(h('div', { class: 'segmented' }, ...[15, 30, 45, 60].map((m) => h('button', { type: 'button', onclick: () => {
       sh.close();
       sleepTimer = window.setTimeout(() => { sleepTimer = 0; stopSpeaking(); if (autoScrollRaf) stopAutoScroll(); toast(t('sleepTimerDone')); }, m * 60000);
-      toast(t('sleepTimerSet', { n: m }));
+      toast(t('sleepTimerSet', { n: countMinutes(m) }));
     } }, t('minutes', { n: m })))));
   }
   onDispose(() => { if (sleepTimer) window.clearTimeout(sleepTimer); });

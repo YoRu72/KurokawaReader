@@ -15,6 +15,9 @@
  *  - an OS/2 table when there is none (Word needs it to embed the font).
  */
 
+
+/** `a.push(...b)` without the call-stack limit a spread of a big array hits. */
+function pushAll<T>(a: T[], b: ArrayLike<T>): void { for (let i = 0; i < b.length; i++) a.push(b[i]); }
 import { readSfnt, glyphReader, verticalMetrics, writeTrueType, type Outline } from './fontbuild';
 
 type Tables = Map<string, Uint8Array>;
@@ -253,7 +256,7 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
       ligCount.set(lkey, (ligCount.get(lkey) ?? 0) + 1);
       for (let k = 0; k < comps.length; k++) inLig.add(stream.length + k);
       if (occ.length < 4000) occ.push({ key: lkey, at: stream.length, len: comps.length });
-      stream.push(...comps);
+      pushAll(stream, comps);
       markPart(e.gid);
     }
   }
@@ -537,7 +540,7 @@ function ligatureSubtable(ligs: Map<number, { rest: number[]; gid: number }[]>):
     const ruleAt = rules.map(() => { const p = st.len; st.u16(0); return p; });
     rules.forEach((r, k) => { st.at(ruleAt[k], st.len - setStart); st.u16(r.gid).u16(r.rest.length + 1); for (const x of r.rest) st.u16(x); });
   });
-  st.at(covAt, st.len); st.b.push(...coverage(firsts));
+  st.at(covAt, st.len); pushAll(st.b, coverage(firsts));
   return st.b;
 }
 
@@ -550,7 +553,7 @@ function buildGsub(singles: Record<Form, Map<number, number>>, ligLookups: LigLo
     const m = singles[f]; if (!m.size) continue;
     const from = [...m.keys()].sort((a, b) => a - b);
     const st = new W(); st.u16(2); const covAt = st.len; st.u16(0); st.u16(from.length); for (const g of from) st.u16(m.get(g)!);
-    st.at(covAt, st.len); st.b.push(...coverage(from));
+    st.at(covAt, st.len); pushAll(st.b, coverage(from));
     lookups.push(lookupOf(1, st.b)); features.push({ tag: f, idx: [lookups.length - 1] });
   }
   const rlig: number[] = [];
@@ -561,7 +564,7 @@ function buildGsub(singles: Record<Form, Map<number, number>>, ligLookups: LigLo
     const swap = new Map<string, number>();
     for (const v of variants) {
       const key = `${v.from}>${v.to}`; if (swap.has(key)) continue;
-      const st = new W(); st.u16(2); const covAt = st.len; st.u16(0); st.u16(1); st.u16(v.to); st.at(covAt, st.len); st.b.push(...coverage([v.from]));
+      const st = new W(); st.u16(2); const covAt = st.len; st.u16(0); st.u16(1); st.u16(v.to); st.at(covAt, st.len); pushAll(st.b, coverage([v.from]));
       lookups.push(lookupOf(1, st.b)); swap.set(key, lookups.length - 1);
     }
     const subs = variants.map((v) => {
@@ -572,7 +575,7 @@ function buildGsub(singles: Record<Form, Map<number, number>>, ligLookups: LigLo
       st.u16(1); cov([v.from]);
       st.u16(v.before ? 0 : 1); if (!v.before) cov(v.ctx);
       st.u16(1); st.u16(0).u16(swap.get(`${v.from}>${v.to}`)!);
-      for (const [p, gs] of covs) { st.at(p, st.len); st.b.push(...coverage(gs)); }
+      for (const [p, gs] of covs) { st.at(p, st.len); pushAll(st.b, coverage(gs)); }
       return st.b;
     });
     lookups.push(lookupMany(6, subs, 8)); features.push({ tag: 'calt', idx: [lookups.length - 1] });
@@ -592,21 +595,21 @@ function layoutTable(features: { tag: string; idx: number[] }[], lookups: number
   features.forEach((f, i) => { fl.at(fAt[i], fl.len); fl.u16(0).u16(f.idx.length); for (const x of f.idx) fl.u16(x); });
   const ll = new W(); ll.u16(lookups.length);
   const lAt = lookups.map(() => { const p = ll.len; ll.u16(0); return p; });
-  lookups.forEach((lk, i) => { ll.at(lAt[i], ll.len); ll.b.push(...lk); });
+  lookups.forEach((lk, i) => { ll.at(lAt[i], ll.len); pushAll(ll.b, lk); });
   const g = new W(); g.u32(0x00010000); g.u16(10); g.u16(10 + sl.len); g.u16(10 + sl.len + fl.len);
-  g.b.push(...sl.b, ...fl.b, ...ll.b);
+  pushAll(g.b, sl.b); pushAll(g.b, fl.b); pushAll(g.b, ll.b);
   return g.bytes();
 }
 
 function lookupMany(type: number, subs: number[][], flag = 0): number[] {
   const w = new W(); w.u16(type).u16(flag).u16(subs.length);
   const at = subs.map(() => { const p = w.len; w.u16(0); return p; });
-  subs.forEach((sb, i) => { w.at(at[i], w.len); w.b.push(...sb); });
+  subs.forEach((sb, i) => { w.at(at[i], w.len); pushAll(w.b, sb); });
   return w.b;
 }
 
 function lookupOf(type: number, sub: number[], flag = 0): number[] {
-  const w = new W(); w.u16(type).u16(flag).u16(1).u16(8); w.b.push(...sub); return w.b;
+  const w = new W(); w.u16(type).u16(flag).u16(1).u16(8); pushAll(w.b, sub); return w.b;
 }
 
 /** Mark-to-base positioning: every mark glyph its own class, anchored at (0,0); each base has, for each mark
@@ -631,8 +634,8 @@ function buildGpos(anchors: Map<number, Map<number, [number, number]>>, fbMarks:
       let at = seen.get(key); if (at === undefined) { at = st.len; seen.set(key, at); st.u16(1).u16(x & 0xffff).u16(y & 0xffff); }
       st.at(p, at - ba);
     } });
-    st.at(mcAt, st.len); st.b.push(...coverage(marks));
-    st.at(bcAt, st.len); st.b.push(...coverage(bases));
+    st.at(mcAt, st.len); pushAll(st.b, coverage(marks));
+    st.at(bcAt, st.len); pushAll(st.b, coverage(bases));
     return lookupOf(4, st.b);
   };
   const lookups: number[][] = [];

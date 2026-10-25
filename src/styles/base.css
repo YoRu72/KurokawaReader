@@ -329,6 +329,13 @@ html[dir='rtl'] .library-tools select { background-position: 14px center; }
 .cover .badge { position: absolute; top: 10px; right: 10px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 4px 8px; border-radius: var(--sh-full); background: var(--md-inverse-surface); color: var(--md-inverse-on-surface); }
 .cover .progress { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 6px; border-radius: var(--sh-full); background: rgba(0,0,0,.45); overflow: hidden; }
 .cover .progress i { display: block; height: 100%; border-radius: var(--sh-full); background: var(--md-primary); }
+.cover .progress b { position: absolute; right: 0; bottom: 9px; font: 700 10.5px/1 var(--font-ui); letter-spacing: .04em; padding: 3px 7px; border-radius: var(--sh-full); background: rgba(0,0,0,.55); color: #fff; }
+[dir='rtl'] .cover .progress b { right: auto; left: 0; }
+.cover .progress { overflow: visible; }
+.cover .progress i { max-width: 100%; }
+.cover .progress::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: rgba(0,0,0,.45); z-index: -1; }
+.cover .badge.done { top: 40px; display: inline-flex; align-items: center; gap: 4px; background: var(--md-primary); color: var(--md-on-primary); letter-spacing: 0; }
+.cover .badge.done svg { width: 12px; height: 12px; }
 .cover .check { position: absolute; top: 10px; left: 10px; width: 28px; height: 28px; border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.4); display: grid; place-items: center; transition: transform var(--dur-med) var(--ease-spring), background var(--dur-short); }
 .cover .check svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 3; opacity: 0; }
 .book-card[aria-selected='true'] .cover { transform: scale(.94); border-radius: var(--sh-xl); box-shadow: 0 0 0 3px var(--md-primary), var(--el-2); }

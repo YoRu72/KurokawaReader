@@ -1,3 +1,6 @@
+
+/** `a.push(...b)` without the call-stack limit a spread of a big array hits. */
+function pushAll<T>(a: T[], b: ArrayLike<T>): void { for (let i = 0; i < b.length; i++) a.push(b[i]); }
 /**
  * Glyph outlines out of a PDF's fonts, and a TrueType font built from them.
  *
@@ -397,7 +400,7 @@ function nameTable(family: string, sub: string): Uint8Array {
   const data: number[] = []; const head: number[] = [];
   const u16 = (a: number[], v: number) => a.push((v >> 8) & 255, v & 255);
   u16(head, 0); u16(head, recs.length); u16(head, 6 + recs.length * 12);
-  for (const [id, s] of recs) { const b = enc(s); u16(head, 3); u16(head, 1); u16(head, 0x409); u16(head, id); u16(head, b.length); u16(head, data.length); data.push(...b); }
+  for (const [id, s] of recs) { const b = enc(s); u16(head, 3); u16(head, 1); u16(head, 0x409); u16(head, id); u16(head, b.length); u16(head, data.length); pushAll(data, b); }
   return new Uint8Array([...head, ...data]);
 }
 

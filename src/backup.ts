@@ -11,7 +11,7 @@ import { importFiles } from './library';
 import { t } from './i18n';
 
 interface BookRecord {
-  key: string; title: string; author?: string; fileName: string; size: number; format: string; folderName?: string; tags?: string[]; tagsAt?: number;
+  key: string; title: string; author?: string; fileName: string; size: number; format: string; folderName?: string; tags?: string[]; tagsAt?: number; done?: boolean; doneAt?: number;
   addedAt: number; lastOpenedAt?: number; progress?: Book['progress']; bookmarks: Book['bookmarks']; highlights: Book['highlights']; pins?: Book['pins']; pdfHighlights?: Book['pdfHighlights']; prefs?: Book['prefs']; stats?: Book['stats'];
   id?: string;
 }
@@ -33,7 +33,7 @@ async function manifest(full: boolean): Promise<Manifest> {
     settings: { ...getSettings(), aiKey: '', syncDropboxRefresh: '', syncWebdavPass: '' }, local, folders, tags: (await db.getMeta<TagDef[]>('tags')) ?? [], fonts: await listFonts(),
     books: books.map((b) => ({
       key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
-      folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
+      folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, done: b.done, doneAt: b.doneAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
       progress: b.progress, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins, pdfHighlights: b.pdfHighlights, prefs: b.prefs, stats: b.stats,
     })),
   };
@@ -130,6 +130,7 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
       if (rec.stats && (rec.stats.sessionAt ?? 0) > (b.stats?.sessionAt ?? 0)) b.stats = rec.stats;
       const fid = folderId(rec.folderName); if (fid && !b.folderId) b.folderId = fid;
       if (rec.tags?.length) { b.tags = [...new Set([...(b.tags ?? []), ...rec.tags])]; b.tagsAt = Date.now(); }
+      if (rec.done !== undefined && (rec.doneAt ?? 0) > (b.doneAt ?? 0)) { b.done = rec.done; b.doneAt = rec.doneAt; }
     });
     applied++;
   }

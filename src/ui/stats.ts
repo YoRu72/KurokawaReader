@@ -1,7 +1,7 @@
 // Library-wide reading statistics: time today and in total, sessions, pages,
 // streak, the daily goal and the last two weeks, plus the most-read books.
 import { h, openSheet, pickSheet } from './dom';
-import { t, formatDuration, formatDate, localDigits } from '../i18n';
+import { t, formatDuration, formatDate, localDigits, countMinutes } from '../i18n';
 import { db, type ReadingDay } from '../db';
 import { getSettings, updateSettings } from '../settings';
 import { todayKey, liveStatsOf } from '../stats';
@@ -89,7 +89,7 @@ export async function showStats(): Promise<void> {
   sheet.actions.append(h('button', { class: 'btn primary small', type: 'button', onclick: () => sheet.close() }, t('close')));
 
   function pickGoal(): void {
-    pickSheet(t('dailyGoal'), GOALS.map((n): [string, string] => [String(n), n ? t('goalValue', { n }) : t('goalOff')]), String(getSettings().readingGoalMinutes), (v) => {
+    pickSheet(t('dailyGoal'), GOALS.map((n): [string, string] => [String(n), n ? countMinutes(n) : t('goalOff')]), String(getSettings().readingGoalMinutes), (v) => {
       updateSettings({ readingGoalMinutes: Number(v) });
       sheet.close();
       void showStats();

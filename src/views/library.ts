@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet } from '../ui/dom';
-import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration } from '../i18n';
+import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
 import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
@@ -168,6 +168,7 @@ export function libraryView(): HTMLElement {
         iconButton('close', t('close'), () => setSelecting(false))),
       h('div', { class: 'sel-actions' },
         act('heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })),
+        act('check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))),
         act('tag', t('tags'), () => tagsSheet([...selected])),
         act('folder', t('moveToFolder'), () => moveSheet([...selected])),
         act('external', t('shareFile'), () => void shareBooks([...selected])),
@@ -222,12 +223,13 @@ export function libraryView(): HTMLElement {
   function card(book: Book): HTMLElement {
     const url = coverUrl(book);
     const [c1, c2] = coverColors(book.title);
-    const pct = Math.round((book.progress?.pct ?? 0) * 100);
+    const pct = Math.round((book.progress?.pct ?? 0) * 100); const done = isDone(book);
     const cover = h('div', { class: 'cover' },
       url ? h('img', { src: url, alt: '', loading: 'lazy' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badge' }, book.format.toUpperCase()),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
-      pct > 0 ? h('div', { class: 'progress' }, h('i', { style: { width: `${pct}%` } })) : null,
+      done && getSettings().showDone ? h('span', { class: 'badge done' }, icon('check'), t('doneBadge')) : null,
+      !done && pct > 0 && getSettings().showProgress ? h('div', { class: 'progress', 'aria-label': `${pct}%` }, h('i', { style: { width: `${pct}%` } }), h('b', null, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`)) : null,
       selecting ? h('div', { class: 'check' }, icon('check')) : null,
     );
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c1', c1);
@@ -269,13 +271,14 @@ export function libraryView(): HTMLElement {
         [t('size'), formatBytes(book.size)],
         [t('added'), formatDate(book.addedAt)],
         [t('lastOpened'), formatDate(book.lastOpenedAt)],
-        [t('progress'), `${Math.round((book.progress?.pct ?? 0) * 100)}%`],
+        [t('progress'), isDone(book) ? t('doneBadge') : `${Math.round((book.progress?.pct ?? 0) * 100)}%`],
       ];
       if (book.pageCount) rows.push([t('pages'), String(book.pageCount)]);
       if (book.tags?.length) rows.push([t('tags'), book.tags.join(' · ')]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
       s.actions.append(
         (() => { const isFav = (book.tags ?? []).includes(FAV_TAG); return h('button', { class: 'btn small' + (isFav ? ' tonal' : ''), onclick: async () => { await setTag([book.id], FAV_TAG, !isFav); s.close(); await refresh(); toast(isFav ? t('removedFromFavorites') : t('addedToFavorites')); } }, icon(isFav ? 'heartFill' : 'heart'), isFav ? t('unfavorite') : t('favorite')); })(),
+        (() => { const d = isDone(book); return h('button', { class: 'btn small' + (d ? ' tonal' : ''), onclick: async () => { await setDone([book.id], !d); s.close(); toast(d ? t('markedNotDone') : t('markedDone')); } }, icon(d ? 'undo' : 'check'), d ? t('markNotDone') : t('markDone')); })(),
         h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
         h('button', { class: 'btn small', onclick: () => { s.close(); moveSheet([book.id]); } }, icon('folder'), t('moveToFolder')),
         h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
@@ -510,9 +513,19 @@ export function libraryView(): HTMLElement {
     if (tagFilter === name) setTagFilter(null); else renderGrid();
   }
 
+  /** Read: marked so, or read to its end and not marked otherwise. */
+  function isDone(b: Book): boolean { return b.done ?? (b.progress?.pct ?? 0) >= 0.98; }
+  async function setDone(ids: string[], on: boolean): Promise<void> {
+    const at = Date.now();
+    for (const id of ids) {
+      await db.updateBook(id, (b) => { b.done = on; b.doneAt = at; });
+      const bk = books.find((b) => b.id === id); if (bk) { bk.done = on; bk.doneAt = at; }
+    }
+    renderGrid();
+  }
   function statusOf(b: Book): string {
     const pct = b.progress?.pct ?? 0;
-    if (pct >= 0.98) return 'finished';
+    if (isDone(b)) return 'finished';
     return b.lastOpenedAt || pct > 0 ? 'reading' : 'unread';
   }
 
@@ -599,7 +612,7 @@ export function libraryView(): HTMLElement {
   let prewarmed = '';
   function renderResume() {
     clear(resume);
-    const last = [...books].filter((b) => b.lastOpenedAt && (b.progress?.pct ?? 0) < 0.98).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
+    const last = [...books].filter((b) => b.lastOpenedAt && !isDone(b)).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
     resume.hidden = !last || selecting || !!query || !!activeFolder || !!tagFilter;
     if (resume.hidden || !last) return;
     if (prewarmed !== last.id) { prewarmed = last.id; prewarm(last, () => db.getFile(last.id)); }
@@ -624,7 +637,7 @@ export function libraryView(): HTMLElement {
     heroGoal.hidden = !goal;
     if (!goal) return;
     heroGoal.append(
-      h('span', null, `${t('today')}: ${formatDuration(today)} · ${t('goalValue', { n: goal })}`),
+      h('span', null, `${t('today')}: ${formatDuration(today)} · ${countMinutes(goal)}`),
       h('div', { class: 'bar' }, h('span', { style: { width: `${Math.min(100, (today / (goal * 60000)) * 100)}%` } })));
   }
 
