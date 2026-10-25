@@ -37,7 +37,7 @@ function attr(e: Element | null, ns: string, name: string): string | null {
   return e ? e.getAttributeNS(ns, name) ?? e.getAttribute(`w:${name}`) : null;
 }
 
-export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool): Promise<{ root: HTMLElement; meta: { title?: string; author?: string } }> {
+export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool): Promise<{ root: HTMLElement; meta: { title?: string; author?: string }; zip: JSZip }> {
   const zip = await JSZip.loadAsync(file);
   const docPath = 'word/document.xml';
   const docFile = zipFile(zip, docPath);
@@ -103,7 +103,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
       switch (c.localName) {
         case 't': dest.appendChild(document.createTextNode(c.textContent ?? '')); break;
         case 'tab': dest.appendChild(document.createTextNode('\t')); break;
-        case 'br': dest.appendChild(document.createElement('br')); break;
+        case 'br': if (attr(c, W, 'type') === 'page') target.dataset.pageBreak = '1'; else dest.appendChild(document.createElement('br')); break;
         case 'sym': dest.appendChild(document.createTextNode(String.fromCharCode(parseInt(attr(c, W, 'char') ?? '20', 16)))); break;
         case 'footnoteReference': {
           const id = attr(c, W, 'id') ?? '';
@@ -129,7 +129,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
             const descr = c.getElementsByTagName('wp:docPr')[0]?.getAttribute('descr') ?? '';
             if (descr) img.alt = descr;
             dest.appendChild(img);
-            imageTasks.push(pool.fromZip(zip, path).then((u) => { if (u) img.src = u; else img.remove(); }));
+            pool.lazy(zip, path, img, 'src');
           }
           break;
         }
@@ -140,7 +140,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
           if (path) {
             const img = document.createElement('img');
             dest.appendChild(img);
-            imageTasks.push(pool.fromZip(zip, path).then((u) => { if (u) img.src = u; else img.remove(); }));
+            pool.lazy(zip, path, img, 'src');
           }
           break;
         }
@@ -185,6 +185,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
     } else {
       currentList = null; currentListLevel = -1;
       elNode = el(level ? (`h${level}` as 'h1') : 'p');
+      if (child(pPr, W, 'pageBreakBefore') || child(pPr, W, 'sectPr')) elNode.dataset.pageBreak = '1';
       const jc = attr(child(pPr, W, 'jc'), W, 'val');
       if (jc === 'center') elNode.style.textAlign = 'center';
       if (attr(child(pPr, W, 'bidi'), W, 'val') !== '0' && child(pPr, W, 'bidi')) elNode.setAttribute('dir', 'rtl');
@@ -230,13 +231,55 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
   };
 
   const body = doc.getElementsByTagNameNS(W, 'body')[0];
-  if (body) renderBlocks(body, root);
+  if (body) {
+    // A long document is rendered a few hundred blocks at a time, letting the page breathe between (the
+    // opening spinner keeps turning; a tap still answers), rather than in one long stretch that a phone's
+    // web view may give up on.
+    const kids = Array.from(body.children); let n = 0;
+    for (const c of kids) {
+      if (c.localName === 'p') renderParagraph(c, root);
+      else if (c.localName === 'tbl') { currentList = null; renderTable(c, root); }
+      else if (c.localName === 'sdt') renderBlocks(child(c, W, 'sdtContent') ?? c, root);
+      if (++n % 400 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+  }
   if (fnOut.length) {
     const hr = el('hr'); root.appendChild(hr);
     const ol = el('ol', 'kr-footnotes'); fnOut.forEach((li) => ol.appendChild(li)); root.appendChild(ol);
   }
   await Promise.all(imageTasks);
-  return { root, meta };
+  chapterize(root, ctx);
+  return { root, meta, zip };
+}
+
+/**
+ * A long document cut into chapters (`section.kr-chapter`, as an EPUB's), so the reader lays out one at a
+ * time: at its top headings when it has a few, else at its page breaks, else every few hundred blocks; a
+ * short document stays one piece. The footnotes go with the last chapter.
+ */
+function chapterize(root: HTMLElement, ctx: RenderContext): void {
+  const blocks = Array.from(root.children) as HTMLElement[];
+  if (blocks.length < 120) return;
+  const text = root.textContent?.length ?? 0;
+  if (text < 60_000 && blocks.length < 400) return;
+  const isHead = (b: HTMLElement, lv: string) => b.tagName === lv;
+  const h1 = blocks.filter((b) => isHead(b, 'H1')).length, h2 = blocks.filter((b) => isHead(b, 'H2')).length;
+  const cutAt = (b: HTMLElement) => (h1 >= 3 ? isHead(b, 'H1') : h2 >= 3 ? isHead(b, 'H1') || isHead(b, 'H2') : false);
+  const hasCuts = h1 >= 3 || h2 >= 3 || blocks.some((b) => b.dataset.pageBreak);
+  const sections: HTMLElement[][] = [[]];
+  let since = 0;
+  for (const b of blocks) {
+    const cut = hasCuts ? (cutAt(b) || (!(h1 >= 3 || h2 >= 3) && !!b.dataset.pageBreak)) : since >= 300;
+    const footnotes = b.tagName === 'OL' && b.classList.contains('kr-footnotes') || (b.tagName === 'HR' && b.nextElementSibling?.classList.contains('kr-footnotes'));
+    // (A chapter must have something in it; very long chapters without headings are still cut by size.)
+    if (!footnotes && (cut || since >= 1200) && sections[sections.length - 1].length) { sections.push([]); since = 0; }
+    sections[sections.length - 1].push(b); since++;
+  }
+  if (sections.length < 2) return;
+  sections.forEach((blocksOf, i) => {
+    const sec = document.createElement('section'); sec.className = 'kr-chapter'; sec.id = ctx.id(`c${i}`);
+    root.appendChild(sec); blocksOf.forEach((b) => sec.appendChild(b));
+  });
 }
 
 export const docxHandler: FlowHandler = {
@@ -257,8 +300,8 @@ export const docxHandler: FlowHandler = {
   },
   async render(file, ctx): Promise<FlowRender> {
     const pool = new UrlPool();
-    const { root } = await docxToHtml(file, ctx, pool);
+    const { root, zip } = await docxToHtml(file, ctx, pool);
     const rtl = markDirections(root);
-    return { element: root, toc: tocFromHeadings(root, ctx, 'docx'), images: collectImages(root, ctx, 'docx'), rtl, dispose: () => pool.dispose() };
+    return { element: root, toc: tocFromHeadings(root, ctx, 'docx'), images: collectImages(root, ctx, 'docx', pool, zip), rtl, dispose: () => pool.dispose(), resolveImages: () => pool.resolveAll(root) };
   },
 };
