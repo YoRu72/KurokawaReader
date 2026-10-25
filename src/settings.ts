@@ -98,6 +98,8 @@ export interface VisualSettings {
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   calendar: 'gregory' | 'hijri' | 'both';
+  arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 123 for data and ١٢٣ in prose, or one of them throughout
+  sizeUnits: 'latin' | 'arabic'; // KB/MB/GB, or كيلوبايت/ميغابايت/قيقابايت in Arabic
   bookPage: 'chaptered' | 'always' | 'never'; // open a book's own page (chapters, tracking) before the reader
   anilistEnabled: boolean; // AniList tracking shown in the app
   anilistClientId: string; // the reader's own AniList API client
@@ -221,6 +223,8 @@ export const DEFAULTS: VisualSettings = {
   statusFilter: [],
   readingGoalMinutes: 0,
   calendar: 'gregory',
+  arDigits: 'auto',
+  sizeUnits: 'latin',
   bookPage: 'chaptered',
   anilistEnabled: false,
   anilistClientId: '',

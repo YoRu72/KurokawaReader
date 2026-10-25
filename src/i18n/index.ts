@@ -83,12 +83,18 @@ export function t(key: keyof Strings, vars?: Record<string, string | number>): s
 /** Numbers interpolated into strings: Western digits in English, Arabic-Indic in Arabic
  *  (strings such as file names pass through untouched). */
 export function formatNumber(v: string | number): string {
-  return typeof v === 'number' ? localDigits(new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false }).format(v)) : v;
+  // (A number inside a sentence is prose: ١٢٣ in Arabic by default; figures that stand alone are data.)
+  return typeof v === 'number' ? localDigits(new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false }).format(v), 'prose') : v;
 }
 
-const DATE_LOCALE: Record<Lang, string> = { ar: 'ar-SA-u-nu-arab-ca-gregory', en: 'en-GB', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR' };
-/** The locale dates are written in for the current language. */
-export const dateLocale = (): string => DATE_LOCALE[current];
+const DATE_LOCALE: Record<Lang, string> = { ar: 'ar-SA-u-ca-gregory', en: 'en-GB', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR' };
+/** The locale dates are written in for the current language (Arabic: with the digits the interface uses;
+ *  a civil date is data, a Hijri one prose). */
+export const dateLocale = (ctx: 'data' | 'prose' = 'data'): string => {
+  if (current !== 'ar') return DATE_LOCALE[current];
+  const pref = digitsPref();
+  return `${DATE_LOCALE.ar}-nu-${pref === 'eastern' || (pref === 'auto' && ctx === 'prose') ? 'arab' : 'latn'}`;
+};
 /** The calendar dates are written in (read from the saved settings, so this file needs nothing of settings.ts). */
 export function calendarPref(): 'gregory' | 'hijri' | 'both' {
   try { const v = (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as { calendar?: string }).calendar; return v === 'hijri' || v === 'both' ? v : 'gregory'; } catch { return 'gregory'; }
@@ -96,11 +102,12 @@ export function calendarPref(): 'gregory' | 'hijri' | 'both' {
 /** A date in the Hijri (Umm al-Qura) calendar, in the current language. */
 export function formatHijri(d: Date, opts: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }): string {
   const base = DATE_LOCALE[current].split('-u-')[0];
-  return new Intl.DateTimeFormat(`${base}-u-ca-islamic-umalqura${current === 'ar' ? '-nu-arab' : ''}`, opts).format(d);
+  const nu = current === 'ar' ? (digitsPref() === 'western' ? '-nu-latn' : '-nu-arab') : '';
+  return new Intl.DateTimeFormat(`${base}-u-ca-islamic-umalqura${nu}`, opts).format(d);
 }
 export function formatDate(ts: number | undefined): string {
   if (!ts) return t('never');
-  const civil = new Intl.DateTimeFormat(DATE_LOCALE[current], { dateStyle: 'medium' }).format(new Date(ts));
+  const civil = new Intl.DateTimeFormat(dateLocale(), { dateStyle: 'medium' }).format(new Date(ts));
   const cal = calendarPref();
   if (cal === 'gregory') return civil;
   const hijri = formatHijri(new Date(ts));
@@ -114,11 +121,13 @@ export function formatDuration(ms: number): string {
 }
 
 export function formatBytes(n: number): string {
-  if (n < 1024) return `${localDigits(n)} B`;
-  const units = ['KB', 'MB', 'GB'];
+  const arabic = current === 'ar' && visualPref('sizeUnits') === 'arabic';
+  if (n < 1024) return `${localDigits(n)} ${arabic ? 'بايت' : 'B'}`;
+  const units = arabic ? ['كيلوبايت', 'ميغابايت', 'قيقابايت', 'تيرابايت'] : ['KB', 'MB', 'GB', 'TB'];
   let i = -1;
   do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
-  return `${localDigits(n.toFixed(n < 10 ? 1 : 0))} ${units[i]}`;
+  // (Latin units keep their own left-to-right order after the number, whichever way the line runs.)
+  return arabic ? `${localDigits(n.toFixed(n < 10 ? 1 : 0))} ${units[i]}` : `\u2066${localDigits(n.toFixed(n < 10 ? 1 : 0))} ${units[i]}\u2069`;
 }
 
 /** Heuristic: does this text read right-to-left? */
@@ -130,9 +139,23 @@ export function isRtlText(text: string): boolean {
 }
 
 /** Arabic-Indic digits for Arabic UI. */
-export function localDigits(n: number | string): string {
+/** A saved visual setting, read here so this file needs nothing of settings.ts. */
+function visualPref(key: string): string | undefined {
+  try { return (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as Record<string, string>)[key]; } catch { return undefined; }
+}
+/** How digits are written in the Arabic interface: 'auto' keeps 123 for data (pages, sizes, times, dates) and
+ *  ١٢٣ in prose (counted nouns, Hijri dates); the others use one kind throughout. */
+export function digitsPref(): 'auto' | 'western' | 'eastern' {
+  const v = visualPref('arDigits'); return v === 'western' || v === 'eastern' ? v : 'auto';
+}
+const EASTERN = (s: string) => s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+/** Digits as the interface writes them: `prose` for a number inside an Arabic sentence, `data` (the default)
+ *  for a count, a size, a time, a page. */
+export function localDigits(n: number | string, ctx: 'data' | 'prose' = 'data'): string {
   const s = String(n);
-  return current === 'ar' ? s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]) : s;
+  if (current !== 'ar') return s;
+  const pref = digitsPref();
+  return pref === 'eastern' || (pref === 'auto' && ctx === 'prose') ? EASTERN(s) : s;
 }
 
 /** A counted noun in Arabic (تمييز العدد), as the case requires: `one` and `two` are the noun alone (واحد
@@ -142,9 +165,9 @@ export function arCount(n: number, f: { one: string; two: string; few: string; m
   if (n === 1) return f.one;
   if (n === 2) return f.two;
   const r = n % 100;
-  if (r === 0 || r === 1 || r === 2) return `${localDigits(n)} ${f.hundred}`;
-  if (r >= 3 && r <= 10) return `${localDigits(n)} ${f.few}`;
-  return `${localDigits(n)} ${f.many}`;
+  if (r === 0 || r === 1 || r === 2) return `${localDigits(n, 'prose')} ${f.hundred}`;
+  if (r >= 3 && r <= 10) return `${localDigits(n, 'prose')} ${f.few}`;
+  return `${localDigits(n, 'prose')} ${f.many}`;
 }
 
 /** "1 page / 2 pages" — in Arabic: صفحة واحدة · صفحتان · ٣–١٠ صفحات · ١١–٩٩ صفحةً · ١٠٠ صفحةٍ. */
@@ -179,8 +202,8 @@ export function countBooks(n: number): string {
   if (n === 1) return 'كتاب';
   if (n === 2) return 'كتابان';
   const r = n % 100;
-  if (r === 0) return `${localDigits(n)} كتابٍ`;
-  if (r >= 3 && r <= 10) return `${localDigits(n)} كتب`;
-  if (r === 1 || r === 2) return `${localDigits(n)} كتابٍ`; // مئةٌ وكتابٌ… تُرَدُّ إلى المفرد المجرور عرفًا في العرض
-  return `${localDigits(n)} كتابًا`;
+  if (r === 0) return `${localDigits(n, 'prose')} كتابٍ`;
+  if (r >= 3 && r <= 10) return `${localDigits(n, 'prose')} كتب`;
+  if (r === 1 || r === 2) return `${localDigits(n, 'prose')} كتابٍ`; // مئةٌ وكتابٌ… تُرَدُّ إلى المفرد المجرور عرفًا في العرض
+  return `${localDigits(n, 'prose')} كتابًا`;
 }

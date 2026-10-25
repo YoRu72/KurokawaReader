@@ -1,5 +1,5 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -27,7 +27,11 @@ export function settingsView(): HTMLElement {
     // A list rather than a row of buttons: it grows as interface languages are added.
     pickButton<LangPref>(t('language'), langs.map(([id, label]): [LangPref, string] => [id, label]), getLangPref(), (id) => { setLangPref(id); navigate('/settings', true); }, t('close')),
     ...(canSetAppName() ? [h('div', { class: 'field' }, resettable(t('appNameOnDevice'), 'appName', () => { void setAppName('auto'); renderAppearance(); }), pickButton<VisualSettings['appName']>(t('appNameOnDevice'), [['auto', t('appNameAuto')], ['en', 'KurokawaReader'], ['ar', 'قارئ كروكاوا'], ['ja', '黒川リーダー'], ['zh', '黑川阅读器'], ['ko', '쿠로카와 리더']], getSettings().appName, (v) => { updateSettings({ appName: v }); void setAppName(v); toast(t('appNameChanged')); }, t('close')), h('span', { class: 'hint' }, t('appNameHint')))] : []),
-    h('div', { class: 'field' }, h('span', { class: 'label' }, t('direction')), h('div', { class: 'segmented' }, ...dirs.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getDirPref() === id), onclick: () => { setDirPref(id); navigate('/settings', true); } }, label))))));
+    h('div', { class: 'field' }, h('span', { class: 'label' }, t('direction')), h('div', { class: 'segmented' }, ...dirs.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getDirPref() === id), onclick: () => { setDirPref(id); navigate('/settings', true); } }, label)))),
+    ...(getLang() === 'ar' ? [
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('digitsPref')), h('div', { class: 'segmented' }, ...([['auto', t('digitsAuto')], ['western', '123'], ['eastern', '١٢٣']] as ['auto' | 'western' | 'eastern', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getSettings().arDigits === id), onclick: () => { updateSettings({ arDigits: id }); navigate('/settings', true); } }, label)))),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('sizeUnitsPref')), h('div', { class: 'segmented' }, ...([['latin', 'KB · MB · GB'], ['arabic', 'كيلوبايت · ميغابايت']] as ['latin' | 'arabic', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getSettings().sizeUnits === id), onclick: () => { updateSettings({ sizeUnits: id }); navigate('/settings', true); } }, label)))),
+    ] : [])));
 
   // Appearance: interface mode, accent, orientation
   const appearance = h('section', { class: 'card' });

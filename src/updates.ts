@@ -2,7 +2,7 @@
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
 import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
-import { t, getLang } from './i18n';
+import { t, getLang, dateLocale } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 
@@ -160,7 +160,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   s.body.style.fontFamily = 'var(--font-ui)';
   s.el.classList.add('update-sheet');
   const platform = nativePlatform();
-  const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString(getLang() === 'ar' ? 'ar-SA-u-nu-arab-ca-gregory' : 'en-GB', { dateStyle: 'medium' }) : '';
+  const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString(dateLocale(), { dateStyle: 'medium' }) : '';
   // Hero: the app's icon in an expressive shape, the headline, the versions.
   s.body.append(h('div', { class: 'upd-hero' },
     h('div', { class: 'upd-badge' }, h('img', { src: '/icons/icon.svg', alt: '' })),
