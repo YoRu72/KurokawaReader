@@ -40,7 +40,9 @@ export interface VisualSettings {
   wordSpacing: number;    // em
   letterSpacing: number;  // em
   pdfInvert: boolean;
-  pdfBar: 'auto' | 'row' | 'rows' | 'side';   // the PDF page bar: two rows when the screen is upright and one when it is wide, or fixed
+  pdfBar: 'auto' | 'row' | 'rows' | 'side';
+  pdfBarSide: 'right' | 'left';      // which side the upright bar stands on
+  pdfBarRow: 'bottom' | 'top';       // where the lying bar goes   // the PDF page bar: two rows when the screen is upright and one when it is wide, or fixed
   pdfPinchZoom: boolean;    // two-finger zoom in PDFs (on by default since 0.32)
   pdfPageNumbers: boolean;  // page number badge on each PDF page
   pdfNoteStyle: 'badge' | 'pin' | 'dot';  // how PDF notes are drawn on the page
@@ -167,6 +169,8 @@ export const DEFAULTS: VisualSettings = {
   pdfInvert: false,
   pdfPinchZoom: true,
   pdfBar: 'auto',
+  pdfBarSide: 'right',
+  pdfBarRow: 'bottom',
   pdfPageNumbers: true,
   pdfNoteStyle: 'badge',
   autoScrollSpeed: 40,

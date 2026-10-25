@@ -267,7 +267,7 @@ html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
   left: auto; right: 12px; top: 50%; bottom: auto; transform: translateY(-50%); width: 56px; height: min(68vh, 600px); max-height: calc(100vh - 140px);
   flex-direction: column; flex-wrap: nowrap; padding: 8px 6px; border-radius: 28px; overflow: hidden auto;
 }
-html[dir='rtl'] .pdf-bar[data-layout='side'] { right: auto; left: 12px; }
+.pdf-bar[data-layout='side'][data-side='left'] { right: auto; left: 12px; }
 .pdf-bar[data-layout='side'] .pdf-bar-nav, .pdf-bar[data-layout='side'] .pdf-bar-tools { flex-direction: column; flex: 0 0 auto; width: 100%; }
 .pdf-bar[data-layout='side'] .pdf-bar-nav { flex: 1 1 auto; min-height: 0; }
 .pdf-bar[data-layout='side'] .pdf-bar-nav .icon-btn:first-child svg, .pdf-bar[data-layout='side'] .pdf-bar-nav .icon-btn:nth-child(3) svg { transform: rotate(90deg); }
@@ -276,9 +276,11 @@ html[dir='rtl'] .pdf-bar[data-layout='side'] input[type='range'] { direction: rt
 .pdf-bar[data-layout='side'] .pcount { display: none; }
 .pdf-bar[data-layout='side'] form { flex-direction: column; }
 .pdf-bar[data-layout='side'] input[type='number'] { width: 42px; height: 32px; padding: 0 2px; font-size: 13px; }
+.pdf-bar[data-row='top']:not([data-layout='side']) { bottom: auto; top: calc(var(--topbar-h) + var(--safe-top) + 34px); }
 .reader-view.immersive .pdf-bar { transform: translateX(-50%) translateY(140%); opacity: 0; pointer-events: none; }
+.reader-view.immersive .pdf-bar[data-row='top']:not([data-layout='side']) { transform: translateX(-50%) translateY(-140%); }
 .reader-view.immersive .pdf-bar[data-layout='side'] { transform: translateY(-50%) translateX(140%); }
-html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'] { transform: translateY(-50%) translateX(-140%); }
+.reader-view.immersive .pdf-bar[data-layout='side'][data-side='left'] { transform: translateY(-50%) translateX(-140%); }
 .pdf-loading { position: absolute; inset: 0; display: grid; place-items: center; }
 .pdf-scroll { padding-bottom: 120px; }
 

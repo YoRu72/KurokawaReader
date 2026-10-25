@@ -161,6 +161,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if (nativePlatform() === 'android') grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
   grid.append(toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
   grid.append(section([t('pdfBar'), 'pdfBar'], segmented([['auto', t('pdfBarAuto')], ['rows', t('pdfBarRows')], ['row', t('pdfBarRow')], ['side', t('pdfBarSide')]] as [VisualSettings['pdfBar'], string][], s.pdfBar, (v) => { updateSettings({ pdfBar: v }); rerender(); })));
+  if (s.pdfBar !== 'row' && s.pdfBar !== 'rows') grid.append(section([t('pdfBarSidePlace'), 'pdfBarSide'], segmented([['right', t('sideRight')], ['left', t('sideLeft')]] as [VisualSettings['pdfBarSide'], string][], s.pdfBarSide, (v) => { updateSettings({ pdfBarSide: v }); rerender(); })));
+  if (s.pdfBar !== 'side') grid.append(section([t('pdfBarRowPlace'), 'pdfBarRow'], segmented([['bottom', t('posBottom')], ['top', t('posTop')]] as [VisualSettings['pdfBarRow'], string][], s.pdfBarRow, (v) => { updateSettings({ pdfBarRow: v }); rerender(); })));
   grid.append(toggle([t('pdfPageNumbers'), 'pdfPageNumbers'], s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
   const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
   grid.append(section([t('pdfNoteStyle'), 'pdfNoteStyle'], segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));

@@ -1175,7 +1175,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
     iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth())),
   );
-  const relayout = () => { bar.dataset.layout = barLayout(); };
+  const relayout = () => { bar.dataset.layout = barLayout(); bar.dataset.side = getSettings().pdfBarSide; bar.dataset.row = getSettings().pdfBarRow; };
+  relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), () => navigate('/')),
