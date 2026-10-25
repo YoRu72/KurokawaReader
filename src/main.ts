@@ -1,3 +1,4 @@
+import { normalizeForSearch } from './formats/types';
 import './styles/fonts.css';
 import './styles/base.css';
 import './styles/reader.css';
@@ -74,6 +75,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 
 // For tests: one PDF page's text items (as the patched pdf.js gives them) and its reading text.
+(window as unknown as { krNorm?: unknown }).krNorm = (s: string) => normalizeForSearch(s);
 (window as unknown as { krPdfDebug?: unknown }).krPdfDebug = async (bytes: Uint8Array, n: number) => {
   const { loadPdfjs } = await import('./formats/pdf');
   const { pageReadingText } = await import('./pdflayer');

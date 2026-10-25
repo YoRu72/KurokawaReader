@@ -11,8 +11,8 @@ import { findVertical, plainVerticalForms, type VPiece } from './pdfvertical';
 import { ltrRunsForward, joinLine, attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
-type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean; hint?: boolean };
-type Word = { text: string; l: number; r: number; y: number; h: number; rtl: boolean; brk?: boolean };
+type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean; hint?: boolean; glued?: boolean };
+type Word = { text: string; l: number; r: number; y: number; h: number; rtl: boolean; brk?: boolean; glued?: boolean };
 
 const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
 const RTL_CHAR = /[֐-ࣿיִ-﷿ﹰ-﻿]/;
@@ -35,7 +35,7 @@ function wordsOf(line: Piece[]): Word[] {
   sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
   const marked = sorted.some((p) => p.space);
   const words: Word[] = [];
-  let cur: Word | null = null; let edge = 0; let breakNext = false; let hintNext = false;
+  let cur: Word | null = null; let edge = 0; let breakNext = false; let hintNext = false; let zeroLast = 0;
   const dirOf = (t: string) => (RTL_CHAR.test(t) ? 'r' : LTR_CHAR.test(t) ? 'l' : '');
   let curDir = '';
   for (const p of sorted) {
@@ -45,21 +45,24 @@ function wordsOf(line: Piece[]): Word[] {
     if (p.hint) { hintNext = true; continue; }
     const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true)) : p.text;
     const d = dirOf(text);
-    const gap: number = cur ? (rtl ? edge - p.r : p.l - edge) : 0;
+    // (After a piece of no width — a half-form of an Indic conjunct, whose advance the PDF left out — the
+    // distances of the next two pieces say nothing: the conjunct's own glyph is wider than their advances.)
+    const gap: number = cur && !zeroLast ? (rtl ? edge - p.r : p.l - edge) : 0;
     // (Never before closing punctuation, or after an opening bracket: those spaces are pdf.js's guess at a
     // change of type size, as for a raised note number.)
     const hinted: boolean = !marked && hintNext && gap > p.h * 0.1 && !/^[.,،؛:!?؟)\]»”’}]/.test(text) && !(cur && /[(\[«“‘{]$/.test(cur.text));
-    const brk: boolean = breakNext || hinted || (gap > p.h * (marked ? 0.3 : 0.18) && !COMBINING.test(text[0]));
+    // (Pieces cut from one run, placed by estimate: only a drawn space parts them from their neighbours.)
+    const brk: boolean = breakNext || (!(p.glued || (cur as Word | null)?.glued) && (hinted || (gap > p.h * (marked ? 0.3 : 0.18) && !COMBINING.test(text[0]))));
     const split = !cur || brk || (d && curDir && d !== curDir);
     if (split) {
-      cur = { text, l: p.l, r: p.r, y: p.y, h: p.h, rtl: d ? d === 'r' : rtl, brk: !!cur && !!brk };
+      cur = { text, l: p.l, r: p.r, y: p.y, h: p.h, rtl: d ? d === 'r' : rtl, brk: !!cur && !!brk, glued: p.glued };
       words.push(cur); curDir = d;
     } else {
       cur!.text += text; cur!.l = Math.min(cur!.l, p.l); cur!.r = Math.max(cur!.r, p.r); cur!.h = Math.max(cur!.h, p.h);
       if (d && !curDir) { curDir = d; cur!.rtl = d === 'r'; }
     }
     edge = rtl ? (split ? p.l : Math.min(edge, p.l)) : (split ? p.r : Math.max(edge, p.r));
-    breakNext = false; hintNext = false;
+    breakNext = false; hintNext = false; zeroLast = p.r - p.l <= 0.02 && !!text.trim() ? 2 : Math.max(0, zeroLast - 1);
   }
   const clean = words.map((w) => ({ ...w, text: w.text.replace(/\s+/g, ' ').trim() })).filter((w) => w.text);
   // (On a right-to-left line, Latin words and the numbers among them keep their own left-to-right order.)
@@ -89,6 +92,21 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
     if (!text.trim()) { if (w > 0 && Math.abs(angle) <= 0.02) pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, hint: true }); continue; }
     if (Math.abs(angle) > 0.02) { turned.push({ text, tx, w, h, angle }); continue; }
     pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, keep: !!raw.krLead });
+  }
+  // A run with a space inside it over which another run is drawn (a letter the run's font lacks, set from
+  // another font into the gap the run left for it — "بہت" as "ب ت" with "ہ" drawn between): the run is cut at
+  // its spaces so the pieces take their own places in the line.
+  for (let i = 0; i < pieces.length; i++) {
+    const p = pieces[i];
+    if (p.space || p.hint || !/\S\s+\S/.test(p.text) || p.r - p.l < 0.1) continue;
+    const inside = pieces.some((q, j) => j !== i && !q.space && !q.hint && q.text.trim() && Math.abs(q.y - p.y) < p.h * 0.5 && q.l > p.l + 0.3 && q.r < p.r - 0.3);
+    if (!inside) continue;
+    const rtl = isRtlText(p.text); const cw = (p.r - p.l) / p.text.length; const parts: Piece[] = [];
+    for (const m of p.text.matchAll(/\S+/g)) {
+      const a = m.index!, b = a + m[0].length;
+      parts.push({ ...p, text: m[0], l: rtl ? p.r - b * cw : p.l + a * cw, r: rtl ? p.r - a * cw : p.l + b * cw, glued: true });
+    }
+    pieces.splice(i, 1, ...parts); i += parts.length - 1;
   }
   // Vertical writing (Japanese, Chinese, Korean set in columns; Mongolian): its columns are found first and
   // laid as columns; the rest is read in lines. A word turned on its side within a column joins it.
@@ -134,9 +152,27 @@ export async function pageReadingText(page: PDFPageProxy): Promise<string> {
   const rows: (typeof words)[] = [];
   for (const w of words) { const cur = rows[rows.length - 1]; if (cur && Math.abs(cur[0].mid - w.mid) < Math.max(cur[0].h, w.h) * 0.6) cur.push(w); else rows.push([w]); }
   const dbgRow = (globalThis as { krDebugRows?: string }).krDebugRows;
-  for (const row of rows) {
-    const t = joinLine(row).text; if (t) blocks.push({ y: row[0].y, text: t });
-    if (dbgRow && t.includes(dbgRow)) console.warn('KR row', JSON.stringify(row.map((w) => [w.text, +w.l.toFixed(1), +w.r.toFixed(1), +w.h.toFixed(1)])));
+  // Columns: a gutter no row's word crosses, with text on both sides of it in most rows, cuts the rows into
+  // columns read one after the other (the right one first on a right-to-left page).
+  const columns = findColumns(rows);
+  const rtlPage = isRtlText(words.map((w) => w.text).join(''));
+  const groups: (typeof rows)[] = columns ? columns.map(([a, b]) => rows.map((row) => row.filter((w) => (w.l + w.r) / 2 >= a && (w.l + w.r) / 2 < b)).filter((r) => r.length)) : [rows];
+  if (columns && rtlPage) groups.reverse();
+  let order = 0;
+  for (const group of groups) {
+    let text = '';
+    // (A line joined to the next without a break must be one that ran to the column's edge — a wrapped line,
+    // not a heading or a paragraph's last line.)
+    const edgeR = Math.max(...group.map((row) => Math.max(...row.map((w) => w.r)))), edgeL = Math.min(...group.map((row) => Math.min(...row.map((w) => w.l))));
+    let fullPrev = false;
+    for (const row of group) {
+      const t = joinLine(row).text; if (!t) continue;
+      if (dbgRow && t.includes(dbgRow)) console.warn('KR row', JSON.stringify(row.map((w) => [w.text, +w.l.toFixed(1), +w.r.toFixed(1), +w.h.toFixed(1)])));
+      text += (fullPrev ? joinBreak(text, t) : text ? '\n' : '') + t;
+      const h = Math.max(...row.map((w) => w.h)), r = Math.max(...row.map((w) => w.r)), l = Math.min(...row.map((w) => w.l));
+      fullPrev = isRtlText(t) ? l <= edgeL + h * 1.2 : r >= edgeR - h * 1.2;
+    }
+    if (text) blocks.push({ y: columns ? order++ : group[0][0].y, text });
   }
   let para = '', top = Infinity;
   for (const g of vert.segments) { para += plainVerticalForms(g.text); top = Math.min(top, g.t); if (g.breakAfter) { blocks.push({ y: top, text: para }); para = ''; top = Infinity; } }
@@ -144,6 +180,46 @@ export async function pageReadingText(page: PDFPageProxy): Promise<string> {
   turned.forEach((t, k) => { if (!vTurned.has(k)) blocks.push({ y: t.tx[5], text: t.text }); });
   blocks.sort((a, b) => a.y - b.y);
   return blocks.map((b) => b.text).join('\n');
+}
+
+/** What goes between a line and the next when they are read as one text: nothing after a hyphen that breaks a
+ *  word (a soft hyphen goes altogether), nothing between characters of a script set without spaces (Chinese,
+ *  Japanese, Korean, Thai), else a line break. */
+export function joinBreak(before: string, next: string): string {
+  if (!before) return '';
+  const last = before[before.length - 1], first = next[0];
+  if (last === '\u00ad') return '';
+  if ((last === '-' || last === '\u2010') && /\p{Ll}/u.test(first)) return '';
+  if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u0e00-\u0e7f\u3001\u3002\uff0c\uff0e]/.test(last) && /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u0e00-\u0e7f]/.test(first)) return '';
+  return '\n';
+}
+
+/** Column bounds [from, to) across the page when the words fall into columns, else null: a gutter that no word
+ *  crosses, with a good share of the words on each side of it, the two sides standing over the same height. */
+function findColumns(rows: { l: number; r: number; y: number; text: string }[][]): [number, number][] | null {
+  const ws = rows.flat().filter((w) => w.text.trim());
+  if (ws.length < 4) return null;
+  const L = Math.min(...ws.map((w) => w.l)), R = Math.max(...ws.map((w) => w.r)); if (R - L < 100) return null;
+  const step = (R - L) / 200;
+  const gutters: [number, number][] = []; let open: number | null = null;
+  for (let x = L + step; x < R - step; x += step) {
+    let crossed = 0, left = 0, right = 0, lt = Infinity, lb = -Infinity, rt = Infinity, rb = -Infinity;
+    for (const w of ws) {
+      if (w.l < x - 0.5 && w.r > x + 0.5) { crossed++; if (crossed > ws.length * 0.04) break; continue; }
+      if (w.r <= x) { left++; lt = Math.min(lt, w.y); lb = Math.max(lb, w.y); } else { right++; rt = Math.min(rt, w.y); rb = Math.max(rb, w.y); }
+    }
+    const span = Math.max(lb - lt, rb - rt), shared = Math.min(lb, rb) - Math.max(lt, rt);
+    // (A heading or a table across both columns is let be: a few words may cross the gutter.)
+    const isGutter = crossed <= ws.length * 0.04 && left >= ws.length * 0.2 && right >= ws.length * 0.2 && span > 0 && (shared >= span * 0.35 || (Math.min(lb - lt, rb - rt) === 0 && shared >= -40));
+    if (isGutter && open === null) open = x; else if (!isGutter && open !== null) { gutters.push([open, x]); open = null; }
+  }
+  if (open !== null) gutters.push([open, R]);
+  const wide = gutters.filter(([a, b]) => b - a >= 8);
+  if (!wide.length || wide.length > 3) return null;
+  const bounds: [number, number][] = []; let from = -Infinity;
+  for (const [a, b] of wide) { bounds.push([from, (a + b) / 2]); from = (a + b) / 2; }
+  bounds.push([from, Infinity]);
+  return bounds;
 }
 
 /** Fill `container` (a .textLayer the size of the page) with the page's words. */

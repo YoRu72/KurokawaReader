@@ -82,6 +82,7 @@ export function normalizeForSearch(s: string): { text: string; map: Int32Array }
   const out: string[] = [];
   const map: number[] = [];
   const push = (n: string, i: number) => { out.push(n); map.push(i); };
+  let skipSpace = false;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     const code = c.charCodeAt(0);
@@ -118,6 +119,10 @@ export function normalizeForSearch(s: string): { text: string; map: Int32Array }
     else if (c === '\u201c' || c === '\u201d' || c === '\u201e' || c === '«' || c === '»') n = '"';
     else if (c === '\u2013' || c === '\u2014' || c === '\u2212' || c === '\u2010' || c === '\u2011') n = '-';
     else if (c === '\u00a0' || c === '\u2009' || c === '\u202f' || c === '\u3000') n = ' ';
+    // (A hyphen between letters — a word broken at a line's end, or a compound — is no letter: "Saint-Honoré"
+    // and "extraordi-narily" are found written either way.)
+    if (n === '-' && i > 0 && i + 1 < s.length && /\p{L}/u.test(s[i - 1]) && /[\p{L}\s]/u.test(s[i + 1])) { if (/\s/.test(s[i + 1])) { /* the break after it goes too */ skipSpace = true; } continue; }
+    if (skipSpace) { if (/\s/.test(c)) continue; skipSpace = false; }
     for (const ch of n) push(ch, i);
   }
   map.push(s.length);
