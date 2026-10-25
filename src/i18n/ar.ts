@@ -424,6 +424,8 @@ export const ar: Strings = {
   tapToTurn: 'النقر على الصفحة ينقل شاشةً إلى أعلى أو أسفل',
 
   showStatusLine: 'إظهار سطر الحالة (الفصل والشاشة والساعة والبطارية)',
+  showTimeLeft: 'ما بقي من الفصل بالدقائق في سطر الحالة',
+  timeLeftChapter: 'ما بقي من هذا الفصل',
   translatorChoice: 'ترجمة النصّ المحدَّد بوساطة',
   translatorBuiltin: 'المترجم المدمج',
   translatorSystem: 'تطبيقٍ على هذا الجهاز',

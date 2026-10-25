@@ -419,6 +419,8 @@ export const en = {
   tapToTurn: 'Tap the page to move a screen up or down',
 
   showStatusLine: 'Show the status line (chapter, screen, clock, battery)',
+  showTimeLeft: 'Minutes left in the chapter on the status line',
+  timeLeftChapter: 'Left in this chapter',
   translatorChoice: 'Translate selected text with',
   translatorBuiltin: 'Built-in translator',
   translatorSystem: 'An app on this device',

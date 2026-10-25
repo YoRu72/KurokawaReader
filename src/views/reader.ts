@@ -92,7 +92,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const statusClock = h('span', { class: 'clock' });
   const statusBatt = h('span', { class: 'batt' });
   const statusPct = h('span', { class: 'pct' });
-  const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusClock, statusBatt, statusPct);
+  const statusLeft = h('span', { class: 'left', title: t('timeLeftChapter') });
+  const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusLeft, statusClock, statusBatt, statusPct);
   const tickClock = () => {
     const d = new Date();
     if (getLang() === 'ar') { const h = d.getHours(); statusClock.textContent = localDigits(`${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')}`) + (h >= 12 ? ' مساءً' : ' صباحًا'); }
@@ -539,6 +540,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const page = Math.min(total, Math.max(1, Math.floor((sr.top - ur.top) / Math.max(1, sr.height)) + 1));
     statusPage.textContent = `(${localDigits(page)}/${localDigits(total)})`;
     statusPct.textContent = `${localDigits(pct)}%`;
+    // Minutes left in the chapter at the reader's own pace (once a pace is known).
+    const speed = getSettings().showTimeLeft ? trackers.get(cur.doc)?.speed() : null;
+    if (speed) {
+      const block = cur.loc.block ?? 0; const unit = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
+      let left = 0; for (let i = block; i < cur.doc.allBlocks.length; i++) { const b = cur.doc.allBlocks[i]; if (!unit.contains(b)) { if (i > block) break; continue; } left += wordCount(b); }
+      const mins = Math.ceil(left / speed);
+      statusLeft.textContent = mins > 0 ? `⏳${localDigits(mins)}${getLang() === 'ar' ? ' د' : 'm'}` : '';
+    } else statusLeft.textContent = '';
   }, 150);
 
   function scheduleSave(): void {
@@ -734,7 +743,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           body.append(h('ul', { class: 'toc-list' }, h('li', null, h('button', { type: 'button', onclick: () => { scrollToAnchor(doc.wrapper.id, false); panel.close(); } }, icon('books'), doc.book.title))));
           const toc = doc.render?.toc ?? [];
           if (!toc.length) body.append(h('p', { style: { color: 'var(--text-dim)', padding: '0 10px', fontSize: '13px' } }, t('noContents')));
-          for (const item of toc) ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { scrollToAnchor(item.anchor, false); panel.close(); } }, item.label)));
+          // Each entry's length: minutes at the reader's pace (or a usual one), from the words up to the next entry.
+          const speed = trackers.get(doc)?.speed() || 200;
+          const starts = toc.map((it) => { const el = document.getElementById(it.anchor); return el ? doc.allBlocks.findIndex((b) => b === el || el.contains(b) || (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) : -1; });
+          const cum: number[] = [0]; for (const b of doc.allBlocks) cum.push(cum[cum.length - 1] + wordCount(b));
+          const lengthOf = (i: number) => { const a = starts[i]; if (a < 0) return 0; let j = i + 1; while (j < starts.length && (starts[j] < 0 || starts[j] <= a)) j++; const b = j < starts.length ? starts[j] : doc.allBlocks.length; return Math.round((cum[b] - cum[a]) / speed); };
+          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { scrollToAnchor(item.anchor, false); panel.close(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
           body.append(ul);
         }
         body.querySelector('.current')?.scrollIntoView({ block: 'center' });

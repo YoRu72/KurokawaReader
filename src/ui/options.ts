@@ -146,6 +146,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('hideSystemBars'), 'hideSystemBars'], s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
   grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
   grid.append(toggle([t('showStatusLine'), 'showStatusLine'], s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
+  if (s.showStatusLine) grid.append(toggle([t('showTimeLeft'), 'showTimeLeft'], s.showTimeLeft, (v) => updateSettings({ showTimeLeft: v })));
   grid.append(stepper([t('dailyGoal'), 'readingGoalMinutes'], s.readingGoalMinutes, 0, 240, 15, (v) => updateSettings({ readingGoalMinutes: v }), (v) => v ? t('goalValue', { n: v }) : t('goalOff')));
   if (isTouchDevice()) grid.append(toggle([t('pinchText'), 'pinchText'], s.pinchText, (v) => updateSettings({ pinchText: v })));
   grid.append(toggle([t('keepAwake'), 'keepAwake'], s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));

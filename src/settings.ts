@@ -68,6 +68,7 @@ export interface VisualSettings {
   jobNotify: boolean;
   tapToTurn: boolean;
   showStatusLine: boolean;
+  showTimeLeft: boolean;      // minutes left in the chapter on the status line, from the reading speed
   importButton: 'chips' | 'top' | 'fab';
   appName: 'auto' | 'en' | 'ar' | 'ja' | 'zh' | 'ko';   // launcher name on the device (Android)
   importMode: 'link' | 'copy';   // keep imported files where they are (Android/desktop) or copy them into the app
@@ -176,6 +177,7 @@ export const DEFAULTS: VisualSettings = {
   jobNotify: true,
   tapToTurn: true,
   showStatusLine: false,
+  showTimeLeft: true,
   importButton: 'chips',
   appName: 'auto',
   importMode: 'link',

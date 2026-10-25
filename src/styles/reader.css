@@ -312,6 +312,10 @@ html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'] { transform:
   background: color-mix(in srgb, var(--r-bg) 92%, transparent); pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .read-status .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55vw; }
+.read-status .left:empty { display: none; }
+.toc-list button { display: flex; align-items: baseline; gap: 8px; }
+.toc-list .toc-label { flex: 1; min-width: 0; }
+.toc-list .toc-len { font-size: 11.5px; color: var(--md-on-surface-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .read-status .sp { flex: 1; }
 .read-status .pct { font-weight: 600; }
 .reader-view.immersive .read-footer { opacity: 0; }
