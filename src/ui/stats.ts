@@ -1,7 +1,7 @@
 // Library-wide reading statistics: time today and in total, sessions, pages,
 // streak, the daily goal and the last two weeks, plus the most-read books.
 import { h, openSheet, pickSheet } from './dom';
-import { t, formatDuration, formatDate, localDigits, countMinutes } from '../i18n';
+import { t, formatDuration, formatDate, localDigits, countMinutes, dateLocale } from '../i18n';
 import { db, type ReadingDay } from '../db';
 import { getSettings, updateSettings } from '../settings';
 import { todayKey, liveStatsOf } from '../stats';
@@ -78,6 +78,35 @@ export async function showStats(): Promise<void> {
         h('i', { class: v >= MIN_DAY_MS ? 'on' : undefined, style: { height: `${height}px` } }),
         h('em', null, localDigits(Number(k.slice(-2)))));
     })));
+
+  // A month at a glance: each day shaded by how long was read, the calendar paged month by month.
+  let shown = new Date(now.getFullYear(), now.getMonth(), 1);
+  const cal = h('div', { class: 'stats-cal' });
+  const calTitle = h('b', null);
+  const weekStart = (() => { try { const l = new Intl.Locale(dateLocale()) as Intl.Locale & { weekInfo?: { firstDay: number }; getWeekInfo?: () => { firstDay: number } }; return (l.getWeekInfo?.() ?? l.weekInfo)?.firstDay ?? 1; } catch { return 1; } })() % 7;
+  const paintCal = () => {
+    calTitle.textContent = shown.toLocaleDateString(dateLocale(), { month: 'long', year: 'numeric' });
+    const first = new Date(shown); const lead = (first.getDay() - weekStart + 7) % 7;
+    const count = new Date(shown.getFullYear(), shown.getMonth() + 1, 0).getDate();
+    const monthMax = Math.max(MIN_DAY_MS * 2, ...Array.from({ length: count }, (_, i) => days[keyOf(new Date(shown.getFullYear(), shown.getMonth(), i + 1))]?.ms ?? 0));
+    const cells: HTMLElement[] = [];
+    for (let i = 0; i < 7; i++) cells.push(h('em', null, new Date(2023, 0, 1 + ((weekStart + i) % 7)).toLocaleDateString(dateLocale(), { weekday: 'narrow' })));
+    for (let i = 0; i < lead; i++) cells.push(h('i', { class: 'pad' }));
+    for (let d = 1; d <= count; d++) {
+      const date = new Date(shown.getFullYear(), shown.getMonth(), d); const key = keyOf(date);
+      const v = days[key]?.ms ?? 0; const level = v < MIN_DAY_MS ? 0 : Math.min(4, 1 + Math.floor((v / monthMax) * 3.99));
+      cells.push(h('i', { class: `l${level}${key === todayKey() ? ' today' : ''}${date > now ? ' future' : ''}`, title: `${formatDate(date.getTime())} · ${formatDuration(v)}` }, h('span', null, localDigits(d))));
+    }
+    cal.replaceChildren(...cells);
+  };
+  const page = (by: number) => { shown = new Date(shown.getFullYear(), shown.getMonth() + by, 1); paintCal(); };
+  sheet.body.append(
+    h('div', { class: 'stats-cal-head' },
+      h('button', { class: 'btn small outlined', type: 'button', 'aria-label': t('prevMonth'), onclick: () => page(-1) }, '‹'),
+      calTitle,
+      h('button', { class: 'btn small outlined', type: 'button', 'aria-label': t('nextMonth'), onclick: () => page(1) }, '›')),
+    cal);
+  paintCal();
 
   const top = books.filter((b) => ((liveStatsOf(b.id) ?? b.stats)?.ms ?? 0) > 0).sort((a, b) => ((liveStatsOf(b.id) ?? b.stats)?.ms ?? 0) - ((liveStatsOf(a.id) ?? a.stats)?.ms ?? 0)).slice(0, 5);
   sheet.body.append(h('div', { style: { margin: '18px 0 4px', fontWeight: '600' } }, t('mostRead')));

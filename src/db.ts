@@ -83,6 +83,9 @@ export interface Book {
   /** Marked read (or marked not read though its progress is at the end); unset: by progress. */
   done?: boolean;
   doneAt?: number;
+  /** The reader's own rating, 1–5 stars. */
+  rating?: number;
+  ratingAt?: number;
   bookmarks: Bookmark[];
   highlights: Highlight[];
   pins?: PdfNote[];

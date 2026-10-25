@@ -86,10 +86,12 @@ export function formatNumber(v: string | number): string {
   return typeof v === 'number' ? localDigits(new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false }).format(v)) : v;
 }
 
+const DATE_LOCALE: Record<Lang, string> = { ar: 'ar-SA-u-nu-arab-ca-gregory', en: 'en-GB', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR' };
+/** The locale dates are written in for the current language. */
+export const dateLocale = (): string => DATE_LOCALE[current];
 export function formatDate(ts: number | undefined): string {
   if (!ts) return t('never');
-  const loc: Record<Lang, string> = { ar: 'ar-SA-u-nu-arab-ca-gregory', en: 'en-GB', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR' };
-  return new Intl.DateTimeFormat(loc[current], { dateStyle: 'medium' }).format(new Date(ts));
+  return new Intl.DateTimeFormat(DATE_LOCALE[current], { dateStyle: 'medium' }).format(new Date(ts));
 }
 
 /** Reading time as "2h 5m" (localised digits and unit). */

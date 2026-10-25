@@ -10,7 +10,7 @@ import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
 import { todayKey, liveStatsOf } from '../stats';
 
-type Sort = 'title' | 'recent' | 'added' | 'author' | 'size';
+type Sort = 'title' | 'recent' | 'added' | 'author' | 'size' | 'rating';
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export function libraryView(): HTMLElement {
@@ -44,7 +44,10 @@ export function libraryView(): HTMLElement {
   }
 
   const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); renderGrid(); } }) as HTMLInputElement;
-  const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['size', t('sortSize'), 'books']];
+  const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['size', t('sortSize'), 'books'], ['rating', t('sortRating'), 'heart']];
+  // Books added since the library was last looked at carry a small «new» mark until opened.
+  const lastVisit = Number(localStorage.getItem('kr.libraryVisit') ?? 0);
+  localStorage.setItem('kr.libraryVisit', String(Date.now()));
   const sortLabel = h('span', null, SORTS.find((x) => x[0] === sort)?.[1] ?? '');
   const sortSel = h('button', { type: 'button', class: 'sort-btn', 'aria-label': t('sortBy'), onclick: () => pickSheet(t('sortBy'), SORTS, sort, (v) => { sort = v; localStorage.setItem('kr.sort', sort); sortLabel.textContent = SORTS.find((x) => x[0] === sort)?.[1] ?? ''; renderGrid(); }, t('close')) }, icon('sort'), sortLabel, icon('chevronDown'));
 
@@ -63,11 +66,12 @@ export function libraryView(): HTMLElement {
   const pdfToolsBtn = iconButton('file', t('pdfTools'), () => void import('../ui/pdftools').then((m) => m.pdfToolsSheet(books, undefined, () => void refresh())));
   pdfToolsBtn.classList.add('tool-btn');
   // Search across books: a word or phrase in many books at once.
+  const randomBtn = iconButton('target', t('randomBook'), () => randomBook()); randomBtn.classList.add('tool-btn');
   const searchBooksBtn = iconButton('search', t('searchBooks'), () => void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder)));
   searchBooksBtn.classList.add('tool-btn');
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn),
     chips,
     tagChips,
     fmtChips,
@@ -120,8 +124,24 @@ export function libraryView(): HTMLElement {
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))),));
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))),
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void removeMissing(); } }, icon('trash'), t('removeMissing')))));
     });
+  }
+  /** Books whose linked files are gone from the device: listed, and removed when confirmed. */
+  async function removeMissing(): Promise<void> {
+    const gone: Book[] = [];
+    for (const b of books) { if (!b.source) continue; try { const f = await db.getFile(b.id); if (!f) gone.push(b); } catch { gone.push(b); } }
+    if (!gone.length) { toast(t('noMissing')); return; }
+    if (!confirm(t('removeMissingConfirm', { n: gone.length, list: gone.slice(0, 6).map((b) => b.title).join('، ') }))) return;
+    await removeBooks(gone.map((b) => b.id)); gone.forEach((b) => forgetCover(b.id));
+    await refresh(); toast(t('removedMissing', { n: gone.length }));
+  }
+  /** Any book, chosen by chance (among the unread ones first). */
+  function randomBook(): void {
+    const pool = books.filter((b) => !isDone(b)); const list = pool.length ? pool : books;
+    if (!list.length) return;
+    const b = list[Math.floor(Math.random() * list.length)]; navigate(`/read/${b.id}`);
   }
   function openScan() {
     openScanSheet({
@@ -201,6 +221,7 @@ export function libraryView(): HTMLElement {
       title: (a, b) => natural.compare(a.title, b.title),
       author: (a, b) => natural.compare(a.author ?? '￿', b.author ?? '￿') || natural.compare(a.title, b.title),
       size: (a, b) => b.size - a.size,
+      rating: (a, b) => (b.rating ?? 0) - (a.rating ?? 0) || natural.compare(a.title, b.title),
     };
     return list.sort(by[sort]);
   }
@@ -226,11 +247,13 @@ export function libraryView(): HTMLElement {
     const pct = Math.round((book.progress?.pct ?? 0) * 100); const done = isDone(book);
     const doneAt = getSettings().doneMark;
     // The mark: how far the book is read, and «read» once it is (the one takes the other's place).
+    const isNew = book.addedAt > lastVisit && !book.lastOpenedAt;
     const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
     const cover = h('div', { class: 'cover' },
       url ? h('img', { src: url, alt: '', loading: 'lazy' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badges' }, h('span', { class: 'badge' }, book.format.toUpperCase()), doneBadge && doneAt === 'beside' ? doneBadge : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
+      isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null,
       doneBadge && doneAt !== 'beside' ? doneBadge : null,
       !done && pct > 0 && getSettings().showProgress ? h('div', { class: 'progress', 'aria-label': `${pct}%` }, h('i', { style: { width: `${pct}%` } })) : null,
       selecting ? h('div', { class: 'check' }, icon('check')) : null,
@@ -239,7 +262,7 @@ export function libraryView(): HTMLElement {
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c2', c2);
     const el = h('button', { class: 'book-card', role: 'listitem', type: 'button', 'aria-selected': String(selecting && selected.has(book.id)), title: `${book.title}${book.author ? ' — ' + book.author : ''}` },
       cover,
-      h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size)))),
+      h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size))), book.rating ? h('div', { class: 'stars-badge', 'aria-label': `${book.rating}/5` }, '★'.repeat(book.rating) + '☆'.repeat(5 - book.rating)) : null),
     );
     // Mouse-only: on touch screens a long press is the folder menu, and a WebView
     // drag that never ends used to leave every chip with a dashed drop outline.
@@ -279,6 +302,11 @@ export function libraryView(): HTMLElement {
       if (book.pageCount) rows.push([t('pages'), String(book.pageCount)]);
       if (book.tags?.length) rows.push([t('tags'), book.tags.join(' · ')]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
+      // The reader's own stars (tap a star again to take the rating away).
+      const stars = h('div', { class: 'stars', role: 'radiogroup', 'aria-label': t('rating') });
+      const paint = () => { stars.replaceChildren(...[1, 2, 3, 4, 5].map((n) => h('button', { type: 'button', class: 'star' + ((book.rating ?? 0) >= n ? ' on' : ''), 'aria-label': `${n}`, onclick: async () => { const v = book.rating === n ? undefined : n; const at = Date.now(); await db.updateBook(book.id, (b) => { if (v) b.rating = v; else delete b.rating; b.ratingAt = at; }); if (v) book.rating = v; else delete book.rating; book.ratingAt = at; paint(); renderGrid(); } }, '★'))); };
+      paint();
+      s.body.append(h('div', { class: 'row', style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' } }, h('span', { style: { color: 'var(--text-dim)' } }, t('rating')), stars));
       s.actions.append(
         (() => { const isFav = (book.tags ?? []).includes(FAV_TAG); return h('button', { class: 'btn small' + (isFav ? ' tonal' : ''), onclick: async () => { await setTag([book.id], FAV_TAG, !isFav); s.close(); await refresh(); toast(isFav ? t('removedFromFavorites') : t('addedToFavorites')); } }, icon(isFav ? 'heartFill' : 'heart'), isFav ? t('unfavorite') : t('favorite')); })(),
         (() => { const d = isDone(book); return h('button', { class: 'btn small' + (d ? ' tonal' : ''), onclick: async () => { await setDone([book.id], !d); s.close(); toast(d ? t('markedNotDone') : t('markedDone')); } }, icon(d ? 'undo' : 'check'), d ? t('markNotDone') : t('markDone')); })(),
