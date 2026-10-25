@@ -14,7 +14,7 @@ import { toast } from './ui/dom';
 export type SyncProvider = 'none' | 'dropbox' | 'webdav' | 'folder';
 const FILE = 'kurokawa-sync.json';
 
-interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; ink?: InkStroke[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats']; done?: boolean; doneAt?: number; rating?: number; ratingAt?: number; review?: string; reviewAt?: number; track?: Book['track'] }
+interface BookState { title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; ink?: InkStroke[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats']; done?: boolean; doneAt?: number; rating?: number; ratingAt?: number; review?: string; reviewAt?: number; track?: Book['track']; readToc?: number; readTocAt?: number }
 interface SyncState { app: 'KurokawaReader'; version: 1; updatedAt: number; device: string; folders: { name: string; createdAt: number }[]; tags?: { name: string; createdAt: number }[]; books: Record<string, BookState>; deleted: Record<string, number> }
 
 const keyOf = (b: { fileName: string; size: number }) => `${b.fileName}:${b.size}`;
@@ -34,7 +34,7 @@ async function localState(): Promise<SyncState> {
   const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
   const deleted = (await db.getMeta<Record<string, number>>('sync.deleted')) ?? {};
   const out: SyncState = { app: 'KurokawaReader', version: 1, updatedAt: Date.now(), device: deviceId(), folders: folders.map((f) => ({ name: f.name, createdAt: f.createdAt })), tags: (await db.getMeta<{ name: string; createdAt: number }[]>('tags')) ?? [], books: {}, deleted };
-  for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], ink: b.ink ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats, done: b.done, doneAt: b.doneAt, rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, track: b.track };
+  for (const b of books) out.books[keyOf(b)] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], ink: b.ink ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats, done: b.done, doneAt: b.doneAt, rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, track: b.track, readToc: b.readToc, readTocAt: b.readTocAt };
   return out;
 }
 
@@ -77,6 +77,7 @@ async function applyRemote(remote: SyncState): Promise<number> {
       if (r.progress && (r.progressAt ?? 0) > (x.progressAt ?? x.lastOpenedAt ?? 0)) { x.progress = { ...r.progress, bookId: x.id }; x.progressAt = r.progressAt; x.lastOpenedAt = Math.max(x.lastOpenedAt ?? 0, r.lastOpenedAt ?? 0); dirty = true; }
       if (r.folderName && !x.folderId) { const f = folders.find((y) => y.name === r.folderName); if (f) { x.folderId = f.id; dirty = true; } }
       if (r.track && (r.track.updatedAt ?? 0) > (x.track?.updatedAt ?? 0)) { x.track = r.track; dirty = true; }
+      if ((r.readTocAt ?? 0) > (x.readTocAt ?? 0)) { x.readToc = r.readToc; x.readTocAt = r.readTocAt; dirty = true; }
       if ((r.reviewAt ?? 0) > (x.reviewAt ?? 0)) { if (r.review) x.review = r.review; else delete x.review; x.reviewAt = r.reviewAt; dirty = true; }
       if ((r.ratingAt ?? 0) > (x.ratingAt ?? 0)) { if (r.rating) x.rating = r.rating; else delete x.rating; x.ratingAt = r.ratingAt; dirty = true; }
       if ((r.doneAt ?? 0) > (x.doneAt ?? 0)) { if (r.done === undefined) delete x.done; else x.done = r.done; x.doneAt = r.doneAt; dirty = true; }
@@ -108,6 +109,7 @@ function mergeStates(local: SyncState, remote: SyncState | null): SyncState {
       ...((l.ratingAt ?? 0) >= (r.ratingAt ?? 0) ? { rating: l.rating, ratingAt: l.ratingAt } : { rating: r.rating, ratingAt: r.ratingAt }),
       ...((l.reviewAt ?? 0) >= (r.reviewAt ?? 0) ? { review: l.review, reviewAt: l.reviewAt } : { review: r.review, reviewAt: r.reviewAt }),
       track: (l.track?.updatedAt ?? 0) >= (r.track?.updatedAt ?? 0) ? l.track : r.track,
+      ...((l.readTocAt ?? 0) >= (r.readTocAt ?? 0) ? { readToc: l.readToc, readTocAt: l.readTocAt } : { readToc: r.readToc, readTocAt: r.readTocAt }),
     };
   }
   return out;

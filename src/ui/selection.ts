@@ -55,10 +55,11 @@ export function selectionText(sel: Selection): string {
   // within a line read right-to-left when the line is mostly Arabic/Hebrew, else left-to-right.
   // Pieces are joined by the gap between them (not with a space each): PDFs made by Word and the
   // like cut Arabic with harakat into many small pieces, often one letter or one mark each.
-  type Piece = LinePiece & { y: number };
+  type Piece = LinePiece & { y: number; b: number };
   const pieces: Piece[] = [];
   for (const el of spans) {
     if (el.dataset.v) continue;
+    const b = Number(el.dataset.b ?? 0);
     const node = el.firstChild!;
     let text = el.textContent ?? '';
     if (node === range.startContainer && node === range.endContainer) text = text.slice(range.startOffset, range.endOffset);
@@ -70,24 +71,32 @@ export function selectionText(sel: Selection): string {
     const rc = el.getBoundingClientRect();
     // (A page shown turned: its boxes are read back as the page was written.)
     const rot = Number((el.parentElement as HTMLElement | null)?.dataset.rot ?? 0);
-    if (rot === 90) pieces.push({ text, l: rc.top, r: rc.bottom, y: -(rc.left + rc.right) / 2, h: rc.width || 10 });
-    else if (rot === 180) pieces.push({ text, l: -rc.right, r: -rc.left, y: -(rc.top + rc.bottom) / 2, h: rc.height || 10 });
-    else if (rot === 270) pieces.push({ text, l: -rc.bottom, r: -rc.top, y: (rc.left + rc.right) / 2, h: rc.width || 10 });
-    else pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10 });
+    if (rot === 90) pieces.push({ text, l: rc.top, r: rc.bottom, y: -(rc.left + rc.right) / 2, h: rc.width || 10, b });
+    else if (rot === 180) pieces.push({ text, l: -rc.right, r: -rc.left, y: -(rc.top + rc.bottom) / 2, h: rc.height || 10, b });
+    else if (rot === 270) pieces.push({ text, l: -rc.bottom, r: -rc.top, y: (rc.left + rc.right) / 2, h: rc.width || 10, b });
+    else pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10, b });
   }
-  const kept = attachMarks(pieces);
-  kept.sort((a, b) => a.y - b.y);
-  const lines: Piece[][] = [];
-  for (const p of kept) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
-  // A page in columns is copied column by column (the right one first on a right-to-left page).
-  const cols = findColumns(lines);
-  let ordered = lines;
-  if (cols) {
-    const byCol = cols.map(([a, b]) => lines.map((line) => line.filter((p) => (p.l + p.r) / 2 >= a && (p.l + p.r) / 2 < b)).filter((l) => l.length));
-    if (isRtlText(kept.map((p) => p.text).join(''))) byCol.reverse();
-    ordered = byCol.flat();
+  // The layer's blocks (a box of text, a column, a label beside a paragraph) are read one after the other as
+  // the layer laid them; within a block, lines by their vertical position.
+  const blocks = new Map<number, Piece[]>();
+  for (const p of pieces) { const list = blocks.get(p.b); if (list) list.push(p); else blocks.set(p.b, [p]); }
+  const texts: string[] = [];
+  for (const b of [...blocks.keys()].sort((x, y) => x - y)) {
+    const kept = attachMarks(blocks.get(b)!);
+    kept.sort((a, b2) => a.y - b2.y);
+    const lines: Piece[][] = [];
+    for (const p of kept) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
+    // A block in columns is copied column by column (the right one first on a right-to-left page).
+    const cols = findColumns(lines);
+    let ordered = lines;
+    if (cols) {
+      const byCol = cols.map(([a, b2]) => lines.map((line) => line.filter((p) => (p.l + p.r) / 2 >= a && (p.l + p.r) / 2 < b2)).filter((l) => l.length));
+      if (isRtlText(kept.map((p) => p.text).join(''))) byCol.reverse();
+      ordered = byCol.flat();
+    }
+    texts.push(...ordered.map((line) => joinLine(line).text).filter(Boolean));
   }
-  const out = ordered.map((line) => joinLine(line).text).filter(Boolean).join('\n');
+  const out = texts.join('\n');
   const flat = fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
   return vText ? [flat, vText].filter(Boolean).join('\n') : flat;
 }

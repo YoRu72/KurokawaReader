@@ -104,8 +104,8 @@ export function inkLayer(o: InkOptions): Ink {
   root.addEventListener('pointercancel', up, true);
 
   // The toolbar.
-  const penBtn = h('button', { type: 'button', class: 'icon-btn', title: t('inkPen'), 'aria-label': t('inkPen'), 'aria-pressed': 'false', onclick: () => { mode = 'pen'; syncBar(); } }, icon('highlight'));
-  const eraseBtn = h('button', { type: 'button', class: 'icon-btn', title: t('inkEraser'), 'aria-label': t('inkEraser'), 'aria-pressed': 'false', onclick: () => { mode = 'erase'; syncBar(); } }, icon('undo'));
+  const penBtn = h('button', { type: 'button', class: 'icon-btn', title: t('inkPen'), 'aria-label': t('inkPen'), 'aria-pressed': 'false', onclick: () => { mode = 'pen'; syncBar(); } }, icon('pen'));
+  const eraseBtn = h('button', { type: 'button', class: 'icon-btn', title: t('inkEraser'), 'aria-label': t('inkEraser'), 'aria-pressed': 'false', onclick: () => { mode = 'erase'; syncBar(); } }, icon('eraser'));
   const undoBtn = h('button', { type: 'button', class: 'icon-btn', title: t('undo'), 'aria-label': t('undo'), onclick: () => {
     const list = o.strokes(); if (!list.length) return;
     const last = list.reduce((a, b) => (b.createdAt > a.createdAt ? b : a)); undone.push(last);

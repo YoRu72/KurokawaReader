@@ -1,8 +1,8 @@
 // A book's own page, shown before the reader: the cover, the title, what the file carries about it, the
 // reader's stars and words, its AniList entry when tracking is on, and the contents — each chapter a tap away,
-// the read ones marked — with «resume» to carry on where the reader left off.
+// the read ones marked, with «resume» to carry on where the reader left off.
 import { h, icon, iconButton, toast, coverColors } from '../ui/dom';
-import { t, formatBytes, formatDate, formatDuration, localDigits } from '../i18n';
+import { t, formatBytes, formatDuration, localDigits, countChapters, getLang } from '../i18n';
 import { db, FAV_TAG, type Book } from '../db';
 import { coverUrl } from '../library';
 import { navigate } from '../router';
@@ -18,19 +18,39 @@ export function wantsBookPage(book: Book): boolean {
   return s === 'always' || (s === 'chaptered' && CHAPTERED.has(book.format));
 }
 
-const outlines = new Map<string, { description?: string; toc: { label: string; depth: number }[] }>();
+type Outline = { description?: string; toc: { label: string; depth: number }[] };
+const outlines = new Map<string, Outline>();
+const blurs = new Map<string, string>();
+
+/** The cover as a few dozen pixels, blown up: a soft wash behind the title that costs a phone nothing to draw. */
+async function coverBlur(book: Book): Promise<string | null> {
+  if (!book.cover) return null;
+  const hit = blurs.get(book.id); if (hit) return hit;
+  try {
+    const bmp = await createImageBitmap(book.cover);
+    const c = document.createElement('canvas'); c.width = 24; c.height = Math.max(1, Math.round((24 * bmp.height) / bmp.width));
+    c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height); bmp.close();
+    const url = c.toDataURL(); blurs.set(book.id, url);
+    while (blurs.size > 20) blurs.delete(blurs.keys().next().value!);
+    return url;
+  } catch { return null; }
+}
 
 export function bookView(id: string): HTMLElement {
   const root = h('div', { class: 'view book-view' });
   const body = h('div', { class: 'book-body' });
   const top = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title' }), h('span', { class: 'spacer' }));
   root.append(top, body);
+  // The chapter list's own state, kept while the page is open.
+  let reversed = false, hideRead = false, query = '';
   void (async () => {
     const book = await db.getBook(id);
     if (!book) { navigate('/', true); return; }
     top.querySelector('.title')!.textContent = book.title;
     render(book);
   })();
+
+  const isRead = (book: Book, i: number) => i < (book.progress?.toc ?? 0) || i <= (book.readToc ?? -1);
 
   function render(book: Book): void {
     const url = coverUrl(book); const [c1, c2] = coverColors(book.title);
@@ -40,14 +60,16 @@ export function bookView(id: string): HTMLElement {
     const done = book.done ?? pct >= 98;
     const status = done ? t('statusFinished') : book.progress ? t('statusReading') : t('statusNew');
 
-    const hero = h('div', { class: 'book-hero' },
-      h('div', { class: 'book-hero-bg', style: url ? { backgroundImage: `url("${url}")` } : { background: `linear-gradient(135deg, ${c1}, ${c2})` } }),
+    const bg = h('div', { class: 'book-hero-bg', style: url ? {} : { background: `linear-gradient(135deg, ${c1}, ${c2})` } });
+    if (url) void coverBlur(book).then((b) => { if (b) bg.style.backgroundImage = `url("${b}")`; else bg.style.background = `linear-gradient(135deg, ${c1}, ${c2})`; });
+    const hero = h('div', { class: 'book-hero' }, bg,
       h('div', { class: 'book-hero-row' },
         url ? h('img', { class: 'book-hero-cover', src: url, alt: '' }) : h('div', { class: 'book-hero-cover gen', style: { background: `linear-gradient(135deg, ${c1}, ${c2})` } }, h('span', { dir: 'auto' }, book.title)),
         h('div', { class: 'book-hero-text' },
           h('h1', { dir: 'auto' }, book.title),
-          book.author ? h('p', { class: 'who', dir: 'auto' }, icon('type'), book.author) : null,
-          h('p', { class: 'src' }, icon('clock'), `${status} · ${book.format.toUpperCase()} · ${formatBytes(book.size)}${book.pageCount ? ' · ' + localDigits(String(book.pageCount)) + ' ' + t('pages').toLowerCase() : ''}`))));
+          book.author ? h('p', { dir: 'auto' }, icon('user'), h('span', null, book.author)) : null,
+          h('p', null, icon('clock'), h('span', null, `${status}${pct > 0 && !done ? ' · ' + (getLang() === 'ar' ? `٪${localDigits(String(pct))}` : `${pct}%`) : ''}`)),
+          h('p', null, icon('file'), h('span', { dir: 'ltr' }, `${book.format.toUpperCase()} · ${formatBytes(book.size)}${book.pageCount ? ' · ' + localDigits(String(book.pageCount)) + ' ' + t('pages').toLowerCase() : ''}`)))));
 
     const tile = (name: string, label: string, on: boolean, fn: () => void, more?: string) => h('button', { type: 'button', class: 'book-tile' + (on ? ' on' : '') + (more ? ' has-more' : ''), title: more, onclick: fn }, icon(name), h('span', null, label), more ? h('i', { class: 'tile-more', 'aria-hidden': 'true' }, icon('chevronDown')) : null);
     const others = (book.tags ?? []).filter((x) => x !== FAV_TAG);
@@ -57,21 +79,23 @@ export function bookView(id: string): HTMLElement {
     if (others.length) favTile.querySelector('span')!.textContent = `${isFav ? t('inLibraryFav') + ' · ' : ''}${others.slice(0, 2).join('، ')}${others.length > 2 ? '…' : ''}`;
     const tiles = h('div', { class: 'book-tiles' },
       favTile,
-      tile('clock', stats?.ms ? formatDuration(stats.ms) : t('notStarted'), false, async () => { const { showBookInfo } = await import('../ui/bookinfo'); showBookInfo({ book, stats: stats ?? { ms: 0, words: 0, days: {} }, speed: null, pages: book.pageCount, pct: book.progress?.pct ?? 0 }); }),
-      anilistOn() ? tile('cloud', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
-      tile('note', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }));
+      tile('clock', stats?.ms ? formatDuration(stats.ms) : t('notStarted'), !!stats?.ms, async () => { const { showBookInfo } = await import('../ui/bookinfo'); showBookInfo({ book, stats: stats ?? { ms: 0, words: 0, days: {} }, speed: null, pages: book.pageCount, pct: book.progress?.pct ?? 0 }); }),
+      anilistOn() ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
+      tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
+      tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }));
 
     const facts = h('div', { class: 'book-facts' });
     if (book.track) {
       const m = book.track.media; const e = book.track.entry;
-      facts.append(h('p', null, h('b', null, 'AniList: '), h('a', { href: m.url, target: '_blank', rel: 'noopener', dir: 'auto' }, m.title), m.score ? ` · ${localDigits(String(m.score))}/١٠٠`.replace('١٠٠', localDigits('100')) : '', m.year ? ` · ${localDigits(String(m.year))}` : ''),
+      facts.append(h('p', null, icon('globe'), h('a', { href: m.url, target: '_blank', rel: 'noopener', dir: 'auto' }, m.title), h('span', { class: 'src' }, `${m.score ? ` · ${localDigits(String(m.score))}/${localDigits('100')}` : ''}${m.year ? ` · ${localDigits(String(m.year))}` : ''}`)),
         h('p', { class: 'src' }, `${t(`al_${e.status}` as 'al_CURRENT')} · ${t('alProgress')}: ${localDigits(String(e.progress))}${m.chapters ? '/' + localDigits(String(m.chapters)) : ''}${e.score ? ' · ' + t('alScore') + ': ' + localDigits(String(e.score)) : ''}`));
     }
     if (book.review) facts.append(h('p', { class: 'review-quote', dir: 'auto' }, book.review));
     const descEl = h('div', { class: 'book-desc', hidden: true });
-    const tagsEl = h('div', { class: 'book-tags' }, ...(book.tags ?? []).filter((x) => x !== FAV_TAG).map((x) => h('span', { class: 'chip small' }, h('span', null, x))));
-    const chaptersEl = h('div', { class: 'book-chapters' }, h('p', { class: 'src' }, t('loading')));
-    const fab = h('button', { type: 'button', class: 'fab book-resume', onclick: () => navigate(`/read/${book.id}`) }, icon('play'), book.progress && !done ? t('resume') : done ? t('readAgain') : t('startReading'));
+    const tagsEl = h('div', { class: 'book-tags' }, ...others.map((x) => h('span', { class: 'chip small' }, h('span', null, x))));
+    const chaptersEl = h('div', { class: 'book-chapters' }, h('p', { class: 'src', style: { padding: '0 16px' } }, t('loading')));
+    const fabText = h('span', { class: 'fab-text' }, h('b', null, book.progress && !done ? t('resume') : done ? t('readAgain') : t('startReading')));
+    const fab = h('button', { type: 'button', class: 'fab book-resume', onclick: () => navigate(`/read/${book.id}`) }, icon('play'), fabText);
     body.replaceChildren(hero, tiles, facts, descEl, tagsEl, chaptersEl, fab);
 
     void (async () => {
@@ -88,17 +112,58 @@ export function bookView(id: string): HTMLElement {
       if (desc) {
         descEl.hidden = false; let open = false;
         const p = h('p', { dir: 'auto', class: 'clamp' }, desc);
-        const more = h('button', { type: 'button', class: 'btn small text', onclick: () => { open = !open; p.classList.toggle('clamp', !open); more.replaceChildren(icon(open ? 'chevronUp' : 'chevronDown')); } }, icon('chevronDown'));
+        const more = h('button', { type: 'button', class: 'btn small text', 'aria-label': t('more'), onclick: () => { open = !open; p.classList.toggle('clamp', !open); more.replaceChildren(icon(open ? 'chevronUp' : 'chevronDown')); } }, icon('chevronDown'));
         descEl.replaceChildren(p, desc.length > 220 ? more : '');
       }
       const toc = outline.toc;
-      const at = book.progress?.toc ?? -1;
       if (!toc.length) { chaptersEl.replaceChildren(); return; }
-      const list = h('ol', { class: 'chapter-list' }, ...toc.map((c, i) => h('li', { class: (i < at ? 'read' : i === at ? 'current' : '') + ` d${Math.min(3, c.depth)}` },
-        h('button', { type: 'button', dir: 'auto', onclick: () => { setJump({ bookId: book.id, kind: 'toc', id: String(i) }); navigate(`/read/${book.id}`); } }, h('i', { class: 'dot' }), h('span', null, c.label)))));
-      chaptersEl.replaceChildren(h('h3', null, t('chaptersCount', { n: localDigits(String(toc.length)) })), list);
-      if (at > 0) setTimeout(() => list.querySelector('.current')?.scrollIntoView({ block: 'center' }), 50);
+      const at = book.progress?.toc ?? -1;
+      if (at >= 0 && toc[at] && !done) fabText.append(h('small', { dir: 'auto' }, toc[at].label));
+      paintChapters(book, toc, chaptersEl);
     })();
+  }
+
+  function paintChapters(book: Book, toc: Outline['toc'], host: HTMLElement): void {
+    const at = book.progress?.toc ?? -1;
+    const readCount = toc.filter((_, i) => isRead(book, i)).length;
+    const search = h('input', { type: 'search', value: query, placeholder: t('searchChapters'), dir: 'auto', class: 'chapter-search', hidden: !query }) as HTMLInputElement;
+    search.addEventListener('input', () => { query = search.value; paintList(); });
+    const tools = h('div', { class: 'chapter-tools' },
+      h('h3', null, countChapters(toc.length), readCount ? h('small', null, ` · ${t('readOf', { n: localDigits(String(readCount)) })}`) : null),
+      h('span', { class: 'spacer' }),
+      iconButton('search', t('searchChapters'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { query = ''; search.value = ''; paintList(); } }),
+      iconButton('filter', t('hideRead'), () => { hideRead = !hideRead; paintChapters(book, toc, host); }, { pressed: hideRead }),
+      iconButton('sortAsc', t('reverseOrder'), () => { reversed = !reversed; paintChapters(book, toc, host); }, { pressed: reversed }));
+    const list = h('ol', { class: 'chapter-list' });
+    const open = (i: number) => { setJump({ bookId: book.id, kind: 'toc', id: String(i) }); navigate(`/read/${book.id}`); };
+    const markRead = async (upTo: number) => { book.readToc = upTo; book.readTocAt = Date.now(); await db.updateBook(book.id, (b) => { b.readToc = upTo; b.readTocAt = book.readTocAt; }); void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined); paintChapters(book, toc, host); };
+    const chapterMenu = (i: number) => {
+      import('../ui/dom').then(({ openSheet }) => {
+        const s = openSheet(toc[i].label, t('close'), { stack: true });
+        s.body.style.fontFamily = 'var(--font-ui)';
+        const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { s.close(); fn(); } }, icon(name), label));
+        s.body.append(h('ul', { class: 'plain-list' },
+          item('play', t('open'), () => open(i)),
+          item('check', t('markReadUpTo'), () => void markRead(i)),
+          item('undo', t('markUnreadFrom'), () => void markRead(i - 1)),
+          item('bookmarkAdd', t('markAllRead'), () => void markRead(toc.length - 1)),
+          item('close', t('markAllUnread'), () => void markRead(-1))));
+      });
+    };
+    const paintList = () => {
+      const q = query.trim().toLowerCase();
+      const rows = toc.map((c, i) => ({ c, i })).filter(({ c, i }) => (!hideRead || !isRead(book, i)) && (!q || c.label.toLowerCase().includes(q)));
+      if (reversed) rows.reverse();
+      list.replaceChildren(...rows.map(({ c, i }) => {
+        const btn = h('button', { type: 'button', dir: 'auto', onclick: () => open(i) }, h('i', { class: 'dot' }), h('span', null, c.label));
+        void import('../ui/tags').then((m) => m.onHoldOrContext(btn, () => chapterMenu(i)));
+        return h('li', { class: (isRead(book, i) && i !== at ? 'read' : i === at ? 'current' : '') + ` d${Math.min(3, c.depth)}` }, btn);
+      }));
+      if (!rows.length) list.append(h('li', { class: 'none' }, t('noResults')));
+    };
+    paintList();
+    host.replaceChildren(tools, search, list);
+    if (at > 0 && !query) setTimeout(() => list.querySelector('.current')?.scrollIntoView({ block: 'center' }), 50);
   }
   return root;
 }

@@ -48,6 +48,26 @@ async function copyStatic() {
   }
 }
 
+/** The chunks the app's entry loads before anything is shown, declared in index.html so the browser fetches them
+ *  all at once instead of discovering them one import at a time (a waterfall thirty-odd requests deep on a phone). */
+async function preloadStartupChunks() {
+  const assets = path.join(dist, 'assets');
+  const seen = new Set(); const order = [];
+  const visit = async (file) => {
+    if (seen.has(file)) return; seen.add(file);
+    let src = ''; try { src = await fs.readFile(path.join(assets, file), 'utf8'); } catch { return; }
+    // Static imports only: `import{...}from"./chunk-x.js"` and `import"./chunk-x.js"` — dynamic ones are not startup.
+    for (const m of src.matchAll(/(?:^|[;}\s])import(?:[^"'()]*?from)?\s*["'](\.\/[^"']+\.js)["']/g)) await visit(m[1].slice(2));
+    if (file !== 'app.js') order.push(file);
+  };
+  await visit('app.js');
+  const fonts = (await fs.readdir(path.join(assets, 'fonts'))).filter((f) => /^(Inter-Variable|Sultan-Medium)/.test(f));
+  const tags = [...order.map((f) => `  <link rel="modulepreload" href="/assets/${f}" />`), ...fonts.map((f) => `  <link rel="preload" href="/assets/fonts/${f}" as="font" type="font/ttf" crossorigin />`)].join('\n');
+  const html = path.join(dist, 'index.html');
+  await fs.writeFile(html, (await fs.readFile(html, 'utf8')).replace('  <link rel="stylesheet" href="/assets/app.css" />', `  <link rel="stylesheet" href="/assets/app.css" />\n${tags}`));
+  return order.length;
+}
+
 async function writeServiceWorker() {
   const files = (await walk(dist)).filter((f) => f !== '/sw.js' && !f.endsWith('.map'));
   const version = Date.now().toString(36);
@@ -107,6 +127,7 @@ if (watch || serve) {
   const ctx = await esbuild.context(buildOptions);
   if (watch) await ctx.watch();
   else await ctx.rebuild();
+  if (!watch) await preloadStartupChunks();
   await writeServiceWorker();
   if (serve) {
     const { hosts, port } = await ctx.serve({ servedir: dist, port: 5173 });
@@ -114,6 +135,7 @@ if (watch || serve) {
   }
 } else {
   await esbuild.build(buildOptions);
+  const n = await preloadStartupChunks();
   await writeServiceWorker();
-  console.log('Built → dist/');
+  console.log(`Built → dist/ (${n} startup chunks preloaded)`);
 }

@@ -184,11 +184,17 @@ export function attachMarks<T extends { text: string; l: number; r: number; y: n
 
 /** Column bounds [from, to) across the page when the words fall into columns, else null: a gutter that no word
  *  crosses, with a good share of the words on each side of it, the two sides standing over the same height. */
-export function findColumns(rows: { l: number; r: number; y: number; text: string }[][]): [number, number][] | null {
+export function findColumns(rows: { l: number; r: number; y: number; text: string; h?: number }[][]): [number, number][] | null {
   const ws = rows.flat().filter((w) => w.text.trim());
-  if (ws.length < 4) return null;
+  // (Fewer than four lines, or than eight words, are never columns: a heading's words set apart are not.)
+  if (ws.length < 8 || rows.filter((r) => r.some((w) => w.text.trim())).length < 4) return null;
+  const hs = ws.map((w) => w.h ?? 0).filter((h) => h > 0).sort((a, b) => a - b); const em = hs.length ? hs[hs.length >> 1] : 10;
   const L = Math.min(...ws.map((w) => w.l)), R = Math.max(...ws.map((w) => w.r)); if (R - L < 100) return null;
   const step = (R - L) / 200;
+  const lines = rows.map((r) => r.filter((w) => w.text.trim())).filter((r) => r.length);
+  // (Lines with words on both sides of the gutter — a heading across the columns, a table — are few in a
+  // page set in columns; many of them mean one column of lines of different lengths.)
+  const bothMax = Math.max(1, Math.round(lines.length * 0.12));
   const gutters: [number, number][] = []; let open: number | null = null;
   for (let x = L + step; x < R - step; x += step) {
     let crossed = 0, left = 0, right = 0, lt = Infinity, lb = -Infinity, rt = Infinity, rb = -Infinity;
@@ -197,12 +203,14 @@ export function findColumns(rows: { l: number; r: number; y: number; text: strin
       if (w.r <= x) { left++; lt = Math.min(lt, w.y); lb = Math.max(lb, w.y); } else { right++; rt = Math.min(rt, w.y); rb = Math.max(rb, w.y); }
     }
     const span = Math.max(lb - lt, rb - rt), shared = Math.min(lb, rb) - Math.max(lt, rt);
+    let both = 0;
+    if (crossed <= ws.length * 0.04) for (const ln of lines) { if (ln.some((w) => w.r <= x) && ln.some((w) => w.l >= x)) { both++; if (both > bothMax) break; } }
     // (A heading or a table across both columns is let be: a few words may cross the gutter.)
-    const isGutter = crossed <= ws.length * 0.04 && left >= ws.length * 0.2 && right >= ws.length * 0.2 && span > 0 && (shared >= span * 0.35 || (Math.min(lb - lt, rb - rt) === 0 && shared >= -40));
+    const isGutter = crossed <= ws.length * 0.04 && both <= bothMax && left >= ws.length * 0.2 && right >= ws.length * 0.2 && span > 0 && (shared >= span * 0.35 || (Math.min(lb - lt, rb - rt) === 0 && shared >= -40));
     if (isGutter && open === null) open = x; else if (!isGutter && open !== null) { gutters.push([open, x]); open = null; }
   }
   if (open !== null) gutters.push([open, R]);
-  const wide = gutters.filter(([a, b]) => b - a >= 8);
+  const wide = gutters.filter(([a, b]) => b - a >= Math.max(8, em * 0.8));
   if (!wide.length || wide.length > 3) return null;
   const bounds: [number, number][] = []; let from = -Infinity;
   for (const [a, b] of wide) { bounds.push([from, (a + b) / 2]); from = (a + b) / 2; }

@@ -94,6 +94,9 @@ export interface Book {
   /** The reader's own words about the book. */
   review?: string;
   reviewAt?: number;
+  /** Chapters marked read by hand on the book's page: every contents entry up to this index. */
+  readToc?: number;
+  readTocAt?: number;
   /** The book's entry on a tracking service (AniList), kept with it. */
   track?: import('./anilist').Track;
   /** The publisher's blurb, when the file carries one. */

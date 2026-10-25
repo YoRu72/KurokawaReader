@@ -1199,7 +1199,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     iconButton('zoomOut', t('zoomOut'), () => viewer.zoom(-0.15)),
     iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
     iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth()),
-    iconButton('highlight', t('inkNotes'), () => ink?.setOn(!ink.on)),
+    iconButton('pen', t('inkNotes'), () => ink?.setOn(!ink.on)),
     iconButton('images', t('pageStrip'), () => strip?.toggle())),
   );
   const relayout = () => { bar.dataset.layout = barLayout(); bar.dataset.side = getSettings().pdfBarSide; bar.dataset.row = getSettings().pdfBarRow; };
@@ -1650,7 +1650,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('external', t('sharePage'), () => void savePage(true)),
         item('copy', t('copyPageImage'), () => void savePage('copy')),
         item('images', t('savePagesRange'), () => savePagesSheet()),
-        item('highlight', t('inkNotes'), () => ink?.setOn(true)),
+        item('pen', t('inkNotes'), () => ink?.setOn(true)),
         item('images', t('pageStrip'), () => strip?.toggle()),
         ...((book.ink ?? []).length ? [item('download', t('exportWithInk'), () => void exportWithInk())] : []),
         item('file', t('print'), () => void printBook()),
