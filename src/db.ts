@@ -97,6 +97,9 @@ export interface Book {
   /** Chapters marked read by hand on the book's page: every contents entry up to this index. */
   readToc?: number;
   readTocAt?: number;
+  /** How many chapters the book really has, as the reader says (a contents list carries covers, credits…). */
+  chapters?: number;
+  chaptersAt?: number;
   /** The book's entry on a tracking service (AniList), kept with it. */
   track?: import('./anilist').Track;
   /** The publisher's blurb, when the file carries one. */

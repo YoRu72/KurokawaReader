@@ -20,6 +20,18 @@ export function wantsBookPage(book: Book): boolean {
 
 type Outline = { description?: string; toc: { label: string; depth: number }[] };
 const outlines = new Map<string, Outline>();
+/** The book's blurb and contents, read from the file once. */
+export async function outlineOf(book: Book): Promise<Outline> {
+  let outline = outlines.get(book.id);
+  if (outline) return outline;
+  try {
+    const file = await db.getFile(book.id);
+    if (file && book.format === 'epub') { const { epubOutline } = await import('../formats/epub'); outline = await epubOutline(file, book.id); }
+    else outline = { description: book.description, toc: [] };
+  } catch { outline = { toc: [] }; }
+  outlines.set(book.id, outline);
+  return outline;
+}
 const blurs = new Map<string, string>();
 
 /** The cover as a few dozen pixels, blown up: a soft wash behind the title that costs a phone nothing to draw. */
@@ -99,15 +111,7 @@ export function bookView(id: string): HTMLElement {
     body.replaceChildren(hero, tiles, facts, descEl, tagsEl, chaptersEl, fab);
 
     void (async () => {
-      let outline = outlines.get(book.id);
-      if (!outline) {
-        try {
-          const file = await db.getFile(book.id);
-          if (file && book.format === 'epub') { const { epubOutline } = await import('../formats/epub'); outline = await epubOutline(file, book.id); }
-          else outline = { description: book.description, toc: [] };
-          outlines.set(book.id, outline);
-        } catch { outline = { toc: [] }; }
-      }
+      const outline = await outlineOf(book);
       const desc = outline.description || book.description || book.track?.media.description;
       if (desc) {
         descEl.hidden = false; let open = false;
@@ -129,7 +133,7 @@ export function bookView(id: string): HTMLElement {
     const search = h('input', { type: 'search', value: query, placeholder: t('searchChapters'), dir: 'auto', class: 'chapter-search', hidden: !query }) as HTMLInputElement;
     search.addEventListener('input', () => { query = search.value; paintList(); });
     const tools = h('div', { class: 'chapter-tools' },
-      h('h3', null, countChapters(toc.length), readCount ? h('small', null, ` · ${t('readOf', { n: localDigits(String(readCount)) })}`) : null),
+      h('h3', null, countChapters(book.chapters ?? toc.length), readCount ? h('small', null, ` · ${t('readOf', { n: readCount })}`) : null),
       h('span', { class: 'spacer' }),
       iconButton('search', t('searchChapters'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { query = ''; search.value = ''; paintList(); } }),
       iconButton('filter', t('hideRead'), () => { hideRead = !hideRead; paintChapters(book, toc, host); }, { pressed: hideRead }),

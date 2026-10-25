@@ -19,6 +19,10 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   await page.fill('.review-text', 'كتابٌ بديع، قرأته في ليلتين. حكايةُ أليس لا تشيخ، وترجمتُه رشيقة.');
   await page.screenshot({ path: `${SHOTS}/review-1-sheet.png` });
   await page.click('button:has-text("بطاقة المراجعة")'); await page.waitForSelector('.snap-preview'); await page.waitForTimeout(600);
+  // Words and the chapter count can be set from the card itself.
+  await page.fill('.sheet:last-of-type .review-text', 'كتابٌ بديع، قرأته في ليلتين.'); await page.fill('.sheet:last-of-type input[type=number]', '12'); await page.$eval('.sheet:last-of-type input[type=number]', (e) => e.dispatchEvent(new Event('change')));
+  await page.click('.chip.check:has-text("الفصول") input'); await page.waitForTimeout(900);
+  await page.selectOption('.sheet:last-of-type select', 'both'); await page.waitForTimeout(600);
   const styles = ['ورق', 'ليل', 'الغلاف', 'بسيط', 'حبر'];
   for (const st of styles) { await page.click(`.chip[role=radio]:has-text("${st}")`); await page.waitForTimeout(500); const data = await page.$eval('.snap-preview', (c) => c.toDataURL('image/png')); fs.writeFileSync(`${SHOTS}/review-card-${st}.png`, Buffer.from(data.split(',')[1], 'base64')); }
   await page.screenshot({ path: `${SHOTS}/review-2-card.png` });

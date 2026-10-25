@@ -105,8 +105,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const title = h('div', { class: 'title' });
   const panel = new SidePanel(root);
 
+  // (Back: to the book's own page when the book opens on one, else the library.)
+  const goBack = () => { const b = docs[0]?.book; if (b && docs.length === 1) void import('./book').then((m) => navigate(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else navigate('/'); };
   const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => navigate('/')),
+    iconButton('back', t('back'), goBack),
     title,
     iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
   );
@@ -1206,7 +1208,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => navigate('/')),
+    iconButton('back', t('back'), () => void import('./book').then((m) => navigate(m.wantsBookPage(book) ? `/book/${book.id}` : '/'))),
     title,
     iconButton('search', t('searchInBook'), () => openSearch()),
     iconButton('toc', t('contents'), () => openContents('toc')),

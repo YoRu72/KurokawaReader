@@ -29,7 +29,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   // Jump to chapter 4, read a little, come back: it is current and earlier ones read.
   await page.click('.chapter-list li:nth-child(4) button'); await page.waitForSelector('.reader-scroll', { timeout: 20000 }); await page.waitForTimeout(1500);
   await page.evaluate(() => document.querySelector('.reader-scroll').scrollBy(0, 400)); await page.waitForTimeout(1500);
-  await page.goBack(); await page.waitForSelector('.book-view .chapter-list li', { timeout: 20000 }); await page.waitForTimeout(500);
+  // The reader's own back arrow returns to the book's page, not the library.
+  await page.click('.reader-view .topbar .icon-btn[data-icon="back"]'); await page.waitForSelector('.book-view .chapter-list li', { timeout: 20000 }); await page.waitForTimeout(500); console.log('back lands on', page.url().split('#')[1].split('/')[1]);
   console.log('read', await page.$$eval('.chapter-list li.read', (l) => l.length), 'current', await page.$eval('.chapter-list li.current span', (e) => e.textContent).catch(() => 'none'));
   // Tracking: search, bind, set status/progress/score.
   await page.click('.book-tile:has-text("المتابعة")'); await page.waitForSelector('.track-hit', { timeout: 10000 }); await page.screenshot({ path: `${SHOTS}/bookpage-2-search.png` });

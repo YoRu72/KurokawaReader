@@ -1,7 +1,7 @@
 // The reader's review of a book: stars and a few words of their own, kept with the book, and made into a
 // picture to share — the cover, the title, the stars and the words, in one of several looks.
 import { h, icon, openSheet, toast, coverColors } from './dom';
-import { t, isRtlText, formatDate, formatDuration, localDigits, countPages } from '../i18n';
+import { t, isRtlText, formatDuration, localDigits, countPages, countChapters, dateLocale, formatHijri, calendarPref } from '../i18n';
 import { db, type Book } from '../db';
 import { coverUrl } from '../library';
 import { canvasToBlob, saveImage, shareFile, copyImage } from './share';
@@ -46,7 +46,7 @@ function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: numb
   ctx.closePath(); ctx.fill();
 }
 
-export interface ReviewCardOptions { book: Book; rating: number; text: string; style: CardStyle; showCover: boolean; showStats: boolean; showDate: boolean }
+export interface ReviewCardOptions { book: Book; rating: number; text: string; style: CardStyle; showCover: boolean; showDate: boolean; showTime: boolean; showPages: boolean; showChapters: boolean; chapters?: number; dateKind?: 'gregory' | 'hijri' | 'both' }
 
 /** The review as a picture (1080 px wide; as tall as its words need). */
 export async function renderReviewCanvas(o: ReviewCardOptions): Promise<HTMLCanvasElement> {
@@ -67,7 +67,7 @@ export async function renderReviewCanvas(o: ReviewCardOptions): Promise<HTMLCanv
   const shown = lines.slice(0, 40); if (lines.length > 40) shown[39] += ' …';
   const textH = shown.length ? shown.length * bodyLh + 30 : 0;
   const headH = Math.max(o.showCover ? coverH : 0, 300);
-  const footH = (o.showStats || o.showDate) ? 70 : 0;
+  const footH = (o.showDate || o.showTime || o.showPages || o.showChapters) ? 70 : 0;
   const H = pad + headH + 60 + textH + footH + pad;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const ctx = c.getContext('2d')!;
@@ -118,12 +118,34 @@ export async function renderReviewCanvas(o: ReviewCardOptions): Promise<HTMLCanv
 
   // The foot: when, and how the book was read — the reader's own numbers, nothing of the app's.
   if (footH) {
-    const bits: string[] = [];
-    if (o.showDate) bits.push(formatDate(Date.now()));
-    if (o.showStats && o.book.stats?.ms) bits.push(formatDuration(o.book.stats.ms));
-    if (o.showStats && o.book.pageCount) bits.push(countPages(o.book.pageCount));
-    ctx.fillStyle = P.dim; ctx.font = `26px Inter, system-ui, sans-serif`; ctx.direction = rtl ? 'rtl' : 'ltr'; ctx.textAlign = rtl ? 'right' : 'left';
-    ctx.fillText(bits.join('  ·  '), rtl ? W - pad : pad, H - pad + 4);
+    const bits: { text: string; sep?: string }[] = [];
+    const now = new Date(); const kind = o.dateKind ?? calendarPref();
+    const civil = now.toLocaleDateString(dateLocale(), { day: 'numeric', month: 'long', year: 'numeric' });
+    const hijri = formatHijri(now, { day: 'numeric', month: 'long', year: 'numeric' });
+    if (o.showDate) { if (kind !== 'hijri') bits.push({ text: civil }); if (kind !== 'gregory') bits.push({ text: hijri, sep: '•' }); }
+    if (o.showTime && o.book.stats?.ms) bits.push({ text: formatDuration(o.book.stats.ms) });
+    if (o.showPages && o.book.pageCount) bits.push({ text: countPages(o.book.pageCount) });
+    if (o.showChapters && o.chapters) bits.push({ text: countChapters(o.chapters) });
+    // (Each piece drawn on its own, in its own direction: a date's digits and slashes would scramble inside a
+    // right-to-left run on a canvas.)
+    ctx.fillStyle = P.dim; ctx.font = `26px Inter, system-ui, sans-serif`;
+    // Word by word, each word upright in its own script, the words of a right-to-left piece laid right to left:
+    // the canvas is given no run to reorder, so «25 أكتوبر 2026» keeps its day on the right and its year on the left.
+    // (The foot runs the way its own words do — the interface's language — whatever the title's script.)
+    const rtl = isRtlText(bits.map((b) => b.text).join(' '));
+    let x = rtl ? W - pad : pad; const gap = 14, space = ctx.measureText(' ').width;
+    const pieces = bits.flatMap((bit, i) => (i ? [bit.sep ?? '·', bit.text] : [bit.text]));
+    ctx.direction = 'ltr';
+    for (const piece of pieces) {
+      const pieceRtl = /[\u0600-\u06ff]/.test(piece);
+      const words = piece.split(/\s+/).filter(Boolean); const widths = words.map((w) => ctx.measureText(w).width);
+      const total = widths.reduce((a, b) => a + b, 0) + space * (words.length - 1);
+      // The piece's own edge on the card's side, then its words from there in its own direction.
+      let wx = pieceRtl ? (rtl ? x : x + total) : (rtl ? x - total : x);
+      ctx.textAlign = pieceRtl ? 'right' : 'left';
+      words.forEach((word, i) => { ctx.fillText(word, wx, H - pad + 4); wx += pieceRtl ? -(widths[i] + space) : widths[i] + space; });
+      x += rtl ? -(total + gap) : total + gap;
+    }
   }
   cover?.close();
   return c;
@@ -160,22 +182,35 @@ export function reviewCardSheet(book: Book): void {
   const sheet = openSheet(t('reviewCard'), t('close'), { stack: true });
   sheet.body.style.fontFamily = 'var(--font-ui)';
   const KEY = 'kr.reviewCard';
-  let opts: Omit<ReviewCardOptions, 'book' | 'rating' | 'text'> = { style: 'paper', showCover: true, showStats: false, showDate: true };
+  let opts: Omit<ReviewCardOptions, 'book' | 'rating' | 'text' | 'chapters'> = { style: 'paper', showCover: true, showDate: true, showTime: false, showPages: false, showChapters: false, dateKind: calendarPref() };
   try { opts = { ...opts, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<typeof opts>) }; } catch { /* defaults */ }
+  // The chapter count: the reader's own number when set, else what the contents list says (read once).
+  let tocCount = 0;
+  void import('../views/book').then((m) => m.outlineOf(book)).then((o) => { tocCount = o.toc.length; chaptersIn.placeholder = tocCount ? String(tocCount) : ''; if (opts.showChapters) void render(); });
   const holder = h('div', { class: 'snap-holder' });
   let canvas: HTMLCanvasElement | null = null; let blob: Blob | null = null; let seq = 0;
   const render = async () => {
     const my = ++seq; blob = null;
     try { localStorage.setItem(KEY, JSON.stringify(opts)); } catch { /* private mode */ }
-    const c = await renderReviewCanvas({ book, rating: book.rating ?? 0, text: book.review ?? '', ...opts });
+    const c = await renderReviewCanvas({ book, rating: book.rating ?? 0, text: book.review ?? '', chapters: book.chapters ?? tocCount, ...opts });
     if (my !== seq) return;
     c.className = 'snap-preview'; holder.replaceChildren(c); canvas = c;
   };
   const chips = h('div', { class: 'scan-filters', role: 'radiogroup', 'aria-label': t('cardStyle') });
   const drawChips = () => chips.replaceChildren(...STYLES.map((st) => h('button', { type: 'button', role: 'radio', class: 'chip small' + (opts.style === st ? ' on' : ''), 'aria-checked': String(opts.style === st), onclick: () => { opts.style = st; drawChips(); void render(); } }, h('span', null, t(`cardStyle_${st}` as 'cardStyle_paper')))));
   drawChips();
-  const check = (label: string, key: 'showCover' | 'showStats' | 'showDate') => { const input = h('input', { type: 'checkbox', checked: opts[key] }) as HTMLInputElement; input.addEventListener('change', () => { opts[key] = input.checked; void render(); }); return h('label', { class: 'chip small check' }, input, h('span', null, label)); };
-  sheet.body.append(chips, h('div', { class: 'scan-filters' }, check(t('cardShowCover'), 'showCover'), check(t('cardShowDate'), 'showDate'), check(t('cardShowStats'), 'showStats')), holder);
+  const check = (label: string, key: 'showCover' | 'showDate' | 'showTime' | 'showPages' | 'showChapters') => { const input = h('input', { type: 'checkbox', checked: opts[key] }) as HTMLInputElement; input.addEventListener('change', () => { opts[key] = input.checked; void render(); }); return h('label', { class: 'chip small check' }, input, h('span', null, label)); };
+  // The reader's words, written or changed here as well, and the chapter count they decide on.
+  const words = h('textarea', { class: 'review-text', rows: 3, placeholder: t('reviewPlaceholder'), dir: 'auto' }) as HTMLTextAreaElement; words.value = book.review ?? '';
+  let wordsTimer = 0;
+  words.addEventListener('input', () => { window.clearTimeout(wordsTimer); wordsTimer = window.setTimeout(async () => { const text = words.value.trim(); const at = Date.now(); if (text) book.review = text; else delete book.review; book.reviewAt = at; await db.updateBook(book.id, (b) => { if (text) b.review = text; else delete b.review; b.reviewAt = at; }); void render(); }, 400); });
+  const chaptersIn = h('input', { type: 'number', min: '0', inputmode: 'numeric', value: book.chapters ? String(book.chapters) : '', style: { width: '72px' }, 'aria-label': t('cardChapters') }) as HTMLInputElement;
+  chaptersIn.addEventListener('change', async () => { const n = Math.max(0, Math.round(Number(chaptersIn.value) || 0)); const at = Date.now(); if (n) book.chapters = n; else delete book.chapters; book.chaptersAt = at; await db.updateBook(book.id, (b) => { if (n) b.chapters = n; else delete b.chapters; b.chaptersAt = at; }); void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined); void render(); });
+  sheet.body.append(chips,
+    h('div', { class: 'scan-filters' }, check(t('cardShowCover'), 'showCover'), check(t('cardShowDate'), 'showDate'),
+      (() => { const sel = h('select', { 'aria-label': t('calendarKind') }, ...([['gregory', t('calGregory')], ['hijri', t('calHijri')], ['both', t('calBoth')]] as const).map(([v, l]) => h('option', { value: v, selected: opts.dateKind === v }, l))) as HTMLSelectElement; sel.addEventListener('change', () => { opts.dateKind = sel.value as 'gregory' | 'hijri' | 'both'; void render(); }); return h('label', { class: 'chip small check' }, sel); })(), check(t('cardShowTime'), 'showTime'), check(t('cardShowPages'), 'showPages'), check(t('cardShowChapters'), 'showChapters'),
+      h('label', { class: 'chip small check' }, h('span', null, t('cardChapters')), chaptersIn)),
+    words, holder);
   void render();
   const png = async () => blob ?? (blob = await canvasToBlob(canvas!, 'image/png'));
   const name = `${book.title.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'review'} — ${t('reviewCard')}.png`;

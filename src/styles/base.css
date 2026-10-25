@@ -1300,3 +1300,5 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
   .chapter-list { columns: 2; column-gap: 0; }
   .chapter-list li { break-inside: avoid; }
 }
+.chip.check input[type=number] { width: 64px; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--text); font: inherit; }
+.snap-holder { margin-top: 10px; }
