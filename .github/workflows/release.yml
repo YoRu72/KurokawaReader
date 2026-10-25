@@ -27,7 +27,7 @@ jobs:
         run: |
           gh api -X PUT "repos/$GITHUB_REPOSITORY/topics" -H "Accept: application/vnd.github+json" \
             --input - <<'JSON'
-          {"names":["ebook-reader","epub-reader","pdf-reader","reader","android","ios","windows","macos","linux","electron","capacitor","pwa","typescript","arabic","rtl","epub","pdf","docx","material-design-3","offline-first"]}
+          {"names":["ebook-reader","epub-reader","pdf-reader","pdf-tools","document-scanner","reader","epub","pdf","docx","arabic","rtl","english","japanese","chinese","korean","android","ios","windows","macos","linux"]}
           JSON
 
   web:
