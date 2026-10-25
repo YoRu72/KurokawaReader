@@ -119,6 +119,7 @@ export class PdfViewer {
   current = 1;
   total = 0;
   private fitWidth = true;
+  private lastFit = 0;
   private textCache = new Map<number, string>();
   private resizeObs?: ResizeObserver;
   private destroyed = false;
@@ -160,7 +161,7 @@ export class PdfViewer {
     const w1 = vp1?.width ?? 612, h1 = vp1?.height ?? 792;
     this.baseWidths = new Array<number>(this.total).fill(w1);
     this.baseHeights = new Array<number>(this.total).fill(h1);
-    this.scale = this.computeFitScale();
+    this.scale = this.computeFitScale(); this.lastFit = this.scale;
     this.pages = [];
     const frag = document.createDocumentFragment();
     for (let i = 1; i <= this.total; i++) {
@@ -200,7 +201,16 @@ export class PdfViewer {
     }
     void this.measurePages();
     this.scroll.addEventListener('scroll', () => this.onScroll(), { passive: true });
-    this.resizeObs = new ResizeObserver(() => { this.tops = null; if (this.fitWidth) this.rescale(this.computeFitScale()); else this.onScroll(); });
+    // The screen turned or the window resized: a page fitted to the width is fitted again; a zoomed page keeps
+    // its zoom relative to the new width (so it looks as it did, and the page in view stays in view).
+    this.resizeObs = new ResizeObserver(() => {
+      this.tops = null;
+      const fit = this.computeFitScale();
+      if (this.fitWidth) this.rescale(fit);
+      else if (this.lastFit && Math.abs(fit - this.lastFit) > 0.001) this.rescale(this.scale * (fit / this.lastFit));
+      else this.onScroll();
+      this.lastFit = fit;
+    });
     this.resizeObs.observe(this.scroll);
     this.opts.onPageChange(this.current, this.total);
     this.frame();

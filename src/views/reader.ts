@@ -567,7 +567,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   hooks.update = () => updateChrome();
   hooks.save = () => scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
-  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); }, { passive: true });
+  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); }, { passive: true });
+  // The screen turned (or the window resized): the text reflows, so the place being read is found again and
+  // put back where it was — the reader does not land somewhere else in the chapter.
+  let stable: Locator | null = null; let stableTimer = 0; let lastW = scroll.clientWidth, lastH = scroll.clientHeight; let resizing = false;
+  const noteStable = () => { if (resizing) return; window.clearTimeout(stableTimer); stableTimer = window.setTimeout(() => { const c = currentLocator(); if (c) stable = c.loc; }, 250); };
+  const sizeObs = new ResizeObserver(() => {
+    const w = scroll.clientWidth, hgt = scroll.clientHeight;
+    if (Math.abs(w - lastW) < 2 && Math.abs(hgt - lastH) < 2) return;
+    lastW = w; lastH = hgt;
+    if (!stable) { noteStable(); return; }
+    resizing = true; const at = stable;
+    requestAnimationFrame(() => { scrollToLocator(at); window.setTimeout(() => { resizing = false; }, 300); });
+  });
+  sizeObs.observe(scroll); onDispose(() => sizeObs.disconnect());
+  window.setTimeout(noteStable, 1500);
   updateChrome();
   onDispose(() => { window.clearTimeout(saveTimer); void saveProgress(); docs.forEach((d) => d.render?.dispose()); });
 
