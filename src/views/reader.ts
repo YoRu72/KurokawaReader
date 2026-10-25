@@ -272,11 +272,20 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const wordCount = (b: HTMLElement): number => { let w = wordsOf.get(b); if (w === undefined) { w = b.tagName === 'IMG' ? 0 : countWords(b.textContent ?? ''); wordsOf.set(b, w); } return w; };
   const trackers = new Map<OpenDoc, ReadingTracker>();
   for (const doc of docs) {
-    const total = doc.allBlocks.reduce((a, b) => a + wordCount(b), 0);
-    const chars = (doc.render?.element.textContent ?? '').replace(/\s+/g, '').length;
-    const tr = new ReadingTracker(doc.book, () => currentLocator()?.doc === doc, total, chars);
+    // (The words of every block are counted after the book is on screen, in idle moments: a big book has
+    // tens of thousands of blocks, and the count used to hold the opening for seconds.)
+    const tr = new ReadingTracker(doc.book, () => currentLocator()?.doc === doc, doc.book.stats?.bookWords, doc.book.stats?.bookChars);
     tr.start();
     trackers.set(doc, tr);
+    let i = 0, total = 0, chars = 0; let gone = false; onDispose(() => { gone = true; });
+    const step = () => {
+      if (gone) return;
+      const end = Math.min(doc.allBlocks.length, i + 400);
+      for (; i < end; i++) { const b = doc.allBlocks[i]; total += wordCount(b); chars += b.tagName === 'IMG' ? 0 : (b.textContent ?? '').replace(/\s+/g, '').length; }
+      if (i < doc.allBlocks.length) { const w = window as Window & { requestIdleCallback?: (cb: () => void) => number }; if (w.requestIdleCallback) w.requestIdleCallback(step); else window.setTimeout(step, 16); }
+      else tr.setTotals(total, chars);
+    };
+    window.setTimeout(step, 300);
   }
   const trackProgress = () => {
     const cur = currentLocator();

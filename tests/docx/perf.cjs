@@ -18,6 +18,7 @@ const [file, slow = '4'] = process.argv.slice(2);
   await p.waitForFunction(() => { const c = document.querySelector('.kr-content'); return !!c && (c.textContent || '').length > 100 && !!document.querySelector('.reader-view') && !document.querySelector('.reader-view .spinner'); }, null, { timeout: 600000 });
   const opened = Date.now() - t0;
   await p.waitForTimeout(1500);
+  const marks = await p.evaluate(() => performance.getEntriesByType('measure').filter((e) => e.name.startsWith('kr:')).map((e) => e.name + '=' + Math.round(e.duration)).join(' ')); console.log(marks);
   const m = await p.evaluate(() => ({ heapMB: Math.round((performance.memory?.usedJSHeapSize || 0) / 1048576), blocks: document.querySelectorAll('.kr-content p, .kr-content li, .kr-content td').length, chapters: document.querySelectorAll('.kr-chapter').length, shown: [...document.querySelectorAll('.kr-chapter')].filter((c) => !c.hidden).length, imgs: document.querySelectorAll('.kr-content img').length, loadedImgs: document.querySelectorAll('.kr-content img[src]').length }));
   // Scroll to the end quickly, then a long way back, to see it stays smooth.
   const t1 = Date.now(); for (let i = 0; i < 10; i++) { await p.mouse.wheel(0, 4000); await p.waitForTimeout(80); } const scrolled = Date.now() - t1;

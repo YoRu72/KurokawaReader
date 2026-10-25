@@ -299,6 +299,8 @@ export const epubHandler: FlowHandler = {
       while (next < pkg.spine.length) {
         const i = next++;
         sections[i] = await renderChapter(pkg, pkg.spine[i], i, ctx, pool, idMap);
+        // (A breath every few chapters: the opening spinner turns, a tap answers, on a book of hundreds.)
+        if (i % 8 === 7) await new Promise((r) => setTimeout(r, 0));
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pkg.spine.length) }, worker));

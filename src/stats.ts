@@ -43,6 +43,12 @@ export class ReadingTracker {
     this.lastPct = book.progress?.pct ?? 0;
   }
 
+  /** The book's size, counted after it is open (a big book's words take a while to count). */
+  setTotals(bookWords: number, bookChars: number): void {
+    this.stats.bookWords = bookWords; this.stats.bookChars = bookChars;
+    this.totalPages = this.book.pageCount ?? Math.max(1, Math.round(bookWords / WORDS_PER_PAGE));
+  }
+
   start(): void {
     this.ensureSession();
     liveStats.set(this.book.id, this.stats);
