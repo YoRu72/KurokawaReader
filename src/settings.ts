@@ -15,6 +15,15 @@ export type CjkFont = 'system' | 'mincho' | 'gothic' | 'publisher' | (string & {
 
 export interface VisualSettings {
   theme: Theme;
+  /** A night theme between two hours of the day ("22:00"–"06:30"), the page's theme the rest of the time. */
+  nightSchedule: boolean;
+  nightFrom: string;
+  nightTo: string;
+  nightTheme: Theme;
+  /** Two pages side by side when the screen is wide. */
+  twoPages: boolean;
+  /** A reminder to rest the eyes every so many minutes of reading (0: none). */
+  eyeRestMinutes: number;
   latinFont: LatinFont;
   arabicFont: ArabicFont;
   cjkFont: CjkFont;           // Japanese, Chinese and Korean books
@@ -134,6 +143,12 @@ export interface VisualSettings {
 
 export const DEFAULTS: VisualSettings = {
   theme: 'grey',
+  nightSchedule: false,
+  nightFrom: '22:00',
+  nightTo: '06:30',
+  nightTheme: 'dark',
+  twoPages: false,
+  eyeRestMinutes: 0,
   latinFont: 'lora',
   arabicFont: 'uthman',
   cjkFont: 'system',
@@ -339,9 +354,22 @@ export function isLightColor(hex: string): boolean {
 
 /** Which chrome the page would call for (light reading themes → light chrome). */
 const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'];
+/** The theme in force now: the night theme in the night hours when that is set, else the chosen one. */
+export function themeNow(s: VisualSettings = current): Theme {
+  if (!s.nightSchedule) return s.theme;
+  const mins = (t: string) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+  const d = new Date(); const now = d.getHours() * 60 + d.getMinutes(); const a = mins(s.nightFrom), b = mins(s.nightTo);
+  const night = a <= b ? now >= a && now < b : now >= a || now < b;
+  return night ? s.nightTheme : s.theme;
+}
+// (The clock moves: at each minute the night may begin or end.)
+let lastThemeNow: string | null = null;
+if (typeof window !== 'undefined') window.setInterval(() => { if (!current.nightSchedule) return; const t = themeNow(); if (t !== lastThemeNow) { lastThemeNow = t; listeners.forEach((fn) => fn(current)); } }, 30_000);
+
 export function pageIsLight(s: VisualSettings = current): boolean {
   if (s.bgOverride) return isLightColor(s.bgOverride);
-  return LIGHT_THEMES.includes(s.theme) || (s.theme === 'custom' && isLightColor(s.customBg));
+  const theme = themeNow(s);
+  return LIGHT_THEMES.includes(theme) || (theme === 'custom' && isLightColor(s.customBg));
 }
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
@@ -403,7 +431,8 @@ export async function applyOrientation(s: VisualSettings = current): Promise<voi
 
 /** Write the settings onto a reader root element as CSS variables. */
 export function applySettings(root: HTMLElement, s: VisualSettings = current): void {
-  root.dataset.theme = s.theme;
+  root.dataset.theme = themeNow(s);
+  root.dataset.twoPages = String(s.twoPages);
   root.dataset.dimImages = String(s.dimImages);
   root.dataset.invertLineart = String(s.invertLineArt);
   root.dataset.texture = s.texture;

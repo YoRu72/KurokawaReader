@@ -620,7 +620,7 @@ export const ar: Strings = {
   minutes: '{n} د',
   pdfPinchZoom: 'PDF: التكبير بقرص الأصابع',
   pdfBar: 'شريط صفحات PDF',
-  pdfBarAuto: 'بحسب وضع الشاشة',
+  pdfBarAuto: 'بحسب وضع الشاشة (طوليًّا: قائمٌ على الجانب، وعرضيًّا: صفٌّ واحد)',
   pdfBarRows: 'صفّان',
   pdfBarRow: 'صفٌّ واحد',
   pdfBarSide: 'قائمٌ على الجانب',

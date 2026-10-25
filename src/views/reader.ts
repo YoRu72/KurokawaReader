@@ -1160,7 +1160,10 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
 
   // The page bar: the page's place (arrows, slider, count) and the tools (go to, zoom, fit) — two rows when
   // the screen is upright, one when it is wide, or down one side, as set.
-  const bar = h('div', { class: 'pdf-bar', dataset: { layout: getSettings().pdfBar } },
+  // "By orientation": down the side when the screen is upright, in one row when it is wide.
+  const portrait = matchMedia('(orientation: portrait)');
+  const barLayout = () => { const l = getSettings().pdfBar; return l === 'auto' ? (portrait.matches ? 'side' : 'row') : l; };
+  const bar = h('div', { class: 'pdf-bar', dataset: { layout: barLayout() } },
     h('div', { class: 'pdf-bar-nav' },
     iconButton('chevronLeft', t('previousPage'), () => viewer.goTo(viewer.current - 1)),
     slider,
@@ -1172,7 +1175,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
     iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth())),
   );
-  onDispose(onSettingsChange((st) => { bar.dataset.layout = st.pdfBar; }));
+  const relayout = () => { bar.dataset.layout = barLayout(); };
+  onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), () => navigate('/')),
     title,

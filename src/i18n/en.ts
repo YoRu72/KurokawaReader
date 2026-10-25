@@ -615,7 +615,7 @@ export const en = {
   minutes: '{n} min',
   pdfPinchZoom: 'PDF: pinch to zoom',
   pdfBar: 'PDF page bar',
-  pdfBarAuto: 'By orientation',
+  pdfBarAuto: 'By orientation (upright: down the side; wide: one row)',
   pdfBarRows: 'Two rows',
   pdfBarRow: 'One row',
   pdfBarSide: 'Down the side',

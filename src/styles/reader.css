@@ -261,14 +261,10 @@ html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
 .pdf-bar[data-layout='row'] { flex-wrap: nowrap; }
 .pdf-bar[data-layout='row'] .pdf-bar-nav { flex: 1 1 auto; }
 .pdf-bar[data-layout='rows'] .pdf-bar-nav, .pdf-bar[data-layout='rows'] .pdf-bar-tools { flex: 1 1 100%; }
-.pdf-bar[data-layout='rows'] .pdf-bar-tools, .pdf-bar[data-layout='auto'] .pdf-bar-tools:not(:first-child) { justify-content: center; }
-@media (orientation: portrait) {
-  .pdf-bar[data-layout='auto'] .pdf-bar-nav, .pdf-bar[data-layout='auto'] .pdf-bar-tools { flex: 1 1 100%; }
-  .pdf-bar[data-layout='auto'] { border-radius: 28px; }
-}
+.pdf-bar[data-layout='rows'] .pdf-bar-tools { justify-content: center; }
 .pdf-bar[data-layout='rows'] { border-radius: 28px; }
 .pdf-bar[data-layout='side'] {
-  left: auto; right: 12px; top: 50%; bottom: auto; transform: translateY(-50%); width: 56px; max-height: calc(100vh - 140px);
+  left: auto; right: 12px; top: 50%; bottom: auto; transform: translateY(-50%); width: 56px; height: min(68vh, 600px); max-height: calc(100vh - 140px);
   flex-direction: column; flex-wrap: nowrap; padding: 8px 6px; border-radius: 28px; overflow: hidden auto;
 }
 html[dir='rtl'] .pdf-bar[data-layout='side'] { right: auto; left: 12px; }
@@ -279,7 +275,7 @@ html[dir='rtl'] .pdf-bar[data-layout='side'] { right: auto; left: 12px; }
 html[dir='rtl'] .pdf-bar[data-layout='side'] input[type='range'] { direction: rtl; }
 .pdf-bar[data-layout='side'] .pcount { display: none; }
 .pdf-bar[data-layout='side'] form { flex-direction: column; }
-.pdf-bar[data-layout='side'] input[type='number'] { width: 44px; }
+.pdf-bar[data-layout='side'] input[type='number'] { width: 42px; height: 32px; padding: 0 2px; font-size: 13px; }
 .reader-view.immersive .pdf-bar { transform: translateX(-50%) translateY(140%); opacity: 0; pointer-events: none; }
 .reader-view.immersive .pdf-bar[data-layout='side'] { transform: translateY(-50%) translateX(140%); }
 html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'] { transform: translateY(-50%) translateX(-140%); }
