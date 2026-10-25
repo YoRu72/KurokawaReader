@@ -2,12 +2,12 @@
 // picture), comfort filters (warmth, dimming), type and layout.
 import { ttsAvailable } from '../tts';
 import { aiTtsSupported } from '../ai';
-import { h, clear, icon, toast, pickButton } from './dom';
+import { h, clear, icon, toast, pickButton, pickSheet } from './dom';
 import { colorField } from './colorpicker';
 import { isTouchDevice, t } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
-import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont } from '../settings';
+import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
 
 type Section = 'theme' | 'background' | 'comfort' | 'type' | 'layout' | 'behaviour';
@@ -144,7 +144,15 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['flow', t('modeFlow')], ['continuous', t('modeContinuous')]];
   grid.append(section([t('readingMode'), 'readingMode'], segmented(modes, s.readingMode, (v) => { updateSettings({ readingMode: v }); rerender(); bump(); })));
   grid.append(toggle([t('hideSystemBars'), 'hideSystemBars'], s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
-  grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => updateSettings({ tapToTurn: v })));
+  grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => { updateSettings({ tapToTurn: v }); rerender(); }));
+  if (s.tapToTurn) {
+    // The nine zones: each a button naming its action; tapping one picks another.
+    const acts: [TapAction, string][] = [['menu', t('tapMenu')], ['next', t('tapNext')], ['prev', t('tapPrev')], ['nextChapter', t('nextChapter')], ['prevChapter', t('prevChapter')], ['bookmark', t('addBookmark')], ['toc', t('contents')], ['search', t('search')], ['options', t('visualOptions')], ['speak', t('speechScope')], ['autoScroll', t('autoScroll')], ['fullscreen', t('fullscreen')], ['none', t('tapNone')]];
+    const zones = [...(s.tapZones ?? DEFAULT_TAP_ZONES)];
+    const gridEl = h('div', { class: 'tap-grid' }, ...zones.map((z, i) => h('button', { type: 'button', onclick: () => { pickSheet(t('tapZoneAction'), acts, zones[i], (v) => { zones[i] = v; updateSettings({ tapZones: [...zones] }); rerender(); }, t('close')); } }, acts.find((a) => a[0] === z)?.[1] ?? z)));
+    grid.append(section([t('tapZones'), 'tapZones'], gridEl));
+    grid.append(section([t('turnAnimation'), 'turnAnimation'], segmented([['none', t('turnNone')], ['slide', t('turnSlide')], ['fade', t('turnFade')]] as [VisualSettings['turnAnimation'], string][], s.turnAnimation, (v) => { updateSettings({ turnAnimation: v }); rerender(); })));
+  }
   grid.append(toggle([t('showStatusLine'), 'showStatusLine'], s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
   if (s.showStatusLine) grid.append(toggle([t('showTimeLeft'), 'showTimeLeft'], s.showTimeLeft, (v) => updateSettings({ showTimeLeft: v })));
   grid.append(stepper([t('dailyGoal'), 'readingGoalMinutes'], s.readingGoalMinutes, 0, 240, 15, (v) => updateSettings({ readingGoalMinutes: v }), (v) => v ? t('goalValue', { n: v }) : t('goalOff')));

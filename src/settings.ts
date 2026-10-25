@@ -9,6 +9,8 @@ export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
+export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen';
+export const DEFAULT_TAP_ZONES: TapAction[] = ['prev', 'prev', 'prev', 'menu', 'menu', 'menu', 'next', 'next', 'next'];
 export type CjkFont = 'system' | 'mincho' | 'gothic' | 'publisher' | (string & {});
 
 export interface VisualSettings {
@@ -67,6 +69,9 @@ export interface VisualSettings {
   /** Long work (conversions) shows its progress in notifications. */
   jobNotify: boolean;
   tapToTurn: boolean;
+  /** What a tap does in each of nine zones of the page (rows top to bottom, left to right), when tapping turns pages. */
+  tapZones: TapAction[];
+  turnAnimation: 'none' | 'slide' | 'fade';   // when a tap or key moves a screen
   showStatusLine: boolean;
   showTimeLeft: boolean;      // minutes left in the chapter on the status line, from the reading speed
   importButton: 'chips' | 'top' | 'fab';
@@ -177,6 +182,8 @@ export const DEFAULTS: VisualSettings = {
   jobNotify: true,
   tapToTurn: true,
   showStatusLine: false,
+  tapZones: DEFAULT_TAP_ZONES,
+  turnAnimation: 'none',
   showTimeLeft: true,
   importButton: 'chips',
   appName: 'auto',

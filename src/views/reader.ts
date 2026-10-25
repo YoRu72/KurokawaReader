@@ -590,12 +590,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (img && allImages.length) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { showGallery(idx); return; } }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
-    // Moon+-style tap zones on touch screens: lower part = next screen, upper part = previous, middle = chrome.
+    // Tap zones on touch screens (nine of them, each given its action in the options; by default the lower
+    // third turns to the next screen, the upper to the previous, the middle shows or hides the chrome).
     if (getSettings().tapToTurn && isTouchDevice()) {
-      const sr = scroll.getBoundingClientRect(); const y = (e.clientY - sr.top) / sr.height;
-      const page = sr.height * 0.88;
-      if (y > 0.62) { scroll.scrollBy({ top: page, behavior: 'smooth' }); return; }
-      if (y < 0.22) { scroll.scrollBy({ top: -page, behavior: 'smooth' }); return; }
+      const sr = scroll.getBoundingClientRect(); const x = (e.clientX - sr.left) / sr.width, y = (e.clientY - sr.top) / sr.height;
+      const col = x < 1 / 3 ? 0 : x < 2 / 3 ? 1 : 2, row = y < 0.22 ? 0 : y < 0.62 ? 1 : 2;
+      const action = (getSettings().tapZones ?? [])[row * 3 + col] ?? 'menu';
+      if (action !== 'menu') { tapAction(action); return; }
     }
     const on = root.classList.toggle('immersive');
     if (nativePlatform() === 'android' || nativePlatform() === 'ios') void setImmersive(on || getSettings().hideSystemBars);
@@ -605,8 +606,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(attachPinchText(scroll));
   // Ctrl + mouse wheel changes the text size (desktop).
   scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); const d = e.deltaY < 0 ? 1 : -1; updateSettings({ fontSize: Math.min(40, Math.max(12, getSettings().fontSize + d)) }); }, { passive: false });
+  /** A screen forward or back, with the turn shown as set (a slide or a fade of the text). */
+  function turnScreen(dir: 1 | -1): void {
+    const page = scroll.getBoundingClientRect().height * 0.88;
+    const anim = getSettings().turnAnimation;
+    if (anim !== 'none') { flow.classList.remove('turn-next', 'turn-prev', 'turn-fade'); void flow.offsetWidth; flow.classList.add(anim === 'fade' ? 'turn-fade' : dir > 0 ? 'turn-next' : 'turn-prev'); }
+    scroll.scrollBy({ top: page * dir, behavior: anim === 'none' ? 'smooth' : 'auto' });
+  }
+  function tapAction(a: string): void {
+    if (a === 'next') turnScreen(1); else if (a === 'prev') turnScreen(-1);
+    else if (a === 'none') return;
+    else document.dispatchEvent(new CustomEvent('kr:command', { detail: a === 'autoScroll' ? 'scroll' : a }));
+  }
   const onCommand = (e: Event) => {
     const c = (e as CustomEvent<string>).detail;
+    if (c === 'scroll') { toggleAutoScroll(); return; }
     if (c === 'search') openSearch(); else if (c === 'options') openOptions(); else if (c === 'toc') openContents('toc'); else if (c === 'bookmark') void addBookmark();
     else if (c === 'translate') translator.toggleUi(); else if (c === 'speak') { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }
     else if (c === 'fullscreen') { void toggleFullscreen(root); }

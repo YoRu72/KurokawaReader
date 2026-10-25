@@ -354,3 +354,14 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .reader[data-furigana='false'] .kr-content rt { display: none; }
 .kr-content ruby { ruby-position: over; }
 .kr-content rt { font-size: 0.5em; line-height: 1; opacity: .85; }
+
+/* Tap zones (options): the nine zones of the page. */
+.tap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; aspect-ratio: 3 / 4; max-width: 240px; }
+.tap-grid button { font: 500 11.5px/1.3 var(--font-ui); padding: 4px; border-radius: var(--sh-md); background: var(--md-surface-container-high); color: var(--md-on-surface); border: 0; overflow: hidden; }
+/* A screen's turn: the text slides in from below/above, or fades. */
+.reader-flow.turn-next { animation: turn-next var(--dur-med) var(--ease-emph-decel); }
+.reader-flow.turn-prev { animation: turn-prev var(--dur-med) var(--ease-emph-decel); }
+.reader-flow.turn-fade { animation: turn-fade var(--dur-med) ease-out; }
+@keyframes turn-next { from { transform: translateY(24px); opacity: .4; } }
+@keyframes turn-prev { from { transform: translateY(-24px); opacity: .4; } }
+@keyframes turn-fade { from { opacity: 0; } }
