@@ -668,7 +668,7 @@ export async function buildOdt(d: ConvDoc, progress: Progress): Promise<Blob> {
   const runs = (rs: Run[]) => rs.map((r) => { const st = r.b && r.i ? 'BI' : r.b ? 'B' : r.i ? 'I' : r.sup ? 'Sup' : ''; const t = xml(r.text).replace(/\n/g, '<text:line-break/>'); return st ? `<text:span text:style-name="${st}">${t}</text:span>` : t; }).join('');
   const body: string[] = [];
   d.chapters.forEach((ch, i) => {
-    if (d.chapters.length > 1) body.push(`<text:h text:style-name="H1" text:outline-level="1"${i ? ' text:style-name="H1Break"' : ''}>${xml(ch.title)}</text:h>`);
+    if (d.chapters.length > 1) body.push(`<text:h text:style-name="${i ? 'H1' : 'H1First'}" text:outline-level="1">${xml(ch.title)}</text:h>`);
     for (const b of blocksOf(ch.html)) {
       const dir = b.rtl ?? d.rtl;
       if (b.kind === 'img') { const n = picOf.get(b.src!); if (n) body.push(`<text:p text:style-name="P"><draw:frame text:anchor-type="as-char" svg:width="12cm" svg:height="9cm"><draw:image xlink:href="${n}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></text:p>`); continue; }
@@ -683,6 +683,7 @@ export async function buildOdt(d: ConvDoc, progress: Progress): Promise<Blob> {
 <style:style style:name="Q" style:family="paragraph" style:parent-style-name="P"><style:paragraph-properties fo:margin-left="1cm" fo:margin-right="1cm"/><style:text-properties fo:font-style="italic"/></style:style>
 <style:style style:name="Pre" style:family="paragraph"><style:text-properties style:font-name="Liberation Mono" fo:font-size="10pt"/></style:style>
 <style:style style:name="H1" style:family="paragraph"><style:paragraph-properties fo:margin-top="0.6cm" fo:margin-bottom="0.3cm" fo:break-before="page"/><style:text-properties fo:font-size="20pt" fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
+<style:style style:name="H1First" style:family="paragraph" style:parent-style-name="H1"><style:paragraph-properties fo:break-before="auto"/></style:style>
 <style:style style:name="H2" style:family="paragraph"><style:paragraph-properties fo:margin-top="0.5cm" fo:margin-bottom="0.2cm"/><style:text-properties fo:font-size="16pt" fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
 <style:style style:name="H3" style:family="paragraph"><style:paragraph-properties fo:margin-top="0.4cm" fo:margin-bottom="0.2cm"/><style:text-properties fo:font-size="14pt" fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
 <style:style style:name="B" style:family="text"><style:text-properties fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
