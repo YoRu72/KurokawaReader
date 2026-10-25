@@ -8,12 +8,15 @@ export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
-export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher' | (string & {});
+export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
+export type CjkFont = 'system' | 'mincho' | 'gothic' | 'publisher' | (string & {});
 
 export interface VisualSettings {
   theme: Theme;
   latinFont: LatinFont;
   arabicFont: ArabicFont;
+  cjkFont: CjkFont;           // Japanese, Chinese and Korean books
+  headingsFont: boolean;      // the chosen reading fonts apply to headings too (else headings keep the default faces)
   fontSize: number;       // px
   lineHeight: number;     // unitless
   paragraphSpacing: number; // em
@@ -26,6 +29,7 @@ export interface VisualSettings {
   wordSpacing: number;    // em
   letterSpacing: number;  // em
   pdfInvert: boolean;
+  pdfBar: 'auto' | 'row' | 'rows' | 'side';   // the PDF page bar: two rows when the screen is upright and one when it is wide, or fixed
   pdfPinchZoom: boolean;    // two-finger zoom in PDFs (on by default since 0.32)
   pdfPageNumbers: boolean;  // page number badge on each PDF page
   pdfNoteStyle: 'badge' | 'pin' | 'dot';  // how PDF notes are drawn on the page
@@ -75,6 +79,7 @@ export interface VisualSettings {
   formatFilter: string[];
   showProgress: boolean;      // a book's progress on its cover
   showDone: boolean;          // the 'read' mark on its cover
+  doneMark: 'beside' | 'below' | 'topLeft' | 'bottom';   // where that mark sits
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   keepAwake: boolean;         // screen wake lock while reading
@@ -125,6 +130,8 @@ export const DEFAULTS: VisualSettings = {
   theme: 'grey',
   latinFont: 'lora',
   arabicFont: 'uthman',
+  cjkFont: 'system',
+  headingsFont: false,
   fontSize: 19,
   lineHeight: 1.7,
   paragraphSpacing: 0.9,
@@ -138,6 +145,7 @@ export const DEFAULTS: VisualSettings = {
   letterSpacing: 0,
   pdfInvert: false,
   pdfPinchZoom: true,
+  pdfBar: 'auto',
   pdfPageNumbers: true,
   pdfNoteStyle: 'badge',
   autoScrollSpeed: 40,
@@ -179,6 +187,7 @@ export const DEFAULTS: VisualSettings = {
   formatFilter: [],
   showProgress: true,
   showDone: true,
+  doneMark: 'beside',
   statusFilter: [],
   readingGoalMinutes: 0,
   keepAwake: true,
@@ -283,6 +292,13 @@ const ARABIC: Record<string, string> = {
   uthman: "'Uthman TN1'",
   sultan: "'Sultan'",
   naskh: "'Noto Naskh Arabic'",
+  mohanad: "'AL-Mohanad'",
+  publisher: 'inherit',
+};
+const CJK: Record<string, string> = {
+  system: 'inherit',
+  mincho: "'Noto Serif CJK JP', 'Noto Serif JP', 'Noto Serif SC', 'Noto Serif KR', 'Hiragino Mincho ProN', 'Yu Mincho', 'MS Mincho', 'Songti SC', 'SimSun', 'Apple Myungjo', 'Batang', serif",
+  gothic: "'Noto Sans CJK JP', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans KR', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', 'PingFang SC', 'Microsoft YaHei', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif",
   publisher: 'inherit',
 };
 
@@ -408,6 +424,11 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   const fallback = "'Noto Naskh Arabic', Georgia, serif";
   root.style.setProperty('--r-font', s.latinFont === 'publisher' ? 'inherit' : `${latin}, ${arabic}, ${fallback}`);
   root.style.setProperty('--r-font-rtl', s.arabicFont === 'publisher' ? 'inherit' : `${arabic}, ${latin}, ${fallback}`);
+  const cjk = familyFor(s.cjkFont, CJK);
+  root.style.setProperty('--r-font-cjk', s.cjkFont === 'system' || s.cjkFont === 'publisher' ? 'inherit' : `${cjk}, ${latin}, ${fallback}`);
+  // Headings keep the default faces unless asked to follow the text's.
+  root.style.setProperty('--r-font-head', s.headingsFont ? 'var(--r-font)' : (s.latinFont === 'publisher' ? 'inherit' : `${LATIN.lora}, ${ARABIC.uthman}, ${fallback}`));
+  root.style.setProperty('--r-font-head-rtl', s.headingsFont ? 'var(--r-font-rtl)' : (s.arabicFont === 'publisher' ? 'inherit' : `${ARABIC.uthman}, ${LATIN.lora}, ${fallback}`));
   root.style.setProperty('--r-size', `${s.fontSize}px`);
   root.style.setProperty('--r-lh', String(s.lineHeight));
   root.style.setProperty('--r-para', `${s.paragraphSpacing}em`);

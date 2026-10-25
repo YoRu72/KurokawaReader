@@ -65,7 +65,7 @@
   color: var(--r-dim); font-family: var(--font-ui); font-size: 13px;
 }
 .kr-doc-head .n { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--r-rule); display: grid; place-items: center; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
-.kr-doc-head .t { color: var(--r-fg); font-family: var(--r-font); font-size: 17px; font-weight: 600; }
+.kr-doc-head .t { color: var(--r-fg); font-family: var(--r-font-head); font-size: 17px; font-weight: 600; }
 .kr-doc-head .a { display: block; font-size: 12px; }
 .kr-doc-head img { width: 36px; height: 52px; object-fit: cover; border-radius: 4px; }
 
@@ -83,6 +83,12 @@
   font-feature-settings: 'rlig' 1, 'liga' 1, 'calt' 1, 'ccmp' 1, 'mark' 1, 'mkmk' 1, 'curs' 1;
   text-justify: inter-word;
   hyphens: manual;
+}
+/* Japanese, Chinese and Korean text in the face chosen for it (the publisher's, or the system's, when none). */
+.kr-content:is(:lang(ja), :lang(zh), :lang(ko)), .kr-content :is(:lang(ja), :lang(zh), :lang(ko)), .cjk-book .kr-content { font-family: var(--r-font-cjk); }
+/* Headings in the default faces (a face chosen for the text is for the text), unless set to follow it. */
+.kr-content :is(h1, h2, h3, h4, h5, h6) { font-family: var(--r-font-head); }
+.kr-content[dir='rtl'] :is(h1, h2, h3, h4, h5, h6), .kr-content :is(h1, h2, h3, h4, h5, h6):is([dir='rtl'], :lang(ar), :lang(fa), :lang(ur)) { font-family: var(--r-font-head-rtl);
 }
 .kr-content { font-feature-settings: 'rlig' 1, 'liga' 1, 'calt' 1, 'ccmp' 1, 'kern' 1; font-variant-ligatures: common-ligatures contextual; }
 .kr-content p, .kr-content li, .kr-content blockquote, .kr-content dd { margin: 0 0 var(--r-para); }
@@ -246,7 +252,37 @@ html[dir='rtl'] .pdf-bar input[type='range'] { direction: rtl; }
 .pdf-bar input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; }
 .pdf-bar form button { height: 40px; }
 .pdf-bar .icon-btn { width: 40px; height: 40px; }
+/* Its two parts: the page's place, and the tools. One row where there is room; two rows ("by orientation" on an
+   upright screen, or always); or a column down the side with the slider upright. */
+.pdf-bar { flex-wrap: wrap; row-gap: 2px; }
+.pdf-bar-nav, .pdf-bar-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pdf-bar-nav { flex: 1 1 260px; }
+.pdf-bar-tools { flex: 0 0 auto; justify-content: center; }
+.pdf-bar[data-layout='row'] { flex-wrap: nowrap; }
+.pdf-bar[data-layout='row'] .pdf-bar-nav { flex: 1 1 auto; }
+.pdf-bar[data-layout='rows'] .pdf-bar-nav, .pdf-bar[data-layout='rows'] .pdf-bar-tools { flex: 1 1 100%; }
+.pdf-bar[data-layout='rows'] .pdf-bar-tools, .pdf-bar[data-layout='auto'] .pdf-bar-tools:not(:first-child) { justify-content: center; }
+@media (orientation: portrait) {
+  .pdf-bar[data-layout='auto'] .pdf-bar-nav, .pdf-bar[data-layout='auto'] .pdf-bar-tools { flex: 1 1 100%; }
+  .pdf-bar[data-layout='auto'] { border-radius: 28px; }
+}
+.pdf-bar[data-layout='rows'] { border-radius: 28px; }
+.pdf-bar[data-layout='side'] {
+  left: auto; right: 12px; top: 50%; bottom: auto; transform: translateY(-50%); width: 56px; max-height: calc(100vh - 140px);
+  flex-direction: column; flex-wrap: nowrap; padding: 8px 6px; border-radius: 28px; overflow: hidden auto;
+}
+html[dir='rtl'] .pdf-bar[data-layout='side'] { right: auto; left: 12px; }
+.pdf-bar[data-layout='side'] .pdf-bar-nav, .pdf-bar[data-layout='side'] .pdf-bar-tools { flex-direction: column; flex: 0 0 auto; width: 100%; }
+.pdf-bar[data-layout='side'] .pdf-bar-nav { flex: 1 1 auto; min-height: 0; }
+.pdf-bar[data-layout='side'] .pdf-bar-nav .icon-btn:first-child svg, .pdf-bar[data-layout='side'] .pdf-bar-nav .icon-btn:nth-child(3) svg { transform: rotate(90deg); }
+.pdf-bar[data-layout='side'] input[type='range'] { writing-mode: vertical-lr; direction: rtl; width: 40px; height: auto; flex: 1 1 120px; min-width: 0; min-height: 120px; }
+html[dir='rtl'] .pdf-bar[data-layout='side'] input[type='range'] { direction: rtl; }
+.pdf-bar[data-layout='side'] .pcount { display: none; }
+.pdf-bar[data-layout='side'] form { flex-direction: column; }
+.pdf-bar[data-layout='side'] input[type='number'] { width: 44px; }
 .reader-view.immersive .pdf-bar { transform: translateX(-50%) translateY(140%); opacity: 0; pointer-events: none; }
+.reader-view.immersive .pdf-bar[data-layout='side'] { transform: translateY(-50%) translateX(140%); }
+html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'] { transform: translateY(-50%) translateX(-140%); }
 .pdf-loading { position: absolute; inset: 0; display: grid; place-items: center; }
 .pdf-scroll { padding-bottom: 120px; }
 

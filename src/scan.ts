@@ -696,17 +696,36 @@ export function applyFilter(img: Img, f: Filter, adj: Adjust = {}): Img {
   black = Math.min(black, 150);
   const stretch = (v: number) => clamp(((v - black) / Math.max(1, 245 - black)) * 255, 0, 255);
   if (f === 'bw') {
-    // Local threshold (Sauvola) on the evened page.
-    const iw = w + 1; const I = new Float64Array(iw * (h + 1)), I2 = new Float64Array(iw * (h + 1));
-    for (let y = 0; y < h; y++) { let s = 0, s2 = 0; for (let x = 0; x < w; x++) { const v = norm[y * w + x]; s += v; s2 += v * v; I[(y + 1) * iw + x + 1] = I[y * iw + x + 1] + s; I2[(y + 1) * iw + x + 1] = I2[y * iw + x + 1] + s2; } }
+    // Local threshold (Sauvola) on the evened page: the window's mean and spread from box sums, taken down each
+    // column first (two single-precision planes), then along each row (a running sum) — no integral image,
+    // which at a page's full size is two double-precision planes more than a phone can spare.
     const r = Math.max(6, Math.round(Math.max(w, h) / 60));
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1), y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1); const c = (x1 - x0) * (y1 - y0);
-      const s = I[y1 * iw + x1] - I[y0 * iw + x1] - I[y1 * iw + x0] + I[y0 * iw + x0]; const s2 = I2[y1 * iw + x1] - I2[y0 * iw + x1] - I2[y1 * iw + x0] + I2[y0 * iw + x0];
-      const m = s / c, sd = Math.sqrt(Math.max(0, s2 / c - m * m));
-      const t = m * (1 + 0.2 * (sd / 128 - 1));
-      const v = norm[y * w + x] < Math.min(t, 235) - (adj.brightness ?? 0) * 60 ? 0 : 255;
-      const o = (y * w + x) * 4; out[o] = out[o + 1] = out[o + 2] = v; out[o + 3] = 255;
+    const C = new Float32Array(n), C2 = new Float32Array(n);
+    for (let x = 0; x < w; x++) {
+      let s = 0, s2 = 0;
+      for (let y = 0; y < Math.min(h, r + 1); y++) { const v = norm[y * w + x]; s += v; s2 += v * v; }
+      for (let y = 0; y < h; y++) {
+        C[y * w + x] = s; C2[y * w + x] = s2;
+        const yin = y + r + 1, yout = y - r;
+        if (yin < h) { const v = norm[yin * w + x]; s += v; s2 += v * v; }
+        if (yout >= 0) { const v = norm[yout * w + x]; s -= v; s2 -= v * v; }
+      }
+    }
+    const bright = (adj.brightness ?? 0) * 60;
+    for (let y = 0; y < h; y++) {
+      const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1); const rows = y1 - y0; const o = y * w;
+      let s = 0, s2 = 0;
+      for (let x = 0; x < Math.min(w, r + 1); x++) { s += C[o + x]; s2 += C2[o + x]; }
+      for (let x = 0; x < w; x++) {
+        const c = (Math.min(w, x + r + 1) - Math.max(0, x - r)) * rows;
+        const m = s / c, sd = Math.sqrt(Math.max(0, s2 / c - m * m));
+        const t = m * (1 + 0.2 * (sd / 128 - 1));
+        const v = norm[o + x] < Math.min(t, 235) - bright ? 0 : 255;
+        const q = (o + x) * 4; out[q] = out[q + 1] = out[q + 2] = v; out[q + 3] = 255;
+        const xin = x + r + 1, xout = x - r;
+        if (xin < w) { s += C[o + xin]; s2 += C2[o + xin]; }
+        if (xout >= 0) { s -= C[o + xout]; s2 -= C2[o + xout]; }
+      }
     }
     return { data: out, width: w, height: h };
   }

@@ -239,6 +239,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const sample = docs.map((d) => d.wrapper.textContent?.slice(0, 4000) ?? '').join('\n');
   const isJa = docs.some((d) => isJapanese(d.wrapper.textContent?.slice(0, 4000) ?? '', d.book.language));
   const isZh = !isJa && (/[\u4e00-\u9fff]/.test(sample) || docs.some((d) => /^zh/i.test(d.book.language ?? '')));
+  const isKo = !isJa && !isZh && /[\uac00-\ud7af]/.test(sample);
+  scroll.classList.toggle('cjk-book', isJa || isZh || isKo);
+  if (isJa || isZh || isKo) scroll.dataset.cjk = isJa ? 'ja' : isZh ? 'zh' : 'ko';
   if (isZh) {
     // Pinyin above the characters of Chinese books (same switch as furigana; readings load from the CDN once).
     let py: (() => void) & { refresh?: () => void } | null = null;
@@ -1113,16 +1116,21 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const count = h('span', { class: 'pcount' });
   let viewer: PdfViewer;
 
-  const bar = h('div', { class: 'pdf-bar' },
+  // The page bar: the page's place (arrows, slider, count) and the tools (go to, zoom, fit) — two rows when
+  // the screen is upright, one when it is wide, or down one side, as set.
+  const bar = h('div', { class: 'pdf-bar', dataset: { layout: getSettings().pdfBar } },
+    h('div', { class: 'pdf-bar-nav' },
     iconButton('chevronLeft', t('previousPage'), () => viewer.goTo(viewer.current - 1)),
     slider,
     iconButton('chevronRight', t('nextPage'), () => viewer.goTo(viewer.current + 1)),
-    count,
+    count),
+    h('div', { class: 'pdf-bar-tools' },
     h('form', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, onsubmit: (e: Event) => { e.preventDefault(); const n = Number(pageInput.value); if (n) viewer.goTo(n); pageInput.blur(); } }, pageInput, h('button', { class: 'btn small', type: 'submit' }, t('go'))),
     iconButton('zoomOut', t('zoomOut'), () => viewer.zoom(-0.15)),
     iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
-    iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth()),
+    iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth())),
   );
+  onDispose(onSettingsChange((st) => { bar.dataset.layout = st.pdfBar; }));
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), () => navigate('/')),
     title,

@@ -4,7 +4,7 @@
 import { h, icon, openSheet, toast, pickButton, debounce } from './dom';
 import { t, localDigits, getLang, countPages } from '../i18n';
 import * as S from '../scan';
-import { runner, pickFiles, pdfBlob } from './pdftools';
+import { runner, pickFiles, pdfBlob, onSheetClosed } from './pdftools';
 import { sortable, placeNumber } from './sortable';
 import { scanWork, parallel } from '../scanpool';
 import type { Look, Prepared } from '../scanops';
@@ -52,9 +52,12 @@ async function previewOf(p: Page): Promise<S.Img> {
   return p.preview;
 }
 
+const thumbSeq = new WeakMap<Page, number>();
 async function makeThumb(p: Page): Promise<void> {
   if (p.pending) return;
+  const my = (thumbSeq.get(p) ?? 0) + 1; thumbSeq.set(p, my);
   const b = await scanWork<Blob>({ op: 'thumb', preview: await previewOf(p), look: lookOf(p) });
+  if (thumbSeq.get(p) !== my) return; // (Turned again meanwhile: the later thumb is the one to show.)
   if (p.thumb) URL.revokeObjectURL(p.thumb);
   p.thumb = URL.createObjectURL(b);
 }
@@ -91,11 +94,12 @@ export function scannerSheet(onDone?: () => void): void {
     await pooled(fresh, parallel(), async (p) => {
       try {
         const r = await scanWork<Prepared>({ op: 'prepare', blob: p.file, maxSide: PREVIEW, autoCrop: set.autoCrop, autoTurn: set.autoTurn, flatten: set.flatten, split: set.split, filter: set.filter, rtl: getLang() === 'ar' });
+        const at = pages.indexOf(p); if (at < 0) return; // (Removed while its photo was being read.)
         Object.assign(p, r.looks[0]); p.preview = r.preview; hold(p); p.thumb = URL.createObjectURL(r.thumbs[0]); p.pending = false;
         // A book open on two pages became two pages: the second one goes right after the first.
         for (let k = 1; k < r.looks.length; k++) {
           const q: Page = { ...r.looks[k], file: p.file, preview: null, thumb: URL.createObjectURL(r.thumbs[k]), pending: false, key: ++keySeq };
-          pages.splice(pages.indexOf(p) + k, 0, q);
+          pages.splice(at + k, 0, q);
         }
         if (r.looks.length > 1) draw();
       } catch (e) {
@@ -141,10 +145,12 @@ export function scannerSheet(onDone?: () => void): void {
     stale();
     if (!pages.length) gridEl.replaceChildren(h('div', { class: 'scan-empty' }, icon('camera'), h('p', null, t('scanEmpty'))));
     else { const want = pages.map(tileFor); if (gridEl.children.length !== want.length || want.some((el, i) => gridEl.children[i] !== el)) gridEl.replaceChildren(...want); pages.forEach(paintTile); }
-    go.disabled = asImages.disabled = !pages.length || pages.some((p) => p.pending);
+    go.disabled = asImages.disabled = r.running || !pages.length || pages.some((p) => p.pending);
     count.textContent = pages.length ? countPages(pages.length) : '';
   };
-  sortable(gridEl, '.page-tile', moveTo, sh.body);
+  const offSort = sortable(gridEl, '.page-tile', moveTo, sh.body);
+  // Closed: the photos (megabytes each), the thumbs' URLs and the document's listeners are let go.
+  onSheetClosed(sh.el, () => { offSort(); for (const p of pages) { if (p.thumb) URL.revokeObjectURL(p.thumb); p.preview = null; } held.length = 0; pages.length = 0; tiles.clear(); });
 
   // The camera: the scanner's own (the page outlined as it is found, taken by itself when held steady), each
   // photo read as it is taken; where that cannot be had, the system's camera — a file input asking for the back
@@ -157,6 +163,7 @@ export function scannerSheet(onDone?: () => void): void {
   const systemCamera = () => {
     const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' } }) as HTMLInputElement;
     input.addEventListener('change', () => { const fs = [...(input.files ?? [])]; input.remove(); void add(fs); });
+    input.addEventListener('cancel', () => input.remove());
     document.body.append(input); input.click();
   };
   const count = h('span', { class: 'src' });
@@ -217,8 +224,14 @@ export function scannerSheet(onDone?: () => void): void {
     const p = pages[k];
     const work: Look = { quad: p.quad.map((c) => ({ ...c })) as S.Quad, curve: p.curve, flatten: p.flatten, turn: p.turn, filter: p.filter, adj: { ...p.adj } };
     // (Corners moved: how the page bends is looked for again, once they are let go.)
-    const recurve = debounce(() => { void scanWork<S.Curve | null>({ op: 'curve', preview, quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), turn: work.turn }).then((c) => { work.curve = c; syncFlat(); refresh(); }); }, 250);
+    // The bend is found anew after the corners settle (and 'Done' waits for it, so the page keeps the bend of
+    // the corners it has, not of the corners before the last drag); nothing runs once the editor is closed.
+    let closed = false, curveDue = false, curveJob: Promise<void> | null = null;
+    const findCurve = () => { curveDue = false; curveJob = scanWork<S.Curve | null>({ op: 'curve', preview, quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), turn: work.turn }).then((c) => { if (closed) return; work.curve = c; syncFlat(); refresh(); }); };
+    const recurveSoon = debounce(() => { if (!closed && curveDue) findCurve(); }, 250);
+    const recurve = () => { curveDue = true; recurveSoon(); };
     const ed = openSheet(t('scanEditPage', { n: localDigits(String(k + 1)) }), t('close'), { stack: true });
+    onSheetClosed(ed.el, () => { closed = true; });
     ed.body.style.fontFamily = 'var(--font-ui)';
     ed.el.classList.add('scan-editor');
     const preview = p.preview!;
@@ -272,7 +285,7 @@ export function scannerSheet(onDone?: () => void): void {
     });
     // (The latest change wins: a picture still being made for an earlier one is not shown.)
     let viewSeq = 0;
-    const refresh = debounce(() => { if (mode !== 'result') return; const my = ++viewSeq; void scanWork<S.Img>({ op: 'view', preview, look: lookOf(work), side: 1100 }).then((img) => { if (my === viewSeq) toCanvas(img, result); }); }, 120);
+    const refresh = debounce(() => { if (mode !== 'result' || closed) return; const my = ++viewSeq; void scanWork<S.Img>({ op: 'view', preview, look: lookOf(work), side: 1100 }).then((img) => { if (my === viewSeq) toCanvas(img, result); }); }, 120);
     const setMode = (m: typeof mode) => {
       mode = m; stage.hidden = m !== 'crop'; result.hidden = m !== 'result';
       cropChip.classList.toggle('on', m === 'crop'); resultChip.classList.toggle('on', m === 'result');
@@ -302,6 +315,9 @@ export function scannerSheet(onDone?: () => void): void {
     ed.body.append(tools, h('div', { class: 'scan-view' }, stage, result), chips,
       h('div', { class: 'scan-sliders' }, slider(t('brightness'), 'brightness', -0.4, 0.4), slider(t('contrast'), 'contrast', -0.4, 0.6)));
     const apply = async (all: boolean) => {
+      if (curveDue) findCurve();
+      await curveJob;
+      closed = true;
       Object.assign(p, { quad: S.orderQuad(work.quad.map((c) => ({ ...c }))), curve: work.curve, flatten: work.flatten, turn: work.turn, filter: work.filter, adj: { ...work.adj } });
       ed.close();
       // (Its place: moved when another number was typed.)

@@ -63,6 +63,7 @@ export function pickFiles(accept: string, multiple: boolean): Promise<File[]> {
   return new Promise((res) => {
     const input = h('input', { type: 'file', accept, multiple, style: { display: 'none' } }) as HTMLInputElement;
     input.addEventListener('change', () => { res([...(input.files ?? [])]); input.remove(); });
+    input.addEventListener('cancel', () => { res([]); input.remove(); });
     document.body.append(input); input.click();
   });
 }
@@ -96,6 +97,12 @@ async function withPassword<T>(src: Source, fn: (s: Source) => Promise<T>): Prom
 }
 
 /** Progress line, bar and the finished file's actions, in a sheet. */
+/** Run `dispose` once the sheet's element has left the document (its close): listeners, URLs, documents. */
+export function onSheetClosed(el: HTMLElement, dispose: () => void): void {
+  const obs = new MutationObserver(() => { if (el.isConnected) return; obs.disconnect(); dispose(); });
+  obs.observe(document.body, { childList: true });
+}
+
 export function runner(body: HTMLElement, onDone?: () => void) {
   const status = h('p', { class: 'src', hidden: true });
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
@@ -118,6 +125,7 @@ export function runner(body: HTMLElement, onDone?: () => void) {
   const api = {
     /** What it was made from has changed: the file made before is no longer this one, so its buttons go. */
     stale() { if (running || result.hidden) return; result.hidden = true; status.hidden = true; track.hidden = true; result.replaceChildren(); },
+    get running() { return running; },
     progress(pct: number) { track.hidden = false; bar.style.width = `${Math.round(pct)}%`; report?.(pct); },
     async run(buttons: HTMLButtonElement[], work: () => Promise<{ blob: Blob; name: string } | null>) {
       buttons.forEach((b) => { b.disabled = true; });
@@ -183,7 +191,7 @@ function imagesSheet(onDone?: () => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const files: { file: File; url: string }[] = [];
   const list = h('div', { class: 'tool-list' });
-  sortable(list, '.tool-row', (a, b) => move(a, b), sh.body);
+  { const off = sortable(list, '.tool-row', (a, b) => move(a, b), sh.body); onSheetClosed(sh.el, () => { off(); files.forEach((f) => URL.revokeObjectURL(f.url)); }); }
   let size: PageSize = 'fit'; let margin = 0;
   const render = () => {
     list.replaceChildren();
@@ -222,7 +230,7 @@ function docsSheet(books: Book[], onDone?: () => void): void {
   type Part = { name: string; file: Blob; format?: Book['format'] };
   const parts: Part[] = [];
   const list = h('div', { class: 'tool-list' });
-  sortable(list, '.tool-row', (a, b) => move(a, b), sh.body);
+  onSheetClosed(sh.el, sortable(list, '.tool-row', (a, b) => move(a, b), sh.body));
   let paper: 'a4' | 'letter' = 'a4';
   const render = () => {
     list.replaceChildren();
@@ -292,7 +300,7 @@ function mergeSheet(pdfs: Book[], preset: Book | undefined, onDone?: () => void)
   sh.body.style.fontFamily = 'var(--font-ui)';
   const parts: (Source & { range: string; count?: number })[] = [];
   const list = h('div', { class: 'tool-list' });
-  sortable(list, '.tool-row', (a, b) => move(a, b), sh.body);
+  onSheetClosed(sh.el, sortable(list, '.tool-row', (a, b) => move(a, b), sh.body));
   const render = () => {
     list.replaceChildren();
     if (!parts.length) list.append(h('p', { class: 'hint' }, t('nothingAdded')));
@@ -416,7 +424,7 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   };
   const order = () => { gridEl.replaceChildren(...pages.map(tileOf)); pages.forEach(paint); sync(); };
   const moveTo = (a: number, b: number) => { if (a === b) return; pages.splice(b, 0, pages.splice(a, 1)[0]); order(); };
-  sortable(gridEl, '.page-tile', moveTo, sh.body);
+  onSheetClosed(sh.el, sortable(gridEl, '.page-tile', moveTo, sh.body));
 
   // Two ways to choose, kept in step: tapping pages writes their numbers in the field, and numbers typed there
   // choose the pages.
@@ -572,6 +580,7 @@ async function toImagesSheet(src: Source): Promise<void> {
     }
   }
   const n = doc.numPages;
+  { const d = doc; onSheetClosed(sh.el, () => void d.loadingTask.destroy()); }
   let fmt: 'png' | 'jpeg' = 'png'; let dpi = '150';
   const range = h('input', { type: 'text', dir: 'ltr', class: 'tool-range', placeholder: '1-3, 7' }) as HTMLInputElement;
   sh.body.append(h('p', { class: 'src' }, h('bdi', null, src.name), ' · ', t('pageCount', { n })), field(t('pagesOptional'), range),

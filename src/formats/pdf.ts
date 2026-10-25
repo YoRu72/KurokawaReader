@@ -188,7 +188,8 @@ export class PdfViewer {
             }
           }
           const info = await nat.pdf.pdfOpen({ path: uri });
-          if (!this.destroyed && info.pageCount === this.total) {
+          if (this.destroyed || info.pageCount !== this.total) { void nat.pdf.pdfClose().catch(() => undefined); return; }
+          {
             this.native = nat.pdf;
             // Redraw what pdf.js already painted so non-embedded Arabic fonts shape correctly.
             for (const s of this.shown.values()) { s.level = 0; this.dropTiles(s); }
@@ -487,9 +488,12 @@ export class PdfViewer {
       const textDiv = h('div', { class: 'textLayer' });
       el.appendChild(textDiv);
       // Our own layer: words in reading order, harakat inside their letters (see src/pdflayer.ts).
-      const pending = buildTextLayer(page, page.getViewport({ scale: this.scale }), textDiv);
+      const at = this.scale;
+      const pending = buildTextLayer(page, page.getViewport({ scale: at }), textDiv);
       s.textCancel = () => void pending.then((l) => l.cancel());
       await pending;
+      // (Zoomed meanwhile: this layer is for the old size; the new one is built again.)
+      if (this.shown.get(n) !== s || at !== this.scale || s.text !== 'building') { textDiv.remove(); return; }
       textDiv.appendChild(h('div', { class: 'endOfContent' }));
       s.text = 'done';
     } catch { s.text = 'done'; /* text layer is optional */ }
@@ -519,6 +523,8 @@ export class PdfViewer {
     // Pictures stay (stretched) until redrawn; tiles and text layers belong to the old size.
     for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
     this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    // (Spare canvases are the old size: of no use again.)
+    this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
     this.running?.cancel();
     this.goTo(anchorPage, rel);
     this.frame();

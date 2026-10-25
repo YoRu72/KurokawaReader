@@ -5,7 +5,7 @@ import { toast, h } from './dom';
 import { t } from '../i18n';
 import { getSettings } from '../settings';
 
-export interface FsPlugin { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }>; appendFile?(o: { path: string; data: string; directory: string }): Promise<void> }
+export interface FsPlugin { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }>; appendFile?(o: { path: string; data: string; directory: string }): Promise<void>; rmdir?(o: { path: string; directory: string; recursive?: boolean }): Promise<void> }
 interface SharePlugin { share(o: { title?: string; text?: string; url?: string; files?: string[]; dialogTitle?: string }): Promise<unknown> }
 interface KrPlugin { processText(o: { text: string; readonly?: boolean }): Promise<void>; saveToGallery?(o: { data: string; name: string; folder: string }): Promise<{ path: string }>; saveToDownloads?(o: { path: string; name: string; mime: string }): Promise<{ path: string }> }
 interface Cap { getPlatform?(): string; isNativePlatform?(): boolean; Plugins?: { Filesystem?: FsPlugin; Share?: SharePlugin; Kurokawa?: KrPlugin } }
@@ -70,8 +70,14 @@ export async function shareFile(blob: Blob, filename: string, title?: string): P
   const c = cap();
   if (c?.isNativePlatform?.() && c.Plugins?.Share) {
     try {
-      const uri = await writeCache(blob, `share-${Date.now() % 100000}`, filename);
-      if (uri) { await c.Plugins.Share.share({ title, files: [uri], dialogTitle: title }); return 'shared'; }
+      const dir = `share-${Date.now() % 100000}`;
+      const uri = await writeCache(blob, dir, filename);
+      if (uri) {
+        // (The copy is removed once the other app has had its minute to read it; the rest go at the next launch.)
+        const drop = () => window.setTimeout(() => void c.Plugins!.Filesystem?.rmdir?.({ path: `kr-share/${dir}`, directory: 'CACHE', recursive: true }).catch(() => undefined), 60_000);
+        try { await c.Plugins.Share.share({ title, files: [uri], dialogTitle: title }); } finally { drop(); }
+        return 'shared';
+      }
     } catch (e) { if ((e as Error).message?.includes('cancel')) return 'shared'; console.warn('[kurokawa] native share failed', e); }
   }
   const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });

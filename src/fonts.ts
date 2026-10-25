@@ -2,7 +2,7 @@
 // at start-up, so they work offline and show up in the Visual Options lists.
 import { db, uid } from './db';
 
-export type FontScript = 'latin' | 'arabic';
+export type FontScript = 'latin' | 'arabic' | 'cjk';
 export interface CustomFont { id: string; name: string; family: string; script: FontScript; size: number }
 
 let cache: CustomFont[] | null = null;
@@ -30,7 +30,8 @@ export async function loadFonts(): Promise<void> {
 }
 
 function guessScript(name: string, bytes: Uint8Array): FontScript {
-  if (/arab|naskh|kufi|thuluth|ruqaa|amiri|cairo|tajawal|almarai|uthman|sultan|scheherazade|lateef|harmattan|noto.*arab/i.test(name)) return 'arabic';
+  if (/arab|naskh|kufi|thuluth|ruqaa|amiri|cairo|tajawal|almarai|uthman|sultan|mohanad|scheherazade|lateef|harmattan|noto.*arab/i.test(name)) return 'arabic';
+  if (/cjk|mincho|gothic|hiragino|meiryo|yu ?(gothic|mincho)|songti|heiti|simsun|simhei|pingfang|yahei|batang|dotum|gulim|malgun|nanum|source ?han|noto.*(jp|sc|tc|kr|hk)\b|\b(jp|sc|tc|kr)\b/i.test(name)) return 'cjk';
   // Look for an Arabic cmap range marker is overkill; fall back to the name heuristic.
   void bytes;
   return 'latin';

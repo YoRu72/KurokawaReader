@@ -37,6 +37,12 @@
    Arabic-Indic ones; leave both out of its range so they fall through to Inter
    (Arabic digits are produced explicitly with localDigits()). */
 @font-face {
+  font-family: 'AL-Mohanad';
+  src: url('../assets/fonts/AL-Mohanad.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
   font-family: 'Sultan';
   src: url('../assets/fonts/Sultan-Medium.ttf') format('truetype');
   font-weight: 400 600;

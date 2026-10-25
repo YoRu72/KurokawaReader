@@ -7,7 +7,7 @@ import { colorField } from './colorpicker';
 import { isTouchDevice, t } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
-import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont } from '../settings';
+import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont } from '../settings';
 import { fontsSync } from '../fonts';
 
 type Section = 'theme' | 'background' | 'comfort' | 'type' | 'layout' | 'behaviour';
@@ -117,9 +117,14 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const customArabic = fontsSync().filter((f) => f.script === 'arabic').map((f): [ArabicFont, string] => [`custom:${f.id}`, f.name]);
   const sys = s.systemFonts.map((f): [string, string] => [`system:${f}`, f]);
   const latin: [LatinFont, string][] = [['lora', 'Lora'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
-  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
+  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['mohanad', 'المهند'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
+  const customCjk = fontsSync().filter((f) => f.script === 'cjk').map((f): [CjkFont, string] => [`custom:${f.id}`, f.name]);
+  const cjkBook = !!document.querySelector('.cjk-book');
+  const cjk: [CjkFont, string][] = [['system', t('fontSystemDefault')], ['mincho', t('fontMincho')], ['gothic', t('fontGothic')], ...customCjk, ...sys, ['publisher', t('fontPublisher')]];
   grid.append(section([t('latinFont'), 'latinFont'], segmented(latin, s.latinFont, (v) => { updateSettings({ latinFont: v }); rerender(); })));
   grid.append(section([t('arabicFont'), 'arabicFont'], segmented(arabic, s.arabicFont, (v) => { updateSettings({ arabicFont: v }); rerender(); }, true)));
+  if (cjkBook || customCjk.length) grid.append(section([t('cjkFont'), 'cjkFont'], segmented(cjk, s.cjkFont, (v) => { updateSettings({ cjkFont: v }); rerender(); })));
+  grid.append(toggle([t('headingsFont'), 'headingsFont'], s.headingsFont, (v) => updateSettings({ headingsFont: v })));
   grid.append(stepper([t('fontSize'), 'fontSize'], s.fontSize, 12, 40, 1, (v) => updateSettings({ fontSize: v }), (v) => `${v}`));
   grid.append(stepper([t('lineHeight'), 'lineHeight'], s.lineHeight, 1.2, 2.6, 0.1, (v) => updateSettings({ lineHeight: Math.round(v * 10) / 10 }), (v) => v.toFixed(1)));
   grid.append(stepper([t('wordSpacing'), 'wordSpacing'], s.wordSpacing, -0.05, 0.5, 0.01, (v) => updateSettings({ wordSpacing: round2(v) }), (v) => v.toFixed(2)));
@@ -146,6 +151,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('keepAwake'), 'keepAwake'], s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
   if (nativePlatform() === 'android') grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
   grid.append(toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
+  grid.append(section([t('pdfBar'), 'pdfBar'], segmented([['auto', t('pdfBarAuto')], ['rows', t('pdfBarRows')], ['row', t('pdfBarRow')], ['side', t('pdfBarSide')]] as [VisualSettings['pdfBar'], string][], s.pdfBar, (v) => { updateSettings({ pdfBar: v }); rerender(); })));
   grid.append(toggle([t('pdfPageNumbers'), 'pdfPageNumbers'], s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
   const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
   grid.append(section([t('pdfNoteStyle'), 'pdfNoteStyle'], segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
@@ -227,7 +233,7 @@ function colorInput(value: string, onChange: (v: string) => void): HTMLElement {
 function segmented<T extends string>(items: [T, string][], value: T, onPick: (v: T) => void, arabicFont = false): HTMLElement {
   const fam = (id: string): string | undefined => {
     if (id.startsWith('custom:')) { const f = fontsSync().find((x) => x.id === id.slice(7)); return f ? `'${f.family}'` : undefined; }
-    if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : undefined;
+    if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : id === 'mohanad' ? "'AL-Mohanad'" : undefined;
     return id === 'lora' ? "'Lora'" : undefined;
   };
   return h('div', { class: 'segmented' }, ...items.map(([id, label]) => { const f = fam(id); return h('button', { type: 'button', 'aria-pressed': String(value === id), onclick: () => onPick(id), style: f ? { fontFamily: f, fontSize: arabicFont ? '16px' : undefined } : undefined }, label); }));

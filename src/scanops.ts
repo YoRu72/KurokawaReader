@@ -124,11 +124,12 @@ export async function handle(m: Op): Promise<{ res: unknown; transfer: Transfera
     const look: Look = { quad: FULL, curve: null, flatten: m.flatten, turn: 0, filter: m.filter, adj: {} };
     if (m.autoCrop) { const f = S.detectPage(preview); look.quad = f.quad.map((c) => ({ x: c.x / preview.width, y: c.y / preview.height })) as S.Quad; }
     // Which way up first (on the page as found, flat), then the bend of its lines.
-    if (m.autoTurn) { const flat = render(preview, { ...look, curve: null, turn: 0, filter: 'original', adj: {} }, 900); look.turn = S.pageTurn(flat); }
+    const flat0 = m.autoTurn || m.split ? render(preview, { ...look, curve: null, turn: 0, filter: 'original', adj: {} }, 900) : null;
+    if (m.autoTurn && flat0) look.turn = S.pageTurn(flat0);
     // A book open on two pages: two pages, each its own (in reading order).
     let looks: Look[] = [look];
-    if (m.split) {
-      const g = S.findGutter(render(preview, { ...look, curve: null, filter: 'original', adj: {} }, 900));
+    if (m.split && flat0) {
+      const g = S.findGutter(S.rotate(flat0, look.turn));
       if (g !== null) { const [a, b] = splitQuad(look.quad, look.turn, g, preview.width, preview.height); looks = (m.rtl ? [b, a] : [a, b]).map((q) => ({ ...look, quad: q })); }
     }
     for (const l of looks) l.curve = curveOf(preview, l.quad, l.turn);
