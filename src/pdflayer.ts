@@ -8,7 +8,7 @@
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { findVertical, plainVerticalForms, type VPiece } from './pdfvertical';
-import { ltrRunsForward, joinLine, attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece } from './pdftext';
+import { ltrRunsForward, joinLine, attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece, findColumns } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
 type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean; hint?: boolean; glued?: boolean };
@@ -135,7 +135,7 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
  */
 export async function pageReadingText(page: PDFPageProxy): Promise<string> {
   const tc = await page.getTextContent();
-  const vp = page.getViewport({ scale: 1 });
+  const vp = page.getViewport({ scale: 1, rotation: 0 }); // (as written, whatever way the page is shown)
   const { lines, vert, turned, vTurned } = layText(tc.items as Item[], vp);
   const blocks: { y: number; text: string }[] = [];
   // Words regrouped into lines by their middles, as copying does: a verse number or a footnote mark set smaller
@@ -194,34 +194,6 @@ export function joinBreak(before: string, next: string): string {
   return '\n';
 }
 
-/** Column bounds [from, to) across the page when the words fall into columns, else null: a gutter that no word
- *  crosses, with a good share of the words on each side of it, the two sides standing over the same height. */
-function findColumns(rows: { l: number; r: number; y: number; text: string }[][]): [number, number][] | null {
-  const ws = rows.flat().filter((w) => w.text.trim());
-  if (ws.length < 4) return null;
-  const L = Math.min(...ws.map((w) => w.l)), R = Math.max(...ws.map((w) => w.r)); if (R - L < 100) return null;
-  const step = (R - L) / 200;
-  const gutters: [number, number][] = []; let open: number | null = null;
-  for (let x = L + step; x < R - step; x += step) {
-    let crossed = 0, left = 0, right = 0, lt = Infinity, lb = -Infinity, rt = Infinity, rb = -Infinity;
-    for (const w of ws) {
-      if (w.l < x - 0.5 && w.r > x + 0.5) { crossed++; if (crossed > ws.length * 0.04) break; continue; }
-      if (w.r <= x) { left++; lt = Math.min(lt, w.y); lb = Math.max(lb, w.y); } else { right++; rt = Math.min(rt, w.y); rb = Math.max(rb, w.y); }
-    }
-    const span = Math.max(lb - lt, rb - rt), shared = Math.min(lb, rb) - Math.max(lt, rt);
-    // (A heading or a table across both columns is let be: a few words may cross the gutter.)
-    const isGutter = crossed <= ws.length * 0.04 && left >= ws.length * 0.2 && right >= ws.length * 0.2 && span > 0 && (shared >= span * 0.35 || (Math.min(lb - lt, rb - rt) === 0 && shared >= -40));
-    if (isGutter && open === null) open = x; else if (!isGutter && open !== null) { gutters.push([open, x]); open = null; }
-  }
-  if (open !== null) gutters.push([open, R]);
-  const wide = gutters.filter(([a, b]) => b - a >= 8);
-  if (!wide.length || wide.length > 3) return null;
-  const bounds: [number, number][] = []; let from = -Infinity;
-  for (const [a, b] of wide) { bounds.push([from, (a + b) / 2]); from = (a + b) / 2; }
-  bounds.push([from, Infinity]);
-  return bounds;
-}
-
 /** Fill `container` (a .textLayer the size of the page) with the page's words. */
 export async function buildTextLayer(page: PDFPageProxy, viewport: { width: number; height: number; scale: number; transform: number[] }, container: HTMLElement): Promise<PdfTextLayer> {
   let cancelled = false;
@@ -230,13 +202,21 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
   if (cancelled) return handle;
   const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
   if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
-  const { lines, vert, turned, vTurned } = layText(tc.items as Item[], viewport);
+  // A page shown turned (its /Rotate): the text is laid out as the page was written, upright, and each box
+  // is then turned with the page.
+  const rot = (((viewport as { rotation?: number }).rotation ?? 0) % 360 + 360) % 360;
+  const laid = rot ? page.getViewport({ scale: viewport.scale, rotation: 0 }) : viewport;
+  const { lines, vert, turned, vTurned } = layText(tc.items as Item[], laid);
   const frag = document.createDocumentFragment();
-  const W = viewport.width, H = viewport.height;
+  const W = viewport.width, H = viewport.height, W0 = laid.width, H0 = laid.height;
+  const place = (x: number, y: number): [number, number] => (rot === 90 ? [H0 - y, x] : rot === 180 ? [W0 - x, H0 - y] : rot === 270 ? [y, W0 - x] : [x, y]);
+  const rotRad = (rot * Math.PI) / 180;
+  container.dataset.rot = String(rot);
   const span = (text: string, left: number, top: number, size: number, scaleX: number, rtl: boolean, angle = 0) => {
     const s = document.createElement('span');
     s.textContent = text;
     s.dir = rtl ? 'rtl' : 'ltr';
+    [left, top] = place(left, top); angle += rotRad;
     s.style.left = `${(100 * left / W).toFixed(3)}%`;
     s.style.top = `${(100 * top / H).toFixed(3)}%`;
     s.style.fontSize = `${size.toFixed(2)}px`;
@@ -244,9 +224,19 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     s.style.transform = `${angle ? `rotate(${angle}rad) ` : ''}scaleX(${scaleX.toFixed(4)})`;
     frag.appendChild(s);
   };
-  for (const line of lines) {
+  // Lines in reading order: column by column where the page has columns (so a selection across the page
+  // copies as it is read), the right column first on a right-to-left page.
+  const lineWords = lines.map((line) => wordsOf(line));
+  const pageCols = findColumns(lineWords);
+  let ordered = lines.map((line, i) => ({ line, words: lineWords[i] }));
+  if (pageCols) {
+    const rtlPage = isRtlText(lineWords.flat().map((w) => w.text).join(''));
+    const byCol = pageCols.map(([a, b]) => ordered.map(({ line, words }) => { const inCol = (w: { l: number; r: number }) => (w.l + w.r) / 2 >= a && (w.l + w.r) / 2 < b; return { line, words: words.filter(inCol) }; }).filter((x) => x.words.length));
+    if (rtlPage) byCol.reverse();
+    ordered = byCol.flat();
+  }
+  for (const { line, words } of ordered) {
     if (dbg && line.some((p) => p.text.includes(dbg))) console.warn('KR line', JSON.stringify(line.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), +p.y.toFixed(1), +p.h.toFixed(1), !!p.space, !!p.keep])));
-    const words = wordsOf(line);
     words.forEach((wd, i) => {
       const last = i === words.length - 1;
       // A word box covers exactly its letters; the space after it (for copying with the keyboard) hangs
@@ -266,12 +256,13 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     s.style.writingMode = 'vertical-rl';
     const size = Math.max(1, g.r - g.l);
     const natural = Math.max(1, [...text].length * size);
-    s.style.left = `${(100 * g.l / W).toFixed(3)}%`;
-    s.style.top = `${(100 * g.t / H).toFixed(3)}%`;
+    const [gl, gt] = place(g.l, g.t);
+    s.style.left = `${(100 * gl / W).toFixed(3)}%`;
+    s.style.top = `${(100 * gt / H).toFixed(3)}%`;
     s.style.fontSize = `${size.toFixed(2)}px`;
     s.style.lineHeight = '1';
     s.style.fontFamily = 'sans-serif';
-    s.style.transform = `scaleY(${Math.max(0.05, (g.b - g.t) / natural).toFixed(4)})`;
+    s.style.transform = `${rot ? `rotate(${rotRad}rad) ` : ''}scaleY(${Math.max(0.05, (g.b - g.t) / natural).toFixed(4)})`;
     s.dataset.len = String(g.b - g.t);
     frag.appendChild(s);
   }

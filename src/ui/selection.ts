@@ -1,6 +1,6 @@
 // Floating toolbar that appears over selected text: Copy · Search · Define ·
 // Translate · Highlight · Speak.
-import { joinLine, cleanPdfText, attachMarks, type LinePiece } from '../pdftext';
+import { joinLine, cleanPdfText, attachMarks, findColumns, type LinePiece } from '../pdftext';
 import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
@@ -68,13 +68,26 @@ export function selectionText(sel: Selection): string {
     if (/^\u2009+$/.test(text)) text = '\u2009'; // a real space the PDF draws (see scripts/patch-pdfjs.mjs)
     else if (!text.trim()) continue;
     const rc = el.getBoundingClientRect();
-    pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10 });
+    // (A page shown turned: its boxes are read back as the page was written.)
+    const rot = Number((el.parentElement as HTMLElement | null)?.dataset.rot ?? 0);
+    if (rot === 90) pieces.push({ text, l: rc.top, r: rc.bottom, y: -(rc.left + rc.right) / 2, h: rc.width || 10 });
+    else if (rot === 180) pieces.push({ text, l: -rc.right, r: -rc.left, y: -(rc.top + rc.bottom) / 2, h: rc.height || 10 });
+    else if (rot === 270) pieces.push({ text, l: -rc.bottom, r: -rc.top, y: (rc.left + rc.right) / 2, h: rc.width || 10 });
+    else pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10 });
   }
   const kept = attachMarks(pieces);
   kept.sort((a, b) => a.y - b.y);
   const lines: Piece[][] = [];
   for (const p of kept) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
-  const out = lines.map((line) => joinLine(line).text).filter(Boolean).join('\n');
+  // A page in columns is copied column by column (the right one first on a right-to-left page).
+  const cols = findColumns(lines);
+  let ordered = lines;
+  if (cols) {
+    const byCol = cols.map(([a, b]) => lines.map((line) => line.filter((p) => (p.l + p.r) / 2 >= a && (p.l + p.r) / 2 < b)).filter((l) => l.length));
+    if (isRtlText(kept.map((p) => p.text).join(''))) byCol.reverse();
+    ordered = byCol.flat();
+  }
+  const out = ordered.map((line) => joinLine(line).text).filter(Boolean).join('\n');
   const flat = fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
   return vText ? [flat, vText].filter(Boolean).join('\n') : flat;
 }
@@ -84,7 +97,8 @@ const COMMON_AR = /\b(في|من|على|إلى|الى|أن|ان|كان|هذا|ه�
 export function fixArabic(text: string): string {
   if (!/[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text)) return text;
   // Presentation forms (ﻻ, ﺑ …) → plain letters; tatweel out; ligature lam-alef into two letters.
-  let t = text.normalize('NFKC').replace(/\u0640/g, '');
+  // (The tatweel of «هـ», the Hijri year's mark, stays; the kashida of justified lines goes.)
+  let t = text.normalize('NFKC').replace(/\u0640+/g, (m, at: number, all: string) => (all[at - 1] === 'ه' && !/[\u0600-\u06ff]/.test(all[at + m.length] ?? '') ? '\u0640' : ''));
   return t.split('\n').map((line) => {
     if (!/[\u0600-\u06FF]/.test(line)) return line;
     const rev = reverseArabicRuns(line);

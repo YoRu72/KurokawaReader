@@ -181,3 +181,32 @@ export function attachMarks<T extends { text: string; l: number; r: number; y: n
   }
   return pieces.filter((p) => !placed.has(p));
 }
+
+/** Column bounds [from, to) across the page when the words fall into columns, else null: a gutter that no word
+ *  crosses, with a good share of the words on each side of it, the two sides standing over the same height. */
+export function findColumns(rows: { l: number; r: number; y: number; text: string }[][]): [number, number][] | null {
+  const ws = rows.flat().filter((w) => w.text.trim());
+  if (ws.length < 4) return null;
+  const L = Math.min(...ws.map((w) => w.l)), R = Math.max(...ws.map((w) => w.r)); if (R - L < 100) return null;
+  const step = (R - L) / 200;
+  const gutters: [number, number][] = []; let open: number | null = null;
+  for (let x = L + step; x < R - step; x += step) {
+    let crossed = 0, left = 0, right = 0, lt = Infinity, lb = -Infinity, rt = Infinity, rb = -Infinity;
+    for (const w of ws) {
+      if (w.l < x - 0.5 && w.r > x + 0.5) { crossed++; if (crossed > ws.length * 0.04) break; continue; }
+      if (w.r <= x) { left++; lt = Math.min(lt, w.y); lb = Math.max(lb, w.y); } else { right++; rt = Math.min(rt, w.y); rb = Math.max(rb, w.y); }
+    }
+    const span = Math.max(lb - lt, rb - rt), shared = Math.min(lb, rb) - Math.max(lt, rt);
+    // (A heading or a table across both columns is let be: a few words may cross the gutter.)
+    const isGutter = crossed <= ws.length * 0.04 && left >= ws.length * 0.2 && right >= ws.length * 0.2 && span > 0 && (shared >= span * 0.35 || (Math.min(lb - lt, rb - rt) === 0 && shared >= -40));
+    if (isGutter && open === null) open = x; else if (!isGutter && open !== null) { gutters.push([open, x]); open = null; }
+  }
+  if (open !== null) gutters.push([open, R]);
+  const wide = gutters.filter(([a, b]) => b - a >= 8);
+  if (!wide.length || wide.length > 3) return null;
+  const bounds: [number, number][] = []; let from = -Infinity;
+  for (const [a, b] of wide) { bounds.push([from, (a + b) / 2]); from = (a + b) / 2; }
+  bounds.push([from, Infinity]);
+  return bounds;
+}
+
