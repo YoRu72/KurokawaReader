@@ -18,7 +18,7 @@ import { isRtlText } from './i18n';
 /** Formats the converter can read. */
 export const convertible = (f: Book['format']) => !['image', 'cbz', 'anki', 'audio', 'unknown'].includes(f);
 
-export type Target = 'epub' | 'kindle' | 'docx' | 'pdf' | 'html' | 'md' | 'txt';
+export type Target = 'epub' | 'kindle' | 'docx' | 'pdf' | 'html' | 'md' | 'txt' | 'fb2' | 'odt' | 'rtf' | 'cbz';
 export interface Chapter { title: string; html: string; rtl: boolean }
 export interface ConvDoc {
   title: string; author?: string; lang?: string; rtl: boolean;
@@ -590,7 +590,165 @@ export const TARGETS: { id: Target; label: string; ext: string; mime: string; fr
   { id: 'html', label: 'HTML', ext: 'html', mime: 'text/html', from: () => true },
   { id: 'md', label: 'Markdown', ext: 'md', mime: 'text/markdown', from: () => true },
   { id: 'txt', label: 'Text', ext: 'txt', mime: 'text/plain', from: () => true },
+  { id: 'fb2', label: 'FictionBook (FB2)', ext: 'fb2', mime: 'application/x-fictionbook+xml', from: () => true },
+  { id: 'odt', label: 'OpenDocument (ODT)', ext: 'odt', mime: 'application/vnd.oasis.opendocument.text', from: () => true },
+  { id: 'rtf', label: 'Rich Text (RTF)', ext: 'rtf', mime: 'application/rtf', from: () => true },
+  { id: 'cbz', label: 'Comic (CBZ)', ext: 'cbz', mime: 'application/vnd.comicbook+zip', from: (f) => f === 'pdf' || f === 'cbz' || f === 'image' },
 ];
+
+/* ------------------------------------------------------------------ */
+/* FB2, ODT, RTF: the chapters' blocks, with their headings, lists, emphasis and pictures as each format has them */
+/* ------------------------------------------------------------------ */
+
+type Run = { text: string; b?: boolean; i?: boolean; sup?: boolean };
+type Blk = { kind: 'h' | 'p' | 'li' | 'quote' | 'pre' | 'img'; level?: number; runs: Run[]; src?: string; rtl?: boolean };
+
+/** A chapter's HTML as plain blocks of runs. */
+function blocksOf(html: string): Blk[] {
+  const host = document.createElement('div'); host.innerHTML = html;
+  host.querySelectorAll('rt, rp, script, style').forEach((e) => e.remove());
+  const out: Blk[] = [];
+  const runsOf = (el: Element, st: { b?: boolean; i?: boolean; sup?: boolean } = {}): Run[] => {
+    const rs: Run[] = [];
+    for (const n of Array.from(el.childNodes)) {
+      if (n.nodeType === Node.TEXT_NODE) { const t = (n.textContent ?? '').replace(/\s+/g, ' '); if (t) rs.push({ text: t, ...st }); }
+      else if (n.nodeType === Node.ELEMENT_NODE) {
+        const e = n as Element; const tag = e.tagName.toLowerCase();
+        if (tag === 'br') { rs.push({ text: '\n', ...st }); continue; }
+        if (tag === 'img') { const src = e.getAttribute('src'); if (src) out.push({ kind: 'img', runs: [], src }); continue; }
+        rs.push(...runsOf(e, { b: st.b || tag === 'b' || tag === 'strong', i: st.i || tag === 'i' || tag === 'em', sup: st.sup || tag === 'sup' }));
+      }
+    }
+    return rs;
+  };
+  const walk = (el: Element) => {
+    for (const c of Array.from(el.children)) {
+      const tag = c.tagName.toLowerCase();
+      const rtl = c.getAttribute('dir') === 'rtl' || undefined;
+      if (/^h[1-6]$/.test(tag)) out.push({ kind: 'h', level: Number(tag[1]), runs: runsOf(c), rtl });
+      else if (tag === 'p' || tag === 'dd' || tag === 'dt' || tag === 'figcaption') out.push({ kind: 'p', runs: runsOf(c), rtl });
+      else if (tag === 'li') { if (c.querySelector('p, ul, ol')) walk(c); else out.push({ kind: 'li', runs: runsOf(c), rtl }); }
+      else if (tag === 'blockquote') { if (c.querySelector('p')) { const at = out.length; walk(c); for (let k = at; k < out.length; k++) out[k].kind = 'quote'; } else out.push({ kind: 'quote', runs: runsOf(c), rtl }); }
+      else if (tag === 'pre') out.push({ kind: 'pre', runs: [{ text: c.textContent ?? '' }], rtl });
+      else if (tag === 'img') { const src = c.getAttribute('src'); if (src) out.push({ kind: 'img', runs: [], src }); }
+      else if (tag === 'table') { for (const tr of Array.from(c.querySelectorAll('tr'))) out.push({ kind: 'p', runs: Array.from(tr.children).flatMap((td, i) => [...(i ? [{ text: ' | ' }] : []), ...runsOf(td)]), rtl }); }
+      else if (c.children.length && !c.querySelector('img') && !/^(ul|ol|div|section|article|header|footer|main|aside|nav|figure|details)$/.test(tag) && !c.querySelector('p, li, h1, h2, h3, h4')) out.push({ kind: 'p', runs: runsOf(c), rtl });
+      else walk(c);
+    }
+  };
+  walk(host);
+  return out.filter((b) => b.kind === 'img' || b.runs.some((r) => r.text.trim()));
+}
+
+const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+export async function buildFb2(d: ConvDoc, progress: Progress): Promise<Blob> {
+  progress('build', 10);
+  const imgIds = new Map<string, string>(); let k = 0;
+  const bins: string[] = [];
+  for (const [url, blob] of d.images) { const id = `img${++k}.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`; imgIds.set(url, id); bins.push(`<binary id="${id}" content-type="${blob.type || 'image/png'}">${(await blobToDataUrl(blob)).split(',')[1]}</binary>`); }
+  const runs = (rs: Run[]) => rs.map((r) => { let t = xml(r.text).replace(/\n/g, '<empty-line/>'); if (r.sup) t = `<sup>${t}</sup>`; if (r.i) t = `<emphasis>${t}</emphasis>`; if (r.b) t = `<strong>${t}</strong>`; return t; }).join('');
+  const sections = d.chapters.map((ch) => {
+    const body = blocksOf(ch.html).map((b) => b.kind === 'img' ? (imgIds.get(b.src!) ? `<image l:href="#${imgIds.get(b.src!)}"/>` : '') : b.kind === 'h' ? `<subtitle>${runs(b.runs)}</subtitle>` : b.kind === 'quote' ? `<cite><p>${runs(b.runs)}</p></cite>` : b.kind === 'pre' ? `<p><code>${runs(b.runs)}</code></p>` : `<p>${b.kind === 'li' ? '• ' : ''}${runs(b.runs)}</p>`).join('\n');
+    return `<section><title><p>${xml(ch.title)}</p></title>\n${body}\n</section>`;
+  });
+  const cover = d.cover ? `<coverpage><image l:href="#cover.${(d.cover.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}"/></coverpage>` : '';
+  if (d.cover) bins.push(`<binary id="cover.${(d.cover.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}" content-type="${d.cover.type || 'image/jpeg'}">${(await blobToDataUrl(d.cover)).split(',')[1]}</binary>`);
+  const [first = '', ...rest] = (d.author ?? '').split(' ');
+  const out = `<?xml version="1.0" encoding="UTF-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n<description><title-info>${d.author ? `<author><first-name>${xml(first)}</first-name><last-name>${xml(rest.join(' '))}</last-name></author>` : ''}<book-title>${xml(d.title)}</book-title>${d.lang ? `<lang>${xml(d.lang)}</lang>` : ''}${cover}</title-info><document-info><program-used>KurokawaReader</program-used></document-info></description>\n<body>\n${sections.join('\n')}\n</body>\n${bins.join('\n')}\n</FictionBook>`;
+  return new Blob([out], { type: 'application/x-fictionbook+xml' });
+}
+
+export async function buildOdt(d: ConvDoc, progress: Progress): Promise<Blob> {
+  progress('build', 10);
+  const zip = new JSZip();
+  zip.file('mimetype', 'application/vnd.oasis.opendocument.text', { compression: 'STORE' });
+  const pics: string[] = []; const picOf = new Map<string, string>(); let k = 0;
+  for (const [url, blob] of d.images) { const name = `Pictures/img${++k}.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`; picOf.set(url, name); zip.file(name, blob); pics.push(`<manifest:file-entry manifest:full-path="${name}" manifest:media-type="${blob.type || 'image/png'}"/>`); }
+  const runs = (rs: Run[]) => rs.map((r) => { const st = r.b && r.i ? 'BI' : r.b ? 'B' : r.i ? 'I' : r.sup ? 'Sup' : ''; const t = xml(r.text).replace(/\n/g, '<text:line-break/>'); return st ? `<text:span text:style-name="${st}">${t}</text:span>` : t; }).join('');
+  const body: string[] = [];
+  d.chapters.forEach((ch, i) => {
+    if (d.chapters.length > 1) body.push(`<text:h text:style-name="H1" text:outline-level="1"${i ? ' text:style-name="H1Break"' : ''}>${xml(ch.title)}</text:h>`);
+    for (const b of blocksOf(ch.html)) {
+      const dir = b.rtl ?? d.rtl;
+      if (b.kind === 'img') { const n = picOf.get(b.src!); if (n) body.push(`<text:p text:style-name="P"><draw:frame text:anchor-type="as-char" svg:width="12cm" svg:height="9cm"><draw:image xlink:href="${n}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></text:p>`); continue; }
+      if (b.kind === 'h') body.push(`<text:h text:style-name="H${Math.min(3, (b.level ?? 1) + 1)}" text:outline-level="${Math.min(3, (b.level ?? 1) + 1)}">${runs(b.runs)}</text:h>`);
+      else if (b.kind === 'li') body.push(`<text:list text:style-name="L1"><text:list-item><text:p text:style-name="${dir ? 'PR' : 'P'}">${runs(b.runs)}</text:p></text:list-item></text:list>`);
+      else body.push(`<text:p text:style-name="${b.kind === 'quote' ? 'Q' : b.kind === 'pre' ? 'Pre' : dir ? 'PR' : 'P'}">${runs(b.runs)}</text:p>`);
+    }
+  });
+  const styles = `<office:styles><style:default-style style:family="paragraph"><style:paragraph-properties fo:line-height="150%"/><style:text-properties fo:font-size="12pt" style:font-name-complex="Traditional Arabic" style:font-size-complex="14pt"/></style:default-style>
+<style:style style:name="P" style:family="paragraph"><style:paragraph-properties fo:margin-bottom="0.2cm" fo:text-align="justify"/></style:style>
+<style:style style:name="PR" style:family="paragraph" style:parent-style-name="P"><style:paragraph-properties style:writing-mode="rl-tb" fo:text-align="justify"/></style:style>
+<style:style style:name="Q" style:family="paragraph" style:parent-style-name="P"><style:paragraph-properties fo:margin-left="1cm" fo:margin-right="1cm"/><style:text-properties fo:font-style="italic"/></style:style>
+<style:style style:name="Pre" style:family="paragraph"><style:text-properties style:font-name="Liberation Mono" fo:font-size="10pt"/></style:style>
+<style:style style:name="H1" style:family="paragraph"><style:paragraph-properties fo:margin-top="0.6cm" fo:margin-bottom="0.3cm" fo:break-before="page"/><style:text-properties fo:font-size="20pt" fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
+<style:style style:name="H2" style:family="paragraph"><style:paragraph-properties fo:margin-top="0.5cm" fo:margin-bottom="0.2cm"/><style:text-properties fo:font-size="16pt" fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
+<style:style style:name="H3" style:family="paragraph"><style:paragraph-properties fo:margin-top="0.4cm" fo:margin-bottom="0.2cm"/><style:text-properties fo:font-size="14pt" fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
+<style:style style:name="B" style:family="text"><style:text-properties fo:font-weight="bold" style:font-weight-complex="bold"/></style:style>
+<style:style style:name="I" style:family="text"><style:text-properties fo:font-style="italic" style:font-style-complex="italic"/></style:style>
+<style:style style:name="BI" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style>
+<style:style style:name="Sup" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style>
+<text:list-style style:name="L1"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.5cm" text:min-label-width="0.5cm"/></text:list-level-style-bullet></text:list-style></office:styles>`;
+  const NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" office:version="1.2"';
+  zip.file('content.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${NS}><office:font-face-decls><style:font-face style:name="Liberation Mono" svg:font-family="'Liberation Mono'" style:font-family-generic="modern"/><style:font-face style:name="Traditional Arabic" svg:font-family="'Traditional Arabic'"/></office:font-face-decls><office:automatic-styles/><office:body><office:text>${body.join('\n')}</office:text></office:body></office:document-content>`);
+  zip.file('styles.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-styles ${NS}><office:font-face-decls><style:font-face style:name="Liberation Mono" svg:font-family="'Liberation Mono'" style:font-family-generic="modern"/><style:font-face style:name="Traditional Arabic" svg:font-family="'Traditional Arabic'"/></office:font-face-decls>${styles}</office:document-styles>`);
+  zip.file('meta.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-meta ${NS}><office:meta><dc:title>${xml(d.title)}</dc:title>${d.author ? `<meta:initial-creator>${xml(d.author)}</meta:initial-creator><dc:creator>${xml(d.author)}</dc:creator>` : ''}${d.lang ? `<dc:language>${xml(d.lang)}</dc:language>` : ''}<meta:generator>KurokawaReader</meta:generator></office:meta></office:document-meta>`);
+  zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>${pics.join('')}</manifest:manifest>`);
+  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.oasis.opendocument.text', compression: 'DEFLATE' });
+}
+
+export function buildRtf(d: ConvDoc, progress: Progress): Blob {
+  progress('build', 10);
+  // (RTF is 7-bit: every character beyond ASCII goes as \uN with a '?' fallback; Arabic and the rest read back as Unicode.)
+  const enc = (s: string) => Array.from(s).map((ch) => { const c = ch.codePointAt(0)!; if (c === 0x5c || c === 0x7b || c === 0x7d) return '\\' + ch; if (c < 0x80) return ch; if (c > 0xffff) { const hi = 0xd800 + ((c - 0x10000) >> 10), lo = 0xdc00 + ((c - 0x10000) & 0x3ff); return `\\u${hi - 0x10000}?\\u${lo - 0x10000}?`; } return `\\u${c > 0x7fff ? c - 0x10000 : c}?`; }).join('');
+  const runs = (rs: Run[]) => rs.map((r) => { let t = enc(r.text).replace(/\n/g, '\\line '); if (r.b) t = `{\\b ${t}}`; if (r.i) t = `{\\i ${t}}`; if (r.sup) t = `{\\super ${t}}`; return t; }).join('');
+  const out: string[] = ['{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Times New Roman;}{\\f1 Traditional Arabic;}}\\viewkind4\\uc1'];
+  out.push(`{\\pard\\qc\\fs40\\b ${enc(d.title)}\\par}`); if (d.author) out.push(`{\\pard\\qc\\fs24 ${enc(d.author)}\\par}`);
+  d.chapters.forEach((ch, i) => {
+    if (d.chapters.length > 1) out.push(`{\\pard${i ? '\\pagebb' : ''}\\sb360\\sa180\\fs32\\b ${enc(ch.title)}\\par}`);
+    for (const b of blocksOf(ch.html)) {
+      if (b.kind === 'img') continue;
+      const rtl = b.rtl ?? d.rtl; const pd = rtl ? '\\rtlpar\\qr' : '\\ltrpar\\ql';
+      if (b.kind === 'h') out.push(`{\\pard${pd}\\sb240\\sa120\\fs${b.level && b.level > 1 ? 28 : 32}\\b ${runs(b.runs)}\\par}`);
+      else if (b.kind === 'li') out.push(`{\\pard${pd}\\li360\\fi-220\\sa100 \\u8226?  ${runs(b.runs)}\\par}`);
+      else if (b.kind === 'quote') out.push(`{\\pard${pd}\\li500\\ri500\\sa120\\i ${runs(b.runs)}\\par}`);
+      else if (b.kind === 'pre') out.push(`{\\pard${pd}\\f1\\fs18 ${runs(b.runs).replace(/\n/g, '\\line ')}\\par}`);
+      else out.push(`{\\pard${pd}\\sa120\\fs24 ${runs(b.runs)}\\par}`);
+    }
+  });
+  out.push('}');
+  return new Blob([out.join('\n')], { type: 'application/rtf' });
+}
+
+/** A comic archive of the pages as pictures (a PDF's pages drawn; a book of pictures as they are). */
+export async function buildCbz(book: Book, file: Blob, progress: Progress, password?: string): Promise<Blob> {
+  const zip = new JSZip();
+  if (book.format === 'pdf') {
+    const pdfjs = await loadPdfjs();
+    const { openPdfjs } = await import('./pdfkeys');
+    const RES = new URL('./pdfjs/', import.meta.url).href;
+    const o = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), { cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false, password });
+    try {
+      const n = o.doc.numPages; const digits = String(n).length;
+      for (let i = 1; i <= n; i++) {
+        const page = await o.doc.getPage(i); const vp = page.getViewport({ scale: 1600 / Math.max(page.view[2] - page.view[0], page.view[3] - page.view[1]) });
+        const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvas: c, canvasContext: ctx, viewport: vp } as Parameters<typeof page.render>[0]).promise;
+        const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.9));
+        zip.file(`${String(i).padStart(digits, '0')}.jpg`, blob); page.cleanup(); c.width = c.height = 0;
+        progress('render', (i / n) * 90);
+      }
+    } finally { o.destroy(); }
+  } else {
+    // (A comic archive or a picture: its pictures in order.)
+    const src = await JSZip.loadAsync(file).catch(() => null);
+    if (src) { const names = Object.keys(src.files).filter((nm) => /\.(jpe?g|png|webp|gif)$/i.test(nm) && !src.files[nm].dir).sort(); let k = 0; for (const nm of names) zip.file(`${String(++k).padStart(String(names.length).length, '0')}${nm.slice(nm.lastIndexOf('.'))}`, await src.files[nm].async('blob')); }
+    else zip.file(`1.${(file.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`, file);
+  }
+  return zip.generateAsync({ type: 'blob', compression: 'STORE' });
+}
 
 export async function convertBook(book: Book, target: Target, progress: Progress, password?: string): Promise<{ blob: Blob; name: string }> {
   const file = await db.getFile(book.id);
@@ -608,9 +766,13 @@ export async function convertBook(book: Book, target: Target, progress: Progress
       console.warn('[kurokawa] layout PDF → DOCX failed, using the reflowed route', err);
     }
   }
+  if (target === 'cbz') { const blob = await buildCbz(book, file, progress, password); progress('done', 100); return { blob, name: `${slug(book.title)}.cbz` }; }
   const d = await readDocument(book, file, progress, password);
   let blob: Blob;
-  if (target === 'epub' || target === 'kindle') {
+  if (target === 'fb2') blob = await buildFb2(d, progress);
+  else if (target === 'odt') blob = await buildOdt(d, progress);
+  else if (target === 'rtf') blob = buildRtf(d, progress);
+  else if (target === 'epub' || target === 'kindle') {
     if (target === 'kindle') { d.fonts.clear(); }   // Kindle prefers its own typefaces; embedded fonts often fail its import
     blob = await buildEpub(d, progress);
   } else if (target === 'docx') blob = await buildDocx(d, progress);

@@ -64,7 +64,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
   };
   for (const tg of targets) {
     grid.append(h('button', { class: 'convert-target', type: 'button', onclick: () => void run(tg.id) },
-      icon(tg.id === 'pdf' ? 'file' : tg.id === 'kindle' ? 'books' : tg.id === 'docx' ? 'note' : tg.id === 'epub' ? 'library' : 'type'),
+      icon(tg.id === 'pdf' ? 'file' : tg.id === 'kindle' ? 'books' : tg.id === 'docx' || tg.id === 'odt' || tg.id === 'rtf' ? 'note' : tg.id === 'epub' || tg.id === 'fb2' ? 'library' : tg.id === 'cbz' ? 'images' : 'type'),
       h('b', null, tg.label),
       h('small', null, `.${tg.ext}`)));
   }
