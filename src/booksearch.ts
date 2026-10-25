@@ -97,6 +97,8 @@ async function flowUnits(book: Book, file: Blob): Promise<Unit[]> {
 /** Words and their places in normalised text (letters and digits of any script). */
 const WORD = /[\p{L}\p{M}\p{N}]/u;
 
+const normCache = new WeakMap<Unit, { raw: string; norm: { text: string; map: Int32Array } }>();
+
 /** Search one book's units. Excerpts are cut at word boundaries, about eight words each side. */
 export function searchUnits(units: Unit[], query: string, o: Options, limit = 200): { hits: Hit[]; total: number } {
   const prep = (s: string) => (o.exact ? { text: s, map: Int32Array.from({ length: s.length + 1 }, (_, i) => i) } : normalizeForSearch(s));
@@ -104,8 +106,11 @@ export function searchUnits(units: Unit[], query: string, o: Options, limit = 20
   if (!terms.length || !terms[0]) return { hits: [], total: 0 };
   const hits: Hit[] = []; let total = 0;
   units.forEach((u, ui) => {
-    const raw = u.text.replace(/\s/g, ' ');
-    const norm = prep(raw);
+    // (A unit's normalised text is kept from one search to the next: a big book's thousands of pages took
+    // seconds to normalise again for every search.)
+    let c = o.exact ? null : normCache.get(u);
+    if (!c) { const raw = u.text.replace(/\s/g, ' '); c = { raw, norm: prep(raw) }; if (!o.exact) normCache.set(u, c); }
+    const { raw, norm } = c;
     const found = (term: string) => {
       const at: number[] = [];
       for (let i = norm.text.indexOf(term); i >= 0; i = norm.text.indexOf(term, i + Math.max(1, term.length))) {
