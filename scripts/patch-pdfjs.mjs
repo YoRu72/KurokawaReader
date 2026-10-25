@@ -422,7 +422,10 @@ export async function buildPdfWorker(outFile) {
           textChunk.str.push(glyphUnicode);
         }`, `        if (!intersector) {
           // (A word ligature such as "ﷺ" spells out its words first.)
-          let krU = /[\\ufdf0-\\ufdfd]/.test(glyphUnicode) ? glyphUnicode.normalize("NFKC") : glyphUnicode;
+          // Presentation forms (a map naming the shaped glyph) become the letters themselves.
+          let krU = /[\\ufb50-\\ufdff\\ufe70-\\ufefc]/.test(glyphUnicode) ? glyphUnicode.normalize("NFKC") : glyphUnicode;
+          // A glyph as wide as a space that the map calls a lone mark (a space named a damma glues the words): a space.
+          if (/^[\\u064b-\\u065f\\u0670]$/.test(krU) && glyph.width >= 150 && !glyph.isSpace && textState.font.krRawAll && krGlyphCentre(textState.font, glyph.originalCharCode) === null) krU = " ";
           if (krGlyphLow) krU = krU.replace(/\\u064e/g, "\\u0650").replace(/\\u064b/g, "\\u064d");
           textChunk.str.push(krU.length > 1 && /^[\\u0600-\\u06ff\\u0750-\\u077f\\ufb50-\\ufdff\\ufe70-\\ufeff ]+$/.test(krU) && /[\\u0600-\\u06ff]/.test(krU) ? [...krU].reverse().join("") : krU);
         }`, 'glyph push');
@@ -486,7 +489,7 @@ export async function buildPdfWorker(outFile) {
   // 4) rebuild a broken /ToUnicode from the embedded font (see scripts/pdfjs-font-unicode.js)
   const fontUnicode = await fs.readFile(new URL('./pdfjs-font-unicode.js', import.meta.url), 'utf8')
     + '\n' + await fs.readFile(new URL('./pdfjs-legacy-glyphs.js', import.meta.url), 'utf8');
-  src = replaceOnce(src, 'class Font {\n', fontUnicode + '\nclass Font {\n', 'class Font');
+  src = replaceOnce(src, 'class Font {\n', (process.env.KR_FONT_DEBUG ? 'globalThis.KR_FONT_DEBUG = true;\n' : '') + fontUnicode + '\nclass Font {\n', 'class Font');
   src = replaceOnce(src, `        case "OpenType":
         case "TrueType":
         case "CIDFontType2":

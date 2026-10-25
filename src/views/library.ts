@@ -225,13 +225,14 @@ export function libraryView(): HTMLElement {
     const [c1, c2] = coverColors(book.title);
     const pct = Math.round((book.progress?.pct ?? 0) * 100); const done = isDone(book);
     const doneAt = getSettings().doneMark;
-    const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : null;
+    // The mark: how far the book is read, and «read» once it is (the one takes the other's place).
+    const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
     const cover = h('div', { class: 'cover' },
       url ? h('img', { src: url, alt: '', loading: 'lazy' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badges' }, h('span', { class: 'badge' }, book.format.toUpperCase()), doneBadge && doneAt === 'beside' ? doneBadge : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
       doneBadge && doneAt !== 'beside' ? doneBadge : null,
-      !done && pct > 0 && getSettings().showProgress ? h('div', { class: 'progress', 'aria-label': `${pct}%` }, h('i', { style: { width: `${pct}%` } }), h('b', null, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`)) : null,
+      !done && pct > 0 && getSettings().showProgress ? h('div', { class: 'progress', 'aria-label': `${pct}%` }, h('i', { style: { width: `${pct}%` } })) : null,
       selecting ? h('div', { class: 'check' }, icon('check')) : null,
     );
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c1', c1);

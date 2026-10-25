@@ -19,7 +19,7 @@ export const searchable = (b: Book) => SEARCHABLE.includes(b.format);
 const memo = new Map<string, Unit[]>();
 // (The version goes up whenever the way text is read changes, so books are read again rather than searched
 // in text kept from before.)
-const TEXT_VERSION = 3;
+const TEXT_VERSION = 4;
 const keyOf = (b: Book) => `v${TEXT_VERSION}:${b.size ?? 0}:${b.fileName ?? ''}`;
 
 /** A book's text units: from the device's store when read before, else read now (and stored). */
