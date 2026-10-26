@@ -1302,3 +1302,20 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 }
 .chip.check input[type=number] { width: 64px; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--text); font: inherit; }
 .snap-holder { margin-top: 10px; }
+
+/* Controls and lists are not text to copy: a hold selects an item, not its letters. */
+.book-card, .book-tile, .chapter-list, .plain-list, .dest-row, .chip, .sel-act, .selection-bar, .sheet-actions, .segmented, .tool-bar, .stars, .track-hit, .page-tile, .strip-cell, .library-tools, .folder-chips, .settings-nav, .topbar, .pdf-bar, .ink-bar { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.conv-opts { margin: 8px 0 10px; }
+.conv-pdf-opts { display: contents; }
+.conv-pdf-opts[hidden] { display: none; }
+.chip.check select { font: inherit; color: var(--text); background: var(--md-surface-container); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 2px 6px; }
+.chapter-pick { position: sticky; top: calc(var(--topbar-h, 56px)); z-index: 5; margin: 0 8px 6px; padding: 6px 8px; border-radius: 14px; background: var(--md-surface-container-high); box-shadow: var(--el-2); }
+.chapter-pick .sel-head { display: flex; align-items: center; gap: 8px; }
+.chapter-pick .sel-actions { display: flex; gap: 2px; overflow-x: auto; }
+.chapter-pick .sel-act { display: grid; justify-items: center; gap: 3px; padding: 6px 8px; border: 0; background: none; color: var(--text); font-size: 11px; border-radius: 10px; min-width: 64px; }
+.chapter-pick .sel-act svg { width: 20px; height: 20px; }
+.chapter-list li.picked button { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.chapter-list .tick { margin-inline-start: auto; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--md-outline); }
+.chapter-list .tick svg { width: 14px; height: 14px; opacity: 0; }
+.chapter-list li.picked .tick { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
+.chapter-list li.picked .tick svg { opacity: 1; }

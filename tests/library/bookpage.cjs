@@ -40,6 +40,13 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   console.log('entry', JSON.stringify(entry), 'tile', await page.$eval('.book-tile.on span', (e) => e.textContent).catch(() => '-'));
   console.log('facts', await page.$eval('.book-facts', (e) => e.innerText.replace(/\n/g, ' | ')));
   await page.screenshot({ path: `${SHOTS}/bookpage-4-tracked.png` });
+  // Chapters: a hold picks; more taps pick more; the bar marks them read.
+  const ch = await page.$('.chapter-list li:nth-child(6) button'); await ch.scrollIntoViewIfNeeded(); const cb = await ch.boundingBox();
+  await page.mouse.move(cb.x + 40, cb.y + cb.height / 2); await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up(); await page.waitForTimeout(300);
+  await page.click('.chapter-list li:nth-child(7) button'); await page.click('.chapter-list li:nth-child(8) button', { modifiers: ['Control'] }); await page.waitForTimeout(200);
+  console.log('picked', await page.$$eval('.chapter-list li.picked', (l) => l.length), 'bar', !!(await page.$('.chapter-pick:not([hidden])')));
+  await page.click('.chapter-pick .sel-act[aria-label="عُدَّه مقروءًا"]'); await page.waitForTimeout(500);
+  console.log('read now', await page.$$eval('.chapter-list li.read', (l) => l.length));
   // Right-click the heart: the tags sheet; tick a new tag.
   await page.click('.book-tile.has-more', { button: 'right' }); await page.waitForSelector('.dest-row'); await page.fill('.sheet input[type=text]', 'قصص'); await page.keyboard.press('Enter'); await page.waitForTimeout(500);
   console.log('tag rows', await page.$$eval('.dest-row', (r) => r.length), 'tile', await page.$eval('.book-tile.has-more span', (e) => e.textContent));

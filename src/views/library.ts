@@ -189,7 +189,9 @@ export function libraryView(): HTMLElement {
       h('div', { class: 'sel-actions' },
         act('heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })),
         act('check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))),
+        n === 1 ? act('info', t('details'), () => { const b = books.find((x) => x.id === [...selected][0]); if (b) showDetails(b); }) : null,
         n === 1 ? act('note', t('reviewBook'), () => { const b = books.find((x) => x.id === [...selected][0]); if (b) void import('../ui/review').then((m) => m.reviewSheet(b, () => renderGrid())); }) : null,
+        n === 1 ? act('convert', t('convertFile'), () => { const b = books.find((x) => x.id === [...selected][0]); if (b) void import('../ui/convert').then((m) => m.convertSheet(b, () => void refresh())); }) : act('convert', t('convertFile'), () => { const list = books.filter((x) => selected.has(x.id)); void import('../ui/convert').then((m) => m.convertManySheet(list, () => void refresh())); }),
         act('tag', t('tags'), () => tagsSheet([...selected])),
         act('folder', t('moveToFolder'), () => moveSheet([...selected])),
         act('external', t('shareFile'), () => void shareBooks([...selected])),
@@ -275,8 +277,11 @@ export function libraryView(): HTMLElement {
     el.addEventListener('pointerdown', () => { pressTimer = window.setTimeout(() => { if (!selecting) { setSelecting(true); selected.add(book.id); renderGrid(); } }, 520); });
     const cancel = () => window.clearTimeout(pressTimer);
     el.addEventListener('pointerup', cancel); el.addEventListener('pointerleave', cancel); el.addEventListener('pointercancel', cancel);
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); showDetails(book); });
-    el.addEventListener('click', () => {
+    // Right-click (a mouse) selects the book like a hold does; the details are an action of the selection bar.
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!selecting) { setSelecting(true); } selected.add(book.id); renderGrid(); });
+    el.addEventListener('click', (e) => {
+      // (Ctrl/⌘ + click on a computer: pick several without entering selection first.)
+      if (!selecting && (e.ctrlKey || e.metaKey)) { setSelecting(true); selected.add(book.id); renderGrid(); return; }
       if (selecting) {
         if (selected.has(book.id)) selected.delete(book.id); else selected.add(book.id);
         el.setAttribute('aria-selected', String(selected.has(book.id)));

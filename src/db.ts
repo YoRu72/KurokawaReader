@@ -97,6 +97,9 @@ export interface Book {
   /** Chapters marked read by hand on the book's page: every contents entry up to this index. */
   readToc?: number;
   readTocAt?: number;
+  /** Chapters marked read (1) or unread (0) by hand, by contents index — over and above the position. */
+  chapterMarks?: Record<string, 0 | 1>;
+  chapterMarksAt?: number;
   /** How many chapters the book really has, as the reader says (a contents list carries covers, credits…). */
   chapters?: number;
   chaptersAt?: number;

@@ -19,7 +19,8 @@ const book = path.resolve(process.argv[2]); const mode = process.argv[3] || 'cha
   const cdp = await ctx.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU || 4) });
   await page.evaluate(() => { const w = window; w.__frames = []; w.__long = 0; let last = performance.now(); const tick = (t) => { w.__frames.push(t - last); last = t; requestAnimationFrame(tick); }; requestAnimationFrame(tick); try { new PerformanceObserver((l) => { for (const e of l.getEntries()) w.__long += e.duration; }).observe({ type: 'longtask' }); } catch { /* none */ } });
   const frames = () => page.evaluate(() => { const f = window.__frames; window.__frames = []; const long = window.__long; window.__long = 0; return { n: f.length, janky: f.filter((x) => x > 50).length, worst: Math.round(Math.max(0, ...f)), longTask: Math.round(long) }; });
-  let t0 = Date.now(); await page.click('.book-card'); await page.waitForFunction(() => (document.querySelector('.reader-scroll .kr-content')?.textContent?.length ?? 0) > 200, null, { timeout: 120000, polling: 50 });
+  let t0 = Date.now(); await page.click('.book-card'); { const r = await page.waitForSelector('.book-resume, .reader-scroll', { timeout: 120000 }); if (await r.evaluate((e) => e.classList.contains('book-resume'))) { t0 = Date.now(); await r.click(); } }
+  await page.waitForFunction(() => (document.querySelector('.reader-scroll .kr-content')?.textContent?.length ?? 0) > 200, null, { timeout: 120000, polling: 50 });
   console.log(`open: text shown ${Date.now() - t0} ms`);
   await page.waitForTimeout(2000); await frames();
   if (process.env.PROF) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 500 }); await cdp.send('Profiler.start'); }

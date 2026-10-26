@@ -62,7 +62,9 @@ export function bookView(id: string): HTMLElement {
     render(book);
   })();
 
-  const isRead = (book: Book, i: number) => i < (book.progress?.toc ?? 0) || i <= (book.readToc ?? -1);
+  const isRead = (book: Book, i: number) => { const m = book.chapterMarks?.[String(i)]; return m !== undefined ? m === 1 : i < (book.progress?.toc ?? 0) || i <= (book.readToc ?? -1); };
+  // Chapters picked (a hold, a right-click, Ctrl+click) for marking together.
+  const picked = new Set<number>(); let picking = false;
 
   function render(book: Book): void {
     const url = coverUrl(book); const [c1, c2] = coverColors(book.title);
@@ -140,33 +142,48 @@ export function bookView(id: string): HTMLElement {
       iconButton('sortAsc', t('reverseOrder'), () => { reversed = !reversed; paintChapters(book, toc, host); }, { pressed: reversed }));
     const list = h('ol', { class: 'chapter-list' });
     const open = (i: number) => { setJump({ bookId: book.id, kind: 'toc', id: String(i) }); navigate(`/read/${book.id}`); };
-    const markRead = async (upTo: number) => { book.readToc = upTo; book.readTocAt = Date.now(); await db.updateBook(book.id, (b) => { b.readToc = upTo; b.readTocAt = book.readTocAt; }); void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined); paintChapters(book, toc, host); };
-    const chapterMenu = (i: number) => {
-      import('../ui/dom').then(({ openSheet }) => {
-        const s = openSheet(toc[i].label, t('close'), { stack: true });
-        s.body.style.fontFamily = 'var(--font-ui)';
-        const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { s.close(); fn(); } }, icon(name), label));
-        s.body.append(h('ul', { class: 'plain-list' },
-          item('play', t('open'), () => open(i)),
-          item('check', t('markReadUpTo'), () => void markRead(i)),
-          item('undo', t('markUnreadFrom'), () => void markRead(i - 1)),
-          item('bookmarkAdd', t('markAllRead'), () => void markRead(toc.length - 1)),
-          item('close', t('markAllUnread'), () => void markRead(-1))));
-      });
+    // Marks: the chapters picked set read or unread, over and above where the reading stands.
+    const mark = async (indices: number[], read: boolean) => {
+      const marks = { ...(book.chapterMarks ?? {}) };
+      for (const i of indices) marks[String(i)] = read ? 1 : 0;
+      book.chapterMarks = marks; book.chapterMarksAt = Date.now();
+      await db.updateBook(book.id, (b) => { b.chapterMarks = marks; b.chapterMarksAt = book.chapterMarksAt; });
+      void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined);
+      picked.clear(); picking = false; paintChapters(book, toc, host);
+    };
+    const pick = (i: number) => { if (picked.has(i)) picked.delete(i); else picked.add(i); if (!picked.size) picking = false; paintBar(); paintList(); };
+    const startPick = (i: number) => { picking = true; picked.add(i); paintBar(); paintList(); };
+    const bar = h('div', { class: 'chapter-pick', hidden: true });
+    const paintBar = () => {
+      bar.hidden = !picking;
+      if (!picking) return;
+      const all = toc.map((_, i) => i); const n = picked.size;
+      const act = (name: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'sel-act', 'aria-label': label, title: label, onclick: fn }, icon(name), h('span', null, label));
+      bar.replaceChildren(
+        h('div', { class: 'sel-head' }, h('span', { class: 'sel-count' }, t('selectedCount', { n })),
+          h('button', { class: 'btn small', type: 'button', onclick: () => { if (n === all.length) picked.clear(); else all.forEach((i) => picked.add(i)); paintBar(); paintList(); } }, n === all.length ? t('selectNone') : t('selectAll')),
+          h('span', { class: 'spacer' }), iconButton('close', t('close'), () => { picked.clear(); picking = false; paintBar(); paintList(); })),
+        h('div', { class: 'sel-actions' },
+          act('check', t('markRead'), () => void mark([...picked], true)),
+          act('undo', t('markUnread'), () => void mark([...picked], false)),
+          act('chevronUp', t('markReadUpTo'), () => void mark(all.filter((i) => i <= Math.max(...picked)), true)),
+          act('chevronDown', t('markUnreadFrom'), () => void mark(all.filter((i) => i >= Math.min(...picked)), false)),
+          n === 1 ? act('play', t('open'), () => open([...picked][0])) : null));
     };
     const paintList = () => {
       const q = query.trim().toLowerCase();
       const rows = toc.map((c, i) => ({ c, i })).filter(({ c, i }) => (!hideRead || !isRead(book, i)) && (!q || c.label.toLowerCase().includes(q)));
       if (reversed) rows.reverse();
       list.replaceChildren(...rows.map(({ c, i }) => {
-        const btn = h('button', { type: 'button', dir: 'auto', onclick: () => open(i) }, h('i', { class: 'dot' }), h('span', null, c.label));
-        void import('../ui/tags').then((m) => m.onHoldOrContext(btn, () => chapterMenu(i)));
-        return h('li', { class: (isRead(book, i) && i !== at ? 'read' : i === at ? 'current' : '') + ` d${Math.min(3, c.depth)}` }, btn);
+        // A tap opens the chapter; a hold, a right-click or Ctrl/⌘ + click picks it (and taps then pick more).
+        const btn = h('button', { type: 'button', dir: 'auto', 'aria-pressed': picking ? String(picked.has(i)) : undefined, onclick: (e: MouseEvent) => { if (picking) pick(i); else if (e.ctrlKey || e.metaKey) startPick(i); else open(i); } }, h('i', { class: 'dot' }), h('span', null, c.label), picking ? h('i', { class: 'tick' }, icon('check')) : null);
+        void import('../ui/tags').then((m) => m.onHoldOrContext(btn, () => { if (!picking) startPick(i); else pick(i); }));
+        return h('li', { class: (isRead(book, i) && i !== at ? 'read' : i === at ? 'current' : '') + ` d${Math.min(3, c.depth)}` + (picked.has(i) ? ' picked' : '') }, btn);
       }));
       if (!rows.length) list.append(h('li', { class: 'none' }, t('noResults')));
     };
-    paintList();
-    host.replaceChildren(tools, search, list);
+    paintList(); paintBar();
+    host.replaceChildren(tools, search, bar, list);
     if (at > 0 && !query) setTimeout(() => list.querySelector('.current')?.scrollIntoView({ block: 'center' }), 50);
   }
   return root;

@@ -333,10 +333,12 @@ export function buildText(d: ConvDoc, markdown: boolean): string {
 }
 
 /** PDF: real text on the desktop (Chromium's printer), pictures of pages elsewhere. */
-export type PdfPaper = 'a4' | 'letter';
-const PAPER: Record<PdfPaper, { css: string; pt: [number, number] }> = { a4: { css: 'A4', pt: [595.28, 841.89] }, letter: { css: 'Letter', pt: [612, 792] } };
+export type PdfPaper = 'a4' | 'a5' | 'letter' | 'phone';
+const PAPER: Record<PdfPaper, { css: string; pt: [number, number] }> = { a4: { css: 'A4', pt: [595.28, 841.89] }, a5: { css: 'A5', pt: [419.53, 595.28] }, letter: { css: 'Letter', pt: [612, 792] }, phone: { css: '90mm 160mm', pt: [255.1, 453.5] } };
+/** What the reader can set for a conversion: the paper and type size of a PDF, whether pictures go along. */
+export interface ConvOptions { paper?: PdfPaper; fontSize?: number; images?: boolean }
 
-export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: PdfPaper } = {}): Promise<Blob> {
+export async function buildPdf(d: ConvDoc, progress: Progress, opts: ConvOptions = {}): Promise<Blob> {
   const paper = PAPER[opts.paper ?? 'a4'];
   const inline = new Map<string, string>();
   for (const [url, blob] of d.images) inline.set(url, await blobToDataUrl(blob));
@@ -344,7 +346,7 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: { paper?: P
   const fontCss = await readerFontCss(d);
   if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage fonts', fontCss.length);
   const desk = (window as unknown as { kurokawaDesktop?: { printToPdf?(html: string, o?: { pageSize?: string }): Promise<string> } }).kurokawaDesktop;
-  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Lora','Uthman TN1','Noto Naskh Arabic',Georgia,serif}@page{size:${paper.css};margin:16mm}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
+  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Lora','Uthman TN1','Noto Naskh Arabic',Georgia,serif${opts.fontSize ? `;font-size:${opts.fontSize}px` : ''}}@page{size:${paper.css};margin:${opts.paper === 'phone' ? '8mm' : '16mm'}}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
   if (desk?.printToPdf) {
     progress('build', 70);
     const b64 = await desk.printToPdf(html, { pageSize: paper.css });
@@ -751,7 +753,7 @@ export async function buildCbz(book: Book, file: Blob, progress: Progress, passw
   return zip.generateAsync({ type: 'blob', compression: 'STORE' });
 }
 
-export async function convertBook(book: Book, target: Target, progress: Progress, password?: string): Promise<{ blob: Blob; name: string }> {
+export async function convertBook(book: Book, target: Target, progress: Progress, password?: string, opts: ConvOptions = {}): Promise<{ blob: Blob; name: string }> {
   const file = await db.getFile(book.id);
   if (!file) throw new Error('missing');
   const tg = TARGETS.find((x) => x.id === target)!;
@@ -769,6 +771,8 @@ export async function convertBook(book: Book, target: Target, progress: Progress
   }
   if (target === 'cbz') { const blob = await buildCbz(book, file, progress, password); progress('done', 100); return { blob, name: `${slug(book.title)}.cbz` }; }
   const d = await readDocument(book, file, progress, password);
+  // (Without pictures: a much smaller file, the text alone.)
+  if (opts.images === false) { for (const url of d.images.keys()) for (const ch of d.chapters) ch.html = ch.html.replace(new RegExp(`<img[^>]*src="${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>`, 'g'), ''); d.images.clear(); delete d.cover; }
   let blob: Blob;
   if (target === 'fb2') blob = await buildFb2(d, progress);
   else if (target === 'odt') blob = await buildOdt(d, progress);
@@ -777,7 +781,7 @@ export async function convertBook(book: Book, target: Target, progress: Progress
     if (target === 'kindle') { d.fonts.clear(); }   // Kindle prefers its own typefaces; embedded fonts often fail its import
     blob = await buildEpub(d, progress);
   } else if (target === 'docx') blob = await buildDocx(d, progress);
-  else if (target === 'pdf') blob = await buildPdf(d, progress);
+  else if (target === 'pdf') blob = await buildPdf(d, progress, opts);
   else if (target === 'html') { const inline = new Map<string, string>(); for (const [u, b] of d.images) inline.set(u, await blobToDataUrl(b)); blob = new Blob([buildHtml(d, inline)], { type: 'text/html' }); }
   else blob = new Blob([buildText(d, target === 'md')], { type: tg.mime + ';charset=utf-8' });
   progress('done', 100);
