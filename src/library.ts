@@ -1,5 +1,6 @@
 // Library operations: importing files, listing, deleting, progress.
 import { db, uid, type Book, type FileSource } from './db';
+import { forgetBookSettings } from './settings';
 
 /** A File that knows where it came from, so it can be linked instead of copied. */
 export type SourcedFile = File & { krSource?: FileSource };
@@ -59,6 +60,7 @@ export async function listBooks(): Promise<Book[]> {
 
 export async function removeBooks(ids: string[]): Promise<void> {
   for (const id of ids) await db.deleteBook(id);
+  forgetBookSettings(ids);
 }
 
 export async function touchBook(id: string): Promise<void> {

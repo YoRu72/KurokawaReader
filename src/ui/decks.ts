@@ -4,7 +4,7 @@
 // download fails, the next source is tried. Android and desktop download in-app
 // (several connections at once; aria2c on desktop when installed) and link the file.
 import { h, icon, toast, clear } from './dom';
-import { t, countCards } from '../i18n';
+import { t, countCards, countBooks } from '../i18n';
 import { db } from '../db';
 import { importFiles, removeBooks, type SourcedFile } from '../library';
 import { nativePlatform, readContentUri } from '../native';
@@ -136,7 +136,7 @@ export function decksCard(): HTMLElement {
     // The reader's own decks: any .apkg / .colpkg from the device, and the ones already in the library.
     const mine = (await db.allBooks()).filter((b) => b.format === 'anki' && !Object.values(installed).some((i) => i.bookId === b.id));
     const input = h('input', { type: 'file', accept: '.apkg,.colpkg', multiple: true, hidden: true }) as HTMLInputElement;
-    input.addEventListener('change', async () => { const files = Array.from(input.files ?? []); input.value = ''; if (!files.length) return; try { const added = await importFiles(files); toast(t('imported', { n: added.length })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } void draw(); });
+    input.addEventListener('change', async () => { const files = Array.from(input.files ?? []); input.value = ''; if (!files.length) return; try { const added = await importFiles(files); toast(t('imported', { n: countBooks(added.length) })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } void draw(); });
     list.append(h('div', { class: 'deck-row own' },
       h('div', { class: 'deck-info' }, h('b', null, t('myDecks')), h('p', null, t('myDecksBody')),
         mine.length ? h('div', { class: 'deck-mine' }, ...mine.map((b) => h('button', { type: 'button', class: 'chip small', onclick: () => navigate(`/read/${b.id}`) }, icon('play'), h('span', null, `${b.title}${b.pageCount ? ' · ' + countCards(b.pageCount) : ''}`)))) : null),

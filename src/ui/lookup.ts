@@ -5,6 +5,7 @@ import { h, icon, openSheet, pickButton, toast } from './dom';
 import { t, getLang, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
 import { hasSystemText, translateWithSystem } from './share';
+import { saveWord } from './vocab';
 
 const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh-CN', 'ru'] as const;
 const NAMES: Record<string, string> = { ar: 'العربية', en: 'English', fr: 'Français', tr: 'Türkçe', ur: 'اردو', fa: 'فارسی', de: 'Deutsch', es: 'Español', id: 'Bahasa Indonesia', ja: '日本語', 'zh-CN': '中文', ru: 'Русский' };
@@ -13,8 +14,9 @@ function sampleWord(text: string): string {
   return text.trim().split(/\s+/)[0]?.replace(/^[\p{P}\s]+|[\p{P}\s]+$/gu, '') ?? '';
 }
 
-export function showDefinition(text: string): void {
+export function showDefinition(text: string, context = ''): void {
   const word = sampleWord(text);
+  void saveWord(word, context);
   const arabic = isRtlText(word);
   const s = openSheet(`${t('define')}: ${word}`, t('close'));
   const dictUrl = arabic ? `https://www.almaany.com/ar/dict/ar-ar/${encodeURIComponent(word)}/` : `https://en.wiktionary.org/wiki/${encodeURIComponent(word)}`;
@@ -22,7 +24,7 @@ export function showDefinition(text: string): void {
   if (!navigator.onLine) { s.body.append(h('p', { class: 'src' }, t('offlineService'))); return; }
   s.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('lookingUp')));
   (arabic ? defineArabic(word) : defineLatin(word))
-    .then((html) => { s.body.innerHTML = ''; if (html) { const d = h('div', { class: arabic ? 'ar' : '' }); d.innerHTML = html; s.body.append(d); } else s.body.append(h('p', { class: 'src' }, t('noDefinition'))); })
+    .then((html) => { s.body.innerHTML = ''; if (html) { const d = h('div', { class: arabic ? 'ar' : '' }); d.innerHTML = html; s.body.append(d); void saveWord(word, context, (d.querySelector('li')?.textContent ?? '').trim().slice(0, 240) || undefined); } else s.body.append(h('p', { class: 'src' }, t('noDefinition'))); })
     .catch(() => { s.body.innerHTML = ''; s.body.append(h('p', { class: 'src' }, t('serviceFailed'))); });
 }
 

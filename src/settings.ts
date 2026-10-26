@@ -79,6 +79,9 @@ export interface VisualSettings {
   indent: number;          // first-line indent of paragraphs, em (0 = none)
   dropCap: boolean;        // a large first letter at the start of a chapter
   bookFormat: boolean;     // printed-book formatting in one switch: justified, hyphenated, indented paragraphs
+  smartTypography: boolean; // curly quotes, dashes and ellipses in the text
+  focusMode: boolean;      // the paragraph being read stands out; the rest of the page is dimmed
+  vocabSave: boolean;      // words looked up go into the vocabulary notebook
   bgOverride: string;
   /* Reading flow */
   readingMode: 'chapters' | 'flow' | 'continuous';   // flow: chapter by chapter, the next one loads when you scroll past the end
@@ -103,6 +106,7 @@ export interface VisualSettings {
   invertLineArt: boolean;
   snapFolder: string;
   formatFilter: string[];
+  shelves: { id: string; name: string; formats: string[]; statuses: string[]; tag: string | null }[]; // saved filter sets
   showProgress: boolean;      // a book's progress on its cover
   showDone: boolean;          // the 'read' mark on its cover
   doneMark: 'beside' | 'below' | 'topLeft' | 'bottom';   // where that mark sits
@@ -219,6 +223,9 @@ export const DEFAULTS: VisualSettings = {
   indent: 0,
   dropCap: false,
   bookFormat: false,
+  smartTypography: false,
+  focusMode: false,
+  vocabSave: true,
   bgOverride: '',
   readingMode: 'chapters',
   hideSystemBars: true,
@@ -239,6 +246,7 @@ export const DEFAULTS: VisualSettings = {
   invertLineArt: false,
   snapFolder: 'Screenshots',
   formatFilter: [],
+  shelves: [],
   showProgress: true,
   showDone: true,
   doneMark: 'beside',
@@ -316,9 +324,43 @@ export function getSettings(): VisualSettings {
   return current;
 }
 
+// Settings for one book: while a book with its own settings is open, what the reader sees is the global
+// settings with that book's changes on top, and every change made goes to the book alone — a Qur'an with
+// its own face and size, a novel in another, the library untouched.
+const BOOK_KEY = 'kr.bookVisual';
+let activeBook: string | null = null;
+let globals: VisualSettings = current;
+let bookOverrides: Record<string, Partial<VisualSettings>> | null = null;
+const overrides = (): Record<string, Partial<VisualSettings>> => { if (!bookOverrides) { try { bookOverrides = JSON.parse(localStorage.getItem(BOOK_KEY) ?? '{}') as Record<string, Partial<VisualSettings>>; } catch { bookOverrides = {}; } } return bookOverrides; };
+const saveOverrides = () => { try { localStorage.setItem(BOOK_KEY, JSON.stringify(overrides())); } catch { /* full */ } };
+const merged = (): VisualSettings => (activeBook && overrides()[activeBook] ? { ...globals, ...overrides()[activeBook] } : globals);
+
+/** The book now open (null in the library): its own settings, if it has any, come into force. */
+export function setActiveBook(id: string | null): void {
+  if (id === activeBook) return;
+  activeBook = id; current = merged();
+  listeners.forEach((fn) => fn(current));
+}
+export const activeBookId = (): string | null => activeBook;
+/** Whether the open book keeps settings of its own. */
+export const bookScoped = (): boolean => !!activeBook && !!overrides()[activeBook];
+/** Give the open book settings of its own (starting from the global ones), or take them away. */
+export function setBookScoped(on: boolean): void {
+  if (!activeBook) return;
+  if (on) overrides()[activeBook] = overrides()[activeBook] ?? {}; else delete overrides()[activeBook];
+  saveOverrides(); current = merged(); listeners.forEach((fn) => fn(current));
+}
+/** Drop the settings kept for books no longer in the library. */
+export function forgetBookSettings(ids: string[]): void { for (const id of ids) delete overrides()[id]; saveOverrides(); }
+
 export function updateSettings(patch: Partial<VisualSettings>): VisualSettings {
-  current = { ...current, ...patch };
-  localStorage.setItem(KEY, JSON.stringify(current));
+  if (activeBook && overrides()[activeBook]) {
+    overrides()[activeBook] = { ...overrides()[activeBook], ...patch }; saveOverrides();
+  } else {
+    globals = { ...globals, ...patch };
+    localStorage.setItem(KEY, JSON.stringify(globals));
+  }
+  current = merged();
   listeners.forEach((fn) => fn(current));
   return current;
 }
@@ -495,6 +537,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   if (s.selOverride) root.style.setProperty('--r-sel', s.selOverride); else root.style.removeProperty('--r-sel');
   root.style.setProperty('--r-indent', s.bookFormat ? `${s.indent || 2}em` : s.indent ? `${s.indent}em` : '0');
   root.classList.toggle('book-format', s.bookFormat);
+  root.classList.toggle('focus-mode', s.focusMode);
   root.classList.toggle('drop-cap', s.dropCap);
   root.style.setProperty('--r-custom-bg', s.customBg);
   root.style.setProperty('--r-custom-fg', s.customFg);

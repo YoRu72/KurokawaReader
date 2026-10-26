@@ -14,7 +14,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   // Hold the card: selection mode, then «تقييم ومراجعة».
   const card = await page.$('.book-card'); const b = await card.boundingBox();
   await page.mouse.move(b.x + 40, b.y + 40); await page.mouse.down(); await page.waitForTimeout(700); await page.mouse.up(); await page.waitForTimeout(300);
-  await page.click('.sel-act[aria-label="تقييم ومراجعة"]'); await page.waitForSelector('.review-text');
+  { const moreBtn = await page.$('.sel-act[aria-label="المزيد"]'); if (moreBtn) { await moreBtn.click(); await page.waitForTimeout(300); await page.click('.dest-row:has-text("تقييم ومراجعة")'); } else await page.click('.sel-act[aria-label="تقييم ومراجعة"]'); } await page.waitForSelector('.review-text');
   await page.click('.stars.big .star:nth-child(5)');
   await page.fill('.review-text', 'كتابٌ بديع، قرأته في ليلتين. حكايةُ أليس لا تشيخ، وترجمتُه رشيقة.');
   await page.screenshot({ path: `${SHOTS}/review-1-sheet.png` });

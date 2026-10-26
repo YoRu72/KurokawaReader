@@ -405,3 +405,8 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .strip-cell { flex: none; width: 56px; border: 2px solid transparent; border-radius: 8px; padding: 2px; background: none; display: grid; gap: 2px; justify-items: center; cursor: pointer; color: var(--text-dim); font-size: 10px; }
 .strip-cell img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 4px; background: var(--md-surface-container-highest); }
 .strip-cell.current { border-color: var(--md-primary); color: var(--text); }
+
+/* Focus mode: everything but the paragraph being read fades back; the eye has one place to be. */
+.reader.focus-mode .kr-content p, .reader.focus-mode .kr-content li, .reader.focus-mode .kr-content blockquote, .reader.focus-mode .kr-content h1, .reader.focus-mode .kr-content h2, .reader.focus-mode .kr-content h3, .reader.focus-mode .kr-content h4 { opacity: .32; transition: opacity .25s ease; }
+.reader.focus-mode .kr-content .kr-focus, .reader.focus-mode .kr-content .kr-focus * { opacity: 1; }
+.reader.focus-mode .kr-content :is(p, li, blockquote, h1, h2, h3, h4):hover { opacity: .7; }

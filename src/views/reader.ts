@@ -2,6 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
+import { applyTypography, revertTypography } from '../ui/typography';
 import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
 import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
@@ -9,7 +10,7 @@ import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
 import { BLOCK_SELECTOR } from '../formats/shared';
 import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
-import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings } from '../settings';
+import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
 import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
@@ -57,6 +58,7 @@ export function readerView(ids: string[]): HTMLElement {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
     if (disposed) return;
     if (!books.length) { navigate('/', true); return; }
+    setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
     if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); return; }
     if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); return; }
     const pdfs = books.filter((b) => b.format === 'pdf');
@@ -198,6 +200,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       performance.measure('kr:render', { start: t1 });
       const t2 = performance.now();
       doc.wrapper.append(doc.render.element);
+      if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(doc.render.element);
       doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
       const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img'));
       doc.chapters = sections.length > 1 ? sections : [doc.render.element];
@@ -592,7 +595,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   hooks.update = () => updateChrome();
   hooks.save = () => scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
-  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); }, { passive: true });
+  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); focusThrottled(); }, { passive: true });
+  // Focus mode: the paragraph under the reading line (a little above the middle of the screen) is the one
+  // that stands out; the rest of the page is dimmed by CSS. Found by a point test, so it costs nothing.
+  let focused: HTMLElement | null = null;
+  const syncFocus = () => {
+    if (!getSettings().focusMode) { focused?.classList.remove('kr-focus'); focused = null; return; }
+    const r = scroll.getBoundingClientRect();
+    const y = r.top + r.height * 0.4;
+    let hit: HTMLElement | null = null;
+    for (const x of [0.5, 0.3, 0.7]) { const el = document.elementFromPoint(r.left + r.width * x, y) as HTMLElement | null; hit = el?.closest<HTMLElement>(BLOCK_SELECTOR) ?? null; if (hit && flow.contains(hit)) break; hit = null; }
+    if (hit === focused) return;
+    focused?.classList.remove('kr-focus'); focused = hit; focused?.classList.add('kr-focus');
+  };
+  const focusThrottled = throttle(syncFocus, 80);
+  window.setTimeout(syncFocus, 600);
   // The screen turned (or the window resized): the text reflows, so the place being read is found again and
   // put back where it was — the reader does not land somewhere else in the chapter.
   let stable: Locator | null = null; let stableTimer = 0; let lastW = scroll.clientWidth, lastH = scroll.clientHeight; let resizing = false;
@@ -611,7 +628,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => { window.clearTimeout(saveTimer); void saveProgress(); docs.forEach((d) => d.render?.dispose()); });
 
   /* ---------- settings ---------- */
-  onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome(); }));
+  let typoOn = getSettings().bookFormat || getSettings().smartTypography;
+  onDispose(onSettingsChange((s) => {
+    applySettings(reader, s); syncChrome(); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome();
+    const want = s.bookFormat || s.smartTypography;
+    if (want !== typoOn) { typoOn = want; for (const d of docs) if (d.render) (want ? applyTypography : revertTypography)(d.render.element); }
+    syncFocus();
+  }));
   root.addEventListener('kr-rerender', async () => {
     const cur = currentLocator();
     for (const doc of docs) await renderDoc(doc);

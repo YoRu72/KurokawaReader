@@ -1,4 +1,5 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } from '../ui/dom';
+import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
 import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
@@ -103,7 +104,7 @@ export function libraryView(): HTMLElement {
     if (!picked.length) return;
     const link = getSettings().importMode === 'link';
     const files: File[] = [];
-    toast(t('importing', { n: localDigits(picked.length) }), 'info', 60000);
+    toast(t('importing', { n: countBooks(picked.length) }), 'info', 60000);
     for (const f of picked) {
       try {
         const file = await readContentUri(f.uri, f.name || 'document', f.mime || '') as File & { krSource?: { uri: string } };
@@ -358,6 +359,22 @@ export function libraryView(): HTMLElement {
     fmtChips.append(h('span', { class: 'chip-sep' }));
     for (const [id, label, ic] of states) fmtChips.append(h('button', { type: 'button', class: 'chip small' + (st.has(id) ? ' on' : ''), 'aria-pressed': String(st.has(id)), onclick: () => { const next = new Set(st); if (next.has(id)) next.delete(id); else next.add(id); updateSettings({ statusFilter: [...next] }); renderGrid(); } }, icon(st.has(id) ? 'check' : ic), h('span', null, label)));
     if (active.size || st.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
+    // Smart shelves: a filter set kept under a name («unread Arabic PDFs»), one tap to bring back. The chip
+    // of the shelf in force is lit; holding or right-clicking a shelf chip removes it.
+    const shelves = getSettings().shelves;
+    const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+    const current = { formats: [...active], statuses: [...st], tag: tagFilter };
+    const onShelf = (sh: (typeof shelves)[number]) => same(sh.formats, current.formats) && same(sh.statuses, current.statuses) && sh.tag === current.tag;
+    if (shelves.length || active.size || st.size || tagFilter) fmtChips.prepend(h('span', { class: 'chip-sep' }));
+    for (const sh of [...shelves].reverse()) {
+      const chip = h('button', { type: 'button', class: 'chip small shelf' + (onShelf(sh) ? ' on' : ''), 'aria-pressed': String(onShelf(sh)), title: sh.name, onclick: () => { if (onShelf(sh)) { updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); } else { updateSettings({ formatFilter: sh.formats, statusFilter: sh.statuses }); setTagFilter(sh.tag); } } }, icon(onShelf(sh) ? 'check' : 'bookmark'), h('span', { dir: 'auto' }, sh.name));
+      onHoldOrContext(chip, () => { if (confirm(t('shelfRemoveConfirm', { name: sh.name }))) { updateSettings({ shelves: getSettings().shelves.filter((x) => x.id !== sh.id) }); renderGrid(); } });
+      fmtChips.prepend(chip);
+    }
+    if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => {
+      const name = (prompt(t('shelfName'), '') ?? '').trim(); if (!name) return;
+      updateSettings({ shelves: [...getSettings().shelves, { id: String(Date.now()), name, ...current }] }); toast(t('shelfSaved', { name })); renderGrid();
+    } }, icon('plus'), h('span', null, t('saveShelf'))));
   }
 
   function allTags(): { name: string; count: number }[] {
@@ -742,7 +759,7 @@ export function libraryView(): HTMLElement {
     try {
       const { importSamples } = await import('../samples');
       const added = await importSamples();
-      toast(t('imported', { n: added.length }));
+      toast(t('imported', { n: countBooks(added.length) }));
       await refresh();
     } catch (err) {
       toast(t('importFailed', { name: 'samples', error: String((err as Error)?.message ?? err) }), 'error', 5000);
@@ -760,13 +777,13 @@ export function libraryView(): HTMLElement {
 
   async function doImport(files: FileList | File[], folderId: string | null = activeFolder) {
     const n = files.length;
-    toast(t('importing', { n }), 'info', 60000);
+    toast(t('importing', { n: countBooks(n) }), 'info', 60000);
     let ok = 0;
     const target = folderId;
     await importFiles(files, (book, file, err) => {
       if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
     });
-    if (ok) toast(t('imported', { n: ok }));
+    if (ok) toast(t('imported', { n: countBooks(ok) }));
     await refresh();
   }
 

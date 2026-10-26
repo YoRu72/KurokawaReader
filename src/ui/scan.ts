@@ -4,7 +4,7 @@
 //  - Desktop & Chromium browsers: the File System Access API (showDirectoryPicker)
 //  - Elsewhere: the ordinary multi-file picker takes over.
 import { h, icon, openSheet, toast, clear } from './dom';
-import { t, formatBytes, localDigits } from '../i18n';
+import { t, formatBytes, localDigits, countBooks } from '../i18n';
 import { detectFormat } from '../formats';
 import type { Format, Folder } from '../db';
 
@@ -247,7 +247,7 @@ export function openScanSheet(o: ScanSheetOptions): void {
     const dest = destList.get();
     if (!dest) { destList.focusName(); return; }
     importSel.disabled = importAll.disabled = true;
-    toast(t('importing', { n: localDigits(entries.length) }), 'info', 60000);
+    toast(t('importing', { n: countBooks(entries.length) }), 'info', 60000);
     const files: File[] = [];
     for (const e of entries) { try { const f = await e.read() as SourcedFile; if (link && e.source && (e.source.uri || e.source.path)) f.krSource = e.source; files.push(f); } catch (err) { toast(t('importFailed', { name: e.name, error: String((err as Error).message ?? err) }), 'error', 4000); } }
     sheet.close();

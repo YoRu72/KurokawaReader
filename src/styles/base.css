@@ -1320,3 +1320,11 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .chapter-list li.picked .tick { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
 .chapter-list li.picked .tick svg { opacity: 1; }
 .deck-mine { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.book-scope { grid-column: 1 / -1; padding: 6px 12px; border-radius: 16px; background: var(--md-surface-container); }
+.book-scope.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.vocab-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.vocab-row { padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container); display: grid; gap: 3px; }
+.vocab-word { font-weight: 700; font-size: 17px; }
+.vocab-ctx { color: var(--md-on-surface-variant); font-style: italic; font-size: 14px; }
+.vocab-def { font-size: 14px; }
+.vocab-meta { display: flex; align-items: center; justify-content: space-between; color: var(--md-on-surface-variant); font-size: 12px; }

@@ -7,7 +7,7 @@ import { colorField } from './colorpicker';
 import { isTouchDevice, t, countMinutes, localDigits } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
-import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
+import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
 
 type Section = 'theme' | 'background' | 'comfort' | 'type' | 'layout' | 'behaviour';
@@ -19,6 +19,10 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const rerender = () => renderOptions(container, opts);
   grid.addEventListener('kr-options-rerender', (e) => { e.stopPropagation(); rerender(); bump(); });
   const bump = () => container.dispatchEvent(new CustomEvent('kr-rerender', { bubbles: true }));
+
+  if (activeBookId()) {
+    grid.append(h('div', { class: 'book-scope' + (bookScoped() ? ' on' : '') }, toggle(t('bookOnly'), bookScoped(), (v) => { setBookScoped(v); rerender(); bump(); }), h('p', { class: 'hint' }, t(bookScoped() ? 'bookOnlyOn' : 'bookOnlyHint'))));
+  }
 
   /* ----- Theme ----- */
   const themes: [Theme, string, string, string][] = [
@@ -177,6 +181,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
   grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
   grid.append(toggle([t('dropCap'), 'dropCap'], s.dropCap, (v) => updateSettings({ dropCap: v })));
+  grid.append(toggle([t('smartTypography'), 'smartTypography'], s.smartTypography || s.bookFormat, (v) => updateSettings({ smartTypography: v })), h('p', { class: 'hint' }, t('smartTypographyHint')));
+  grid.append(toggle([t('focusMode'), 'focusMode'], s.focusMode, (v) => updateSettings({ focusMode: v })), h('p', { class: 'hint' }, t('focusModeHint')));
 
   /* ----- Behaviour ----- */
   grid.append(head('behaviour', t('behaviourSection')));

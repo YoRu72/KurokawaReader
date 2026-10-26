@@ -143,7 +143,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     const row = h('div', { class: 'sel-row' },
       btn('copy', t('copySelected'), async () => { const { text } = cur(); try { await navigator.clipboard.writeText(text); toast(t('copied')); } catch { document.execCommand('copy'); toast(t('copied')); } hide(); }),
       btn('search', t('searchSelected'), () => { actions.search(cur().text); hide(); }),
-      btn('define', t('defineSelected'), () => { showDefinition(cur().text); hide(); }),
+      btn('define', t('defineSelected'), () => { const c = cur(); showDefinition(c.text, sentenceAround(c.range, c.text)); hide(); }),
       btn('translate', t('translateSelected'), () => { showTranslation(cur().text); hide(); }),
       btn('type', t('readings'), () => { showReadings(cur().text, actions.lang?.()); hide(); }),
       btn('note', t('note'), () => { const c = cur(); actions.note(c.range, c.text); document.getSelection()?.removeAllRanges(); hide(); }),
@@ -298,4 +298,16 @@ function showAutoReadings(text: string, lang: string | undefined, range: Range):
   void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => { if (autoPop !== pop) return; if (!html) { pop.remove(); return; } pop.innerHTML = html; place(); }).catch(() => pop.remove());
   const onChange = () => { const sel = document.getSelection(); if (!sel || sel.isCollapsed || sel.toString().trim() !== text) { pop.remove(); if (autoPop === pop) autoPop = null; document.removeEventListener('selectionchange', onChange); } };
   setTimeout(() => document.addEventListener('selectionchange', onChange), 50);
+}
+
+/** The sentence the selection sits in (for the vocabulary notebook), or nothing when it cannot be told. */
+function sentenceAround(range: Range, text: string): string {
+  const block = range.startContainer.parentElement?.closest('p, li, blockquote, h1, h2, h3, h4, td, div, span.pdf-line, .pdf-text');
+  const all = (block?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const at = all.indexOf(text.trim().split(/\s+/)[0] ?? '');
+  if (!all || at < 0) return '';
+  const parts = all.split(/(?<=[.!?؟。！？])\s+/);
+  let pos = 0;
+  for (const p of parts) { if (at < pos + p.length + 1) return p.length > 320 ? p.slice(Math.max(0, at - pos - 120), at - pos + 200) : p; pos += p.length + 1; }
+  return '';
 }

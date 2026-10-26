@@ -1,5 +1,6 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang } from '../i18n';
+import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -133,7 +134,7 @@ export function settingsView(): HTMLElement {
 
   // Starter books
   body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),
-    h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: a.length })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));
+    h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: countBooks(a.length) })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));
 
   // AI (translation & voices)
   body.append(h('section', { class: 'card' }, h('h3', null, t('aiSection')), h('p', null, t('aiTranslateBody')),
@@ -180,7 +181,7 @@ export function settingsView(): HTMLElement {
   const bkStatus = h('p', { class: 'src' });
   restoreInput.addEventListener('change', async () => {
     const f = restoreInput.files?.[0]; restoreInput.value = ''; if (!f) return;
-    bkStatus.textContent = t('importing', { n: 1 });
+    bkStatus.textContent = t('importing', { n: countBooks(1) });
     try { const { restoreBackup } = await import('../backup'); const n = await restoreBackup(f, (title) => { bkStatus.textContent = title; }); bkStatus.textContent = t('restored', { n }); toast(t('restored', { n })); }
     catch (err) { bkStatus.textContent = `${t('restoreFailed')} — ${String((err as Error).message ?? err)}`; }
   });
@@ -219,6 +220,16 @@ export function settingsView(): HTMLElement {
 
   // Learning decks: optional downloads, nothing installed by default
   body.append(decksCard());
+  // The vocabulary notebook: words looked up while reading, ready for Anki.
+  {
+    const count = h('span', { class: 'hint' });
+    const draw = () => { count.textContent = t('wordsCount', { n: localDigits(String(vocab().length)) }); };
+    const cb = h('input', { type: 'checkbox', onchange: () => updateSettings({ vocabSave: cb.checked }) }) as HTMLInputElement; cb.checked = getSettings().vocabSave;
+    body.append(h('section', { class: 'card' }, h('h3', null, t('vocabulary')), h('p', null, t('vocabularyBody')),
+      h('label', { class: 'row' }, h('span', { class: 'label' }, t('vocabSave')), h('span', { class: 'switch' }, cb, h('i'))),
+      h('div', { class: 'row', style: { gap: '10px', alignItems: 'center' } }, h('button', { class: 'btn small primary', type: 'button', onclick: vocabSheet }, icon('book'), t('openVocabulary')), count)));
+    draw(); onVocabChange(draw);
+  }
 
   // Updates
   const upd = h('section', { class: 'card' }, h('h3', null, t('updates')));

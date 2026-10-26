@@ -18,6 +18,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   console.log('new marks', await page.$$eval('.badge.new', (b) => b.length));
   await page.evaluate(() => { const c = document.querySelector('.book-card'); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); });
   await page.waitForTimeout(400);
+  const moreBtn = await page.$('.sel-act[aria-label="المزيد"]'); if (moreBtn) { await moreBtn.click(); await page.waitForTimeout(300); }
   const detailsBtn = await page.$('text=التفاصيل'); if (detailsBtn) { await detailsBtn.click(); await page.waitForTimeout(400); }
   await page.waitForSelector('.stars .star');
   await page.click('.stars .star:nth-child(4)'); await page.waitForTimeout(300);
