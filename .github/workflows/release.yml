@@ -314,6 +314,9 @@ jobs:
     name: Web app & AltStore source (GitHub Pages)
     needs: [version, release]
     runs-on: ubuntu-latest
+    # Needs GitHub Pages turned on once (Settings → Pages → Source: GitHub Actions); until then this job
+    # fails on its own without touching the release.
+    continue-on-error: true
     permissions:
       contents: read
       pages: write
