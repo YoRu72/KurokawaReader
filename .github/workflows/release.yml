@@ -182,10 +182,12 @@ jobs:
           { echo "### Windows job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/win-build.log 2>/dev/null; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: |
+        with:
+          name: windows
+          path: |
             desktop/out/*.exe
             desktop/out/*.blockmap
-            desktop/out/latest.yml }
+            desktop/out/latest.yml
 
   macos:
     needs: version
@@ -213,11 +215,13 @@ jobs:
           { echo "### macOS job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/mac-build.log 2>/dev/null; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
-        with: { name: macos, path: |
+        with:
+          name: macos
+          path: |
             desktop/out/*.dmg
             desktop/out/*.zip
             desktop/out/*.blockmap
-            desktop/out/latest-mac.yml }
+            desktop/out/latest-mac.yml
 
   linux:
     needs: version
@@ -245,9 +249,11 @@ jobs:
           { echo "### Linux job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/linux-build.log 2>/dev/null; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
-        with: { name: linux, path: |
+        with:
+          name: linux
+          path: |
             desktop/out/*.AppImage
-            desktop/out/latest-linux.yml }
+            desktop/out/latest-linux.yml
 
   release:
     name: Publish release
