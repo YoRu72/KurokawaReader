@@ -171,33 +171,40 @@ export function arCount(n: number, f: { one: string; two: string; few: string; m
 }
 
 /** "1 page / 2 pages" — in Arabic: صفحة واحدة · صفحتان · ٣–١٠ صفحات · ١١–٩٩ صفحةً · ١٠٠ صفحةٍ. */
+/** Counted nouns in Japanese, Chinese and Korean: a counter word after the figure, no plural. */
+const CJK_COUNT: Record<string, Record<'page' | 'minute' | 'card' | 'book' | 'chapter', string>> = {
+  ja: { page: '{n}ページ', minute: '{n}分', card: '{n}枚', book: '{n}冊', chapter: '{n}章' },
+  zh: { page: '{n} 页', minute: '{n} 分钟', card: '{n} 张', book: '{n} 本', chapter: '{n} 章' },
+  ko: { page: '{n}쪽', minute: '{n}분', card: '카드 {n}장', book: '{n}권', chapter: '{n}장' },
+};
+const cjkCount = (n: number, what: keyof (typeof CJK_COUNT)['ja']): string | null => (CJK_COUNT[current] ? CJK_COUNT[current][what].replace('{n}', String(n)) : null);
 export function countPages(n: number): string {
-  if (current !== 'ar') return `${n} ${n === 1 ? 'page' : 'pages'}`;
+  if (current !== 'ar') return cjkCount(n, 'page') ?? `${n} ${n === 1 ? 'page' : 'pages'}`;
   return arCount(n, { one: 'صفحة واحدة', two: 'صفحتان', few: 'صفحات', many: 'صفحةً', hundred: 'صفحةٍ' });
 }
 
 /** "12 chapters" — in Arabic: فصل واحد · فصلان · ٣–١٠ فصول · ١١–٩٩ فصلًا · ١٠٠ فصلٍ. */
 export function countChapters(n: number): string {
-  if (current !== 'ar') return `${n} ${n === 1 ? 'chapter' : 'chapters'}`;
+  if (current !== 'ar') return cjkCount(n, 'chapter') ?? `${n} ${n === 1 ? 'chapter' : 'chapters'}`;
   return arCount(n, { one: 'فصل واحد', two: 'فصلان', few: 'فصول', many: 'فصلًا', hundred: 'فصلٍ' });
 }
 
 /** "3 min" — in Arabic: دقيقة واحدة · دقيقتان · ٣–١٠ دقائق · ١١–٩٩ دقيقةً · ١٠٠ دقيقةٍ. */
 export function countMinutes(n: number): string {
-  if (current !== 'ar') return `${n} min`;
+  if (current !== 'ar') return cjkCount(n, 'minute') ?? `${n} min`;
   return arCount(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: 'دقائق', many: 'دقيقةً', hundred: 'دقيقةٍ' });
 }
 
 /** "12 cards" — in Arabic: بطاقة واحدة · بطاقتان · ٣–١٠ بطاقات · ١١–٩٩ بطاقةً · ١٠٠ بطاقةٍ. */
 export function countCards(n: number): string {
-  if (current !== 'ar') return `${n} ${n === 1 ? 'card' : 'cards'}`;
+  if (current !== 'ar') return cjkCount(n, 'card') ?? `${n} ${n === 1 ? 'card' : 'cards'}`;
   return arCount(n, { one: 'بطاقة واحدة', two: 'بطاقتان', few: 'بطاقات', many: 'بطاقةً', hundred: 'بطاقةٍ' });
 }
 
 /** "1 file / 2 files" — and the Arabic rules for the counted noun (تمييز العدد):
  *  كتاب · كتابان · ٣–١٠ كتب (جمعٌ مجرور) · ١١–٩٩ كتابًا (مفردٌ منصوب) · ١٠٠ و٢٠٠… كتابٍ (مفردٌ مجرور). */
 export function countBooks(n: number): string {
-  if (current !== 'ar') return `${n} ${n === 1 ? 'file' : 'files'}`;
+  if (current !== 'ar') return cjkCount(n, 'book') ?? `${n} ${n === 1 ? 'file' : 'files'}`;
   if (n === 0) return 'لا كتب';
   if (n === 1) return 'كتاب';
   if (n === 2) return 'كتابان';
