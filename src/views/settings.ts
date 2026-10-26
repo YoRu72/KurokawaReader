@@ -77,7 +77,7 @@ export function settingsView(): HTMLElement {
     const url = h('input', { type: 'text', placeholder: t('fontUrlPlaceholder'), style: { flex: '1' }, dir: 'ltr' }) as HTMLInputElement;
     if (!fontsCard.querySelector('h3.card-title')) fontsCard.prepend(h('h3', null, t('fonts')));
     fontsCard.append(h('p', null, t('fontsBody')),
-      h('p', { class: 'sample' }, 'The quick brown fox jumps over the lazy dog — Lora carries the Latin text.'),
+      h('p', { class: 'sample' }, 'The quick brown fox jumps over the lazy dog — Merriweather carries the Latin text.'),
       h('p', { class: 'sample ar' }, 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — خطُّ عثمان طه للنصِّ العربيِّ، وسلطانُ للواجهة.'),
       h('h3', null, t('customFonts')), h('p', null, t('customFontsBody')),
       h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },

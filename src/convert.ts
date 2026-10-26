@@ -346,7 +346,7 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: ConvOptions
   const fontCss = await readerFontCss(d);
   if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage fonts', fontCss.length);
   const desk = (window as unknown as { kurokawaDesktop?: { printToPdf?(html: string, o?: { pageSize?: string }): Promise<string> } }).kurokawaDesktop;
-  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Lora','Uthman TN1','Noto Naskh Arabic',Georgia,serif${opts.fontSize ? `;font-size:${opts.fontSize}px` : ''}}@page{size:${paper.css};margin:${opts.paper === 'phone' ? '8mm' : '16mm'}}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
+  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Merriweather','Uthman TN1','Noto Naskh Arabic',Georgia,serif${opts.fontSize ? `;font-size:${opts.fontSize}px` : ''}}@page{size:${paper.css};margin:${opts.paper === 'phone' ? '8mm' : '16mm'}}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
   if (desk?.printToPdf) {
     progress('build', 70);
     const b64 = await desk.printToPdf(html, { pageSize: paper.css });
@@ -561,7 +561,7 @@ async function readerFontCss(d: ConvDoc): Promise<string> {
   for (const [family, f] of d.fonts) css += `@font-face{font-family:'${family}';src:url(${await blobToDataUrl(f.blob)})}\n`;
   // (Only the faces the document uses: every page picture carries them again.)
   const all = d.chapters.map((c) => c.html).join('');
-  const want = new Set<string>(['Lora', ...(/[\u0600-\u06ff]/.test(all + d.title) ? ['Uthman TN1'] : [])]);
+  const want = new Set<string>(['Merriweather', ...(/[\u0600-\u06ff]/.test(all + d.title) ? ['Uthman TN1'] : [])]);
   const italic = /<(i|em|cite|var|dfn)[\s>]|font-style:\s*italic/i.test(all);
   for (const sheet of Array.from(document.styleSheets)) {
     let rules: CSSRuleList; try { rules = sheet.cssRules; } catch { continue; }

@@ -60,9 +60,12 @@ const toMedia = (m: RawMedia): AlMedia => ({ id: m.id, title: m.title.english ||
 const MEDIA = 'id title { romaji english native } coverImage { medium large } format status startDate { year } averageScore chapters volumes description(asHtml: false) siteUrl mediaListEntry { id status progress score startedAt { year month day } completedAt { year month day } }';
 
 /** Manga and novels matching a title. */
-export async function search(q: string): Promise<{ media: AlMedia; entry?: AlEntry }[]> {
-  const d = await gql<{ Page: { media: RawMedia[] } }>(`query ($q: String) { Page(perPage: 15) { media(search: $q, type: MANGA, sort: SEARCH_MATCH) { ${MEDIA} } } }`, { q });
-  return d.Page.media.map((m) => ({ media: toMedia(m), entry: m.mediaListEntry ? { id: m.mediaListEntry.id, status: m.mediaListEntry.status, progress: m.mediaListEntry.progress, score: m.mediaListEntry.score, startedAt: m.mediaListEntry.startedAt, completedAt: m.mediaListEntry.completedAt } : undefined }));
+export async function search(q: string, novelsFirst = true): Promise<{ media: AlMedia; entry?: AlEntry }[]> {
+  // (Light novels are listed as MANGA of format NOVEL: asked for on their own first, so a book finds its novel
+  // before the manga adaptation of the same name.)
+  const d = await gql<{ novels?: { media: RawMedia[] }; Page: { media: RawMedia[] } }>(`query ($q: String) { ${novelsFirst ? `novels: Page(perPage: 8) { media(search: $q, type: MANGA, format: NOVEL, sort: SEARCH_MATCH) { ${MEDIA} } } ` : ''}Page(perPage: 15) { media(search: $q, type: MANGA, sort: SEARCH_MATCH) { ${MEDIA} } } }`, { q });
+  const seen = new Set<number>();
+  return [...(d.novels?.media ?? []), ...d.Page.media].filter((m) => !seen.has(m.id) && seen.add(m.id)).map((m) => ({ media: toMedia(m), entry: m.mediaListEntry ? { id: m.mediaListEntry.id, status: m.mediaListEntry.status, progress: m.mediaListEntry.progress, score: m.mediaListEntry.score, startedAt: m.mediaListEntry.startedAt, completedAt: m.mediaListEntry.completedAt } : undefined }));
 }
 
 /** The entry as it is on AniList now (and the media, in case it changed). */

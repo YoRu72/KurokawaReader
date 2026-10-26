@@ -1,35 +1,177 @@
-/* Reading fonts */
+/* Reading fonts (WOFF2, subset to the scripts they serve; the Latin ones are from Google Fonts under the SIL OFL) */
+@font-face {
+  font-family: 'Merriweather';
+  src: url('../assets/fonts/Merriweather-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Merriweather';
+  src: url('../assets/fonts/Merriweather-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Merriweather';
+  src: url('../assets/fonts/Merriweather-Italic-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
 @font-face {
   font-family: 'Lora';
-  src: url('../assets/fonts/Lora-Variable.ttf') format('truetype');
+  src: url('../assets/fonts/Lora.woff2') format('woff2');
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Lora';
-  src: url('../assets/fonts/Lora-Italic-Variable.ttf') format('truetype');
+  src: url('../assets/fonts/Lora-Italic.woff2') format('woff2');
   font-weight: 400 700;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
-  font-family: 'Uthman TN1';
-  src: url('../assets/fonts/UthmanTN1.ttf') format('truetype');
+  font-family: 'Literata';
+  src: url('../assets/fonts/Literata.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Literata';
+  src: url('../assets/fonts/Literata-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'EB Garamond';
+  src: url('../assets/fonts/EBGaramond.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'EB Garamond';
+  src: url('../assets/fonts/EBGaramond-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Crimson Pro';
+  src: url('../assets/fonts/CrimsonPro.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Crimson Pro';
+  src: url('../assets/fonts/CrimsonPro-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Gelasio';
+  src: url('../assets/fonts/Gelasio.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Gelasio';
+  src: url('../assets/fonts/Gelasio-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Vollkorn';
+  src: url('../assets/fonts/Vollkorn.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Vollkorn';
+  src: url('../assets/fonts/Vollkorn-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Bitter';
+  src: url('../assets/fonts/Bitter.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Bitter';
+  src: url('../assets/fonts/Bitter-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Serif';
+  src: url('../assets/fonts/SourceSerif.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Serif';
+  src: url('../assets/fonts/SourceSerif-Italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  src: url('../assets/fonts/Atkinson.woff2') format('woff2');
   font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  src: url('../assets/fonts/Atkinson-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  src: url('../assets/fonts/Atkinson-Italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Uthman TN1';
+  src: url('../assets/fonts/UthmanTN1.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Noto Naskh Arabic';
-  src: url('../assets/fonts/NotoNaskhArabic-Variable.ttf') format('truetype');
+  src: url('../assets/fonts/NotoNaskhArabic-Variable.woff2') format('woff2');
   font-weight: 400 700;
+  font-style: normal;
   font-display: swap;
 }
 
 /* Interface fonts */
 @font-face {
   font-family: 'Inter';
-  src: url('../assets/fonts/Inter-Variable.ttf') format('truetype');
+  src: url('../assets/fonts/Inter.woff2') format('woff2');
   font-weight: 100 900;
   font-display: swap;
 }
@@ -38,13 +180,13 @@
    (Arabic digits are produced explicitly with localDigits()). */
 @font-face {
   font-family: 'AL-Mohanad';
-  src: url('../assets/fonts/AL-Mohanad.ttf') format('truetype');
+  src: url('../assets/fonts/AL-Mohanad.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'Sultan';
-  src: url('../assets/fonts/Sultan-Medium.ttf') format('truetype');
+  src: url('../assets/fonts/Sultan-Medium.woff2') format('woff2');
   font-weight: 400 600;
   font-display: swap;
   unicode-range: U+0000-0027, U+002A-002F, U+003A-10FFFF;
@@ -56,7 +198,7 @@
   --font-cjk: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo', 'PingFang SC', 'Microsoft YaHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK JP', 'Noto Sans CJK SC', 'Noto Sans CJK KR', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans KR', 'Source Han Sans', sans-serif;
   --font-ui: 'Inter', 'Sultan', system-ui, -apple-system, 'Segoe UI', var(--font-cjk);
   --font-ui-ar: 'Sultan', 'Inter', 'Noto Naskh Arabic', system-ui, sans-serif;
-  --font-read-latin: 'Lora';
+  --font-read-latin: 'Merriweather';
   --font-read-arabic: 'Uthman TN1';
   --font-read: var(--font-read-latin), var(--font-read-arabic), 'Noto Naskh Arabic', Georgia, serif;
   --font-read-rtl: var(--font-read-arabic), var(--font-read-latin), 'Noto Naskh Arabic', serif;

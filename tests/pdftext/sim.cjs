@@ -3,7 +3,7 @@
 // Prints a line per variant and the first lines of each, to see what kind of wreck remains.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path');
 const DIST = path.resolve(__dirname, '../../dist');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.bcmap': 'application/octet-stream' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 const dir = process.argv[2];
 const SIMPLE8 = ['اللفظ: وسميناه في تقسيمنا: اللسان.', 'وقد سبق إلى ذكر هذه العلامات المناطقة حين قسموا الدلالة إلى دلالة', 'وضعية، ودلالة عقلية، ودلالة طبيعية.'].join('\n');

@@ -1319,3 +1319,4 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .chapter-list .tick svg { width: 14px; height: 14px; opacity: 0; }
 .chapter-list li.picked .tick { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
 .chapter-list li.picked .tick svg { opacity: 1; }
+.deck-mine { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

@@ -7,7 +7,7 @@ const DIST = path.join(__dirname, '..', 'dist');
 const FIX = path.join(__dirname, 'fixtures');
 const SHOTS = path.join(__dirname, 'shots');
 fs.mkdirSync(SHOTS, { recursive: true });
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.map': 'application/json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.map': 'application/json' };
 
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);

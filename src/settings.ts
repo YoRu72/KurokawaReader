@@ -2,12 +2,12 @@ import { familyFor } from './fonts';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
-export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'coffee' | 'lavender' | 'sky' | 'charcoal' | 'nord' | 'dracula' | 'solardark' | 'gruvbox' | 'solarlight' | 'cream' | 'peach' | 'custom';
+export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'moon' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'coffee' | 'lavender' | 'sky' | 'charcoal' | 'nord' | 'dracula' | 'solardark' | 'gruvbox' | 'solarlight' | 'cream' | 'peach' | 'custom';
 export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots';
 export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
-export type LatinFont = 'lora' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
+export type LatinFont = 'merriweather' | 'lora' | 'literata' | 'garamond' | 'crimson' | 'gelasio' | 'vollkorn' | 'bitter' | 'sourceserif' | 'atkinson' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
 export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen';
 export const DEFAULT_TAP_ZONES: TapAction[] = ['prev', 'prev', 'prev', 'menu', 'menu', 'menu', 'next', 'next', 'next'];
@@ -68,6 +68,13 @@ export interface VisualSettings {
   highlightColor: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
   /* Overrides that apply on top of any theme ('' = theme default) */
   fgOverride: string;
+  linkOverride: string;    // link colour on top of any theme ('' = theme's)
+  selOverride: string;     // selection colour ('' = the accent's)
+  /** The reader's own themes, saved by name; `myTheme` is the one in force (theme 'custom' then carries its colours). */
+  myThemes: { id: string; name: string; bg: string; fg: string; link: string; sel: string }[];
+  myTheme: string;
+  indent: number;          // first-line indent of paragraphs, em (0 = none)
+  dropCap: boolean;        // a large first letter at the start of a chapter
   bgOverride: string;
   /* Reading flow */
   readingMode: 'chapters' | 'flow' | 'continuous';   // flow: chapter by chapter, the next one loads when you scroll past the end
@@ -156,7 +163,7 @@ export const DEFAULTS: VisualSettings = {
   nightTo: '06:30',
   nightTheme: 'dark',
   eyeRestMinutes: 0,
-  latinFont: 'lora',
+  latinFont: 'merriweather',
   arabicFont: 'uthman',
   cjkFont: 'system',
   headingsFont: false,
@@ -198,6 +205,12 @@ export const DEFAULTS: VisualSettings = {
   orientation: 'auto',
   highlightColor: 'amber',
   fgOverride: '',
+  linkOverride: '',
+  selOverride: '',
+  myThemes: [],
+  myTheme: '',
+  indent: 0,
+  dropCap: false,
   bgOverride: '',
   readingMode: 'chapters',
   hideSystemBars: true,
@@ -323,7 +336,16 @@ export function onSettingsChange(fn: (s: VisualSettings) => void): () => void {
 }
 
 const LATIN: Record<string, string> = {
+  merriweather: "'Merriweather'",
   lora: "'Lora'",
+  literata: "'Literata'",
+  garamond: "'EB Garamond'",
+  crimson: "'Crimson Pro'",
+  gelasio: "'Gelasio'",
+  vollkorn: "'Vollkorn'",
+  bitter: "'Bitter'",
+  sourceserif: "'Source Serif'",
+  atkinson: "'Atkinson Hyperlegible'",
   inter: "'Inter'",
   serif: 'Georgia, "Times New Roman", serif',
   sans: 'system-ui, -apple-system, "Segoe UI", sans-serif',
@@ -370,7 +392,7 @@ export function isLightColor(hex: string): boolean {
 }
 
 /** Which chrome the page would call for (light reading themes → light chrome). */
-const LIGHT_THEMES: Theme[] = ['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'];
+const LIGHT_THEMES: Theme[] = ['sepia', 'moon', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'];
 /** The theme in force now: the night theme in the night hours when that is set, else the chosen one. */
 export function themeNow(s: VisualSettings = current): Theme {
   if (!s.nightSchedule) return s.theme;
@@ -459,6 +481,11 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   if (s.bgOverride) root.style.setProperty('--r-bg-override', s.bgOverride); else root.style.removeProperty('--r-bg-override');
   root.classList.toggle('has-fg-override', !!s.fgOverride);
   root.classList.toggle('has-bg-override', !!s.bgOverride);
+  if (s.linkOverride) root.style.setProperty('--r-link-override', s.linkOverride); else root.style.removeProperty('--r-link-override');
+  root.classList.toggle('has-link-override', !!s.linkOverride);
+  if (s.selOverride) root.style.setProperty('--r-sel', s.selOverride); else root.style.removeProperty('--r-sel');
+  root.style.setProperty('--r-indent', s.indent ? `${s.indent}em` : '0');
+  root.classList.toggle('drop-cap', s.dropCap);
   root.style.setProperty('--r-custom-bg', s.customBg);
   root.style.setProperty('--r-custom-fg', s.customFg);
   root.style.setProperty('--r-texture-opacity', String(s.textureOpacity));
@@ -482,7 +509,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   const cjk = familyFor(s.cjkFont, CJK);
   root.style.setProperty('--r-font-cjk', s.cjkFont === 'system' || s.cjkFont === 'publisher' ? 'inherit' : `${cjk}, ${latin}, ${fallback}`);
   // Headings keep the default faces unless asked to follow the text's.
-  root.style.setProperty('--r-font-head', s.headingsFont ? 'var(--r-font)' : (s.latinFont === 'publisher' ? 'inherit' : `${LATIN.lora}, ${ARABIC.uthman}, ${fallback}`));
+  root.style.setProperty('--r-font-head', s.headingsFont ? 'var(--r-font)' : (s.latinFont === 'publisher' ? 'inherit' : `${LATIN.merriweather}, ${ARABIC.uthman}, ${fallback}`));
   root.style.setProperty('--r-font-head-rtl', s.headingsFont ? 'var(--r-font-rtl)' : (s.arabicFont === 'publisher' ? 'inherit' : `${ARABIC.uthman}, ${LATIN.lora}, ${fallback}`));
   root.style.setProperty('--r-size', `${s.fontSize}px`);
   root.style.setProperty('--r-lh', String(s.lineHeight));

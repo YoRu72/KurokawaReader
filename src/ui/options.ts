@@ -23,12 +23,25 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   /* ----- Theme ----- */
   const themes: [Theme, string, string, string][] = [
     ['grey', t('themeGrey'), '#1b1b1b', '#d2d2d2'], ['dark', t('themeDark'), '#141414', '#cfcbc4'], ['black', t('themeBlack'), '#000', '#c9c9c9'], ['slate', t('themeSlate'), '#1e2228', '#d3d8de'], ['night', t('themeNight'), '#0f1626', '#cfd8e8'],
-    ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'], ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['mintpaper', t('themeMintPaper'), '#e6efe6', '#1f2a22'], ['rosepaper', t('themeRosePaper'), '#f3e6e6', '#2c1e20'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['sand', t('themeSand'), '#efe4cf', '#3a3024'],
+    ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'], ['moon', t('themeMoon'), '#f0dec6', '#634d35'], ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['mintpaper', t('themeMintPaper'), '#e6efe6', '#1f2a22'], ['rosepaper', t('themeRosePaper'), '#f3e6e6', '#2c1e20'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['sand', t('themeSand'), '#efe4cf', '#3a3024'],
     ['olive', t('themeOlive'), '#1d2017', '#d6d8c6'], ['amber', t('themeAmber'), '#1f1a12', '#e3cfa8'], ['forest', t('themeForest'), '#10201a', '#cbd9cf'], ['plum', t('themePlum'), '#1e1520', '#ddd0dc'], ['ink', t('themeInk'), '#0b1120', '#dfe6f3'], ['coffee', t('themeCoffee'), '#1c1512', '#d9c9b8'], ['lavender', t('themeLavender'), '#efeaf6', '#2b2436'], ['sky', t('themeSky'), '#e9f1f7', '#1f2a33'],
     ['charcoal', t('themeCharcoal'), '#232323', '#dcdcdc'], ['nord', t('themeNord'), '#2e3440', '#d8dee9'], ['dracula', t('themeDracula'), '#282a36', '#f8f8f2'], ['solardark', t('themeSolarizeddark'), '#002b36', '#a9b7b8'], ['gruvbox', t('themeGruvbox'), '#282828', '#ebdbb2'], ['solarlight', t('themeSolarizedlight'), '#fdf6e3', '#586e75'], ['cream', t('themeCream'), '#fff8e7', '#2d2a26'], ['peach', t('themePeach'), '#fbeee4', '#3a2a22'], ['custom', t('themeCustom'), s.customBg, s.customFg],
   ];
   grid.append(head('theme', t('theme')), h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
-    h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
+    h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '', myTheme: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
+  // The reader's own saved themes: colours of text, page, links and selection, by name.
+  const mine = s.myThemes;
+  const applyMine = (m: (typeof mine)[number]) => updateSettings({ theme: 'custom', myTheme: m.id, customBg: m.bg, customFg: m.fg, linkOverride: m.link, selOverride: m.sel, fgOverride: '', bgOverride: '' });
+  const saveMine = () => {
+    const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
+    const name = prompt(t('themeName'), '') ?? ''; if (!name.trim()) return;
+    const m = { id: String(Date.now()), name: name.trim(), bg: toHex(s.bgOverride || cur.getPropertyValue('--r-bg').trim() || s.customBg), fg: toHex(s.fgOverride || cur.getPropertyValue('--r-fg').trim() || s.customFg), link: toHex(s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8'), sel: s.selOverride || toHex(cur.getPropertyValue('--r-sel').trim() || '#7fb4e5') };
+    updateSettings({ myThemes: [...mine, m] }); applyMine(m); rerender();
+  };
+  grid.append(h('div', { class: 'row', style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('myThemes')),
+    h('div', { class: 'theme-swatches small' }, ...mine.map((m) => h('button', { type: 'button', title: m.name, 'aria-label': m.name, 'aria-pressed': String(s.theme === 'custom' && s.myTheme === m.id), style: { background: m.bg, color: m.fg }, onclick: () => { applyMine(m); rerender(); } }, 'A'))),
+    h('button', { class: 'btn small outlined', type: 'button', onclick: saveMine }, icon('plus'), t('saveTheme')),
+    s.theme === 'custom' && s.myTheme ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ myThemes: mine.filter((m) => m.id !== s.myTheme), myTheme: '' }); rerender(); } }, icon('trash'), t('delete')) : null));
   // A night theme between two hours.
   grid.append(toggle([t('nightSchedule'), 'nightSchedule'], s.nightSchedule, (v) => { updateSettings({ nightSchedule: v }); rerender(); }));
   if (s.nightSchedule) {
@@ -37,9 +50,11 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     const dark = themes.filter(([id]) => !['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'].includes(id));
     grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('nightTheme')), h('div', { class: 'theme-swatches small' }, ...dark.map(([id, label, bg, fg]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.nightTheme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ nightTheme: id }); rerender(); } }, 'A')))));
   }
+  // (Colours set while one of the saved themes is in force are kept in it.)
+  const keepMine = (patch: Partial<{ bg: string; fg: string; link: string; sel: string }>) => { const cur = getSettings(); if (cur.theme === 'custom' && cur.myTheme) updateSettings({ myThemes: cur.myThemes.map((m) => (m.id === cur.myTheme ? { ...m, ...patch } : m)) }); };
   if (s.theme === 'custom') {
-    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => updateSettings({ customFg: v }))),
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => updateSettings({ customBg: v }))));
+    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => { updateSettings({ customFg: v }); keepMine({ fg: v }); })),
+      h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => { updateSettings({ customBg: v }); keepMine({ bg: v }); })));
   } else {
     // Colour overrides on top of the chosen theme
     const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
@@ -51,6 +66,14 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     );
   }
 
+  {
+    const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
+    const linkNow = s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8';
+    const selNow = s.selOverride || '#7fb4e5';
+    grid.append(
+      h('div', { class: 'row' }, h('span', { class: 'label' }, t('linkColor')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.linkOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ linkOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(linkNow), (v) => { updateSettings({ linkOverride: v }); keepMine({ link: v }); }))),
+      h('div', { class: 'row' }, h('span', { class: 'label' }, t('selectionColor')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.selOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ selOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(selNow), (v) => { updateSettings({ selOverride: v }); keepMine({ sel: v }); }))));
+  }
   // Highlight colours (also used by notes and PDF pins)
   grid.append(section([t('highlightColors'), 'highlightPalette'], h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, ...(Object.keys(s.highlightPalette) as (keyof typeof s.highlightPalette)[]).map((k) => colorField(s.highlightPalette[k], (v) => updateSettings({ highlightPalette: { ...getSettings().highlightPalette, [k]: v } }), k)))));
 
@@ -124,7 +147,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const customLatin = fontsSync().filter((f) => f.script === 'latin').map((f): [LatinFont, string] => [`custom:${f.id}`, f.name]);
   const customArabic = fontsSync().filter((f) => f.script === 'arabic').map((f): [ArabicFont, string] => [`custom:${f.id}`, f.name]);
   const sys = s.systemFonts.map((f): [string, string] => [`system:${f}`, f]);
-  const latin: [LatinFont, string][] = [['lora', 'Lora'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
+  const latin: [LatinFont, string][] = [['merriweather', 'Merriweather'], ['literata', 'Literata'], ['lora', 'Lora'], ['garamond', 'EB Garamond'], ['crimson', 'Crimson Pro'], ['sourceserif', 'Source Serif'], ['gelasio', 'Gelasio'], ['vollkorn', 'Vollkorn'], ['bitter', 'Bitter'], ['atkinson', 'Atkinson'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
   const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['mohanad', 'المهند'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
   const customCjk = fontsSync().filter((f) => f.script === 'cjk').map((f): [CjkFont, string] => [`custom:${f.id}`, f.name]);
   const cjkBook = !!document.querySelector('.cjk-book');
@@ -146,6 +169,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const aligns: [VisualSettings['align'], string][] = [['start', t('alignStart')], ['justify', t('alignJustify')], ['center', t('alignCenter')]];
   grid.append(section([t('textAlign'), 'align'], segmented(aligns, s.align, (v) => { updateSettings({ align: v }); rerender(); })));
   grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
+  grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
+  grid.append(toggle([t('dropCap'), 'dropCap'], s.dropCap, (v) => updateSettings({ dropCap: v })));
 
   /* ----- Behaviour ----- */
   grid.append(head('behaviour', t('behaviourSection')));
@@ -254,7 +279,8 @@ function segmented<T extends string>(items: [T, string][], value: T, onPick: (v:
   const fam = (id: string): string | undefined => {
     if (id.startsWith('custom:')) { const f = fontsSync().find((x) => x.id === id.slice(7)); return f ? `'${f.family}'` : undefined; }
     if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : id === 'mohanad' ? "'AL-Mohanad'" : undefined;
-    return id === 'lora' ? "'Lora'" : undefined;
+    const named: Record<string, string> = { merriweather: "'Merriweather'", lora: "'Lora'", literata: "'Literata'", garamond: "'EB Garamond'", crimson: "'Crimson Pro'", sourceserif: "'Source Serif'", gelasio: "'Gelasio'", vollkorn: "'Vollkorn'", bitter: "'Bitter'", atkinson: "'Atkinson Hyperlegible'", inter: "'Inter'" };
+    return named[id];
   };
   return h('div', { class: 'segmented' }, ...items.map(([id, label]) => { const f = fam(id); return h('button', { type: 'button', 'aria-pressed': String(value === id), onclick: () => onPick(id), style: f ? { fontFamily: f, fontSize: arabicFont ? '16px' : undefined } : undefined }, label); }));
 }

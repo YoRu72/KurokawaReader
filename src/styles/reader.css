@@ -16,6 +16,7 @@
 .reader[data-theme='forest'] { --r-bg: #10201a; --r-fg: #cbd9cf; --r-dim: #83998a; --r-rule: #203329; --r-link: #8fd2ad; }
 .reader[data-theme='plum'] { --r-bg: #1e1520; --r-fg: #ddd0dc; --r-dim: #9c8c9b; --r-rule: #352838; --r-link: #d3a3dc; }
 .reader[data-theme='ink'] { --r-bg: #0b1120; --r-fg: #dfe6f3; --r-dim: #8894ab; --r-rule: #1c2740; --r-link: #93c3ff; }
+.reader[data-theme='moon'] { --r-bg: #f0dec6; --r-fg: #634d35; --r-dim: #9a8468; --r-rule: #d9c4a4; --r-link: #c7705f; --r-img-filter: none; }
 .reader[data-theme='sand'] { --r-bg: #efe4cf; --r-fg: #3a3024; --r-dim: #7d6f5d; --r-rule: #d8c9ad; --r-link: #8a5a1e; --r-img-filter: none; }
 .reader[data-theme='coffee'] { --r-bg: #1c1512; --r-fg: #d9c9b8; --r-dim: #9a8a7a; --r-rule: #342923; --r-link: #d8a872; }
 .reader[data-theme='lavender'] { --r-bg: #efeaf6; --r-fg: #2b2436; --r-dim: #6f6480; --r-rule: #d8cfe6; --r-link: #6b4fa0; --r-img-filter: none; }
@@ -34,6 +35,10 @@
 .reader[data-theme='cream'] { --r-bg: #fff8e7; --r-fg: #2d2a26; --r-dim: #7a736a; --r-rule: #eadfc9; --r-link: #8a5a1e; --r-img-filter: none; }
 .reader[data-theme='peach'] { --r-bg: #fbeee4; --r-fg: #3a2a22; --r-dim: #8a7066; --r-rule: #ecd8cb; --r-link: #a0522d; --r-img-filter: none; }
 .reader.has-fg-override { --r-fg: var(--r-fg-override); --r-dim: color-mix(in srgb, var(--r-fg-override) 65%, var(--r-bg)); }
+.reader.has-link-override { --r-link: var(--r-link-override); }
+.reader ::selection { background: var(--r-sel, color-mix(in srgb, var(--md-primary) 35%, transparent)); }
+.kr-content p { text-indent: var(--r-indent, 0); }
+.reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
 

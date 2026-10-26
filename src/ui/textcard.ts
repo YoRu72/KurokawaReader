@@ -19,7 +19,7 @@ function look(): Look {
   const get = (v: string, d: string) => cs?.getPropertyValue(v).trim() || d;
   return {
     bg: get('--r-bg', '#1b1b1b'), fg: get('--r-fg', '#d2d2d2'), dim: get('--r-dim', '#8f8f8f'), rule: get('--r-rule', '#303030'),
-    font: get('--r-font', "'Lora', serif"), fontRtl: get('--r-font-rtl', "'Uthman TN1', serif"),
+    font: get('--r-font', "'Merriweather', serif"), fontRtl: get('--r-font-rtl', "'Uthman TN1', serif"),
     size: parseFloat(get('--r-size', '19')) || 19, lh: parseFloat(get('--r-lh', '1.7')) || 1.7, align: get('--r-align', 'start'),
   };
 }
@@ -89,7 +89,7 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
   const rtl = isRtlText(o.text);
   const family = rtl ? L.fontRtl : L.font;
   // Only wait for fonts if the one we need is not loaded yet.
-  if (!document.fonts.check(`16px ${family}`)) { try { await document.fonts.ready; } catch { /* ignore */ } }
+  try { await document.fonts.load(`16px ${family}`); } catch { /* ignore */ }
 
   const W = 1080, pad = 84;
   const scale = W / Math.min(Math.max(window.innerWidth, 320), 720); // match on-screen proportions

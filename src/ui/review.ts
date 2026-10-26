@@ -21,7 +21,7 @@ const fontOf = (kind: 'serif' | 'sans', rtl: boolean, el: HTMLElement | null) =>
   const cs = el ? getComputedStyle(el) : null;
   const get = (v: string, d: string) => cs?.getPropertyValue(v).trim() || d;
   if (rtl) return get('--r-font-rtl', "'Uthman TN1', 'Noto Naskh Arabic', serif");
-  return kind === 'serif' ? get('--r-font', "'Lora', serif") : 'Inter, system-ui, sans-serif';
+  return kind === 'serif' ? get('--r-font', "'Merriweather', serif") : 'Inter, system-ui, sans-serif';
 };
 
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
@@ -54,7 +54,8 @@ export async function renderReviewCanvas(o: ReviewCardOptions): Promise<HTMLCanv
   const reader = document.querySelector('.reader') as HTMLElement | null;
   const rtlTitle = isRtlText(o.book.title), rtlText = isRtlText(o.text || o.book.title);
   const titleFont = fontOf(P.font, rtlTitle, reader), textFont = fontOf(P.font, rtlText, reader);
-  for (const f of [titleFont, textFont]) if (!document.fonts.check(`16px ${f}`)) { try { await document.fonts.ready; } catch { /* fine */ } }
+  // (The faces are fetched here if the page has not used them yet: a canvas falls back silently otherwise.)
+  for (const f of [titleFont, textFont]) { try { await document.fonts.load(`16px ${f}`); await document.fonts.load(`bold 16px ${f}`); } catch { /* fine */ } }
 
   const W = 1080, pad = 88;
   let cover: ImageBitmap | null = null;

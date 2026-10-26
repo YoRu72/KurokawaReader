@@ -61,8 +61,8 @@ async function preloadStartupChunks() {
     if (file !== 'app.js') order.push(file);
   };
   await visit('app.js');
-  const fonts = (await fs.readdir(path.join(assets, 'fonts'))).filter((f) => /^(Inter-Variable|Sultan-Medium)/.test(f));
-  const tags = [...order.map((f) => `  <link rel="modulepreload" href="/assets/${f}" />`), ...fonts.map((f) => `  <link rel="preload" href="/assets/fonts/${f}" as="font" type="font/ttf" crossorigin />`)].join('\n');
+  const fonts = (await fs.readdir(path.join(assets, 'fonts'))).filter((f) => /^(Inter|Sultan-Medium)-/.test(f) && f.endsWith('.woff2'));
+  const tags = [...order.map((f) => `  <link rel="modulepreload" href="/assets/${f}" />`), ...fonts.map((f) => `  <link rel="preload" href="/assets/fonts/${f}" as="font" type="font/woff2" crossorigin />`)].join('\n');
   const html = path.join(dist, 'index.html');
   await fs.writeFile(html, (await fs.readFile(html, 'utf8')).replace('  <link rel="stylesheet" href="/assets/app.css" />', `  <link rel="stylesheet" href="/assets/app.css" />\n${tags}`));
   return order.length;
