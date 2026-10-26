@@ -8,10 +8,10 @@
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { findVertical, plainVerticalForms, type VPiece } from './pdfvertical';
-import { ltrRunsForward, joinLine, attachMarks, balanceBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece, findColumns } from './pdftext';
+import { ltrRunsForward, joinLine, attachMarks, orientBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece, findColumns } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
-type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean; hint?: boolean; glued?: boolean };
+type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean; hint?: boolean; glued?: boolean; font?: string };
 type Word = { text: string; l: number; r: number; y: number; h: number; rtl: boolean; brk?: boolean; glued?: boolean };
 
 const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
@@ -35,7 +35,7 @@ function wordsOf(line: Piece[]): Word[] {
   sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
   const marked = sorted.some((p) => p.space);
   const words: Word[] = [];
-  let cur: Word | null = null; let edge = 0; let breakNext = false; let hintNext = false; let zeroLast = 0;
+  let cur: Word | null = null; let edge = 0; let breakNext = false; let hintNext = false; let zeroLast = 0; const depth = { n: 0 };
   const dirOf = (t: string) => (RTL_CHAR.test(t) ? 'r' : LTR_CHAR.test(t) ? 'l' : '');
   let curDir = '';
   for (const p of sorted) {
@@ -43,7 +43,7 @@ function wordsOf(line: Piece[]): Word[] {
     // (A space pdf.js found in a gap: a word break when the gap is really there — Word sets its Arabic
     // words apart by little more than a tenth of the type size.)
     if (p.hint) { hintNext = true; continue; }
-    const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true)) : p.text;
+    const text = rtl ? orientBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true), depth) : p.text;
     const d = dirOf(text);
     // (After a piece of no width — a half-form of an Indic conjunct, whose advance the PDF left out — the
     // distances of the next two pieces say nothing: the conjunct's own glyph is wider than their advances.)
@@ -86,6 +86,28 @@ function dropDoubleDrawn(pieces: Piece[]): void {
   }
 }
 
+/** A page's text as blocks of lines, in reading order, for conversion: each line joined as it is read, with
+ *  its place and size; a line's `font` is the font of its first word. */
+export type LaidLine = { text: string; rtl: boolean; l: number; r: number; y: number; h: number; font?: string; brk: boolean };
+export function pageBlocks(items: Item[], viewport: { scale: number; transform: number[]; height: number }): { lines: LaidLine[] }[] {
+  const { blocks, vert } = layText(items, viewport);
+  const out: { lines: LaidLine[] }[] = blocks.map((lines) => ({ lines: lines.map((line): LaidLine => {
+    const words = wordsOf(line);
+    // (Where the line was cut into words at a space, a blank marker keeps the break when they are joined again.)
+    const lineRtl = isRtlText(line.map((p) => p.text).join(''));
+    const { text, rtl } = joinLine(words.flatMap((w) => (!w.brk || /^[.,،؛:!?؟)\]»”’}]/.test(w.text) ? [w] : [{ ...w, text: ' ', l: lineRtl ? w.r : w.l, r: lineRtl ? w.r : w.l }, w])));
+    // (The line's size is its letters' usual size, not a mark's or a raised number's.)
+    const hs = line.filter((p) => !p.space && !p.hint && p.text.trim()).map((p) => p.h).sort((a, b) => a - b);
+    const h = hs.length ? hs[hs.length >> 1] : Math.max(...line.map((p) => p.h)), l = Math.min(...words.map((w) => w.l)), r = Math.max(...words.map((w) => w.r));
+    return { text, rtl, l, r, y: line[0].y, h, font: (line.find((p) => !p.space && !p.hint) as (Piece & { font?: string }) | undefined)?.font, brk: false };
+  }).filter((ln) => ln.text.trim()) })).filter((b) => b.lines.length);
+  // Columns of vertical writing become blocks of their own, where they stand.
+  let para = '', top = Infinity, size = 0;
+  for (const g of vert.segments) { para += plainVerticalForms(g.text); top = Math.min(top, g.t); size = Math.max(size, g.r - g.l); if (g.breakAfter) { out.push({ lines: [{ text: para, rtl: false, l: g.l, r: g.r, y: top, h: size, font: undefined, brk: false }] }); para = ''; top = Infinity; size = 0; } }
+  if (para) out.push({ lines: [{ text: para, rtl: false, l: 0, r: 0, y: top, h: size, font: undefined, brk: false }] });
+  return out;
+}
+
 export interface PdfTextLayer { cancel(): void }
 
 type Turned = { text: string; tx: number[]; w: number; h: number; angle: number };
@@ -108,7 +130,7 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
     if (!h) continue;
     if (!text.trim()) { if (w > 0 && Math.abs(angle) <= 0.02) pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, hint: true }); continue; }
     if (Math.abs(angle) > 0.02) { turned.push({ text, tx, w, h, angle }); continue; }
-    pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, keep: !!raw.krLead });
+    pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, keep: !!raw.krLead, font: raw.fontName });
   }
   // Text drawn twice in the same place — a heading's shadow or outline under it, a fake bold made of two
   // passes a hair apart — is one text to the reader: the second drawing goes.

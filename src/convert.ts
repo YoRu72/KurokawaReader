@@ -89,8 +89,12 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
   const doc = opened.doc;
   const fonts = new Map<string, { blob: Blob; ext: string }>();
   const fontFamilies = new Map<string, string>();   // pdf.js font id → css family
-  const paragraphs: { text: string; size: number; rtl: boolean; family?: string; heading: boolean; page: number }[] = [];
+  const paragraphs: { text: string; size: number; rtl: boolean; family?: string; heading: boolean; page: number; edgeKey: string; open?: boolean; center?: boolean }[] = [];
   const sizes: number[] = [];
+  // Lines at the page's edges, counted across pages: the ones that repeat are running heads and page numbers.
+  const edgeSeen = new Map<string, number>();
+  const edgeLines: { key: string; text: string; page: number; size: number; rtl: boolean; font?: string }[] = [];
+  const notes: { text: string; page: number }[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     progress('pdfPage', Math.round((p / doc.numPages) * 60));
     const page = await doc.getPage(p);
@@ -117,43 +121,89 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
         } catch { fontFamilies.set(it.fontName, cleanFamily(it.fontName)); }
       }
     }
-    // Vertical writing (columns of Japanese, Chinese, Korean; Mongolian): its columns in reading order become
-    // paragraphs of their own; the rest is read in lines.
-    const vh = page.getViewport({ scale: 1 }).height;
-    const vert = findVertical(items.map((i) => ({ text: i.str, l: i.x, r: i.x + i.w, y: vh - i.y, h: i.h })));
-    const vParas: { text: string; size: number; family?: string }[] = [];
-    { let t = '', size = 0, fam: string | undefined; for (const g of vert.segments) { t += plainVerticalForms(g.text); size = Math.max(size, g.size); fam ??= fontFamilies.get(items[g.items[0]]?.font ?? ''); if (g.breakAfter) { if (t.trim()) vParas.push({ text: t.trim(), size, family: fam }); t = ''; size = 0; fam = undefined; } } if (t.trim()) vParas.push({ text: t.trim(), size, family: fam }); }
-    const flatItems = vert.vertical.size ? items.filter((_, i) => !vert.vertical.has(i)) : items;
-    // Lines by vertical position (PDF y grows upwards).
-    const sorted = flatItems.filter((i) => i.str.trim() || i.str === '\u2009' || i.eol).sort((a, b) => b.y - a.y || a.x - b.x);
-    const lines: It[][] = [];
-    for (const it of sorted) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - it.y) < Math.max(cur[0].h, it.h) * 0.5) cur.push(it); else lines.push([it]); }
-    let prevBottom: number | null = null; let prevSize = 0; let buf = ''; let bufSize = 0; let bufFont: string | undefined; let bufRtl = false;
-    const flush = () => { if (buf.trim()) { paragraphs.push({ text: buf.replace(/\s+/g, ' ').trim(), size: bufSize, rtl: bufRtl, family: bufFont, heading: false, page: p }); sizes.push(bufSize); } buf = ''; };
-    for (const line of lines) {
-      const joinedLine = joinLine(line.map((i) => ({ text: i.str, l: i.x, r: i.x + i.w, h: i.h, keep: i.keep })));
-      const rtl = joinedLine.rtl;
-      let text = joinedLine.text;
-      text = fixArabicLine(text.trim());
-      if (!text) continue;
-      const size = Math.max(...line.map((i) => i.h));
-      const top = line[0].y + size; const bottom = line[0].y;
-      const gap = prevBottom === null ? 0 : prevBottom - top;
-      const newPara = prevBottom === null || gap > size * 0.9 || Math.abs(size - prevSize) > prevSize * 0.25 || /[.!?؟。！？]["»”]?$/.test(buf.trim()) && /^[؀-ۿA-Z一-鿿"«“]/.test(text) && gap > size * 0.3;
-      if (newPara) { flush(); bufSize = size; bufFont = fontFamilies.get(line[0].font); bufRtl = rtl; }
-      // (Lines of Chinese or Japanese run on without a space where they wrap.)
-      const cjkJoin = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]$/.test(buf) && /^[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/.test(text);
-      buf += (buf && !cjkJoin ? ' ' : '') + text;
-      prevBottom = bottom; prevSize = size;
+    // The page as blocks of lines in reading order (the same layout the viewer selects and searches by), each
+    // block its own run of paragraphs. Lines at the very top or bottom that repeat across pages (a running
+    // head, a page number) are set aside; smaller lines at the foot of the page are footnotes.
+    const vp = page.getViewport({ scale: 1, rotation: 0 });
+    const { pageBlocks } = await import('./pdflayer');
+    const blocks = pageBlocks(tc.items as { str: string; transform: number[]; width: number; height: number; fontName?: string; krLead?: boolean }[], vp);
+    const pageLines = blocks.flatMap((b) => b.lines);
+    const pageMedian = pageLines.length ? [...pageLines.map((l) => l.h)].sort((a, b) => a - b)[pageLines.length >> 1] : 12;
+    const edge = (ln: { y: number }) => ln.y < vp.height * 0.08 ? 'top' : ln.y > vp.height * 0.92 ? 'bottom' : '';
+    for (const ln of pageLines) { const e = edge(ln); if (e) { const key = ln.text.replace(/[\d٠-٩]+/g, '#').trim(); edgeSeen.set(key, (edgeSeen.get(key) ?? 0) + 1); } }
+    let prevBottom: number | null = null; let prevSize = 0; let buf = ''; let bufSize = 0; let bufFont: string | undefined; let bufRtl = false; let bufFull = false; let bufWide = false; let bufCenter = false; let bufLines = 0;
+    const flush = (kind: 'para' | 'note' = 'para') => {
+      if (buf.trim()) {
+        const text = buf.replace(/\s+/g, ' ').trim();
+        if (kind === 'note') notes.push({ text, page: p });
+        else {
+          // (A paragraph left open at the foot of a page or block — its last line full, no stop at its end — goes
+          // on with the next body text of the same size.)
+          const last = paragraphs[paragraphs.length - 1];
+          if (last && last.open && !last.heading && Math.abs(last.size - bufSize) <= last.size * 0.15) { last.text += (/[\u3000-\u9fff]$/.test(last.text) ? '' : ' ') + text; last.open = bufFull && !/[.!?؟。！？:"»”)]$/.test(text); }
+          else { paragraphs.push({ text, size: bufSize, rtl: bufRtl, family: bufFont, heading: false, page: p, edgeKey: '', center: bufCenter, open: bufFull && bufWide && !bufCenter && bufLines >= 2 && bufSize <= pageMedian * 1.2 && !/[.!?؟。！？:"»”)]$/.test(text) }); sizes.push(bufSize); }
+        }
+      }
+      buf = '';
+    };
+    for (const block of blocks) {
+      flush(); prevBottom = null;
+      const blockBottom = Math.max(...block.lines.map((l) => l.y));
+      const isNote = blockBottom > vp.height * 0.6 && block.lines.every((l) => l.h < pageMedian * 0.88) && /^[\s(（\[]*[\d٠-٩]+[)）\]]?/.test(block.lines[0].text);
+      const edgeL = Math.min(...block.lines.map((l) => l.l)), edgeR = Math.max(...block.lines.map((l) => l.r));
+      // (The block's own leading: a paragraph ends where the next line comes later than that by half a line.)
+      const pitches = block.lines.slice(1).map((l, i) => l.y - block.lines[i].y).filter((d) => d > 0).sort((a, b) => a - b);
+      const pitch = pitches.length ? pitches[pitches.length >> 1] : 0;
+      let prevY: number | null = null; let prevCentered = false;
+      for (const ln of block.lines) {
+        const e = edge(ln);
+        if (e) { const key = ln.text.replace(/[\d٠-٩]+/g, '#').trim(); edgeLines.push({ key, text: ln.text, page: p, size: ln.h, rtl: ln.rtl, font: fontFamilies.get(ln.font ?? '') }); continue; }
+        let text = fixArabicLine(ln.text.trim());
+        if (!text) continue;
+        const size = ln.h, top = ln.y - size, bottom = ln.y;
+        const gap = prevBottom === null ? 0 : top - prevBottom;
+        // (A new paragraph: a gap of most of a line, a change of size, a sentence ended and the last line short,
+        // a first line indented.)
+        const shortPrev = !bufFull;
+        const wideGap = pitch && prevY !== null ? ln.y - prevY > pitch * 1.45 : gap > size * 0.9;
+        // (A short line set in the middle — a heading, a title — stands on its own, as does what follows it.)
+        const centered = (ln.r - ln.l) < (edgeR - edgeL) * 0.6 && Math.abs((ln.l + ln.r) / 2 - (edgeL + edgeR) / 2) < size * 0.8 && block.lines.length > 1;
+        const newPara = prevBottom === null || wideGap || centered || prevCentered || Math.abs(size - prevSize) > prevSize * 0.25 || (shortPrev && buf.trim() && /[.!?؟。！？:]["»”)]?$/.test(buf.trim())) || (!!buf && (ln.rtl ? edgeR - ln.r : ln.l - edgeL) > size * 1.2 && gap > size * 0.2);
+        if ((globalThis as { krDebugPara?: string }).krDebugPara && text.includes((globalThis as { krDebugPara?: string }).krDebugPara!)) console.warn('KR para', JSON.stringify({ text: text.slice(0, 30), newPara, gap: +gap.toFixed(1), size: +size.toFixed(1), prevSize: +prevSize.toFixed(1), shortPrev, bufEnd: buf.trim().slice(-12), indent: +(ln.rtl ? edgeR - ln.r : ln.l - edgeL).toFixed(1) }));
+        if (newPara) { flush(isNote ? 'note' : 'para'); bufSize = size; bufFont = fontFamilies.get(ln.font ?? ''); bufRtl = ln.rtl; bufWide = false; bufLines = 0; bufCenter = centered && !/[.!?؟。！？،,;؛]$/.test(text) && text.length <= 80; }
+        // (A wrapped line joins the next: a hyphen at its end goes, Chinese and Japanese run on without a space.)
+        const { joinBreak } = await import('./pdflayer');
+        const sep = buf ? (joinBreak(buf, text) === '' ? '' : ' ') : '';
+        if (buf && /[-\u2010\u00ad]$/.test(buf) && /^\p{Ll}/u.test(text)) buf = buf.replace(/[-\u2010\u00ad]$/, '');
+        buf += sep + text;
+        bufFull = ln.rtl ? ln.l <= edgeL + size * 1.5 : ln.r >= edgeR - size * 1.5;
+        if (ln.r - ln.l > vp.width * 0.45) bufWide = true;
+        bufLines++;
+        prevBottom = bottom; prevSize = size; prevY = ln.y; prevCentered = centered;
+      }
+      flush(isNote ? 'note' : 'para');
     }
-    flush();
-    for (const v of vParas) { paragraphs.push({ text: v.text, size: v.size, rtl: false, family: v.family, heading: false, page: p }); sizes.push(v.size); }
     page.cleanup();
   }
   await task.destroy();
-  // Headings: noticeably larger than the common size.
+  // Edge lines that do not repeat (a chapter's first line high on the page) go back in as text; a lone number
+  // is a page number whatever its count.
+  const repeated = (key: string) => (edgeSeen.get(key) ?? 0) >= Math.max(2, Math.min(doc.numPages, 20) * 0.3);
+  const lonely = (t: string) => /^[\s\-–—]*[\d٠-٩]+[\s\-–—]*$/.test(t);
+  const kept = edgeLines.filter((e) => !repeated(e.key) && !lonely(e.text));
+  for (const e of kept) { paragraphs.push({ text: fixArabicLine(e.text.trim()), size: e.size, rtl: e.rtl, family: e.font, heading: false, page: e.page - 0.5, edgeKey: e.key }); sizes.push(e.size); }
+  paragraphs.sort((a, b) => a.page - b.page);
+  // Footnotes: each page's notes follow that page's text, set small.
+  for (const n of notes) paragraphs.push({ text: n.text, size: 0, rtl: /[\u0600-\u06ff]/.test(n.text), family: undefined, heading: false, page: n.page + 0.5, edgeKey: 'note' });
+  paragraphs.sort((a, b) => a.page - b.page);
+  // (The same words twice in a row — a title drawn with a shadow in two sizes — are one.)
+  const bare = (t: string) => t.normalize('NFKD').replace(/[\u064b-\u065f\u0670\s\p{M}]/gu, '');
+  for (let i = paragraphs.length - 1; i > 0; i--) if (bare(paragraphs[i].text) === bare(paragraphs[i - 1].text) && Math.abs(paragraphs[i].page - paragraphs[i - 1].page) <= 1) paragraphs.splice(i, 1);
+  // Headings: noticeably larger than the common size — the largest a chapter's, the next a section's.
   const median = sizes.length ? [...sizes].sort((a, b) => a - b)[Math.floor(sizes.length / 2)] : 12;
+  const big = [...new Set(paragraphs.filter((q) => q.size > median * 1.25 && q.text.length < 140).map((q) => Math.round(q.size)))].sort((a, b) => b - a);
   for (const para of paragraphs) para.heading = para.size > median * 1.25 && para.text.length < 140;
+  const level = (size: number) => (big.indexOf(Math.round(size)) === 0 ? 2 : 3);
   // Chapters: split at headings; otherwise one chapter per ~60 paragraphs.
   const chapters: Chapter[] = [];
   let cur: string[] = []; let curTitle = book.title; let curRtl = false; let rtlCount = 0, count = 0;
@@ -162,7 +212,9 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
   for (const para of paragraphs) {
     const style = para.family && fonts.has(para.family) ? ` style="font-family:'${para.family}'"` : '';
     const dir = para.rtl ? ' dir="rtl"' : ' dir="ltr"';
-    if (para.heading) { pushChapter(); curTitle = para.text; cur.push(`<h2${dir}${style}>${esc(para.text)}</h2>`); }
+    if (para.heading && level(para.size) === 2) { pushChapter(); curTitle = para.text; cur.push(`<h2${dir}${style}>${esc(para.text)}</h2>`); }
+    else if (para.heading || para.center) cur.push(`<h3${dir}${style}>${esc(para.text)}</h3>`);
+    else if (para.edgeKey === 'note') cur.push(`<p class="footnote"${dir}><small>${esc(para.text)}</small></p>`);
     else cur.push(`<p${dir}${style}>${esc(para.text)}</p>`);
     count++; if (para.rtl) rtlCount++;
     if (cur.length >= 400) { pushChapter(); curTitle = `${book.title} · ${chapters.length + 1}`; }
@@ -317,13 +369,17 @@ export function buildText(d: ConvDoc, markdown: boolean): string {
   else { out.push(d.title); if (d.author) out.push(d.author); out.push(''); }
   for (const ch of d.chapters) {
     const host = document.createElement('div'); host.innerHTML = ch.html;
-    if (d.chapters.length > 1) out.push(markdown ? `## ${ch.title}` : `\n${ch.title}\n`);
     host.querySelectorAll('rt, rp').forEach((e) => e.remove());
+    // (A chapter that opens with its own title as a heading is not titled twice.)
+    const first = host.querySelector('h1, h2, h3');
+    const titled = first && first === host.firstElementChild && (first.textContent ?? '').replace(/\s+/g, ' ').trim() === ch.title.replace(/\s+/g, ' ').trim();
+    if (d.chapters.length > 1 && !titled) out.push(markdown ? `## ${ch.title}` : `\n${ch.title}\n`);
+    if (titled) { if (markdown) out.push(`## ${ch.title}`); else out.push(`\n${ch.title}\n`); out.push(''); first.remove(); }
     for (const el of Array.from(host.querySelectorAll('h1, h2, h3, h4, p, li, blockquote, pre, td, th, figcaption, dd, dt'))) {
       if (el.querySelector('p, li, h1, h2, h3')) continue;
       const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim(); if (!text) continue;
       const tag = el.tagName.toLowerCase();
-      if (markdown) out.push(/^h[1-4]$/.test(tag) ? `${'#'.repeat(Math.min(6, Number(tag[1]) + 1))} ${text}` : tag === 'li' ? `- ${text}` : tag === 'blockquote' ? `> ${text}` : text);
+      if (markdown) out.push(/^h[1-4]$/.test(tag) ? `${'#'.repeat(Math.min(6, Number(tag[1]) + 1))} ${text}` : tag === 'li' ? `- ${text}` : tag === 'blockquote' || el.classList.contains('footnote') ? `> ${text}` : text);
       else out.push(text);
       out.push('');
     }

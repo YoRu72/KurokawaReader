@@ -39,12 +39,39 @@ export function dropBuriedSpaces<T extends { l: number; r: number; text: string 
  *  glyph) is made to pair up: opening, closing, opening… */
 export function balanceBrackets(text: string): string {
   let out = text;
+  // A bracket named by its shape in a font set for right-to-left text comes out mirrored: a word that begins
+  // with a closing bracket (")فقه") or ends with an opening one ("اللغة(") is turned the right way round.
+  const OPEN = '([{«﴿', CLOSE = ')]}»﴾';
+  const ci = CLOSE.indexOf(out[0]); if (ci >= 0 && !out.includes(OPEN[ci])) out = OPEN[ci] + out.slice(1);
+  const oi = OPEN.indexOf(out[out.length - 1]); if (oi >= 0 && !out.includes(CLOSE[oi])) out = out.slice(0, -1) + CLOSE[oi];
   for (const [o, c] of [['(', ')'], ['[', ']'], ['{', '}'], ['«', '»']]) {
     const no = [...out].filter((x) => x === o).length, nc = [...out].filter((x) => x === c).length;
     if (no + nc < 2 || (no && nc)) continue;
     let k = 0; out = [...out].map((x) => (x === o || x === c ? (k++ % 2 ? c : o) : x)).join('');
   }
   return out;
+}
+
+/**
+ * Brackets inside the words of a right-to-left line, turned the right way as the line is read: a font set for
+ * Arabic names a bracket by its mirrored shape, so what counts is where it stands — a bracket that begins a
+ * word, or comes while none is open, opens; one that ends a word, or comes while one is open, closes. A piece
+ * that is nothing but a bracket was settled by its neighbours already and only moves the count.
+ */
+export function orientBrackets(text: string, depth: { n: number }): string {
+  const OPEN = '([{«﴿', CLOSE = ')]}»﴾';
+  const chars = [...text];
+  const lone = chars.every((c) => OPEN.includes(c) || CLOSE.includes(c) || /\s/.test(c));
+  const body = chars.map((c, i) => ({ c, i })).filter(({ c }) => !/[\s.,،؛:!?؟]/.test(c));
+  return chars.map((c, i) => {
+    const k = OPEN.indexOf(c) >= 0 ? OPEN.indexOf(c) : CLOSE.indexOf(c);
+    if (k < 0) return c;
+    if (lone) { depth.n = Math.max(0, depth.n + (OPEN.includes(c) ? 1 : -1)); return c; }
+    const first = body.length > 0 && body[0].i === i, last = body.length > 0 && body[body.length - 1].i === i;
+    const opens = depth.n > 0 ? false : first || !last;
+    depth.n = Math.max(0, depth.n + (opens ? 1 : -1));
+    return opens ? OPEN[k] : CLOSE[k];
+  }).join('');
 }
 
 /** Each bracket's [opening, closing] form. */
@@ -128,11 +155,11 @@ export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: b
   const marked = sorted.some((p) => p.text === '\u2009');
   const { seq: ordered, inRun } = rtl ? ltrRunsForward(sorted, (p) => p.text) : { seq: sorted, inRun: new Set<T>() };
   let s = '';
-  let prev: LinePiece | null = null; let prevIn = false;
+  let prev: LinePiece | null = null; let prevIn = false; const depth = { n: 0 };
   for (const p of ordered) {
     // (A drawn space, however narrow — a justified line squeezes it — is a word break.)
     if (p.text === '\u2009' || !p.text.trim()) { if (s && !/\s$/.test(s)) s += ' '; continue; }
-    const text = rtl ? balanceBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true)) : p.text;
+    const text = rtl ? orientBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true), depth) : p.text;
     if (prev) {
       // (Where the page draws its spaces, a gap is still a word break when it is wide: a stretched line may
       // set some words apart by position alone.)
