@@ -34,7 +34,7 @@ function item(name: string, iconName: string, label: string, onClick: () => void
 
 function build(): HTMLElement {
   const nav = h('nav', { class: 'nav-rail', 'aria-label': t('appName') },
-    h('div', { class: 'rail-brand' }, h('img', { src: '/icons/icon.svg', alt: '' })),
+    h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' })),
     h('button', { type: 'button', class: 'rail-fab', title: `${t('importBooks')} (Ctrl+O)`, 'aria-label': t('importBooks'), onclick: () => ask('import') }, icon('plus')),
     h('div', { class: 'rail-items' },
       item('library', 'books', t('library'), () => navigate('/')),

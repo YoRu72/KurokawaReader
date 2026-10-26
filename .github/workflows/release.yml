@@ -182,7 +182,10 @@ jobs:
           { echo "### Windows job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/win-build.log 2>/dev/null; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: desktop/out/*.exe }
+        with: { name: windows, path: |
+            desktop/out/*.exe
+            desktop/out/*.blockmap
+            desktop/out/latest.yml }
 
   macos:
     needs: version
@@ -201,7 +204,7 @@ jobs:
           V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
           npm install
-          CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
+          CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
           ls -la out
       - name: Report failure
         if: failure()
@@ -210,7 +213,11 @@ jobs:
           { echo "### macOS job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/mac-build.log 2>/dev/null; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
-        with: { name: macos, path: desktop/out/*.dmg }
+        with: { name: macos, path: |
+            desktop/out/*.dmg
+            desktop/out/*.zip
+            desktop/out/*.blockmap
+            desktop/out/latest-mac.yml }
 
   linux:
     needs: version
@@ -238,7 +245,9 @@ jobs:
           { echo "### Linux job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/linux-build.log 2>/dev/null; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
       - uses: actions/upload-artifact@v4
-        with: { name: linux, path: desktop/out/*.AppImage }
+        with: { name: linux, path: |
+            desktop/out/*.AppImage
+            desktop/out/latest-linux.yml }
 
   release:
     name: Publish release
@@ -273,8 +282,10 @@ jobs:
             echo "| Windows | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
             echo "| macOS | \`*-mac-universal.dmg\` (unsigned: right-click → Open the first time) |"
             echo "| Linux | \`*-linux-x64.AppImage\` (chmod +x, then run) |"
-            echo "| iOS | \`*-ios-unsigned.ipa\` — install with AltStore / SideStore, see below |"
-            echo "| Web (self-host) | \`KurokawaReader-web.zip\` |"
+            echo "| iOS | \`*-ios-unsigned.ipa\` — AltStore / SideStore source: \`https://${{ github.repository_owner }}.github.io/KurokawaReader/altstore.json\` · TrollStore · or install the web app from https://${{ github.repository_owner }}.github.io/KurokawaReader/ |"
+            echo "| Web (self-host) | \`KurokawaReader-web.zip\` — or use the hosted app above |"
+            echo
+            echo "_\`latest*.yml\`, \`*.blockmap\` and the macOS zip are for the desktop app's own updater (differential updates); you do not need to download them._"
             echo
             cat docs/INSTALL.md
           } > notes.md
@@ -292,3 +303,32 @@ jobs:
             artifacts/windows/*
             artifacts/macos/*
             artifacts/linux/*
+
+  pages:
+    name: Web app & AltStore source (GitHub Pages)
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Site = the web app + the AltStore/SideStore source
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          mkdir -p site && cd site && unzip -q ../artifacts/web/KurokawaReader-web.zip && cd ..
+          touch site/.nojekyll
+          node scripts/altstore.mjs "${{ needs.version.outputs.v }}" "${{ github.repository }}" "https://${{ github.repository_owner }}.github.io/KurokawaReader" artifacts/ios > site/altstore.json
+          node -e "JSON.parse(require('fs').readFileSync('site/altstore.json','utf8')); console.log('altstore.json ok')"
+      - uses: actions/configure-pages@v5
+        with: { enablement: true }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: deploy
+        uses: actions/deploy-pages@v4

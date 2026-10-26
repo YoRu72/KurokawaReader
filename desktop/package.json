@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.38.1",
+  "version": "0.39.0",
   "description": "KurokawaReader for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
@@ -52,11 +52,13 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "differentialPackage": true
     },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "icon": "icon.png",
       "category": "public.app-category.books"
@@ -134,6 +136,15 @@
     ],
     "portable": {
       "artifactName": "KurokawaReader-${version}-win-x64-portable.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "YoRu72",
+      "repo": "KurokawaReader",
+      "releaseType": "release"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   }
 }

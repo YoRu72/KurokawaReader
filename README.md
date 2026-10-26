@@ -2,7 +2,7 @@
 
 EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · FictionBook · OpenDocument · comics · images — one offline library.
 
-**Download:** [Releases](../../releases) — Android · Windows · macOS · Linux · iOS (sideload) · [install notes](docs/INSTALL.md)
+**Download:** [Releases](../../releases) — Android · Windows · macOS · Linux · iOS (web app, TrollStore, AltStore/SideStore source) · **[Web app](https://yoru72.github.io/KurokawaReader/)** (install from the browser, no signing) · [install notes](docs/INSTALL.md)
 
 <p align="center">
   <img src="docs/screenshots/library-m3.png" width="48%" alt="Library" />

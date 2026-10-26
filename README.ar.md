@@ -4,7 +4,7 @@
 
 EPUB · PDF · Word · Excel · PowerPoint · نصوص وMarkdown · HTML · FictionBook · OpenDocument · قصص مصوّرة · صور — مكتبة واحدة تعمل دون اتّصال.
 
-**التنزيل:** [الإصدارات](../../releases) — أندرويد · ويندوز · ماك · لينكس · iOS (تثبيت جانبيّ) · [ملاحظات التثبيت](docs/INSTALL.md)
+**التنزيل:** [الإصدارات](../../releases) — أندرويد · ويندوز · ماك · لينكس · iOS (تطبيق الويب، أو TrollStore، أو مصدر AltStore/SideStore) · **[تطبيق الويب](https://yoru72.github.io/KurokawaReader/)** (يُثبَّت من المتصفح بلا توقيع) · [ملاحظات التثبيت](docs/INSTALL.md)
 
 <p align="center">
   <img src="docs/screenshots/library-m3.png" width="48%" alt="المكتبة" />

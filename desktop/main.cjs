@@ -115,8 +115,35 @@ app.whenReady().then(() => {
 }
 ipcMain.handle('kr:ready', () => { flush(); return true; });
 
-// In-app update: download the installer to the temp folder and run it.
+// In-app update. First choice: electron-updater, which fetches only the parts of the new installer that
+// differ from the one installed (the release carries latest.yml and the .blockmap for that) and installs it
+// on quit — so an update is a few MB, not the whole program again. It needs the installed build (Windows
+// NSIS, Linux AppImage); the portable EXE and the unsigned macOS app cannot use it, and if it fails for any
+// reason the full-download path below takes over, so an update never breaks the app that is running.
+async function differentialUpdate(e) {
+  if (process.env.PORTABLE_EXECUTABLE_DIR || process.platform === 'darwin' || !app.isPackaged) return false;
+  let updater;
+  try { ({ autoUpdater: updater } = require('electron-updater')); } catch { return false; }
+  updater.autoDownload = false; updater.autoInstallOnAppQuit = true; updater.allowDowngrade = false; updater.logger = null;
+  const r = await updater.checkForUpdates().catch(() => null);
+  if (!r || !r.updateInfo || !r.updateInfo.version || r.updateInfo.version === app.getVersion()) return false;
+  const onProgress = (p) => { try { e.sender.send('kr:update-progress', { pct: Math.round(p.percent || 0), got: p.transferred || 0, total: p.total || 0, speed: p.bytesPerSecond || 0 }); } catch { /* window gone */ } };
+  updater.on('download-progress', onProgress);
+  try {
+    const files = await updater.downloadUpdate();
+    if (!files || !files.length) return false;
+  } catch (err) {
+    updater.removeListener('download-progress', onProgress);
+    console.warn('differential update failed, falling back to a full download:', err && err.message);
+    return false;
+  }
+  updater.removeListener('download-progress', onProgress);
+  setTimeout(() => updater.quitAndInstall(false, true), 800);
+  return true;
+}
+
 ipcMain.handle('kr:install-update', async (e, url) => {
+  if (await differentialUpdate(e)) return 'differential';
   const res = await net.fetch(url);
   if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
   const total = Number(res.headers.get('content-length') || 0);

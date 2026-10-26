@@ -7,6 +7,9 @@ import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
+/** The hosted web app and the AltStore/SideStore source (published by the release workflow to GitHub Pages). */
+export const WEB_APP_URL = 'https://yoru72.github.io/KurokawaReader/';
+export const ALTSTORE_SOURCE = `${WEB_APP_URL}altstore.json`;
 const REPO = 'YoRu72/KurokawaReader';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour
@@ -163,7 +166,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString(dateLocale(), { dateStyle: 'medium' }) : '';
   // Hero: the app's icon in an expressive shape, the headline, the versions.
   s.body.append(h('div', { class: 'upd-hero' },
-    h('div', { class: 'upd-badge' }, h('img', { src: '/icons/icon.svg', alt: '' })),
+    h('div', { class: 'upd-badge' }, h('img', { src: 'icons/icon.svg', alt: '' })),
     h('div', { class: 'upd-hero-text' },
       h('h2', null, t('updateHeadline')),
       h('p', null, t('updateReadySub', { v: rel.version })),
@@ -230,7 +233,15 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   const skip = h('button', { class: 'btn small text', type: 'button', onclick: () => { localStorage.setItem('kr.update.skip', rel.version); s.close(); toast(t('versionSkipped', { v: rel.version })); } }, t('skipVersion'));
   s.actions.classList.add('upd-actions');
   s.actions.append(h('div', { class: 'upd-minor' }, skip, link), h('div', { class: 'upd-major' }, later, cancel, install));
-  if (platform === 'ios') void suitableAsset(rel).then((a) => { if (a) s.actions.querySelector('.upd-major')?.insertBefore(h('a', { class: 'btn tonal', href: `sidestore://install?url=${encodeURIComponent(a.url)}` }, icon('download'), t('installWithSideStore')), install); });
+  if (platform === 'ios') void suitableAsset(rel).then((a) => {
+    if (!a) return;
+    const major = s.actions.querySelector('.upd-major');
+    // TrollStore signs for good (no 7-day limit) and installs from a URL; SideStore / AltStore sign with the
+    // Apple ID. The source link makes future updates appear in their own catalogue.
+    major?.insertBefore(h('a', { class: 'btn tonal', href: `apple-magnifier://install?url=${encodeURIComponent(a.url)}` }, icon('download'), t('installWithTrollStore')), install);
+    major?.insertBefore(h('a', { class: 'btn tonal', href: `sidestore://install?url=${encodeURIComponent(a.url)}` }, icon('download'), t('installWithSideStore')), install);
+    s.body.append(h('p', { class: 'src' }, h('a', { href: `altstore://source?url=${encodeURIComponent(ALTSTORE_SOURCE)}` }, t('addAltStoreSource')), ' · ', h('a', { href: `sidestore://source?url=${encodeURIComponent(ALTSTORE_SOURCE)}` }, t('addSideStoreSource')), ' · ', h('a', { href: WEB_APP_URL, target: '_blank', rel: 'noopener' }, t('useWebApp'))));
+  });
 }
 
 export function renderUpdateCard(container: HTMLElement): void {

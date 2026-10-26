@@ -53,7 +53,7 @@ function noteDone(j: Job): void {
   const quiet = j.watched() && document.visibilityState === 'visible';
   if (a?.jobDone) void a.jobDone({ title: j.title, text: quiet ? '' : text, ok: j.state === 'done', stop: !others }).catch(() => undefined);
   else if ('Notification' in window && Notification.permission === 'granted' && getSettings().jobNotify && document.visibilityState === 'hidden') {
-    try { const n = new Notification(j.title, { body: text, icon: '/icons/icon-192.png', tag: `kr-job-${j.id}` }); n.onclick = () => { window.focus(); jobsSheet(); n.close(); }; } catch { /* not allowed here */ }
+    try { const n = new Notification(j.title, { body: text, icon: 'icons/icon-192.png', tag: `kr-job-${j.id}` }); n.onclick = () => { window.focus(); jobsSheet(); n.close(); }; } catch { /* not allowed here */ }
   }
   if (!others) { desktop()?.setProgress?.(-1); document.title = t('appName'); }
 }

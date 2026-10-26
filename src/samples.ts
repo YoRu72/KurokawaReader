@@ -5,8 +5,8 @@ import { importFiles } from './library';
 import type { Book } from './db';
 
 export const SAMPLES = [
-  { path: '/samples/maqamat-al-hariri.epub', name: 'maqamat-al-hariri.epub' },
-  { path: '/samples/alice-in-wonderland.epub', name: 'alice-in-wonderland.epub' },
+  { path: 'samples/maqamat-al-hariri.epub', name: 'maqamat-al-hariri.epub' },
+  { path: 'samples/alice-in-wonderland.epub', name: 'alice-in-wonderland.epub' },
 ];
 
 export async function importSamples(): Promise<Book[]> {
@@ -28,7 +28,7 @@ export async function refreshSampleCovers(): Promise<void> {
   const old = books.find((b) => b.fileName === 'maqamat-al-hariri.epub');
   if (old) {
     try {
-      const r = await fetch('/samples/maqamat-al-hariri.epub');
+      const r = await fetch('samples/maqamat-al-hariri.epub');
       if (r.ok) {
         const blob = await r.blob();
         const { readMeta } = await import('./formats');

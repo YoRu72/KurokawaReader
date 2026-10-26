@@ -25,7 +25,7 @@ function loadSql(): Promise<SqlJs> {
     const w = window as unknown as { initSqlJs?: (o: { locateFile: (f: string) => string }) => Promise<SqlJs> };
     const go = () => w.initSqlJs!({ locateFile: (f) => `/vendor/${f}` }).then(res, rej);
     if (w.initSqlJs) { go(); return; }
-    const s = document.createElement('script'); s.src = '/vendor/sql-wasm.js';
+    const s = document.createElement('script'); s.src = 'vendor/sql-wasm.js';
     s.onload = go; s.onerror = () => rej(new Error('sql.js')); document.head.appendChild(s);
   });
   sqlPromise.catch(() => { sqlPromise = null; });
