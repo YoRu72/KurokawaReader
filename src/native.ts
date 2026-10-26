@@ -54,9 +54,28 @@ async function fontsInZip(file: File): Promise<File[]> {
   return out;
 }
 
+// A book opened from another app (a file shared from WhatsApp, say): leaving it should land back in that app,
+// the way a viewer does, not in the library. The reader asks on its way out whether it was opened this way.
+let externalBook: string | null = null;
+let fromOutside = false;
+/** True — once — when the book being left was opened from another app; the app then steps aside. */
+export function leaveToCaller(bookId: string): boolean {
+  if (externalBook !== bookId) return false;
+  externalBook = null;
+  const app = window.Capacitor?.Plugins?.App as { minimizeApp?(): Promise<void> } | undefined;
+  if (!app?.minimizeApp) return false;
+  navigate('/', true);
+  void app.minimizeApp();
+  return true;
+}
+function openFromOutside(ids: string[]): void {
+  externalBook = fromOutside && ids.length === 1 ? ids[0] : null;
+  navigate(`/read/${ids.join(',')}`);
+}
+
 async function importBooks(files: File[]): Promise<void> {
   const added = await importFiles(files, (book, f, err) => { if (!book) toast(t('importFailed', { name: f.name, error: String((err as Error)?.message ?? err) }), 'error', 5000); });
-  if (added.length) navigate(`/read/${added.map((b) => b.id).join(',')}`);
+  if (added.length) openFromOutside(added.map((b) => b.id));
 }
 
 /** A file handed to the app by the OS. Fonts are added as fonts; a ZIP asks whether it is fonts or a comic. */
@@ -102,6 +121,7 @@ async function handleUrl(url: string): Promise<void> {
   if (!/^(content|file):/i.test(url)) return;
   if (opening === url) return; // getLaunchUrl and appUrlOpen can both report the same file
   opening = url; setTimeout(() => { if (opening === url) opening = null; }, 4000);
+  fromOutside = true; setTimeout(() => { fromOutside = false; }, 60000);
   const plugins = window.Capacitor?.Plugins as { Filesystem?: { readFile(o: { path: string }): Promise<{ data: string | Blob }> }; Kurokawa?: KrDoc } | undefined;
   const kr = plugins?.Kurokawa;
   const fs = plugins?.Filesystem;
@@ -116,7 +136,7 @@ async function handleUrl(url: string): Promise<void> {
     if (info && info.size > 0 && name) {
       const { db } = await import('./db');
       const same = (await db.allBooks()).find((b) => b.fileName === name && b.size === info.size);
-      if (same) { navigate(`/read/${same.id}`); repaint(); return; }
+      if (same) { openFromOutside([same.id]); repaint(); return; }
     }
     if (!name) name = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '');
     if (!name || !/\.[a-z0-9]{2,5}$/i.test(name)) name = (name || 'document') + '.bin';
@@ -164,6 +184,8 @@ export function initNativeBridges(): void {
       const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && (d as HTMLElement).offsetParent !== null);
       const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
       if (overlayBtn) { overlayBtn.click(); return; }
+      const viewBack = document.querySelector<HTMLButtonElement>('.view .topbar button[data-icon="back"]');
+      if (viewBack) { viewBack.click(); return; }
       if (location.hash && location.hash !== '#/' && location.hash !== '#') { navigate('/'); return; }
       void cap.Plugins?.App?.minimizeApp?.();
     });

@@ -2,6 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
+import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
 import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
 import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
@@ -79,6 +80,7 @@ export function readerView(ids: string[]): HTMLElement {
 async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void): Promise<void> {
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
+  let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
   onDispose(() => { document.body.style.background = ''; applyChrome(); });
   const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
@@ -108,7 +110,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const panel = new SidePanel(root);
 
   // (Back: to the book's own page when the book opens on one, else the library.)
-  const goBack = () => { const b = docs[0]?.book; if (b && docs.length === 1) void import('./book').then((m) => navigate(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else navigate('/'); };
+  const goBack = () => { const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => navigate(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else navigate('/'); };
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), goBack),
     title,
@@ -316,6 +318,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   performance.measure('kr:restore2', { start: tR2 });
   // Images loading above the saved position shift the layout; settle a few times.
   [400, 1200, 2500].forEach((ms) => setTimeout(() => { if (!userScrolled) restore(); }, ms));
+  void document.fonts.ready.then(() => { if (!userScrolled && reader.isConnected) restore(); });
 
   /* ---------- chapter mode ---------- */
   interface Unit { doc: OpenDoc; el: HTMLElement; index: number }
@@ -442,9 +445,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   function currentLocator(): { doc: OpenDoc; loc: Locator } | null {
     const probeY = 8;
+    const sr = scroll.getBoundingClientRect();
+    if (!reader.isConnected || sr.height < 40 || sr.width < 40) return null;
     const doc = docAt(probeY);
     if (!doc) return null;
-    const sr = scroll.getBoundingClientRect();
     const blocks = doc.blocks;
     // Binary search for the first block whose bottom is below the probe line.
     let lo = 0, hi = blocks.length - 1;
@@ -474,6 +478,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function scrollToLocator(loc: Locator): void {
     const doc = docs.find((d) => d.book.id === loc.bookId) ?? docs[0];
     if (!doc) return;
+    programmatic = performance.now();
     if (loc.anchor) { scrollToAnchor(loc.anchor); return; }
     // Positions are stored as whole-book block indices; older ones were chapter-local.
     let target = doc.allBlocks[loc.block ?? 0];
@@ -595,7 +600,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   hooks.update = () => updateChrome();
   hooks.save = () => scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
-  scroll.addEventListener('scroll', () => { userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); focusThrottled(); }, { passive: true });
+  scroll.addEventListener('scroll', () => { if (performance.now() - programmatic > 150) userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); focusThrottled(); }, { passive: true });
   // Focus mode: the paragraph under the reading line (a little above the middle of the screen) is the one
   // that stands out; the rest of the page is dimmed by CSS. Found by a point test, so it costs nothing.
   let focused: HTMLElement | null = null;
@@ -1231,7 +1236,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => void import('./book').then((m) => navigate(m.wantsBookPage(book) ? `/book/${book.id}` : '/'))),
+    iconButton('back', t('back'), () => { if (leaveToCaller(book.id)) return; void import('./book').then((m) => navigate(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
     title,
     iconButton('search', t('searchInBook'), () => openSearch()),
     iconButton('toc', t('contents'), () => openContents('toc')),
