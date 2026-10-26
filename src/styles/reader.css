@@ -38,6 +38,10 @@
 .reader.has-link-override { --r-link: var(--r-link-override); }
 .reader ::selection { background: var(--r-sel, color-mix(in srgb, var(--md-primary) 35%, transparent)); }
 .kr-content p { text-indent: var(--r-indent, 0); }
+/* Book formatting: paragraphs told apart by their indent, with only a breath between them. */
+.reader.book-format .kr-content p { margin-block: 0 calc(var(--r-para, .9em) * .5); text-align: justify; text-align-last: start; hyphenate-limit-chars: 5 2 2; -webkit-hyphenate-limit-before: 2; -webkit-hyphenate-limit-after: 2; }
+.reader.book-format .kr-content p:has(> img:only-child), .reader.book-format .kr-content p.center, .reader.book-format .kr-content [style*='text-align: center'] { text-indent: 0; }
+.reader.book-format .kr-content p + p { margin-block-start: 0; }
 .reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
@@ -53,6 +57,13 @@
 .reader[data-texture='paper'] .reader-scroll::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--r-texture-opacity, .5); mix-blend-mode: overlay; }
 .reader[data-texture='linen'] .reader-scroll::after { background-image: repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0 1px, transparent 1px 3px), repeating-linear-gradient(90deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px); opacity: var(--r-texture-opacity, .6); }
 .reader[data-texture='parchment'] .reader-scroll::after { background: radial-gradient(ellipse at 20% 10%, rgba(255,210,140,.14), transparent 50%), radial-gradient(ellipse at 80% 90%, rgba(120,70,20,.18), transparent 55%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .6 0 0 0 0 .45 0 0 0 0 .25 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--r-texture-opacity, .55); mix-blend-mode: multiply; }
+.reader[data-texture='polka'] .reader-flow { isolation: isolate; --r-gutter: max(var(--r-margin), calc((100vw - var(--r-width)) / 2 + var(--r-margin))); }
+.reader[data-texture='polka'] .reader-flow::before, .reader[data-texture='polka'] .reader-flow::after { content: ''; position: fixed; z-index: -1; top: 0; bottom: 0; width: var(--r-gutter); pointer-events: none; background: var(--r-link); opacity: var(--r-texture-opacity, .5); -webkit-mask-repeat: repeat-y; mask-repeat: repeat-y; -webkit-mask-size: 100% 900px; mask-size: 100% 900px; }
+.reader[data-texture='polka'] .reader-flow::before { left: 0; -webkit-mask-image: var(--r-polka-l); mask-image: var(--r-polka-l); -webkit-mask-position: left top; mask-position: left top; }
+.reader[data-texture='polka'] .reader-flow::after { right: 0; -webkit-mask-image: var(--r-polka-r); mask-image: var(--r-polka-r); -webkit-mask-position: right top; mask-position: right top; }
+.reader[data-polka='left'] .reader-flow::after, .reader[data-polka='right'] .reader-flow::before { display: none; }
+/* Edges: the two side strips plus a band along the top and the bottom, in the padding above and below the text. */
+.reader[data-polka='edges'] .reader-scroll::before { content: ''; position: fixed; left: 0; right: 0; top: 0; height: 28px; z-index: 0; pointer-events: none; background: var(--r-link); opacity: var(--r-texture-opacity, .5); -webkit-mask-image: var(--r-polka-tb); mask-image: var(--r-polka-tb); -webkit-mask-size: 900px 100%; mask-size: 900px 100%; -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x; -webkit-mask-position: left top; mask-position: left top; background-image: none; }
 .reader[data-texture='dots'] .reader-scroll::after { background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1.5px); background-size: 14px 14px; opacity: var(--r-texture-opacity, .5); }
 .reader-flow { position: relative; z-index: 1; }
 /* Comfort filters applied to the whole reading area */

@@ -4,7 +4,7 @@ import { ttsAvailable } from '../tts';
 import { aiTtsSupported } from '../ai';
 import { h, clear, icon, toast, pickButton, pickSheet } from './dom';
 import { colorField } from './colorpicker';
-import { isTouchDevice, t, countMinutes } from '../i18n';
+import { isTouchDevice, t, countMinutes, localDigits } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
@@ -104,8 +104,13 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 
   /* ----- Background ----- */
   grid.append(head('background', t('background')));
-  const textures: [Texture, string][] = [['none', t('textureNone')], ['paper', t('texturePaper')], ['linen', t('textureLinen')], ['parchment', t('textureParchment')], ['dots', t('textureDots')]];
+  const textures: [Texture, string][] = [['none', t('textureNone')], ['paper', t('texturePaper')], ['linen', t('textureLinen')], ['parchment', t('textureParchment')], ['dots', t('textureDots')], ['polka', t('texturePolka')]];
   grid.append(section([t('texture'), 'texture'], segmented(textures, s.texture, (v) => { updateSettings({ texture: v }); rerender(); })));
+  if (s.texture === 'polka') {
+    grid.append(stepper([t('polkaAmount'), 'polkaAmount'], s.polkaAmount, 1, 5, 1, (v) => updateSettings({ polkaAmount: v }), (v) => localDigits(String(v))));
+    grid.append(section([t('polkaPlace'), 'polkaPlace'], segmented([['both', t('polkaBoth')], ['left', t('polkaLeft')], ['right', t('polkaRight')], ['edges', t('polkaEdges')]] as [typeof s.polkaPlace, string][], s.polkaPlace, (v) => updateSettings({ polkaPlace: v }))));
+    grid.append(section([t('polkaSize'), 'polkaSize'], segmented([['1', t('coverSmall')], ['2', t('coverMedium')], ['3', t('coverLarge')]] as [string, string][], String(s.polkaSize), (v) => updateSettings({ polkaSize: Number(v) as 1 | 2 | 3 }))));
+  }
   if (s.texture !== 'none') grid.append(stepper([t('textureStrength'), 'textureOpacity'], s.textureOpacity, 0.1, 1, 0.05, (v) => updateSettings({ textureOpacity: round2(v) }), pct));
 
   const preview = h('div', { class: 'bg-preview' }, s.bgImage ? '' : t('backgroundImage'));
@@ -147,7 +152,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const customLatin = fontsSync().filter((f) => f.script === 'latin').map((f): [LatinFont, string] => [`custom:${f.id}`, f.name]);
   const customArabic = fontsSync().filter((f) => f.script === 'arabic').map((f): [ArabicFont, string] => [`custom:${f.id}`, f.name]);
   const sys = s.systemFonts.map((f): [string, string] => [`system:${f}`, f]);
-  const latin: [LatinFont, string][] = [['merriweather', 'Merriweather'], ['literata', 'Literata'], ['lora', 'Lora'], ['garamond', 'EB Garamond'], ['crimson', 'Crimson Pro'], ['sourceserif', 'Source Serif'], ['gelasio', 'Gelasio'], ['vollkorn', 'Vollkorn'], ['bitter', 'Bitter'], ['atkinson', 'Atkinson'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
+  const latin: [LatinFont, string][] = [['merriweather', 'Merriweather'], ['termes', 'TeX Gyre Termes'], ['literata', 'Literata'], ['lora', 'Lora'], ['garamond', 'EB Garamond'], ['crimson', 'Crimson Pro'], ['sourceserif', 'Source Serif'], ['gelasio', 'Gelasio'], ['vollkorn', 'Vollkorn'], ['bitter', 'Bitter'], ['atkinson', 'Atkinson'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
   const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['mohanad', 'المهند'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
   const customCjk = fontsSync().filter((f) => f.script === 'cjk').map((f): [CjkFont, string] => [`custom:${f.id}`, f.name]);
   const cjkBook = !!document.querySelector('.cjk-book');
@@ -168,6 +173,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(stepper([t('margins'), 'margin'], s.margin, 0, 80, 4, (v) => updateSettings({ margin: v }), (v) => `${v}`));
   const aligns: [VisualSettings['align'], string][] = [['start', t('alignStart')], ['justify', t('alignJustify')], ['center', t('alignCenter')]];
   grid.append(section([t('textAlign'), 'align'], segmented(aligns, s.align, (v) => { updateSettings({ align: v }); rerender(); })));
+  grid.append(toggle([t('bookFormat'), 'bookFormat'], s.bookFormat, (v) => { updateSettings({ bookFormat: v }); rerender(); }), h('p', { class: 'hint' }, t('bookFormatHint')));
   grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
   grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
   grid.append(toggle([t('dropCap'), 'dropCap'], s.dropCap, (v) => updateSettings({ dropCap: v })));
@@ -279,7 +285,7 @@ function segmented<T extends string>(items: [T, string][], value: T, onPick: (v:
   const fam = (id: string): string | undefined => {
     if (id.startsWith('custom:')) { const f = fontsSync().find((x) => x.id === id.slice(7)); return f ? `'${f.family}'` : undefined; }
     if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : id === 'mohanad' ? "'AL-Mohanad'" : undefined;
-    const named: Record<string, string> = { merriweather: "'Merriweather'", lora: "'Lora'", literata: "'Literata'", garamond: "'EB Garamond'", crimson: "'Crimson Pro'", sourceserif: "'Source Serif'", gelasio: "'Gelasio'", vollkorn: "'Vollkorn'", bitter: "'Bitter'", atkinson: "'Atkinson Hyperlegible'", inter: "'Inter'" };
+    const named: Record<string, string> = { merriweather: "'Merriweather'", termes: "'TeX Gyre Termes'", lora: "'Lora'", literata: "'Literata'", garamond: "'EB Garamond'", crimson: "'Crimson Pro'", sourceserif: "'Source Serif'", gelasio: "'Gelasio'", vollkorn: "'Vollkorn'", bitter: "'Bitter'", atkinson: "'Atkinson Hyperlegible'", inter: "'Inter'" };
     return named[id];
   };
   return h('div', { class: 'segmented' }, ...items.map(([id, label]) => { const f = fam(id); return h('button', { type: 'button', 'aria-pressed': String(value === id), onclick: () => onPick(id), style: f ? { fontFamily: f, fontSize: arabicFont ? '16px' : undefined } : undefined }, label); }));
