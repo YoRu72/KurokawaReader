@@ -10,6 +10,17 @@ import { t } from '../i18n';
 // pdf.js (≈450 KB) is loaded on first use, not at start-up.
 type PdfJs = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
 let pdfjsPromise: Promise<PdfJs> | null = null;
+
+/** A canvas a page is drawn on off the screen (a cover, a thumbnail, the converter's): pdf.js draws it slice
+ *  after slice without waiting for screen frames (see scripts/patch-pdfjs.mjs) — faster, and it goes on in an
+ *  app out of sight. `sharedOps`: drawn from the operator list `getOperatorList()` read for the page, not a
+ *  second one read again by the worker. */
+export function offscreen<T extends HTMLCanvasElement>(c: T, sharedOps = false): T {
+  const k = c as T & { krFast?: boolean; krSharedOps?: boolean };
+  k.krFast = true; if (sharedOps) k.krSharedOps = true;
+  return c;
+}
+
 export function loadPdfjs(): Promise<PdfJs> {
   pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs').then((m) => { m.GlobalWorkerOptions.workerSrc = new URL('./pdf.worker.min.mjs', import.meta.url).href; return m; });
   return pdfjsPromise;
@@ -51,7 +62,7 @@ export async function pdfMeta(file: Blob, fileName: string): Promise<BookMeta> {
     const vp = page.getViewport({ scale: 1 });
     const scale = 360 / vp.width;
     const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
+    const canvas = offscreen(document.createElement('canvas'));
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
     await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
@@ -343,7 +354,7 @@ export class PdfViewer {
       const cached = await this.opts.crop?.get().catch(() => null);
       if (cached && cached.length === this.total) { this.applyCrops(cached); return; }
       const boxes: CropBox[] = new Array(this.total);
-      const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+      const canvas = offscreen(document.createElement('canvas')); const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
       for (let n = 1; n <= this.total; n++) {
         if (this.destroyed) return;
         try {
@@ -942,7 +953,7 @@ export class PdfViewer {
     const page = await this.doc.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: width / base.width });
-    const canvas = document.createElement('canvas');
+    const canvas = offscreen(document.createElement('canvas'));
     canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
     const ctx = canvas.getContext('2d')!;
     if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
@@ -955,7 +966,7 @@ export class PdfViewer {
     const page = await this.doc.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: width / base.width });
-    const canvas = document.createElement('canvas');
+    const canvas = offscreen(document.createElement('canvas'));
     canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
     await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
     return canvas.toDataURL('image/jpeg', 0.7);

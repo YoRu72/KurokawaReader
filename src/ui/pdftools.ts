@@ -365,7 +365,7 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   const gridEl = h('div', { class: 'page-grid organize-grid' });
   const count = h('span', { class: 'src organize-count' });
   const thumbs = new Map<number, string>();
-  const { loadPdfjs } = await import('../formats/pdf');
+  const { loadPdfjs, offscreen } = await import('../formats/pdf');
   const pdfjs = await loadPdfjs();
   const task = pdfjs.getDocument({ data: src.bytes.slice(), password: src.password } as Parameters<typeof pdfjs.getDocument>[0]);
   const doc = await task.promise.catch(() => null);
@@ -378,7 +378,7 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
       try {
         const page = await doc.getPage(i + 1);
         const vp0 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 180 / Math.max(vp0.width, vp0.height) });
-        const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        const c = offscreen(document.createElement('canvas')); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
         await page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp } as Parameters<typeof page.render>[0]).promise;
         const url = await new Promise<string>((res) => c.toBlob((bl) => res(bl ? URL.createObjectURL(bl) : ''), 'image/jpeg', 0.72));
         thumbs.set(i, url); page.cleanup();
@@ -569,7 +569,7 @@ async function unlockSheet(src: Source, onDone?: () => void): Promise<void> {
 async function toImagesSheet(src: Source): Promise<void> {
   const sh = openSheet(t('toolToImages'), t('close'), { stack: true });
   sh.body.style.fontFamily = 'var(--font-ui)';
-  const { loadPdfjs } = await import('../formats/pdf');
+  const { loadPdfjs, offscreen } = await import('../formats/pdf');
   const pdfjs = await loadPdfjs();
   let doc: Awaited<ReturnType<typeof pdfjs.getDocument>['promise']> | null = null;
   for (let wrong = false; !doc;) {
@@ -595,7 +595,7 @@ async function toImagesSheet(src: Source): Promise<void> {
     const ext = fmt === 'png' ? 'png' : 'jpg'; const base = baseName(src.name);
     const one = async (i: number) => {
       const page = await doc!.getPage(i + 1); const vp = page.getViewport({ scale: +dpi / 72 });
-      const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const c = offscreen(document.createElement('canvas')); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
       const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
       await page.render({ canvas: c, canvasContext: ctx, viewport: vp } as Parameters<typeof page.render>[0]).promise;
       return new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), `image/${fmt}`, 0.9));

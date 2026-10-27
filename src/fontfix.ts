@@ -179,9 +179,11 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     const stream: { c: number; form: Form }[] = []; const occ: { key: string; at: number; len: number }[] = [];
     const inLig = new Set<number>();
     streams.push({ stream, occ, inLig });
-    const letters = (e: Cl) => (e.bad || !e.cps.length ? [0x20] : e.cps.filter((c) => !isMark(c)));
-    const firstJ = (e: Cl) => { const n = letters(e); return n.length ? joining(n[0]) : 'T'; };
-    const lastJ = (e: Cl) => { const n = letters(e); return n.length ? joining(n[n.length - 1]) : 'T'; };
+    // (Each cluster's letters and how its first and last join, worked out once: they are asked again and again.)
+    const lettersOf = new Map<Cl, number[]>(); const fj = new Map<Cl, string>(); const lj = new Map<Cl, string>();
+    const letters = (e: Cl) => { let n = lettersOf.get(e); if (!n) { n = e.bad || !e.cps.length ? [0x20] : e.cps.filter((c) => !isMark(c)); lettersOf.set(e, n); } return n; };
+    const firstJ = (e: Cl) => { let j = fj.get(e); if (j === undefined) { const n = letters(e); j = n.length ? joining(n[0]) : 'T'; fj.set(e, j); } return j; };
+    const lastJ = (e: Cl) => { let j = lj.get(e); if (j === undefined) { const n = letters(e); j = n.length ? joining(n[n.length - 1]) : 'T'; lj.set(e, j); } return j; };
     // The joining form of cluster i's (first or last) letter.
     const formAt = (i: number): Form => {
       const e = cls[i];

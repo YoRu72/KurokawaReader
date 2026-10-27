@@ -277,7 +277,7 @@ async function peekEpub(url: string, noCover = false): Promise<Read> {
 /* ---------- a PDF ---------- */
 async function peekPdf(url: string, size?: number): Promise<Read> {
   const head = await range(url, 0, 65535);
-  const { loadPdfjs } = await import('../formats/pdf');
+  const { loadPdfjs, offscreen } = await import('../formats/pdf');
   const pdfjs = await loadPdfjs();
   let task: ReturnType<typeof pdfjs.getDocument>;
   const res = new URL('./pdfjs/', import.meta.url).href;
@@ -300,7 +300,7 @@ async function peekPdf(url: string, size?: number): Promise<Read> {
       const page = await doc.getPage(n);
       const vp = page.getViewport({ scale: 1 });
       const viewport = page.getViewport({ scale: Math.min(2, THUMB_H / vp.height) });
-      const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+      const canvas = offscreen(document.createElement('canvas')); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
       const ctx = canvas.getContext('2d')!;
       await page.render({ canvas, canvasContext: ctx, viewport }).promise;
       if (n < Math.min(2, doc.numPages) && blank(ctx, canvas.width, canvas.height)) continue;

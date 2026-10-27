@@ -13,8 +13,10 @@ const [out, pdf] = process.argv.slice(2); fs.mkdirSync(out, { recursive: true })
   await p.goto('http://localhost:5182/'); await p.evaluate(() => { localStorage.setItem('kr.lang', 'ar'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); });
   await p.reload(); await p.waitForSelector('.library-view');
   await p.setInputFiles('input[type=file]', [path.resolve(pdf)]); await p.waitForSelector('.book-card', { timeout: 60000 }); await p.waitForTimeout(500);
-  const card = await p.$('.book-card'); await card.dispatchEvent('contextmenu'); await p.waitForSelector('.sheet');
-  await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /تحويل|Convert/.test(x.textContent)); b?.click(); });
+  // (A long press selects the card; Convert is among the selection's actions — behind «More» on a narrow screen.)
+  const card = await p.$('.book-card'); await card.dispatchEvent('contextmenu'); await p.waitForSelector('.sel-actions');
+  const direct = await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-actions button')].find((x) => /تحويل|Convert/.test(x.textContent)); b?.click(); return !!b; });
+  if (!direct) { await p.evaluate(() => { const bs = [...document.querySelectorAll('.sel-actions button')]; bs[bs.length - 1].click(); }); await p.waitForSelector('.sheet'); await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /تحويل|Convert/.test(x.textContent)); b?.click(); }); }
   await p.waitForSelector('.convert-target');
   await p.click(process.env.T ? `.convert-target:has-text("${process.env.T}")` : '.convert-target >> nth=0'); await p.waitForTimeout(600);
   await p.keyboard.press('Escape'); await p.waitForTimeout(400);

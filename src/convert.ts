@@ -9,9 +9,11 @@
 import { joinLine, cleanPdfText } from './pdftext';
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import JSZip from 'jszip';
+import { packDocx, storeCompressed, type ZipLike } from './ziputil';
+import { imageSize } from './imagesize';
 import { db, type Book } from './db';
 import { flowHandlerFor } from './formats';
-import { loadPdfjs } from './formats/pdf';
+import { loadPdfjs, offscreen } from './formats/pdf';
 import { getSettings } from './settings';
 import { isRtlText } from './i18n';
 
@@ -95,12 +97,18 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
   const edgeSeen = new Map<string, number>();
   const edgeLines: { key: string; text: string; page: number; size: number; rtl: boolean; font?: string }[] = [];
   const notes: { text: string; page: number }[] = [];
+  const { pageBlocks, joinBreak } = await import('./pdflayer');
+  // The worker reads the next pages' text while this one is put together here.
+  const AHEAD = 2;
+  const asked = new Map<number, Promise<{ page: import('pdfjs-dist').PDFPageProxy; tc: Awaited<ReturnType<import('pdfjs-dist').PDFPageProxy['getTextContent']>> }>>();
+  const ask = (n: number) => doc.getPage(n).then(async (page) => ({ page, tc: await page.getTextContent() }));
   for (let p = 1; p <= doc.numPages; p++) {
     progress('pdfPage', Math.round((p / doc.numPages) * 60));
-    const page = await doc.getPage(p);
-    // Fonts are only loaded by rendering the operator list; after that commonObjs has them.
-    try { await page.getOperatorList(); } catch { /* ignore */ }
-    const tc = await page.getTextContent();
+    for (let k = p; k <= Math.min(doc.numPages, p + AHEAD); k++) if (!asked.has(k)) asked.set(k, ask(k));
+    const { page, tc } = await asked.get(p)!; asked.delete(p);
+    // A font's file comes over only with a page's drawing (then commonObjs has it): the drawing is read only for
+    // a page that brings a font not met before — not for every page, which took most of the time.
+    if ((tc.items as { fontName?: string }[]).some((it) => it.fontName && !fontFamilies.has(it.fontName))) { try { await page.getOperatorList(); } catch { /* its text all the same */ } }
     type It = { str: string; x: number; y: number; w: number; h: number; font: string; eol: boolean; keep: boolean };
     const items: It[] = [];
     for (const it of tc.items) {
@@ -125,7 +133,6 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
     // block its own run of paragraphs. Lines at the very top or bottom that repeat across pages (a running
     // head, a page number) are set aside; smaller lines at the foot of the page are footnotes.
     const vp = page.getViewport({ scale: 1, rotation: 0 });
-    const { pageBlocks } = await import('./pdflayer');
     const blocks = pageBlocks(tc.items as { str: string; transform: number[]; width: number; height: number; fontName?: string; krLead?: boolean }[], vp);
     const pageLines = blocks.flatMap((b) => b.lines);
     const pageMedian = pageLines.length ? [...pageLines.map((l) => l.h)].sort((a, b) => a - b)[pageLines.length >> 1] : 12;
@@ -172,7 +179,6 @@ async function readPdf(book: Book, file: Blob, progress: Progress, password?: st
         if ((globalThis as { krDebugPara?: string }).krDebugPara && text.includes((globalThis as { krDebugPara?: string }).krDebugPara!)) console.warn('KR para', JSON.stringify({ text: text.slice(0, 30), newPara, gap: +gap.toFixed(1), size: +size.toFixed(1), prevSize: +prevSize.toFixed(1), shortPrev, bufEnd: buf.trim().slice(-12), indent: +(ln.rtl ? edgeR - ln.r : ln.l - edgeL).toFixed(1) }));
         if (newPara) { flush(isNote ? 'note' : 'para'); bufSize = size; bufFont = fontFamilies.get(ln.font ?? ''); bufRtl = ln.rtl; bufWide = false; bufLines = 0; bufCenter = centered && !/[.!?؟。！？،,;؛]$/.test(text) && text.length <= 80; }
         // (A wrapped line joins the next: a hyphen at its end goes, Chinese and Japanese run on without a space.)
-        const { joinBreak } = await import('./pdflayer');
         const sep = buf ? (joinBreak(buf, text) === '' ? '' : ' ') : '';
         if (buf && /[-\u2010\u00ad]$/.test(buf) && /^\p{Ll}/u.test(text)) buf = buf.replace(/[-\u2010\u00ad]$/, '');
         buf += sep + text;
@@ -295,55 +301,122 @@ export async function buildEpub(d: ConvDoc, progress: Progress): Promise<Blob> {
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">${uid}</dc:identifier><dc:title>${esc(d.title)}</dc:title>${d.author ? `<dc:creator>${esc(d.author)}</dc:creator>` : ''}<dc:language>${esc(d.lang || (d.rtl ? 'ar' : 'en'))}</dc:language><meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${manifest.join('')}</manifest>
 <spine${d.rtl ? ' page-progression-direction="rtl"' : ''}>${spine.join('')}</spine></package>`);
+  storeCompressed(zip as unknown as ZipLike);
   return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip', compression: 'DEFLATE' });
 }
 
 export async function buildDocx(d: ConvDoc, progress: Progress): Promise<Blob> {
   const docx = await import('docx');
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun, AlignmentType } = docx;
-  const children: InstanceType<typeof Paragraph>[] = [];
+  const { Document, Paragraph, TextRun, HeadingLevel, ImageRun, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink, LevelFormat } = docx;
+  const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = [];
+  // Each picture's kind and size from its first bytes (decoding it only when they do not say: a WebP, which Word
+  // does not take, is drawn again as a PNG).
   const imgDims = new Map<string, { w: number; h: number; type: 'png' | 'jpg' | 'gif' | 'bmp' }>();
-  for (const [url, blob] of d.images) {
-    try { const bmp = await createImageBitmap(blob); const scale = Math.min(1, 500 / bmp.width); imgDims.set(url, { w: Math.round(bmp.width * scale), h: Math.round(bmp.height * scale), type: blob.type.includes('png') ? 'png' : blob.type.includes('gif') ? 'gif' : blob.type.includes('bmp') ? 'bmp' : 'jpg' }); } catch { /* skip */ }
-  }
   const imgData = new Map<string, Uint8Array>();
-  for (const [url, blob] of d.images) imgData.set(url, new Uint8Array(await blob.arrayBuffer()));
-  const walkBlock = (el: Element, rtl: boolean) => {
+  for (const [url, blob] of d.images) {
+    try {
+      let bytes = new Uint8Array(await blob.arrayBuffer());
+      let size = imageSize(bytes);
+      if (!size || size.kind === 'webp') {
+        const bmp = await createImageBitmap(blob);
+        const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height; c.getContext('2d')!.drawImage(bmp, 0, 0); bmp.close();
+        const png = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/png'));
+        if (!png) continue;
+        bytes = new Uint8Array(await png.arrayBuffer()); size = { kind: 'png', w: c.width, h: c.height };
+      }
+      const scale = Math.min(1, 500 / Math.max(1, size.w));
+      imgDims.set(url, { w: Math.round(size.w * scale), h: Math.round(size.h * scale), type: size.kind === 'webp' ? 'png' : size.kind });
+      imgData.set(url, bytes);
+    } catch { /* left out */ }
+  }
+  // Lists numbered as the book numbers them (each list counting from its own start), bulleted ones by depth.
+  let lists = 0;
+  const alignOf = (el: Element, dir: boolean) => {
+    const a = (el.getAttribute('align') ?? (el as HTMLElement).style?.textAlign ?? '').toLowerCase();
+    return a === 'center' ? AlignmentType.CENTER : a === 'justify' ? AlignmentType.BOTH : a === 'right' ? (dir ? AlignmentType.LEFT : AlignmentType.RIGHT) : dir ? AlignmentType.RIGHT : AlignmentType.LEFT;
+  };
+  type Block = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
+  const walkBlock = (el: Element, rtl: boolean, out: Block[] = children, list?: { ordered: boolean; level: number; instance: number }) => {
     const tag = el.tagName.toLowerCase();
     const dir = el.getAttribute('dir') === 'rtl' ? true : el.getAttribute('dir') === 'ltr' ? false : rtl || isRtlText(el.textContent ?? '');
     const family = (el as HTMLElement).style?.fontFamily?.replace(/['"]/g, '') || undefined;
     if (tag === 'img') {
       const src = el.getAttribute('src') ?? ''; const dim = imgDims.get(src); const data = imgData.get(src);
-      if (dim && data) children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data, type: dim.type, transformation: { width: dim.w, height: dim.h } })] }));
+      if (dim && data) out.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data, type: dim.type, transformation: { width: dim.w, height: dim.h } })] }));
       return;
     }
-    if (/^h[1-6]$/.test(tag)) { children.push(new Paragraph({ heading: tag === 'h1' ? HeadingLevel.HEADING_1 : tag === 'h2' ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3, bidirectional: dir, alignment: dir ? AlignmentType.RIGHT : AlignmentType.LEFT, children: runs(el, dir, family) })); return; }
+    if (/^h[1-6]$/.test(tag)) { out.push(new Paragraph({ heading: tag === 'h1' ? HeadingLevel.HEADING_1 : tag === 'h2' ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3, bidirectional: dir, alignment: alignOf(el, dir), children: runs(el, dir, family) })); return; }
+    // A table as a table: its rows and cells (a cell spanning columns spans them), each cell's text its paragraphs.
+    if (tag === 'table') {
+      const rows = Array.from(el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr'));
+      const width = Math.max(1, ...rows.map((tr) => Array.from(tr.children).reduce((n, c) => n + Math.max(1, Number(c.getAttribute('colspan')) || 1), 0)));
+      const trs = rows.map((tr) => new TableRow({ tableHeader: tr.parentElement?.tagName.toLowerCase() === 'thead' || undefined, children: Array.from(tr.children).filter((c) => /^t[dh]$/i.test(c.tagName)).map((td) => {
+        const inner: Block[] = []; const kids = Array.from(td.children).filter((k) => !/^(b|i|em|strong|span|a|sup|sub|u|s|br|small|code|font)$/i.test(k.tagName));
+        if (kids.length) { for (const k of Array.from(td.childNodes)) { if (k.nodeType === 1 && kids.includes(k as Element)) walkBlock(k as Element, dir, inner); } }
+        const own = runs(td, dir, family, !!kids.length, [], false, { b: td.tagName.toLowerCase() === 'th' });
+        if (own.length) inner.unshift(new Paragraph({ bidirectional: dir, alignment: alignOf(td, dir), children: own }));
+        return new TableCell({ columnSpan: Math.max(1, Number(td.getAttribute('colspan')) || 1) > 1 ? Math.max(1, Number(td.getAttribute('colspan'))) : undefined, children: inner.length ? inner.filter((b): b is InstanceType<typeof Paragraph> | InstanceType<typeof Table> => !!b) : [new Paragraph({ children: [] })] });
+      }) }));
+      if (trs.length) out.push(new Table({ rows: trs, width: { size: 100, type: WidthType.PERCENTAGE }, visuallyRightToLeft: dir || undefined, columnWidths: Array.from({ length: width }, () => Math.floor(9000 / width)) }), new Paragraph({ children: [] }));
+      return;
+    }
+    if (tag === 'ul' || tag === 'ol') {
+      const level = list ? Math.min(8, list.level + 1) : 0;
+      const me = { ordered: tag === 'ol', level, instance: tag === 'ol' ? ++lists : 0 };
+      for (const k of Array.from(el.children)) walkBlock(k, dir, out, me);
+      return;
+    }
     if (tag === 'p' || tag === 'li' || tag === 'blockquote' || tag === 'pre' || tag === 'figcaption' || tag === 'dd' || tag === 'dt' || tag === 'td' || tag === 'th') {
       const imgs = Array.from(el.querySelectorAll('img'));
-      const r = runs(el, dir, family);
-      if (r.length) children.push(new Paragraph({ bidirectional: dir, alignment: dir ? AlignmentType.RIGHT : AlignmentType.LEFT, indent: tag === 'blockquote' ? { left: 720 } : undefined, bullet: tag === 'li' ? { level: 0 } : undefined, children: r }));
-      imgs.forEach((im) => walkBlock(im, dir));
+      // (A list item's own text; a list inside it follows, a level deeper.)
+      const subLists = tag === 'li' ? Array.from(el.children).filter((k) => /^(ul|ol)$/i.test(k.tagName)) : [];
+      const r = runs(el, dir, family, false, subLists, tag === 'pre');
+      const item = tag === 'li' && list ? (list.ordered ? { numbering: { reference: 'kr-ol', level: Math.min(list.level, 2), instance: list.instance } } : { bullet: { level: list.level } }) : tag === 'li' ? { bullet: { level: 0 } } : {};
+      if (r.length) out.push(new Paragraph({ bidirectional: dir, alignment: alignOf(el, dir), indent: tag === 'blockquote' ? { start: 720, end: 360 } : tag === 'dd' ? { start: 720 } : undefined, ...item, children: r }));
+      for (const sl of subLists) walkBlock(sl, dir, out, list ?? { ordered: false, level: 0, instance: 0 });
+      imgs.filter((im) => !subLists.some((sl) => sl.contains(im))).forEach((im) => walkBlock(im, dir, out));
       return;
     }
-    if (tag === 'hr' || tag === 'br') { children.push(new Paragraph({ children: [] })); return; }
+    // A rule between scenes: a paragraph with a line under it.
+    if (tag === 'hr') { out.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'auto', space: 1 } }, children: [] })); return; }
+    if (tag === 'br') { out.push(new Paragraph({ children: [] })); return; }
     const kids = Array.from(el.children);
-    if (!kids.length) { const r = runs(el, dir, family); if (r.length) children.push(new Paragraph({ bidirectional: dir, alignment: dir ? AlignmentType.RIGHT : AlignmentType.LEFT, children: r })); return; }
+    if (!kids.length) { const r = runs(el, dir, family); if (r.length) out.push(new Paragraph({ bidirectional: dir, alignment: alignOf(el, dir), children: r })); return; }
     // Loose text directly inside a container becomes its own paragraph.
     const loose = Array.from(el.childNodes).filter((nd) => nd.nodeType === 3 && nd.textContent?.trim()).map((nd) => nd.textContent!.trim()).join(' ');
-    if (loose) children.push(new Paragraph({ bidirectional: dir, children: [new TextRun({ text: loose, rightToLeft: dir, font: family })] }));
-    kids.forEach((k) => walkBlock(k, dir));
+    if (loose) out.push(new Paragraph({ bidirectional: dir, children: [new TextRun({ text: loose, rightToLeft: dir, font: family })] }));
+    kids.forEach((k) => walkBlock(k, dir, out, list));
   };
-  const runs = (el: Element, rtl: boolean, family?: string): InstanceType<typeof TextRun>[] => {
-    const out: InstanceType<typeof TextRun>[] = [];
-    const visit = (node: Node, b: boolean, i: boolean) => {
-      if (node.nodeType === 3) { const txt = (node.textContent ?? '').replace(/\s+/g, ' '); if (txt.trim()) out.push(new TextRun({ text: txt, bold: b || undefined, italics: i || undefined, rightToLeft: rtl || undefined, font: family })); return; }
+  type Inline = InstanceType<typeof TextRun> | InstanceType<typeof ExternalHyperlink>;
+  /** A block's text as runs: bold, italic, underlined, struck, raised or lowered, set in a fixed-width face, a
+   *  link to the web as a link; `skipBlocks` leaves out the block children walked on their own. */
+  type St = { b?: boolean; i?: boolean; u?: boolean; s?: boolean; sup?: boolean; sub?: boolean; mono?: boolean };
+  const runs = (el: Element, rtl: boolean, family?: string, skipBlocks = false, skip: Element[] = [], keepSpaces = false, base: St = {}): Inline[] => {
+    const out: Inline[] = [];
+    const run = (text: string, st: St) => new TextRun({ text, bold: st.b || undefined, italics: st.i || undefined, underline: st.u ? {} : undefined, strike: st.s || undefined, superScript: st.sup || undefined, subScript: st.sub || undefined, rightToLeft: rtl || undefined, font: st.mono ? 'Courier New' : family });
+    const visit = (node: Node, st: St, into: Inline[]) => {
+      if (node.nodeType === 3) {
+        // (Preformatted text keeps its spaces and its lines.)
+        if (keepSpaces) { (node.textContent ?? '').split('\n').forEach((ln, k) => { if (k) into.push(new TextRun({ break: 1 })); if (ln) into.push(run(ln, { ...st, mono: true })); }); return; }
+        // (A space between two styled words is kept: "<b>one</b> <i>two</i>" is not "onetwo".)
+        const txt = (node.textContent ?? '').replace(/\s+/g, ' '); if (txt.trim()) into.push(run(txt, st)); else if (txt && into.length) into.push(run(' ', st)); return;
+      }
       if (node.nodeType !== 1) return;
       const e = node as Element; const tg = e.tagName.toLowerCase();
-      if (tg === 'img' || tg === 'rt' || tg === 'rp') return;
-      if (tg === 'br') { out.push(new TextRun({ break: 1 })); return; }
-      node.childNodes.forEach((c) => visit(c, b || tg === 'b' || tg === 'strong', i || tg === 'i' || tg === 'em'));
+      if (tg === 'img' || tg === 'rt' || tg === 'rp' || skip.includes(e)) return;
+      if (skipBlocks && /^(p|div|table|ul|ol|li|h[1-6]|blockquote|pre|figure|section|hr)$/.test(tg)) return;
+      if (tg === 'br') { into.push(new TextRun({ break: 1 })); return; }
+      const next: St = { ...st, b: st.b || tg === 'b' || tg === 'strong' || tg === 'th', i: st.i || tg === 'i' || tg === 'em' || tg === 'cite', u: st.u || tg === 'u' || tg === 'ins', s: st.s || tg === 's' || tg === 'strike' || tg === 'del', sup: st.sup || tg === 'sup', sub: st.sub || tg === 'sub', mono: st.mono || tg === 'code' || tg === 'kbd' || tg === 'tt' || tg === 'samp' };
+      const href = tg === 'a' ? e.getAttribute('href') ?? '' : '';
+      if (/^(https?|mailto):/i.test(href)) {
+        const inner: Inline[] = []; e.childNodes.forEach((c) => visit(c, { ...next, u: true }, inner));
+        const textRuns = inner.filter((x): x is InstanceType<typeof TextRun> => x instanceof TextRun);
+        if (textRuns.length) into.push(new ExternalHyperlink({ link: href, children: textRuns }));
+        return;
+      }
+      node.childNodes.forEach((c) => visit(c, next, into));
     };
-    el.childNodes.forEach((c) => visit(c, false, false));
+    el.childNodes.forEach((c) => visit(c, base, out));
     return out;
   };
   d.chapters.forEach((ch, i) => {
@@ -353,9 +426,10 @@ export async function buildDocx(d: ConvDoc, progress: Progress): Promise<Blob> {
     Array.from(host.children).forEach((el: Element) => walkBlock(el, ch.rtl));
   });
   const fontNames = [...d.fonts.keys()];
-  const wordDoc = new Document({ creator: d.author ?? 'KurokawaReader', title: d.title, description: fontNames.length ? `Fonts used in the source: ${fontNames.join(', ')}` : undefined, styles: { default: { document: { run: { font: d.rtl ? 'Arial' : 'Calibri', size: 24 } } } }, sections: [{ properties: { page: { textDirection: undefined } }, children }] });
-  const blob = await Packer.toBlob(wordDoc);
-  return blob;
+  const wordDoc = new Document({ creator: d.author ?? 'KurokawaReader', title: d.title, description: fontNames.length ? `Fonts used in the source: ${fontNames.join(', ')}` : undefined, styles: { default: { document: { run: { font: d.rtl ? 'Arial' : 'Calibri', size: 24 } } } },
+    numbering: { config: [{ reference: 'kr-ol', levels: [0, 1, 2].map((level) => ({ level, format: [LevelFormat.DECIMAL, LevelFormat.LOWER_LETTER, LevelFormat.LOWER_ROMAN][level], text: `%${level + 1}.`, alignment: AlignmentType.START, style: { paragraph: { indent: { left: 720 * (level + 1), hanging: 360 } } } })) }] },
+    sections: [{ properties: { page: { textDirection: undefined } }, children }] });
+  return packDocx(wordDoc);
 }
 
 export function buildHtml(d: ConvDoc, inlineImages: Map<string, string>): string {
@@ -754,6 +828,7 @@ export async function buildOdt(d: ConvDoc, progress: Progress): Promise<Blob> {
   zip.file('styles.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-styles ${NS}><office:font-face-decls><style:font-face style:name="Liberation Mono" svg:font-family="'Liberation Mono'" style:font-family-generic="modern"/><style:font-face style:name="Traditional Arabic" svg:font-family="'Traditional Arabic'"/></office:font-face-decls>${styles}</office:document-styles>`);
   zip.file('meta.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-meta ${NS}><office:meta><dc:title>${xml(d.title)}</dc:title>${d.author ? `<meta:initial-creator>${xml(d.author)}</meta:initial-creator><dc:creator>${xml(d.author)}</dc:creator>` : ''}${d.lang ? `<dc:language>${xml(d.lang)}</dc:language>` : ''}<meta:generator>KurokawaReader</meta:generator></office:meta></office:document-meta>`);
   zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>${pics.join('')}</manifest:manifest>`);
+  storeCompressed(zip as unknown as ZipLike);
   return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.oasis.opendocument.text', compression: 'DEFLATE' });
 }
 
@@ -792,7 +867,7 @@ export async function buildCbz(book: Book, file: Blob, progress: Progress, passw
       const n = o.doc.numPages; const digits = String(n).length;
       for (let i = 1; i <= n; i++) {
         const page = await o.doc.getPage(i); const vp = page.getViewport({ scale: 1600 / Math.max(page.view[2] - page.view[0], page.view[3] - page.view[1]) });
-        const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        const c = offscreen(document.createElement('canvas')); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
         const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
         await page.render({ canvas: c, canvasContext: ctx, viewport: vp } as Parameters<typeof page.render>[0]).promise;
         const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.9));

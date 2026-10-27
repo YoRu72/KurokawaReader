@@ -8,7 +8,8 @@ import { yieldNow } from './jobs';
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
-import { loadPdfjs } from './formats/pdf';
+import { loadPdfjs, offscreen } from './formats/pdf';
+import { packDocx, type ZipLike } from './ziputil';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
@@ -25,8 +26,8 @@ type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb:
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
-type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece };
-type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: number[] };
+type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece };
+type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[] };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
 /** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
  *  left to right — each spanning `span` columns, `cont` when it carries on the cell above (no rule between). */
@@ -198,19 +199,28 @@ function drawsGraphics(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown
   return false;
 }
 
-// One canvas for every page's graphics (a new one each page left megabytes for the collector).
+// One canvas for every page's graphics (a new one each page left megabytes for the collector), and one for
+// the small copy its ink is looked for on.
 let graphicsCanvas: (HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> }) | null = null;
+let scanCanvas: HTMLCanvasElement | null = null;
+
+/** A channel of a pixel as it shows on white paper (the page's graphics are drawn on nothing). */
+const onWhite = (v: Uint8ClampedArray, i: number, ch: number): number => { const a = v[i + 3]; return a === 255 ? v[i + ch] : Math.round((v[i + ch] * a) / 255 + 255 - a); };
+/** Whether a pixel shows as white (or nothing) on white paper. */
+const whiteAt = (v: Uint8ClampedArray, i: number): boolean => v[i + 3] === 0 || (onWhite(v, i, 0) > 250 && onWhite(v, i, 1) > 250 && onWhite(v, i, 2) > 250);
 
 async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: number, keepFonts: Set<string>, grids: GridSpec[] = [], arts: Piece[] = [], textOnly = false): Promise<Pic[]> {
   if (textOnly && !keepFonts.size && !arts.length && !grids.length) return [];
   const vp = page.getViewport({ scale });
-  const c = (graphicsCanvas ??= document.createElement('canvas') as HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> });
+  const c = (graphicsCanvas ??= offscreen(document.createElement('canvas'), true) as HTMLCanvasElement & { krNoText?: boolean; krKeepFonts?: Set<string> });
   c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); c.krNoText = true; c.krKeepFonts = keepFonts;
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  // (Drawn on nothing, not on white: what the page paints is all the picture holds, its edges soft as drawn —
+  // nothing to read back to take the white out of it after.)
+  ctx.clearRect(0, 0, c.width, c.height);
   const TG = (globalThis as { krTiming?: Record<string, number> }).krTiming; let tg = performance.now();
   const lapG = (k: string) => { if (TG) { const n = performance.now(); TG[k] = (TG[k] ?? 0) + n - tg; tg = n; } };
-  await page.render({ canvas: c, canvasContext: ctx, viewport: vp, background: 'rgba(255,255,255,1)' } as Parameters<typeof page.render>[0]).promise;
+  await page.render({ canvas: c, canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)' } as Parameters<typeof page.render>[0]).promise;
   lapG('g.render');
   const W = c.width, H = c.height;
   // Ruled tables become Word tables: their shading is read off the page here, and their rules and shading
@@ -222,16 +232,16 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
       if (cell.cont) return;
       const l = g.xs[cell.c0], r = g.xs[cell.c0 + cell.span], t = g.ys[j], b = g.ys[j + 1];
       const pts = [[l + 2.5, t - 2.5], [r - 2.5, t - 2.5], [l + 2.5, b + 2.5], [r - 2.5, b + 2.5]];
-      const cols = pts.map(([x, y]) => { const v = ctx.getImageData(Math.max(0, Math.min(W - 1, px(x))), Math.max(0, Math.min(H - 1, py(y))), 1, 1).data; return [v[0], v[1], v[2]]; });
+      const cols = pts.map(([x, y]) => { const v = ctx.getImageData(Math.max(0, Math.min(W - 1, px(x))), Math.max(0, Math.min(H - 1, py(y))), 1, 1).data; return [onWhite(v, 0, 0), onWhite(v, 0, 1), onWhite(v, 0, 2)]; });
       const hex = (v: number[]) => v.map((n) => n.toString(16).padStart(2, '0')).join('');
       const same = cols.filter((v) => Math.abs(v[0] - cols[0][0]) + Math.abs(v[1] - cols[0][1]) + Math.abs(v[2] - cols[0][2]) < 24).length;
       if (same >= 3 && cols[0].some((n) => n < 245)) cell.fill = hex(cols[0]);
     }));
-    ctx.fillStyle = '#fff';
     const x0 = px(g.xs[0]) - Math.ceil(2 * scale), x1 = px(g.xs[g.xs.length - 1]) + Math.ceil(2 * scale);
     const y0 = py(g.ys[0]) - Math.ceil(2 * scale), y1 = py(g.ys[g.ys.length - 1]) + Math.ceil(2 * scale);
-    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.clearRect(x0, y0, x1 - x0, y1 - y0);
   }
+  lapG('g.grids');
   // Text kept as drawn goes into its line as a picture of its own: cut out here, tight to its ink.
   for (const p of arts) {
     const x0 = Math.max(0, Math.floor((p.l - p.h * 0.15) * scale)), x1 = Math.min(W, Math.ceil((p.r + p.h * 0.15) * scale));
@@ -239,46 +249,58 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
     if (x1 <= x0 || y1 <= y0) continue;
     const px = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data; const w = x1 - x0;
     let a = Infinity, b = -1, t = Infinity, u = -1;
-    for (let i = 0, k = 0; i < px.length; i += 4, k++) if (!(px[i] > 250 && px[i + 1] > 250 && px[i + 2] > 250)) { const x = k % w, y = (k / w) | 0; if (x < a) a = x; if (x > b) b = x; if (y < t) t = y; if (y > u) u = y; }
+    for (let i = 0, k = 0; i < px.length; i += 4, k++) if (!whiteAt(px, i)) { const x = k % w, y = (k / w) | 0; if (x < a) a = x; if (x > b) b = x; if (y < t) t = y; if (y > u) u = y; }
     if (b < 0) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art-noink', p.font, p.l.toFixed(1), p.y.toFixed(1), p.h.toFixed(1)); continue; }
     const cw = b - a + 1, chh = u - t + 1;
     const cc = document.createElement('canvas'); cc.width = cw; cc.height = chh;
     const cx = cc.getContext('2d')!; cx.drawImage(c, x0 + a, y0 + t, cw, chh, 0, 0, cw, chh);
-    const im = cx.getImageData(0, 0, cw, chh); for (let i = 0; i < im.data.length; i += 4) if (im.data[i] > 250 && im.data[i + 1] > 250 && im.data[i + 2] > 250) im.data[i + 3] = 0; cx.putImageData(im, 0, 0);
-    p.pic = { png: await canvasPng(cc), w: cw / scale, h: chh / scale, drop: ph - (y0 + u + 1) / scale - p.y };
-    ctx.fillStyle = '#fff'; ctx.fillRect(x0 + a, y0 + t, cw, chh);
+    const im = cx.getImageData(0, 0, cw, chh); for (let i = 0; i < im.data.length; i += 4) if (whiteAt(im.data, i)) im.data[i + 3] = 0; cx.putImageData(im, 0, 0);
+    // (Encoded off this thread while the pages go on, like the page's pictures.)
+    p.pic = { png: new Uint8Array(0), w: cw / scale, h: chh / scale, drop: ph - (y0 + u + 1) / scale - p.y };
+    encodeLater(cc, p.pic);
+    ctx.clearRect(x0 + a, y0 + t, cw, chh);
   }
-  const d = ctx.getImageData(0, 0, W, H).data;
-  const ink = new Uint8Array(W * H); const rowHas = new Uint8Array(H);
-  // (Read as whole pixels: most of a page is pure white, settled by one comparison.)
-  const px32 = new Uint32Array(d.buffer, d.byteOffset, W * H);
-  const WHITE = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 4 ? 0x00ffffff : 0xffffff00;
-  for (let y = 0, k = 0; y < H; y++) {
+  lapG('g.arts');
+  // Where the ink is, found on a copy a quarter the size (a sixteenth of the pixels to read and look at); each
+  // place then cut from the page itself.
+  const R = 4;
+  const w = Math.max(1, Math.ceil(W / R)), h = Math.max(1, Math.ceil(H / R));
+  const sc = (scanCanvas ??= document.createElement('canvas')); sc.width = w; sc.height = h;
+  const sx = sc.getContext('2d', { willReadFrequently: true })!;
+  sx.imageSmoothingEnabled = true; sx.imageSmoothingQuality = 'high';
+  sx.drawImage(c, 0, 0, W, H, 0, 0, w, h);
+  const d = sx.getImageData(0, 0, w, h).data;
+  const ink = new Uint8Array(w * h); const rowHas = new Uint8Array(h);
+  // (Read as whole pixels: most of a page is nothing at all, or white, settled by one comparison. A thin rule a
+  // quarter the size is faint: anything that shows on white paper as not quite white is ink here.)
+  const px32 = new Uint32Array(d.buffer, d.byteOffset, w * h);
+  for (let y = 0, k = 0; y < h; y++) {
     let any = 0;
-    for (let x = 0; x < W; x++, k++) {
+    for (let x = 0; x < w; x++, k++) {
       const v = px32[k];
-      if ((v & WHITE) === WHITE) continue;
+      if (v === 0 || v === 0xffffffff) continue;
       const i = k * 4;
-      if (!(d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250)) { ink[k] = 1; any = 1; }
+      if (!(onWhite(d, i, 0) > 252 && onWhite(d, i, 1) > 252 && onWhite(d, i, 2) > 252)) { ink[k] = 1; any = 1; }
     }
     rowHas[y] = any;
   }
   lapG('g.scan');
   if (!rowHas.some((v) => v)) return [];
-  const rowInk = (y: number, x0: number, x1: number) => { if (x0 === 0 && x1 === W) return rowHas[y] === 1; for (let x = x0; x < x1; x++) if (ink[y * W + x]) return true; return false; };
-  const colInk = (x: number, y0: number, y1: number) => { for (let y = y0; y < y1; y++) if (ink[y * W + x]) return true; return false; };
+  const rowInk = (y: number, x0: number, x1: number) => { if (x0 === 0 && x1 === w) return rowHas[y] === 1; for (let x = x0; x < x1; x++) if (ink[y * w + x]) return true; return false; };
+  const colInk = (x: number, y0: number, y1: number) => { for (let y = y0; y < y1; y++) if (ink[y * w + x]) return true; return false; };
   // Bands of rows with ink (small gaps bridged), then clusters of columns within each band.
   const boxes: [number, number, number, number][] = [];
-  const gapY = Math.round(6 * scale), gapX = Math.round(24 * scale);
-  for (let y = 0; y < H;) {
-    if (!rowInk(y, 0, W)) { y++; continue; }
+  const gapY = Math.max(1, Math.round((6 * scale) / R)), gapX = Math.max(1, Math.round((24 * scale) / R));
+  for (let y = 0; y < h;) {
+    if (!rowInk(y, 0, w)) { y++; continue; }
     let y1 = y, blank = 0;
-    for (let yy = y; yy < H; yy++) { if (rowInk(yy, 0, W)) { y1 = yy; blank = 0; } else if (++blank > gapY) break; }
-    for (let x = 0; x < W;) {
+    for (let yy = y; yy < h; yy++) { if (rowInk(yy, 0, w)) { y1 = yy; blank = 0; } else if (++blank > gapY) break; }
+    for (let x = 0; x < w;) {
       if (!colInk(x, y, y1 + 1)) { x++; continue; }
       let x1 = x, b2 = 0;
-      for (let xx = x; xx < W; xx++) { if (colInk(xx, y, y1 + 1)) { x1 = xx; b2 = 0; } else if (++b2 > gapX) break; }
-      boxes.push([x, y, x1 + 1, y1 + 1]);
+      for (let xx = x; xx < w; xx++) { if (colInk(xx, y, y1 + 1)) { x1 = xx; b2 = 0; } else if (++b2 > gapX) break; }
+      // (In the page's own pixels, with a small pixel of room around it: what lies there is nothing at all.)
+      boxes.push([Math.max(0, (x - 1) * R), Math.max(0, (y - 1) * R), Math.min(W, (x1 + 2) * R), Math.min(H, (y1 + 2) * R)]);
       x = x1 + 1;
     }
     y = y1 + 1;
@@ -288,15 +310,10 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
   const area = boxes.reduce((a, [x0, y0, x1, y1]) => a + (x1 - x0) * (y1 - y0), 0);
   const parts = area > W * H * 0.5 || boxes.length > 60 ? [[0, 0, W, H] as [number, number, number, number]] : boxes;
   const out: Pic[] = [];
-  for (const [x0, y0, x1, y1] of parts) {
-    const cc = document.createElement('canvas'); cc.width = x1 - x0; cc.height = y1 - y0;
-    const cx = cc.getContext('2d')!;
-    cx.drawImage(c, x0, y0, cc.width, cc.height, 0, 0, cc.width, cc.height);
-    // White → transparent, in the picture only (not over the whole page).
-    const im = cx.getImageData(0, 0, cc.width, cc.height); const q = im.data;
-    for (let i = 0; i < q.length; i += 4) if (q[i] > 250 && q[i + 1] > 250 && q[i + 2] > 250) q[i + 3] = 0;
-    cx.putImageData(im, 0, 0);
-    const pic: Pic = { png: new Uint8Array(0), x: x0 / scale, y: y0 / scale, w: cc.width / scale, h: cc.height / scale };
+  for (const [bx0, by0, bx1, by1] of parts) {
+    const cc = document.createElement('canvas'); cc.width = bx1 - bx0; cc.height = by1 - by0;
+    cc.getContext('2d')!.drawImage(c, bx0, by0, cc.width, cc.height, 0, 0, cc.width, cc.height);
+    const pic: Pic = { png: new Uint8Array(0), x: bx0 / scale, y: by0 / scale, w: cc.width / scale, h: cc.height / scale };
     encodeLater(cc, pic); out.push(pic);
   }
   lapG('g.png');
@@ -330,7 +347,7 @@ function pullFormulas(lines: Line[], boxes: Box[]): Line[] {
 async function renderRegions(page: import('pdfjs-dist').PDFPageProxy, scale: number, boxes: Box[]): Promise<Pic[]> {
   if (!boxes.length) return [];
   const vp = page.getViewport({ scale });
-  const c = document.createElement('canvas');
+  const c = offscreen(document.createElement('canvas'), true);
   c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
   await page.render({ canvas: c, canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)' } as Parameters<typeof page.render>[0]).promise;
@@ -705,6 +722,9 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     prev = prev && (rtlLine ? p.l > prev.l : p.r < prev.r) ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
   }
   const runs: Run[] = [];
+  // (Where each tabbed stretch of the line ends: a column's text may line up on its end, not its start.)
+  let seg: Run | null = null;
+  const reach = (p: Piece) => { if (seg) seg.tabEnd = rtlLine ? Math.min(seg.tabEnd ?? p.l, p.l) : Math.max(seg.tabEnd ?? p.r, p.r); };
   for (const { p, space, tab, blank, trim } of ordered) {
     const f = fonts.get(p.font) ?? { family: 'Times New Roman', bold: false, italic: false };
     // A piece stored in drawing order (mark before its letter) reads in logical order through joinLine.
@@ -726,7 +746,8 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     }
     const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, cs: lineCs };
     const last = runs[runs.length - 1];
-    if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, text, tab }); continue; }
+    if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push(seg = { ...look, text, tab, tabEnd: rtlLine ? p.l : p.r }); continue; }
+    reach(p);
     if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank * 0.92 - p.h * 0.3) }); }
     if (space && last?.art) text = ` ${text}`;
     else if (space && last) last.text += ' ';
@@ -805,16 +826,28 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       if (pos + r.text.length * r.size * 0.45 > R - L + 6) { r.tab = undefined; r.text = ` ${r.text}`; }
     }
     const tabX = runs.filter((r) => r.tab !== undefined).map((r) => r.tab!);
-    let tabs: number[] | undefined;
+    let tabs: Para['tabs'];
     if (tabX.length) {
       // Tab stops are measured from the text's edge (the margin, 3pt outside L/R).
       // A piece set at the very end of the line stops a little short of it, so a slightly wider font cannot push it over.
       const room = R - L + 6;
-      tabs = [...new Set(runs.filter((r) => r.tab !== undefined).map((r) => {
-        const pos = rtl ? R + 3 - r.tab! : r.tab! - (L - 3);
-        const w = r.text.length * r.size * 0.5;
-        return Math.round(Math.max(0, Math.min(pos, room - w * 1.25 - 3)) * 2) / 2;
-      }))].sort((a, b) => a - b);
+      const at = (x: number) => (rtl ? R + 3 - x : x - (L - 3));
+      const half = (v: number) => Math.round(v * 2) / 2;
+      // The lines' tabbed stretches gathered into columns (stretches that overlap across the lines), one stop each:
+      // where a column's stretches line up — their starts, their ends (numbers set flush right), their middles.
+      // (A stop per stretch, the lines of a paragraph sharing them, sent a short stretch of one line to a stop meant
+      // for another's.)
+      const segs = runs.filter((r) => r.tab !== undefined).map((r) => { const a = at(r.tab!), b = at(r.tabEnd ?? r.tab!); return { a: Math.min(a, b), b: Math.max(a, b), r }; }).sort((x, y) => x.a - y.a);
+      const cols: (typeof segs)[] = [];
+      for (const g of segs) { const c = cols[cols.length - 1]; if (c && g.a < Math.max(...c.map((x) => x.b)) + 1) c.push(g); else cols.push([g]); }
+      tabs = cols.map((c) => {
+        const w = Math.max(...c.map((g) => g.r.text.length * g.r.size * 0.5));
+        const spread = (f: (g: (typeof segs)[number]) => number) => Math.max(...c.map(f)) - Math.min(...c.map(f));
+        const left = spread((g) => g.a), right = spread((g) => g.b), mid = spread((g) => (g.a + g.b) / 2);
+        if (!rtl && c.length > 1 && right + 1 < left && right <= mid) return { pos: half(Math.min(room - 3, Math.max(...c.map((g) => g.b)))), type: 'right' as const };
+        if (!rtl && c.length > 1 && mid + 1 < left && mid < right) return { pos: half((Math.min(...c.map((g) => g.a)) + Math.max(...c.map((g) => g.b))) / 2), type: 'center' as const };
+        return { pos: half(Math.max(0, Math.min(Math.min(...c.map((g) => g.a)), room - w * 1.25 - 3))), type: 'left' as const };
+      }).filter((tb, i, all) => !all.slice(0, i).some((o) => o.pos === tb.pos)).sort((x, y) => x.pos - y.pos);
       // Positioned text: set flush from the start, no stretching (a justified line would spread the text after the last tab).
       if (align === 'center' || ls.length === 1) { indStart = 0; indEnd = 0; firstLine = Math.max(0, startGap(first)); }
       align = 'start';
@@ -1066,6 +1099,9 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
   const groups = new Map<string, string[]>();
   for (const [k] of used) { const r = find(k); (groups.get(r) ?? groups.set(r, []).get(r)!).push(k); }
   const debug = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
+  // (The fonts each line sets, worked out once: a font's lines are then found without going through every line
+  // of the book for each font.)
+  const seqFonts = store.seqs.map((seq) => { const f = new Set<string>(); for (const u of seq) f.add(u[0]); return f; });
   for (const keys of groups.values()) {
     keys.sort((a, b) => (fonts.get(b)!.uses ?? 0) - (fonts.get(a)!.uses ?? 0));
     const lead = fonts.get(keys[0])!;
@@ -1075,7 +1111,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
       let cov: Set<number> | null = null; try { cov = cmapCoverage(lead.raw); } catch { /* unreadable */ }
       if (cov?.size) {
         const used = new Set<number>();
-        for (const seq of store.seqs) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !COMBINING.test(ch)) used.add(c); }
+        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !COMBINING.test(ch)) used.add(c); } });
         let ok = 0; for (const c of used) if (cov.has(c)) ok++;
         if (!used.size || ok / used.size >= 0.97) continue;
       }
@@ -1093,7 +1129,9 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     if (!sources.length) continue;
     const member = new Set(keys);
     const lines: Use[][] = [];
-    for (const seq of store.seqs) {
+    for (let si = 0; si < store.seqs.length; si++) {
+      if (!keys.some((k) => seqFonts[si].has(k))) continue;
+      const seq = store.seqs[si];
       let cur: Use[] = [];
       const push = (x: Use[]) => lines.push(Object.assign(x, { rtl: seq.rtl }));
       for (const [font, u] of seq) {
@@ -1535,13 +1573,15 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const store: UseStore = { seqs: [], seen: new Map() };
   const pages: PageModel[] = [];
   pendingPngs = [];
-  // The worker reads the next page (its drawing and its text) while this one is laid out here.
+  // The worker reads the next pages (their drawing and their text) while this one is laid out here — a couple
+  // ahead, so that neither side waits for the other (each page's pictures let go once it is laid out).
+  const AHEAD = Number((globalThis as { krAhead?: number }).krAhead ?? 2);
   const ask = (n: number) => doc.getPage(n).then((pg) => { void pg.getOperatorList(); prefetched.set(pg, pg.getTextContent()); return pg; });
-  let next = ask(1);
+  const asked = new Map<number, Promise<import('pdfjs-dist').PDFPageProxy>>();
   for (let p = 1; p <= doc.numPages; p++) {
+    for (let k = p; k <= Math.min(doc.numPages, p + AHEAD); k++) if (!asked.has(k)) asked.set(k, ask(k));
     progress('pdfPage', Math.round((p / doc.numPages) * 80));
-    const page = await next;
-    if (p < doc.numPages) next = ask(p + 1);
+    const page = await asked.get(p)!; asked.delete(p);
     pages.push(await analysePage(pdfjs, page, fonts, true, store));
     if (p % 8 === 0) await yieldNow();
   }
@@ -1569,7 +1609,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   if (alias.size) for (const pg of pages) renameRuns(pg, alias);
 
   const docx = await import('docx');
-  const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak, HeightRule, VerticalMergeType, VerticalAlign, ShadingType } = docx;
+  const { Document, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak, HeightRule, VerticalMergeType, VerticalAlign, ShadingType } = docx;
 
   const usedChars = new Map<string, Set<number>>();
   const runFor = (r: Run, footnotes: Map<number, number> | null) => {
@@ -1613,7 +1653,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     alignment: alignOf(b.align, false),
     indent: { start: Math.round(b.indStart * PT), end: Math.round(b.indEnd * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) },
     spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: LineRuleType.EXACT },
-    tabStops: b.tabs?.map((t) => ({ type: TabStopType.LEFT, position: Math.round(t * PT) })),
+    tabStops: b.tabs?.map((t) => ({ type: t.type === 'right' ? TabStopType.RIGHT : t.type === 'center' ? TabStopType.CENTER : TabStopType.LEFT, position: Math.round(t.pos * PT) })),
     children: [...(extra.colBreak ? [new ColumnBreak()] : []), ...b.runs.map((r) => runFor(r, footnotes))],
   }); };
   const none = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
@@ -1706,10 +1746,12 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     }
     // Otherwise the note area stays in the page's flow, numbers and all, right where the page has it.
     const flowNotes = allCalled ? [] : pg.notesRaw;
-    const picRuns = pg.pics.map((pic) => new ImageRun({
+    // (Stacked in the order the page has them: its drawing first, a formula's or a diagram's picture with its
+    // words over it — not by their heights, which is what Word goes by when it is not told.)
+    const picRuns = pg.pics.map((pic, i) => new ImageRun({
       type: 'png', data: pic.png,
       transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) },
-      floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(pic.x * EMU) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(pic.y * EMU) }, behindDocument: true, allowOverlap: true, lockAnchor: true, wrap: { type: TextWrappingType.NONE } },
+      floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(pic.x * EMU) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(pic.y * EMU) }, behindDocument: true, allowOverlap: true, lockAnchor: true, wrap: { type: TextWrappingType.NONE }, zIndex: 1 + i },
     }));
     // Running heads and page numbers: plain header/footer paragraphs placed by spacing (the 4/5 baseline rule)
     // with each item on a centre tab stop at its original centre — exact in any word processor and font.
@@ -1864,8 +1906,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   });
   progress('build', 92);
   if (TT) TT.build = performance.now() - tb;
-  let blob = await Packer.toBlob(d);
-  if (TT) TT.pack = performance.now() - tb - TT.build;
+  // (The package as docx makes it, before it is zipped: finished and zipped once — not zipped, opened again
+  // and zipped a second time — its pictures stored, not squeezed for nothing.)
   // Fonts that are neither carried in the file nor common: named after a common font of the same kind.
   const subs = new Map<string, { latin: string; cs: string; ea: string }>();
   for (const key of usedChars.keys()) {
@@ -1879,15 +1921,15 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const sub = fontSubstitute(family, info);
     if (sub) subs.set(family, sub);
   }
-  blob = await finishDocx(blob, rtlDoc, extraFaces, sigs, subs);
+  const blob = await packDocx(d, (zip) => finishDocx(zip, rtlDoc, extraFaces, sigs, subs));
+  if (TT) TT.pack = performance.now() - tb - TT.build;
   progress('build', 100);
   return blob;
 }
 
+
 /** Word details the library has no option for: right-to-left sections, footnote numbers restart on each page. */
-async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>()): Promise<Blob> {
-  const JSZip = (await import('jszip')).default;
-  const zip = await JSZip.loadAsync(blob);
+async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>()): Promise<void> {
   // Fonts: the other faces of each embedded family (bold, …), the fonts' own signatures, and the switch that
   // tells Word the document carries its fonts.
   const ft = zip.file('word/fontTable.xml');
@@ -1952,5 +1994,4 @@ async function finishDocx(blob: Blob, rtl: boolean, extraFaces: { family: string
     if (ft && !s.includes('w:embedTrueTypeFonts')) s = s.replace(/<w:settings([^>]*)>/, (m) => `${m}<w:embedTrueTypeFonts/>`);
     zip.file('word/settings.xml', s);
   }
-  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE' });
 }

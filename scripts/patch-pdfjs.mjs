@@ -538,7 +538,7 @@ export async function buildPdfWorker(outFile) {
     }`, 'font raw keep');
   src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "krLegacy", "cMap",`, 'export extra');
 
-  const out = await esbuild.transform(src, { minify: true, format: 'esm', target: 'es2020', legalComments: 'inline' });
+  const out = await esbuild.transform(src, { minify: !process.env.NOMINIFY, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);
 }
 
@@ -555,6 +555,17 @@ export const pdfjsMainPlugin = {
       // neighbours, the selection highlight is off and word gaps vanish).
       src = replaceOnce(src, '    if (geom.str.length > 1) {\n      shouldScaleText = true;\n', '    if (geom.str.length > 1 || (geom.str.trim() !== "" && geom.width > 0)) {\n      shouldScaleText = true;\n', 'scale one letter');
       src = replaceOnce(src, '  showType3Text(opIdx, glyphs) {\n', '  showType3Text(opIdx, glyphs) {\n    if (this.ctx?.canvas?.krNoText) return undefined;\n', 'showType3Text');
+      // A page drawn off the screen (a canvas marked `krFast`: the converter's, a cover's) goes on slice after
+      // slice through a message — not one slice a screen frame, as a page shown does: twice as fast, and it goes
+      // on in a page out of sight (a screen frame never comes there).
+      src = replaceOnce(src, '  _scheduleNext() {\n    if (this._useRequestAnimationFrame) {\n', '  _scheduleNext() {\n    if (this._canvas?.krFast) {\n      const ch = new MessageChannel();\n      ch.port1.onmessage = () => { ch.port1.close(); this._nextBound().catch(this._cancelBound); };\n      ch.port2.postMessage(0);\n      return;\n    }\n    if (this._useRequestAnimationFrame) {\n', 'scheduleNext off screen');
+      // A canvas marked `krSharedOps` is drawn from the operator list `getOperatorList()` already read for the
+      // page (the converter reads it first, to find the page's rules, tables and pictures) — not from a second one
+      // the worker would read again from the page's content: half the work for a page with graphics. (The lists
+      // differ only in pdf.js's grouping of repeated pictures, which drawing does not need.)
+      src = replaceOnce(src, '    const intentArgs = this._transport.getRenderingIntent(intent, annotationMode, printAnnotationStorage, isEditing);\n    const {\n      renderingIntent,\n      cacheKey\n    } = intentArgs;\n    this.#pendingCleanup = false;', '    const intentArgs = this._transport.getRenderingIntent(intent, annotationMode, printAnnotationStorage, isEditing, !!canvas?.krSharedOps);\n    const {\n      renderingIntent,\n      cacheKey\n    } = intentArgs;\n    this.#pendingCleanup = false;', 'render shared intent');
+      src = replaceOnce(src, '    const intentPrint = !!(renderingIntent & RenderingIntentFlag.PRINT);\n    if (!intentState.displayReadyCapability) {\n', '    const intentPrint = !!(renderingIntent & RenderingIntentFlag.PRINT);\n    if (!intentState.displayReadyCapability && canvas?.krSharedOps && intentState.operatorList?.lastChunk) {\n      intentState.displayReadyCapability = Promise.withResolvers();\n      intentState.displayReadyCapability.resolve(!!intentState.krTransparency);\n    }\n    if (!intentState.displayReadyCapability) {\n', 'render shared list');
+      src = replaceOnce(src, '    this._stats?.timeEnd("Page Request");\n    intentState.displayReadyCapability?.resolve(transparency);\n', '    this._stats?.timeEnd("Page Request");\n    intentState.krTransparency = transparency;\n    intentState.displayReadyCapability?.resolve(transparency);\n', 'keep transparency');
       return { contents: src, loader: 'js' };
     });
   },
