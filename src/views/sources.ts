@@ -407,9 +407,11 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
     tocSlot.replaceChildren(...(p.toc?.length ? [tocBlock(p.toc)] : []));
   };
   // Cover and contents of the edition shown — at once when read before in this session (a page come back to
-  // keeps its height and its place), else as the row comes near.
+  // keeps its height and its place), else as the row comes near. A PDF (or another format) shows the cover
+  // and contents of the volume's EPUB when it has one: a cover picture of its own, not a page drawn.
+  const epub = alts.find((a) => a.file.ext === 'epub')?.file ?? (b.coverFile?.ext === 'epub' ? b.coverFile : undefined);
   const look = () => {
-    const mine = ++token; const shown: SourceBook = { ...b, id: cur.id, file: cur.file };
+    const mine = ++token; const shown: SourceBook = { ...b, id: cur.id, file: cur.file.ext === 'epub' || !epub ? cur.file : epub };
     const now = src.peekNow?.(shown);
     if (now) fill(now, mine);
     else if (src.peek) observe(row, async () => { const p = await src.peek!(shown).catch(() => null); if (p) fill(p, mine); });
@@ -420,7 +422,7 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
 /** The head of a folder of volumes: the first volume's cover, the name, how many and how big, and a button
  *  to fetch them all — into a folder of the library named after the series, skipping those already there. */
 /** Indexes being made: one per source, carried on when its page is left and shown again when it comes back. */
-interface IndexRun { text: string; done: Promise<void>; on?: (text: string) => void; end?: (ok: boolean, e?: unknown) => void }
+interface IndexRun { text: string; done: Promise<void>; on?: (text: string) => void; end?: (ok: boolean, e?: unknown, changed?: boolean) => void }
 const indexRuns = new Map<string, IndexRun>();
 const autoTried = new Set<string>();
 /** Series being fetched whole: one run per series however often its page is opened meanwhile. */
@@ -494,8 +496,8 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
       h('div', { class: 'series-actions' }, next, btn), status));
-  // (The cover is the first volume's: an EPUB before a PDF.)
-  const v1 = files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
+  // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
+  const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
   // (The first volume's cover, and its publisher's blurb as the series' — folded to a few lines, a tap opens it.)
   const fill = (p: { cover?: string; description?: string; author?: string } | null | undefined) => {
@@ -539,16 +541,34 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // and covers and contents read as their cards come near (a few at a time, the ones scrolled past dropped).
   const lib = new Map<string, string>(); const rows = new Map<string, (bookId: string) => void>();
   const lazy = new WeakMap<Element, () => Promise<void>>(); const waiting = new WeakMap<Element, () => void>();
+  // (Those on the screen go first; those only near it wait their turn.)
   const lazyIo = new IntersectionObserver((es) => {
     for (const e of es) {
       const fn = lazy.get(e.target); if (!fn) continue;
-      if (e.isIntersecting) { if (!waiting.has(e.target)) waiting.set(e.target, schedule(async () => { if (gone || !lazy.has(e.target)) return; lazy.delete(e.target); lazyIo.unobserve(e.target); await fn(); })); }
-      else { waiting.get(e.target)?.(); waiting.delete(e.target); }
+      if (e.isIntersecting) {
+        const r = e.boundingClientRect; const onScreen = r.bottom > 0 && r.top < window.innerHeight;
+        if (!waiting.has(e.target)) waiting.set(e.target, schedule(async () => { if (gone || !lazy.has(e.target)) return; lazy.delete(e.target); lazyIo.unobserve(e.target); await fn(); }, onScreen));
+      } else { waiting.get(e.target)?.(); waiting.delete(e.target); }
     }
-  }, { rootMargin: '500px 0px' });
+  }, { rootMargin: '600px 0px' });
   const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); };
   // (The page scrolls in its body: that is the place kept for the way back.)
-  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
+  // (A folder shown from the index that the site says has changed since: drawn again, in place.)
+  let stale = false;
+  const redraw = () => {
+    stale = false; cache.delete(key); items = []; page = 0; hasMore = true; const top = body.scrollTop;
+    grid.replaceChildren(); void more().then(() => { body.scrollTop = top; });
+  };
+  const changed = (ev: Event) => {
+    const d = (ev as CustomEvent<{ source: string; shelf: string }>).detail;
+    if (gone || q || d.source !== src.id || d.shelf !== (shelf ?? '')) return;
+    // (While a page is still coming, after it.)
+    if (loading) stale = true; else redraw();
+  };
+  window.addEventListener('kr:shelf-changed', changed);
+  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
+  // (A web folder's own address, for "Open this folder on the site".)
+  const here = src.id.startsWith('dir:') && /^https?:\/\//i.test(src.site ?? '') ? `${src.site.replace(/\/?$/, '/')}${shelf && !shelf.startsWith('::') ? `${shelf.replace(/^\/+|\/+$/g, '')}/` : ''}` : undefined;
 
   // Shelves (collections, categories, popular/latest) when nothing is searched.
   if (src.shelves) void src.shelves(shelf).then((list) => {
@@ -578,12 +598,14 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
         let run = indexRuns.get(src.id);
         if (!run) {
           const r: IndexRun = { text: '', done: Promise.resolve() };
-          r.done = act.run((txt) => { r.text = txt; r.on?.(txt); }, () => true, auto).then(() => { indexRuns.delete(src.id); r.end?.(true); }, (e) => { indexRuns.delete(src.id); r.end?.(false, e); });
+          r.done = act.run((txt) => { r.text = txt; r.on?.(txt); }, () => true, auto).then((changed) => { indexRuns.delete(src.id); r.end?.(true, undefined, changed !== false); }, (e) => { indexRuns.delete(src.id); r.end?.(false, e); });
           indexRuns.set(src.id, r); run = r;
         }
         run.on = (txt) => { text.textContent = txt; };
-        run.end = (ok, e) => {
-          if (ok) { cache.delete(key); if (!gone) navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }
+        run.end = (ok, e, changed) => {
+          // (An index made again with nothing new leaves the page as it is: only its line says so.)
+          if (ok && !changed) { btn.disabled = false; auto = false; }
+          else if (ok) { cache.delete(key); if (!gone) navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }
           else {
             btn.disabled = false; auto = false; text.textContent = (e as SourceError)?.message === 'noSearch' ? t('indexNeedsWalk') : describe(e);
             // (A check in the way: the reader passes it from here, and the index is made at once after.)
@@ -651,15 +673,18 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       if (r.tags?.length && page === 1) { allTags = r.tags; drawTags(); }
       if (r.title && page === 1 && (q || !shelf || !src.shelves || src.id.startsWith('dir:'))) titleEl.replaceChildren(h('span', { dir: 'auto' }, r.title), h('small', null, src.name));
       for (const b of r.items) grid.append(card(b));
-      status.textContent = items.length ? '' : t('noResults');
+      if (items.length) status.textContent = '';
+      else if (r.empty) status.replaceChildren(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('folder')), h('p', { dir: 'auto' }, r.empty.text),
+        ...(r.empty.url ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => void openSite(r.empty!.url!) }, icon('globe'), t('openFolderOnSite'))] : [])));
+      else status.textContent = t('noResults');
       cache.set(key, { items: [...items], page, hasMore, tags: allTags, title: r.title, scroll: 0 });
       // (A short page leaves the end of the shelf in view: the next one is asked for without a scroll.)
       if (hasMore) requestAnimationFrame(() => { if (!gone && sentinel.getBoundingClientRect().top < window.innerHeight + 600) void more(); });
     } catch (e) {
       if (gone) return;
-      showError(status, e, () => { hasMore = true; void more(); }, src);
+      showError(status, e, () => { hasMore = true; void more(); }, src, here);
       hasMore = false;
-    } finally { loading = false; }
+    } finally { loading = false; if (stale && !gone) redraw(); }
   };
   const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) void more(); }, { rootMargin: '600px' });
   const had = cache.get(key);
@@ -1139,27 +1164,33 @@ function describe(e: unknown): string {
     if (err.kind === 'cloudflare') return t('sourceCloudflare') + oldWebView();
     if (err.kind === 'blocked') return t('sourceBlocked', { what: err.detail ? t('siteSaid', { title: err.detail }) : '' }) + oldWebView();
     if (err.kind === 'rate') return t('sourceRate');
-    if (err.kind === 'auth') return t('shamelaLinkNeeded');
+    // (A sentence a source wrote for the reader — a folder refused, a page of its own — is said as it is.)
+    const said = /\s/.test(err.message) && err.message.length > 12 && /[.!?…]$/.test(err.message.trim());
+    if (err.kind === 'auth') return said ? err.message : t('shamelaLinkNeeded');
     if (err.kind === 'cors') return t('sourceNeedsApp');
-    if (err.kind === 'parse') return err.message === 'notRunnable' ? t('extNotRunnable') : err.message === 'noExtension' ? t('extGone') : t('sourceParse');
+    if (err.kind === 'parse') return err.message === 'notRunnable' ? t('extNotRunnable') : err.message === 'noExtension' ? t('extGone') : said ? err.message : t('sourceParse');
+    if (err.kind === 'http' && said) return err.message;
   }
   return String((e as Error)?.message ?? e);
 }
 /** The ways on from an error: a site's check opened for the reader ("Confirm I'm human"), its cookies cleared
  *  (a clearance gone stale), a sign-in, or simply trying again. */
-function errorActions(e: unknown, site: () => Promise<string>, retry: () => void): HTMLElement[] {
+function errorActions(e: unknown, site: () => Promise<string>, retry: () => void, folder?: string): HTMLElement[] {
   const err = e as SourceError;
   const kind = err instanceof SourceError ? err.kind : '';
   const out: HTMLElement[] = [];
+  // (A web folder the site will not list, or lists as a page of its own: the folder opened on the site.)
+  const onSite = folder && (kind === 'auth' || kind === 'parse' || kind === 'http') ? (err.detail && /^https?:/.test(err.detail) ? err.detail : folder) : undefined;
   if (kind === 'cloudflare') out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void site().then((u) => (u ? passChallenge(u) : undefined)).then(retry) }, icon('globe'), t('passCheck')));
+  else if (onSite) out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void openSite(onSite) }, icon('globe'), t('openFolderOnSite')), h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
   else if (kind === 'auth') out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void link.connect().catch((x) => toast(describe(x), 'error')) }, icon('user'), t('signIn')));
   else out.push(h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
   if (kind === 'cloudflare' || kind === 'blocked') out.push(h('button', { type: 'button', class: 'btn text', onclick: () => void site().then((u) => (u ? forgetSite(u) : 0)).then(() => { toast(t('siteCookiesCleared'), 'info', 2500); retry(); }) }, t('clearSiteCookies')));
   return out;
 }
-function showError(box: HTMLElement, e: unknown, retry: () => void, src: Source): void {
+function showError(box: HTMLElement, e: unknown, retry: () => void, src: Source, folder?: string): void {
   const el = h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('globe')), h('p', null, describe(e)));
-  el.append(...errorActions(e, async () => src.site ?? '', retry));
+  el.append(...errorActions(e, async () => src.site ?? '', retry, folder));
   box.replaceChildren(el);
 }
 export { describe as describeSourceError };

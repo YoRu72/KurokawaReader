@@ -10,7 +10,7 @@ import { request, fetchBytes, pool, useBrowserFor } from './http';
 import type { HttpResult } from '../net';
 import { t, formatBytes, countVolumes, countSeries, daysAgo, localDigits } from '../i18n';
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFile, type SourcePage, type FilterValues, type SourceFilter, type SourceTag } from './types';
-import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf } from './peek';
+import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf, peekKeyOf, imageKeyOf, assumeRanges, type Peek } from './peek';
 import { db } from '../db';
 import type { Repo } from './repos';
 
@@ -196,10 +196,13 @@ export function volumeOrder(a: DirEntry, b: DirEntry): number {
   return natural(a.name, b.name);
 }
 
-/** The volumes of a folder: a group per volume (its editions together, the best first), in reading order. */
+/** The volumes of a folder: a group per volume (its editions together), in reading order. In a group the
+ *  edition the reader would rather read comes first: not a scan, in the format preferred (EPUB, unless PDF
+ *  was chosen), the better edition (editionRank), the newer version. */
 interface Vol { e: DirEntry; v: VolName; rel: string }
 interface VolGroup { key: string; num?: number; items: Vol[] }
-function groupVolumes(list: Vol[], storeFirst: boolean, scans: boolean): VolGroup[] {
+const formatRank = (ext: string, first: string) => (ext === first ? 0 : ext === 'epub' ? 1 : ext === 'pdf' ? 2 : 3);
+function groupVolumes(list: Vol[], storeFirst: boolean, scans: boolean, format = 'epub'): VolGroup[] {
   const groups = new Map<string, VolGroup>();
   for (const it of list) {
     const key = it.v.num !== undefined ? `n${it.v.num}|${(it.v.sub ?? '').toLowerCase().replace(/\W+/g, '')}` : `t${it.v.base.toLowerCase().replace(/\W+/g, '')}`;
@@ -208,13 +211,19 @@ function groupVolumes(list: Vol[], storeFirst: boolean, scans: boolean): VolGrou
   }
   const out = [...groups.values()];
   for (const g of out) {
-    g.items.sort((a, b) => editionRank(a.v, storeFirst) - editionRank(b.v, storeFirst) || b.v.version - a.v.version || natural(a.e.name, b.e.name));
+    g.items.sort((a, b) => Number(isScan(a.v)) - Number(isScan(b.v)) || formatRank(a.v.ext, format) - formatRank(b.v.ext, format) || editionRank(a.v, storeFirst) - editionRank(b.v, storeFirst) || b.v.version - a.v.version || natural(a.e.name, b.e.name));
     // (Scans hidden unless a volume has nothing else.)
     if (!scans && g.items.some((x) => !isScan(x.v))) g.items = g.items.filter((x) => !isScan(x.v));
   }
   // (Volumes with the same number but different subtitles — "Volume 01.5 - Part 1/2" — keep their order by name.)
   return out.sort((a, b) => (a.num !== undefined && b.num !== undefined ? a.num - b.num || natural(a.items[0].e.name, b.items[0].e.name) : a.num !== undefined ? -1 : b.num !== undefined ? 1 : natural(a.items[0].e.name, b.items[0].e.name)));
 }
+
+/** The edition whose cover a volume shows: its first EPUB (a cover picture of its own), else its first PDF
+ *  (the first page drawn). */
+const coverItem = (g: VolGroup): Vol | undefined => g.items.find((x) => x.v.ext === 'epub') ?? g.items.find((x) => x.v.ext === 'pdf');
+/** The cover of a run of volumes: the first volume's (the next one's only when the first has neither). */
+const firstCover = (groups: VolGroup[]): Vol | undefined => { for (const g of groups) { const c = coverItem(g); if (c) return c; } return undefined; };
 
 /* ---------- listings, fetched and kept a while ---------- */
 const listings = new Map<string, { at: number; entries: DirEntry[] }>();
@@ -229,6 +238,11 @@ const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').to
 function notAListing(url: string, r: HttpResult): SourceError {
   const title = /<title[^>]*>([^<]{0,80})/i.exec(r.body)?.[1]?.trim();
   return new SourceError(t('folderNotListing', { status: String(r.status), where: dec(url.replace(/^https?:\/\//, '')).slice(0, 90), what: title ? t('folderPageTitled', { title }) : t('folderEmptyPage') }), 'parse', r.status);
+}
+/** A folder h5ai leaves to a page of its own (its index.html): no list of files, the site's page instead. */
+function ownPage(url: string, r: HttpResult): SourceError {
+  const title = /<title[^>]*>([^<]{0,80})/i.exec(r.body)?.[1]?.trim();
+  return new SourceError(t('folderOwnPage', { what: title ? ` (“${title}”)` : '' }), 'parse', r.status, url);
 }
 function refusal(r: HttpResult): SourceError {
   const title = /<title[^>]*>([^<]{0,80})/i.exec(r.body)?.[1]?.trim();
@@ -254,11 +268,12 @@ async function h5aiApi<T>(folder: string, body: Record<string, unknown>, quiet: 
 
 /** The entries of a folder, from the site (or from a listing fetched a few minutes ago): h5ai's API first on an
  *  h5ai server (sizes to the byte, times to the second), else the page's table, else the API after all; folders
- *  first, then the names in order. */
+ *  first, then the names in order. A folder h5ai answers nothing for — one with a page of its own (index.html),
+ *  which h5ai leaves alone — is read from that page; one whose page lists nothing says so. */
 export async function listFolder(url: string, quiet = false, h5ai = false): Promise<DirEntry[]> {
   const key = withSlash(url);
   const had = listings.get(key); if (had && Date.now() - had.at < KEEP) return had.entries;
-  let entries: DirEntry[] | null = null; let failure: SourceError | null = null;
+  let entries: DirEntry[] | null = null; let failure: SourceError | null = null; let apiEmpty = false;
   const fromApi = async (): Promise<DirEntry[] | null> => {
     const why: { error?: SourceError } = {};
     const j = await h5aiApi<{ items?: unknown }>(key, { action: 'get', items: { href: new URL(key).pathname, what: 1 } }, quiet, why);
@@ -266,20 +281,27 @@ export async function listFolder(url: string, quiet = false, h5ai = false): Prom
     if (why.error) failure = why.error;
     return null;
   };
-  if (h5ai) entries = await fromApi();
+  if (h5ai) { entries = await fromApi(); if (entries && !entries.length) { entries = null; apiEmpty = true; } }
   if (!entries) {
     const r = await request(key, { headers: { accept: 'text/html,application/json;q=0.9,*/*;q=0.8' }, quiet, retries: 1 });
     if (r.status === 429) throw new SourceError('rate', 'rate', 429);
     if (r.status < 400) {
       const base = r.url && /^https?:/.test(r.url) ? withSlash(r.url.replace(/[?#].*$/, '')) : key;
-      const found = parseListing(base, r.body, r.headers['content-type'] ?? '');
-      if (found.length || !(h5ai || isH5ai(r.body))) { entries = found; if (!found.length && !isListing(base, r.body, r.headers['content-type'] ?? '')) failure = notAListing(key, r); }
-      else failure = failure ?? notAListing(key, r);
+      const type = r.headers['content-type'] ?? '';
+      const found = parseListing(base, r.body, type);
+      const byH5ai = isH5ai(r.body);
+      if (found.length) { entries = found; failure = null; }
       // (An h5ai page drawing its list by script, with no table: its API, once more, for a server not known as h5ai.)
-      if ((!entries || !entries.length) && !h5ai && isH5ai(r.body)) { const api = await fromApi(); if (api) { entries = api; failure = null; } }
-    } else failure = r.status === 401 || r.status === 403 ? refusal(r) : notAListing(key, r);
+      else if (byH5ai && !h5ai) { const api = await fromApi(); if (api) { entries = api; failure = null; } }
+      if (!entries) {
+        if (byH5ai) { if (apiEmpty || !failure) { entries = []; failure = null; } }   // h5ai's own page, nothing in it: empty indeed (else its API's error)
+        else if (apiEmpty) failure = ownPage(key, r);                                 // h5ai left it to a page of its own
+        else if (isListing(base, r.body, type)) { entries = []; failure = null; }
+        else failure = failure ?? notAListing(key, r);
+      }
+    } else failure = r.status === 401 || r.status === 403 ? refusal(r) : apiEmpty ? ownPage(key, r) : notAListing(key, r);
   }
-  if (!entries || (failure && !entries.length)) throw failure ?? new SourceError('parse', 'parse');
+  if (!entries) throw failure ?? new SourceError('parse', 'parse');
   entries.sort((a, b) => (a.dir === b.dir ? natural(a.name, b.name) : a.dir ? -1 : 1));
   listings.set(key, { at: Date.now(), entries });
   return entries;
@@ -287,7 +309,9 @@ export async function listFolder(url: string, quiet = false, h5ai = false): Prom
 
 /* ---------- the index of every file ---------- */
 interface IndexFile { p: string; s?: number; t?: number }
-interface FolderIndex { v: 2; at: number; how: 'search' | 'tree' | 'walk'; complete: boolean; files: IndexFile[]; dirs: string[] }
+/** The index: every book file under the folder (its path from the root, size, time) and every folder; the
+ *  folders h5ai leaves to a page of their own (`unmanaged`), whose files it does not list. */
+interface FolderIndex { v: 2; at: number; how: 'search' | 'tree' | 'walk'; complete: boolean; files: IndexFile[]; dirs: string[]; unmanaged?: string[] }
 /** A series as the index knows it. */
 interface SeriesInfo { rel: string; name: string; time?: number; files: { rel: string; name: string; v: VolName; size?: number; time?: number; sub: string }[]; volumes: number; publishers: string[] }
 const indexes = new Map<string, FolderIndex>();
@@ -325,15 +349,59 @@ function seriesOf(idx: FolderIndex): Map<string, SeriesInfo> {
   return out;
 }
 
-type Hit = { href?: string; size?: unknown; time?: unknown };
+type Hit = { href?: string; size?: unknown; time?: unknown; managed?: boolean };
+
+/** The index's entries by folder, made once per index. */
+const byFolder = new WeakMap<FolderIndex, Map<string, { files: IndexFile[]; dirs: string[] }>>();
+const parentOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+function folderMap(idx: FolderIndex): Map<string, { files: IndexFile[]; dirs: string[] }> {
+  const had = byFolder.get(idx); if (had) return had;
+  const m = new Map<string, { files: IndexFile[]; dirs: string[] }>();
+  const at = (k: string) => { let x = m.get(k); if (!x) { x = { files: [], dirs: [] }; m.set(k, x); } return x; };
+  for (const d of idx.dirs) { at(parentOf(d)).dirs.push(d); at(d); }
+  for (const f of idx.files) at(parentOf(f.p)).files.push(f);
+  byFolder.set(idx, m);
+  return m;
+}
+/** A folder's entries as the index knows them — at once, without a request — or null when the index does not
+ *  know the folder whole: a folder h5ai leaves to a page of its own (or one inside such), an index not made
+ *  to the end, a folder it has nothing in (asked of the site, to be sure). */
+function entriesFromIndex(idx: FolderIndex, rel: string, root: string): DirEntry[] | null {
+  if (!idx.complete && idx.how !== 'search') return null;
+  if (idx.unmanaged?.some((u) => rel === u || rel.startsWith(`${u}/`))) return null;
+  const here = folderMap(idx).get(rel);
+  if (!here || (!here.files.length && !here.dirs.length)) return null;
+  const out: DirEntry[] = [];
+  for (const d of here.dirs) { const seg = d.slice(d.lastIndexOf('/') + 1); out.push({ name: dec(seg), url: `${root}${d}/`, dir: true }); }
+  for (const f of here.files) { const seg = f.p.slice(f.p.lastIndexOf('/') + 1); out.push({ name: dec(seg), url: `${root}${f.p}`, dir: false, size: f.s, time: f.t, date: f.t ? stamp(f.t) : undefined, ext: extOf(seg) }); }
+  return out.sort((a, b) => (a.dir === b.dir ? natural(a.name, b.name) : a.dir ? -1 : 1));
+}
+/** A folder's entries as the site lists them now, put into the index in place of what it had for the folder
+ *  (volumes added or taken away since it was made); whether anything changed. */
+function mergeFolder(repo: Repo, idx: FolderIndex, rel: string, live: DirEntry[]): boolean {
+  const prefix = rel ? `${rel}/` : '';
+  const here = (p: string) => parentOf(p) === rel;
+  const seg = (e: DirEntry) => e.url.replace(/\/+$/, '').split('/').pop() ?? encodeURIComponent(e.name);
+  const liveFiles = new Map(live.filter(isBook).map((e) => [prefix + seg(e), e]));
+  const liveDirs = new Set(live.filter((e) => e.dir).map((e) => prefix + seg(e)));
+  let changed = false;
+  const files = idx.files.filter((f) => { if (!here(f.p)) return true; if (!liveFiles.has(f.p)) { changed = true; return false; } liveFiles.delete(f.p); return true; });
+  for (const [p, e] of liveFiles) { files.push({ p, s: e.size, t: e.time }); changed = true; }
+  const dirs = idx.dirs.filter((d) => { if (!here(d)) return true; if (!liveDirs.has(d)) { changed = true; return false; } liveDirs.delete(d); return true; });
+  for (const d of liveDirs) { dirs.push(d); changed = true; }
+  if (!changed) return false;
+  idx.files = files; idx.dirs = dirs; derived.delete(idx); byFolder.delete(idx);
+  void db.setMeta(INDEX_KEY(repo), idx).catch(() => undefined);
+  return true;
+}
 /** Every file under the folder from h5ai's "items" asked with what=2 — a folder's content and its subfolders'
  *  — two levels a request: a folder of series and all their volumes in one answer; then each series that has
  *  folders of its own, asked the same way (its side folders' contents in one answer), three at a time. (A
  *  server that leaves the subfolders out is asked folder by folder.) */
-async function h5aiTree(root: string, progress: (text: string) => void, live: () => boolean, quiet: boolean): Promise<{ files: IndexFile[]; dirs: string[]; complete: boolean } | null> {
+async function h5aiTree(root: string, progress: (text: string) => void, live: () => boolean, quiet: boolean): Promise<{ files: IndexFile[]; dirs: string[]; complete: boolean; unmanaged: string[] } | null> {
   const rootPath = new URL(root).pathname;
   const relOf = (href: string) => { try { const p = new URL(href, root).pathname; return p.startsWith(rootPath) ? p.slice(rootPath.length).replace(/\/$/, '') : null; } catch { return null; } };
-  const files: IndexFile[] = []; const dirs = new Set<string>(); const seen = new Set<string>();
+  const files: IndexFile[] = []; const dirs = new Set<string>(); const seen = new Set<string>(); const unmanaged = new Set<string>();
   let queue: string[] = ['']; let complete = true; let asked = 0;
   while (queue.length) {
     if (!live()) { complete = false; break; }
@@ -353,7 +421,7 @@ async function h5aiTree(root: string, progress: (text: string) => void, live: ()
         const depth = (rel ? r.slice(rel.length + 1) : r).split('/').length;
         if (depth >= 2) deep = true;
         // (A folder two levels down: its parent asked next, which gives the contents of all its folders at once.)
-        if (href.endsWith('/')) { dirs.add(r); if (depth === 1) subdirs.push(r); else if (depth === 2) next.add(r.split('/').slice(0, -1).join('/')); }
+        if (href.endsWith('/')) { dirs.add(r); if (it.managed === false) { unmanaged.add(r); continue; } if (depth === 1) subdirs.push(r); else if (depth === 2) next.add(r.split('/').slice(0, -1).join('/')); }
         else if (!seen.has(r) && isBook({ ext: extOf(r) })) { seen.add(r); files.push({ p: r, s: num(it.size), t: typeof it.time === 'number' ? it.time : undefined }); }
       }
       if (!deep) for (const d of subdirs) next.add(d);
@@ -363,7 +431,7 @@ async function h5aiTree(root: string, progress: (text: string) => void, live: ()
     queue = [...next];
     if (asked > 4000) { complete = false; break; }
   }
-  return { files, dirs: [...dirs], complete };
+  return { files, dirs: [...dirs], complete, unmanaged: [...unmanaged] };
 }
 
 /** Make the index: h5ai's search asked once for every file under the folder; else h5ai's items, two levels a
@@ -375,7 +443,7 @@ export async function buildIndex(repo: Repo, progress: (text: string) => void, l
   const before = await loadIndex(repo);
   const rootPath = new URL(root).pathname;
   const quiet = !!opts.quiet;
-  let files: IndexFile[] = []; let dirs: string[] = [];
+  let files: IndexFile[] = []; let dirs: string[] = []; let unmanaged: string[] = [];
   const relOf = (u: string) => { const p = new URL(u, root).pathname; return p.startsWith(rootPath) ? p.slice(rootPath.length).replace(/\/$/, '') : ''; };
   progress(t('indexAsking'));
   let how: FolderIndex['how'] = 'search'; let complete = true;
@@ -388,14 +456,14 @@ export async function buildIndex(repo: Repo, progress: (text: string) => void, l
     for (const it of j.search as Hit[]) {
       const href = str(it.href); if (!href) continue;
       const rel = relOf(href); if (!rel) continue;
-      if (href.endsWith('/')) dirs.push(rel);
+      if (href.endsWith('/')) { dirs.push(rel); if (it.managed === false) unmanaged.push(rel); }
       else if (isBook({ ext: extOf(rel) })) files.push({ p: rel, s: num(it.size), t: typeof it.time === 'number' ? it.time : undefined });
     }
   } else {
     failure = why.error ?? null;
     // h5ai's items, two levels a request (its search turned off, or not answering).
     const tree = isApi ? await h5aiTree(root, progress, live, quiet) : null;
-    if (tree && (tree.files.length || tree.dirs.length)) { how = 'tree'; files = tree.files; dirs = tree.dirs; complete = tree.complete; }
+    if (tree && (tree.files.length || tree.dirs.length)) { how = 'tree'; files = tree.files; dirs = tree.dirs; complete = tree.complete; unmanaged = tree.unmanaged; }
     else {
       // The walk: the folders, a layer at a time — only when asked for.
       if (!opts.walk) throw isApi && failure ? failure : new SourceError('noSearch', 'parse');
@@ -423,7 +491,7 @@ export async function buildIndex(repo: Repo, progress: (text: string) => void, l
   }
   // (Nothing at all: the site's own answer said why — a check, a refusal, a page that is not a listing.)
   if (!files.length && !dirs.length) throw failure ?? new SourceError(t('indexEmptyAnswer'), 'parse');
-  const idx: FolderIndex = { v: 2, at: Date.now(), how, complete, files, dirs };
+  const idx: FolderIndex = { v: 2, at: Date.now(), how, complete, files, dirs, ...(unmanaged.length ? { unmanaged } : {}) };
   indexes.set(repo.key, idx);
   await db.setMeta(INDEX_KEY(repo), idx).catch(() => undefined);
   // (Listings read before the index was made again are read again: a series' page shows what is new.)
@@ -504,6 +572,7 @@ export function folderSource(repo: Repo): Source {
   if (repo.browser) { try { useBrowserFor(new URL(root).host, 30); } catch { /* an address without a host */ } }
   const srcId = `dir:${repo.key}`;
   const h5ai = repo.flavor === 'h5ai';
+  if (h5ai) assumeRanges(root);
   const headers = { referer: `${originOf(root)}/` };
   const saved = (): FilterValues => { try { return JSON.parse(localStorage.getItem(`kr.src.${srcId}.filters`) ?? '{}') as FilterValues; } catch { return {}; } };
   // (Covers cost a piece of every file: off, or only on Wi-Fi, as the reader chose.)
@@ -511,6 +580,8 @@ export function folderSource(repo: Repo): Source {
   const wanted = (f: FilterValues) => { const kinds = Array.isArray(f.kinds) ? f.kinds : []; if (!kinds.length) return () => true; const exts = new Set(KINDS.filter(([k]) => kinds.includes(k)).flatMap(([, e]) => e)); return (e: { dir?: boolean; ext?: string }) => !!e.dir || (!!e.ext && exts.has(e.ext)); };
   const storeFirst = (f: FilterValues) => f.edition === 'store';
   const scans = (f: FilterValues) => f.scans !== false;
+  const format = (f: FilterValues) => (f.format === 'pdf' ? 'pdf' : 'epub');
+  const groupsOf = (list: Vol[], f: FilterValues, withScans = scans(f)) => groupVolumes(list, storeFirst(f), withScans, format(f));
   const folderCard = (name: string, rel: string, extra: Partial<SourceBook> = {}): SourceBook => ({ id: `d:${rel}`, title: shownName(name), openShelf: rel, look: 'folder', ...extra });
   const fileFor = (rel: string, name: string, size?: number): SourceFile => fileOf({ name, url: `${root}${rel}`, size, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, rel);
   /** A row for a group of editions: the best one shown, the others offered beside it. */
@@ -519,9 +590,10 @@ export function folderSource(repo: Repo): Source {
     const mixed = new Set(g.items.map((x) => x.v.ext)).size > 1;
     // ("Volume 14 — The Subtitle" in a series' page when the name says it is a volume; else the file's own name.)
     const title = opts.full || g.num === undefined || !first.v.marked ? first.v.base : `${t('volumeN', { n: localDigits(String(g.num), 'prose') })}${first.v.sub ? ` — ${first.v.sub}` : ''}`;
+    const c = coverItem(g);
     return {
       id: `f:${first.rel}`, title, look: 'volume', badge: BOOK_EXT[first.v.ext]?.[0] ?? first.v.ext.toUpperCase(), author: opts.where, year: first.e.date,
-      file: fileOf(first.e, first.rel),
+      file: fileOf(first.e, first.rel), coverFile: c ? fileOf(c.e, c.rel) : undefined,
       alts: g.items.length > 1 ? g.items.map((x) => ({ label: editionLabel(x.v, mixed), id: `f:${x.rel}`, file: fileOf(x.e, x.rel) })) : undefined,
       description: g.items.length === 1 && (first.v.editions.length || first.v.publisher) ? editionLabel(first.v, false) : undefined,
     };
@@ -540,12 +612,14 @@ export function folderSource(repo: Repo): Source {
     const crumbs = crumbsOf(rel);
     const total = groups.reduce((n, g) => n + (g.items[0].e.size ?? 0), 0);
     const pubs = [...new Set(books.map((e) => parseName(e.name).publisher).filter(Boolean))] as string[];
-    return { id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
+    // (Its cover is the first volume's — the same file as its card's on the shelf, read once for both.)
+    const c = firstCover(groups);
+    return { id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', coverFile: c ? fileOf(c.e, c.rel) : undefined, author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
   };
   // A search's matches are gathered once and paged from memory.
   const searches = new Map<string, { items: SourceBook[]; partial: boolean }>();
   const search = async (q: string, rel: string, f: FilterValues): Promise<{ items: SourceBook[]; partial: boolean }> => {
-    const key = `${rel}\u0000${q}\u0000${JSON.stringify([f.kinds, f.publisher, f.edition, f.scans])}`;
+    const key = `${rel}\u0000${q}\u0000${JSON.stringify([f.kinds, f.publisher, f.edition, f.scans, f.format])}`;
     const had = searches.get(key); if (had) return had;
     const words = norm(q).split(' ').filter(Boolean);
     const keep = wanted(f);
@@ -564,7 +638,7 @@ export function folderSource(repo: Repo): Source {
       }
       // (Grouped by series and volume, the editions of one volume in one row.)
       const bySeries = new Map<string, Vol[]>(); for (const v of vols) { const s = v.rel.split('/')[0]; const l = bySeries.get(s); if (l) l.push(v); else bySeries.set(s, [v]); }
-      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(dec(a[0]), dec(b[0])))) for (const g of groupVolumes(list, storeFirst(f), scans(f))) items.push({ ...volumeRow(g, { full: true, where: dec(s) }), group: shownName(dec(s)) });
+      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(dec(a[0]), dec(b[0])))) for (const g of groupsOf(list, f)) items.push({ ...volumeRow(g, { full: true, where: dec(s) }), group: shownName(dec(s)) });
       const res = { items, partial: !idx.complete };
       searches.set(key, res); return res;
     }
@@ -579,7 +653,7 @@ export function folderSource(repo: Repo): Source {
         if (isBook(e) && keep(e) && match(name, where)) vols.push({ e, v: parseName(name), rel: x.rel });
       }
       const bySeries = new Map<string, Vol[]>(); for (const v of vols) { const s = v.rel.split('/').slice(0, -1).join('/'); const l = bySeries.get(s); if (l) l.push(v); else bySeries.set(s, [v]); }
-      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(a[0], b[0]))) for (const g of groupVolumes(list, storeFirst(f), scans(f))) items.push(volumeRow(g, { full: true, where: crumbsOf(s).join(' / ') }));
+      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(a[0], b[0]))) for (const g of groupsOf(list, f)) items.push(volumeRow(g, { full: true, where: crumbsOf(s).join(' / ') }));
       const res = { items, partial: false }; searches.set(key, res); return res;
     }
     const foundWalk: { e: DirEntry; rel: string; where: string }[] = [];
@@ -604,8 +678,28 @@ export function folderSource(repo: Repo): Source {
     }
     const items: SourceBook[] = foundWalk.filter((x) => x.e.dir).sort((a, b) => natural(a.e.name, b.e.name)).map((x) => folderCard(x.e.name, x.rel, { author: x.where || undefined }));
     const bySeries = new Map<string, Vol[]>(); for (const x of foundWalk) { if (x.e.dir) continue; const l = bySeries.get(x.where); const v = { e: x.e, v: parseName(x.e.name), rel: x.rel }; if (l) l.push(v); else bySeries.set(x.where, [v]); }
-    for (const [where, list] of [...bySeries.entries()].sort((a, b) => natural(a[0], b[0]))) for (const g of groupVolumes(list, storeFirst(f), scans(f))) items.push(volumeRow(g, { full: true, where }));
+    for (const [where, list] of [...bySeries.entries()].sort((a, b) => natural(a[0], b[0]))) for (const g of groupsOf(list, f)) items.push(volumeRow(g, { full: true, where }));
     const res = { items, partial }; searches.set(key, res); return res;
+  };
+
+  /** A folder's entries: from the index at once when it knows the folder whole, else from the site. */
+  const entriesOf = async (rel: string, quiet = false): Promise<{ entries: DirEntry[]; fromIndex: boolean }> => {
+    const idx = await loadIndex(repo);
+    const got = idx ? entriesFromIndex(idx, rel, root) : null;
+    if (got) return { entries: got, fromIndex: true };
+    return { entries: await listFolder(urlOf(root, rel), quiet, h5ai), fromIndex: false };
+  };
+  /** A folder shown from an index some minutes old, asked of the site out of sight: what changed since goes into
+   *  the index, and the page is told to draw itself again. */
+  const checking = new Set<string>();
+  const checkLater = (rel: string, idx: FolderIndex) => {
+    if (Date.now() - idx.at < KEEP || checking.has(rel)) return;
+    checking.add(rel);
+    void listFolder(urlOf(root, rel), true, h5ai).then((live) => {
+      if (!mergeFolder(repo, idx, rel, live)) return;
+      searches.clear();
+      window.dispatchEvent(new CustomEvent('kr:shelf-changed', { detail: { source: srcId, shelf: rel } }));
+    }).catch(() => undefined).finally(() => setTimeout(() => checking.delete(rel), KEEP));
   };
 
   const src: Source = {
@@ -618,6 +712,7 @@ export function folderSource(repo: Repo): Source {
       ];
       if (pubs.length) list.push({ id: 'publisher', label: t('publishersFilter'), kind: 'multi', options: pubs, value: [] });
       list.push(
+        { id: 'format', label: t('preferredFormat'), kind: 'select', options: [{ value: 'epub', label: 'EPUB' }, { value: 'pdf', label: 'PDF' }], value: 'epub' },
         { id: 'edition', label: t('preferredEdition'), kind: 'select', options: [{ value: 'premium', label: t('editionPremiumFirst') }, { value: 'store', label: t('editionStoreFirst') }], value: 'premium' },
         { id: 'scans', label: t('showScans'), kind: 'toggle', value: true },
         { id: 'covers', label: t('coversPref'), kind: 'select', options: [{ value: 'always', label: t('coversAlways') }, { value: 'wifi', label: t('coversWifi') }, { value: 'off', label: t('coversOff') }], value: 'always' },
@@ -633,11 +728,20 @@ export function folderSource(repo: Repo): Source {
     },
     async status() {
       const idx = await loadIndex(repo);
-      const run = async (progress: (text: string) => void, live: () => boolean, auto = false) => { const made = await buildIndex(repo, progress, live, { walk: !auto }); searches.clear(); progress(t('indexMade', { series: countSeries(seriesOf(made).size), n: countVolumes(made.files.length) })); };
+      // (Whether the index made again differs from the one before: the page is drawn again only then.)
+      const run = async (progress: (text: string) => void, live: () => boolean, auto = false): Promise<boolean> => {
+        const before = await loadIndex(repo);
+        const made = await buildIndex(repo, progress, live, { walk: !auto });
+        searches.clear();
+        progress(t('indexMade', { series: countSeries(seriesOf(made).size), n: countVolumes(made.files.length) }));
+        if (!before || before.files.length !== made.files.length || before.dirs.length !== made.dirs.length) return true;
+        const had = new Set(before.files.map((x) => x.p));
+        return made.files.some((x) => !had.has(x.p));
+      };
       // (An h5ai server gives its whole list in one answer: made at once, the first time the folder is opened —
-      // and again when a day old. A walk through every folder is made only when asked for.)
+      // and again, out of sight, when a few hours old. A walk through every folder is made only when asked for.)
       if (!idx) return { text: t('indexNone'), auto: h5ai, action: { label: t('indexMake'), run } };
-      if (h5ai && Date.now() - idx.at > 86400000) return { text: t('indexOld'), auto: true, action: { label: t('indexUpdate'), run } };
+      if (h5ai && Date.now() - idx.at > 6 * 3600000) return { text: t('indexOld'), auto: true, action: { label: t('indexUpdate'), run } };
       const ago = Math.round((Date.now() - idx.at) / 86400000);
       return { text: `${t('indexState', { series: countSeries(seriesOf(idx).size), n: countVolumes(idx.files.length) })} · ${ago < 1 ? t('today') : daysAgo(ago)}${idx.complete ? '' : ` · ${t('indexPartial')}`}`, action: { label: t('indexUpdate'), run } };
     },
@@ -663,7 +767,8 @@ export function folderSource(repo: Repo): Source {
       if (!rel) {
         let list: SourceBook[]; let topBooks: Vol[] = [];
         if (idx) {
-          let series = [...seriesOf(idx).values()].filter((s) => s.files.length || idx.dirs.includes(s.rel)).filter(byPublisher(f));
+          const dirSet = new Set(idx.dirs);
+          let series = [...seriesOf(idx).values()].filter((s) => s.files.length || dirSet.has(s.rel)).filter(byPublisher(f));
           if (special === '::mine') { const mine = await inLibrary(srcId); series = series.filter((s) => mine.has(s.rel)); }
           const news = await newsOf(repo);
           // (The series with new volumes first on "In my library".)
@@ -680,29 +785,44 @@ export function folderSource(repo: Repo): Source {
           list = dirs.map((e) => folderCard(e.name, childRel('', e), { year: special === '::recent' ? e.date?.slice(0, 10) : undefined }));
           if (!special) topBooks = all.filter((e) => isBook(e) && wanted(f)(e)).map((e) => ({ e, v: parseName(e.name), rel: childRel('', e) }));
         }
-        const groups = groupVolumes(topBooks, storeFirst(f), scans(f));
+        // (Books lying at the top beside the series are rows after them; the top is a series' page only when it
+        // has no folders — a flat folder of volumes.)
+        const shelvesHere = list.length;
+        const groups = groupsOf(topBooks, f);
         list.push(...groups.map((g) => volumeRow(g, { full: true })));
-        const head = groups.length ? seriesHeadOf('', groups, topBooks.map((x) => x.e)) : undefined;
-        return paged(list, head, special === '::recent' ? t('shelfRecentSeries') : special === '::mine' ? t('shelfInMyLibrary') : undefined);
+        const head = groups.length && !shelvesHere && !special ? seriesHeadOf('', groups, topBooks.map((x) => x.e)) : undefined;
+        const out = paged(list, head, special === '::recent' ? t('shelfRecentSeries') : special === '::mine' ? t('shelfInMyLibrary') : undefined);
+        if (!list.length && !special) out.empty = { text: t('folderEmpty'), url: root };
+        return out;
       }
-      // A series (or any folder with books in it): its card, its volumes in reading order, then its side folders.
+      // A series (or any folder with books in it): its card, its volumes in reading order, then its side folders —
+      // from the index at once when it knows the folder (the site asked out of sight whether anything changed).
       void seen(repo, rel.split('/')[0]);
-      const all = await listFolder(urlOf(root, rel), false, h5ai);
+      const { entries: all, fromIndex } = await entriesOf(rel);
+      if (fromIndex && idx) checkLater(rel, idx);
       const folders = all.filter((e) => e.dir);
       const books = all.filter((e) => isBook(e) && wanted(f)(e));
-      const groups = groupVolumes(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(rel, e) })), storeFirst(f), scans(f));
+      const groups = groupsOf(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(rel, e) })), f);
       // (A volume fetched from a series' page goes into the library's folder of that series.)
       const series = shownName(crumbs[0] ?? '');
       const rows = groups.map((g) => ({ ...volumeRow(g), group: series }));
       const list: SourceBook[] = [...rows, ...folders.map((e) => folderCard(e.name, childRel(rel, e)))];
-      const head = groups.length ? seriesHeadOf(rel, groups, books) : undefined;
-      return paged(list, head, title);
+      // (A series' card on top when the folder is its volumes, a few side folders beside them — not over a shelf
+      // of series with a stray file or two.)
+      const head = groups.length && (folders.length <= 3 || groups.length >= folders.length) ? seriesHeadOf(rel, groups, books) : undefined;
+      const out = paged(list, head, title);
+      if (!list.length) {
+        const others = all.filter((e) => !e.dir && !isBook(e));
+        const kinds = [...new Set(others.map((e) => (e.ext || '?').toUpperCase()))].slice(0, 5).join(', ');
+        out.empty = { text: all.some(isBook) ? t('folderFiltered') : others.length ? t('folderOtherFiles', { kinds }) : t('folderEmpty'), url: urlOf(root, rel) };
+      }
+      return out;
     },
     async details(id): Promise<SourceDetails> {
       const kind = id.slice(0, 2); const rel = id.slice(2);
       if (kind !== 'f:') throw new SourceError('notFound', 'parse');
       const parts = rel.split('/'); const last = parts.pop() ?? ''; const parent = parts.join('/');
-      const entries = await listFolder(urlOf(root, parent), false, h5ai);
+      const { entries } = await entriesOf(parent);
       const e = entries.find((x) => !x.dir && (segOf(x) === last || x.name === dec(last)));
       if (!e) throw new SourceError('notFound', 'http', 404);
       const file = fileOf(e, rel);
@@ -729,36 +849,46 @@ export function folderSource(repo: Repo): Source {
     freshNow: (rel) => { const news = newsMem.get(repo.key); return news ? news[rel]?.n ?? 0 : undefined; },
     folderCoverNow: (rel) => known(`peek:dir:${keyOf(urlOf(root, rel))}`),
     async folderCover(rel) {
-      // A folder's own picture (cover.jpg…) when it has one, else its first volume's cover (the index says
-      // which, without a listing), a folder of folders looked into one level down. Kept for a week.
+      // Its first volume's cover — volume 1's EPUB (else its PDF), the very file its series' page shows on top,
+      // read once for both; for a folder without books, its own picture (cover.jpg…) or its first folder's first
+      // volume. What is kept is which file (or picture) — its cover is kept with it, once — for a week.
       const key = `peek:dir:${keyOf(urlOf(root, rel))}`;
       const had = await recall(key, 7 * 86400000); if (had && (had.cover || noCover())) return had;
-      const idx = await loadIndex(repo);
-      const s = idx && !rel.includes('/') ? seriesOf(idx).get(rel) : undefined;
-      if (s) {
-        const own = s.files.filter((x) => !x.sub);
-        const g = groupVolumes((own.length ? own : s.files).map((x) => ({ e: entryOf(x), v: x.v, rel: x.rel })), storeFirst(saved()), true);
-        const v1 = g.map((x) => x.items[0]).find((x) => x.v.ext === 'epub') ?? g[0]?.items[0];
-        if (v1 && /^(epub|pdf)$/.test(v1.v.ext)) { const peek = await peekFile(v1.e.url, v1.v.ext, v1.e.size, { noCover: noCover(), headers }); const p = { cover: peek?.cover, count: s.volumes, at: Date.now(), description: peek?.description }; if (peek?.cover) remember(key, p); return p; }
-        return { count: s.volumes, at: Date.now() };
-      }
-      let at = rel; let count = 0;
-      for (let depth = 0; depth < 2; depth++) {
-        const entries = await listFolder(urlOf(root, at), true, h5ai);
-        const books = entries.filter(isBook);
-        if (depth === 0) count = groupVolumes(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(at, e) })), false, true).length;
-        const img = entries.filter(isImage).find((e) => /^(cover|folder|poster|front|thumb)/i.test(e.name)) ?? (entries.filter(isImage).length === 1 ? entries.find(isImage) : undefined);
-        if (img && !noCover()) { const cover = await thumbOf(img.url); if (cover) { const p = { cover, count, at: Date.now() }; remember(key, p); return p; } }
-        const g = groupVolumes(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(at, e) })), storeFirst(saved()), true);
-        const v1 = g.map((x) => x.items[0]).find((x) => x.v.ext === 'epub') ?? g[0]?.items[0];
-        if (v1 && /^(epub|pdf)$/.test(v1.v.ext)) { const peek = await peekFile(v1.e.url, v1.v.ext, v1.e.size, { noCover: noCover(), headers }); const p = { cover: peek?.cover, count, at: Date.now() }; if (peek?.cover) remember(key, p); return p; }
-        if (books.length) break;
-        const sub = entries.filter((e) => e.dir).sort((a, b) => natural(a.name, b.name))[0];
-        if (!sub) break;
-        at = childRel(at, sub);
-      }
-      return { count, at: Date.now() };
+      // (A folder that could not be read for a cover — a page of its own — is not asked again this session.)
+      if (coverless.has(rel)) return { at: Date.now() };
+      try { return await coverOf(rel, key); }
+      catch (e) { if (!fatal(e)) coverless.add(rel); throw e; }
     },
+  };
+  /** A folder's cover looked for (see folderCover). */
+  const coverless = new Set<string>();
+  const coverOf = async (rel: string, key: string): Promise<Peek> => {
+    const idx = await loadIndex(repo);
+    const s = idx && !rel.includes('/') ? seriesOf(idx).get(rel) : undefined;
+    let at = rel; let count = s?.volumes ?? 0;
+    for (let depth = 0; depth < 2; depth++) {
+      const { entries, fromIndex } = await entriesOf(at, true);
+      const books = entries.filter(isBook);
+      const groups = groupVolumes(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(at, e) })), storeFirst(saved()), true);
+      if (depth === 0 && !s) count = groups.length;
+      const c = firstCover(groups);
+      if (c) {
+        const peek = await peekFile(c.e.url, c.v.ext, c.e.size, { noCover: noCover(), headers });
+        const p: Peek = { cover: peek?.cover, count, at: Date.now(), ref: peekKeyOf(c.e.url, c.e.size) };
+        if (peek?.cover) remember(key, p);
+        return p;
+      }
+      // (No EPUB or PDF in it: its own picture — which only the site's listing shows, the index keeps books.)
+      const live = fromIndex ? await listFolder(urlOf(root, at), true, h5ai).catch(() => entries) : entries;
+      const imgs = live.filter(isImage);
+      const img = imgs.find((e) => /^(cover|folder|poster|front|thumb)/i.test(e.name)) ?? (imgs.length === 1 ? imgs[0] : undefined);
+      if (img && !noCover()) { const cover = await thumbOf(img.url); if (cover) { const p: Peek = { cover, count, at: Date.now(), ref: imageKeyOf(img.url) }; remember(key, p); return p; } }
+      if (books.length) break;
+      const sub = live.filter((e) => e.dir).sort((a, b) => natural(a.name, b.name))[0];
+      if (!sub) break;
+      at = childRel(at, sub);
+    }
+    return { count, at: Date.now() };
   };
   return src;
 }

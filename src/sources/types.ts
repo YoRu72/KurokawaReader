@@ -33,6 +33,9 @@ export interface SourceBook {
   group?: string;
   /** For a series' card: the ids of every edition of each of its volumes (one in the library is enough). */
   volumeIds?: string[][];
+  /** The file whose cover a volume's row or a series' card shows: an EPUB edition when there is one (its own
+   *  cover picture, where a PDF's is its first page drawn). */
+  coverFile?: SourceFile;
 }
 
 /** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
@@ -72,7 +75,7 @@ export interface SourceDetails extends SourceBook {
   toc?: { label: string; depth: number }[];   // a file's own contents, read from it
 }
 
-export interface SourcePage { items: SourceBook[]; hasMore: boolean; tags?: SourceTag[]; title?: string }
+export interface SourcePage { items: SourceBook[]; hasMore: boolean; tags?: SourceTag[]; title?: string; /** What an empty page says instead of "No results", and the page on the site to open instead. */ empty?: { text: string; url?: string } }
 
 export interface Source {
   id: string;
@@ -86,7 +89,7 @@ export interface Source {
    *  is the shelf on screen (a source of folders offers its shelves only at its top). */
   shelves?(current?: string): Promise<SourceTag[]>;
   /** A line about the source's own state shown above its shelf (an index of its files, and how to renew it). */
-  status?(): Promise<{ text: string; auto?: boolean; action?: { label: string; run: (progress: (text: string) => void, live: () => boolean, auto?: boolean) => Promise<void> } } | null>;
+  status?(): Promise<{ text: string; auto?: boolean; action?: { label: string; run: (progress: (text: string) => void, live: () => boolean, auto?: boolean) => Promise<boolean | void> } } | null>;
   /** A page of books: a search, or a shelf when `shelf` is given, with the filters applied. */
   browse(q: string, filters: FilterValues, page: number, shelf?: string): Promise<SourcePage>;
   details(id: string): Promise<SourceDetails>;

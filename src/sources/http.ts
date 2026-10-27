@@ -175,7 +175,7 @@ export async function openSite(url: string): Promise<void> {
 
 /* ---------- requests: a few at a time per site, asked again when the site says so ---------- */
 const lanes = new Map<string, { running: number; queue: (() => void)[] }>();
-const PER_HOST = 4;
+const PER_HOST = 6;
 async function lane<T>(host: string, fn: () => Promise<T>): Promise<T> {
   let l = lanes.get(host); if (!l) { l = { running: 0, queue: [] }; lanes.set(host, l); }
   if (l.running >= PER_HOST) await new Promise<void>((r) => l!.queue.push(r));

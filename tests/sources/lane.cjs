@@ -91,9 +91,9 @@ async function nativeRequest(o, byBrowser) {
       ok('added by its address though its plain requests are refused: through the app\'s browser', card === 'Officially Translated Light Novels|server.elscione.com/Officially Translated Light Novels' && log.browser >= 1);
       ok('… the site kept as one reached through the browser', await page.evaluate(() => (JSON.parse(localStorage.getItem('kr.browserHosts') || '{}')['server.elscione.com'] ?? 0) > Date.now()));
       await page.click('.folder-card .source-head');
-      await page.waitForFunction(() => /Indexed: 113 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder').length >= 20, null, { timeout: 60000 });
+      await page.waitForFunction(() => /Indexed: 116 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder').length >= 20, null, { timeout: 60000 });
       const s1 = await shield('');
-      ok('opened and indexed through the browser: every series there, the plain way asked once at most', /Indexed: 113 series, \d+ volumes · Today/.test(await indexText(page)) && s1.browser > 3 && s1.plain <= 1);
+      ok('opened and indexed through the browser: every series there, the plain way asked once at most', /Indexed: 116 series, \d+ volumes · Today/.test(await indexText(page)) && s1.browser > 3 && s1.plain <= 1);
       if (!(s1.plain <= 1)) console.log('  shield:', JSON.stringify(s1));
       await page.fill('.src-search', 'goblin'); await page.press('.src-search', 'Enter');
       await page.waitForFunction(() => /found/.test(document.querySelector('.topbar .title')?.textContent || '') && /Goblin/.test(document.querySelector('.src-grid')?.textContent || ''), null, { timeout: 20000 });
@@ -117,7 +117,7 @@ async function nativeRequest(o, byBrowser) {
       const { ctx, page, log } = await app();
       await add(page, 'OTL');
       await page.click('.folder-card .source-head');
-      await page.waitForFunction(() => /Indexed: 113 series/.test(document.querySelector('.src-index')?.textContent || ''), null, { timeout: 60000 });
+      await page.waitForFunction(() => /Indexed: 116 series/.test(document.querySelector('.src-index')?.textContent || ''), null, { timeout: 60000 });
       const shown = log.checks.filter((c) => !c.hidden);
       ok('the reader asked once, in a window that says what to do', shown.length === 1 && /^Confirm you’re human on server\.elscione\.com/.test(shown[0].message || '') && shown[0].done === 'Close' && shown[0].reload === 'Reload' && shown[0].fresh === true);
       if (shown.length !== 1) console.log('  checks:', JSON.stringify(log.checks));
@@ -149,13 +149,13 @@ async function nativeRequest(o, byBrowser) {
       await fetch(`${MOCK}/__otl/reset-posts`);
       await add(page, 'OTL');
       await page.click('.folder-card .source-head');
-      await page.waitForFunction(() => /Indexed: 113 series/.test(document.querySelector('.src-index')?.textContent || ''), null, { timeout: 60000 });
+      await page.waitForFunction(() => /Indexed: 116 series/.test(document.querySelector('.src-index')?.textContent || ''), null, { timeout: 60000 });
       const posts = await (await fetch(`${MOCK}/__otl/posts`)).json();
       const deep = posts.filter((b) => /"what":2/.test(b));
       // (One for the root and every series in it; then one per series with side folders — never a side folder
       // by itself, never a request per series as a walk would.)
       const sides = deep.filter((b) => /%21|!/.test(b)).length;
-      ok('search off: indexed from h5ai\'s items, two levels a request (the root, then each series with side folders)', deep.length >= 2 && deep.length <= 20 && sides === 0 && /Indexed: 113 series, \d+ volumes/.test(await indexText(page)));
+      ok('search off: indexed from h5ai\'s items, two levels a request (the root, then each series with side folders)', deep.length >= 2 && deep.length <= 20 && sides === 0 && /Indexed: 116 series, \d+ volumes/.test(await indexText(page)));
       if (!(deep.length >= 2 && deep.length <= 20 && sides === 0)) console.log('  what=2 posts:', deep.length, 'side folders asked:', sides);
       await page.fill('.src-search', 'monogatari'); await page.press('.src-search', 'Enter');
       await page.waitForFunction(() => /found/.test(document.querySelector('.topbar .title')?.textContent || ''), null, { timeout: 20000 });

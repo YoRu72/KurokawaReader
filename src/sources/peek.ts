@@ -1,19 +1,40 @@
-// A book on a server looked into without fetching it whole. An EPUB is a zip: its directory is read from
-// the end of the file, then only the pieces wanted — the package (title, author), the contents, the cover —
-// each a range of the file. A PDF is opened by pdf.js over ranges too, for its first page and its outline.
-// The cover becomes a small picture, kept with the rest on the device, so a folder seen again shows at once.
+// A book on a server looked into without fetching it whole. An EPUB is a zip: its directory is read from the
+// end of the file and the little files every EPUB puts first (the container, often the package) from its start
+// — both at once — then only the pieces still wanted — the cover, the contents — each a range of the file, all
+// at once. A PDF is opened by pdf.js over ranges too, for its first page and its outline.
+//
+// The covers are kept the way Mihon keeps its own: a small picture (a blob, WebP where the platform writes it)
+// on the device, found again by the file's address and size, and a few hundred of them at hand in memory for
+// the session; the ones on the screen are fetched first, those scrolled past are dropped from the queue.
 import { request, bytesOf } from './http';
 import { db } from '../db';
 import { SourceError } from './types';
 
-export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean }
+export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean; /** a folder's: the file whose cover it shows */ ref?: string }
+/** A peek as kept on the device: its cover a picture of its own (a data URL in what older versions kept). */
+type Stored = Omit<Peek, 'cover'> & { cover?: string; coverBlob?: Blob };
 
 const h32 = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
 
 /* ---------- ranges ---------- */
-/** Hosts that answered a range with the whole file: their big files are not looked into. */
-const wholeHosts = new Set<string>();
+/** Hosts that answered a range with the whole file: their big files are not looked into. Hosts that answered
+ *  one with a range: their files' start and end are asked for at once. */
+const HOSTS = 'kr.rangeHosts';
+const hostsKept = (() => { try { return JSON.parse(localStorage.getItem(HOSTS) ?? '{}') as { whole?: string[]; range?: string[] }; } catch { return {}; } })();
+const wholeHosts = new Set<string>(hostsKept.whole ?? []);
+const rangeHosts = new Set<string>(hostsKept.range ?? []);
+/** (What a host does with ranges — its last answer — kept: the next session asks a host known to answer them
+ *  for both ends of a file at once.) */
+function learned(set: Set<string>, host: string): void {
+  const other = set === wholeHosts ? rangeHosts : wholeHosts;
+  if (set.has(host) && !other.has(host)) return;
+  set.add(host); other.delete(host);
+  try { localStorage.setItem(HOSTS, JSON.stringify({ whole: [...wholeHosts].slice(-50), range: [...rangeHosts].slice(-50) })); } catch { /* kept for the session */ }
+}
 const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u; } };
+/** A host whose files a static web server serves (an h5ai folder's): taken to answer ranges until it says
+ *  otherwise — its very first files asked for both ends at once. */
+export function assumeRanges(url: string): void { const h = hostOf(url); if (!wholeHosts.has(h)) rangeHosts.add(h); }
 
 interface Got { bytes: Uint8Array; start: number; total?: number; whole: boolean }
 /** Bytes `from`–`to` (inclusive) of a file, or its last `-from` bytes when `from` is negative. */
@@ -23,7 +44,8 @@ async function range(url: string, from: number, to?: number): Promise<Got> {
   if (r.status === 416) throw new SourceError('range', 'http', 416);
   if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
   const bytes = bytesOf(r.body);
-  if (r.status !== 206) { wholeHosts.add(hostOf(url)); return { bytes, start: 0, total: bytes.length, whole: true }; }
+  if (r.status !== 206) { learned(wholeHosts, hostOf(url)); return { bytes, start: 0, total: bytes.length, whole: true }; }
+  learned(rangeHosts, hostOf(url));
   const m = /bytes\s+(\d+)-(\d+)\/(\d+|\*)/i.exec(r.headers['content-range'] ?? '');
   return { bytes, start: m ? Number(m[1]) : Math.max(0, from), total: m && m[3] !== '*' ? Number(m[3]) : undefined, whole: false };
 }
@@ -34,17 +56,26 @@ const u16 = (b: Uint8Array, o: number) => b[o] | (b[o + 1] << 8);
 const u32 = (b: Uint8Array, o: number) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
 const u64 = (b: Uint8Array, o: number) => u32(b, o) + u32(b, o + 4) * 0x100000000;
 const utf8 = new TextDecoder();
+const HEAD = 96 * 1024; const TAIL = 64 * 1024;
 
 class RemoteZip {
   entries = new Map<string, ZEntry>();
-  /** The whole file, when the server sent it whole (or it was small enough to take at once). */
+  /** The whole file, when the server sent it whole (or it was small enough to come in the two ends). */
   private all: Uint8Array | null = null;
+  /** The file's start, read with its end: the small files an EPUB puts first are taken from it. */
+  private head: Uint8Array | null = null;
+  /** The file's end (its directory, and the files just before it — where some makers put the package). */
+  private tail: { bytes: Uint8Array; start: number } | null = null;
   constructor(readonly url: string) {}
 
   async open(): Promise<void> {
-    // The end of the file (the whole of it from a server that ignores ranges): the end record, then the directory.
-    const tail = await range(this.url, -65536);
+    // The end of the file (its directory) and its start, at once on a server known to answer ranges; the end
+    // first on one not known yet (a server sending whole files would otherwise send this one twice).
+    const both = rangeHosts.has(hostOf(this.url));
+    const [tail, head] = both ? await Promise.all([range(this.url, -TAIL), range(this.url, 0, HEAD - 1).catch(() => null)]) : [await range(this.url, -TAIL), null];
     if (tail.whole) this.all = tail.bytes;
+    else if (head?.whole) this.all = head.bytes;
+    else { this.head = head?.bytes ?? (tail.start === 0 ? tail.bytes : null); this.tail = { bytes: tail.bytes, start: tail.start }; }
     const total = tail.total ?? tail.start + tail.bytes.length;
     let eocd = -1;
     for (let i = tail.bytes.length - 22; i >= Math.max(0, tail.bytes.length - 22 - 65557); i--) if (tail.bytes[i] === 0x50 && tail.bytes[i + 1] === 0x4b && tail.bytes[i + 2] === 5 && tail.bytes[i + 3] === 6) { eocd = i; break; }
@@ -84,32 +115,52 @@ class RemoteZip {
     if (!this.entries.size) throw new SourceError('notZip', 'parse');
   }
 
-  /** The named entries' bytes, uncompressed: neighbours fetched in one range. */
+  /** An entry's bytes out of a buffer holding the file from `base` on, when it is all there. */
+  private static take(buf: Uint8Array, base: number, e: ZEntry): Uint8Array | null {
+    const at = e.offset - base;
+    if (at < 0 || at + 30 > buf.length || u32(buf, at) !== 0x04034b50) return null;
+    const start = at + 30 + u16(buf, at + 26) + u16(buf, at + 28);
+    return start + e.csize <= buf.length ? buf.subarray(start, start + e.csize) : null;
+  }
+  private static async unpack(e: ZEntry, data: Uint8Array): Promise<Uint8Array> { return e.method === 8 ? inflateRaw(data, e) : data.slice(); }
+
+  /** An entry's bytes from what is already here (the whole file, its start, its end), compressed as stored. */
+  private here(e: ZEntry): Uint8Array | null {
+    if (this.all) return RemoteZip.take(this.all, 0, e);
+    return (this.head ? RemoteZip.take(this.head, 0, e) : null) ?? (this.tail ? RemoteZip.take(this.tail.bytes, this.tail.start, e) : null);
+  }
+  /** Whether an entry can be read without asking the server. */
+  isHere(name: string): boolean { const e = this.entries.get(name); return !!e && !!this.here(e); }
+
+  /** The named entries' bytes, uncompressed: those in the parts already read taken from them, the others
+   *  fetched in ranges (neighbours together), all the ranges at once. */
   async read(names: string[]): Promise<Map<string, Uint8Array>> {
-    const want = [...new Set(names)].map((n) => this.entries.get(n)).filter((e): e is ZEntry => !!e).sort((a, b) => a.offset - b.offset);
     const out = new Map<string, Uint8Array>();
+    const want: ZEntry[] = [];
+    for (const n of new Set(names)) {
+      const e = this.entries.get(n); if (!e) continue;
+      const data = this.here(e);
+      if (data) { try { out.set(n, await RemoteZip.unpack(e, data)); } catch { /* left out */ } }
+      else if (!this.all) want.push(e);
+    }
     if (!want.length) return out;
+    want.sort((a, b) => a.offset - b.offset);
     // Groups of entries close to each other, each fetched as one range (with room for the local headers).
     const groups: ZEntry[][] = [];
+    const end = (x: ZEntry) => x.offset + 30 + x.nameLen + x.extraLen + x.csize + 256;
     for (const e of want) {
       const g = groups[groups.length - 1];
-      const end = (x: ZEntry) => x.offset + 30 + x.nameLen + x.extraLen + x.csize + 256;
       if (g && e.offset - end(g[g.length - 1]) < 96 * 1024 && end(e) - g[0].offset < 2 * 1024 * 1024) g.push(e); else groups.push([e]);
     }
-    for (const g of groups) {
+    await Promise.all(groups.map(async (g) => {
       const from = g[0].offset; const to = g[g.length - 1].offset + 30 + g[g.length - 1].nameLen + g[g.length - 1].extraLen + g[g.length - 1].csize + 1024;
-      let buf: Uint8Array; let base: number;
-      if (this.all) { buf = this.all; base = 0; }
-      else { const got = await range(this.url, from, to); if (got.whole) { this.all = got.bytes; buf = got.bytes; base = 0; } else { buf = got.bytes; base = got.start; } }
+      const got = await range(this.url, from, to).catch(() => null); if (!got) return;
+      if (got.whole) this.all = got.bytes;
       for (const e of g) {
-        const at = e.offset - base;
-        if (at < 0 || u32(buf, at) !== 0x04034b50) continue;
-        const start = at + 30 + u16(buf, at + 26) + u16(buf, at + 28);
-        const data = buf.subarray(start, start + e.csize);
-        if (data.length < e.csize) continue;
-        try { out.set(e.name, e.method === 0 ? data.slice() : e.method === 8 ? await inflateRaw(data, e) : data.slice()); } catch { /* left out */ }
+        const data = RemoteZip.take(got.bytes, got.whole ? 0 : got.start, e);
+        if (data) { try { out.set(e.name, await RemoteZip.unpack(e, data)); } catch { /* left out */ } }
       }
-    }
+    }));
     return out;
   }
 }
@@ -145,17 +196,27 @@ function resolve(dir: string, href: string): string {
   try { return decodeURIComponent(new URL(href.split('#')[0], `zip://x/${dir}`).pathname.slice(1)); } catch { return href; }
 }
 
-async function peekEpub(url: string, noCover = false): Promise<Peek> {
+interface Read { title?: string; author?: string; cover?: Blob; toc: { label: string; depth: number }[]; description?: string; publisher?: string }
+async function peekEpub(url: string, noCover = false): Promise<Read> {
   const z = new RemoteZip(url);
   await z.open();
-  const container = (await z.read(['META-INF/container.xml'])).get('META-INF/container.xml');
+  // The container and the package (the one the directory has, read with it when it is not in the start
+  // already), with the likeliest contents files beside it.
+  const names = [...z.entries.keys()];
+  const opfGuess = names.filter((n) => /\.opf$/i.test(n));
+  const guessToc = names.filter((n) => /(^|\/)(toc\.ncx|nav\.xhtml|toc\.xhtml|nav\.html)$/i.test(n));
+  const firstNames = ['META-INF/container.xml', ...(opfGuess.length === 1 ? opfGuess : []), ...guessToc];
+  // (When the server must be asked for these anyway, the picture called the cover comes with them: the package
+  // nearly always names that one, and a round trip is saved.)
+  const asking = firstNames.some((n) => z.entries.has(n) && !z.isHere(n));
+  const coverGuess = asking && !noCover ? names.filter((n) => /\.(jpe?g|png|webp|gif)$/i.test(n) && /cover/i.test(n.split('/').pop() ?? '') && (z.entries.get(n)?.csize ?? 0) < 6 * 1024 * 1024).sort((a, b) => (z.entries.get(b)?.csize ?? 0) - (z.entries.get(a)?.csize ?? 0))[0] : undefined;
+  const first = await z.read([...firstNames, ...(coverGuess ? [coverGuess] : [])]);
+  const container = first.get('META-INF/container.xml');
   let opfPath = container ? byTag(xml(container), 'rootfile')[0]?.getAttribute('full-path') ?? '' : '';
-  if (!opfPath || !z.entries.has(opfPath)) opfPath = [...z.entries.keys()].find((n) => /\.opf$/i.test(n)) ?? '';
+  if (!opfPath || !z.entries.has(opfPath)) opfPath = opfGuess[0] ?? '';
   if (!opfPath) throw new SourceError('notEpub', 'parse');
+  if (!first.has(opfPath)) for (const [k, v] of await z.read([opfPath])) first.set(k, v);
   const dir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
-  // (The package, with the likeliest contents files beside it in the same range when they are near.)
-  const guessToc = [...z.entries.keys()].filter((n) => /(^|\/)(toc\.ncx|nav\.xhtml|toc\.xhtml|nav\.html)$/i.test(n));
-  const first = await z.read([opfPath, ...guessToc]);
   const opfBytes = first.get(opfPath); if (!opfBytes) throw new SourceError('notEpub', 'parse');
   const opf = xml(opfBytes);
   const meta = byTag(opf, 'metadata')[0];
@@ -171,28 +232,31 @@ async function peekEpub(url: string, noCover = false): Promise<Peek> {
   const coverId = byTag(opf, 'meta').find((m) => m.getAttribute('name') === 'cover')?.getAttribute('content');
   let cover = items.find((i) => /(^|\s)cover-image(\s|$)/.test(i.props)) ?? items.find((i) => i.id === coverId && isImg(i.type)) ?? items.find((i) => isImg(i.type) && /cover/i.test(`${i.id} ${i.href}`));
   let coverPath = cover ? resolve(dir, cover.href) : '';
-  if (!coverPath) {
-    const page = byTag(opf, 'reference').find((r) => r.getAttribute('type') === 'cover')?.getAttribute('href') ?? items.find((i) => /cover/i.test(i.id) && /html/.test(i.type))?.href;
-    if (page) {
-      const pagePath = resolve(dir, page);
-      const html = (await z.read([pagePath])).get(pagePath);
-      if (html) {
-        const d = xml(html, 'text/html');
-        const src = d.querySelector('img')?.getAttribute('src') ?? Array.from(d.getElementsByTagName('image'))[0]?.getAttribute('xlink:href') ?? Array.from(d.getElementsByTagName('image'))[0]?.getAttribute('href');
-        if (src) { coverPath = resolve(pagePath.slice(0, pagePath.lastIndexOf('/') + 1), src); cover = { id: '', href: src, type: /\.png$/i.test(src) ? 'image/png' : 'image/jpeg', props: '' }; }
-      }
-    }
-  }
   // The contents: the navigation document (EPUB 3), else the NCX (EPUB 2).
   const navItem = items.find((i) => /(^|\s)nav(\s|$)/.test(i.props));
   const ncxId = byTag(opf, 'spine')[0]?.getAttribute('toc');
   const ncxItem = items.find((i) => i.id === ncxId) ?? items.find((i) => /ncx/.test(i.type));
   const tocPath = navItem ? resolve(dir, navItem.href) : ncxItem ? resolve(dir, ncxItem.href) : '';
+  // (No picture named the cover: the cover page's, read with the contents.)
+  const coverPage = !coverPath && !noCover ? byTag(opf, 'reference').find((r) => r.getAttribute('type') === 'cover')?.getAttribute('href') ?? items.find((i) => /cover/i.test(i.id) && /html/.test(i.type))?.href : undefined;
+  const pagePath = coverPage ? resolve(dir, coverPage) : '';
   // (A picture too big to be worth fetching for a thumbnail is left out; none at all when covers are off.)
   if (noCover || (coverPath && (z.entries.get(coverPath)?.csize ?? 0) > 6 * 1024 * 1024)) coverPath = '';
-  const later = [tocPath, coverPath].filter((p) => p && !first.has(p));
+  const later = [tocPath, coverPath, pagePath].filter((p) => p && !first.has(p));
   const more = later.length ? await z.read(later) : new Map<string, Uint8Array>();
   const get = (p: string) => first.get(p) ?? more.get(p);
+  if (pagePath && !coverPath) {
+    const html = get(pagePath);
+    if (html) {
+      const d = xml(html, 'text/html');
+      const src = d.querySelector('img')?.getAttribute('src') ?? Array.from(d.getElementsByTagName('image'))[0]?.getAttribute('xlink:href') ?? Array.from(d.getElementsByTagName('image'))[0]?.getAttribute('href');
+      if (src) {
+        coverPath = resolve(pagePath.slice(0, pagePath.lastIndexOf('/') + 1), src); cover = { id: '', href: src, type: /\.png$/i.test(src) ? 'image/png' : 'image/jpeg', props: '' };
+        if ((z.entries.get(coverPath)?.csize ?? 0) > 6 * 1024 * 1024) coverPath = '';
+        else if (coverPath) for (const [k, v] of await z.read([coverPath])) more.set(k, v);
+      }
+    }
+  }
   const toc: { label: string; depth: number }[] = [];
   const tocBytes = tocPath ? get(tocPath) : undefined;
   if (tocBytes && navItem) {
@@ -206,12 +270,12 @@ async function peekEpub(url: string, noCover = false): Promise<Peek> {
     const map = byTag(d, 'navMap')[0]; if (map) walk(map, 0);
   }
   const coverBytes = coverPath ? get(coverPath) : undefined;
-  const thumbUrl = coverBytes ? await thumb(coverBytes, cover?.type || 'image/jpeg').catch(() => undefined) : undefined;
-  return { title: title || undefined, author: author || undefined, cover: thumbUrl, toc, at: Date.now(), description: description || undefined, publisher: publisher || undefined, noCover: noCover || undefined };
+  const coverBlob = coverBytes ? await thumb(coverBytes, cover?.type || 'image/jpeg').catch(() => null) : null;
+  return { title: title || undefined, author: author || undefined, cover: coverBlob ?? undefined, toc, description: description || undefined, publisher: publisher || undefined };
 }
 
 /* ---------- a PDF ---------- */
-async function peekPdf(url: string, size?: number): Promise<Peek> {
+async function peekPdf(url: string, size?: number): Promise<Read> {
   const head = await range(url, 0, 65535);
   const { loadPdfjs } = await import('../formats/pdf');
   const pdfjs = await loadPdfjs();
@@ -230,28 +294,51 @@ async function peekPdf(url: string, size?: number): Promise<Peek> {
   try {
     const doc = await task.promise;
     const info = (await doc.getMetadata().catch(() => null))?.info as Record<string, string> | undefined;
-    const page = await doc.getPage(1);
-    const vp = page.getViewport({ scale: 1 });
-    const scale = Math.min(2, 420 / vp.height);
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-    await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-    const cover = canvas.toDataURL('image/jpeg', 0.8);
+    // (The first page, or the second when the first is blank — a PDF made from a book often opens on one.)
+    let cover: Blob | undefined;
+    for (let n = 1; n <= Math.min(2, doc.numPages) && !cover; n++) {
+      const page = await doc.getPage(n);
+      const vp = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(2, THUMB_H / vp.height) });
+      const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d')!;
+      await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+      if (n < Math.min(2, doc.numPages) && blank(ctx, canvas.width, canvas.height)) continue;
+      cover = (await toBlob(canvas)) ?? undefined;
+    }
     const toc: { label: string; depth: number }[] = [];
     const outline = await doc.getOutline().catch(() => null);
     const walk = (list: { title: string; items?: unknown[] }[] | null, depth: number) => { for (const o of list ?? []) { if (toc.length >= 400) return; const label = (o.title ?? '').replace(/\s+/g, ' ').trim(); if (label) toc.push({ label, depth }); walk((o.items ?? []) as { title: string; items?: unknown[] }[], depth + 1); } };
     walk(outline as { title: string; items?: unknown[] }[] | null, 0);
     const title = info?.Title?.trim();
-    return { title: title && !/^(untitled|unknown|microsoft word|document)/i.test(title) ? title : undefined, author: info?.Author?.trim() || undefined, cover, toc, at: Date.now() };
+    return { title: title && !/^(untitled|unknown|microsoft word|document)/i.test(title) ? title : undefined, author: info?.Author?.trim() || undefined, cover, toc };
   } finally { clearTimeout(timer); void task.destroy(); }
+}
+/** A page drawn all (or nearly all) white. */
+function blank(ctx: CanvasRenderingContext2D, w: number, h: number): boolean {
+  try {
+    const d = ctx.getImageData(0, 0, w, h).data; let ink = 0; const step = 4 * 7;
+    for (let i = 0; i < d.length; i += step) if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) ink++;
+    return ink / (d.length / step) < 0.01;
+  } catch { return false; }
 }
 
 /* ---------- a picture made small ---------- */
-async function thumb(bytes: Uint8Array, type: string, height = 420): Promise<string> {
+// (Sharp on a phone's screen at the largest a cover is drawn — 140 points wide, at three pixels a point — and
+// a JPEG: written four times faster than a WebP, for a tenth more bytes.)
+const THUMB_H = 540;
+function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((ok) => canvas.toBlob((b) => ok(b), 'image/jpeg', 0.82));
+}
+async function thumb(bytes: Uint8Array, type: string, height = THUMB_H): Promise<Blob | null> {
   const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: /svg/.test(type) ? 'image/svg+xml' : type });
   let src: CanvasImageSource; let w: number; let hgt: number; let free = () => {};
-  try { const bmp = await createImageBitmap(blob); src = bmp; w = bmp.width; hgt = bmp.height; free = () => bmp.close(); }
-  catch {
+  try {
+    // (A very big picture decoded straight to the size shown — the memory a phone has; the others whole, which
+    // decodes faster.)
+    const bmp = bytes.length > 1536 * 1024 ? await createImageBitmap(blob, { resizeHeight: height, resizeQuality: 'high' }) : await createImageBitmap(blob);
+    src = bmp; w = bmp.width; hgt = bmp.height; free = () => bmp.close();
+  } catch {
     const url = URL.createObjectURL(blob);
     const img = await new Promise<HTMLImageElement>((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => fail(new Error('image')); i.src = url; });
     src = img; w = img.naturalWidth || 300; hgt = img.naturalHeight || 420; free = () => URL.revokeObjectURL(url);
@@ -259,71 +346,113 @@ async function thumb(bytes: Uint8Array, type: string, height = 420): Promise<str
   try {
     const scale = Math.min(1, height / hgt);
     const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(w * scale)); canvas.height = Math.max(1, Math.round(hgt * scale));
-    const ctx = canvas.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.8);
+    const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+    return await toBlob(canvas);
   } finally { free(); }
 }
+/** The key a picture on a server is kept under (a folder's peek points to it). */
+export const imageKeyOf = (url: string) => `peek:img:${h32(url)}`;
 /** A picture on a server (a folder's cover.jpg), made small. */
 export async function thumbOf(url: string): Promise<string | undefined> {
-  const key = `peek:img:${h32(url)}`;
-  const had = mem.get(key) ?? (await db.getMeta<Peek>(key).catch(() => undefined));
-  if (had) { mem.set(key, had); return had.cover; }
+  const key = imageKeyOf(url);
+  const had = await recall(key); if (had) return had.cover;
   const r = await request(url, { binary: true, quiet: true, retries: 1 });
   if (r.status >= 400) return undefined;
-  const cover = await thumb(bytesOf(r.body), r.headers['content-type'] ?? 'image/jpeg').catch(() => undefined);
-  const p: Peek = { cover, at: Date.now() }; mem.set(key, p); void keep(key, p);
-  return cover;
+  const blob = await thumb(bytesOf(r.body), r.headers['content-type'] ?? 'image/jpeg').catch(() => null);
+  if (!blob) return undefined;
+  return store(key, { at: Date.now() }, blob).cover;
 }
 
-/* ---------- kept on the device ---------- */
+/* ---------- kept: in memory for the session, on the device ---------- */
+/** In memory: the last few hundred, the oldest let go (its picture's address with it). */
+const MEM_MAX = 400;
 const mem = new Map<string, Peek>();
+const urls = new Map<string, string>();   // key → the address of its picture made from a blob, while in memory
+function memGet(key: string): Peek | undefined { const p = mem.get(key); if (p) { mem.delete(key); mem.set(key, p); } return p; }
+function memSet(key: string, p: Peek): void {
+  mem.delete(key); mem.set(key, p);
+  while (mem.size > MEM_MAX) {
+    const old = mem.keys().next().value as string; mem.delete(old);
+    const u = urls.get(old); if (u) { urls.delete(old); setTimeout(() => URL.revokeObjectURL(u), 60000); }
+  }
+}
+/** A stored peek as used: its picture an address (one made for its blob, kept while it is in memory). */
+function live(key: string, s: Stored): Peek {
+  const { coverBlob, ...rest } = s;
+  if (coverBlob) { let u = urls.get(key); if (!u) { u = URL.createObjectURL(coverBlob); urls.set(key, u); } return { ...rest, cover: u }; }
+  return rest;
+}
+/** Keep a peek (its picture as a blob) on the device and in memory; returns it as used. */
+function store(key: string, p: Omit<Peek, 'cover'>, cover?: Blob | null): Peek {
+  const s: Stored = { ...p, ...(cover ? { coverBlob: cover } : {}) };
+  const shown = live(key, s); memSet(key, shown); void keep(key, s);
+  return shown;
+}
 const running = new Map<string, Promise<Peek | null>>();
-const INDEX = 'peek:index'; const LIMIT = 900;
+const INDEX = 'peek:index'; const LIMIT = 1800;
 let index: [string, number][] | null = null; let saving = 0;
-async function keep(key: string, p: Peek): Promise<void> {
+async function keep(key: string, s: Stored): Promise<void> {
   try {
-    await db.setMeta(key, p);
+    try { await db.setMeta(key, s); }
+    catch { if (!s.coverBlob) throw new Error('kept'); await db.setMeta(key, { ...s, coverBlob: undefined, cover: await dataUrl(s.coverBlob) }); }
     index ??= (await db.getMeta<[string, number][]>(INDEX)) ?? [];
-    index = index.filter(([k]) => k !== key); index.push([key, p.at]);
+    index = index.filter(([k]) => k !== key); index.push([key, s.at]);
     if (index.length > LIMIT) { const drop = index.splice(0, index.length - LIMIT); for (const [k] of drop) void db.deleteMeta(k); }
     clearTimeout(saving); saving = window.setTimeout(() => void db.setMeta(INDEX, index), 1500);
   } catch { /* the cover is kept for this session only */ }
 }
+const dataUrl = (b: Blob) => new Promise<string>((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => fail(r.error); r.readAsDataURL(b); });
 
-/** Something kept under `key` (on the device, and in memory for the session), when younger than `maxAge`. */
+/** Something kept under `key` (in memory, else on the device), when younger than `maxAge`. A folder's peek
+ *  that points at a file's gives that file's picture. */
 export async function recall(key: string, maxAge = Infinity): Promise<Peek | undefined> {
-  const p = mem.get(key) ?? (await db.getMeta<Peek>(key).catch(() => undefined));
+  let p = memGet(key);
+  if (!p) { const s = await db.getMeta<Stored>(key).catch(() => undefined); if (s) { p = live(key, s); memSet(key, p); } }
   if (!p || Date.now() - p.at > maxAge) return undefined;
-  mem.set(key, p); return p;
+  if (p.ref && !p.cover) { const f = await recall(p.ref); if (f?.cover) return { ...p, cover: f.cover, description: p.description ?? f.description }; }
+  return p;
 }
-export function remember(key: string, p: Peek): void { mem.set(key, p); void keep(key, p); }
+/** Keep `p` under `key`; a folder's that shows a file's cover (or a picture's) keeps only which (`ref`). A
+ *  picture's address made for this session (blob:) is never kept on the device. */
+export function remember(key: string, p: Peek): void {
+  const { cover, ...rest } = p;
+  memSet(key, rest.ref ? { ...rest } : p);
+  void keep(key, rest.ref || !cover || cover.startsWith('blob:') ? rest : { ...rest, cover });
+}
 /** What is already known in this session, at once (a page drawn again shows it without waiting). */
-export const known = (key: string): Peek | undefined => mem.get(key);
-export const peekKnown = (url: string, size?: number, noCover = false): Peek | undefined => { const p = mem.get(`peek:${h32(`${url}|${size ?? ''}`)}`); return p && (!p.noCover || noCover) ? p : undefined; };
+export const known = (key: string): Peek | undefined => {
+  const p = memGet(key); if (!p) return undefined;
+  if (p.ref && !p.cover) { const f = memGet(p.ref); return f?.cover ? { ...p, cover: f.cover, description: p.description ?? f.description } : undefined; }
+  return p;
+};
+const fileKey = (url: string, size?: number) => `peek:${h32(`${url}|${size ?? ''}`)}`;
+export const peekKnown = (url: string, size?: number, noCover = false): Peek | undefined => { const p = memGet(fileKey(url, size)); return p && (!p.noCover || noCover) ? p : undefined; };
 export const keyOf = (s: string) => h32(s);
+export const peekKeyOf = fileKey;
 
 /** What a file on a server holds — cover, title, contents — for an EPUB or a PDF; kept once found. A file is
  *  known by its address and size (a new upload under the same name is looked at again). */
 export function peekFile(url: string, ext: string, size?: number, opts: { noCover?: boolean; headers?: Record<string, string> } = {}): Promise<Peek | null> {
-  const key = `peek:${h32(`${url}|${size ?? ''}`)}`;
+  const key = fileKey(url, size);
   if (opts.headers) extra.set(hostOf(url), opts.headers);
   // (One read without its cover — covers were off — is read again when they are on.)
   const usable = (p: Peek | undefined) => !!p && (!p.noCover || !!opts.noCover);
-  const had = mem.get(key); if (usable(had)) return Promise.resolve(had!);
+  const had = memGet(key); if (usable(had)) return Promise.resolve(had!);
   const run = running.get(key); if (run) return run;
   const p = (async (): Promise<Peek | null> => {
-    const stored = await db.getMeta<Peek>(key).catch(() => undefined);
-    if (usable(stored)) { mem.set(key, stored!); return stored!; }
+    const stored = await recall(key);
+    if (usable(stored)) return stored!;
     // (A server that sends whole files for ranges is not asked for its big ones.)
     if (wholeHosts.has(hostOf(url)) && (size ?? Infinity) > 6 * 1024 * 1024) return null;
     try {
-      const peek = ext === 'epub' ? await peekEpub(url, !!opts.noCover) : ext === 'pdf' ? (opts.noCover ? null : await peekPdf(url, size)) : null;
-      if (!peek) return null;
-      mem.set(key, peek); void keep(key, peek);
-      return peek;
+      const got = ext === 'epub' ? await peekEpub(url, !!opts.noCover) : ext === 'pdf' ? (opts.noCover ? null : await peekPdf(url, size)) : null;
+      if (!got) return null;
+      const { cover, ...rest } = got;
+      return store(key, { ...rest, at: Date.now(), noCover: opts.noCover || undefined }, cover);
     } catch (e) {
       // (What cannot be read is remembered as such for this session, not retried on every scroll.)
-      if ((e as SourceError).kind !== 'offline' && (e as SourceError).kind !== 'cloudflare' && (e as SourceError).kind !== 'blocked') mem.set(key, { at: Date.now() });
+      if ((e as SourceError).kind !== 'offline' && (e as SourceError).kind !== 'cloudflare' && (e as SourceError).kind !== 'blocked') memSet(key, { at: Date.now() });
       return null;
     }
   })();
@@ -334,15 +463,17 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
 /* ---------- a queue for what is on the screen ---------- */
 type Job = { run: () => Promise<void>; started: boolean };
 const queue: Job[] = []; let active = 0;
-/** Run `fn` when a turn comes (three at a time, in the order asked); the returned function takes it back
- *  out of the queue if it has not started (an element scrolled away). */
-export function schedule(fn: () => Promise<void>): () => void {
+const AT_ONCE = 5;
+/** Run `fn` when a turn comes (five at a time; one on the screen now before those only near it); the returned
+ *  function takes it back out of the queue if it has not started (an element scrolled away). */
+export function schedule(fn: () => Promise<void>, now = false): () => void {
   const job: Job = { run: fn, started: false };
-  queue.push(job); pump();
+  if (now) queue.unshift(job); else queue.push(job);
+  pump();
   return () => { if (!job.started) { const i = queue.indexOf(job); if (i >= 0) queue.splice(i, 1); } };
 }
 function pump(): void {
-  while (active < 3 && queue.length) {
+  while (active < AT_ONCE && queue.length) {
     const job = queue.shift()!; job.started = true; active++;
     void job.run().catch(() => undefined).finally(() => { active--; pump(); });
   }

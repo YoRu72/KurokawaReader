@@ -172,18 +172,20 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.folder-card .source-head'); await page.waitForSelector('.src-grid .src-card', { timeout: 15000 }); await page.waitForTimeout(400);
     const dirId = (await page.evaluate(() => location.hash)).replace(/^#\/sources\//, '').replace(/[?].*$/, '');
     const plain = (x) => (x || '').replace(/[⁦-⁩]/g, '').trim();
-    // The root (Apache's table): the folder's own books as a series' card and its rows, the subfolders as cards.
-    const root = await page.evaluate(() => ({ head: document.querySelector('.series-head h2')?.textContent, chips: [...document.querySelectorAll('.series-head .src-chip')].map((c) => c.textContent), folders: [...document.querySelectorAll('.src-card.folder .src-title')].map((e) => e.textContent), rows: [...document.querySelectorAll('.vol-row')].map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-sub')?.textContent}`) }));
-    ok('the root: its two books as a series with their rows, its two folders as cards (pictures and archives left out)', root.head === 'library' && root.chips[0] === '2 volumes' && root.folders.join() === 'Alpha Series,Beta' && root.rows.length === 2 && /^readme\|.*1\.5 KB/.test(plain(root.rows[0])) && /^sample\|.*1\.2 MB/.test(plain(root.rows[1])));
-    if (root.rows.length !== 2 || root.head !== 'library') console.log('  root:', JSON.stringify(root));
+    // The root (Apache's table): the subfolders as cards, the folder's own books as rows after them — no series'
+    // card over a shelf of folders (pictures and archives left out).
+    const root = await page.evaluate(() => ({ head: document.querySelector('.series-head h2')?.textContent, folders: [...document.querySelectorAll('.src-card.folder .src-title')].map((e) => e.textContent), rows: [...document.querySelectorAll('.vol-row')].map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-sub')?.textContent}`) }));
+    ok('the root: its two folders as cards, its two books as rows after them, no series\' card over them', root.head === undefined && root.folders.join() === 'Alpha Series,Beta' && root.rows.length === 2 && /^readme\|.*1\.5 KB/.test(plain(root.rows[0])) && /^sample\|.*1\.2 MB/.test(plain(root.rows[1])));
+    if (root.rows.length !== 2 || root.head !== undefined) console.log('  root:', JSON.stringify(root));
     await page.screenshot({ path: path.join(__dirname, 'folder.png') });
     // Into a subfolder (nginx's <pre> listing): a series' page, every volume with its size, its cover and contents read from the file by range.
     await page.click('.src-card.folder >> nth=0'); await page.waitForFunction(() => /Alpha Series/.test(document.querySelector('.topbar .title')?.textContent || ''), null, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelectorAll('.vol-row .vol-cover img').length === 2 && document.querySelectorAll('.vol-row .vol-toc').length === 2, null, { timeout: 30000 });
     const sub = await page.evaluate(() => ({ head: document.querySelector('.series-head h2')?.textContent, cover: (document.querySelector('.series-head .series-cover img')?.getAttribute('src') || '').slice(0, 15), rows: [...document.querySelectorAll('.vol-row')].map((r) => ({ title: r.querySelector('.vol-title')?.textContent, sub: r.querySelector('.vol-sub')?.textContent, cover: (r.querySelector('.vol-cover img')?.getAttribute('src') || '').slice(0, 15), toc: r.querySelectorAll('.vol-toc-list li').length, more: r.querySelector('.vol-toc-more')?.textContent, meta: r.querySelector('.vol-meta')?.textContent })) }));
     ok('a subfolder: the series card, its volumes in order with their sizes (the zip left out)', sub.head === 'Alpha Series' && sub.rows.length === 2 && sub.rows[0].title === 'Alpha 1' && /200 KB/.test(plain(sub.rows[0].sub)) && sub.rows[1].title === 'Alpha 2' && /311 KB/.test(plain(sub.rows[1].sub)));
-    ok('every volume\'s cover and contents, read from the file without fetching it', sub.rows.every((r) => r.cover === 'data:image/jpeg' && r.toc >= 3) && /Show all/.test(sub.rows[0].more || '') && /Lewis Carroll/.test(sub.rows[0].meta || '') && sub.cover === 'data:image/jpeg');
-    if (!sub.rows.every((r) => r.cover === 'data:image/jpeg' && r.toc >= 3)) console.log('  sub:', JSON.stringify(sub));
+    const pic = (src) => /^blob:|^data:image\//.test(src);
+    ok('every volume\'s cover and contents, read from the file without fetching it', sub.rows.every((r) => pic(r.cover) && r.toc >= 3) && /Show all/.test(sub.rows[0].more || '') && /Lewis Carroll/.test(sub.rows[0].meta || '') && pic(sub.cover));
+    if (!sub.rows.every((r) => pic(r.cover) && r.toc >= 3)) console.log('  sub:', JSON.stringify(sub));
     const got = await (await fetch('http://localhost:5401/__otl/ranges')).json();
     ok('… by ranges of the files (never a whole volume)', got.some((r) => /^alice-in-wonderland\.epub \d+-\d+$/.test(r)) && got.every((r) => { const [a, b] = r.split(' ')[1].split('-').map(Number); return b - a < 1024 * 1024; }));
     await page.screenshot({ path: path.join(__dirname, 'folder-series.png') });
@@ -197,7 +199,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('… down to a JSON listing: the folder and the file named so', (await page.$$('.src-card.folder')).length === 1 && (await page.$$('.vol-row')).length === 1 && /^deep$/.test(await page.$eval('.vol-row .vol-title', (e) => e.textContent)) && /Beta \/ Deep · 5\.9 KB/.test(plain(await page.$eval('.vol-row .vol-sub', (e) => e.textContent))));
     // A file's page (from its cover): the PDF's first page as its cover, read by range; the file with its size.
     await page.click('.vol-row .vol-cover'); await page.waitForSelector('.src-files .src-file', { timeout: 30000 }); await page.waitForTimeout(300);
-    ok('a file\'s page: its kind marked, its size, its folder, its first page as the cover', await page.evaluate(() => /ok:PDF/.test([...document.querySelectorAll('.src-actions .src-fmt')].map((x) => x.className.replace('src-fmt ', '') + ':' + x.textContent).join(' ')) && /5\.9 KB/.test(document.querySelector('.src-files .src-file')?.textContent || '') && /deep\.pdf/.test(document.querySelector('.src-meta')?.textContent || '') && /^data:image\/jpeg/.test(document.querySelector('.src-cover img')?.getAttribute('src') || '')));
+    ok('a file\'s page: its kind marked, its size, its folder, its first page as the cover', await page.evaluate(() => /ok:PDF/.test([...document.querySelectorAll('.src-actions .src-fmt')].map((x) => x.className.replace('src-fmt ', '') + ':' + x.textContent).join(' ')) && /5\.9 KB/.test(document.querySelector('.src-files .src-file')?.textContent || '') && /deep\.pdf/.test(document.querySelector('.src-meta')?.textContent || '') && /^blob:|^data:image\//.test(document.querySelector('.src-cover img')?.getAttribute('src') || '')));
     await page.click('.src-files .src-file'); await page.waitForSelector('.src-files .btn.primary', { timeout: 60000 });
     await page.reload(); await page.waitForSelector('.src-files', { timeout: 30000 }); await page.waitForTimeout(800);
     ok('… once fetched, its page opens it from the library', /In your library/.test(await page.$eval('.src-files', (e) => e.textContent)));
@@ -236,17 +238,60 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('"OTL" installs the extension from its manifest: the Officially Translated Light Novels folder, under "Web folders"', otl.some((x) => x === 'Officially Translated Light Novels|server.elscione.com/Officially Translated Light Novels') && /Web folders/.test(await page.$eval('.repos', (e) => e.textContent)));
     // Opened: indexed at once — one request to h5ai's search — and the series shelf drawn from the index.
     await page.click('.folder-card:has-text("Officially Translated") .source-head');
-    await page.waitForFunction(() => /Indexed: 113 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder .src-badge').length >= 20, null, { timeout: 40000 });
-    const posted = await (await fetch('http://localhost:5401/__otl/posts')).json();
-    ok('opened: indexed by one request to h5ai\'s search; every series counted', posted.filter((b) => /"search"/.test(b)).length === 1 && /Indexed: 113 series, \d+ volumes · Today/.test(await page.$eval('.src-index', (e) => e.textContent)));
+    await page.waitForFunction(() => /Indexed: 116 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder .src-badge').length >= 20, null, { timeout: 40000 });
+    const posted = await (await fetch('http://localhost:5401/__otl/posts')).json(); const postsAtIndex = posted.length;
+    ok('opened: indexed by one request to h5ai\'s search; every series counted', posted.filter((b) => /"search"/.test(b)).length === 1 && /Indexed: 116 series, \d+ volumes · Today/.test(await page.$eval('.src-index', (e) => e.textContent)));
     const shelf = await page.$$eval('.src-card.folder', (cs) => cs.slice(0, 14).map((c) => `${c.querySelector('.src-title')?.textContent}|${c.querySelector('.src-badge.left')?.textContent ?? ''}|${c.querySelector('.src-author')?.textContent ?? ''}`));
     ok('the series by name, each with its volumes counted and its publisher', shelf.length === 14 && shelf[0] === 'Alpha Saga|4 volumes|' && shelf.some((x) => x === 'Black Summoner|7 volumes|Seven Seas') && shelf.some((x) => x === 'Monogatari Series|13 volumes|Dark Horse') && shelf.some((x) => /^Didn't I Say to Make My Abilities Average\|\d+ volumes\|J-Novel Club$/.test(x)));
     if (shelf[0] !== 'Alpha Saga|4 volumes|' || !shelf.some((x) => /^Black Summoner/.test(x))) console.log('  shelf:', JSON.stringify(shelf));
     ok('the shelves of the top: All, Recently updated, New volumes, In my library', (await page.$$eval('.src-shelves .chip', (cs) => cs.map((c) => c.textContent))).join() === 'All,Recently updated,New volumes,In my library');
     await page.waitForFunction(() => document.querySelectorAll('.src-card.folder .src-cover.has-img img').length >= 6, null, { timeout: 60000 });
-    ok('the first volume\'s cover on each series as it comes near (Beta Tales its own picture)', (await page.$$('.src-card.folder .src-cover.has-img img')).length >= 6);
+    ok('the first volume\'s cover on each series as it comes near', (await page.$$('.src-card.folder .src-cover.has-img img')).length >= 6);
     await page.screenshot({ path: path.join(__dirname, 'otl.png') });
     const otlHash = await page.evaluate(() => location.hash);
+    const hits = async () => (await fetch('http://localhost:5401/__otl/files')).json();
+    const postsNow = async () => (await fetch('http://localhost:5401/__otl/posts')).json();
+    // A series whose first volume is a premium PDF beside a store EPUB: its card shows volume 1's cover, from
+    // the EPUB — never the second volume's, never the PDF's page.
+    await page.waitForFunction(() => !!document.querySelector('.src-card.folder[title="Delta Omnibus"] .src-cover.has-img img'), null, { timeout: 30000 });
+    const delta = (await hits()).filter((h) => h[0].startsWith('Delta Omnibus/')).map((h) => h[0]);
+    ok('a series\' card: its first volume\'s cover, read from that volume\'s EPUB (not the PDF, not volume 2)', delta.length >= 1 && delta.every((x) => x === 'Delta Omnibus/Delta Omnibus - Volume 01 [Yen Press][Kobo].epub'));
+    if (!delta.every((x) => /Volume 01 \[Yen Press\]\[Kobo\]\.epub$/.test(x))) console.log('  delta:', JSON.stringify(delta));
+    ok('… each read in a few ranges of the file (its two ends at once, then its cover)', delta.length <= 4);
+    // The shelf's covers come from the index: no folder asked of the site for them (but those h5ai leaves to a
+    // page of their own, which the index cannot know).
+    const itemPosts = (await postsNow()).slice(postsAtIndex).filter((b) => /"items"/.test(b) && !/EPUB|Reader/.test(b));
+    ok('the shelf\'s covers found through the index: no folder listed for them', itemPosts.length === 0);
+    if (itemPosts.length) console.log('  items asked:', itemPosts.length, itemPosts.slice(0, 3));
+    // Its page: on top, the same cover at once (the file read once for both); volume 1 shown as its EPUB, the PDF
+    // beside it; the PDF chosen, the cover still the EPUB's (the PDF not read for it).
+    const beforeSeries = (await hits()).length;
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Delta%20Omnibus')); await page.waitForSelector('.series-block', { timeout: 20000 });
+    const headAtOnce = await page.evaluate(() => !!document.querySelector('.series-head .series-cover img'));
+    ok('its page: the series\' cover on top at once, the very one its card showed', headAtOnce);
+    await page.waitForFunction(() => document.querySelectorAll('.vol-row .vol-cover img').length === 2, null, { timeout: 30000 });
+    const dRows = await page.$$eval('.vol-row', (rs) => rs.map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-kind')?.textContent}|${[...r.querySelectorAll('.vol-editions .chip')].map((c) => c.textContent + (c.classList.contains('on') ? '*' : '')).join('/')}`));
+    ok('volume 1 shown as its EPUB first, the premium PDF beside it', dRows[0] === 'Volume 1|EPUB|Kobo · EPUB*/Premium · PDF' && dRows[1] === 'Volume 2|EPUB|');
+    if (dRows[0] !== 'Volume 1|EPUB|Kobo · EPUB*/Premium · PDF') console.log('  delta rows:', JSON.stringify(dRows));
+    await page.click('.vol-row >> nth=0 >> .vol-editions .chip:has-text("PDF")'); await page.waitForTimeout(800);
+    const dHits = (await hits()).slice(beforeSeries).map((h) => h[0]);
+    ok('… the PDF chosen: the volume\'s cover still its EPUB\'s, the PDF not read for it', !!(await page.$('.vol-row >> nth=0 >> .vol-cover img')) && !dHits.some((x) => /\.pdf$/.test(x)) && !dHits.includes('Delta Omnibus/Delta Omnibus - Volume 01 [Yen Press][Kobo].epub'));
+    if (dHits.some((x) => /\.pdf$/.test(x))) console.log('  hits on the series page:', JSON.stringify(dHits));
+    // A folder h5ai leaves to a page of its own: read from that page; one whose page lists nothing says so, with
+    // the folder a tap away on the site.
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=EPUB'); await page.waitForSelector('.vol-row', { timeout: 20000 }); await page.waitForTimeout(300);
+    ok('a folder with a page of its own ("EPUB"): its volumes read from that page', (await page.$$eval('.vol-row .vol-title', (es) => es.map((e) => e.textContent))).join() === 'Volume 1,Volume 2');
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=Reader'); await page.waitForSelector('.src-status .empty', { timeout: 20000 }); await page.waitForTimeout(300);
+    const reader = await page.$eval('.src-status', (e) => e.textContent);
+    ok('… one whose page is no list ("Reader"): said so, with "Open this folder on the site"', /page of its own on the site instead of a list of files \(“OTL Web Reader”\)/.test(reader) && /Open this folder on the site/.test(reader) && !/No results/.test(reader));
+    if (!/page of its own/.test(reader)) console.log('  reader:', reader.slice(0, 200));
+    // The covers kept on the device: the app opened again, the shelf's covers without a byte asked again.
+    const seen = new Set((await hits()).map((h) => h[0])); const hitsBefore = (await hits()).length;
+    await page.goto(base + '#/sources'); await page.reload(); await page.waitForSelector('.sources-hub');
+    await page.goto(base + otlHash); await page.waitForFunction(() => document.querySelectorAll('.src-card.folder .src-cover.has-img img').length >= 6, null, { timeout: 30000 }); await page.waitForTimeout(1500);
+    const again2 = (await hits()).slice(hitsBefore).filter((h) => seen.has(h[0]));
+    ok('the app opened again: the covers from the device, no file read again for them', again2.length === 0);
+    if (again2.length) console.log('  read again:', JSON.stringify(again2.slice(0, 5)));
     // Searching the whole folder from the index; three searches, then back: the page before, not each search.
     for (const q of ['goblin', 'monogatari', 'spice']) { await page.fill('.src-search', q); await page.press('.src-search', 'Enter'); await page.waitForFunction((w) => new RegExp(w, 'i').test(document.querySelector('.src-grid')?.textContent || '') && /found/.test(document.querySelector('.topbar .title')?.textContent || ''), q, { timeout: 20000 }); }
     const found = await page.evaluate(() => ({ series: [...document.querySelectorAll('.src-card.folder .src-title')].map((e) => e.textContent), rows: [...document.querySelectorAll('.vol-row .vol-title')].map((e) => e.textContent), title: document.querySelector('.topbar .title')?.textContent }));
@@ -343,6 +388,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('… the new volume on its page', (await page.$$eval('.vol-row .vol-title', (es) => es.map((e) => e.textContent))).includes('Volume 10'));
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(500);
     ok('… seen: the mark gone', !(await page.$('.src-card.folder .fresh-mark')));
+    // A series' page from an index some minutes old: drawn from it at once, the site asked out of sight — a
+    // volume published since appears on its own.
+    await page.evaluate(() => new Promise((ok) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('meta', 'readwrite'); const st = tx.objectStore('meta'); const all = st.getAllKeys(); all.onsuccess = () => { const k = all.result.find((x) => String(x).startsWith('dir:index:') && !/library/.test(String(x))); const g = st.get(k); g.onsuccess = () => { const v = g.result; v.at = Date.now() - 20 * 60000; st.put(v, k); }; }; tx.oncomplete = () => ok(); }; }));
+    await fetch('http://localhost:5401/__otl/add?folder=' + encodeURIComponent('Gamma Chronicles') + '&name=' + encodeURIComponent('Gamma Chronicles v03.epub'));
+    await page.goto(base + '#/'); await page.reload(); await page.waitForSelector('.library-view');
+    await page.evaluate(() => { window.__changed = 0; window.addEventListener('kr:shelf-changed', () => { window.__changed++; }); });
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Gamma%20Chronicles')); await page.waitForSelector('.vol-row', { timeout: 20000 });
+    await page.waitForFunction(() => document.querySelectorAll('.vol-row').length === 3, null, { timeout: 20000 }).catch(() => undefined);
+    const gamma = await page.$$eval('.vol-row .vol-title', (es) => es.map((e) => e.textContent));
+    const redrawn = await page.evaluate(() => window.__changed);
+    ok('a series\' page from the index at once; a volume published since appears when the site has answered', redrawn === 1 && gamma.join() === 'Volume 1,Volume 2,Volume 3');
+    if (redrawn !== 1 || gamma.length !== 3) console.log('  gamma:', JSON.stringify({ redrawn, gamma }));
     // Removed, and added again by the site's own address: found to be h5ai's, indexed at once.
     page.once('dialog', (d) => void d.accept());
     await page.goto(base + '#/sources'); await page.waitForSelector('.folder-card', { timeout: 15000 }); await page.waitForTimeout(300);
@@ -352,7 +409,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.fill('.sheet input[type=url]', 'https://server.elscione.com/Officially%20Translated%20Light%20Novels/'); await page.press('.sheet input[type=url]', 'Enter');
     await page.waitForSelector('.folder-card:has-text("Officially Translated")', { timeout: 20000 });
     await page.click('.folder-card:has-text("Officially Translated") .source-head');
-    const again = await page.waitForFunction(() => /Indexed: 113 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder .src-badge.left').length >= 20, null, { timeout: 40000 }).then(() => true, () => false);
+    const again = await page.waitForFunction(() => /Indexed: 116 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder .src-badge.left').length >= 20, null, { timeout: 40000 }).then(() => true, () => false);
     ok('added again by the site\'s own address: recognised as h5ai, indexed at once', again);
     // And the word again: already added.
     await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);

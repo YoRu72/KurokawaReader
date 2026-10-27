@@ -103,6 +103,22 @@ otlAdd('Beta Tales', 'Beta Tales 1.epub', 'maqamat-al-hariri.epub', 'application
 otlAdd('Beta Tales', 'cover.jpg', 'beta-cover.jpg', 'image/jpeg');
 otlAdd('Gamma Chronicles', 'Gamma Chronicles v01.epub', 'alice-in-wonderland.epub', 'application/epub+zip');
 otlAdd('Gamma Chronicles', 'Gamma Chronicles v02.epub', 'maqamat-al-hariri.epub', 'application/epub+zip');
+// (Delta Omnibus: its first volume a premium PDF beside a store EPUB, the second an EPUB only — the series'
+// cover must still be the first volume's, from its EPUB.)
+otlDir('', 'Delta Omnibus', T0 + 2 * 86400000);
+otlAdd('Delta Omnibus', 'Delta Omnibus - Volume 01 [Yen Press][Premium].pdf', 'sample.pdf', 'application/pdf');
+otlAdd('Delta Omnibus', 'Delta Omnibus - Volume 01 [Yen Press][Kobo].epub', 'alice-in-wonderland.epub', 'application/epub+zip');
+otlAdd('Delta Omnibus', 'Delta Omnibus - Volume 02 [Yen Press][Kobo].epub', 'maqamat-al-hariri.epub', 'application/epub+zip');
+// (Folders h5ai leaves alone — each has an index.html of its own: h5ai's API answers nothing for them, its
+// search does not go into them. "EPUB" is a page listing its files; "Reader" a site's app with no list.)
+const otlUnmanaged = new Set(['EPUB', 'Reader']);
+otlDir('', 'EPUB', T0 + 86400000); otlDir('', 'Reader', T0 + 86400000);
+otlAdd('EPUB', 'Zeta Collection - Volume 01 [Yen Press][Kobo].epub', 'maqamat-al-hariri.epub', 'application/epub+zip');
+otlAdd('EPUB', 'Zeta Collection - Volume 02 [Yen Press][Kobo].epub', 'alice-in-wonderland.epub', 'application/epub+zip');
+const ownPages = {
+  EPUB: () => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>EPUB Collection</title></head><body><h1>EPUB Collection</h1><p>Every volume as an EPUB.</p><ul>${otlDirs.EPUB.map(([href, name, size]) => `<li><a href="${href.split('/').pop()}">${name}</a> (${Math.round(size / 1024)} KB)</li>`).join('')}</ul><p><a href="https://example.org/">Elsewhere</a></p></body></html>`,
+  Reader: () => '<!DOCTYPE html><html><head><meta charset="utf-8"><title>OTL Web Reader</title><script src="app.js"></script></head><body><div id="app">Loading…</div></body></html>',
+};
 const NAMES = ['Spice and Wolf', "Didn't I Say to Make My Abilities Average", 'Re:Zero -Starting Life in Another World-', 'Monogatari Series', 'Goblin Slayer', 'Ascendance of a Bookworm', 'The Apothecary Diaries', 'Black Summoner', 'Mushoku Tensei', 'Solo Leveling'];
 const PUBS = [['Yen Press', ['Kobo']], ['J-Novel Club', ['Premium', 'Kobo']], ['Seven Seas', ['Kobo']], ['Dark Horse', ['Google Play']], ['Vertical', ['Kobo']]];
 for (let i = 0; i < 110; i++) {
@@ -126,8 +142,10 @@ for (let i = 0; i < 110; i++) {
   }
   if (name === 'Goblin Slayer') otlAdd(name, `${name} - Volume 01 [${pub}][OCR][Anon].epub`, EPUBS[1], 'application/epub+zip', t + 1000);
 }
-const otlWalk = (folder, fn) => { for (const it of otlDirs[folder] ?? []) { fn(it, folder); if (it[2] === null) otlWalk(folder ? `${folder}/${it[1]}` : it[1], fn); } };
-const otlItem = ([href, , size, time]) => ({ href, time, size, managed: true, fetched: false });
+const otlWalk = (folder, fn) => { if (otlUnmanaged.has(folder)) return; for (const it of otlDirs[folder] ?? []) { fn(it, folder); if (it[2] === null) otlWalk(folder ? `${folder}/${it[1]}` : it[1], fn); } };
+const otlItem = ([href, name, size, time], folder = '') => ({ href, time, size, ...(size === null ? { managed: !otlUnmanaged.has(folder ? `${folder}/${name}` : name), fetched: false } : {}) });
+// (Every request for a file of the folder, with its range: which volume's cover was read.)
+const fileHits = []; let latency = 0;
 const posts = [];
 // (The shield in front of the real site: off, or turning away whatever is not a browser — a Cloudflare 403 page,
 // or its check — the browser itself checked until "passed"; requests counted by who made them. h5ai's search
@@ -145,6 +163,10 @@ const server = http.createServer((req, res) => {
     if (req.method === 'OPTIONS') return res.end();
     if (p === '/__otl/posts') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(posts)); }
     if (p === '/__otl/ranges') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(ranges)); }
+    if (p === '/__otl/files') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(fileHits)); }
+    // (A delay on every answer of the site's, as a far server — or the app's browser in between — adds.)
+    if (p === '/__otl/latency') { latency = Number(u.searchParams.get('ms') || 0); res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ latency })); }
+    if (latency && !req.__delayed) { req.__delayed = true; return setTimeout(() => server.emit('request', req, res), latency); }
     // (A new volume published in a series, as the site's keepers do.)
     if (p === '/__otl/add') { otlAdd(u.searchParams.get('folder'), u.searchParams.get('name'), EPUBS[0], 'application/epub+zip', Date.now()); res.setHeader('Content-Type', 'application/json'); return res.end('{"ok":true}'); }
     // (The extension's manifest, as the app's repository keeps it.)
@@ -171,17 +193,21 @@ const server = http.createServer((req, res) => {
           // (As h5ai answers: the folder's content and the content of every folder above it.)
           const f = folderOf(j.items.href);
           if (f === null || !otlDirs[f]) { res.statusCode = 404; return res.end('{"err":"ERR_NOT_FOUND"}'); }
-          const items = [{ href: OTL, time: T0, size: null, managed: true, fetched: true }, ...otlDirs[''].map(otlItem)];
-          if (f) { const parts = f.split('/'); for (let k = 1; k <= parts.length; k++) { const at = parts.slice(0, k).join('/'); if (k < parts.length || true) items.push(...(otlDirs[at] ?? []).map(otlItem)); } }
-          // (what=2: the content of each of its subfolders too.)
-          if (Number(j.items.what) >= 2) for (const it of otlDirs[f] ?? []) if (it[2] === null) items.push(...(otlDirs[f ? `${f}/${it[1]}` : it[1]] ?? []).map(otlItem));
+          // (A folder h5ai leaves alone: nothing at all, as h5ai answers.)
+          if ([...otlUnmanaged].some((u) => f === u || f.startsWith(`${u}/`))) { out.items = []; return res.end(JSON.stringify(out)); }
+          const items = [{ href: OTL, time: T0, size: null, managed: true, fetched: true }, ...otlDirs[''].map((it) => otlItem(it, ''))];
+          if (f) { const parts = f.split('/'); for (let k = 1; k <= parts.length; k++) { const at = parts.slice(0, k).join('/'); items.push(...(otlDirs[at] ?? []).map((it) => otlItem(it, at))); } }
+          // (what=2: the content of each of its subfolders too — not of those h5ai leaves alone.)
+          if (Number(j.items.what) >= 2) for (const it of otlDirs[f] ?? []) { const sub = f ? `${f}/${it[1]}` : it[1]; if (it[2] === null && !otlUnmanaged.has(sub)) items.push(...(otlDirs[sub] ?? []).map((x) => otlItem(x, sub))); }
           out.items = items;
         }
         if (j.search && shield.noSearch) { res.statusCode = 500; return res.end('{"errno":"ERR_DISABLED","msg":"search disabled"}'); }
         if (j.search) {
           const f = folderOf(j.search.href); const pat = String(j.search.pattern || '').toLowerCase();
           if (f === null || !pat) { res.statusCode = 500; return res.end('{"err":"ERR_FAILED"}'); }
-          const found = []; otlWalk(f, (it) => { if (it[1].toLowerCase().includes(pat)) found.push(otlItem(it)); });
+          // (A pattern is a regular expression to h5ai: "." is every name.)
+          let re; try { re = new RegExp(pat, 'i'); } catch { re = { test: (x) => x.toLowerCase().includes(pat) }; }
+          const found = []; otlWalk(f, (it, at) => { if (re.test(it[1])) found.push(otlItem(it, at)); });
           out.search = found;
         }
         res.end(JSON.stringify(out));
@@ -191,12 +217,13 @@ const server = http.createServer((req, res) => {
     const enc = p.split('/').map((seg) => encodeURIComponent(decodeURIComponent(seg))).join('/');
     const folder = enc === OTL ? '' : enc.startsWith(OTL) && enc.endsWith('/') ? decodeURIComponent(enc.slice(OTL.length, -1)) : null;
     if (folder === null && !otlFiles[enc] && otlDirs[decodeURIComponent(enc.slice(OTL.length))]) { res.statusCode = 301; res.setHeader('Location', enc + '/'); return res.end('<html><head><title>301 Moved Permanently</title></head><body><center><h1>301 Moved Permanently</h1></center></body></html>'); }
+    if (folder !== null && ownPages[folder]) { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(ownPages[folder]()); }
     if (folder !== null && otlDirs[folder]) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       // (Gamma's page is the scripted one, without the table.)
       return res.end(h5aiPage(folder === 'Gamma Chronicles' ? null : otlDirs[folder].map(([href, name, size]) => [href, name, size])));
     }
-    const f = otlFiles[enc]; if (f) { const file = f[0] === 'beta-cover.jpg' ? path.join(require('os').tmpdir(), 'kr-beta-cover.jpg') : path.join(dir, f[0]); if (fs.existsSync(file)) return sendFile(req, res, file, f[1]); }
+    const f = otlFiles[enc]; if (f) { fileHits.push([decodeURIComponent(enc.slice(OTL.length)), req.headers.range || '']); const file = f[0] === 'beta-cover.jpg' ? path.join(require('os').tmpdir(), 'kr-beta-cover.jpg') : path.join(dir, f[0]); if (fs.existsSync(file)) return sendFile(req, res, file, f[1]); }
     res.statusCode = 404; return res.end('not here');
   }
   // (The web folder, answering with its listing or its files; a folder asked without its slash is sent to it.)
