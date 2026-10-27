@@ -42,6 +42,7 @@ export interface VisualSettings {
   pdfBarSide: 'right' | 'left';      // which side the upright bar stands on
   pdfBarRow: 'bottom' | 'top';       // where the lying bar goes   // the PDF page bar: two rows when the screen is upright and one when it is wide, or fixed
   pdfPinchZoom: boolean;    // two-finger zoom in PDFs (on by default since 0.32)
+  pdfAutoCrop: boolean;     // show only each page's printed area (margins cropped), at a common width
   pdfPageNumbers: boolean;  // page number badge on each PDF page
   pdfNoteStyle: 'badge' | 'pin' | 'dot';  // how PDF notes are drawn on the page
   autoScrollSpeed: number; // px per second
@@ -195,6 +196,7 @@ export const DEFAULTS: VisualSettings = {
   letterSpacing: 0,
   pdfInvert: false,
   pdfPinchZoom: true,
+  pdfAutoCrop: false,
   pdfBar: 'auto',
   pdfBarSide: 'right',
   pdfBarRow: 'bottom',

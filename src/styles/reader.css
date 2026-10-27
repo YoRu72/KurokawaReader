@@ -440,3 +440,5 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .rsvp-controls { display: flex; align-items: center; gap: 10px; padding: 12px 16px calc(16px + var(--safe-bottom)); font-family: var(--font-ui); }
 .rsvp-controls input[type='range'] { flex: 1; min-width: 80px; }
 .rsvp-wpm { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--md-on-surface-variant); white-space: nowrap; }
+/* Each page is a window on its sheet: the whole page sits inside, shifted when the margins are cropped. */
+.pdf-page .pdf-sheet { position: absolute; left: 0; top: 0; }

@@ -15,7 +15,7 @@ import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch } from '../formats/types';
 import { BLOCK_SELECTOR } from '../formats/shared';
-import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
+import { PdfViewer, type CropBox, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
@@ -1320,6 +1320,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer = new PdfViewer({
     container: reader,
     invert: getSettings().pdfInvert,
+    crop: { enabled: () => getSettings().pdfAutoCrop, get: () => db.getMeta<CropBox[]>(`crop:${book.id}`).then((v) => v ?? null), set: (boxes) => db.setMeta(`crop:${book.id}`, boxes) },
     onPageRender: (n) => { renderHighlights(n); ink?.render(n); strip?.sync(); },
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
@@ -1340,7 +1341,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.pinchZoom = getSettings().pdfPinchZoom;
   (window as unknown as { __krPdfViewer?: unknown }).__krPdfViewer = viewer; // (for tests)
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
-  onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); }));
+  onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); viewer.setCrop(st.pdfAutoCrop); }));
   await viewer.load(file, book.id, book.source?.uri);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
@@ -1517,11 +1518,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     const groups = new Map<number, [number, number, number, number][]>();
     const clamp = (v: number) => Math.min(1, Math.max(0, v));
     // Pages are found by geometry (works for parts of the selection scrolled out of view).
-    const pages = Array.from(viewer.root.querySelectorAll<HTMLElement>('.pdf-page')).map((el) => ({ el, box: el.getBoundingClientRect() }));
+    // (Fractions are of the whole page — its sheet — even when the margins are cropped away.)
+    const pages = Array.from(viewer.root.querySelectorAll<HTMLElement>('.pdf-page')).map((el) => ({ el, win: el.getBoundingClientRect(), box: (PdfViewer.sheetOf(el) ?? el).getBoundingClientRect() }));
     for (const r of Array.from(range.getClientRects())) {
       if (r.width < 2 || r.height < 2) continue;
       const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      const pg = pages.find(({ box }) => cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom);
+      const pg = pages.find(({ win }) => cx >= win.left && cx <= win.right && cy >= win.top && cy <= win.bottom);
       if (!pg || !pg.box.width || !pg.box.height) continue;
       const box = pg.box;
       const x = clamp((r.left - box.left) / box.width), y = clamp((r.top - box.top) / box.height);
@@ -1644,7 +1646,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const pointOnPage = (clientX: number, clientY: number) => {
     const el = (document.elementFromPoint(clientX, clientY) as HTMLElement | null)?.closest('.pdf-page') as HTMLElement | null;
     if (!el) return null;
-    const r = el.getBoundingClientRect();
+    const r = (PdfViewer.sheetOf(el) ?? el).getBoundingClientRect();
     return { page: Number(el.dataset.page), x: (clientX - r.left) / r.width, y: (clientY - r.top) / r.height };
   };
   // A note on a spot of the page: right-click with a mouse, or «Note on this page» in the menu, then a tap where
@@ -1768,6 +1770,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('note', t('noteOnPage'), placeNote),
+        item('fullscreen', getSettings().pdfAutoCrop ? t('cropMarginsOff') : t('cropMargins'), () => updateSettings({ pdfAutoCrop: !getSettings().pdfAutoCrop })),
         item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() }))),
         item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
         item('type', t('visualOptions'), openPdfOptions),

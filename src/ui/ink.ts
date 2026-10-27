@@ -33,7 +33,7 @@ export function inkLayer(o: InkOptions): Ink {
     svg.setAttribute('viewBox', `0 0 1000 ${Math.round((1000 * hh) / w)}`);
     return svg;
   };
-  const ratioOf = (page: HTMLElement) => (page.offsetHeight || 1) / (page.offsetWidth || 1);
+  const ratioOf = (page: HTMLElement) => { const s = page.querySelector<HTMLElement>(':scope > .pdf-sheet') ?? page; return (s.offsetHeight || 1) / (s.offsetWidth || 1); };
   const pathD = (s: InkStroke, ratio: number): string => {
     const p = s.pts; if (p.length < 2) return '';
     if (p.length === 2) return `M${p[0] * 1000} ${p[1] * 1000 * ratio} l0.01 0`;
@@ -60,12 +60,13 @@ export function inkLayer(o: InkOptions): Ink {
   // Drawing: the pointer on a page, while the pen is on. Only one finger draws; a second one is left to the
   // viewer (pinching, scrolling).
   let live: { page: HTMLElement; n: number; pts: number[]; el: SVGPathElement; id: number } | null = null;
-  const frac = (e: PointerEvent, page: HTMLElement) => { const b = page.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (e.clientY - b.top) / b.height))]; };
+  const frac = (e: PointerEvent, page: HTMLElement) => { const b = (page.querySelector<HTMLElement>(':scope > .pdf-sheet') ?? page).getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (e.clientY - b.top) / b.height))]; };
   const down = (e: PointerEvent) => {
     if (!on || live || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    const page = (e.target as HTMLElement).closest<HTMLElement>('.pdf-page'); if (!page) return;
+    const win = (e.target as HTMLElement).closest<HTMLElement>('.pdf-page'); if (!win) return;
+    const page = win.querySelector<HTMLElement>(':scope > .pdf-sheet') ?? win;
     e.preventDefault(); e.stopPropagation();
-    const n = Number(page.dataset.page);
+    const n = Number(win.dataset.page);
     if (mode === 'erase') { eraseAt(e, page, n); live = { page, n, pts: [], el: null as unknown as SVGPathElement, id: e.pointerId }; return; }
     const [x, y] = frac(e, page);
     const s: InkStroke = { id: 'live', page: n, color, w: width, pts: [x, y], createdAt: 0 };
