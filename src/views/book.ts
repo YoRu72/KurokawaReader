@@ -3,7 +3,7 @@
 // the read ones marked, with «resume» to carry on where the reader left off.
 import { h, icon, iconButton, toast, coverColors } from '../ui/dom';
 import { volumesOf } from '../series';
-import { t, formatBytes, formatDuration, localDigits, countChapters, getLang } from '../i18n';
+import { t, formatBytes, formatDuration, localDigits, countChapters, getLang, formatLabel } from '../i18n';
 import { db, FAV_TAG, type Book } from '../db';
 import { coverUrl } from '../library';
 import { navigate } from '../router';
@@ -84,7 +84,7 @@ export function bookView(id: string): HTMLElement {
           h('h1', { dir: 'auto' }, book.title),
           book.author ? h('p', { dir: 'auto' }, icon('user'), h('span', null, book.author)) : null,
           h('p', null, icon('clock'), h('span', null, `${status}${pct > 0 && !done ? ' · ' + (getLang() === 'ar' ? `٪${localDigits(String(pct))}` : `${pct}%`) : ''}`)),
-          h('p', null, icon('file'), h('span', { dir: 'ltr' }, `${book.format.toUpperCase()} · ${formatBytes(book.size)}${book.pageCount ? ' · ' + localDigits(String(book.pageCount)) + ' ' + t('pages').toLowerCase() : ''}`)))));
+          h('p', null, icon('file'), h('span', { dir: 'auto' }, `${formatLabel(book.format)} · ${formatBytes(book.size)}${book.pageCount ? ' · ' + (book.format === 'webnovel' ? countChapters(book.pageCount) : localDigits(String(book.pageCount)) + ' ' + t('pages').toLowerCase()) : ''}`)))));
 
     const tile = (name: string, label: string, on: boolean, fn: () => void, more?: string) => h('button', { type: 'button', class: 'book-tile' + (on ? ' on' : '') + (more ? ' has-more' : ''), title: more, onclick: fn }, icon(name), h('span', null, label), more ? h('i', { class: 'tile-more', 'aria-hidden': 'true' }, icon('chevronDown')) : null);
     const others = (book.tags ?? []).filter((x) => x !== FAV_TAG);

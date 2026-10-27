@@ -1,6 +1,6 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } from '../ui/dom';
 import { onHoldOrContext } from '../ui/tags';
-import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters } from '../i18n';
+import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, formatLabel } from '../i18n';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
 import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
@@ -273,7 +273,7 @@ export function libraryView(): HTMLElement {
     const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
     const cover = h('div', { class: 'cover' },
       url ? h('img', { src: url, alt: '', loading: 'lazy' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
-      h('span', { class: 'badges' }, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, book.format === 'shamela' ? 'الشاملة' : book.format === 'webnovel' ? t('webnovelBadge') : book.format.toUpperCase()), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
+      h('span', { class: 'badges' }, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, formatLabel(book.format)), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
       doneBadge && doneAt !== 'beside' ? doneBadge : null,
       !done && pct > 0 && getSettings().showProgress ? h('div', { class: 'progress', 'aria-label': `${pct}%` }, h('i', { style: { width: `${pct}%` } })) : null,
@@ -317,7 +317,7 @@ export function libraryView(): HTMLElement {
       s.body.style.fontSize = '14px';
       const rows: [string, string][] = [
         [t('sortAuthor'), book.author ?? t('unknownAuthor')],
-        [t('format'), `${book.format.toUpperCase()} · ${book.fileName}`],
+        [t('format'), `${formatLabel(book.format)} · ${book.fileName}`],
         [t('size'), formatBytes(book.size)],
         [t('added'), formatDate(book.addedAt)],
         [t('lastOpened'), formatDate(book.lastOpenedAt)],

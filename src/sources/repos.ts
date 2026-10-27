@@ -228,7 +228,7 @@ export async function removeRepo(key: string): Promise<void> {
   const repos = await listRepos();
   const repo = repos.find((r) => r.key === key);
   await saveRepos(repos.filter((r) => r.key !== key));
-  if (repo) for (const it of repo.items) { await db.deleteMeta(codeKey(key, it.id)); try { localStorage.removeItem(`kr.ext.store.${pluginKey(key, it.id)}`); localStorage.removeItem(`kr.ext.filters.${pluginKey(key, it.id)}`); } catch { /* ignore */ } }
+  if (repo) for (const it of repo.items) { await db.deleteMeta(codeKey(key, it.id)); setInstalled(pluginKey(key, it.id), null); try { localStorage.removeItem(`kr.ext.store.${pluginKey(key, it.id)}`); localStorage.removeItem(`kr.src.ext:${key}:${encodeURIComponent(it.id)}.filters`); } catch { /* ignore */ } }
 }
 export async function renameRepo(key: string, name: string): Promise<void> {
   const repos = await listRepos(); const r = repos.find((x) => x.key === key); if (!r) return; r.name = name; await saveRepos([...repos]);
@@ -249,6 +249,10 @@ export async function refreshRepo(key: string): Promise<{ repo: Repo; updated: E
 export interface CodeCache { version: string; code: string; at: number; url: string }
 export const pluginKey = (repoKey: string, pluginId: string) => `${repoKey}:${pluginId}`;
 const codeKey = (repoKey: string, pluginId: string) => `ext:code:${repoKey}:${pluginId}`;
+// The versions on the device, in one small map (so the hub and the bell need not open every code entry).
+const INSTALLED = 'kr.ext.installed';
+function installed(): Record<string, string> { try { return JSON.parse(localStorage.getItem(INSTALLED) ?? '{}') as Record<string, string>; } catch { return {}; } }
+function setInstalled(key: string, version: string | null): void { const m = installed(); if (version === null) delete m[key]; else m[key] = version; try { localStorage.setItem(INSTALLED, JSON.stringify(m)); } catch { /* full */ } }
 
 /** The plugin's code, from the device when it was fetched before (an update is fetched when `fresh`). */
 export async function pluginCode(repo: Repo, item: ExtItem, fresh = false): Promise<CodeCache> {
@@ -262,10 +266,11 @@ export async function pluginCode(repo: Repo, item: ExtItem, fresh = false): Prom
   if (!code || code.length < 20) throw new SourceError('parse', 'parse');
   const entry: CodeCache = { version: item.version, code, at: Date.now(), url: item.url };
   await db.setMeta(key, entry);
+  setInstalled(pluginKey(repo.key, item.id), item.version);
   return entry;
 }
-export async function cachedVersion(repo: Repo, item: ExtItem): Promise<string | null> { return (await db.getMeta<CodeCache>(codeKey(repo.key, item.id)))?.version ?? null; }
-export async function hasCode(repo: Repo, item: ExtItem): Promise<boolean> { return !!(await db.getMeta<CodeCache>(codeKey(repo.key, item.id))); }
+export async function cachedVersion(repo: Repo, item: ExtItem): Promise<string | null> { return installed()[pluginKey(repo.key, item.id)] ?? null; }
+export async function hasCode(repo: Repo, item: ExtItem): Promise<boolean> { return pluginKey(repo.key, item.id) in installed(); }
 
 /** The extensions whose repo lists a newer version than the one on the device. */
 export async function extensionUpdates(): Promise<{ repo: Repo; item: ExtItem; from: string }[]> {

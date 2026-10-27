@@ -238,7 +238,7 @@ function updatesSheet(after: () => void): void {
     btn.addEventListener('click', async () => {
       btn.disabled = true; track.hidden = false;
       void askNotifyPermission().catch(() => false);
-      try { const r = await checkAll({ quiet: false, notify: false, onProgress: (d, tot, title) => { bar.style.width = `${tot ? (d / tot) * 100 : 100}%`; line.textContent = t('checkingBook', { title }); } }); toast(r.chapters.length || r.extensions.length ? t('checkFound') : t('checkNothing')); }
+      try { const r = await checkAll({ quiet: false, notify: false, force: true, onProgress: (d, tot, title) => { bar.style.width = `${tot ? (d / tot) * 100 : 100}%`; line.textContent = t('checkingBook', { title }); } }); toast(r.chapters.length || r.extensions.length ? t('checkFound') : t('checkNothing')); }
       catch (e) { toast(describe(e), 'error'); }
       finally { track.hidden = true; void draw(); after(); }
     });

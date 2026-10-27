@@ -189,6 +189,13 @@ export function countChapters(n: number): string {
   return arCount(n, { one: 'فصل واحد', two: 'فصلان', few: 'فصول', many: 'فصلًا', hundred: 'فصلٍ' });
 }
 
+/** A format's name as the interface shows it: the file kind in capitals, the online kinds by name. */
+export function formatLabel(format: string): string {
+  if (format === 'shamela') return 'الشاملة';
+  if (format === 'webnovel') return t('webnovelBadge');
+  return format.toUpperCase();
+}
+
 /** "3 novels" — in Arabic: رواية واحدة · روايتان · ٣–١٠ روايات · ١١–٩٩ روايةً · ١٠٠ روايةٍ. */
 export function countNovels(n: number): string {
   if (current !== 'ar') return `${n} ${n === 1 ? 'novel' : 'novels'}`;

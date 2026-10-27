@@ -37,7 +37,7 @@ export async function pendingCounts(): Promise<{ chapters: number; books: number
 }
 
 /** Ask every source: the novels' sites for chapters, the repos for versions. One check at a time. */
-export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, total: number, title: string) => void; notify?: boolean } = {}): Promise<UpdateReport> {
+export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, total: number, title: string) => void; notify?: boolean; force?: boolean } = {}): Promise<UpdateReport> {
   if (running) return running;
   running = (async () => {
     const report: UpdateReport = { at: Date.now(), chapters: [], extensions: [], failed: [] };
@@ -51,7 +51,7 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
     });
     // The repos: their indexes again (an hour old at least), then the versions against what is on the device.
     for (const repo of await listRepos()) {
-      if (repo.fetchedAt && Date.now() - repo.fetchedAt < 3600000 && !opts.notify) continue;
+      if (!opts.force && repo.fetchedAt && Date.now() - repo.fetchedAt < 3600000) continue;
       try { await refreshRepo(repo.key); } catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e) }); }
     }
     for (const u of await extensionUpdates().catch(() => [] as { repo: Repo; item: ExtItem; from: string }[])) report.extensions.push({ repoKey: u.repo.key, repoName: u.repo.name, pluginId: u.item.id, name: u.item.name, from: u.from, to: u.item.version });

@@ -5,6 +5,7 @@
 import type { FlowHandler, FlowRender, TocItem } from './types';
 import type { ShamelaBook, ShamelaPageData, ShamelaToc } from '../sources/shamela';
 import { SHAMELA } from '../sources/shamela';
+import { t } from '../i18n';
 
 const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
 const arNum = (n: string | number) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
@@ -61,7 +62,7 @@ export const shamelaHandler: FlowHandler = {
         // (A fetched page goes into the file now and then, so the next opening has it.)
         if (Object.keys(content).length % 10 === 0 || Object.keys(content).length === info.pages) void save();
       } catch (e) {
-        const pg = pages.get(n); if (pg) { const err = pg.querySelector('.kr-page-wait'); if (err) { err.textContent = (e as Error).message === 'cloudflare' ? 'الموقع يطلب التحقق من المتصفح — افتحه من صفحة الكتاب في المصادر' : (e as Error).message === 'offline' ? 'لا اتصال — تعذّر جلب الصفحة' : 'تعذّر جلب الصفحة'; err.classList.add('failed'); } }
+        const pg = pages.get(n); if (pg) { const err = pg.querySelector('.kr-page-wait'); if (err) { err.textContent = (e as Error).message === 'cloudflare' ? t('pageNeedsCheck') : (e as Error).message === 'offline' ? t('pageOffline') : t('pageFailed'); err.classList.add('failed'); } }
       } finally { running--; void pump(); }
     };
     const save = async () => {
