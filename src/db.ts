@@ -4,7 +4,7 @@
 
 export type Format =
   | 'epub' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'txt' | 'md' | 'html'
-  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'unknown';
+  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'unknown';
 
 export interface Locator {
   /** Which opened document (book id). */
@@ -113,6 +113,9 @@ export interface Book {
   ink?: InkStroke[];
   /** Where the file lives when it is linked instead of copied into the app (scan import). */
   source?: FileSource;
+  /** A book from an online source (a Shamela book read from the site): where it came from, and whether its
+   *  text still lives there (`online`) or has been fetched into its file. */
+  remote?: { source: string; id: string; online?: boolean };
   pdfHighlights?: PdfHighlight[];
   /** Cached per-book override of the visual settings (optional). */
   prefs?: Record<string, unknown>;

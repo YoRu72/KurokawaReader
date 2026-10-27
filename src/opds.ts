@@ -6,6 +6,8 @@
 import { db } from './db';
 import { importFiles, shrinkCover } from './library';
 import { nativePlatform, readContentUri } from './native';
+import { http } from './net';
+export { http };
 
 export interface OpdsLink { href: string; rel: string; type: string; title?: string }
 export interface OpdsEntry {
@@ -44,22 +46,6 @@ export const SUGGESTED: { name: string; url: string; note: string }[] = [
 ];
 
 /* ---------- fetching ---------- */
-
-interface HttpResult { status: number; headers: Record<string, string>; body: string }
-type HttpInit = { method?: string; headers?: Record<string, string>; body?: string; binary?: boolean };
-/** A request that reaches any server: native code on the phone and the desktop (no CORS), fetch on the web. */
-export async function http(url: string, init: HttpInit = {}): Promise<HttpResult> {
-  const cap = (window as unknown as { Capacitor?: { isNativePlatform?(): boolean; Plugins?: { Kurokawa?: { httpRequest?(o: unknown): Promise<HttpResult> } } } }).Capacitor;
-  if (cap?.isNativePlatform?.() && cap.Plugins?.Kurokawa?.httpRequest) return cap.Plugins.Kurokawa.httpRequest({ url, method: init.method ?? 'GET', headers: init.headers ?? {}, body: init.body ?? null, binary: !!init.binary });
-  const desk = (window as unknown as { kurokawaDesktop?: { http?(o: unknown): Promise<HttpResult> } }).kurokawaDesktop;
-  if (desk?.http) return desk.http({ url, method: init.method ?? 'GET', headers: init.headers ?? {}, body: init.body ?? null, binary: !!init.binary });
-  const r = await fetch(url, { method: init.method ?? 'GET', headers: init.headers, body: init.body });
-  const headers: Record<string, string> = {}; r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-  if (!init.binary) return { status: r.status, headers, body: await r.text() };
-  const bytes = new Uint8Array(await r.arrayBuffer()); let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return { status: r.status, headers, body: btoa(s) };
-}
 
 function authHeaders(url: string): Record<string, string> {
   const c = catalogFor(url);

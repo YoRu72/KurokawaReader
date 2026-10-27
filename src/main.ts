@@ -43,6 +43,7 @@ function mount(route: Route): void {
     case 'settings': current = settingsView(); break;
     case 'notes': current = notesView(); break;
     case 'catalog': current = lazyView(() => import('./views/catalog').then((m) => m.catalogView(route.url, route.q))); break;
+    case 'sources': current = lazyView(() => import('./views/sources').then((m) => m.sourcesView(route.src, route.book, route.q, route.shelf, route.tags))); break;
     default: current = libraryView();
   }
   app.appendChild(current);

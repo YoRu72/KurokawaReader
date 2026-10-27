@@ -147,10 +147,16 @@ public class KurokawaPlugin extends Plugin {
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(urlStr).openConnection();
                 conn.setRequestMethod(method);
                 conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                boolean hasUa = false, hasCookie = false;
                 java.util.Iterator<String> it = headers.keys();
-                while (it.hasNext()) { String k = it.next(); conn.setRequestProperty(k, headers.getString(k)); }
+                while (it.hasNext()) { String k = it.next(); conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; if (k.equalsIgnoreCase("cookie")) hasCookie = true; }
+                // The app's own identity and cookies go with the request (a Cloudflare clearance passed in the
+                // app's web view is bound to both), and what the site sets comes back into the same jar.
+                if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
+                if (!hasCookie) { try { String ck = android.webkit.CookieManager.getInstance().getCookie(urlStr); if (ck != null && !ck.isEmpty()) conn.setRequestProperty("Cookie", ck); } catch (Exception ignored) {} }
                 if (body != null) { conn.setDoOutput(true); try (OutputStream os = conn.getOutputStream()) { os.write(call.getBoolean("bodyBase64", false) ? Base64.decode(body, Base64.DEFAULT) : body.getBytes("UTF-8")); } }
                 int code = conn.getResponseCode();
+                try { java.util.List<String> set = conn.getHeaderFields().get("Set-Cookie"); if (set != null) { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(urlStr, c); cm.flush(); } } catch (Exception ignored) {}
                 InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 if (in != null) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) bos.write(buf, 0, n); }
@@ -163,6 +169,45 @@ public class KurokawaPlugin extends Plugin {
                 call.resolve(ret);
             } catch (Exception e) { call.reject("Request failed: " + e.getMessage(), e); }
         }).start();
+    }
+
+    /** Opens a page in a web view of the app's own (its cookies are the app's), so a site's browser check can be
+     *  passed by hand; resolves when the view is closed. */
+    @PluginMethod
+    public void openWebView(PluginCall call) {
+        final String url = call.getString("url", "");
+        if (url.isEmpty()) { call.reject("No url"); return; }
+        getActivity().runOnUiThread(() -> {
+            try {
+                final android.app.Dialog dialog = new android.app.Dialog(getActivity(), android.R.style.Theme_DeviceDefault_NoActionBar);
+                final android.widget.LinearLayout box = new android.widget.LinearLayout(getActivity());
+                box.setOrientation(android.widget.LinearLayout.VERTICAL);
+                final android.widget.Button close = new android.widget.Button(getActivity());
+                close.setText("✓  تم / Done");
+                close.setOnClickListener(v -> dialog.dismiss());
+                final android.webkit.WebView web = new android.webkit.WebView(getActivity());
+                web.getSettings().setJavaScriptEnabled(true);
+                web.getSettings().setDomStorageEnabled(true);
+                web.getSettings().setUserAgentString(android.webkit.WebSettings.getDefaultUserAgent(getContext()));
+                android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+                web.setWebViewClient(new android.webkit.WebViewClient() {
+                    @Override public void onPageFinished(android.webkit.WebView view, String u) {
+                        // (Once the site answers with a page of its own — no longer the check — the view goes away on its own.)
+                        String title = view.getTitle();
+                        if (title != null && !title.isEmpty() && !title.contains("Just a moment") && !title.contains("Attention Required") && !title.contains("لحظة")) {
+                            String ck = android.webkit.CookieManager.getInstance().getCookie(u);
+                            if (ck != null && ck.contains("cf_clearance")) view.postDelayed(dialog::dismiss, 800);
+                        }
+                    }
+                });
+                box.addView(close, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+                box.addView(web, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+                dialog.setContentView(box);
+                dialog.setOnDismissListener(d -> { try { android.webkit.CookieManager.getInstance().flush(); web.destroy(); } catch (Exception ignored) {} call.resolve(); });
+                dialog.show();
+                web.loadUrl(url);
+            } catch (Exception e) { call.reject("WebView failed: " + e.getMessage()); }
+        });
     }
 
     /** Downloads a file (following redirects, no CORS) with progress events. Returns file:// path.

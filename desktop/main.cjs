@@ -251,8 +251,12 @@ ipcMain.handle('kr:scan-device', async (_e, exts) => {
   if (queue.length) truncated = true;
   return { root: roots.join(' · '), files, truncated };
 });
+// Pages read for the sources (archive.org, Shamela, novel sites) go through the app's own session: its cookies
+// go with them — a Cloudflare clearance passed in the window below is kept there — and the app's identity is
+// a plain Chrome's (the Electron token in the user agent gets a browser check from some sites).
+app.userAgentFallback = app.userAgentFallback.replace(/ ?Electron\/[\d.]+/, '').replace(/ ?KurokawaReader\/[\d.]+/, '');
 ipcMain.handle('kr:http', async (_e, o) => {
-  const res = await net.fetch(o.url, { method: o.method || 'GET', headers: o.headers || {}, body: o.body == null ? undefined : (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body) });
+  const res = await net.fetch(o.url, { method: o.method || 'GET', headers: o.headers || {}, body: o.body == null ? undefined : (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body), useSessionCookies: true });
   const buf = Buffer.from(await res.arrayBuffer());
   const headers = {}; res.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   return { status: res.status, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
@@ -265,6 +269,14 @@ ipcMain.on('kr:progress', (e, p) => {
   w.setProgressBar(busy ? Math.min(1, p) : -1);
   e.sender.setBackgroundThrottling(!busy);
 });
+// A window on a site, sharing the app's session, so a browser check can be passed by hand; resolves when closed.
+ipcMain.handle('kr:open-webview', async (_e, url) => new Promise((resolve) => {
+  const w = new BrowserWindow({ width: 900, height: 760, parent: win || undefined, title: String(url), webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  w.setMenuBarVisibility(false);
+  w.webContents.on('did-finish-load', () => { const title = w.webContents.getTitle(); if (title && !/Just a moment|Attention Required|لحظة/.test(title)) w.webContents.session.cookies.get({ url: String(url) }).then((cs) => { if (cs.some((c) => c.name === 'cf_clearance')) setTimeout(() => { if (!w.isDestroyed()) w.close(); }, 800); }).catch(() => {}); });
+  w.on('closed', () => resolve(true));
+  w.loadURL(String(url)).catch(() => {});
+}));
 ipcMain.handle('kr:folder-pick', async () => { const { dialog } = require('electron'); const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('fs/promises').readFile(String(p), 'utf8'); } catch { return null; } });
 // Downloads into the app's data folder (learning decks), with progress. Uses aria2c when it is

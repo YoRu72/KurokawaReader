@@ -539,6 +539,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const doc = docs.find((d) => d.book.id === jump.bookId) ?? first;
       if (jump.kind === 'bm') { const bm = doc.book.bookmarks.find((x) => x.id === jump.id); if (bm) { scrollToLocator(bm.locator); return; } }
       if (jump.kind === 'toc') { const i = Number(jump.id); const item = doc.render?.toc?.[i]; if (item) { setTimeout(() => scrollToAnchor(item.anchor, false), 30); return; } }
+      if (jump.kind === 'anchor') { setTimeout(() => scrollToAnchor(jump.id, false), 30); return; }
       if (jump.kind === 'hl') { setTimeout(() => { const m = doc.wrapper.querySelector(`mark[data-hl="${jump.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${jump.id}`; scrollToAnchor(m.id); } }, 50); return; }
     }
     const p = first.book.progress;
@@ -1390,7 +1391,7 @@ export async function toggleFavorite(book: Book): Promise<boolean> {
 }
 
 /** A one-shot jump target set by the Bookmarks & notes view before opening a book. */
-export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin' | 'toc'; id: string }
+export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin' | 'toc' | 'anchor'; id: string }
 export function setJump(j: Jump): void { sessionStorage.setItem('kr.jump', JSON.stringify(j)); }
 function takeJump(): Jump | null { const raw = sessionStorage.getItem('kr.jump'); if (!raw) return null; sessionStorage.removeItem('kr.jump'); try { return JSON.parse(raw) as Jump; } catch { return null; } }
 

@@ -446,3 +446,21 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .rsvp-wpm { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--md-on-surface-variant); white-space: nowrap; }
 /* Each page is a window on its sheet: the whole page sits inside, shifted when the margins are cropped. */
 .pdf-page .pdf-sheet { position: absolute; left: 0; top: 0; }
+
+/* Shamela books: a page is one block, with its printed number at its start; footnotes smaller under a rule. */
+.kr-content.kr-shamela .kr-page { margin: 0 0 1.1em; }
+.kr-content.kr-shamela .kr-page.pending { min-height: 2.5em; color: var(--r-dim); }
+.kr-content.kr-shamela .kr-page-mark { display: inline-block; font-family: var(--font-ui); font-size: .72em; color: var(--r-dim); margin-inline-end: .6em; vertical-align: baseline; user-select: none; -webkit-user-select: none; }
+.kr-content.kr-shamela .kr-page-wait { color: var(--r-dim); font-size: .85em; }
+.kr-content.kr-shamela .kr-page-wait.failed { color: var(--r-link); }
+.kr-content.kr-shamela .kr-para { margin: 0 0 .55em; }
+.kr-content.kr-shamela .kr-para.kr-center { text-align: center; }
+.kr-content.kr-shamela .kr-hamesh { font-size: .86em; color: var(--r-dim); line-height: 1.6; }
+.kr-content.kr-shamela .kr-para.kr-hamesh:first-of-type, .kr-content.kr-shamela .kr-para:not(.kr-hamesh) + .kr-hamesh { border-top: 1px solid var(--r-rule); padding-top: .5em; margin-top: .9em; }
+.kr-content.kr-shamela .kr-red { color: var(--r-link); font-weight: 600; }
+.kr-content.kr-shamela .kr-green { color: color-mix(in srgb, var(--r-fg) 60%, #2a9d5c); }
+.kr-content.kr-shamela .kr-blue { color: var(--r-link); }
+.kr-content.kr-shamela .kr-shamela-title { font-size: 1.3em; margin: 1.4em 0 .8em; }
+.kr-content.kr-shamela .kr-shamela-sub { font-size: 1.1em; margin: 1.1em 0 .6em; }
+.kr-content.kr-shamela .kr-shamela-card { font-size: .92em; color: var(--r-dim); }
+.kr-content.kr-shamela .kr-shamela-card b { color: var(--r-fg); }

@@ -135,6 +135,12 @@ export function settingsView(): HTMLElement {
   renderOptions(opts);
   body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts));
 
+  // Books from the web: the sources (archive.org, Shamela) and the OPDS catalogues.
+  body.append(h('section', { class: 'card' }, h('h3', null, t('sources')), h('p', null, t('sourcesHint')),
+    h('div', { class: 'actions-row' },
+      h('button', { class: 'btn tonal small', onclick: () => navigate('/sources') }, icon('globe'), t('sourcesMenu')),
+      h('button', { class: 'btn small', onclick: () => navigate('/catalog') }, icon('books'), t('catalogs')))));
+
   // Starter books
   body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: async () => { toast(t('addingSamples'), 'info', 60000); try { const { importSamples } = await import('../samples'); const a = await importSamples(); toast(t('imported', { n: countBooks(a.length) })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('books'), t('sampleBooks')))));

@@ -1,4 +1,5 @@
-// Hash router: #/ (library), #/read/<id>[,<id>…], #/book/<id>, #/settings, #/notes, #/catalog[?u=<feed>&q=<query>]
+// Hash router: #/ (library), #/read/<id>[,<id>…], #/book/<id>, #/settings, #/notes, #/catalog[?u=<feed>&q=<query>],
+// #/sources[/<source>[/book/<id>]][?q=&shelf=&tags=]
 
 export type Route =
   | { name: 'library' }
@@ -6,7 +7,8 @@ export type Route =
   | { name: 'book'; id: string }
   | { name: 'settings' }
   | { name: 'notes' }
-  | { name: 'catalog'; url?: string; q?: string };
+  | { name: 'catalog'; url?: string; q?: string }
+  | { name: 'sources'; src?: string; book?: string; q?: string; shelf?: string; tags?: string[]; v?: string };
 
 const listeners = new Set<(r: Route) => void>();
 
@@ -18,6 +20,11 @@ export function parseRoute(hash = location.hash): Route {
   if (b) return { name: 'book', id: b[1] };
   if (path.startsWith('/settings')) return { name: 'settings' };
   if (path.startsWith('/notes')) return { name: 'notes' };
+  if (path.startsWith('/sources')) {
+    const [p0, qs] = path.split('?'); const sp = new URLSearchParams(qs ?? '');
+    const m = /^\/sources(?:\/([^/?]+))?(?:\/book\/([^/?]+))?/.exec(p0);
+    return { name: 'sources', src: m?.[1] || undefined, book: m?.[2] ? decodeURIComponent(m[2]) : undefined, q: sp.get('q') ?? undefined, shelf: sp.get('shelf') ?? undefined, tags: sp.get('tags') ? sp.get('tags')!.split('\u0001').filter(Boolean) : undefined, v: sp.get('v') ?? undefined };
+  }
   if (path.startsWith('/catalog')) { const sp = new URLSearchParams(path.split('?')[1] ?? ''); return { name: 'catalog', url: sp.get('u') ?? undefined, q: sp.get('q') ?? undefined }; }
   return { name: 'library' };
 }

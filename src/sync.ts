@@ -146,6 +146,8 @@ export async function dropboxConnect(): Promise<void> {
 }
 /** Called with the redirect URL (web: location; native/desktop: kurokawareader://oauth?code=…). */
 export async function handleOAuthRedirect(url: string): Promise<boolean> {
+  // (A sign-in to وصلة الشاملة comes back the same way, told apart by its state.)
+  { const m = await import('./sources/shamelalink'); if (m.isOurRedirect(url)) { const ok = await m.finishSignIn(url); if (ok) { const { toast } = await import('./ui/dom'); toast('تم تسجيل الدخول إلى وصلة الشاملة'); } return ok; } }
   const code = new URL(url.replace(/^kurokawareader:\/\//, 'https://x/')).searchParams.get('code');
   const verifier = localStorage.getItem('kr.dbx.verifier');
   if (!code || !verifier) return false;
@@ -255,7 +257,7 @@ export function initSync(onAsk: () => void): void {
   window.addEventListener('online', () => setTimeout(kick, 1500));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && localStorage.getItem('kr.sync.pending') && getSettings().syncAuto) void syncNow(); });
   // OAuth redirects
-  if (location.search.includes('code=') && localStorage.getItem('kr.dbx.verifier')) { void handleOAuthRedirect(location.href).then(() => history.replaceState(null, '', location.pathname + location.hash)).catch((e) => toast(String((e as Error).message ?? e), 'error')); }
+  if (location.search.includes('code=') && (localStorage.getItem('kr.dbx.verifier') || localStorage.getItem('kr.shamelalink.flow'))) { void handleOAuthRedirect(location.href).then(() => history.replaceState(null, '', location.pathname + location.hash)).catch((e) => toast(String((e as Error).message ?? e), 'error')); }
 }
 export function disconnectSync(): void {
   updateSettings({ syncProvider: 'none', syncDropboxRefresh: '', syncLastAt: 0 });
