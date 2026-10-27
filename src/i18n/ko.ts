@@ -100,4 +100,5 @@ export const ko: Partial<Strings> = {
   deckOpenedInBrowser: '브라우저에서 열었습니다. 다운로드가 끝나면 파일을 추가하세요.',
   hskSentencesBody: '같은 HSK 덱, 예문 포함.',
   addBooks: '책 추가', addBooksNow: '지금 책 추가', tagExists: '같은 이름의 태그가 있습니다', tagCreated: '태그를 만들었습니다', addedToTag: '{n}권을 “{name}”에 추가했습니다', emptyTagBody: '이 태그는 비어 있습니다. 서재에서 책을 추가하세요.',
+  searching: '검색 중…',
 };

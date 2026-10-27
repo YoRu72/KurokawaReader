@@ -442,6 +442,9 @@ html[dir='rtl'] .toc-book { text-transform: none; letter-spacing: 0; font-size: 
 .hit .ctx { font-size: 14px; color: var(--md-on-surface); line-height: 1.5; }
 .plain-list li.hit .meta { display: flex; align-items: baseline; gap: 10px; }
 .plain-list li.hit button { overflow-wrap: anywhere; }
+/* (Hits below the fold are not laid out until scrolled to: hundreds of lines of shaped Arabic took the phone
+   half a second to lay out at once.) */
+.plain-list li.hit { content-visibility: auto; contain-intrinsic-size: auto 78px; }
 .hit .hit-pct { color: var(--md-primary); font-weight: 600; font-size: 12.5px; }
 
 /* Options */

@@ -1142,6 +1142,7 @@ export const ar: Strings = {
   chooseBooks: "اختيار الكتب…",
   searchFilters: "التصفية",
   searchTooShort: "اكتب حرفين على الأقل.",
+  searching: 'جارٍ البحث…',
   searchingBook: "البحث في {n} من {total}: {title}",
   readingBookPages: "قراءة «{title}» للبحث: الصفحة {n} من {total} (مرّةً واحدة)",
   protectedBook: "«{title}» (محميّ: افتحه مرّةً بكلمة مروره)",

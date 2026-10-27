@@ -3,7 +3,7 @@
 // quick; the units are then searched with the same normalisation as the in-book search (Arabic harakat,
 // tatweel and letter variants, vertical and full-width forms, case), or exactly, as chosen.
 import { db, type Book } from './db';
-import { normalizeForSearch } from './formats/types';
+import { normalizeForSearch, searchFormOf } from './formats/types';
 import { flowHandlerFor } from './formats';
 
 export type Unit = { label: string; text: string };
@@ -16,7 +16,15 @@ export type BookResult = { book: Book; hits: Hit[]; total: number; error?: 'prot
 export const SEARCHABLE: Book['format'][] = ['pdf', 'epub', 'docx', 'odt', 'fb2', 'txt', 'md', 'html', 'mobi', 'xlsx', 'csv', 'pptx'];
 export const searchable = (b: Book) => SEARCHABLE.includes(b.format);
 
+// (The books read most lately stay in memory, up to a budget of letters; the rest are read again from the
+// device's store when searched — a whole library's text in memory would sink a phone.)
 const memo = new Map<string, Unit[]>();
+const MEMO_CHARS = 24_000_000;
+function remember(id: string, units: Unit[]): void {
+  memo.delete(id); memo.set(id, units);
+  let total = 0; for (const u of memo.values()) for (const x of u) total += x.text.length;
+  for (const [k, u] of memo) { if (total <= MEMO_CHARS || k === id) break; memo.delete(k); for (const x of u) total -= x.text.length; }
+}
 // (The version goes up whenever the way text is read changes, so books are read again rather than searched
 // in text kept from before.)
 const TEXT_VERSION = 4;
@@ -25,9 +33,9 @@ const keyOf = (b: Book) => `v${TEXT_VERSION}:${b.size ?? 0}:${b.fileName ?? ''}`
 /** A book's text units: from the device's store when read before, else read now (and stored). */
 export async function unitsOf(book: Book, onPage?: (n: number, total: number) => void): Promise<Unit[] | 'protected' | 'unreadable'> {
   const key = keyOf(book);
-  const m = memo.get(book.id); if (m) return m;
+  const m = memo.get(book.id); if (m) { remember(book.id, m); return m; }
   const stored = await db.getText(book.id);
-  if (stored && stored.key === key) { memo.set(book.id, stored.units); return stored.units; }
+  if (stored && stored.key === key) { remember(book.id, stored.units); return stored.units; }
   const file = await db.getFile(book.id);
   if (!file) return 'unreadable';
   let units: Unit[];
@@ -37,8 +45,8 @@ export async function unitsOf(book: Book, onPage?: (n: number, total: number) =>
       if (r === 'protected') return r;
       units = r;
     } else units = await flowUnits(book, file);
-  } catch { return 'unreadable'; }
-  memo.set(book.id, units);
+  } catch (err) { console.warn('search: cannot read', book.title, err); return 'unreadable'; }
+  remember(book.id, units);
   void db.putText(book.id, { key, units });
   return units;
 }
@@ -97,7 +105,11 @@ async function flowUnits(book: Book, file: Blob): Promise<Unit[]> {
 /** Words and their places in normalised text (letters and digits of any script). */
 const WORD = /[\p{L}\p{M}\p{N}]/u;
 
-const normCache = new WeakMap<Unit, { raw: string; norm: { text: string; map: Int32Array } }>();
+// (A unit's search form is kept from one search to the next — a big book's thousands of pages took seconds
+// to normalise again for every search — but only the form: the map back to the letters as written is made
+// for the units with hits, when they are shown.)
+const formCache = new WeakMap<Unit, string>();
+const rawOf = (u: Unit) => u.text.replace(/\s/g, ' ');
 
 /** Search one book's units. Excerpts are cut at word boundaries, about eight words each side. */
 export function searchUnits(units: Unit[], query: string, o: Options, limit = 200): { hits: Hit[]; total: number } {
@@ -106,15 +118,14 @@ export function searchUnits(units: Unit[], query: string, o: Options, limit = 20
   if (!terms.length || !terms[0]) return { hits: [], total: 0 };
   const hits: Hit[] = []; let total = 0;
   units.forEach((u, ui) => {
-    // (A unit's normalised text is kept from one search to the next: a big book's thousands of pages took
-    // seconds to normalise again for every search.)
-    let c = o.exact ? null : normCache.get(u);
-    if (!c) { const raw = u.text.replace(/\s/g, ' '); c = { raw, norm: prep(raw) }; if (!o.exact) normCache.set(u, c); }
-    const { raw, norm } = c;
+    let text: string;
+    if (o.exact) text = rawOf(u);
+    else { const c = formCache.get(u); if (c !== undefined) text = c; else { text = searchFormOf(rawOf(u)); formCache.set(u, text); } }
+    let norm: { text: string; map: Int32Array } | null = null, raw = '';
     const found = (term: string) => {
       const at: number[] = [];
-      for (let i = norm.text.indexOf(term); i >= 0; i = norm.text.indexOf(term, i + Math.max(1, term.length))) {
-        if (o.wholeWord && ((i > 0 && WORD.test(norm.text[i - 1])) || (i + term.length < norm.text.length && WORD.test(norm.text[i + term.length])))) continue;
+      for (let i = text.indexOf(term); i >= 0; i = text.indexOf(term, i + Math.max(1, term.length))) {
+        if (o.wholeWord && ((i > 0 && WORD.test(text[i - 1])) || (i + term.length < text.length && WORD.test(text[i + term.length])))) continue;
         at.push(i);
       }
       return at;
@@ -127,6 +138,7 @@ export function searchUnits(units: Unit[], query: string, o: Options, limit = 20
     for (const { i, len } of places) {
       total++;
       if (hits.length >= limit) continue;
+      if (!norm) { raw = rawOf(u); norm = prep(raw); }
       const s = norm.map[i], e = norm.map[Math.min(norm.map.length - 1, i + len)];
       let a = Math.max(0, s - 70); if (a > 0) { const sp = raw.indexOf(' ', a); a = sp >= 0 && sp < s ? sp + 1 : a; }
       let b = Math.min(raw.length, e + 70); if (b < raw.length) { const sp = raw.lastIndexOf(' ', b); b = sp > e ? sp : b; }

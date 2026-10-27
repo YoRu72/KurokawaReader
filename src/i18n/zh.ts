@@ -100,4 +100,5 @@ export const zh: Partial<Strings> = {
   deckOpenedInBrowser: '已在浏览器中打开；下载完成后请添加该文件。',
   hskSentencesBody: '同一 HSK 卡组，附例句。',
   addBooks: '添加图书', addBooksNow: '现在就添加图书', tagExists: '已有同名标签', tagCreated: '已创建标签', addedToTag: '已将 {n} 本添加到“{name}”', emptyTagBody: '此标签为空。请从书库中添加图书。',
+  searching: '搜索中…',
 };

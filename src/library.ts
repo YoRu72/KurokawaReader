@@ -80,7 +80,7 @@ export function forgetCover(id: string): void {
 }
 
 /** Covers are shown at card size; a 3000-px publisher cover is wasted storage. */
-async function shrinkCover(cover?: Blob): Promise<Blob | undefined> {
+export async function shrinkCover(cover?: Blob): Promise<Blob | undefined> {
   if (!cover || cover.size < 150_000) return cover;
   try {
     const bmp = await createImageBitmap(cover);

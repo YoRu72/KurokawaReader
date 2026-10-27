@@ -562,6 +562,9 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   if (s.texture === 'polka') { const [l, r, tb] = polkaStrips(s.polkaAmount, s.polkaSize); root.style.setProperty('--r-polka-l', l); root.style.setProperty('--r-polka-r', r); root.style.setProperty('--r-polka-tb', tb); }
   root.dataset.polka = s.texture === 'polka' ? s.polkaPlace : '';
   root.style.setProperty('--r-bg-image-opacity', String(s.bgImage ? s.bgImageOpacity : 0));
+  // (The picture and texture layers exist only when there is something on them: an empty full-screen layer
+  // with a filter still costs the phone a composited surface on every scrolled frame.)
+  root.dataset.bgImage = s.bgImage ? 'on' : '';
   root.style.setProperty('--r-bg-blur', `${s.bgBlur}px`);
   root.style.setProperty('--r-bg-shade', String(s.bgShade));
   root.style.setProperty('--r-bg-sat', String(s.bgSaturate));

@@ -150,8 +150,10 @@ export function librarySearchSheet(books: Book[], folders: Folder[], activeFolde
     const opts: Options = { mode: st.mode, wholeWord: st.wholeWord, exact: st.exact };
     results.replaceChildren(); go.hidden = true; if (!back || q !== back.q) shownOf.clear(); stop.hidden = false; bar.hidden = false;
     const fill = bar.firstElementChild as HTMLElement;
-    let found = 0, inBooks = 0; const skipped: string[] = [];
+    let found = 0, inBooks = 0; const skipped: string[] = []; let breath = performance.now();
     for (let i = 0; i < list.length && !my.cancelled; i++) {
+      // (The page gets a frame now and then even through a run of books with nothing in them.)
+      if (performance.now() - breath > 40) { await new Promise((res) => setTimeout(res, 0)); breath = performance.now(); if (my.cancelled) break; }
       const b = list[i];
       status.textContent = t('searchingBook', { n: localDigits(i + 1), total: localDigits(list.length), title: b.title });
       fill.style.width = `${(i / list.length) * 100}%`;

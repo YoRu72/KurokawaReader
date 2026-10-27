@@ -9,9 +9,38 @@ const SAVE_MS = 30000;
 const SESSION_GAP_MS = 30 * 60000;
 const WORDS_PER_PAGE = 300;
 
-export function countWords(text: string): number {
-  return (text.match(/[\p{L}\p{N}]+(?:['’ـ-ٟ][\p{L}\p{N}]+)*/gu) ?? []).length;
+/** Is the character at code `c` part of a word? Letters and digits of every script are; whitespace, ASCII
+ *  symbols and the common punctuation blocks (Latin-1, general, CJK, Arabic, full-width) are not. Told apart
+ *  by ranges rather than Unicode property lookups: a big book has millions of characters to go through. */
+function isWordChar(c: number): boolean {
+  if (c < 0x80) return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  if (c < 0xC0) return c === 0xAA || c === 0xB5 || c === 0xBA || c === 0xB2 || c === 0xB3 || c === 0xB9;
+  if (c === 0xD7 || c === 0xF7) return false;
+  if (c >= 0x0300 && c <= 0x036F) return true;                                   // combining marks stay in the word
+  if (c >= 0x064B && c <= 0x065F) return true;                                   // Arabic marks (harakat, shadda) too
+  if (c === 0x060C || c === 0x061B || c === 0x061F || c === 0x06D4 || (c >= 0x066A && c <= 0x066D) || c === 0x0600 || c === 0x061E) return false;
+  if (c >= 0x2000 && c <= 0x206F) return false;                                  // general punctuation
+  if (c >= 0x2190 && c <= 0x2BFF) return false;                                  // arrows, maths, box drawing, dingbats
+  if (c >= 0x2E00 && c <= 0x2E7F) return false;
+  if (c >= 0x3000 && c <= 0x303F) return false;                                  // CJK punctuation
+  if ((c >= 0xFF00 && c <= 0xFF0F) || (c >= 0xFF1A && c <= 0xFF20) || (c >= 0xFF3B && c <= 0xFF40) || (c >= 0xFF5B && c <= 0xFF65)) return false;
+  return true;
 }
+/** Words and non-blank characters of `text`. A word is a run of word characters; an apostrophe or a tatweel
+ *  between two of them keeps the run one word (it's, don’t, مـحـمد). A run of CJK characters counts as one. */
+export function countWordsAndChars(text: string): [number, number] {
+  let words = 0, chars = 0, inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 32 || (c >= 9 && c <= 13) || c === 0xA0 || c === 0x3000 || c === 0x2028 || c === 0x2029) { inWord = false; continue; }
+    chars++;
+    if (isWordChar(c)) { if (!inWord) { words++; inWord = true; } }
+    else if (inWord && (c === 0x27 || c === 0x2019 || c === 0x0640) && i + 1 < text.length && isWordChar(text.charCodeAt(i + 1))) { /* still the same word */ }
+    else inWord = false;
+  }
+  return [words, chars];
+}
+export function countWords(text: string): number { return countWordsAndChars(text)[0]; }
 
 export function todayKey(): string {
   const d = new Date();

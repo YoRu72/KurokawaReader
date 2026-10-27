@@ -1137,6 +1137,7 @@ export const en = {
   chooseBooks: "Choose books…",
   searchFilters: "Filters",
   searchTooShort: "Type at least two letters.",
+  searching: 'Searching…',
   searchingBook: "Searching {n} of {total}: {title}",
   readingBookPages: "Reading “{title}” for searching: page {n} of {total} (once only)",
   protectedBook: "“{title}” (protected: open it once with its password)",

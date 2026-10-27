@@ -13,7 +13,7 @@ import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from 
 import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
-import { normalizeForSearch } from '../formats/types';
+import { normalizeForSearch, searchFormOf } from '../formats/types';
 import { BLOCK_SELECTOR } from '../formats/shared';
 import { PdfViewer, type CropBox, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
@@ -23,7 +23,7 @@ import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } fr
 import { openGallery } from './gallery';
 import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate } from '../router';
-import { ReadingTracker, countWords } from '../stats';
+import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot } from '../ui/textcard';
 import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
@@ -88,7 +88,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
   onDispose(() => { document.body.style.background = ''; applyChrome(); });
-  const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
+  const syncComfort = () => {
+    const st = getComputedStyle(reader); const warm = st.getPropertyValue('--r-warmth').trim(), dim = st.getPropertyValue('--r-dim-overlay').trim();
+    root.style.setProperty('--r-warmth', warm); root.style.setProperty('--r-dim-overlay', dim);
+    const el = root.querySelector<HTMLElement>('.reader-comfort'); if (el) { el.hidden = !(Number(warm) > 0 || Number(dim) > 0); el.dataset.warm = Number(warm) > 0 ? '1' : '0'; }
+  };
   queueMicrotask(syncComfort);
   const flow = h('div', { class: 'reader-flow' });
   const scroll = h('div', { class: 'reader-scroll', tabindex: '0' }, flow);
@@ -239,13 +243,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // matches), the matches marked.
   {
     const sj = takeSearchJump(docs[0].book.id);
-    if (sj) {
-      const hits = searchFlow(sj.q);
+    if (sj) void searchFlow(sj.q).then((hits) => {
+      if (!reader.isConnected) return;
       const chapters = [...(docs[0].render?.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter') ?? [])];
       const inUnit = hits.filter((hh) => { const el = hh.range.startContainer.parentElement; const c = el?.closest('.kr-chapter'); return c ? chapters.indexOf(c as HTMLElement) === sj.unit : sj.unit === 0; });
       const hit = inUnit[Math.min(sj.nth, inUnit.length - 1)] ?? hits[0];
       if (hit) goToHit(hit);
-    }
+    });
   }
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
@@ -282,6 +286,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // Reading statistics: words per block, tracked as the reader scrolls past them.
   const wordsOf = new WeakMap<HTMLElement, number>();
   const wordCount = (b: HTMLElement): number => { let w = wordsOf.get(b); if (w === undefined) { w = b.tagName === 'IMG' ? 0 : countWords(b.textContent ?? ''); wordsOf.set(b, w); } return w; };
+  type Idle = Window & { requestIdleCallback?: (cb: (d: { timeRemaining(): number }) => void, o?: { timeout: number }) => number };
   const trackers = new Map<OpenDoc, ReadingTracker>();
   for (const doc of docs) {
     // (The words of every block are counted after the book is on screen, in idle moments: a big book has
@@ -289,15 +294,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const tr = new ReadingTracker(doc.book, () => currentLocator()?.doc === doc, doc.book.stats?.bookWords, doc.book.stats?.bookChars);
     tr.start();
     trackers.set(doc, tr);
+    // (A book counted once is not counted again: the totals are kept with it.)
+    if (doc.book.stats?.bookWords != null && doc.book.stats?.bookChars != null) continue;
     let i = 0, total = 0, chars = 0; let gone = false; onDispose(() => { gone = true; });
-    const step = () => {
+    const step = (deadline?: { timeRemaining(): number }) => {
       if (gone) return;
-      const end = Math.min(doc.allBlocks.length, i + 400);
-      for (; i < end; i++) { const b = doc.allBlocks[i]; total += wordCount(b); chars += b.tagName === 'IMG' ? 0 : (b.textContent ?? '').replace(/\s+/g, '').length; }
-      if (i < doc.allBlocks.length) { const w = window as Window & { requestIdleCallback?: (cb: () => void) => number }; if (w.requestIdleCallback) w.requestIdleCallback(step); else window.setTimeout(step, 16); }
+      // Only while the browser has nothing else to do — never into a frame that is scrolling.
+      const until = performance.now() + (deadline ? Math.min(12, deadline.timeRemaining() - 1) : 6);
+      for (; i < doc.allBlocks.length && (i & 15 || performance.now() < until); i++) {
+        const b = doc.allBlocks[i]; if (b.tagName === 'IMG') { wordsOf.set(b, 0); continue; }
+        const [w, c] = countWordsAndChars(b.textContent ?? ''); wordsOf.set(b, w); total += w; chars += c;
+      }
+      if (i < doc.allBlocks.length) { const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(step, { timeout: 2000 }); else window.setTimeout(step, 32); }
       else tr.setTotals(total, chars);
     };
-    window.setTimeout(step, 300);
+    window.setTimeout(step, 1200);
   }
   const trackProgress = () => {
     const cur = currentLocator();
@@ -469,7 +480,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     let pct = Math.min(1, Math.max(0, (sr.top - wr.top + probeY) / Math.max(1, wr.height - sr.height * 0.5)));
     // Block index is always relative to the whole book, so a position survives switching
     // between chapter and continuous mode; progress is weighted by content, not by chapter count.
-    const globalIdx = block ? doc.allBlocks.indexOf(block) : -1;
+    const globalIdx = block ? blockIndexOf(doc, block) : -1;
     if (chapterMode() && doc.chapters.length > 1) {
       const cr = doc.chapters[doc.chapter].getBoundingClientRect();
       const within = Math.min(1, Math.max(0, (sr.top - cr.top + probeY) / Math.max(1, cr.height - sr.height * 0.5)));
@@ -534,27 +545,39 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (p && p.bookId === first.book.id) scrollToLocator(p);
   }
 
-  /** Which contents entry a block falls under (the last one that starts at or before it). */
+  /** Which contents entry a block falls under (the last one that starts at or before it). A binary search
+   *  over the contents, so a book with thousands of entries costs a dozen comparisons a scroll, not thousands. */
+  const anchorsOf = new Map<OpenDoc, Element[]>();
+  function tocAnchor(doc: OpenDoc, i: number): Element | null {
+    let arr = anchorsOf.get(doc); if (!arr) { arr = []; anchorsOf.set(doc, arr); }
+    // (A missing one is looked for again: its chapter may not be on the page yet.)
+    const have = arr[i]; if (have?.isConnected) return have;
+    const el = document.getElementById(doc.render?.toc?.[i]?.anchor ?? ''); if (el) arr[i] = el;
+    return el;
+  }
   function tocIndexFor(doc: OpenDoc, block: Element): number {
-    const toc = doc.render?.toc ?? []; let best = -1;
-    for (let i = 0; i < toc.length; i++) {
-      const el = document.getElementById(toc[i].anchor); if (!el) continue;
-      if (el.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING || el === block || el.contains(block)) best = i; else break;
+    const toc = doc.render?.toc ?? []; if (!toc.length) return -1;
+    const startsBefore = (i: number): boolean | null => { const el = tocAnchor(doc, i); if (!el) return null; return !!(el.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING) || el === block || el.contains(block); };
+    let lo = 0, hi = toc.length - 1, best = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1; let k = m; let r = startsBefore(k);
+      while (r === null && k < hi) r = startsBefore(++k);
+      if (r === null) { hi = m - 1; continue; }
+      if (r) { best = k; lo = k + 1; } else hi = m - 1;
     }
     return best;
   }
   function labelFor(doc: OpenDoc, blockIdx: number): string {
-    const toc = doc.render?.toc ?? [];
-    if (!toc.length) return doc.book.title;
-    const block = doc.allBlocks[blockIdx];
-    if (!block) return doc.book.title;
-    let best = '';
-    for (const item of toc) {
-      const el = document.getElementById(item.anchor);
-      if (!el) continue;
-      if (el.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING || el === block || el.contains(block)) best = item.label; else break;
-    }
-    return best || doc.book.title;
+    const block = doc.allBlocks[blockIdx]; if (!block) return doc.book.title;
+    const i = tocIndexFor(doc, block);
+    return (i >= 0 ? doc.render?.toc?.[i]?.label : '') || doc.book.title;
+  }
+  /** A block's place in the whole book (looked up, not searched for: a hit list has hundreds). */
+  const blockIdx = new WeakMap<OpenDoc, WeakMap<Element, number>>();
+  function blockIndexOf(doc: OpenDoc, block: Element): number {
+    let m = blockIdx.get(doc);
+    if (!m || m.get(doc.allBlocks[doc.allBlocks.length - 1]) === undefined) { m = new WeakMap(); doc.allBlocks.forEach((b, i) => m!.set(b, i)); blockIdx.set(doc, m); }
+    return m.get(block) ?? -1;
   }
 
   /* ---------- the next volume, when the book ends ---------- */
@@ -657,7 +680,34 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // The screen turned (or the window resized): the text reflows, so the place being read is found again and
   // put back where it was — the reader does not land somewhere else in the chapter.
   let stable: Locator | null = null; let stableTimer = 0; let lastW = scroll.clientWidth, lastH = scroll.clientHeight; let resizing = false;
-  const noteStable = () => { if (resizing) return; window.clearTimeout(stableTimer); stableTimer = window.setTimeout(() => { const c = currentLocator(); if (c) stable = c.loc; }, 250); };
+  let lastScrollAt = 0;
+  const noteStable = () => { lastScrollAt = performance.now(); if (resizing) return; window.clearTimeout(stableTimer); stableTimer = window.setTimeout(() => { const c = currentLocator(); if (c) stable = c.loc; layAhead(); }, 250); };
+  // Continuous reading keeps chapters away from the screen unlaid (content-visibility), and laying one out when
+  // it comes near takes a frame or three on a phone — a page of Arabic, shaped, is slow work — which showed as
+  // a catch in every fling that reached a new chapter. So once the scrolling has settled, the chapters within
+  // two screens below are laid out in idle moments, one at a time, and are ready when the reader gets there.
+  let aheadTimer = 0;
+  const layAhead = () => {
+    window.clearTimeout(aheadTimer);
+    if (!reader.isConnected || chapterMode()) return;
+    const step = () => {
+      // (Not into a fling that has started since: the next settling brings it back.)
+      if (!reader.isConnected || chapterMode() || performance.now() - lastScrollAt < 200) return;
+      const sr = scroll.getBoundingClientRect(); const until = sr.bottom + sr.height * 2;
+      for (const doc of docs) for (const ch of doc.chapters) {
+        const r = ch.getBoundingClientRect();
+        if (r.bottom < sr.top - sr.height) continue;
+        if (r.top > until) return;
+        const last = ch.lastElementChild; if (!last) continue;
+        const t0 = performance.now(); last.getBoundingClientRect();
+        // One slow chapter per idle slot; the rest follow in the next.
+        if (performance.now() - t0 > 3) { const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(() => step(), { timeout: 1500 }); else aheadTimer = window.setTimeout(step, 50); return; }
+      }
+    };
+    const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(() => step(), { timeout: 1500 }); else aheadTimer = window.setTimeout(step, 50);
+  };
+  onDispose(() => window.clearTimeout(aheadTimer));
+  window.setTimeout(layAhead, 900);
   const sizeObs = new ResizeObserver(() => {
     const w = scroll.clientWidth, hgt = scroll.clientHeight;
     if (Math.abs(w - lastW) < 2 && Math.abs(hgt - lastH) < 2) return;
@@ -933,38 +983,103 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   onDispose(clearSearchMarks);
 
-  function searchFlow(query: string): SearchHit[] {
+  // Searching the book. Each chapter's text nodes are gathered once and their search forms (harakat, tatweel
+  // and letter variants aside) joined into one string, kept from one search to the next and made ahead in idle
+  // moments; a search is then a scan of a few long strings — a book of fifteen million letters in a fraction
+  // of a second — run in slices between frames, handing over its hits as it goes, so the page stays live and
+  // the first results show at once. A chapter whose text changes (a highlight added) is gathered again.
+  interface ChapterIndex { nodes: Text[]; parts: string[]; starts: number[]; next: number; text: string | null; dirty: boolean }
+  const chapterIndexes = new WeakMap<Element, ChapterIndex>();
+  const watched = new WeakSet<Element>();
+  function unitsOf(doc: OpenDoc): Element[] {
+    const content = doc.render?.element; if (!content) return [];
+    if (!watched.has(content)) {
+      watched.add(content);
+      const obs = new MutationObserver((muts) => { for (const m of muts) { const el = (m.target instanceof Element ? m.target : m.target.parentElement)?.closest('.kr-chapter') ?? content; const ix = chapterIndexes.get(el); if (ix) ix.dirty = true; } });
+      obs.observe(content, { childList: true, subtree: true, characterData: true }); onDispose(() => obs.disconnect());
+    }
+    return doc.chapters.length ? doc.chapters : [content];
+  }
+  function textNodesUnder(el: Element): Text[] {
+    // (Style and script elements are stepped over whole, rather than every text node asking for its ancestors.)
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : (n as Element).localName === 'style' || (n as Element).localName === 'script' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP });
+    const nodes: Text[] = []; let node: Node | null;
+    while ((node = walker.nextNode())) nodes.push(node as Text);
+    return nodes;
+  }
+  /** The index of a chapter, built as far as `until` allows (null when more remains; call again). */
+  function chapterIndex(el: Element, until = Infinity): ChapterIndex | null {
+    let ix = chapterIndexes.get(el);
+    if (!ix || ix.dirty) { ix = { nodes: textNodesUnder(el), parts: [], starts: [], next: 0, text: null, dirty: false }; chapterIndexes.set(el, ix); }
+    if (ix.text !== null) return ix;
+    let at = ix.starts.length ? ix.starts[ix.starts.length - 1] + ix.parts[ix.parts.length - 1].length + 1 : 0;
+    for (; ix.next < ix.nodes.length; ix.next++) {
+      if ((ix.next & 31) === 0 && performance.now() > until) return null;
+      const form = searchFormOf(ix.nodes[ix.next].data);
+      ix.starts.push(at); ix.parts.push(form); at += form.length + 1;
+    }
+    ix.text = ix.parts.join('\n');   // (the break keeps a match inside one node, as the page has it)
+    return ix;
+  }
+  const yieldToPage = (): Promise<void> => new Promise((r) => { const sch = (window as Window & { scheduler?: { yield?(): Promise<void> } }).scheduler; if (sch?.yield) void sch.yield().then(r); else setTimeout(r, 0); });
+  /** Run `query` through the book, calling `onHits` with each slice's hits; resolves to all of them. */
+  async function searchFlow(query: string, onHits?: (hits: SearchHit[]) => void, live?: () => boolean): Promise<SearchHit[]> {
     const q = normalizeForSearch(query.trim());
     const hits: SearchHit[] = [];
     if (!q.text) return hits;
     const ranges: Range[] = [];
+    const LIMIT = 500, SLICE = 600000;   // letters looked through between two breaths
     for (const doc of docs) {
-      const content = doc.render?.element;
-      if (!content) continue;
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement?.closest('style, script') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
-      let node: Node | null;
-      while ((node = walker.nextNode()) && hits.length < 500) {
-        const text = node.textContent ?? '';
-        if (text.length < q.text.length) continue;
-        const norm = normalizeForSearch(text);
-        let idx = norm.text.indexOf(q.text);
-        while (idx >= 0 && hits.length < 500) {
-          const s = norm.map[idx], e = norm.map[Math.min(norm.map.length - 1, idx + q.text.length)];
-          const range = document.createRange();
-          range.setStart(node, s); range.setEnd(node, e);
-          ranges.push(range);
-          const block = (node.parentElement?.closest(BLOCK_SELECTOR) as HTMLElement | null);
-          const all = doc.allBlocks.length ? doc.allBlocks : doc.blocks;
-          const bi = block ? Math.max(0, all.indexOf(block)) : 0;
-          hits.push({ bookId: doc.book.id, label: labelFor(doc, bi), pct: all.length ? (bi / all.length) * 100 : 0, before: text.slice(Math.max(0, s - 60), s), match: text.slice(s, e), after: text.slice(e, e + 60), range });
-          idx = norm.text.indexOf(q.text, idx + q.text.length);
+      const all = doc.allBlocks.length ? doc.allBlocks : doc.blocks;
+      let batch: SearchHit[] = []; let done = 0;
+      for (const unit of unitsOf(doc)) {
+        if (hits.length >= LIMIT) break;
+        // (A chapter not indexed yet is indexed now, a slice at a time.)
+        let ix = chapterIndex(unit, performance.now() + 12);
+        while (!ix) { if (batch.length) { onHits?.(batch); batch = []; } await yieldToPage(); if (live && !live()) return hits; ix = chapterIndex(unit, performance.now() + 12); }
+        const text = ix.text!; done += text.length;
+        const maps = new Map<number, { text: string; map: Int32Array }>();
+        for (let at = text.indexOf(q.text); at >= 0 && hits.length < LIMIT; at = text.indexOf(q.text, at + q.text.length)) {
+          // The node the hit falls in: the last one starting at or before it.
+          let lo = 0, hi = ix.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ix.starts[m] <= at) lo = m; else hi = m - 1; }
+          const node = ix.nodes[lo]; const local = at - ix.starts[lo];
+          if (local + q.text.length > ix.parts[lo].length || !node.isConnected) continue;
+          let norm = maps.get(lo); if (!norm) { norm = normalizeForSearch(node.data); maps.set(lo, norm); }
+          const raw = node.data;
+          const s = norm.map[local], e = norm.map[Math.min(norm.map.length - 1, local + q.text.length)];
+          const range = document.createRange(); range.setStart(node, s); range.setEnd(node, e); ranges.push(range);
+          const block = node.parentElement?.closest(BLOCK_SELECTOR) as HTMLElement | null;
+          const bi = block ? Math.max(0, blockIndexOf(doc, block)) : 0;
+          const hit = { bookId: doc.book.id, label: labelFor(doc, bi), pct: all.length ? (bi / all.length) * 100 : 0, before: raw.slice(Math.max(0, s - 60), s), match: raw.slice(s, e), after: raw.slice(e, e + 60), range };
+          hits.push(hit); batch.push(hit);
+        }
+        if (done >= SLICE) {
+          done = 0;
+          if (batch.length) { onHits?.(batch); batch = []; }
+          await yieldToPage();
+          if (live && !live()) return hits;
         }
       }
+      if (batch.length) onHits?.(batch);
     }
     const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
     const HL = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
-    if (reg && HL) { reg.set('kr-search', new HL(...ranges)); }
+    if (reg && HL && (!live || live())) reg.set('kr-search', new HL(...ranges));
     return hits;
+  }
+  // The indexes are made ahead, in idle moments after the book is open, so the first search is as quick as
+  // the next: the whole book is gone through once, a slice at a time.
+  {
+    let gone = false; onDispose(() => { gone = true; });
+    const prep = (deadline?: { timeRemaining(): number }) => {
+      if (gone || !reader.isConnected) return;
+      const until = performance.now() + (deadline ? Math.min(10, deadline.timeRemaining() - 1) : 5);
+      for (const doc of docs) for (const unit of unitsOf(doc)) {
+        if (chapterIndex(unit, until)) continue;
+        const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(prep, { timeout: 4000 }); else window.setTimeout(prep, 100); return;
+      }
+    };
+    window.setTimeout(prep, 4000);
   }
 
   /** Scroll to a search hit (showing its chapter first when hidden) and mark it. */
@@ -992,26 +1107,46 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const count = h('div', { style: { color: 'var(--text-dim)', fontSize: '13px', margin: '10px 0' } });
       const list = h('ul', { class: 'plain-list' });
       body.append(input, count, list);
-      let timer: number | undefined;
-      const run = () => {
-        clear(list); clearSearchMarks();
-        const q = input.value.trim();
-        if (q.length < 2) { count.textContent = ''; return; }
-        const hits = searchFlow(q);
-        count.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
-        let lastBook = '';
-        for (const hit of hits) {
-          if (docs.length > 1 && hit.bookId !== lastBook) { lastBook = hit.bookId; list.append(h('div', { class: 'toc-book', dir: 'auto' }, docs.find((d) => d.book.id === hit.bookId)?.book.title)); }
-          list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => {
-            if (window.innerWidth < 900) panel.close();
-            goToHit(hit);
-          } },
-            h('span', { class: 'meta', dir: 'auto' }, hit.label, h('b', { class: 'hit-pct' }, localDigits(hit.pct.toFixed(1)) + '%')),
-            h('span', { class: 'ctx', dir: 'auto' }, (hit.before ? '…' : '') + hit.before, h('mark', null, hit.match), hit.after + (hit.after ? '…' : '')))));
+      let timer: number | undefined; let runId = 0;
+      // The hits are listed a few dozen at a time, the next batch as the list is scrolled near its end: five
+      // hundred lines of shaped text at once held the page for half a second.
+      const PAGE = 40; const more = h('li', { class: 'hit-more', hidden: true });
+      let pending: SearchHit[] = []; let lastBook = '', n = 0;
+      const row = (hit: SearchHit) => h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => {
+        if (window.innerWidth < 900) panel.close();
+        goToHit(hit);
+      } },
+        h('span', { class: 'meta', dir: 'auto' }, hit.label, h('b', { class: 'hit-pct' }, localDigits(hit.pct.toFixed(1)) + '%')),
+        h('span', { class: 'ctx', dir: 'auto' }, (hit.before ? '…' : '') + hit.before, h('mark', null, hit.match), hit.after + (hit.after ? '…' : ''))));
+      const flushRows = (max = PAGE) => {
+        if (!pending.length) { more.hidden = true; return; }
+        const frag = document.createDocumentFragment();
+        for (const hit of pending.splice(0, max)) {
+          if (docs.length > 1 && hit.bookId !== lastBook) { lastBook = hit.bookId; frag.append(h('div', { class: 'toc-book', dir: 'auto' }, docs.find((d) => d.book.id === hit.bookId)?.book.title)); }
+          frag.append(row(hit));
         }
+        more.before(frag); more.hidden = !pending.length;
       };
-      input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(run, 250); });
-      if (initial) run();
+      const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) flushRows(); }, { root: body.closest('.panel-body, .panel') ?? body, rootMargin: '200px' });
+      io.observe(more); list.append(more); onDispose(() => io.disconnect());
+      const run = async () => {
+        list.replaceChildren(more); clearSearchMarks(); pending = []; lastBook = ''; n = 0;
+        const q = input.value.trim(); const id = ++runId;
+        if (q.length < 2) { count.textContent = ''; more.hidden = true; return; }
+        count.textContent = t('searching');
+        const show = (hits: SearchHit[]) => {
+          if (id !== runId) return;
+          pending.push(...hits); n += hits.length;
+          if (list.children.length - 1 < PAGE) flushRows(PAGE - (list.children.length - 1));
+          else more.hidden = false;
+          count.textContent = `${t('resultsCount', { n })}…`;
+        };
+        const hits = await searchFlow(q, show, () => id === runId);
+        if (id !== runId) return;
+        count.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
+      };
+      input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 200); });
+      if (initial) void run();
       setTimeout(() => input.focus(), 50);
     } }]);
     void searchHighlight;
@@ -1310,7 +1445,11 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     iconButton('grid', t('pagesGrid'), () => showPagesGrid()),
     iconButton('more', t('more'), () => openMore()),
   );
-  const syncComfort = () => { const st = getComputedStyle(reader); root.style.setProperty('--r-warmth', st.getPropertyValue('--r-warmth')); root.style.setProperty('--r-dim-overlay', st.getPropertyValue('--r-dim-overlay')); };
+  const syncComfort = () => {
+    const st = getComputedStyle(reader); const warm = st.getPropertyValue('--r-warmth').trim(), dim = st.getPropertyValue('--r-dim-overlay').trim();
+    root.style.setProperty('--r-warmth', warm); root.style.setProperty('--r-dim-overlay', dim);
+    const el = root.querySelector<HTMLElement>('.reader-comfort'); if (el) { el.hidden = !(Number(warm) > 0 || Number(dim) > 0); el.dataset.warm = Number(warm) > 0 ? '1' : '0'; }
+  };
   queueMicrotask(syncComfort);
   root.append(topbar, reader, bar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
   syncChrome();

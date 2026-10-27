@@ -50,6 +50,7 @@
    sit under the text so selection and reading are unaffected. */
 .reader-scroll { background: var(--r-bg); }
 .reader-scroll::before, .reader-scroll::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.reader:not([data-bg-image='on']):not([data-polka='edges']) .reader-scroll::before, .reader[data-texture='none'] .reader-scroll::after, .reader:not([data-texture]) .reader-scroll::after { display: none; }
 .reader-scroll::before {
   background-image: linear-gradient(rgb(0 0 0 / var(--r-bg-shade, 0)), rgb(0 0 0 / var(--r-bg-shade, 0))), var(--r-bg-image, none); background-size: var(--r-bg-size, cover); background-position: var(--r-bg-pos, center); background-repeat: var(--r-bg-repeat, no-repeat);
   opacity: var(--r-bg-image-opacity, 0); filter: blur(var(--r-bg-blur, 0px)) saturate(var(--r-bg-sat, 1)); transform: scale(1.04);
@@ -67,7 +68,10 @@
 .reader[data-texture='dots'] .reader-scroll::after { background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1.5px); background-size: 14px 14px; opacity: var(--r-texture-opacity, .5); }
 .reader-flow { position: relative; z-index: 1; }
 /* Comfort filters applied to the whole reading area */
+/* (Blending a full-screen layer costs every scrolled frame, so the overlay is only in the page while a filter is on.) */
 .reader-comfort { position: fixed; inset: 0; pointer-events: none; z-index: 34; mix-blend-mode: multiply; background: rgb(255 170 60 / var(--r-warmth, 0)); }
+.reader-comfort[hidden] { display: none; }
+.reader-comfort[data-warm='0'] { mix-blend-mode: normal; background: none; }
 .reader-comfort::after { content: ''; position: absolute; inset: 0; background: rgb(0 0 0 / var(--r-dim-overlay, 0)); mix-blend-mode: normal; }
 
 .reader-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scroll-behavior: auto; overscroll-behavior: contain; position: relative; }
