@@ -288,7 +288,7 @@ export async function downloadBook(book: Book, onProgress: (done: number, total:
   let done = info.pages - wanted.length; onProgress(done, info.pages);
   let failed = 0;
   await pool(wanted, 4, async (n) => {
-    try { content[n] = await page(info.id, n); } catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'offline') throw e; }
+    try { content[n] = await page(info.id, n); } catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'blocked' || (e as SourceError).kind === 'offline') throw e; }
     onProgress(++done, info.pages);
     // (The pages so far are saved now and then: a download cut short keeps what it got.)
     if (done % 40 === 0) await saveContent(book, info, content, false);

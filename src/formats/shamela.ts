@@ -116,7 +116,7 @@ export const shamelaHandler: FlowHandler = {
         if (Object.keys(content).length % 10 === 0 || Object.keys(content).length === info.pages) void save();
       } catch (e) {
         const s = slots.get(n); const err = s?.parts[s.first].block.querySelector('.kr-page-wait');
-        if (err) { err.textContent = (e as Error).message === 'cloudflare' ? t('pageNeedsCheck') : (e as Error).message === 'offline' ? t('pageOffline') : t('pageFailed'); err.classList.add('failed'); }
+        if (err) { err.textContent = (e as Error).message === 'cloudflare' ? t('pageNeedsCheck') : (e as Error).message === 'blocked' ? t('sourceBlockedShort') : (e as Error).message === 'offline' ? t('pageOffline') : t('pageFailed'); err.classList.add('failed'); }
       } finally { running--; void pump(); }
     };
     const save = async () => {

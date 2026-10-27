@@ -105,6 +105,8 @@ export interface Source {
   freshNow?(shelf: string): number | undefined;
 }
 
+/** What went wrong reaching a source: 'cloudflare' a check the reader can pass, 'blocked' a site that refuses
+ *  even a browser — `detail` the title of the page the site answered with, when known. */
 export class SourceError extends Error {
-  constructor(msg: string, readonly kind: 'offline' | 'cloudflare' | 'rate' | 'http' | 'parse' | 'auth' | 'cors' = 'http', readonly status?: number) { super(msg); }
+  constructor(msg: string, readonly kind: 'offline' | 'cloudflare' | 'blocked' | 'rate' | 'http' | 'parse' | 'auth' | 'cors' = 'http', readonly status?: number, /** what the site's page said (its title) */ readonly detail?: string) { super(msg); }
 }

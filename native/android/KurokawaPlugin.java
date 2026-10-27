@@ -218,10 +218,8 @@ public class KurokawaPlugin extends Plugin {
         }).start();
     }
 
-    private static boolean ok(java.util.concurrent.Callable<Boolean> c) { try { return Boolean.TRUE.equals(c.call()); } catch (Exception e) { return false; } }
-
     /** The charset a page's text is in: the header's, else a <meta> in its first bytes, else UTF-8. */
-    private static java.nio.charset.Charset charsetOf(String contentType, byte[] body) {
+    static java.nio.charset.Charset charsetOf(String contentType, byte[] body) {
         try {
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("charset=\"?'?([\\w-]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(contentType == null ? "" : contentType);
             if (m.find()) return java.nio.charset.Charset.forName(m.group(1));
@@ -232,77 +230,27 @@ public class KurokawaPlugin extends Plugin {
         return java.nio.charset.StandardCharsets.UTF_8;
     }
 
-    /** Opens a page in a web view of the app's own (its cookies and identity are those the requests carry), so a
-     *  site's browser check can be passed: out of sight (`hidden`, a view of one pixel behind the app, given
-     *  `timeout` ms — the plain JavaScript checks pass by themselves) or in a dialog the reader can act in.
-     *  Resolves {passed} — true once the site answered with a page of its own and new cookies came with it. */
+    /* ---------- the app's own browser: a site's check passed, the sites that answer only a browser ---------- */
+    // (See KrBrowser: the check — out of sight, else a window the reader passes it in — and the requests a page
+    // of the site makes for the app when the site turns the app's own requests away.)
+    private KrBrowser browser;
+    private KrBrowser browser() { if (browser == null) browser = new KrBrowser(this); return browser; }
+
+    /** {url, hidden?, timeout?, fresh?, message?, done?, reload?} → {passed, blocked, title}. */
     @PluginMethod
-    public void openWebView(PluginCall call) {
-        final String url = call.getString("url", "");
-        final boolean hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false));
-        final int timeout = call.getInt("timeout", hidden ? 14000 : 180000);
-        if (url.isEmpty()) { call.reject("No url"); return; }
-        getActivity().runOnUiThread(() -> {
-            try {
-                final android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance();
-                final String before = String.valueOf(cm.getCookie(url));
-                final android.webkit.WebView web = new android.webkit.WebView(getActivity());
-                web.getSettings().setJavaScriptEnabled(true);
-                web.getSettings().setDomStorageEnabled(true);
-                web.getSettings().setUserAgentString(android.webkit.WebSettings.getDefaultUserAgent(getContext()));
-                cm.setAcceptThirdPartyCookies(web, true);
-                final boolean[] done = { false }; final boolean[] passed = { false };
-                final android.view.ViewGroup content = getActivity().findViewById(android.R.id.content);
-                final android.app.Dialog[] dialog = { null };
-                final Runnable finish = () -> {
-                    if (done[0]) return; done[0] = true;
-                    try { cm.flush(); } catch (Exception ignored) {}
-                    try { if (dialog[0] != null && dialog[0].isShowing()) dialog[0].dismiss(); } catch (Exception ignored) {}
-                    try { if (hidden) content.removeView(web); web.destroy(); } catch (Exception ignored) {}
-                    JSObject r = new JSObject(); r.put("passed", passed[0]); call.resolve(r);
-                };
-                // (A check is passed when the site answers with a page of its own — not the check's — and the
-                // cookies are not what they were: the clearance the check leaves behind.)
-                final java.util.concurrent.Callable<Boolean> cleared = () -> {
-                    String title = web.getTitle(); String now = String.valueOf(cm.getCookie(url));
-                    boolean page = title != null && !title.isEmpty() && !title.contains("Just a moment") && !title.contains("Attention Required") && !title.contains("لحظة") && !title.contains("Один момент") && !title.contains("DDoS-Guard") && !title.contains("Verifying") && !title.contains("Checking your browser");
-                    return page && !now.equals(before) && (now.contains("cf_clearance") || now.contains("__ddg") || !before.contains("cf_clearance"));
-                };
-                web.setWebViewClient(new android.webkit.WebViewClient() {
-                    @Override public void onPageFinished(android.webkit.WebView view, String u) {
-                        if (ok(cleared)) { passed[0] = true; view.postDelayed(finish, 600); }
-                    }
-                });
-                if (hidden) {
-                    content.addView(web, new android.view.ViewGroup.LayoutParams(1, 1));
-                    final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
-                    final long start = android.os.SystemClock.uptimeMillis();
-                    final Runnable[] poll = new Runnable[1];
-                    poll[0] = () -> {
-                        if (done[0]) return;
-                        if (ok(cleared)) { passed[0] = true; finish.run(); return; }
-                        if (android.os.SystemClock.uptimeMillis() - start > timeout) { finish.run(); return; }
-                        h.postDelayed(poll[0], 500);
-                    };
-                    h.postDelayed(poll[0], 700);
-                } else {
-                    dialog[0] = new android.app.Dialog(getActivity(), android.R.style.Theme_DeviceDefault_NoActionBar);
-                    final android.widget.LinearLayout box = new android.widget.LinearLayout(getActivity());
-                    box.setOrientation(android.widget.LinearLayout.VERTICAL);
-                    final android.widget.Button close = new android.widget.Button(getActivity());
-                    close.setText("✓  تم / Done");
-                    close.setOnClickListener(v -> { if (ok(cleared)) passed[0] = true; finish.run(); });
-                    box.addView(close, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-                    box.addView(web, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-                    dialog[0].setContentView(box);
-                    dialog[0].setOnDismissListener(d -> { if (ok(cleared)) passed[0] = true; finish.run(); });
-                    dialog[0].show();
-                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(finish, timeout);
-                }
-                web.loadUrl(url);
-            } catch (Exception e) { call.reject("WebView failed: " + e.getMessage()); }
-        });
-    }
+    public void openWebView(PluginCall call) { browser().check(call); }
+
+    /** A request made by a page of the site itself, in the app's own browser (see KrBrowser.fetch). */
+    @PluginMethod
+    public void browserFetch(PluginCall call) { browser().fetch(call); }
+
+    /** The site's browser view closed: the next request opens it again with the cookies as they are now. */
+    @PluginMethod
+    public void browserReset(PluginCall call) { browser().reset(call); }
+
+    /** The site's clearance (or all its cookies, {all: true}) cleared. */
+    @PluginMethod
+    public void browserForget(PluginCall call) { browser().forget(call); }
 
     /** Downloads a file (following redirects, no CORS) with progress events. Returns file:// path.
      *  Large files that the server can serve in ranges are fetched over several connections at once
@@ -1175,6 +1123,7 @@ public class KurokawaPlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         if (tts != null) { try { tts.shutdown(); } catch (Exception ignored) {} tts = null; ttsReady = false; }
+        if (browser != null) { browser.closeAll(); browser = null; }
         super.handleOnDestroy();
     }
 }

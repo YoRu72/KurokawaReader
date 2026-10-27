@@ -11,4 +11,8 @@ CAP_PLUGIN(KurokawaPlugin, "Kurokawa",
   CAP_PLUGIN_METHOD(setBrightness, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(getBrightness, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(httpRequest, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(openWebView, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(browserFetch, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(browserReset, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(browserForget, CAPPluginReturnPromise);
 )

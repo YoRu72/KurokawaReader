@@ -104,7 +104,7 @@ export async function callPlugin<T>(key: string, method: string, ...args: unknow
   const started = Date.now();
   try { return await ask<T>(win, { t: 'call', key, method, args }); }
   catch (e) {
-    const m = /^kr:(offline|cloudflare|rate|http|parse|auth|cors):(.*)$/.exec(String((e as Error).message));
+    const m = /^kr:(offline|cloudflare|blocked|rate|http|parse|auth|cors):(.*)$/.exec(String((e as Error).message));
     if (m) throw new SourceError(m[2], m[1] as SourceError['kind']);
     if (lastHttpError && lastHttpError.at >= started) throw lastHttpError.err;
     throw e;

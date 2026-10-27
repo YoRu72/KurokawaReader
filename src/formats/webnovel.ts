@@ -60,7 +60,7 @@ export const webnovelHandler: FlowHandler = {
         if (++dirty >= 3 || Object.keys(content).length === info.chapters.length) { dirty = 0; void save(); }
       } catch (e) {
         const err = body.querySelector('.kr-page-wait');
-        if (err) { const kind = (e as { kind?: string }).kind; err.textContent = kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }
+        if (err) { const kind = (e as { kind?: string }).kind; err.textContent = kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'blocked' ? t('sourceBlockedShort') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }
       } finally { running--; void pump(); }
     };
     const save = async () => {

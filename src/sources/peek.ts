@@ -323,7 +323,7 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
       return peek;
     } catch (e) {
       // (What cannot be read is remembered as such for this session, not retried on every scroll.)
-      if ((e as SourceError).kind !== 'offline' && (e as SourceError).kind !== 'cloudflare') mem.set(key, { at: Date.now() });
+      if ((e as SourceError).kind !== 'offline' && (e as SourceError).kind !== 'cloudflare' && (e as SourceError).kind !== 'blocked') mem.set(key, { at: Date.now() });
       return null;
     }
   })();

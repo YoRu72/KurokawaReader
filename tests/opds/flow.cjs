@@ -37,8 +37,9 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     // Fetch the first book.
     await page.click('.catalog-book >> nth=0 >> .catalog-get button'); await page.waitForFunction(() => !!document.querySelector('.catalog-book .catalog-get .btn.primary'), null, { timeout: 60000 });
     ok('book fetched: Open button', !!(await page.$('.catalog-book .catalog-get .btn.primary')));
-    const inLib = await page.evaluate(async () => { const r = indexedDB.open('kurokawa'); return new Promise((res) => { r.onsuccess = () => { const db = r.result; const tx = db.transaction('books'); const req = tx.objectStore('books').getAll(); req.onsuccess = () => res(req.result.map((b) => b.title)); }; r.onerror = () => res([]); }); }).catch(() => []);
-    ok('book in library store', inLib.some((t) => /مقامات/.test(t)) || true);
+    // (The app's own database, read as it is: the book is in it.)
+    const inLib = await page.evaluate(async () => { const r = indexedDB.open('kurokawa-reader'); return new Promise((res) => { r.onsuccess = () => { const db = r.result; if (!db.objectStoreNames.contains('books')) { res([]); return; } const req = db.transaction('books').objectStore('books').getAll(); req.onsuccess = () => res(req.result.map((b) => b.title)); }; r.onerror = () => res([]); }); }).catch(() => []);
+    ok('book in library store', inLib.some((t) => /مقامات/.test(t)));
     // Search through the catalogue.
     await page.fill('.catalog-search', 'alice'); await page.press('.catalog-search', 'Enter'); await page.waitForFunction(() => /Search: alice/.test(document.querySelector('.catalog-view .title')?.textContent || ''), null, { timeout: 15000 });
     ok('search results', (await page.$$('.catalog-book')).length === 1);

@@ -48,6 +48,9 @@ export interface Repo {
   folder?: string;
   /** The manifest's version. */
   version?: string;
+  /** The manifest says the site answers only a browser (it sits behind Cloudflare): reached through the app's
+   *  own browser from the start, without a refused request first. */
+  browser?: boolean;
 }
 
 const META = 'sources:repos';
@@ -141,7 +144,7 @@ export function candidates(given: string): string[] {
 }
 
 /* ---------- reading an index ---------- */
-interface Parsed { kind: RepoKind; name?: string; items: ExtItem[]; count: { novel: number; other: number }; flavor?: 'h5ai'; folder?: string; version?: string }
+interface Parsed { kind: RepoKind; name?: string; items: ExtItem[]; count: { novel: number; other: number }; flavor?: 'h5ai'; folder?: string; version?: string; browser?: boolean }
 const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
 
 export function parseIndex(url: string, text: string): Parsed | null {
@@ -149,11 +152,12 @@ export function parseIndex(url: string, text: string): Parsed | null {
   try { data = JSON.parse(text); } catch { return null; }
   const base = url.replace(/[^/]*$/, '');
   const abs = (u: string) => { if (!u) return ''; try { return new URL(u, base).href; } catch { return u; } };
-  // This reader's own: a web folder of books described by a manifest — {"kurokawa": "folder", name, url, server, version}.
+  // This reader's own: a web folder of books described by a manifest — {"kurokawa": "folder", name, url, server, version,
+  // browser} (browser: the site answers only a browser).
   if (data && typeof data === 'object' && !Array.isArray(data) && (data as Record<string, unknown>).kurokawa === 'folder' && typeof (data as Record<string, unknown>).url === 'string') {
     const d = data as Record<string, unknown>;
     const folder = abs(str(d.url)); if (!/^https?:\/\//i.test(folder)) return null;
-    return { kind: 'folder', name: str(d.name) || undefined, items: [], count: { novel: 0, other: 0 }, flavor: d.server === 'h5ai' ? 'h5ai' : undefined, folder: folder.endsWith('/') ? folder : `${folder}/`, version: str(d.version) || undefined };
+    return { kind: 'folder', name: str(d.name) || undefined, items: [], count: { novel: 0, other: 0 }, flavor: d.server === 'h5ai' ? 'h5ai' : undefined, folder: folder.endsWith('/') ? folder : `${folder}/`, version: str(d.version) || undefined, browser: d.browser === true || d.via === 'browser' || undefined };
   }
   // LNReader: [{id, name, site, lang, version, url, iconUrl}]
   if (Array.isArray(data) && data.length && data.every((e) => e && typeof e === 'object' && typeof (e as Record<string, unknown>).id === 'string' && 'site' in (e as object) && 'url' in (e as object))) {
@@ -277,7 +281,7 @@ export async function addRepo(given: string): Promise<{ repo: Repo; added: boole
   const dup = repos.find((r) => normalizeUrl(r.url) === norm || (folderNorm && (normalizeUrl(r.url) === folderNorm || (r.folder && normalizeUrl(r.folder) === folderNorm))) || normalizeUrl(r.given) === normalizeUrl(given) || (r.items.length && r.items.length === parsed.items.length && r.kind === parsed.kind && r.items.every((it, i) => it.id === parsed.items[i]?.id && it.url === parsed.items[i]?.url)));
   if (dup) return { repo: dup, added: false };
   const name = parsed.name || nameOf(url, parsed.kind);
-  const repo: Repo = { key: hashKey(norm), url, given, name, kind: parsed.kind, addedAt: Date.now(), fetchedAt: Date.now(), items: parsed.items, count: parsed.count, flavor: parsed.flavor, folder: parsed.folder, version: parsed.version };
+  const repo: Repo = { key: hashKey(norm), url, given, name, kind: parsed.kind, addedAt: Date.now(), fetchedAt: Date.now(), items: parsed.items, count: parsed.count, flavor: parsed.flavor, folder: parsed.folder, version: parsed.version, browser: parsed.browser };
   await saveRepos([...repos, repo]);
   return { repo, added: true };
 }
@@ -303,7 +307,7 @@ export async function refreshRepo(key: string): Promise<{ repo: Repo; updated: E
   // (A folder has no index of extensions: its manifest, if it came from one, is read again; its listings are
   // fetched again as they are opened.)
   if (r.kind === 'folder') {
-    if (r.folder) { const p = parseIndex(r.url, await fetchText(r.url)); if (p?.kind === 'folder' && p.folder) { r.folder = p.folder; r.flavor = p.flavor; r.version = p.version; if (p.name) r.name = p.name; } }
+    if (r.folder) { const p = parseIndex(r.url, await fetchText(r.url)); if (p?.kind === 'folder' && p.folder) { r.folder = p.folder; r.flavor = p.flavor; r.version = p.version; r.browser = p.browser; if (p.name) r.name = p.name; } }
     forgetListings(r.folder ?? r.url); r.fetchedAt = Date.now(); r.error = undefined; await saveRepos([...repos]); return { repo: r, updated: [] };
   }
   const text = await fetchText(r.url);

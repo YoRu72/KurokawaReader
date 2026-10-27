@@ -129,6 +129,12 @@ for (let i = 0; i < 110; i++) {
 const otlWalk = (folder, fn) => { for (const it of otlDirs[folder] ?? []) { fn(it, folder); if (it[2] === null) otlWalk(folder ? `${folder}/${it[1]}` : it[1], fn); } };
 const otlItem = ([href, , size, time]) => ({ href, time, size, managed: true, fetched: false });
 const posts = [];
+// (The shield in front of the real site: off, or turning away whatever is not a browser — a Cloudflare 403 page,
+// or its check — the browser itself checked until "passed"; requests counted by who made them. h5ai's search
+// can be turned off, as a server's keeper may.)
+const shield = { kind: 'off', passed: false, plain: 0, browser: 0, noSearch: false };
+const CF_BLOCK = '<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><div id="cf-wrapper"><h1>Sorry, you have been blocked</h1><h2>You are unable to access server.elscione.com</h2></div></body></html>';
+const CF_CHECK = '<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><div id="challenge-running"></div><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>';
 const folderFiles = { '/library/Alpha%20Series/Alpha%201.epub': ['alice-in-wonderland.epub', 'application/epub+zip'], '/library/Alpha%20Series/Alpha%202.epub': ['maqamat-al-hariri.epub', 'application/epub+zip'], '/library/sample.pdf': ['sample.pdf', 'application/pdf'], '/library/Beta/Deep/deep.pdf': ['sample.pdf', 'application/pdf'], '/library/readme.txt': ['plain.txt', 'text/plain'], '/library/Beta/notes.txt': ['notes.md', 'text/plain'] };
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://localhost:${port}`); const p = u.pathname;
@@ -143,6 +149,16 @@ const server = http.createServer((req, res) => {
     if (p === '/__otl/add') { otlAdd(u.searchParams.get('folder'), u.searchParams.get('name'), EPUBS[0], 'application/epub+zip', Date.now()); res.setHeader('Content-Type', 'application/json'); return res.end('{"ok":true}'); }
     // (The extension's manifest, as the app's repository keeps it.)
     if (p === '/extensions/otl.json') { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, '../../extensions/otl.json'))); }
+    if (p === '/__otl/shield') { if (u.searchParams.has('kind')) { shield.kind = u.searchParams.get('kind'); shield.passed = false; shield.plain = 0; shield.browser = 0; } if (u.searchParams.has('passed')) shield.passed = u.searchParams.get('passed') === '1'; if (u.searchParams.has('nosearch')) shield.noSearch = u.searchParams.get('nosearch') === '1'; res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(shield)); }
+    if (p === '/__otl/reset-posts') { posts.length = 0; res.setHeader('Content-Type', 'application/json'); return res.end('[]'); }
+    // The shield: a request not made by a browser turned away; a browser's checked until the check is passed.
+    const byBrowser = req.headers['x-kr-browser'] === '1';
+    if (byBrowser) shield.browser++; else shield.plain++;
+    if (shield.kind !== 'off' && (!byBrowser || shield.kind === 'blockall' || (shield.kind === 'challenge' && !shield.passed))) {
+      res.statusCode = 403; res.setHeader('Content-Type', 'text/html; charset=UTF-8'); res.setHeader('Server', 'cloudflare'); res.setHeader('CF-RAY', '8d5e2f1a0c3b4e21-DXB');
+      if (shield.kind === 'challenge') { res.setHeader('cf-mitigated', 'challenge'); return res.end(CF_CHECK); }
+      return res.end(CF_BLOCK);
+    }
     if (isApi) {
       let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
         posts.push(body);
@@ -157,8 +173,11 @@ const server = http.createServer((req, res) => {
           if (f === null || !otlDirs[f]) { res.statusCode = 404; return res.end('{"err":"ERR_NOT_FOUND"}'); }
           const items = [{ href: OTL, time: T0, size: null, managed: true, fetched: true }, ...otlDirs[''].map(otlItem)];
           if (f) { const parts = f.split('/'); for (let k = 1; k <= parts.length; k++) { const at = parts.slice(0, k).join('/'); if (k < parts.length || true) items.push(...(otlDirs[at] ?? []).map(otlItem)); } }
+          // (what=2: the content of each of its subfolders too.)
+          if (Number(j.items.what) >= 2) for (const it of otlDirs[f] ?? []) if (it[2] === null) items.push(...(otlDirs[f ? `${f}/${it[1]}` : it[1]] ?? []).map(otlItem));
           out.items = items;
         }
+        if (j.search && shield.noSearch) { res.statusCode = 500; return res.end('{"errno":"ERR_DISABLED","msg":"search disabled"}'); }
         if (j.search) {
           const f = folderOf(j.search.href); const pat = String(j.search.pattern || '').toLowerCase();
           if (f === null || !pat) { res.statusCode = 500; return res.end('{"err":"ERR_FAILED"}'); }
