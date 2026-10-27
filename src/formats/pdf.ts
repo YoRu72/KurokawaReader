@@ -155,6 +155,9 @@ export class PdfViewer {
   private tops: number[] | null = null;
   private first = 1;
   private last = 1;
+  /** The scroll's speed (px/ms, signed) and where it was last measured: a fling too fast to draw for is left
+   *  alone, and the pages ahead of a slower one are drawn before it reaches them. */
+  private speed = 0; private lastTop = 0; private lastAt = 0;
   private scrolling = false;
   private settleTimer = 0;
   private frameAsked = false;
@@ -407,21 +410,24 @@ export class PdfViewer {
   private frame(): void {
     if (this.destroyed || !this.pages.length) return;
     const top = this.scroll.scrollTop, hgt = this.scroll.clientHeight;
+    const now = performance.now();
+    if (now - this.lastAt < 400 && now > this.lastAt) this.speed = (top - this.lastTop) / (now - this.lastAt); else if (now - this.lastAt >= 400) this.speed = 0;
+    this.lastTop = top; this.lastAt = now;
     this.first = this.pageAt(top);
     this.last = Math.max(this.first, this.pageAt(top + hgt));
     this.updateCurrent();
     // A drawing for a page that has gone well out of view is dropped.
-    if (this.running && (this.running.n < this.first - 2 || this.running.n > this.last + 2)) { this.running.cancel(); }
+    if (this.running && (this.running.n < this.first - 3 || this.running.n > this.last + 3)) { this.running.cancel(); }
     for (let n = Math.max(1, this.first - 1); n <= Math.min(this.total, this.last + 1); n++) this.pages[n - 1].classList.toggle('loading', !this.shown.get(n)?.pic);
     this.pump();
   }
 
   /** Scrolling has stopped: pages far from view let go of their pictures, and the ones in view are made sharp. */
   private settle(): void {
-    this.scrolling = false;
+    this.scrolling = false; this.speed = 0;
     if (this.destroyed) return;
     this.frame();
-    for (const n of [...this.shown.keys()]) if (n < this.first - 2 || n > this.last + 2) this.releasePage(n);
+    for (const n of [...this.shown.keys()]) if (n < this.first - 3 || n > this.last + 3) this.releasePage(n);
     this.pump();
   }
 
@@ -448,18 +454,25 @@ export class PdfViewer {
     const mid = (first + last) / 2;
     for (let n = first; n <= last; n++) vis.push(n);
     vis.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
-    const near = [last + 1, first - 1].filter((n) => n >= 1 && n <= this.total);
+    // The pages either side — the two ahead first when the scroll has a direction, then the one behind.
+    const down = this.speed >= 0;
+    const near = (down ? [last + 1, last + 2, first - 1] : [first - 1, first - 2, last + 1]).filter((n) => n >= 1 && n <= this.total);
     const st = (n: number) => this.shown.get(n);
     const stale = (n: number) => { const s = st(n); return !s?.pic || s.at !== this.scale; };
+    // A fling faster than a screen every 150 ms outruns any drawing: what is drawn now is gone before it shows.
+    // Nothing is drawn until it slows (the frame after each scroll event asks again).
+    if (this.scrolling && Math.abs(this.speed) > this.scroll.clientHeight / 150) return null;
     // 1. A page in view with nothing on it: quickly while scrolling, sharp when still.
     for (const n of vis) if (!st(n)?.pic) return () => this.draw(n, this.scrolling ? 1 : 2);
-    // 2. While scrolling, the next pages get their quick picture too; nothing more until it stops.
+    // 2. While scrolling, the pages ahead get their quick picture too; nothing more until it stops.
     if (this.scrolling) { for (const n of near) if (!st(n)?.pic) return () => this.draw(n, 1); return null; }
     // 3. Pages in view made sharp (or redrawn at a new zoom), then their tiles when zoomed in.
     for (const n of vis) { const s = st(n)!; if (s.level < 2 || s.at !== this.scale) return () => this.draw(n, 2); }
     for (const n of vis) { const t = this.missingTile(n); if (t) return () => this.drawTile(n, t); }
-    // 4. The pages either side, sharp.
-    for (const n of near) if (stale(n) || st(n)!.level < 2) return () => this.draw(n, 2);
+    // 4. The pages either side, sharp; the two beyond them with a quick picture, so a scroll finds them drawn.
+    for (const n of near.slice(0, 2)) if (stale(n) || st(n)!.level < 2) return () => this.draw(n, 2);
+    for (const n of near.slice(2)) if (stale(n)) return () => this.draw(n, 1);
+    for (const n of [last + 3, first - 2]) if (n >= 1 && n <= this.total && !st(n)?.pic) return () => this.draw(n, 1);
     // 5. The text layer of the pages in view (to select and search), last.
     for (const n of vis) { const s = st(n)!; if (!s.text) return () => this.buildText(n); }
     return null;
