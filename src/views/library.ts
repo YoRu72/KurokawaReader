@@ -61,7 +61,8 @@ export function libraryView(): HTMLElement {
   const fmtChips = h('div', { class: 'format-chips', role: 'group', 'aria-label': t('filterFormats') });
   const heroSub = h('div', { class: 'sub' });
   const heroGoal = h('div', { class: 'goal-line', hidden: true });
-  const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub, heroGoal);
+  const heroQuote = h('div', { class: 'quote-card', hidden: true });
+  const hero = h('div', { class: 'library-hero' }, h('h1', { class: 'display' }, t('library')), heroSub, heroGoal, heroQuote);
   const convertBtn = iconButton('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertPicker(books, () => void pickFiles())));
   convertBtn.classList.add('tool-btn');
   const pdfToolsBtn = iconButton('file', t('pdfTools'), () => void import('../ui/pdftools').then((m) => m.pdfToolsSheet(books, undefined, () => void refresh())));
@@ -196,6 +197,7 @@ export function libraryView(): HTMLElement {
       const one = () => books.find((x) => x.id === [...selected][0]);
       const list: Act[] = [
         ['books', n > 1 ? t('openTogether') : t('open'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); navigate(`/read/${ids.join(',')}`); }, 'primary'],
+        ...(n > 1 ? [['sort', t('readInOrder'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); void import('../ui/queue').then((m) => m.queueSheet(ids, { start: true })); }] as Act] : []),
         ['heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
         ['check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))],
         ['tag', t('tags'), () => tagsSheet([...selected])],
@@ -711,10 +713,43 @@ export function libraryView(): HTMLElement {
       h('div', { class: 'bar' }, h('span', { style: { width: `${Math.min(100, (today / (goal * 60000)) * 100)}%` } })));
   }
 
+  /** A line from the reader's own highlights, a different one each day; a tap opens the book at it. */
+  function renderQuote() {
+    clear(heroQuote);
+    const all = books.flatMap((b) => [...b.highlights.map((hl) => ({ b, id: hl.id, text: hl.text, kind: 'hl' as const })), ...(b.pdfHighlights ?? []).map((hl) => ({ b, id: hl.id, text: hl.text, kind: 'hl' as const }))]).filter((q) => q.text.trim().length >= 20);
+    heroQuote.hidden = !getSettings().showQuote || !all.length;
+    if (heroQuote.hidden) return;
+    // (The day picks the line, so it stays the same all day and changes tomorrow.)
+    const day = Math.floor(Date.now() / 86400000); let x = day * 2654435761 % 2147483647; x = (x * 48271) % 2147483647;
+    const q = all[x % all.length];
+    heroQuote.append(
+      h('button', { type: 'button', class: 'quote-body', onclick: () => { sessionStorage.setItem('kr.jump', JSON.stringify({ bookId: q.b.id, kind: q.kind, id: q.id })); navigate(`/read/${q.b.id}`); } },
+        h('div', { class: 'quote-text', dir: 'auto' }, `«${q.text.replace(/\s+/g, ' ').trim().slice(0, 220)}${q.text.length > 220 ? '…' : ''}»`),
+        h('div', { class: 'quote-from', dir: 'auto' }, q.b.title)),
+      iconButton('close', t('hideQuotes'), () => { updateSettings({ showQuote: false }); renderQuote(); }));
+  }
+
+  /** «Continue reading»: the book last read in this tag or folder, with where it stopped. */
+  function continueCard(book: Book): HTMLElement {
+    const url = coverUrl(book); const [c1, c2] = coverColors(book.title);
+    const pct = Math.round((book.progress?.pct ?? 0) * 100);
+    const open = () => navigate(`/read/${book.id}`);
+    const el = h('div', { class: 'continue-card', role: 'button', tabindex: '0', onclick: open, onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } } },
+      url ? h('img', { src: url, alt: '' }) : h('div', { class: 'cover gen', style: { background: `linear-gradient(135deg, ${c1}, ${c2})` } }),
+      h('div', { class: 'continue-text' },
+        h('div', { class: 'continue-kicker' }, icon('play'), t('continueReading')),
+        h('div', { class: 'continue-title', dir: 'auto' }, book.title),
+        h('div', { class: 'continue-meta' }, `${localDigits(String(pct))}% · ${formatDate(book.lastOpenedAt ?? book.addedAt)}`),
+        h('div', { class: 'bar' }, h('i', { style: { width: `${pct}%` } }))),
+      h('button', { type: 'button', class: 'btn small primary', onclick: (e: Event) => { e.stopPropagation(); open(); } }, icon('play'), t('resume')));
+    return el;
+  }
+
   function renderGrid() {
     clear(grid);
     renderResume();
     renderGoal();
+    renderQuote();
     renderSelBar();
     renderChips();
     renderTagChips();
@@ -741,6 +776,8 @@ export function libraryView(): HTMLElement {
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, tagFilter && !query ? t('noTaggedBooks') : activeFolder && !query ? t('emptyFolder') : t('noResults')),
       tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
     if (getSettings().libraryView === 'cards' && !activeFolder && !query && !tagFilter) folders.forEach((f) => grid.appendChild(folderCard(f)));
+    // Inside a tag or a folder: the book last read there, to pick up where it was left.
+    if ((tagFilter || activeFolder) && !query && !selecting) { const last = list.filter((b) => b.progress && (b.progress.pct ?? 0) < 0.98 && !b.done).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0]; if (last && last.lastOpenedAt) grid.appendChild(continueCard(last)); }
     // A big library's cards come in batches as the grid is scrolled (a thousand cards at once would hold the
     // page for seconds); the first batch fills the screen and more.
     const BATCH = 60;

@@ -79,8 +79,10 @@ export interface VisualSettings {
   indent: number;          // first-line indent of paragraphs, em (0 = none)
   dropCap: boolean;        // a large first letter at the start of a chapter
   bookFormat: boolean;     // printed-book formatting in one switch: justified, hyphenated, indented paragraphs
+  customCss: string;       // the reader's own CSS for the text (scoped to the book's content)
   smartTypography: boolean; // curly quotes, dashes and ellipses in the text
   focusMode: boolean;      // the paragraph being read stands out; the rest of the page is dimmed
+  readingRuler: boolean;   // a clear band that follows the pointer or the last touch; the rest dimmed a little
   vocabSave: boolean;      // words looked up go into the vocabulary notebook
   bgOverride: string;
   /* Reading flow */
@@ -132,6 +134,8 @@ export interface VisualSettings {
   speechVoice: string;        // voice name, '' = system default for the language
   openLastOnLaunch: boolean;  // reopen the last book when the app starts
   coverSize: 'small' | 'medium' | 'large';
+  gridColumns: number;     // library cards per row (0: as many as fit)
+  showQuote: boolean;      // a line from the reader's highlights on the library page, a new one each day
   // AI (chapter translation, AI voices)
   aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
   localEngine: 'device' | 'server';
@@ -226,8 +230,10 @@ export const DEFAULTS: VisualSettings = {
   indent: 0,
   dropCap: false,
   bookFormat: false,
+  customCss: '',
   smartTypography: false,
   focusMode: false,
+  readingRuler: false,
   vocabSave: true,
   bgOverride: '',
   readingMode: 'chapters',
@@ -275,6 +281,8 @@ export const DEFAULTS: VisualSettings = {
   speechVoice: '',
   openLastOnLaunch: false,
   coverSize: 'medium',
+  gridColumns: 0,
+  showQuote: true,
   aiProvider: 'gemini',
   localEngine: 'device',
   localModel: '',
@@ -480,6 +488,7 @@ export function applyChrome(s: VisualSettings = current): void {
   html.dataset.accent = s.accent;
   for (const [k, v] of Object.entries(s.highlightPalette ?? {})) html.style.setProperty(`--hl-${k}`, v);
   html.style.setProperty('--cover-min', s.coverSize === 'small' ? '104px' : s.coverSize === 'large' ? '176px' : '136px');
+  if (s.gridColumns > 0) html.style.setProperty('--lib-cols', String(s.gridColumns)); else html.style.removeProperty('--lib-cols');
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light);
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');
@@ -582,6 +591,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.style.setProperty('--r-letter', s.letterSpacing ? `${s.letterSpacing}em` : 'normal');
   root.style.setProperty('--r-hyphens', s.hyphenate || s.bookFormat ? 'auto' : 'manual');
   root.classList.toggle('publisher-styles', s.publisherStyles);
+  applyCustomCss(s.customCss);
 }
 
 // The polka texture: dots scattered at random down both page margins — a background, never under the text —
@@ -619,4 +629,39 @@ function polkaStrips(amount: number, size: 1 | 2 | 3): [string, string, string] 
   const out: [string, string, string] = [strip('l'), strip('r'), strip('tb')];
   polkaCache.set(key, out);
   return out;
+}
+
+// The reader's own CSS, as Moon+ allows: every rule is scoped to the book's text, so `p { text-indent: 2em }`
+// touches paragraphs of the book and nothing of the app. `body` and `html` mean the text as a whole.
+let lastCss: string | undefined;
+function applyCustomCss(css: string): void {
+  if (css === lastCss) return;
+  lastCss = css;
+  let el = document.getElementById('kr-user-css') as HTMLStyleElement | null;
+  if (!css.trim()) { el?.remove(); return; }
+  if (!el) { el = document.createElement('style'); el.id = 'kr-user-css'; document.head.appendChild(el); }
+  el.textContent = scopeCss(css, '.reader .kr-content');
+}
+export function scopeCss(css: string, scope: string): string {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scopeSel = (sel: string) => sel.split(',').map((x) => { const s2 = x.trim(); if (!s2) return ''; if (/^(html|body)$/i.test(s2)) return scope; return `${scope} ${s2.replace(/^(html|body)\s+/i, '')}`; }).filter(Boolean).join(', ');
+  // A small walk over the braces: plain rules get their selectors scoped; @media / @supports blocks are kept
+  // and the rules inside them scoped; other @-rules (fonts, keyframes) are kept as they are.
+  const walk = (text: string): string => {
+    let out = ''; let i = 0;
+    while (i < text.length) {
+      const open = text.indexOf('{', i); if (open < 0) break;
+      const head = text.slice(i, open).trim();
+      let depth = 1, j = open + 1;
+      while (j < text.length && depth) { if (text[j] === '{') depth++; else if (text[j] === '}') depth--; j++; }
+      const body = text.slice(open + 1, j - 1);
+      if (!head) { i = j; continue; }
+      if (/^@(media|supports|container)/i.test(head)) out += `${head} {\n${walk(body)}\n}\n`;
+      else if (head.startsWith('@')) out += `${head} {${body}}\n`;
+      else out += `${scopeSel(head)} {${body}}\n`;
+      i = j;
+    }
+    return out;
+  };
+  return walk(src);
 }

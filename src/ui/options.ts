@@ -181,8 +181,16 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
   grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
   grid.append(toggle([t('dropCap'), 'dropCap'], s.dropCap, (v) => updateSettings({ dropCap: v })));
+  // The reader's own CSS for the text.
+  {
+    const ta = h('textarea', { class: 'css-box', rows: '4', spellcheck: 'false', placeholder: 'p { text-indent: 2em; }\nh2 { color: #a0522d; }', dir: 'ltr' }) as HTMLTextAreaElement;
+    ta.value = s.customCss;
+    let tmr = 0; ta.addEventListener('input', () => { window.clearTimeout(tmr); tmr = window.setTimeout(() => updateSettings({ customCss: ta.value }), 400); });
+    grid.append(section([t('customCss'), 'customCss'], ta), h('p', { class: 'hint' }, t('customCssHint')));
+  }
   grid.append(toggle([t('smartTypography'), 'smartTypography'], s.smartTypography || s.bookFormat, (v) => updateSettings({ smartTypography: v })), h('p', { class: 'hint' }, t('smartTypographyHint')));
   grid.append(toggle([t('focusMode'), 'focusMode'], s.focusMode, (v) => updateSettings({ focusMode: v })), h('p', { class: 'hint' }, t('focusModeHint')));
+  grid.append(toggle([t('readingRuler'), 'readingRuler'], s.readingRuler, (v) => updateSettings({ readingRuler: v })), h('p', { class: 'hint' }, t('readingRulerHint')));
 
   /* ----- Behaviour ----- */
   grid.append(head('behaviour', t('behaviourSection')));

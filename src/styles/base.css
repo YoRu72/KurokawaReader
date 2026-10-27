@@ -319,6 +319,7 @@ html[dir='rtl'] .library-tools select { background-position: 14px center; }
 
 .book-grid { display: grid; gap: 22px 16px; grid-template-columns: repeat(auto-fill, minmax(var(--cover-min, 136px), 1fr)); }
 @media (min-width: 700px) { .book-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
+html[style*='--lib-cols'] .book-grid { grid-template-columns: repeat(var(--lib-cols), minmax(0, 1fr)); }
 .book-card { position: relative; text-align: start; display: flex; flex-direction: column; gap: 10px; border-radius: var(--sh-lg); outline: none; }
 .book-card:focus-visible .cover { box-shadow: 0 0 0 3px var(--md-primary); }
 .cover {
@@ -1328,3 +1329,24 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .vocab-ctx { color: var(--md-on-surface-variant); font-style: italic; font-size: 14px; }
 .vocab-def { font-size: 14px; }
 .vocab-meta { display: flex; align-items: center; justify-content: space-between; color: var(--md-on-surface-variant); font-size: 12px; }
+.css-box { width: 100%; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--md-surface-container-lowest, var(--bg)); color: inherit; resize: vertical; }
+.book-series { padding: 4px 16px 10px; } .book-series h3 { margin: 0 0 8px; font-size: 15px; display: flex; gap: 6px; align-items: baseline; } .book-series h3 small { color: var(--md-on-surface-variant); font-weight: 400; }
+.series-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.jump-back.next-volume { max-width: calc(100% - 32px); } .jump-back.next-volume span { overflow: hidden; text-overflow: ellipsis; }
+.continue-card { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 20px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); cursor: pointer; animation: pop-in var(--dur-med) var(--ease-spring); }
+.continue-card img, .continue-card .cover { width: 56px; height: 80px; object-fit: cover; border-radius: 10px; flex: 0 0 auto; box-shadow: var(--el-1); }
+.continue-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.continue-kicker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; opacity: .8; } .continue-kicker svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+.continue-title { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.continue-meta { font-size: 12.5px; opacity: .8; }
+.continue-card .bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, currentColor 18%, transparent); overflow: hidden; margin-top: 2px; } .continue-card .bar i { display: block; height: 100%; background: var(--md-primary); }
+@keyframes pop-in { from { transform: translateY(8px) scale(.98); opacity: 0; } }
+.queue-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.queue-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 14px; background: var(--md-surface-container); }
+.queue-no { width: 22px; text-align: center; font-weight: 700; color: var(--md-primary); }
+.queue-row .cover.small { width: 32px; height: 46px; border-radius: 6px; flex: 0 0 auto; }
+.queue-text { flex: 1; min-width: 0; } .queue-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quote-card { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; padding: 12px 8px 12px 16px; border-radius: 18px; background: var(--md-surface-container); border-inline-start: 3px solid var(--md-primary); }
+.quote-body { flex: 1; min-width: 0; text-align: start; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; font: inherit; }
+.quote-text { font-family: var(--font-read-latin, serif), var(--font-read-arabic, serif); font-size: 15.5px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.quote-from { margin-top: 6px; font-size: 12.5px; color: var(--md-on-surface-variant); }

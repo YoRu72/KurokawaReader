@@ -2,6 +2,11 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
+import { nextQueued, getQueue } from '../ui/queue';
+import { overscrollNext } from '../ui/overscroll';
+import { nextVolume } from '../series';
+import { attachRuler } from '../ui/ruler';
+import { jumpBack } from '../ui/jumpback';
 import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
 import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
@@ -21,7 +26,7 @@ import { navigate } from '../router';
 import { ReadingTracker, countWords } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot } from '../ui/textcard';
-import { exportNotes } from '../ui/exportnotes';
+import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
@@ -552,6 +557,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     return best || doc.book.title;
   }
 
+  /* ---------- the next volume, when the book ends ---------- */
+  let nextVol: Book | null = null; let nextPill: HTMLElement | null = null; let queued = false;
+  const findNext = () => nextQueued(books[books.length - 1].id).then(async (q) => { if (q) { nextVol = q; queued = true; return; } queued = false; nextVol = nextVolume(books[books.length - 1], await db.allBooks()); }).catch(() => undefined);
+  void findNext().then(() => updateChrome());
+  const offerNext = (pct: number) => {
+    if (!nextVol || nextPill || pct < 0.985) return;
+    const next = nextVol;
+    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
+    root.appendChild(nextPill);
+  };
+  // Reading in order: scrolling on past the end goes to the next book.
+  const lastUnitShown = () => { const d = docs[docs.length - 1]; return !chapterMode() || d.chapters.length <= 1 || (d.chapter >= d.chapters.length - 1 && !d.wrapper.hidden); };
+  onDispose(overscrollNext(scroll, () => (queued && nextVol && lastUnitShown() ? nextVol.id : null)));
+
+
   // (All reads first, then all writes: a write between two reads would make the browser lay the page out
   // again in the middle of a scroll.)
   const unitWords = new WeakMap<Element, { start: number; after: number[] }>();
@@ -598,6 +618,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (statusPage.textContent !== pageText) statusPage.textContent = pageText;
     const leftText = mins > 0 ? `⏳${localDigits(mins)}${getLang() === 'ar' ? ' د' : 'm'}` : '';
     if (statusLeft.textContent !== leftText) statusLeft.textContent = leftText;
+    if (cur.doc === docs[docs.length - 1] && lastUnitShown()) offerNext(scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 ? 1 : cur.loc.pct);
   }, 150);
 
   function scheduleSave(): void {
@@ -667,10 +688,33 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   });
   applyLayoutMode();
 
+  /* ---------- speed reading ---------- */
+  async function startSpeedReading(): Promise<void> {
+    const cur = currentLocator(); if (!cur) return;
+    const { speedReader, rsvpUnits } = await import('../ui/rsvp');
+    const from = cur.loc.block ?? 0; const unit = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
+    // The words from here to the end of the chapter (or of the book in continuous mode), with where each block starts.
+    const starts: number[] = []; let text = '';
+    for (let i = from; i < cur.doc.allBlocks.length; i++) { const b = cur.doc.allBlocks[i]; if (chapterMode() && !unit.contains(b)) break; if (b.tagName === 'IMG') continue; starts.push(rsvpUnits(text).length); text += (b.textContent ?? '') + ' '; }
+    const units = rsvpUnits(text); if (!units.length) { toast(t('noResults')); return; }
+    root.classList.add('immersive');
+    speedReader(root, units, { onClose: (at) => {
+      // Back in the text where the reading stopped.
+      let k = 0; for (let j = 0; j < starts.length; j++) if (starts[j] <= at) k = j;
+      scrollToLocator({ bookId: cur.doc.book.id, block: from + k, offset: 0, pct: cur.loc.pct });
+    } });
+  }
+
+  /* ---------- a way back after a jump ---------- */
+  // Following a link, a contents entry, a bookmark or a search hit leaves the place being read; a pill offers
+  // the way back to it (and back again, and so on), as long as the reader has not moved on by themselves.
+  const back = jumpBack(root, (loc) => { scrollToLocator(loc as Locator); }, () => currentLocator()?.loc ?? null, scroll);
+  onDispose(back.dispose);
+
   /* ---------- links & taps ---------- */
   flow.addEventListener('click', (e) => {
     const a = (e.target as HTMLElement).closest('a[data-kr-anchor]') as HTMLElement | null;
-    if (a) { e.preventDefault(); scrollToAnchor(a.dataset.krAnchor!); return; }
+    if (a) { e.preventDefault(); back.remember(); scrollToAnchor(a.dataset.krAnchor!); return; }
     const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
     if (img && allImages.length) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { showGallery(idx); return; } }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
@@ -689,6 +733,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   onDispose(attachEdgeBrightness(scroll));
   onDispose(attachPinchText(scroll));
+  onDispose(attachRuler(root, scroll));
   // Ctrl + mouse wheel changes the text size (desktop).
   scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); const d = e.deltaY < 0 ? 1 : -1; updateSettings({ fontSize: Math.min(40, Math.max(12, getSettings().fontSize + d)) }); }, { passive: false });
   /** A screen forward or back, with the turn shown as set (a slide or a fade of the text). */
@@ -847,7 +892,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           const starts = toc.map((it) => { const el = document.getElementById(it.anchor); return el ? doc.allBlocks.findIndex((b) => b === el || el.contains(b) || (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) : -1; });
           const cum: number[] = [0]; for (const b of doc.allBlocks) cum.push(cum[cum.length - 1] + wordCount(b));
           const lengthOf = (i: number) => { const a = starts[i]; if (a < 0) return 0; let j = i + 1; while (j < starts.length && (starts[j] < 0 || starts[j] <= a)) j++; const b = j < starts.length ? starts[j] : doc.allBlocks.length; return Math.round((cum[b] - cum[a]) / speed); };
-          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { scrollToAnchor(item.anchor, false); panel.close(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
+          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.close(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
           body.append(ul);
         }
         body.querySelector('.current')?.scrollIntoView({ block: 'center' });
@@ -856,7 +901,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         const all = docs.flatMap((d) => (d.book.bookmarks ?? []).map((bm) => ({ doc: d, bm }))).sort((a, b) => b.bm.createdAt - a.bm.createdAt);
         if (!all.length) { body.append(h('p', { class: 'center' }, t('noBookmarks'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...all.map(({ doc, bm }) => h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { scrollToLocator(bm.locator); panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); scrollToLocator(bm.locator); panel.close(); } },
             h('span', { dir: 'auto' }, bm.label), h('span', { class: 'meta', dir: 'auto' }, (docs.length > 1 ? doc.book.title + ' · ' : '') + (bm.excerpt ?? ''))),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); doc.book.bookmarks = doc.book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(doc.book.id, (b) => { b.bookmarks = doc.book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
@@ -924,6 +969,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   /** Scroll to a search hit (showing its chapter first when hidden) and mark it. */
   function goToHit(hit: SearchHit): void {
+    back.remember();
     const el = (hit.range.startContainer.parentElement ?? hit.range.startContainer) as HTMLElement;
     const block = (el.closest(BLOCK_SELECTOR) as HTMLElement | null) ?? el;
     revealElement(block);
@@ -1134,6 +1180,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
+        item('download', t('exportAnki'), () => { const cur = currentLocator(); void exportNotesAnki(cur?.doc.book ?? docs[0].book); }),
+        item('scroll', t('speedReading'), () => void startSpeedReading()),
+        item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : books.map((b) => b.id), { onChange: () => void findNext() }))),
         item('external', t('shareFile'), () => { const cur = currentLocator(); void shareBooks([(cur?.doc.book ?? docs[0].book).id]); }),
         item('convert', t('convertFile'), () => { const cur = currentLocator(); void import('../ui/convert').then((m) => m.convertSheet(cur?.doc.book ?? docs[0].book)); }),
         item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
@@ -1275,11 +1324,19 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
+      if (page >= total && total > 1) offerNextPdf();
       window.clearTimeout(saveTimer);
       saveTimer = window.setTimeout(() => { const loc: Locator = { bookId: book.id, page, offset: viewer.currentOffset(), pct: total ? page / total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); scheduleSync(); }, 600);
     },
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
+  let nextVolPdf: Book | null = null; let nextPillPdf: HTMLElement | null = null; let queuedPdf = false;
+  const findNextPdf = () => nextQueued(book.id).then(async (q) => { if (q) { nextVolPdf = q; queuedPdf = true; return; } queuedPdf = false; nextVolPdf = nextVolume(book, await db.allBooks()); }).catch(() => undefined);
+  void findNextPdf();
+  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => navigate(`/read/${next.id}`) }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
+  onDispose(overscrollNext(viewer.scroll, () => (queuedPdf && nextVolPdf ? nextVolPdf.id : null)));
+  const back = jumpBack(root, (loc) => { const l = loc as { page: number; offset: number }; viewer.goTo(l.page, l.offset); }, () => ({ page: viewer.current, offset: viewer.currentOffset() }), viewer.scroll);
+  onDispose(back.dispose);
   viewer.pinchZoom = getSettings().pdfPinchZoom;
   (window as unknown as { __krPdfViewer?: unknown }).__krPdfViewer = viewer; // (for tests)
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
@@ -1403,7 +1460,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       }
     }, { root: overlay.querySelector('.gallery-body'), rootMargin: '400px 0px' });
     for (let n = 1; n <= viewer.total; n++) {
-      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { viewer.goTo(n); close(); } }, h('img', { alt: String(n) }), h('span', null, String(n)));
+      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { back.remember(); viewer.goTo(n); close(); } }, h('img', { alt: String(n) }), h('span', null, String(n)));
       grid.append(cell); io.observe(cell);
     }
     window.addEventListener('keydown', onKey);
@@ -1422,13 +1479,13 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       { id: 'toc', label: t('contents'), render: async (body) => {
         outline ??= await viewer.outline();
         if (!outline.length) { body.append(h('p', { class: 'center' }, t('noContents'))); return; }
-        body.append(h('ul', { class: 'toc-list' }, ...outline.map((it) => h('li', { class: `depth-${Math.min(3, it.depth)}` }, h('button', { type: 'button', dir: 'auto', class: it.page === viewer.current ? 'current' : '', onclick: () => { if (it.page) viewer.goTo(it.page); panel.close(); } }, h('span', { style: { flex: '1' } }, it.label), it.page ? h('span', { class: 'meta' }, String(it.page)) : null)))));
+        body.append(h('ul', { class: 'toc-list' }, ...outline.map((it) => h('li', { class: `depth-${Math.min(3, it.depth)}` }, h('button', { type: 'button', dir: 'auto', class: it.page === viewer.current ? 'current' : '', onclick: () => { if (it.page) { back.remember(); viewer.goTo(it.page); } panel.close(); } }, h('span', { style: { flex: '1' } }, it.label), it.page ? h('span', { class: 'meta' }, String(it.page)) : null)))));
       } },
       { id: 'bookmarks', label: t('bookmarks'), render: (body) => {
         const list = [...(book.bookmarks ?? [])].sort((a, b) => b.createdAt - a.createdAt);
         if (!list.length) { body.append(h('p', { class: 'center' }, t('noBookmarks'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...list.map((bm) => h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); panel.close(); } }, h('span', null, bm.label), bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); panel.close(); } }, h('span', null, bm.label), bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
@@ -1437,12 +1494,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         if (!pins.length && !noted.length) { body.append(h('p', { class: 'center' }, t('noPdfNotes'))); return; }
         const list = h('ul', { class: 'plain-list' });
         pins.forEach((pin, i) => list.append(h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.close(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: viewer.total }))),
             h('span', { dir: 'auto' }, pin.note)),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash')))));
         noted.forEach((hl, i) => list.append(h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); panel.close(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: hl.page, total: viewer.total }))),
             h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text),
             h('span', { dir: 'auto' }, hl.note!)),
@@ -1694,6 +1751,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       body.append(h('ul', { class: 'plain-list' },
         item('info', t('bookInfo'), showInfo),
         item('download', t('exportNotes'), () => void exportNotes(book)),
+        item('download', t('exportAnki'), () => void exportNotesAnki(book)),
         item('external', t('shareFile'), () => void shareBooks([book.id])),
         item('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertSheet(book))),
         item('grid', t('pagesGrid'), showPagesGrid),
@@ -1710,6 +1768,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
         item('note', t('noteOnPage'), placeNote),
+        item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() }))),
         item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
         item('type', t('visualOptions'), openPdfOptions),
         item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),

@@ -124,3 +124,4 @@ export function showReadings(text: string, lang?: string): void {
     s.actions.append(h('button', { class: 'btn small', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(d.innerText); toast(t('copied')); } catch { /* ignore */ } } }, icon('copy'), t('copySelected')));
   }).catch(() => { s.body.innerHTML = ''; s.body.append(h('p', { class: 'src' }, t('furiganaOffline'))); });
 }
+

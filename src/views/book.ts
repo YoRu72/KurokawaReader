@@ -2,6 +2,7 @@
 // reader's stars and words, its AniList entry when tracking is on, and the contents — each chapter a tap away,
 // the read ones marked, with «resume» to carry on where the reader left off.
 import { h, icon, iconButton, toast, coverColors } from '../ui/dom';
+import { volumesOf } from '../series';
 import { t, formatBytes, formatDuration, localDigits, countChapters, getLang } from '../i18n';
 import { db, FAV_TAG, type Book } from '../db';
 import { coverUrl } from '../library';
@@ -108,9 +109,19 @@ export function bookView(id: string): HTMLElement {
     const descEl = h('div', { class: 'book-desc', hidden: true });
     const tagsEl = h('div', { class: 'book-tags' }, ...others.map((x) => h('span', { class: 'chip small' }, h('span', null, x))));
     const chaptersEl = h('div', { class: 'book-chapters' }, h('p', { class: 'src', style: { padding: '0 16px' } }, t('loading')));
+    // The series this book belongs to (told from the titles), with its other volumes in the library.
+    const seriesEl = h('div', { class: 'book-series', hidden: true });
+    void db.allBooks().then((all) => {
+      const v = volumesOf(book, all); if (!v) return;
+      const i = v.books.findIndex((x) => x.book.id === book.id);
+      seriesEl.hidden = false;
+      seriesEl.replaceChildren(h('h3', null, h('span', { dir: 'auto' }, v.part.name), h('small', null, ` · ${t('volumeOf', { n: localDigits(String(v.books[i]?.index ?? 0)), total: localDigits(String(v.books.length)) })}`)),
+        h('div', { class: 'series-row' }, ...v.books.map((x) => h('button', { type: 'button', class: 'chip small' + (x.book.id === book.id ? ' on' : ''), title: x.book.title, onclick: () => { if (x.book.id !== book.id) navigate(`/book/${x.book.id}`); } }, h('span', null, localDigits(String(x.index)))))),
+        ...(i + 1 < v.books.length ? [h('button', { type: 'button', class: 'btn small tonal', onclick: () => navigate(`/book/${v.books[i + 1].book.id}`) }, icon('arrowRight'), t('nextVolume'))] : []));
+    });
     const fabText = h('span', { class: 'fab-text' }, h('b', null, book.progress && !done ? t('resume') : done ? t('readAgain') : t('startReading')));
     const fab = h('button', { type: 'button', class: 'fab book-resume', onclick: () => navigate(`/read/${book.id}`) }, icon('play'), fabText);
-    body.replaceChildren(hero, tiles, facts, descEl, tagsEl, chaptersEl, fab);
+    body.replaceChildren(hero, tiles, facts, descEl, tagsEl, seriesEl, chaptersEl, fab);
 
     void (async () => {
       const outline = await outlineOf(book);
