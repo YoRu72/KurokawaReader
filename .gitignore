@@ -12,3 +12,4 @@ native/android/*.keystore
 __pycache__/
 vendor/
 *-vertical.pdf
+mixed-scripts.pdf
