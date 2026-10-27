@@ -4,7 +4,7 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickSheet } from '../ui/dom';
 import { t, localDigits, countCards } from '../i18n';
 import { db, type Book } from '../db';
-import { navigate } from '../router';
+import { navigate, back } from '../router';
 import { getSettings, pageIsLight } from '../settings';
 import { scheduleSync } from '../sync';
 import { ReadingTracker } from '../stats';
@@ -12,7 +12,7 @@ import { openDeck, loadProgress, saveProgress, buildQueue, nextCard, schedule, d
 
 export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void): Promise<void> {
   const title = h('div', { class: 'title', dir: 'auto' }, book.title, h('small', null, t('ankiDeck')));
-  const topbar = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), title,
+  const topbar = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), title,
     iconButton('search', t('ankiBrowse'), () => browse()),
     iconButton('settings', t('ankiOptions'), () => options()));
   const main = h('div', { class: 'anki-main' });

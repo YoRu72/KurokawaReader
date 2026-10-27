@@ -3,7 +3,7 @@
 // catalogue offers one. Each feed is its own place in the history, so the system's back goes up one shelf.
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, localDigits } from '../i18n';
-import { navigate } from '../router';
+import { navigate, back } from '../router';
 import { db } from '../db';
 import { nativePlatform } from '../native';
 import { fmtMB } from '../updates';
@@ -18,7 +18,7 @@ export function catalogView(url?: string, q?: string): HTMLElement & { dispose?:
   const titleEl = h('div', { class: 'title' }, t('catalogs'));
   const actions = h('div', { class: 'topbar-actions' });
   const root = h('div', { class: 'view catalog-view' },
-    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => (url ? history.back() : navigate('/'))), titleEl, actions),
+    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(url ? '/catalog' : '/')), titleEl, actions),
     body) as HTMLElement & { dispose?: () => void };
   let gone = false; root.dispose = () => { gone = true; };
 

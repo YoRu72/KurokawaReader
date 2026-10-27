@@ -6,19 +6,20 @@
 // or fetched whole for offline. A bell tells what came: new chapters for the novels of the library, newer
 // versions of the extensions.
 import { h, icon, iconButton, toast, openSheet, coverColors, pickButton } from '../ui/dom';
-import { t, localDigits, getLang, countChapters } from '../i18n';
-import { navigate } from '../router';
-import { db, type Book } from '../db';
+import { t, localDigits, getLang, countChapters, countBooks, countVolumes, formatBytes } from '../i18n';
+import { navigate, back } from '../router';
+import { db, uid, type Book, type Folder } from '../db';
 import { importFiles } from '../library';
-import { fmtMB } from '../updates';
 import { setJump } from './reader';
-import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceChapter } from '../sources/types';
+import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceChapter, type SourceFile } from '../sources/types';
 import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
 import { passChallenge } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, type Repo, type ExtItem } from '../sources/repos';
-import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, type Handle, type WebNovel } from '../sources/ext/source';
+import { folderSource } from '../sources/folder';
+import { schedule } from '../sources/peek';
+import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
 
@@ -40,8 +41,18 @@ function saveFilters(src: Source, v: FilterValues): void { localStorage.setItem(
 interface Cached { items: SourceBook[]; page: number; hasMore: boolean; tags: SourceTag[]; title?: string; scroll: number }
 const cache = new Map<string, Cached>();
 
+const DIR_PREFIX = 'dir:';
+const isDir = (id: string) => id.startsWith(DIR_PREFIX);
+/** The source of a web folder the reader added, by its id. */
+async function folderSourceFor(srcId: string): Promise<Source> {
+  const repo = (await listRepos()).find((r) => r.kind === 'folder' && `${DIR_PREFIX}${r.key}` === srcId);
+  if (!repo) throw new SourceError('noRepo', 'parse');
+  return folderSource(repo);
+}
+
 export function sourcesView(srcId?: string, bookId?: string, q?: string, shelf?: string, tags?: string[]): HTMLElement & { dispose?: () => void } {
   if (srcId && isExt(srcId)) return lazy(async () => { const hnd = await extHandle(srcId); return bookId ? detailsView(hnd.source, bookId, hnd) : browseView(hnd.source, q ?? '', shelf, tags ?? [], hnd); }, srcId);
+  if (srcId && isDir(srcId)) return lazy(async () => { const src = await folderSourceFor(srcId); return bookId ? detailsView(src, bookId) : browseView(src, q ?? '', shelf, tags ?? []); }, srcId);
   const src = srcId ? sourceById(srcId) : undefined;
   if (src && bookId) return detailsView(src, bookId);
   if (src) return browseView(src, q ?? '', shelf, tags ?? []);
@@ -51,15 +62,16 @@ export function sourcesView(srcId?: string, bookId?: string, q?: string, shelf?:
 /** A view that comes once an extension is running: a shell with a spinner, then the view — or the error. */
 function lazy(make: () => Promise<HTMLElement & { dispose?: () => void }>, srcId: string): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'library-body' }, h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('loadingExtension')));
-  const shell = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/sources')), h('div', { class: 'title' }, t('sources'))), body) as HTMLElement & { dispose?: () => void };
+  const shell = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/sources')), h('div', { class: 'title' }, t('sources'))), body) as HTMLElement & { dispose?: () => void };
   let inner: (HTMLElement & { dispose?: () => void }) | null = null; let gone = false;
   shell.dispose = () => { gone = true; inner?.dispose?.(); };
   const run = () => make().then((el) => { if (gone) { el.dispose?.(); return; } inner = el; shell.replaceChildren(...Array.from(el.childNodes)); shell.dispose = () => { gone = true; el.dispose?.(); }; }).catch((e) => {
     if (gone) return;
     body.replaceChildren();
     const err = e as SourceError;
-    const el = h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('puzzle')), h('p', null, err instanceof SourceError && err.kind === 'parse' && /noExtension|notRunnable/.test(err.message) ? t(err.message === 'notRunnable' ? 'extNotRunnable' : 'extGone') : describe(e)));
-    if (err instanceof SourceError && err.kind === 'cloudflare') el.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void findItem(srcId).then((f) => f && passChallenge(f.item.url)).then(() => { body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); forgetHandle(srcId); void run(); }) }, icon('globe'), t('passCheck')));
+    const el = h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon(isDir(srcId) ? 'folder' : 'puzzle')), h('p', null, err instanceof SourceError && err.kind === 'parse' && /noExtension|notRunnable|noRepo/.test(err.message) ? t(err.message === 'notRunnable' ? 'extNotRunnable' : 'extGone') : describe(e)));
+    const siteOf = async () => (isDir(srcId) ? (await folderSourceFor(srcId)).site : (await findItem(srcId))?.item.url);
+    if (err instanceof SourceError && err.kind === 'cloudflare') el.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void siteOf().then((u) => (u ? passChallenge(u) : undefined)).then(() => { body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); forgetHandle(srcId); void run(); }) }, icon('globe'), t('passCheck')));
     else el.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); forgetHandle(srcId); void run(); } }, t('tryAgain')));
     body.append(el);
   });
@@ -73,7 +85,7 @@ function hubView(): HTMLElement & { dispose?: () => void } {
   const bell = iconButton('bell', t('srcWhatsNew'), () => updatesSheet(() => void drawBell()));
   bell.classList.add('bell-btn');
   const actions = h('div', { class: 'topbar-actions' }, bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
-  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
   const off = onUpdatesChanged(() => void drawBell());
   root.dispose = () => off();
   const drawBell = async () => {
@@ -103,7 +115,7 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     reposBox.replaceChildren();
     if (!repos.length) { reposBox.append(h('p', { class: 'hint repos-empty' }, t('noReposYet'))); return; }
     reposBox.append(h('h3', { class: 'section-title' }, t('repos')));
-    for (const r of repos) reposBox.append(repoSection(r, () => void drawRepos()));
+    for (const r of repos) reposBox.append(r.kind === 'folder' ? folderSection(r, () => void drawRepos()) : repoSection(r, () => void drawRepos()));
   };
   void drawRepos();
   return root;
@@ -174,6 +186,18 @@ function repoSection(r: Repo, redraw: () => void): HTMLElement {
   draw();
   return sec;
 }
+/** A web folder the reader added: a source card like the built-in ones, opening its root. */
+function folderSection(r: Repo, redraw: () => void): HTMLElement {
+  let where = r.url; try { const u = new URL(r.url); where = `${u.host}${u.pathname === '/' ? '' : decodeURIComponent(u.pathname).replace(/\/$/, '')}`; } catch { /* as given */ }
+  const card = h('article', { class: 'source-card folder-card' });
+  const head = h('button', { type: 'button', class: 'source-head', onclick: () => navigate(path(`${DIR_PREFIX}${r.key}`)) },
+    h('span', { class: 'source-icon' }, icon('folder')),
+    h('span', { class: 'source-text' }, h('b', { dir: 'auto' }, r.name), h('small', { dir: 'ltr' }, where)),
+    icon('chevronRight'));
+  card.append(h('div', { class: 'repo-head' }, head, iconButton('more', t('more'), () => repoMenu(r, redraw))), h('p', { class: 'source-desc', dir: 'auto' }, t('folderSourceDesc')));
+  if (r.error) card.append(h('p', { class: 'hint warn' }, r.error));
+  return card;
+}
 function extCard(r: Repo, i: ExtItem): HTMLElement {
   const [c1, c2] = coverColors(i.name);
   const ic = h('span', { class: 'ext-icon', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, i.icon ? h('img', { src: i.icon, alt: '', loading: 'lazy', onerror: (e: Event) => (e.target as HTMLElement).remove() }) : icon('puzzle'));
@@ -206,10 +230,12 @@ function addRepoSheet(after: () => void): void {
     go.disabled = true; status.textContent = t('readingRepo');
     try {
       const { repo, added } = await addRepo(given);
-      if (!added) { status.textContent = t('repoAlreadyAdded', { name: repo.name }); toast(t('repoAlreadyAdded', { name: repo.name })); go.disabled = false; return; }
+      if (!added) { status.textContent = t('repoAlreadyAdded', { name: `\u2068${repo.name}\u2069` }); toast(t('repoAlreadyAdded', { name: `\u2068${repo.name}\u2069` })); go.disabled = false; return; }
       sh.close(); after();
       const runnable = repo.items.filter((i) => i.runnable).length;
-      toast(runnable ? t('repoAdded', { name: repo.name, n: localDigits(runnable) }) : t('repoAddedNotRunnable', { name: repo.name, app: KIND_APP[repo.kind] }), 'info', 4000);
+      // (The name kept whole inside a sentence of the other direction.)
+      const name = `\u2068${repo.name}\u2069`;
+      toast(repo.kind === 'folder' ? t('folderAdded', { name }) : runnable ? t('repoAdded', { name, n: localDigits(runnable) }) : t('repoAddedNotRunnable', { name, app: KIND_APP[repo.kind] }), 'info', 4000);
     } catch (e) {
       const err = e as SourceError;
       status.textContent = err instanceof SourceError && err.kind === 'parse' ? (err.message === 'badRepoUrl' ? t('repoBadUrl') : t('repoNoIndex')) : describe(e);
@@ -271,6 +297,145 @@ function updatesSheet(after: () => void): void {
   void draw();
 }
 
+/* ---------- a web folder: covers, a series, its volumes ---------- */
+/** The library's books fetched from a source, by the id of the item each came from. */
+async function fromSource(srcId: string): Promise<Map<string, string>> {
+  const m = new Map<string, string>();
+  for (const b of await db.allBooks()) if (b.remote?.source === srcId && b.remote.id) m.set(b.remote.id, b.id);
+  return m;
+}
+/** A folder of the library by its name: the one there is, or a new one. */
+async function libraryFolder(name: string): Promise<string> {
+  const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
+  const had = folders.find((f) => f.name === name); if (had) return had.id;
+  const f: Folder = { id: uid(), name, createdAt: Date.now() };
+  await db.setMeta('folders', [...folders, f]);
+  return f.id;
+}
+/** One file of a folder into the library, remembered as coming from there (so its row says "Open" after). */
+async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number }) => void, folderId?: string): Promise<Book> {
+  const got = await src.fetchFile!({ id, title, tags: [], files: [file] }, file, onProgress);
+  const added = await importFiles([got]);
+  if (!added.length) throw new Error(t('convertFailed'));
+  await db.updateBook(added[0].id, (b) => { b.remote = { source: src.id, id }; if (folderId) b.folderId = folderId; });
+  return added[0];
+}
+/** A file's contents as a short list — the first entries, the rest behind a button. */
+function tocBlock(toc: { label: string; depth: number }[], first = 6): HTMLElement {
+  const box = h('div', { class: 'vol-toc' });
+  const list = h('ol', { class: 'vol-toc-list' });
+  const draw = (all: boolean) => {
+    list.replaceChildren(...toc.slice(0, all ? toc.length : first).map((e) => h('li', { dir: 'auto', style: { paddingInlineStart: `${Math.min(e.depth, 4) * 14}px` } }, e.label)));
+  };
+  draw(false);
+  box.append(h('b', { class: 'vol-toc-head' }, `${t('contents')} · ${localDigits(toc.length)}`), list);
+  if (toc.length > first) {
+    let all = false;
+    const more = h('button', { type: 'button', class: 'btn small text vol-toc-more' }, t('showAllN', { n: localDigits(toc.length) })) as HTMLButtonElement;
+    more.addEventListener('click', () => { all = !all; draw(all); more.textContent = all ? t('showLess') : t('showAllN', { n: localDigits(toc.length) }); });
+    box.append(more);
+  }
+  return box;
+}
+type Observe = (el: Element, fn: () => Promise<void>) => void;
+const HEAD = '\u0000head';
+/** A volume: its cover and contents (read from the file as the row comes near), its size, its button —
+ *  "Download", the progress, then "Open" once it is in the library. */
+function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
+  const f = b.file!;
+  const [c1, c2] = coverColors(b.title);
+  const kind = h('span', { class: 'vol-kind' }, b.badge ?? f.label);
+  const cover = h('button', { type: 'button', class: 'vol-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` }, 'aria-label': b.title, onclick: () => navigate(bookPath(src.id, b.id)) }, h('span', { class: 'vol-cover-title', dir: 'auto' }, b.title), kind);
+  const extra = h('small', { class: 'vol-meta', dir: 'auto', hidden: true });
+  const tocSlot = h('div');
+  const actions = h('div', { class: 'vol-actions' });
+  const openBtn = (bookId: string) => h('button', { type: 'button', class: 'btn primary small', onclick: () => navigate(`/read/${bookId}`) }, icon('play'), t('open'));
+  const setOpen = (bookId: string) => { actions.replaceChildren(openBtn(bookId)); };
+  rows.set(b.id, setOpen);
+  const dl = h('button', { type: 'button', class: 'btn tonal small' }, icon('download'), h('span', null, t('download'))) as HTMLButtonElement;
+  dl.addEventListener('click', async () => {
+    dl.disabled = true;
+    try {
+      const book = await fetchVolume(src, b.id, b.title, f, (p) => { dl.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : '…')); });
+      lib.set(b.id, book.id); setOpen(book.id); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
+    } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); toast(describe(e), 'error'); }
+  });
+  const have = lib.get(b.id);
+  actions.append(have ? openBtn(have) : dl);
+  const row = h('article', { class: 'vol-row' }, cover,
+    h('div', { class: 'vol-text' },
+      h('b', { class: 'vol-title', dir: 'auto' }, b.title),
+      h('small', { class: 'vol-sub', dir: 'auto' }, [b.author, f.size !== undefined ? formatBytes(f.size) : '', (b.year ?? '').replace(/[ T]\d{1,2}:\d{2}.*$/, '')].filter(Boolean).join(' · ')),
+      extra, actions, tocSlot));
+  const fill = (p: { cover?: string; title?: string; author?: string; toc?: { label: string; depth: number }[] }) => {
+    if (p.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), kind); }
+    const line = [p.title && p.title.toLowerCase() !== b.title.toLowerCase() ? p.title : '', p.author].filter(Boolean).join(' — ');
+    if (line) { extra.textContent = line; extra.hidden = false; }
+    if (p.toc?.length) tocSlot.replaceChildren(tocBlock(p.toc));
+  };
+  // (Read before in this session: drawn at once, so a page come back to keeps its height and its place.)
+  const now = src.peekNow?.(b);
+  if (now) fill(now);
+  else if (src.peek) observe(row, async () => { const p = await src.peek!(b).catch(() => null); if (p) fill(p); });
+  return row;
+}
+/** The head of a folder of volumes: the first volume's cover, the name, how many and how big, and a button
+ *  to fetch them all — into a folder of the library named after the series, skipping those already there. */
+/** Series being fetched whole: one run per series however often its page is opened meanwhile. */
+const seriesRuns = new Map<string, { text: string; on?: (text: string) => void; done?: () => void }>();
+function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
+  const files = b.files ?? [];
+  const runKey = `${src.id}|${b.id}`;
+  const [c1, c2] = coverColors(b.title);
+  const cover = h('div', { class: 'series-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, icon('books'));
+  const status = h('small', { class: 'series-status', hidden: true });
+  const missing = () => files.filter((f) => !lib.has(`f:${f.id}`));
+  const btn = h('button', { type: 'button', class: 'btn primary' }) as HTMLButtonElement;
+  const label = () => { const n = missing().length; btn.disabled = !n; btn.className = n ? 'btn primary' : 'btn tonal'; btn.replaceChildren(icon(n ? 'download' : 'check'), h('span', null, n ? t('downloadAllVolumes', { n: countVolumes(n) }) : t('allInLibrary'))); };
+  label();
+  // (A volume fetched by its own button leaves one fewer for this one.)
+  rows.set(HEAD, () => { if (!btn.disabled || !missing().length) label(); });
+  // (A run already going — the page left and opened again — shows its progress here.)
+  const attach = (run: { text: string; on?: (text: string) => void; done?: () => void }) => {
+    btn.disabled = true; status.hidden = false; status.textContent = run.text;
+    run.on = (text) => { status.textContent = text; };
+    run.done = () => { status.hidden = true; label(); };
+  };
+  const going = seriesRuns.get(runKey); if (going) attach(going);
+  btn.addEventListener('click', async () => {
+    const todo = missing(); if (!todo.length || seriesRuns.has(runKey)) return;
+    const run: { text: string; on?: (text: string) => void; done?: () => void } = { text: '' };
+    seriesRuns.set(runKey, run); attach(run);
+    let done = 0;
+    try {
+      const folderId = await libraryFolder(b.title);
+      for (const [i, f] of todo.entries()) {
+        const id = `f:${f.id}`;
+        if (lib.has(id)) continue;   // (fetched meanwhile by its own button)
+        const say = (extra: string) => { run.text = `${t('fetchingVolume', { n: localDigits(i + 1), total: localDigits(todo.length) })}${extra ? ` · ${extra}` : ''}`; run.on?.(run.text); };
+        say('');
+        const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : ''), folderId);
+        lib.set(id, book.id); rows.get(id)?.(book.id); done++;
+      }
+      toast(t('volumesAdded', { n: countVolumes(done), folder: `\u2068${b.title}\u2069` }), 'info', 4000);
+      seriesRuns.delete(runKey); run.done?.();
+    } catch (e) { seriesRuns.delete(runKey); toast(describe(e), 'error'); run.done?.(); status.hidden = false; status.textContent = describe(e); }
+  });
+  const head = h('article', { class: 'series-head' }, cover,
+    h('div', { class: 'series-text' },
+      h('h2', { dir: 'auto' }, b.title),
+      b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
+      h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
+      h('div', { class: 'series-actions' }, btn), status));
+  // (The cover is the first volume's: an EPUB before a PDF.)
+  const v1 = files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
+  const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
+  const now = v1b ? src.peekNow?.(v1b) : undefined;
+  if (now?.cover) cover.replaceChildren(h('img', { src: now.cover, alt: '' }));
+  else if (v1b && src.peek) observe(head, async () => { const p = await src.peek!(v1b).catch(() => null); if (p?.cover) cover.replaceChildren(h('img', { src: p.cover, alt: '' })); });
+  return head;
+}
+
 /* ---------- browsing a source ---------- */
 function browseView(src: Source, q: string, shelf: string | undefined, tags: string[], hnd?: Handle): HTMLElement & { dispose?: () => void } {
   let filters = filterValues(src);
@@ -289,10 +454,23 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   if (hnd && (hnd.ln?.pluginSettings || hnd.my?.prefs.length)) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
   topActions.append(iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); })));
   const root = h('div', { class: 'view sources-view' },
-    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => (q || shelf || tags.length ? navigate(path(src.id)) : navigate('/sources'))), titleEl, topActions),
+    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(src.id.startsWith('dir:') && !q && shelf ? path(src.id, { shelf: shelf.split('/').slice(0, -1).join('/') || undefined }) : q || shelf || tags.length ? path(src.id) : '/sources')), titleEl, topActions),
     body) as HTMLElement & { dispose?: () => void };
   let gone = false; let page = 0; let hasMore = true; let loading = false; let items: SourceBook[] = []; let allTags: SourceTag[] = [];
-  root.dispose = () => { gone = true; io.disconnect(); const c = cache.get(key); if (c) c.scroll = root.closest('.view')?.scrollTop ?? document.scrollingElement?.scrollTop ?? 0; };
+  // What a folder's items need: the library's books from this source, the rows to tell when one arrives,
+  // and covers and contents read as their cards come near (a few at a time, the ones scrolled past dropped).
+  const lib = new Map<string, string>(); const rows = new Map<string, (bookId: string) => void>();
+  const lazy = new WeakMap<Element, () => Promise<void>>(); const waiting = new WeakMap<Element, () => void>();
+  const lazyIo = new IntersectionObserver((es) => {
+    for (const e of es) {
+      const fn = lazy.get(e.target); if (!fn) continue;
+      if (e.isIntersecting) { if (!waiting.has(e.target)) waiting.set(e.target, schedule(async () => { if (gone || !lazy.has(e.target)) return; lazy.delete(e.target); lazyIo.unobserve(e.target); await fn(); })); }
+      else { waiting.get(e.target)?.(); waiting.delete(e.target); }
+    }
+  }, { rootMargin: '500px 0px' });
+  const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); };
+  // (The page scrolls in its body: that is the place kept for the way back.)
+  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
 
   // Shelves (collections, categories, popular/latest) when nothing is searched.
   if (src.shelves) void src.shelves().then((list) => {
@@ -313,16 +491,30 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       tagRow.append(h('button', { type: 'button', class: 'chip tag' + (on ? ' on' : ''), onclick: () => navigate(path(src.id, { q, shelf, tags: on ? tags.filter((x) => x !== tg.id) : [...tags, tg.id] })) }, icon('tag'), h('span', { dir: 'auto' }, tg.label), tg.count ? h('small', null, ` ${localDigits(tg.count)}`) : null));
     }
   };
-  const card = (b: SourceBook) => {
+  const card = (b: SourceBook): HTMLElement => {
+    if (b.look === 'volume' && b.file) return volumeRow(src, b, lib, observe, rows);
+    if (b.look === 'series') return seriesHead(src, b, lib, observe, rows);
     const [c1, c2] = coverColors(b.title);
-    const cover = h('div', { class: 'src-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, b.cover ? coverImg(b.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, b.title));
-    return h('button', { type: 'button', class: 'src-card', title: b.title, onclick: () => navigate(bookPath(src.id, b.id)) },
+    const cover = h('div', { class: 'src-cover' + (b.look ? ` ${b.look}` : ''), style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, b.cover ? coverImg(b.cover, hnd) : b.look === 'folder' ? icon('folder') : h('span', { class: 'src-cover-title', dir: 'auto' }, b.title));
+    const el = h('button', { type: 'button', class: 'src-card' + (b.look ? ` ${b.look}` : ''), title: b.title, onclick: () => navigate(b.openShelf !== undefined ? path(src.id, { shelf: b.openShelf }) : bookPath(src.id, b.id)) },
       cover,
       b.badge ? h('span', { class: 'src-badge left' }, b.badge) : null,
       b.lang ? h('span', { class: 'src-badge right' }, b.lang.length > 3 ? b.lang.slice(0, 3) : b.lang.toUpperCase()) : null,
       h('span', { class: 'src-title', dir: 'auto' }, b.title),
       b.author ? h('span', { class: 'src-author', dir: 'auto' }, b.author) : null,
+      formatMarks(b.formats),
       b.description && src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? h('span', { class: 'src-snippet', dir: 'auto' }, b.description) : null);
+    // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
+    if (b.look === 'folder' && b.openShelf !== undefined && src.folderCover) {
+      const fill = (p: { cover?: string; count?: number } | null) => {
+        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), h('span', { class: 'folder-mark' }, icon('folder'))); }
+        if (p?.count) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
+      };
+      const now = src.folderCoverNow?.(b.openShelf);
+      if (now) fill(now);
+      else observe(el, async () => fill(await src.folderCover!(b.openShelf!).catch(() => null)));
+    }
+    return el;
   };
   const more = async () => {
     if (gone || loading || !hasMore) return;
@@ -333,7 +525,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       if (gone) return;
       page++; hasMore = r.hasMore; items.push(...r.items);
       if (r.tags?.length && page === 1) { allTags = r.tags; drawTags(); }
-      if (r.title && page === 1 && (q || !shelf)) titleEl.replaceChildren(h('span', { dir: 'auto' }, r.title), h('small', null, src.name));
+      if (r.title && page === 1 && (q || !shelf || !src.shelves)) titleEl.replaceChildren(h('span', { dir: 'auto' }, r.title), h('small', null, src.name));
       for (const b of r.items) grid.append(card(b));
       status.textContent = items.length ? '' : t('noResults');
       cache.set(key, { items: [...items], page, hasMore, tags: allTags, title: r.title, scroll: 0 });
@@ -346,11 +538,12 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     } finally { loading = false; }
   };
   const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) void more(); }, { rootMargin: '600px' });
-  io.observe(sentinel);
   const had = cache.get(key);
-  if (had) { items = [...had.items]; page = had.page; hasMore = had.hasMore; allTags = had.tags; drawTags(); for (const b of items) grid.append(card(b)); if (had.title && (q || !shelf)) titleEl.replaceChildren(h('span', { dir: 'auto' }, had.title), h('small', null, src.name)); requestAnimationFrame(() => { (root.closest('.view') ?? root).scrollTop = had.scroll; }); }
-  else if (q || shelf || !src.shelves || src.id === 'archive' || hnd) void more();
-  else { drawTags(); status.textContent = t('pickShelfOrSearch'); }
+  // (A folder's rows know which of its files are in the library before they are drawn.)
+  const ready = src.id.startsWith('dir:') ? fromSource(src.id).then((m) => { for (const [k, v] of m) lib.set(k, v); }).catch(() => undefined) : Promise.resolve();
+  void ready.then(() => { if (!gone) io.observe(sentinel); });
+  if (had) void ready.then(() => { if (gone) return; items = [...had.items]; page = had.page; hasMore = had.hasMore; allTags = had.tags; drawTags(); for (const b of items) grid.append(card(b)); if (had.title && (q || !shelf || !src.shelves)) titleEl.replaceChildren(h('span', { dir: 'auto' }, had.title), h('small', null, src.name)); requestAnimationFrame(() => { body.scrollTop = had.scroll; }); });
+  else void ready.then(() => void more());
   if (src.needsApp && isWeb()) status.replaceChildren(h('p', { class: 'hint warn' }, t('sourceNeedsApp')));
   if (src.id === 'shamela' && q && String(filters.mode) !== 'titles' && !link.isConnected() && (String(filters.mode) === 'chapters' || String(filters.engine) === 'link' || /^(root|wild)$/.test(String(filters.match)))) status.replaceChildren(signInNote());
   return root;
@@ -436,7 +629,7 @@ const downloads = new Map<string, { done: number; total: number; live: boolean }
 function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'library-body src-details' });
   const titleEl = h('div', { class: 'title' }, src.name);
-  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => history.back()), titleEl), body) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(path(src.id))), titleEl), body) as HTMLElement & { dispose?: () => void };
   let gone = false; root.dispose = () => { gone = true; };
   body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('loading')));
   void (async () => {
@@ -462,27 +655,101 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     if (d.tags.length) body.append(h('div', { class: 'folder-chips src-tags' }, ...d.tags.slice(0, 30).map((tg) => h('button', { type: 'button', class: 'chip tag', onclick: () => navigate(path(src.id, hnd ? { q: tg.label } : { tags: [tg.id] })) }, icon('tag'), h('span', { dir: 'auto' }, tg.label)))));
     if (d.meta?.length && !hnd) body.append(h('dl', { class: 'src-meta' }, ...d.meta.flatMap((m) => [h('dt', null, m.label), h('dd', { dir: 'auto' }, m.value)])));
     if (d.chapters?.length) body.append(hnd ? novelChapters(d, hnd) : chaptersList(d, id, () => gone));
+    if (d.toc?.length) body.append(tocBlock(d.toc, 40));
   })();
   return root;
 }
 
-/** archive.org and the like: a button per file, the fetched one going into the library. */
+/** What a book can be fetched in, told at a glance (the archive says so for every book): EPUB — the format
+ *  that reads best — marked present or, in red, not available; the other formats after it; a book that can
+ *  be fetched in nothing marked so in red. Nothing for a source that does not say. */
+function formatMarks(formats: string[] | undefined): HTMLElement | null {
+  if (!formats) return null;
+  const row = h('span', { class: 'src-formats' });
+  if (!formats.length) { row.append(h('span', { class: 'src-fmt missing' }, t('notAvailable'))); return row; }
+  row.append(formats.includes('EPUB') ? h('span', { class: 'src-fmt ok' }, 'EPUB') : h('span', { class: 'src-fmt missing' }, `EPUB (${t('notAvailable')})`));
+  for (const f of formats.filter((f) => f !== 'EPUB').slice(0, 3)) row.append(h('span', { class: 'src-fmt ok' }, f));
+  return row;
+}
+
+/** archive.org and the like: a button per file, the fetched one going into the library. A work in parts
+ *  (volumes as several PDFs) is fetched merged into one book, or as separate books (a series). */
 function fileActions(box: HTMLElement, src: Source, d: SourceDetails): void {
-  if (!d.files.length) { box.append(h('p', { class: 'hint' }, d.badge === 'borrow only' ? t('borrowOnly') : t('noFilesOffered'))); return; }
+  const marks = formatMarks(d.formats); if (marks) box.append(marks);
+  if (!d.files.length) { box.append(h('p', { class: 'hint src-na' }, d.badge === 'borrow only' ? t('borrowOnly') : t('noFilesOffered'))); return; }
+  const folder = src.id.startsWith('dir:');
   const list = h('div', { class: 'src-files' });
-  for (const f of d.files) {
-    const btn = h('button', { type: 'button', class: 'btn tonal src-file' }, icon('download'), h('span', { class: 'grow' }, f.label), f.size ? h('small', null, fmtMB(f.size)) : null) as HTMLButtonElement;
+  // (A folder's file already in the library opens from here.)
+  if (folder) void fromSource(src.id).then((m) => { const id = m.get(d.id); if (id) list.replaceChildren(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${id}`) }, icon('play'), h('span', { class: 'grow' }, `${t('inLibrary')} · ${t('open')}`))); });
+  const fileButton = (f: SourceFile, label: string, name?: string): HTMLButtonElement => {
+    const btn = h('button', { type: 'button', class: 'btn tonal src-file' }, icon('download'), h('span', { class: 'grow' }, label), f.size ? h('small', null, formatBytes(f.size)) : null) as HTMLButtonElement;
     btn.addEventListener('click', async () => {
-      btn.disabled = true; const label = f.label;
+      btn.disabled = true;
       try {
-        const file = await src.fetchFile!(d, f, (p) => { btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, p.total ? `${p.pct}% · ${fmtMB(p.got)} / ${fmtMB(p.total)}` : p.got ? fmtMB(p.got) : `${label}…`)); });
-        const added = await importFiles([file]);
+        const progress = (p: { pct: number; got: number; total: number }) => { btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, p.total ? `${p.pct}% · ${formatBytes(p.got)} / ${formatBytes(p.total)}` : p.got ? formatBytes(p.got) : `${label}…`)); };
+        // (A web folder's file is remembered as coming from there, so its row and page say "Open" after.)
+        const added = folder ? [await fetchVolume(src, d.id, d.title, f, progress)] : await importFiles([await fetchOne(f, progress, name)]);
         if (!added.length) throw new Error(t('convertFailed'));
         toast(t('addedToLibrary'));
         btn.replaceWith(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${added[0].id}`) }, icon('play'), h('span', { class: 'grow' }, `${label} · ${t('open')}`)));
-      } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, label)); if (f.size) btn.append(h('small', null, fmtMB(f.size))); toast(describe(e), 'error'); }
+      } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, label)); if (f.size) btn.append(h('small', null, formatBytes(f.size))); toast(describe(e), 'error'); }
     });
-    list.append(btn);
+    return btn;
+  };
+  const safeTitle = d.title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim().slice(0, 120) || d.id;
+  const fetchOne = async (f: SourceFile, onProgress: (p: { pct: number; got: number; total: number }) => void, name?: string): Promise<File> => {
+    const file = await src.fetchFile!(d, f, onProgress);
+    return name ? new File([file], name, { type: file.type }) : file;
+  };
+  const partName = (f: SourceFile, i: number) => { if (f.name) return f.name; const m = /(\d+)(?!.*\d)/.exec(f.id.replace(/\.[a-z0-9]+$/i, '')); return `${safeTitle} ${m ? Number(m[1]) : i + 1}.${f.ext}`; };
+  for (const f of d.files) {
+    if (!f.parts?.length) { list.append(fileButton(f, f.label)); continue; }
+    const parts = f.parts;
+    const group = h('div', { class: 'src-parts' });
+    group.append(h('div', { class: 'src-parts-head' }, h('b', null, `${f.label} · ${t('partsN', { n: localDigits(parts.length) })}`), f.size ? h('small', null, formatBytes(f.size)) : null));
+    // Merged into one book: PDFs page after page, texts one after another.
+    if (f.ext === 'pdf' || f.ext === 'txt') {
+      const merged = h('button', { type: 'button', class: 'btn tonal src-file' }, icon('download'), h('span', { class: 'grow' }, t('fetchMerged'))) as HTMLButtonElement;
+      merged.addEventListener('click', async () => {
+        merged.disabled = true; const say = (txt: string) => merged.replaceChildren(icon('download'), h('span', { class: 'grow' }, txt));
+        try {
+          const got: File[] = [];
+          for (const [i, part] of parts.entries()) { say(t('fetchingPart', { n: localDigits(i + 1), total: localDigits(parts.length) })); got.push(await fetchOne(part, () => undefined)); }
+          let file: File;
+          if (f.ext === 'pdf') {
+            say(t('mergingParts'));
+            const { mergePdfs } = await import('../pdftools');
+            const bytes = await mergePdfs(await Promise.all(got.map(async (g) => ({ name: g.name, bytes: new Uint8Array(await g.arrayBuffer()) }))));
+            file = new File([bytes.buffer as ArrayBuffer], `${safeTitle}.pdf`, { type: 'application/pdf' });
+          } else file = new File([(await Promise.all(got.map((g) => g.text()))).join('\n\n')], `${safeTitle}.txt`, { type: 'text/plain' });
+          const added = await importFiles([file]);
+          if (!added.length) throw new Error(t('convertFailed'));
+          toast(t('addedToLibrary'));
+          merged.replaceWith(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${added[0].id}`) }, icon('play'), h('span', { class: 'grow' }, `${t('fetchMerged')} · ${t('open')}`)));
+        } catch (e) { merged.disabled = false; say(t('fetchMerged')); toast(describe(e), 'error'); }
+      });
+      group.append(merged);
+    }
+    // As separate books, each a volume of the series.
+    const split = h('button', { type: 'button', class: 'btn tonal src-file' }, icon('books'), h('span', { class: 'grow' }, t('fetchSeparate'))) as HTMLButtonElement;
+    split.addEventListener('click', async () => {
+      split.disabled = true; const say = (txt: string) => split.replaceChildren(icon('books'), h('span', { class: 'grow' }, txt));
+      try {
+        const got: File[] = [];
+        for (const [i, part] of parts.entries()) { say(t('fetchingPart', { n: localDigits(i + 1), total: localDigits(parts.length) })); got.push(await fetchOne(part, () => undefined, partName(part, i))); }
+        const added = await importFiles(got);
+        if (!added.length) throw new Error(t('convertFailed'));
+        toast(t('addedBooks', { n: countBooks(added.length) }));
+        split.replaceWith(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${added[0].id}`) }, icon('play'), h('span', { class: 'grow' }, `${t('fetchSeparate')} · ${t('open')}`)));
+      } catch (e) { split.disabled = false; say(t('fetchSeparate')); toast(describe(e), 'error'); }
+    });
+    group.append(split);
+    // Each part on its own, behind a toggle.
+    const partList = h('div', { class: 'src-files src-part-list', hidden: true });
+    parts.forEach((part, i) => partList.append(fileButton(part, (part.name ?? part.id).replace(/\.[a-z0-9]+$/i, ''), partName(part, i))));
+    const tg = h('button', { type: 'button', class: 'btn small src-parts-toggle', onclick: () => { partList.hidden = !partList.hidden; tg.replaceChildren(icon(partList.hidden ? 'chevronDown' : 'chevronUp'), t('eachPart')); } }, icon('chevronDown'), t('eachPart'));
+    group.append(tg, partList);
+    list.append(group);
   }
   box.append(list);
 }
@@ -530,6 +797,20 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
       });
       row.append(btn, track);
     }
+    // The novel as an EPUB file to keep or pass on: the chapters not here yet fetched first, the pictures inside.
+    const epub = h('button', { type: 'button', class: 'btn tonal src-file' }, icon('file'), h('span', { class: 'grow' }, t('saveAsEpub'))) as HTMLButtonElement;
+    epub.addEventListener('click', async () => {
+      epub.disabled = true;
+      const say = (txt: string) => epub.replaceChildren(icon('file'), h('span', { class: 'grow' }, txt));
+      try {
+        if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
+        const blob = await novelToEpub(book, (step, done, tot) => say(step === 'chapters' ? t('fetchingChapters', { n: localDigits(done), total: localDigits(tot) }) : step === 'pictures' ? t('epubPictures', { n: localDigits(done), total: localDigits(tot) }) : t('epubMaking')));
+        const { downloadBlob } = await import('../ui/share');
+        downloadBlob(blob, `${novel.title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim().slice(0, 120) || 'novel'}.epub`);
+      } catch (e) { toast(describe(e), 'error'); }
+      finally { epub.disabled = false; say(t('saveAsEpub')); }
+    });
+    row.append(epub);
     box.append(row);
     if (book) {
       const checkBtn = h('button', { type: 'button', class: 'btn small' }, icon('refresh'), t('checkChapters')) as HTMLButtonElement;

@@ -1356,7 +1356,7 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 
 /* ---------- online catalogues (OPDS) ---------- */
 .catalog-view .topbar-actions { display: flex; gap: 2px; }
-.catalog-view .library-body { padding: 10px 16px 40px; max-width: 760px; margin: 0 auto; }
+.catalog-view .library-body { padding: 10px 16px 40px; max-width: 760px; width: 100%; box-sizing: border-box; margin: 0 auto; }
 .catalog-hint { color: var(--md-on-surface-dim); line-height: 1.6; margin: 6px 0 14px; }
 .catalog-view .section-title { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--md-on-surface-dim); margin: 18px 0 6px; }
 html[dir='rtl'] .catalog-view .section-title { letter-spacing: 0; text-transform: none; font-size: 14px; }
@@ -1397,7 +1397,11 @@ html[dir='rtl'] .catalog-nav > svg:last-child { transform: scaleX(-1); }
 
 /* ---------- sources (archive.org, Shamela): the hub, a source's shelf, a book ---------- */
 .cover .badge.online { padding: 2px 5px; } .cover .badge.online svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; display: block; }
-.sources-view .library-body { padding: 8px 14px 48px; max-width: 980px; margin: 0 auto; }
+.sources-view .library-body { padding: 8px 14px 48px; max-width: 980px; width: 100%; box-sizing: border-box; margin: 0 auto; overflow-x: clip; }
+/* (Nothing in a source's page may widen the view on a phone: the grid's columns shrink to it, a long word breaks.) */
+.sources-view .src-grid { grid-template-columns: repeat(auto-fill, minmax(min(118px, 100%), 1fr)); min-width: 0; }
+.sources-view .src-card, .sources-view .src-head, .sources-view .src-files, .sources-view .src-meta dd, .sources-view .src-desc, .sources-view .source-row .grow { min-width: 0; overflow-wrap: anywhere; }
+.catalog-view .library-body { overflow-x: clip; }
 .sources-hub .source-card { border-radius: var(--sh-lg, 16px); background: var(--md-surface-container, color-mix(in srgb, var(--md-on-surface) 5%, transparent)); padding: 6px 14px 12px; margin: 12px 0; }
 .source-head { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
 .source-head > svg:last-child { flex: none; stroke: var(--md-on-surface-dim); fill: none; stroke-width: 1.8; width: 22px; height: 22px; }
@@ -1435,6 +1439,45 @@ html[dir='rtl'] .source-head > svg:last-child { transform: scaleX(-1); }
 .src-badge.left { inset-inline-start: 6px; } .src-badge.right { inset-inline-end: 6px; background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
 .src-title { font-size: 13px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .src-author { font-size: 12px; color: var(--md-on-surface-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-cover.folder { display: grid; place-items: center; }
+.src-cover.folder > svg { width: 44%; height: 44%; stroke: #fff; fill: none; stroke-width: 1.4; opacity: .9; }
+.src-cover.folder.has-img { display: block; }
+.src-cover .folder-mark { position: absolute; inset-inline-end: 6px; bottom: 6px; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: rgba(0, 0, 0, .55); }
+.src-cover .folder-mark svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 1.8; }
+.src-card.folder .src-title { font-weight: 650; }
+/* A folder of volumes: the series' card, then a row per volume (the grid's whole width). */
+.src-grid > .series-head, .src-grid > .vol-row { grid-column: 1 / -1; min-width: 0; }
+.series-head { display: flex; gap: 14px; align-items: flex-start; padding: 4px 0 10px; border-bottom: 1px solid var(--md-outline-variant); margin-bottom: 4px; }
+.series-cover { flex: none; width: 112px; aspect-ratio: 2 / 3; border-radius: 12px; overflow: hidden; display: grid; place-items: center; box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
+.series-cover > svg { width: 40%; height: 40%; stroke: #fff; fill: none; stroke-width: 1.4; opacity: .9; }
+.series-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.series-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.series-text h2 { margin: 0; font-size: 19px; line-height: 1.3; font-weight: 650; }
+.series-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.series-status { color: var(--md-on-surface-dim); font-size: 12.5px; }
+.vol-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 60%, transparent); }
+.vol-cover { position: relative; flex: none; width: 76px; aspect-ratio: 2 / 3; border: 0; padding: 0; border-radius: 9px; overflow: hidden; display: grid; place-items: center; cursor: pointer; color: #fff; }
+.vol-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vol-cover-title { font-size: 10.5px; font-weight: 650; line-height: 1.25; padding: 6px; text-align: center; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 2px rgba(0, 0, 0, .5); }
+.vol-kind { position: absolute; inset-inline-start: 4px; top: 4px; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 5px; background: rgba(0, 0, 0, .55); color: #fff; letter-spacing: .02em; }
+.vol-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.vol-title { font-size: 14.5px; line-height: 1.35; font-weight: 650; }
+.vol-sub, .vol-meta { color: var(--md-on-surface-dim); font-size: 12.5px; line-height: 1.4; }
+.vol-actions { display: flex; gap: 8px; margin-top: 2px; }
+.vol-toc { margin-top: 4px; font-size: 13px; }
+.vol-toc-head { display: block; font-size: 12px; font-weight: 650; color: var(--md-on-surface-dim); margin-bottom: 2px; }
+.vol-toc-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.vol-toc-list li { line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vol-toc-more { margin-top: 2px; padding-inline: 0; }
+.src-details > .vol-toc { margin: 12px 0; }
+.src-details > .vol-toc .vol-toc-list li { white-space: normal; }
+.folder-card .repo-head { display: flex; align-items: center; gap: 4px; padding: 0; }
+.folder-card .repo-head .source-head { flex: 1; min-width: 0; }
+.src-formats { display: flex; flex-wrap: wrap; gap: 4px; }
+.src-fmt { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 6px; line-height: 1.5; letter-spacing: .02em; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.src-fmt.missing { background: var(--md-error-container); color: var(--md-on-error-container); }
+.src-actions > .src-formats { margin-bottom: 8px; }
+.src-na { color: var(--md-error); }
 .src-snippet { font-size: 12.5px; color: var(--md-on-surface); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .src-more { height: 1px; }
 .src-details .src-head { display: flex; gap: 16px; margin: 6px 0 12px; }
@@ -1475,6 +1518,11 @@ html[dir='rtl'] .source-head > svg:last-child { transform: scaleX(-1); }
 .repo-head .source-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .repo-head .source-text small { color: var(--md-on-surface-dim); font-size: 12.5px; }
 .repos-empty { margin: 8px 0 14px; }
+.src-parts { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 14px; background: color-mix(in srgb, var(--md-on-surface) 4%, transparent); }
+.src-parts-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 0 2px 2px; }
+.src-parts-head small { color: var(--md-on-surface-dim); }
+.src-parts-toggle { align-self: flex-start; }
+.src-part-list { margin-top: 4px; }
 .ext-langs { margin: 4px 0 8px; }
 .ext-find { width: 100%; margin: 4px 0 10px; }
 .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }

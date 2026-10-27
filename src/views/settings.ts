@@ -1,7 +1,7 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
 import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels } from '../i18n';
-import { navigate } from '../router';
+import { navigate, back } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
 import { colorField } from '../ui/colorpicker';
@@ -17,7 +17,7 @@ declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void
 export function settingsView(): HTMLElement {
   const body = h('div', { class: 'settings-body' });
   const root = h('div', { class: 'view settings-view' },
-    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title' }, t('settings'))),
+    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }, t('settings'))),
     body);
   const s = getSettings();
 

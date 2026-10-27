@@ -6,7 +6,7 @@ import { volumesOf } from '../series';
 import { t, formatBytes, formatDuration, localDigits, countChapters, getLang, formatLabel } from '../i18n';
 import { db, FAV_TAG, type Book } from '../db';
 import { coverUrl } from '../library';
-import { navigate } from '../router';
+import { navigate, back } from '../router';
 import { getSettings } from '../settings';
 import { liveStatsOf } from '../stats';
 import { setJump } from './reader';
@@ -52,7 +52,7 @@ async function coverBlur(book: Book): Promise<string | null> {
 export function bookView(id: string): HTMLElement {
   const root = h('div', { class: 'view book-view' });
   const body = h('div', { class: 'book-body' });
-  const top = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title' }), h('span', { class: 'spacer' }));
+  const top = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }), h('span', { class: 'spacer' }));
   root.append(top, body);
   // The chapter list's own state, kept while the page is open.
   let reversed = false, hideRead = false, query = '';

@@ -29,16 +29,29 @@ export function parseRoute(hash = location.hash): Route {
   return { name: 'library' };
 }
 
+// The way back: the views visited in this session, as a stack beside the browser's history (every navigate
+// pushes one entry on both; a replace changes the top of both; the browser's back pops both). Back from a
+// view goes to the view it was opened from — the shelf a book was found on, the book's page, the library —
+// and only without one, to the view's own fallback.
+const current = () => location.hash.replace(/^#/, '') || '/';
+const stack: string[] = [current()];
+let pushing: string | null = null;
+
 export function navigate(path: string, replace = false): void {
   const url = `#${path}`;
-  if (replace) history.replaceState(null, '', url); else location.hash = path;
-  if (replace) emit();
+  if (replace) { history.replaceState(null, '', url); stack[stack.length - 1] = path; emit(); return; }
+  if (location.hash === url || (path === '/' && (location.hash === '' || location.hash === '#'))) return;
+  pushing = path;
+  location.hash = path;
 }
 
+/** Whether a view was opened from another in this session (there is something to go back to). */
+export function canGoBack(): boolean { return stack.length > 1; }
+
+/** Back to the view this one was opened from; `fallback` when it was the first (a cold start, a link). */
 export function back(fallback = '/'): void {
-  if (history.length > 1 && document.referrer !== '') history.back();
-  else if (history.length > 1) history.back();
-  else navigate(fallback);
+  if (stack.length > 1) { history.back(); return; }
+  navigate(fallback, true);
 }
 
 function emit() {
@@ -50,4 +63,11 @@ export function onRoute(fn: (r: Route) => void): void {
   listeners.add(fn);
 }
 
-window.addEventListener('hashchange', emit);
+window.addEventListener('hashchange', () => {
+  const p = current();
+  if (pushing === p) stack.push(p);
+  else if (stack.length > 1 && stack[stack.length - 2] === p) stack.pop();
+  else if (stack[stack.length - 1] !== p) stack.push(p);
+  pushing = null;
+  emit();
+});

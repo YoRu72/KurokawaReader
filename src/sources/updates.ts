@@ -51,6 +51,7 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
     });
     // The repos: their indexes again (an hour old at least), then the versions against what is on the device.
     for (const repo of await listRepos()) {
+      if (repo.kind === 'folder') continue;
       if (!opts.force && repo.fetchedAt && Date.now() - repo.fetchedAt < 3600000) continue;
       try { await refreshRepo(repo.key); } catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e) }); }
     }

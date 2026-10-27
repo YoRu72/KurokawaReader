@@ -5,7 +5,7 @@
 import { db, uid, type Book } from '../../db';
 import { listRepos, pluginCode, pluginKey, langLabel, type Repo, type ExtItem } from '../repos';
 import { loadPlugin, callPlugin, isLoaded, withQuiet } from './sandbox';
-import { pool } from '../http';
+import { pool, fetchBytes } from '../http';
 import { SourceError, type Source, type SourceFilter, type FilterValues, type SourcePage, type SourceBook, type SourceDetails, type SourceChapter } from '../types';
 
 /* ---------- ids ---------- */
@@ -317,6 +317,37 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content }, fetchedAt: complete ? Date.now() : cur.fetchedAt }));
   if (failed && !complete) throw new SourceError('incomplete', 'http');
   return complete;
+}
+
+/** The novel as an EPUB file of its own: every chapter (the ones not fetched yet fetched first), the
+ *  pictures in them carried inside, the card at the head, the cover. */
+export async function novelToEpub(book: Book, onProgress: (step: 'chapters' | 'pictures' | 'build', done: number, total: number) => void, live?: () => boolean): Promise<Blob> {
+  let info = await readNovelFile(book.id); if (!info) throw new SourceError('parse', 'parse');
+  if (info.chapters.some((c) => !info!.content?.[c.path])) {
+    const complete = await downloadNovel(book, (d, tot) => onProgress('chapters', d, tot), live);
+    if (!complete) throw new SourceError('stopped', 'http');
+    info = await readNovelFile(book.id); if (!info) throw new SourceError('parse', 'parse');
+  }
+  const nv = info;
+  const rtl = /^(ar|fa|ur|he)/i.test(nv.lang ?? '') || /[؀-ۿ]/.test(nv.title);
+  const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+  // The pictures the chapters show, fetched with the site's headers (a few at a time); one that fails stays a link.
+  const urls = new Set<string>();
+  for (const c of nv.chapters) for (const m of (nv.content?.[c.path]?.html ?? '').matchAll(/<img[^>]+src\s*=\s*["']([^"']+)["']/gi)) { const u = m[1].replace(/&amp;/g, '&'); if (/^https?:/i.test(u)) urls.add(u); }
+  const images = new Map<string, Blob>(); let got = 0;
+  const kind = (b: Uint8Array) => (b[0] === 0x89 && b[1] === 0x50 ? 'image/png' : b[0] === 0x47 && b[1] === 0x49 ? 'image/gif' : b[0] === 0x52 && b[8] === 0x57 ? 'image/webp' : 'image/jpeg');
+  const list = [...urls].slice(0, 500);
+  await pool(list, 3, async (u) => {
+    try { const bytes = await fetchBytes(u, undefined, { headers: nv.imageHeaders ?? { referer: nv.url ?? '' }, retries: 1 }); images.set(u, new Blob([bytes.slice().buffer as ArrayBuffer], { type: kind(bytes) })); } catch { /* left as a link */ }
+    onProgress('pictures', ++got, list.length);
+  }, live);
+  const card = `<h1>${esc(nv.title)}</h1>${nv.author ? `<p><b>${esc(nv.author)}</b></p>` : ''}${(nv.summary ?? '').split(/\n+/).filter(Boolean).map((l) => `<p>${esc(l)}</p>`).join('')}${nv.genres.length ? `<p><i>${esc(nv.genres.join(' · '))}</i></p>` : ''}${nv.url ? `<p><small>${esc(nv.url)}</small></p>` : ''}`;
+  const chapters = [{ title: nv.title, html: card, rtl }, ...nv.chapters.map((c, i) => ({ title: c.name || String(i + 1), html: `<h2>${esc(c.name || String(i + 1))}</h2>${nv.content?.[c.path]?.html ?? ''}`, rtl }))];
+  const { buildEpub } = await import('../../convert');
+  onProgress('build', 0, 1);
+  const blob = await buildEpub({ title: nv.title, author: nv.author, lang: nv.lang, rtl, chapters, images, fonts: new Map(), cover: book.cover }, () => undefined);
+  onProgress('build', 1, 1);
+  return blob;
 }
 
 /** Ask the site for the novel's chapters again; new ones go into the file (and are counted on the book). */

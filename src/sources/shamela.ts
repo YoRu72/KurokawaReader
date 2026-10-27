@@ -378,10 +378,26 @@ export const shamelaSource: Source = {
     const text = q.trim();
     const catId = shelf ? Number(shelf) : undefined;
     if (!text) {
-      if (!catId) return { items: [], hasMore: false };
-      const all = await categoryBooks(catId);
-      const slice = all.slice((pageNo - 1) * 60, pageNo * 60);
-      return { items: slice.map(fromCatalogue), hasMore: pageNo * 60 < all.length, title: (await categories()).find((c) => c.id === catId)?.name };
+      if (catId) {
+        const all = await categoryBooks(catId);
+        const slice = all.slice((pageNo - 1) * 60, pageNo * 60);
+        return { items: slice.map(fromCatalogue), hasMore: pageNo * 60 < all.length, title: (await categories()).find((c) => c.id === catId)?.name };
+      }
+      // No shelf: the whole library, category after category, each list fetched when the page reaches it
+      // (the home page's counts say where each begins).
+      const cats = await categories();
+      const total = cats.reduce((n, c) => n + (c.count || 0), 0);
+      let offset = (pageNo - 1) * 60, pos = 0; const items: SourceBook[] = [];
+      for (const c of cats) {
+        if (items.length >= 60) break;
+        const count = c.count || 0;
+        if (offset >= pos + count) { pos += count; continue; }
+        const list = await categoryBooks(c.id);
+        const start = Math.max(0, offset - pos);
+        items.push(...list.slice(start, start + (60 - items.length)).map(fromCatalogue));
+        pos += count; offset = pos;
+      }
+      return { items, hasMore: (pageNo - 1) * 60 + items.length < total && items.length > 0 };
     }
     const mode = String(f.mode ?? 'titles');
     const period: link.Scope = {}; if (f.from) period.period_from = (Number(f.from) - 1) * 100 + 1; if (f.to) period.period_to = Number(f.to) * 100;

@@ -73,6 +73,13 @@ const SITE = 'http://localhost:5403';
     ok('novel page knows the book is in the library', /In your library/.test(await page.$eval('.src-actions', (e) => e.textContent)));
     await page.click('.src-files .btn.tonal'); await page.waitForTimeout(4000);
     ok('whole novel fetched for offline', /reads offline/.test(await page.$eval('.src-actions', (e) => e.textContent)));
+    // The novel saved as an EPUB file: the card, every chapter, the package naming it.
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('.src-files button:has-text("Save as EPUB")')]);
+    const JSZip = require(path.join(__dirname, '../../node_modules/jszip'));
+    const z = await JSZip.loadAsync(fs.readFileSync(await dl.path()));
+    const opf = await z.file('OEBPS/content.opf').async('string'); const xhtml = Object.keys(z.files).filter((n) => /^OEBPS\/ch\d+\.xhtml$/.test(n));
+    ok('saved as an EPUB: the card and every chapter, the title and author in the package', dl.suggestedFilename() === 'Alpha Ascension.epub' && (await z.file('mimetype').async('string')) === 'application/epub+zip' && /<dc:title>Alpha Ascension<\/dc:title>/.test(opf) && /A\. Writer/.test(opf) && xhtml.length === 7 && /Chapter 1 of Alpha/.test(await z.file('OEBPS/ch2.xhtml').async('string')) && /<nav/.test(await z.file('OEBPS/nav.xhtml').async('string')));
+    if (xhtml.length !== 7) console.log('  epub:', dl.suggestedFilename(), JSON.stringify(Object.keys(z.files)));
     // A chapter arrives on the site; the check finds it.
     await page.evaluate((site) => fetch(site + '/admin/add-chapter?slug=alpha').then((r) => r.json()), SITE);
     await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);

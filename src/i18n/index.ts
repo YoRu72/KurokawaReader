@@ -202,6 +202,18 @@ export function countNovels(n: number): string {
   return arCount(n, { one: 'رواية واحدة', two: 'روايتان', few: 'روايات', many: 'روايةً', hundred: 'روايةٍ' });
 }
 
+/** "3 volumes" — in Arabic: مجلد واحد · مجلدان · ٣–١٠ مجلدات · ١١–٩٩ مجلدًا · ١٠٠ مجلدٍ. */
+export function countVolumes(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'volume' : 'volumes'}`;
+  return arCount(n, { one: 'مجلد واحد', two: 'مجلدان', few: 'مجلدات', many: 'مجلدًا', hundred: 'مجلدٍ' });
+}
+
+/** "3 files" — in Arabic: ملف واحد · ملفان · ٣–١٠ ملفات · ١١–٩٩ ملفًا · ١٠٠ ملفٍ. */
+export function countFiles(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'file' : 'files'}`;
+  return arCount(n, { one: 'ملف واحد', two: 'ملفان', few: 'ملفات', many: 'ملفًا', hundred: 'ملفٍ' });
+}
+
 /** "3 min" — in Arabic: دقيقة واحدة · دقيقتان · ٣–١٠ دقائق · ١١–٩٩ دقيقةً · ١٠٠ دقيقةٍ. */
 export function countMinutes(n: number): string {
   if (current !== 'ar') return cjkCount(n, 'minute') ?? `${n} min`;

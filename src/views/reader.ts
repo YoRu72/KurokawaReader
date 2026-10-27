@@ -22,7 +22,7 @@ import { renderOptions } from '../ui/options';
 import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
 import { openGallery } from './gallery';
 import { touchBook, coverUrl, shareBooks } from '../library';
-import { navigate } from '../router';
+import { navigate, back as goBackView } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot } from '../ui/textcard';
@@ -119,7 +119,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const panel = new SidePanel(root);
 
   // (Back: to the book's own page when the book opens on one, else the library.)
-  const goBack = () => { const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => navigate(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else navigate('/'); };
+  const goBack = () => { const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), goBack),
     title,
@@ -1439,7 +1439,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => { if (leaveToCaller(book.id)) return; void import('./book').then((m) => navigate(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
+    iconButton('back', t('back'), () => { if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
     title,
     iconButton('search', t('searchInBook'), () => openSearch()),
     iconButton('toc', t('contents'), () => openContents('toc')),

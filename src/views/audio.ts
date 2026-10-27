@@ -4,7 +4,7 @@
 import { h, icon, iconButton, toast, clear, pickSheet } from '../ui/dom';
 import { t, localDigits } from '../i18n';
 import { db, type Book } from '../db';
-import { navigate } from '../router';
+import { navigate, back } from '../router';
 import { coverUrl } from '../library';
 import { scheduleSync } from '../sync';
 import { keepAwake } from '../native';
@@ -62,7 +62,7 @@ export async function mountAudio(root: HTMLElement, books: Book[], onDispose: (f
   const playBtn = h('button', { class: 'audio-play', type: 'button', 'aria-label': t('play') }, icon('play'));
   const rateBtn = h('button', { class: 'btn small', type: 'button' });
   const sleepBtn = h('button', { class: 'btn small', type: 'button' }, icon('clock'), t('sleepTimer'));
-  const topbar = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title', dir: 'auto' }, t('audiobooks')), iconButton('toc', t('contents'), () => chaptersSheet()));
+  const topbar = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title', dir: 'auto' }, t('audiobooks')), iconButton('toc', t('contents'), () => chaptersSheet()));
   root.append(topbar, h('div', { class: 'audio-main' },
     cover, titleEl, authorEl, chapterEl,
     h('div', { class: 'audio-seek-row' }, seek, h('div', { class: 'audio-times' }, cur, dur)),

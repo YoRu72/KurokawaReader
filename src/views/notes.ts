@@ -4,14 +4,14 @@ import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, formatDate, localDigits } from '../i18n';
 import { db, type Book } from '../db';
 import { listBooks, coverUrl } from '../library';
-import { navigate } from '../router';
+import { navigate, back } from '../router';
 import { setJump } from './reader';
 import { markDeleted } from '../sync';
 
 export function notesView(): HTMLElement {
   const body = h('div', { class: 'library-body notes-view' });
   const root = h('div', { class: 'view notes-view' },
-    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => navigate('/')), h('div', { class: 'title' }, t('allNotes'))),
+    h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }, t('allNotes'))),
     body);
   let filter: 'all' | 'bookmarks' | 'notes' = 'all';
   const chips = h('div', { class: 'folder-chips', role: 'tablist' });

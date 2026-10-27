@@ -11,7 +11,22 @@ export interface SourceBook {
   year?: string;
   badge?: string;             // a short mark on the cover (downloads, pages…)
   description?: string;
+  /** The formats the book can be fetched in (EPUB, PDF…), when the source tells at a glance: an empty list
+   *  is a book that cannot be fetched (the archive's lending-only ones); left out, the source does not say. */
+  formats?: string[];
+  /** A card that opens a shelf of the source (a folder) instead of a book's page. */
+  openShelf?: string;
+  /** How the item is drawn: a folder's card (its first volume's cover on it), a series' card at the head of
+   *  its volumes (with a button to fetch them all), a volume as a row with its cover, contents and button. */
+  look?: 'folder' | 'series' | 'volume';
+  /** The file a volume row fetches. */
+  file?: SourceFile;
+  /** The files a series' card fetches. */
+  files?: SourceFile[];
 }
+
+/** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
+export interface SourcePeek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; count?: number }
 
 /** A filter as a Mihon filter sheet shows it: a choice, a set of choices, a sort order, or text. */
 export type SourceFilter =
@@ -25,7 +40,13 @@ export type FilterValues = Record<string, string | string[] | boolean>;
 
 export interface SourceTag { id: string; label: string; count?: number }
 
-export interface SourceFile { id: string; label: string; ext: string; size?: number; url: string; mime?: string }
+export interface SourceFile {
+  id: string; label: string; ext: string; size?: number; url: string; mime?: string;
+  /** The file's own name, kept when it is fetched (else the book's title names it). */
+  name?: string;
+  /** A set of files that make one work in parts (volumes, sides): fetched merged (PDF, text) or as separate books. */
+  parts?: SourceFile[];
+}
 
 export interface SourceChapter { id: string; title: string; level: number; page?: number }
 
@@ -38,6 +59,7 @@ export interface SourceDetails extends SourceBook {
   meta?: { label: string; value: string }[];
   url?: string;                         // the book's page on the site
   raw?: unknown;                        // the source's own record of the book, for what adds it to the library
+  toc?: { label: string; depth: number }[];   // a file's own contents, read from it
 }
 
 export interface SourcePage { items: SourceBook[]; hasMore: boolean; tags?: SourceTag[]; title?: string }
@@ -59,6 +81,13 @@ export interface Source {
   fetchFile?(book: SourceDetails, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number }) => void): Promise<File>;
   /** True when the source cannot be reached from a plain web page (no CORS): the apps can. */
   needsApp?: boolean;
+  /** A volume's cover, title and contents, read from the file without fetching it whole. */
+  peek?(b: SourceBook): Promise<SourcePeek | null>;
+  /** A folder's cover (its own picture, or its first volume's) and how many volumes it holds. */
+  folderCover?(shelf: string): Promise<SourcePeek | null>;
+  /** The same two when already known in this session, at once. */
+  peekNow?(b: SourceBook): SourcePeek | undefined;
+  folderCoverNow?(shelf: string): SourcePeek | undefined;
 }
 
 export class SourceError extends Error {

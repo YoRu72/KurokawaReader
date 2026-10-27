@@ -2,14 +2,17 @@
 // API for a book's page and files. Free to read, no key; the files come straight from the archive.
 import { fetchJson, fetchBytes } from './http';
 import { SourceError, type Source, type SourceFilter, type FilterValues, type SourcePage, type SourceBook, type SourceDetails, type SourceTag, type SourceFile } from './types';
+import { getLang } from '../i18n';
 
 const API = (typeof localStorage !== 'undefined' && localStorage.getItem('kr.archive.base')) || 'https://archive.org';
-const FIELDS = ['identifier', 'title', 'creator', 'year', 'language', 'subject', 'downloads', 'mediatype', 'collection', 'description', 'publicdate'];
+const FIELDS = ['identifier', 'title', 'creator', 'year', 'language', 'subject', 'downloads', 'mediatype', 'collection', 'description', 'publicdate', 'format'];
 
+const ar = () => getLang() === 'ar';
+const L = (en: string, arabic: string) => (ar() ? arabic : en);
 const LANGUAGES: [string, string][] = [
-  ['', 'Any'], ['Arabic', 'العربية'], ['English', 'English'], ['French', 'Français'], ['Spanish', 'Español'], ['German', 'Deutsch'], ['Italian', 'Italiano'],
+  ['', L('Any', 'أي لغة')], ['Arabic', 'العربية'], ['English', 'English'], ['French', 'Français'], ['Spanish', 'Español'], ['German', 'Deutsch'], ['Italian', 'Italiano'],
   ['Portuguese', 'Português'], ['Russian', 'Русский'], ['Turkish', 'Türkçe'], ['Persian', 'فارسی'], ['Urdu', 'اردو'], ['Indonesian', 'Bahasa Indonesia'], ['Malay', 'Bahasa Melayu'],
-  ['Hindi', 'हिन्दी'], ['Bengali', 'বাংলা'], ['Chinese', '中文'], ['Japanese', '日本語'], ['Korean', '한국어'], ['Latin', 'Latina'], ['Greek', 'Ελληνικά'], ['Hebrew', 'עברית'], ['Dutch', 'Nederlands'], ['Swedish', 'Svenska'], ['Polish', 'Polski'],
+  ['Hindi', 'हिन्दी'], ['Bengali', 'বাংলা'], ['Chinese', '中文'], ['Japanese', '日本語'], ['Korean', '한국어'], ['Latin', 'Latina'], ['Greek', 'Ελληνικά'], ['Dutch', 'Nederlands'], ['Swedish', 'Svenska'], ['Polish', 'Polski'],
 ];
 /** Collections anyone may fetch from (the lending library's books cannot be downloaded). */
 const SHELVES: SourceTag[] = [
@@ -38,28 +41,36 @@ const first = (v: unknown): string => (Array.isArray(v) ? String(v[0] ?? '') : v
 const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : v == null || v === '' ? [] : String(v).split(';').map((s) => s.trim()).filter(Boolean));
 const plain = (html: string): string => { const d = new DOMParser().parseFromString(html, 'text/html'); return (d.body.textContent ?? '').replace(/\s+/g, ' ').trim(); };
 
-interface SearchDoc { identifier: string; title?: unknown; creator?: unknown; year?: unknown; language?: unknown; subject?: unknown; downloads?: number; mediatype?: string; collection?: unknown; description?: unknown; publicdate?: string }
+interface SearchDoc { identifier: string; title?: unknown; creator?: unknown; year?: unknown; language?: unknown; subject?: unknown; downloads?: number; mediatype?: string; collection?: unknown; format?: unknown; description?: unknown; publicdate?: string }
 interface SearchResponse { response?: { numFound: number; start: number; docs: SearchDoc[] } }
 interface MetaResponse { metadata?: Record<string, unknown>; files?: { name: string; format?: string; size?: string; source?: string }[]; server?: string; dir?: string }
 
 const quote = (s: string) => `"${s.replace(/["\\]/g, ' ').trim()}"`;
+/** The order the reader prefers the formats in: what opens best first. */
+const ORDER = ['epub', 'pdf', 'djvu', 'mobi', 'cbz', 'cbr', 'fb2', 'docx', 'rtf', 'txt', 'html', 'm4b', 'mp3', 'ogg'];
+/** The readable formats among the archive's format names (an item's `format` field, or its files'), in that order, each once. */
+function readableFormats(names: string[]): string[] {
+  const exts = new Map<string, string>();
+  for (const n of names) { const fmt = FORMATS.find(([re]) => re.test(n)); if (fmt && !exts.has(fmt[2])) exts.set(fmt[2], fmt[1]); }
+  return [...exts.entries()].sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0])).map(([, label]) => label);
+}
 
 export const archiveSource: Source = {
   id: 'archive',
   name: 'Internet Archive',
   lang: 'en',
   site: 'https://archive.org',
-  description: 'Millions of free books, texts and audiobooks: public domain works, community uploads and library scans. Fetch a book as PDF, EPUB, DjVu, Kindle or text.',
+  get description() { return L('Millions of free books, texts and audiobooks: public domain works, community uploads and library scans. Fetch a book as PDF, EPUB, DjVu, Kindle or text.', 'ملايين الكتب والنصوص والكتب المسموعة المجانية: أعمال في الملك العام، ومرفوعات الناس، ومسوحات المكتبات. يُجلب الكتاب بصيغة PDF أو EPUB أو DjVu أو Kindle أو نصًّا.'); },
   filters: (): SourceFilter[] => [
-    { id: 'sort', label: 'Sort', kind: 'sort', value: 'downloads desc', options: [['downloads desc', 'Most downloaded'], ['', 'Relevance'], ['publicdate desc', 'Newest added'], ['year desc', 'Newest'], ['year asc', 'Oldest'], ['titleSorter asc', 'Title A–Z'], ['week desc', 'Popular this week']].map(([value, label]) => ({ value, label })) },
-    { id: 'media', label: 'Kind', kind: 'select', value: 'texts', options: [['texts', 'Books & texts'], ['audio', 'Audiobooks & audio'], ['', 'Anything']].map(([value, label]) => ({ value, label })) },
-    { id: 'language', label: 'Language', kind: 'select', value: '', options: LANGUAGES.map(([value, label]) => ({ value, label })) },
-    { id: 'in', label: 'Search in', kind: 'select', value: 'any', options: [['any', 'Anywhere'], ['title', 'Title'], ['creator', 'Author'], ['subject', 'Subject'], ['text', 'Full text']].map(([value, label]) => ({ value, label })) },
-    { id: 'from', label: 'Year from', kind: 'text', value: '', placeholder: '1800' },
-    { id: 'to', label: 'Year to', kind: 'text', value: '', placeholder: '1950' },
-    { id: 'free', label: 'Downloadable only (no lending-library books)', kind: 'toggle', value: true },
+    { id: 'sort', label: L('Sort', 'الترتيب'), kind: 'sort', value: 'downloads desc', options: [['downloads desc', L('Most downloaded', 'الأكثر تحميلًا')], ['', L('Relevance', 'الأقرب إلى البحث')], ['publicdate desc', L('Newest added', 'أحدث ما أُضيف')], ['year desc', L('Newest', 'الأحدث')], ['year asc', L('Oldest', 'الأقدم')], ['titleSorter asc', L('Title A–Z', 'العنوان')], ['week desc', L('Popular this week', 'رائج هذا الأسبوع')]].map(([value, label]) => ({ value, label })) },
+    { id: 'media', label: L('Kind', 'النوع'), kind: 'select', value: 'texts', options: [['texts', L('Books & texts', 'كتب ونصوص')], ['audio', L('Audiobooks & audio', 'كتب مسموعة وصوتيات')], ['', L('Anything', 'كل شيء')]].map(([value, label]) => ({ value, label })) },
+    { id: 'language', label: L('Language', 'اللغة'), kind: 'select', value: '', options: LANGUAGES.map(([value, label]) => ({ value, label })) },
+    { id: 'in', label: L('Search in', 'البحث في'), kind: 'select', value: 'any', options: [['any', L('Anywhere', 'كل الحقول')], ['title', L('Title', 'العنوان')], ['creator', L('Author', 'المؤلف')], ['subject', L('Subject', 'الموضوع')], ['text', L('Full text', 'النص الكامل')]].map(([value, label]) => ({ value, label })) },
+    { id: 'from', label: L('Year from', 'من سنة'), kind: 'text', value: '', placeholder: '1800' },
+    { id: 'to', label: L('Year to', 'إلى سنة'), kind: 'text', value: '', placeholder: '1950' },
+    { id: 'free', label: L('Downloadable only (no lending-library books)', 'ما يمكن تنزيله فقط (دون كتب الإعارة)'), kind: 'toggle', value: true },
   ],
-  shelves: async () => SHELVES,
+  shelves: async () => SHELVES.map((s) => (s.id === 'texts' ? { ...s, label: L('All texts', 'كل النصوص') } : s)),
   async browse(q, f, page, shelf): Promise<SourcePage> {
     const parts: string[] = [];
     const text = q.trim();
@@ -86,6 +97,8 @@ export const archiveSource: Source = {
       id: d.identifier, title: first(d.title) || d.identifier, author: list(d.creator).slice(0, 2).join(', ') || undefined,
       cover: `${API}/services/img/${encodeURIComponent(d.identifier)}`, lang: first(d.language) || undefined, year: first(d.year) || undefined,
       badge: d.downloads ? shortCount(d.downloads) : undefined, description: typeof d.description === 'string' ? plain(d.description).slice(0, 300) : undefined,
+      // (What it can be fetched in; a lending-library book in nothing.)
+      formats: list(d.collection).includes('inlibrary') ? [] : readableFormats(list(d.format)),
     }));
     // The subjects the page's books share, as tags to narrow by.
     const counts = new Map<string, number>();
@@ -98,19 +111,33 @@ export const archiveSource: Source = {
     const j = await fetchJson<MetaResponse>(`${API}/metadata/${encodeURIComponent(id)}`);
     const m = j.metadata ?? {};
     if (!j.files) throw new SourceError('parse', 'parse');
-    const files: SourceFile[] = [];
+    // The files the reader can open, with their real sizes; the uploader's own files before the archive's
+    // derivatives of them (an OCR'd "_text.pdf", a black-and-white "_bw.pdf", a sample); several of one kind
+    // are the work in parts (volumes, sides), offered together.
+    const byExt = new Map<string, { orig: SourceFile[]; deriv: SourceFile[] }>();
     for (const f of j.files) {
       const fmt = FORMATS.find(([re]) => re.test(f.format ?? ''));
-      if (!fmt || /_text\.pdf$|_bw\.pdf$/i.test(f.name) && files.some((x) => x.ext === 'pdf')) continue;
-      files.push({ id: f.name, label: fmt[1], ext: fmt[2], mime: fmt[3], size: f.size ? Number(f.size) : undefined, url: `${API}/download/${encodeURIComponent(id)}/${encodeURIComponent(f.name).replace(/%2F/g, '/')}` });
+      if (!fmt) continue;
+      const file: SourceFile = { id: f.name, label: fmt[1], ext: fmt[2], mime: fmt[3], size: f.size ? Number(f.size) : undefined, url: `${API}/download/${encodeURIComponent(id)}/${encodeURIComponent(f.name).replace(/%2F/g, '/')}` };
+      const derivative = f.source === 'derivative' || /_text\.pdf$|_bw\.pdf$|_sample\.|_preview\./i.test(f.name);
+      let g = byExt.get(fmt[2]); if (!g) { g = { orig: [], deriv: [] }; byExt.set(fmt[2], g); }
+      (derivative ? g.deriv : g.orig).push(file);
     }
-    const order = ['epub', 'pdf', 'djvu', 'mobi', 'cbz', 'cbr', 'fb2', 'docx', 'rtf', 'txt', 'html', 'm4b', 'mp3', 'ogg'];
-    files.sort((a, b) => order.indexOf(a.ext) - order.indexOf(b.ext) || (a.size ?? 0) - (b.size ?? 0));
-    // (One of each kind: the first PDF, not every derivative.)
-    const seen = new Set<string>(); const kept = files.filter((f) => { if (f.ext === 'mp3' || f.ext === 'ogg') return true; if (seen.has(f.ext)) return false; seen.add(f.ext); return true; });
+    const order = ORDER;
+    const natural = (a: SourceFile, b: SourceFile) => a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' });
+    const kept: SourceFile[] = [];
+    for (const [ext, g] of [...byExt.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))) {
+      const audio = ext === 'mp3' || ext === 'ogg' || ext === 'm4b';
+      const chosen = (g.orig.length ? g.orig : g.deriv).sort(natural);
+      if (!chosen.length) continue;
+      if (audio) { kept.push(...chosen); continue; }
+      if (chosen.length === 1) { kept.push(chosen[0]); continue; }
+      const total = chosen.reduce((n, f) => n + (f.size ?? 0), 0);
+      kept.push({ id: `${ext}:parts`, label: chosen[0].label, ext, mime: chosen[0].mime, size: total || undefined, url: chosen[0].url, parts: chosen });
+    }
     const subjects = list(m.subject).map((s) => s.trim()).filter(Boolean);
     const meta: { label: string; value: string }[] = [];
-    for (const [k, label] of [['publisher', 'Publisher'], ['date', 'Date'], ['language', 'Language'], ['contributor', 'Contributor'], ['isbn', 'ISBN'], ['source', 'Source'], ['collection', 'Collections']] as const) { const v = list(m[k]).join(', '); if (v) meta.push({ label, value: v }); }
+    for (const [k, label] of [['publisher', L('Publisher', 'الناشر')], ['date', L('Date', 'التاريخ')], ['language', L('Language', 'اللغة')], ['contributor', L('Contributor', 'المساهم')], ['isbn', 'ISBN'], ['source', L('Source', 'المصدر')], ['collection', L('Collections', 'المجموعات')]] as const) { const v = list(m[k]).join(', '); if (v) meta.push({ label, value: v }); }
     const restricted = String(first(m['access-restricted-item'])) === 'true' || list(m.collection).includes('inlibrary');
     return {
       id, title: first(m.title) || id, author: list(m.creator).join(', ') || undefined, cover: `${API}/services/img/${encodeURIComponent(id)}`,
@@ -118,6 +145,7 @@ export const archiveSource: Source = {
       description: typeof m.description === 'string' ? plain(m.description) : list(m.description).map(plain).join('\n'),
       tags: subjects.map((s) => ({ id: s, label: s })), files: restricted ? [] : kept, meta, url: `${API}/details/${encodeURIComponent(id)}`,
       badge: restricted ? 'borrow only' : undefined,
+      formats: restricted ? [] : [...new Set(kept.map((f) => f.label))],
     };
   },
   async fetchFile(book, file, onProgress): Promise<File> {

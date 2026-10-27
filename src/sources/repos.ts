@@ -2,14 +2,17 @@
 // GitLab, its index file, or the install link an app's wiki offers), the index is fetched and read, and
 // its format tells which app it was made for — LNReader's plugins and Mangayomi's JavaScript novel
 // extensions run here; the others (Shosetsu's Lua, IReader's and Mihon's APKs, Sora's and Suwatte's iOS
-// modules…) are recognised and listed so the reader knows what the repo is. Every repo is a section of its
-// own in Sources; a repo already added — under any of its addresses — is refused.
+// modules…) are recognised and listed so the reader knows what the repo is. A web folder — a page listing
+// files, as servers make for a folder (see folder.ts) — is added the same way and browsed as a source of its
+// own. Every repo is a section of its own in Sources; a repo already added — under any of its addresses —
+// is refused.
 import { db } from '../db';
 import { fetchText, request } from './http';
+import { isListing, parseListing, folderName, forgetListings } from './folder';
 import { SourceError } from './types';
 
-export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'unknown';
-export const KIND_APP: Record<RepoKind, string> = { lnreader: 'LNReader', mangayomi: 'Mangayomi', shosetsu: 'Shosetsu', ireader: 'IReader', mihon: 'Mihon / Tachiyomi', sora: 'Sora', suwatte: 'Suwatte', aidoku: 'Aidoku', paperback: 'Paperback', kotatsu: 'Kotatsu', unknown: '?' };
+export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'folder' | 'unknown';
+export const KIND_APP: Record<RepoKind, string> = { lnreader: 'LNReader', mangayomi: 'Mangayomi', shosetsu: 'Shosetsu', ireader: 'IReader', mihon: 'Mihon / Tachiyomi', sora: 'Sora', suwatte: 'Suwatte', aidoku: 'Aidoku', paperback: 'Paperback', kotatsu: 'Kotatsu', folder: 'Web folder', unknown: '?' };
 /** The kinds whose extensions run in this reader. */
 export const RUNNABLE: RepoKind[] = ['lnreader', 'mangayomi'];
 
@@ -52,6 +55,13 @@ export async function listRepos(): Promise<Repo[]> {
 async function saveRepos(list: Repo[]): Promise<void> { cache = list; await db.setMeta(META, list); }
 
 /* ---------- addresses ---------- */
+/** Addresses known by a word typed in the + sheet. They are shown nowhere: whoever knows the word (or the
+ *  address itself) adds the source; nobody else meets it. */
+const HIDDEN: Record<string, string> = {
+  otl: 'https://server.elscione.com/Officially%20Translated%20Light%20Novels/',
+};
+export const hiddenAddress = (given: string): string | undefined => HIDDEN[given.trim().toLowerCase()];
+
 export function hashKey(s: string): string {
   let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
   return (h >>> 0).toString(36);
@@ -181,14 +191,27 @@ export function parseIndex(url: string, text: string): Parsed | null {
   return null;
 }
 
-/** Fetch the index behind what the reader gave: the first candidate that reads as a repo. */
+/** Fetch the index behind what the reader gave: the first candidate that reads as a repo — or, when the
+ *  address itself answers with a folder's listing and no index is found, that folder. */
 export async function resolveRepo(given: string): Promise<{ url: string; parsed: Parsed }> {
-  const list = candidates(given);
+  const list = candidates(hiddenAddress(given) ?? given);
   if (!list.length) throw new SourceError('badRepoUrl', 'parse');
-  let lastError: unknown = null; let sawSomething = false;
+  let lastError: unknown = null; let sawSomething = false; let folder: string | null = null;
   for (const url of list) {
     let text: string;
-    try { text = await fetchText(url, { retries: 0 }); }
+    try {
+      const r = await request(url, { retries: 0, headers: { accept: 'text/html,application/json;q=0.9,*/*;q=0.8' } });
+      if (r.status === 429) throw new SourceError('rate', 'rate', 429);
+      if (r.status === 401) throw new SourceError('auth', 'auth', 401);
+      if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
+      text = r.body;
+      const type = r.headers['content-type'] ?? '';
+      if (!folder && url === list[0] && !/json/i.test(type) && !/\.(json|pb|txt)(\?.*)?$/i.test(url) && isListing(r.url && /^https?:/.test(r.url) ? r.url : url, text, type)) {
+        folder = (r.url && /^https?:/.test(r.url) ? r.url : url).replace(/[?#].*$/, '').replace(/\/?$/, '/');
+        // (A folder that does not hold an extension index is a folder of books: no need to ask for the index files.)
+        if (!parseListing(folder, text, type).some((e) => /^((novel_)?index(\.min)?|plugins(\.min)?|runners|sources|modules|repo)\.json$/i.test(e.name))) return { url: folder, parsed: { kind: 'folder', name: folderName(folder), items: [], count: { novel: 0, other: 0 } } };
+      }
+    }
     catch (e) { lastError = e; if ((e as SourceError).kind === 'offline' || (e as SourceError).kind === 'cors') throw e; continue; }
     sawSomething = true;
     const parsed = parseIndex(url, text);
@@ -203,6 +226,7 @@ export async function resolveRepo(given: string): Promise<{ url: string; parsed:
       return { url, parsed };
     }
   }
+  if (folder) return { url: folder, parsed: { kind: 'folder', name: folderName(folder), items: [], count: { novel: 0, other: 0 } } };
   if (lastError && !sawSomething) throw lastError;
   throw new SourceError('noIndex', 'parse');
 }
@@ -210,6 +234,10 @@ export async function resolveRepo(given: string): Promise<{ url: string; parsed:
 /** Add a repo; refuses one already added (the same index under any address, or the very same list). */
 export async function addRepo(given: string): Promise<{ repo: Repo; added: boolean }> {
   const repos = await listRepos();
+  // (Already here under the word or the address typed: refused before anything is fetched.)
+  const asked = normalizeUrl(hiddenAddress(given) ?? given);
+  const known = repos.find((r) => normalizeUrl(r.url) === asked || normalizeUrl(hiddenAddress(r.given) ?? r.given) === asked);
+  if (known) return { repo: known, added: false };
   const { url, parsed } = await resolveRepo(given);
   const norm = normalizeUrl(url);
   const dup = repos.find((r) => normalizeUrl(r.url) === norm || normalizeUrl(r.given) === normalizeUrl(given) || (r.items.length && r.items.length === parsed.items.length && r.kind === parsed.kind && r.items.every((it, i) => it.id === parsed.items[i]?.id && it.url === parsed.items[i]?.url)));
@@ -220,6 +248,7 @@ export async function addRepo(given: string): Promise<{ repo: Repo; added: boole
   return { repo, added: true };
 }
 function nameOf(url: string, kind: RepoKind): string {
+  if (kind === 'folder') return folderName(url);
   const m = /^https?:\/\/(?:raw\.githubusercontent\.com|github\.com|gitlab\.com)\/([^/]+)\/([^/]+)/i.exec(url);
   if (m) return `${m[1]}/${m[2]}`;
   try { return new URL(url).host; } catch { return KIND_APP[kind]; }
@@ -236,6 +265,8 @@ export async function renameRepo(key: string, name: string): Promise<void> {
 /** Fetch the index again; the items change, the key stays. Returns the items whose version moved. */
 export async function refreshRepo(key: string): Promise<{ repo: Repo; updated: ExtItem[] }> {
   const repos = await listRepos(); const r = repos.find((x) => x.key === key); if (!r) throw new SourceError('noRepo', 'parse');
+  // (A folder has no index: its listings are fetched again as they are opened.)
+  if (r.kind === 'folder') { forgetListings(r.url); r.fetchedAt = Date.now(); r.error = undefined; await saveRepos([...repos]); return { repo: r, updated: [] }; }
   const text = await fetchText(r.url);
   const parsed = parseIndex(r.url, text); if (!parsed) throw new SourceError('noIndex', 'parse');
   const updated: ExtItem[] = [];
