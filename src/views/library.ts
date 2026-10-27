@@ -120,14 +120,14 @@ export function libraryView(): HTMLElement {
     } else await doImport(files);
   }
   function importMenu() {
-    if (!canScan()) { void pickFiles(); return; }
     import('../ui/dom').then(({ openSheet }) => {
       const s = openSheet(t('importBooks'), t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))),
-        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void removeMissing(); } }, icon('trash'), t('removeMissing')))));
+        canScan() ? h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))) : null,
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/catalog'); } }, icon('globe'), t('catalogsMenu'))),
+        canScan() ? h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void removeMissing(); } }, icon('trash'), t('removeMissing'))) : null));
     });
   }
   /** Books whose linked files are gone from the device: listed, and removed when confirmed. */

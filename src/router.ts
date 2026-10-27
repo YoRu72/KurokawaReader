@@ -1,11 +1,12 @@
-// Hash router: #/ (library), #/read/<id>[,<id>…], #/settings
+// Hash router: #/ (library), #/read/<id>[,<id>…], #/book/<id>, #/settings, #/notes, #/catalog[?u=<feed>&q=<query>]
 
 export type Route =
   | { name: 'library' }
   | { name: 'read'; ids: string[] }
   | { name: 'book'; id: string }
   | { name: 'settings' }
-  | { name: 'notes' };
+  | { name: 'notes' }
+  | { name: 'catalog'; url?: string; q?: string };
 
 const listeners = new Set<(r: Route) => void>();
 
@@ -17,6 +18,7 @@ export function parseRoute(hash = location.hash): Route {
   if (b) return { name: 'book', id: b[1] };
   if (path.startsWith('/settings')) return { name: 'settings' };
   if (path.startsWith('/notes')) return { name: 'notes' };
+  if (path.startsWith('/catalog')) { const sp = new URLSearchParams(path.split('?')[1] ?? ''); return { name: 'catalog', url: sp.get('u') ?? undefined, q: sp.get('q') ?? undefined }; }
   return { name: 'library' };
 }
 

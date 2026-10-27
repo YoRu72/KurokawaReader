@@ -4,6 +4,7 @@ import './styles/base.css';
 import './styles/reader.css';
 import { applyDocumentLang, onLangChange } from './i18n';
 import { onRoute, parseRoute, navigate, type Route } from './router';
+import { h } from './ui/dom';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
 import { bookView } from './views/book';
@@ -20,6 +21,15 @@ const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
 let currentKey = '';
 
+/** A view whose code is fetched when first wanted: a shell now, the view inside it when it arrives. */
+function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): HTMLElement & { dispose?: () => void } {
+  const shell = h('div', { class: 'view' }, h('div', { class: 'center' }, h('div', { class: 'spinner' }))) as HTMLElement & { dispose?: () => void };
+  let inner: (HTMLElement & { dispose?: () => void }) | null = null; let gone = false;
+  shell.dispose = () => { gone = true; inner?.dispose?.(); };
+  void make().then((el) => { if (gone) { el.dispose?.(); return; } inner = el; shell.replaceChildren(el); }).catch((e) => { console.error(e); shell.replaceChildren(h('div', { class: 'center' }, String(e))); });
+  return shell;
+}
+
 function mount(route: Route): void {
   const key = JSON.stringify(route);
   if (key === currentKey && current) return;
@@ -32,6 +42,7 @@ function mount(route: Route): void {
     case 'book': current = bookView(route.id); break;
     case 'settings': current = settingsView(); break;
     case 'notes': current = notesView(); break;
+    case 'catalog': current = lazyView(() => import('./views/catalog').then((m) => m.catalogView(route.url, route.q))); break;
     default: current = libraryView();
   }
   app.appendChild(current);

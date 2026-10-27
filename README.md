@@ -13,6 +13,7 @@ EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · Fiction
 - 27 themes, custom colours, textures and background pictures, your own fonts
 - Snapshots of selected text, built-in / device / AI translation, PNG export
 - Cloud sync (Dropbox · WebDAV · a Drive folder), portable backups, in-app updates on every platform
+- Online catalogs (OPDS): Project Gutenberg and other free libraries, or your own Calibre-Web, Kavita, Komga or Nextcloud shelf, browsed and fetched from inside the app
 
 ```bash
 npm install && npm run build            # web → dist/
