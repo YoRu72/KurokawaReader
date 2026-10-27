@@ -309,7 +309,7 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   let failed = 0; let since = 0;
   await pool(wanted, 2, async (c) => {
     try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; }
-    catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'offline') throw e; }
+    catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'blocked' || (e as SourceError).kind === 'offline') throw e; }
     onProgress(++done, info.chapters.length);
     if (++since >= 10) { since = 0; await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } })); }
   }, live);

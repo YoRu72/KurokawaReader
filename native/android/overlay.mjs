@@ -157,6 +157,7 @@ await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.jo
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
 await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));
 await fs.copyFile(path.join(root, 'native/android/KrJobService.java'), path.join(pkgDir, 'KrJobService.java'));
+await fs.copyFile(path.join(root, 'native/android/KrBrowser.java'), path.join(pkgDir, 'KrBrowser.java'));
 // Swap Capacitor's WebView for ours (suppresses the system selection menu). BridgeActivity
 // inflates the library's bridge_layout_main; an app resource of the same name overrides it.
 await fs.writeFile(path.join(app, 'src/main/res/layout/bridge_layout_main.xml'), `<?xml version="1.0" encoding="utf-8"?>

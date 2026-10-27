@@ -8,6 +8,9 @@ import UniformTypeIdentifiers
 ///  - pickTree / listTree / readDocument: scan a folder chosen in the Files picker
 ///  - saveToGallery: save a snapshot PNG into Photos, in an album named after the folder setting
 ///  - copyImage: put a PNG on the pasteboard
+///  - httpRequest: a request from native code (no CORS), with the clearance a site's check left
+///  - openWebView / browserFetch / browserReset / browserForget: the app's own browser (KrBrowser.swift), for
+///    the sites that answer only a browser
 @objc(KurokawaPlugin)
 public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     private var pickCall: CAPPluginCall?
@@ -138,7 +141,16 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
         DispatchQueue.main.async { UIPasteboard.general.image = image; call.resolve() }
     }
 
-    /// Generic HTTP request from native code (no CORS) for the sync back-ends.
+    // MARK: the app's own browser (sites behind Cloudflare and the like)
+
+    private lazy var browser: KrBrowser = KrBrowser(plugin: self)
+    @objc func openWebView(_ call: CAPPluginCall) { browser.check(call) }
+    @objc func browserFetch(_ call: CAPPluginCall) { browser.fetch(call) }
+    @objc func browserReset(_ call: CAPPluginCall) { browser.reset(call) }
+    @objc func browserForget(_ call: CAPPluginCall) { browser.forget(call) }
+
+    /// HTTP request from native code (no CORS): the sync back-ends and the sources. The shared cookie store goes
+    /// with it (a check's clearance is copied there once passed); its answer's text in the charset it names.
     @objc func httpRequest(_ call: CAPPluginCall) {
         guard let urlStr = call.getString("url"), let url = URL(string: urlStr) else { call.reject("url required"); return }
         var req = URLRequest(url: url)
@@ -153,7 +165,8 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
             var hs: [String: Any] = [:]
             http?.allHeaderFields.forEach { k, v in hs[String(describing: k).lowercased()] = String(describing: v) }
             let d = data ?? Data()
-            call.resolve(["status": http?.statusCode ?? 0, "body": binary ? d.base64EncodedString() : (String(data: d, encoding: .utf8) ?? ""), "headers": hs])
+            let text = binary ? d.base64EncodedString() : KrBrowser.text(d, contentType: hs["content-type"] as? String)
+            call.resolve(["status": http?.statusCode ?? 0, "body": text, "headers": hs, "url": resp?.url?.absoluteString ?? urlStr])
         }.resume()
     }
 

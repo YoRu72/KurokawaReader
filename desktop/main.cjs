@@ -80,7 +80,8 @@ function createWindow() {
   win.loadURL('app://kurokawa/index.html');
   if (st.maximized) win.maximize();
   win.on('resize', saveState); win.on('move', saveState); win.on('close', saveState);
-  win.on('closed', () => { win = null; });
+  // (The app's hidden browser windows go with it: they would keep it running unseen.)
+  win.on('closed', () => { win = null; closeHelpers(); });
 }
 
 // kurokawareader:// links (OAuth redirects for cloud sync)
@@ -276,29 +277,145 @@ ipcMain.on('kr:progress', (e, p) => {
   w.setProgressBar(busy ? Math.min(1, p) : -1);
   e.sender.setBackgroundThrottling(!busy);
 });
-// A window on a site, sharing the app's session, so a browser check can be passed: out of sight ({hidden},
-// for {timeout} ms — the plain JavaScript checks pass by themselves) or shown for the reader to act in.
-// Resolves {passed}: true once the site answered with a page of its own and the cookies changed (the clearance).
-const CHECK_TITLE = /Just a moment|Attention Required|لحظة|Один момент|DDoS-Guard|Verifying|Checking your browser|Please wait/i;
-ipcMain.handle('kr:open-webview', async (_e, arg) => new Promise((resolve) => {
+// The app's own browser, for the sites that answer only a browser (Cloudflare, DDoS-Guard…): windows sharing
+// the app's session — its cookies, and the same identity (User-Agent) as its requests.
+//  - kr:open-webview: a site's check passed, out of sight ({hidden}, the JavaScript checks pass by themselves)
+//    or in a window the reader acts in, titled with {message}; resolves {passed, blocked, title} — passed once
+//    the site shows a page of its own (no check on it), blocked when it refuses outright. {fresh} clears the
+//    site's old clearance first; {stay} keeps the window until the reader closes it (the site opened for them).
+//  - kr:browser-fetch: a request made by a page of the site itself — a hidden window opened on the site once
+//    (its check passed as any browser passes it), kept a few minutes; each request that page's own fetch.
+//  - kr:browser-reset / kr:browser-forget: the site's window closed; its clearance (or every cookie) cleared.
+const STATE_JS = "(function(){try{var t=document.title||'',b=document.body?(document.body.innerText||'').slice(0,700):'';var bl=/used Cloudflare to restrict access|Sorry, you have been blocked|You are unable to access|has banned you|banned your IP|Error 10(06|07|08|09|10|12|20)\\b/i.test(t+' '+b);var ch=!bl&&(/Just a moment|Attention Required|Verifying you are human|Verify you are human|Checking your browser|Checking if the site connection is secure|Please wait|DDoS-Guard|One moment|لحظة|Один момент/i.test(t)||!!document.querySelector('#challenge-form,#challenge-running,#challenge-stage,#cf-challenge-running,.cf-browser-verification,#cf-please-wait,#turnstile-wrapper,[name=\"cf-turnstile-response\"],#ddg-captcha,.ddg-captcha,#sucuri_cloudproxy_js'));return [document.readyState,location.origin,ch?1:0,bl?1:0,t.slice(0,140)].join('\\u0001');}catch(e){return 'error';}})()";
+const pageState = async (w) => { try { const s = String(await w.webContents.executeJavaScript(STATE_JS, true)).split('\u0001'); return s.length >= 5 ? { ready: s[0], origin: s[1], check: s[2] === '1', blocked: s[3] === '1', title: s[4] } : null; } catch { return null; } };
+const isClear = (st, origin) => !!st && st.origin === origin && st.ready !== 'loading' && !st.check && !st.blocked;
+const originOf = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin : null; } catch { return null; } };
+async function forgetSite(url, all) {
+  const { session } = require('electron');
+  let n = 0;
+  try {
+    for (const c of await session.defaultSession.cookies.get({ url })) {
+      if (!all && !/^(cf_clearance|__cf.*|cf_chl.*|__ddg.*)$/.test(c.name)) continue;
+      await session.defaultSession.cookies.remove(url, c.name).catch(() => undefined); n++;
+    }
+  } catch { /* nothing to clear */ }
+  return n;
+}
+ipcMain.handle('kr:open-webview', async (_e, arg) => {
   const o = typeof arg === 'string' ? { url: arg } : (arg || {});
-  const url = String(o.url || ''); const hidden = !!o.hidden; const timeout = Number(o.timeout) || (hidden ? 14000 : 180000);
-  const w = new BrowserWindow({ width: 900, height: 760, show: !hidden, parent: hidden ? undefined : (win || undefined), title: url, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
-  w.setMenuBarVisibility(false);
-  const jar = () => w.webContents.session.cookies.get({ url }).then((cs) => cs.map((c) => `${c.name}=${c.value}`).sort().join('; ')).catch(() => '');
-  let before = ''; let done = false; let passed = false;
-  const finish = () => { if (done) return; done = true; clearInterval(timer); clearTimeout(limit); resolve({ passed }); if (!w.isDestroyed()) w.close(); };
-  const check = async () => {
-    if (done || w.isDestroyed()) return;
-    const title = w.webContents.getTitle(); const now = await jar();
-    if (title && !CHECK_TITLE.test(title) && now !== before && (/cf_clearance|__ddg/.test(now) || !/cf_clearance/.test(before))) { passed = true; setTimeout(finish, 600); }
-  };
-  const timer = setInterval(check, 500);
-  const limit = setTimeout(finish, timeout);
-  w.webContents.on('did-finish-load', check);
-  w.on('closed', () => { if (!done) { done = true; clearInterval(timer); clearTimeout(limit); resolve({ passed }); } });
-  jar().then((j) => { before = j; return w.loadURL(url); }).catch(() => {});
-}));
+  const url = String(o.url || ''); const origin = originOf(url); const hidden = !!o.hidden; const stay = !!o.stay && !hidden; const timeout = Number(o.timeout) || (hidden ? 15000 : 300000);
+  if (!origin) return { passed: false, blocked: false, title: '' };
+  if (o.fresh) await forgetSite(url, false);
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({ width: 980, height: 820, show: !hidden, parent: hidden ? undefined : (win || undefined), title: String(o.message || url), autoHideMenuBar: true, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+    w.setMenuBarVisibility(false);
+    if (hidden) { hiddenChecks.add(w); w.on('closed', () => hiddenChecks.delete(w)); }
+    // (The window keeps the reader's line as its title, whatever the page calls itself.)
+    if (!hidden) w.on('page-title-updated', (ev) => ev.preventDefault());
+    let done = false; let passed = false; let blocked = false; let title = '';
+    const finish = () => { if (done) return; done = true; clearTimeout(limit); resolve({ passed, blocked, title }); if (!w.isDestroyed()) w.destroy(); };
+    const tick = async () => {
+      if (done || w.isDestroyed()) return;
+      const st = await pageState(w);
+      if (st) { title = st.title; blocked = st.blocked; }
+      // (A window that stays — the site opened for the reader to use — closes only when they close it.)
+      if (isClear(st, origin)) { passed = true; blocked = false; if (stay) setTimeout(tick, 1500); else setTimeout(finish, hidden ? 0 : 900); return; }
+      if (st && st.blocked && hidden) { finish(); return; }
+      setTimeout(tick, 600);
+    };
+    const limit = setTimeout(finish, timeout);
+    // (Closed by the reader: looked at once more — a check passed a moment before counts.)
+    w.on('close', (ev) => { if (done) return; ev.preventDefault(); void pageState(w).then((st) => { if (isClear(st, origin)) passed = true; finish(); }); });
+    w.on('closed', finish);
+    w.loadURL(url).catch(() => {});
+    setTimeout(tick, 800);
+  });
+});
+const lanes = new Map();
+const LANE_IDLE = 4 * 60000;
+const hiddenChecks = new Set();
+function closeHelpers() {
+  for (const l of [...lanes.values()]) closeLane(l);
+  for (const w of [...hiddenChecks]) if (!w.isDestroyed()) w.destroy();
+  hiddenChecks.clear();
+}
+let laneSweep = null;
+function closeLane(l) { if (lanes.get(l.origin) === l) lanes.delete(l.origin); l.fail?.(Object.assign(new Error('closed'), { why: 'error' })); if (!l.win.isDestroyed()) l.win.destroy(); }
+// A window set aside: new requests open the site afresh (with the cookies as they are now); the requests under
+// way in it finish first, then it is closed (after a minute at the most). One still opening goes on.
+function retireLane(l) {
+  if (!l.settled) return;
+  if (lanes.get(l.origin) === l) lanes.delete(l.origin);
+  const until = Date.now() + 60000;
+  const end = () => { if (l.win.isDestroyed()) return; if (!l.busy || Date.now() > until) closeLane(l); else setTimeout(end, 2000); };
+  end();
+}
+function openLane(origin, page, timeout) {
+  const had = lanes.get(origin);
+  if (had && !had.win.isDestroyed()) { had.used = Date.now(); return had.ready; }
+  const w = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+  const lane = { origin, win: w, used: Date.now(), busy: 0, title: '' };
+  lane.ready = new Promise((resolve, reject) => {
+    const start = Date.now(); let settled = false;
+    const settle = (err) => { if (settled) return; settled = true; lane.settled = true; if (err) { closeLane(lane); reject(err); } else { lane.used = Date.now(); resolve(lane); } };
+    lane.fail = (err) => settle(err);
+    w.webContents.on('did-fail-load', (_ev, code, desc, _u, isMain) => { if (isMain && code !== -3) settle(Object.assign(new Error(desc || 'the page did not load'), { why: 'error' })); });
+    // (A page whose renderer went away is opened afresh by the next request.)
+    w.webContents.on('render-process-gone', () => { settle(Object.assign(new Error('the page stopped'), { why: 'error' })); closeLane(lane); });
+    const tick = async () => {
+      if (settled || w.isDestroyed()) return;
+      const st = await pageState(w);
+      if (st) lane.title = st.title;
+      if (isClear(st, origin)) return settle();
+      if (st && st.blocked) return settle(Object.assign(new Error('blocked'), { why: 'blocked', title: st.title }));
+      if (Date.now() - start > timeout) return settle(Object.assign(new Error('challenge'), { why: 'challenge', title: lane.title }));
+      setTimeout(tick, 500);
+    };
+    w.loadURL(page).catch(() => {});
+    setTimeout(tick, 700);
+  });
+  lane.ready.catch(() => undefined);
+  lanes.set(origin, lane);
+  if (!laneSweep) laneSweep = setInterval(() => { for (const l of [...lanes.values()]) if (l.settled && !l.busy && Date.now() - l.used > LANE_IDLE) closeLane(l); if (!lanes.size) { clearInterval(laneSweep); laneSweep = null; } }, 60000);
+  return lane.ready;
+}
+// The page's own request (o given): its answer as base64 with its status, headers and address.
+const LANE_FETCH = `(async (o) => {
+  const h = {}; for (const [k, v] of Object.entries(o.headers || {})) if (!/^(user-agent|referer|cookie|cookie2|accept-encoding|host|origin|connection|content-length|keep-alive|te|trailer|transfer-encoding|upgrade|via|sec-.*|proxy-.*)$/i.test(k)) h[k] = v;
+  const init = { method: o.method || 'GET', headers: h, credentials: 'include', cache: 'no-store', redirect: 'follow' };
+  if (o.body != null) init.body = o.bodyBase64 ? Uint8Array.from(atob(o.body), (c) => c.charCodeAt(0)) : o.body;
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), o.timeout || 90000); init.signal = ctl.signal;
+  try {
+    const r = await fetch(o.url, init);
+    const hs = {}; r.headers.forEach((v, n) => { hs[n.toLowerCase()] = v; });
+    const u8 = new Uint8Array(await r.arrayBuffer()); let s = '';
+    for (let j = 0; j < u8.length; j += 8192) s += String.fromCharCode.apply(null, u8.subarray(j, j + 8192));
+    return { status: r.status, headers: hs, b64: btoa(s), url: r.url || o.url };
+  } finally { clearTimeout(tm); }
+})`;
+function refusal(url, blocked, title, binary) {
+  const html = `<html><head><title>${String(title || (blocked ? 'Access denied' : 'Just a moment...')).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</title></head><body></body></html>`;
+  return { status: 403, headers: { 'content-type': 'text/html; charset=utf-8', ...(blocked ? { 'x-kr-lane': 'blocked' } : { 'cf-mitigated': 'challenge', 'x-kr-lane': 'challenge' }) }, body: binary ? Buffer.from(html).toString('base64') : html, url, via: 'browser' };
+}
+ipcMain.handle('kr:browser-fetch', async (_e, o) => {
+  const url = String(o?.url || ''); const origin = originOf(url);
+  if (!origin) throw new Error('Bad address');
+  let lane;
+  try { lane = await openLane(origin, String(o.page || origin + '/'), Number(o.openTimeout) || 25000); }
+  catch (err) { if (err.why === 'blocked' || err.why === 'challenge') return refusal(url, err.why === 'blocked', err.title, !!o.binary); throw new Error('Browser could not open the site: ' + err.message); }
+  lane.busy++; lane.used = Date.now();
+  try {
+    const timeout = Number(o.timeout) || 90000;
+    const run = lane.win.webContents.executeJavaScript(`${LANE_FETCH}(${JSON.stringify({ url, method: o.method || 'GET', headers: o.headers || {}, body: o.body ?? null, bodyBase64: !!o.bodyBase64, timeout })})`, true);
+    // (The timer cleared once the answer is in: a promise left to reject later would be an unhandled one.)
+    let timer = null;
+    const res = await Promise.race([run, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('Browser request timed out')), timeout + 15000); })]).finally(() => clearTimeout(timer));
+    const buf = Buffer.from(res.b64 || '', 'base64');
+    return { status: res.status, headers: res.headers || {}, body: o.binary ? (res.b64 || '') : decodeText(buf, (res.headers || {})['content-type']), url: res.url || url, via: 'browser' };
+  } finally { lane.busy--; lane.used = Date.now(); }
+});
+ipcMain.handle('kr:browser-reset', async (_e, url) => { const origin = originOf(String(url || '')); const l = origin && lanes.get(origin); if (l) retireLane(l); return true; });
+ipcMain.handle('kr:browser-forget', async (_e, url, all) => { const origin = originOf(String(url || '')); const l = origin && lanes.get(origin); if (l) retireLane(l); return { cleared: origin ? await forgetSite(String(url), !!all) : 0 }; });
 // A system notification (new chapters, extension updates); a click brings the app forward and opens the hash given.
 ipcMain.handle('kr:notify', async (e, o) => {
   try {

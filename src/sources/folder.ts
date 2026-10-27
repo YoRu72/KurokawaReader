@@ -6,7 +6,8 @@
 // volume (a store's EPUB, a premium one, a scan) together in one row, fetched one at a time or all at once.
 // An index of every file, made once (one request to an h5ai server, else a walk through the folders) and
 // kept, lets the whole folder be searched at once, filtered by publisher, and shows what is new.
-import { request, fetchBytes, pool } from './http';
+import { request, fetchBytes, pool, useBrowserFor } from './http';
+import type { HttpResult } from '../net';
 import { t, formatBytes, countVolumes, countSeries, daysAgo, localDigits } from '../i18n';
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFile, type SourcePage, type FilterValues, type SourceFilter, type SourceTag } from './types';
 import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf } from './peek';
@@ -219,49 +220,66 @@ function groupVolumes(list: Vol[], storeFirst: boolean, scans: boolean): VolGrou
 const listings = new Map<string, { at: number; entries: DirEntry[] }>();
 const KEEP = 15 * 60000;
 export function forgetListings(prefix?: string): void { for (const k of [...listings.keys()]) if (!prefix || k.startsWith(prefix)) listings.delete(k); }
-/** Sites whose pages carry no table (h5ai drawing its list by script): their API is asked first. */
-const scripted = new Set<string>();
 const originOf = (u: string) => { try { return new URL(u).origin; } catch { return u; } };
+/** What no other way round will mend: a check, a refusal, the network gone, a web page barred from the site. */
+const fatal = (e: unknown): boolean => ['cloudflare', 'blocked', 'offline', 'cors', 'rate'].includes((e as SourceError)?.kind ?? '');
+const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase();
 
-/** The listing of a folder from h5ai's API: a POST of JSON to the site's root — as h5ai's own page asks. */
-async function h5aiItems(url: string, quiet: boolean): Promise<DirEntry[] | null> {
-  const origin = originOf(url);
-  const r = await request(`${origin}/?`, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', referer: url, 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'get', items: { href: new URL(url).pathname, what: 1 } }), quiet, retries: 1 }).catch((e) => { if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'offline') throw e; return null; });
-  if (!r || r.status >= 400 || !/^\s*\{/.test(r.body)) return null;
-  const entries = parseListing(url, r.body, 'application/json');
-  return entries.length || /"items"\s*:/.test(r.body) ? entries : null;
+/** Why a folder could not be read, said plainly: the status, the server, what the page was instead. */
+function notAListing(url: string, r: HttpResult): SourceError {
+  const title = /<title[^>]*>([^<]{0,80})/i.exec(r.body)?.[1]?.trim();
+  return new SourceError(t('folderNotListing', { status: String(r.status), where: dec(url.replace(/^https?:\/\//, '')).slice(0, 90), what: title ? t('folderPageTitled', { title }) : t('folderEmptyPage') }), 'parse', r.status);
+}
+function refusal(r: HttpResult): SourceError {
+  const title = /<title[^>]*>([^<]{0,80})/i.exec(r.body)?.[1]?.trim();
+  const server = r.headers.server ? ` · ${r.headers.server}` : '';
+  return new SourceError(t('folderRefused', { status: String(r.status), what: `${server}${title ? ` · “${title}”` : ''}` }), 'auth', r.status);
 }
 
-/** Why a folder could not be read, said plainly: the answer's status, or what the page was instead. */
-function notAListing(url: string, status: number, body: string): SourceError {
-  const title = /<title[^>]*>([^<]{0,80})/i.exec(body)?.[1]?.trim();
-  return new SourceError(t('folderNotListing', { status: String(status), where: dec(url.replace(/^https?:\/\//, '')).slice(0, 90), what: title ? t('folderPageTitled', { title }) : t('folderEmptyPage') }), 'parse', status);
+/** A question to h5ai's API: JSON POSTed to the folder's own address — as h5ai's own page asks it — else to
+ *  the site's root (as its downloaders do). The answer's JSON, or null when the site gave none (`why` then
+ *  says what it gave instead). A check, a refusal or a lost network is thrown. */
+async function h5aiApi<T>(folder: string, body: Record<string, unknown>, quiet: boolean, why: { error?: SourceError } = {}): Promise<T | null> {
+  const page = withSlash(folder.replace(/[?#].*$/, ''));
+  for (const target of [...new Set([`${page}?`, `${originOf(page)}/?`])]) {
+    let r: HttpResult;
+    try { r = await request(target, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', referer: page, 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify(body), quiet, retries: 1 }); }
+    catch (e) { if (fatal(e)) throw e; why.error = e as SourceError; continue; }
+    if (r.status === 429) throw new SourceError('rate', 'rate', 429);
+    if (r.status < 400 && /^\s*[{[]/.test(r.body)) { try { return JSON.parse(r.body) as T; } catch { /* not JSON after all */ } }
+    why.error = r.status === 401 || r.status === 403 ? refusal(r) : notAListing(target, r);
+  }
+  return null;
 }
 
-/** The entries of a folder, from the site (or from a listing fetched a few minutes ago): the page's table,
- *  else h5ai's API; folders first, then the names in order. */
+/** The entries of a folder, from the site (or from a listing fetched a few minutes ago): h5ai's API first on an
+ *  h5ai server (sizes to the byte, times to the second), else the page's table, else the API after all; folders
+ *  first, then the names in order. */
 export async function listFolder(url: string, quiet = false, h5ai = false): Promise<DirEntry[]> {
   const key = withSlash(url);
   const had = listings.get(key); if (had && Date.now() - had.at < KEEP) return had.entries;
   let entries: DirEntry[] | null = null; let failure: SourceError | null = null;
-  if (h5ai && scripted.has(originOf(key))) entries = await h5aiItems(key, quiet);
+  const fromApi = async (): Promise<DirEntry[] | null> => {
+    const why: { error?: SourceError } = {};
+    const j = await h5aiApi<{ items?: unknown }>(key, { action: 'get', items: { href: new URL(key).pathname, what: 1 } }, quiet, why);
+    if (j && Array.isArray(j.items)) return parseListing(key, JSON.stringify({ items: j.items }), 'application/json');
+    if (why.error) failure = why.error;
+    return null;
+  };
+  if (h5ai) entries = await fromApi();
   if (!entries) {
     const r = await request(key, { headers: { accept: 'text/html,application/json;q=0.9,*/*;q=0.8' }, quiet, retries: 1 });
     if (r.status === 429) throw new SourceError('rate', 'rate', 429);
     if (r.status < 400) {
       const base = r.url && /^https?:/.test(r.url) ? withSlash(r.url.replace(/[?#].*$/, '')) : key;
       const found = parseListing(base, r.body, r.headers['content-type'] ?? '');
-      if (found.length || !(h5ai || isH5ai(r.body))) { entries = found; if (!found.length && !isListing(base, r.body, r.headers['content-type'] ?? '')) failure = notAListing(key, r.status, r.body); }
-      else failure = notAListing(key, r.status, r.body);
-    } else failure = r.status === 401 || r.status === 403 ? new SourceError(t('folderRefused', { status: String(r.status) }), 'auth', r.status) : notAListing(key, r.status, r.body);
-    // (h5ai drawing its list by script, or a page that says nothing: its API.)
-    if ((!entries || !entries.length) && (h5ai || failure)) {
-      const api = await h5aiItems(key, quiet);
-      if (api) { entries = api; failure = null; scripted.add(originOf(key)); }
-    }
+      if (found.length || !(h5ai || isH5ai(r.body))) { entries = found; if (!found.length && !isListing(base, r.body, r.headers['content-type'] ?? '')) failure = notAListing(key, r); }
+      else failure = failure ?? notAListing(key, r);
+      // (An h5ai page drawing its list by script, with no table: its API, once more, for a server not known as h5ai.)
+      if ((!entries || !entries.length) && !h5ai && isH5ai(r.body)) { const api = await fromApi(); if (api) { entries = api; failure = null; } }
+    } else failure = r.status === 401 || r.status === 403 ? refusal(r) : notAListing(key, r);
   }
-  if (!entries) throw failure ?? new SourceError('parse', 'parse');
-  if (failure && !entries.length) throw failure;
+  if (!entries || (failure && !entries.length)) throw failure ?? new SourceError('parse', 'parse');
   entries.sort((a, b) => (a.dir === b.dir ? natural(a.name, b.name) : a.dir ? -1 : 1));
   listings.set(key, { at: Date.now(), entries });
   return entries;
@@ -269,16 +287,19 @@ export async function listFolder(url: string, quiet = false, h5ai = false): Prom
 
 /* ---------- the index of every file ---------- */
 interface IndexFile { p: string; s?: number; t?: number }
-interface FolderIndex { v: 2; at: number; how: 'search' | 'walk'; complete: boolean; files: IndexFile[]; dirs: string[] }
+interface FolderIndex { v: 2; at: number; how: 'search' | 'tree' | 'walk'; complete: boolean; files: IndexFile[]; dirs: string[] }
 /** A series as the index knows it. */
 interface SeriesInfo { rel: string; name: string; time?: number; files: { rel: string; name: string; v: VolName; size?: number; time?: number; sub: string }[]; volumes: number; publishers: string[] }
 const indexes = new Map<string, FolderIndex>();
 const derived = new WeakMap<FolderIndex, Map<string, SeriesInfo>>();
 const INDEX_KEY = (repo: Repo) => `dir:index:${repo.key}`;
+/** The index kept for a folder, if any — one with nothing in it (a site that could not be read when it was made,
+ *  in an earlier version) counts as none, and is dropped. */
 export async function loadIndex(repo: Repo): Promise<FolderIndex | null> {
   const had = indexes.get(repo.key); if (had) return had;
   const stored = await db.getMeta<FolderIndex>(INDEX_KEY(repo)).catch(() => undefined);
-  if (stored?.v === 2) { indexes.set(repo.key, stored); return stored; }
+  if (stored?.v === 2 && (stored.files.length || stored.dirs.length)) { indexes.set(repo.key, stored); return stored; }
+  if (stored) await db.deleteMeta(INDEX_KEY(repo)).catch(() => undefined);
   return null;
 }
 /** The index's files by series (the root's folders), each with its volumes counted and its publishers. */
@@ -304,53 +325,104 @@ function seriesOf(idx: FolderIndex): Map<string, SeriesInfo> {
   return out;
 }
 
-/** Make the index: h5ai's search asked once for every file under the folder; a server without it walked,
- *  folder by folder (four at a time), as far as `live` allows — what was walked is kept either way. */
+type Hit = { href?: string; size?: unknown; time?: unknown };
+/** Every file under the folder from h5ai's "items" asked with what=2 — a folder's content and its subfolders'
+ *  — two levels a request: a folder of series and all their volumes in one answer; then each series that has
+ *  folders of its own, asked the same way (its side folders' contents in one answer), three at a time. (A
+ *  server that leaves the subfolders out is asked folder by folder.) */
+async function h5aiTree(root: string, progress: (text: string) => void, live: () => boolean, quiet: boolean): Promise<{ files: IndexFile[]; dirs: string[]; complete: boolean } | null> {
+  const rootPath = new URL(root).pathname;
+  const relOf = (href: string) => { try { const p = new URL(href, root).pathname; return p.startsWith(rootPath) ? p.slice(rootPath.length).replace(/\/$/, '') : null; } catch { return null; } };
+  const files: IndexFile[] = []; const dirs = new Set<string>(); const seen = new Set<string>();
+  let queue: string[] = ['']; let complete = true; let asked = 0;
+  while (queue.length) {
+    if (!live()) { complete = false; break; }
+    const next = new Set<string>();
+    let rootFailed: SourceError | null = null;
+    await pool(queue, 3, async (rel) => {
+      const folder = rel ? `${root}${rel}/` : root;
+      const why: { error?: SourceError } = {};
+      const j = await h5aiApi<{ items?: Hit[] }>(folder, { action: 'get', items: { href: new URL(folder).pathname, what: 2 } }, quiet, why).catch((e) => { if (!rel) throw e; complete = false; return null; });
+      if (!j || !Array.isArray(j.items)) { if (!rel) rootFailed = why.error ?? new SourceError('parse', 'parse'); complete = false; return; }
+      asked++;
+      let deep = false; const subdirs: string[] = [];
+      for (const it of j.items) {
+        const href = str(it.href); if (!href) continue;
+        const r = relOf(href); if (!r) continue;
+        if (rel && !r.startsWith(`${rel}/`)) continue;   // (the folders above it and their other content)
+        const depth = (rel ? r.slice(rel.length + 1) : r).split('/').length;
+        if (depth >= 2) deep = true;
+        // (A folder two levels down: its parent asked next, which gives the contents of all its folders at once.)
+        if (href.endsWith('/')) { dirs.add(r); if (depth === 1) subdirs.push(r); else if (depth === 2) next.add(r.split('/').slice(0, -1).join('/')); }
+        else if (!seen.has(r) && isBook({ ext: extOf(r) })) { seen.add(r); files.push({ p: r, s: num(it.size), t: typeof it.time === 'number' ? it.time : undefined }); }
+      }
+      if (!deep) for (const d of subdirs) next.add(d);
+      progress(t('indexWalking', { n: localDigits(asked), files: localDigits(files.length) }));
+    }, live);
+    if (rootFailed) { if (!files.length) return null; }
+    queue = [...next];
+    if (asked > 4000) { complete = false; break; }
+  }
+  return { files, dirs: [...dirs], complete };
+}
+
+/** Make the index: h5ai's search asked once for every file under the folder; else h5ai's items, two levels a
+ *  request; else — a server without an API — a walk through the folders, four at a time, as far as `live`
+ *  allows (only when asked for: a request per folder). An index with nothing in it is never kept: the reason
+ *  the site gave is thrown instead. */
 export async function buildIndex(repo: Repo, progress: (text: string) => void, live: () => boolean = () => true, opts: { walk?: boolean; quiet?: boolean } = {}): Promise<FolderIndex> {
   const root = withSlash(repo.folder ?? repo.url);
   const before = await loadIndex(repo);
   const rootPath = new URL(root).pathname;
-  const files: IndexFile[] = []; const dirs: string[] = [];
+  const quiet = !!opts.quiet;
+  let files: IndexFile[] = []; let dirs: string[] = [];
   const relOf = (u: string) => { const p = new URL(u, root).pathname; return p.startsWith(rootPath) ? p.slice(rootPath.length).replace(/\/$/, '') : ''; };
   progress(t('indexAsking'));
   let how: FolderIndex['how'] = 'search'; let complete = true;
-  // h5ai's search: every name with a dot in it (every file), folders and all, in one answer.
-  type Hit = { href?: string; size?: unknown; time?: unknown };
-  let found = null as Hit[] | null;
-  try {
-    const r = await request(`${originOf(root)}/?`, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', referer: root, 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'get', search: { href: rootPath, pattern: '.', ignorecase: true } }), retries: 1, quiet: opts.quiet });
-    if (r.status < 400 && /^\s*\{/.test(r.body)) { const j = JSON.parse(r.body) as { search?: unknown }; if (Array.isArray(j.search) && j.search.length) found = j.search as Hit[]; }
-  } catch (e) { if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'offline') throw e; }
-  if (found) {
-    for (const it of found) {
+  let failure: SourceError | null = null;
+  // h5ai's search: every name with a character in it (everything), folders and all, in one answer.
+  const why: { error?: SourceError } = {};
+  const j = await h5aiApi<{ search?: unknown }>(root, { action: 'get', search: { href: rootPath, pattern: '.', ignorecase: true } }, quiet, why);
+  const isApi = !!j || repo.flavor === 'h5ai';
+  if (j && Array.isArray(j.search) && j.search.length) {
+    for (const it of j.search as Hit[]) {
       const href = str(it.href); if (!href) continue;
       const rel = relOf(href); if (!rel) continue;
       if (href.endsWith('/')) dirs.push(rel);
-      else if (isBook({ ext: (/\.([a-z0-9]{1,5})$/i.exec(rel)?.[1] ?? '').toLowerCase() })) files.push({ p: rel, s: num(it.size), t: typeof it.time === 'number' ? it.time : undefined });
+      else if (isBook({ ext: extOf(rel) })) files.push({ p: rel, s: num(it.size), t: typeof it.time === 'number' ? it.time : undefined });
     }
   } else {
-    // The walk: the folders, a layer at a time — only when asked for (it is a request per folder).
-    if (!opts.walk) throw new SourceError('noSearch', 'parse');
-    how = 'walk';
-    let layer = ['']; let walked = 0;
-    while (layer.length) {
-      if (!live()) { complete = false; break; }
-      const next: string[] = [];
-      await pool(layer, 4, async (rel) => {
-        let entries: DirEntry[];
-        try { entries = await listFolder(rel ? `${root}${rel}/` : root, true, repo.flavor === 'h5ai'); } catch { complete = false; return; }
-        walked++; progress(t('indexWalking', { n: localDigits(walked), files: localDigits(files.length) }));
-        for (const e of entries) {
-          const seg = e.url.replace(/\/+$/, '').split('/').pop() ?? encodeURIComponent(e.name);
-          const p = rel ? `${rel}/${seg}` : seg;
-          if (e.dir) { dirs.push(p); next.push(p); }
-          else if (isBook(e)) files.push({ p, s: e.size, t: e.time });
-        }
-      }, live);
-      layer = next;
-      if (walked > 6000) { complete = false; break; }
+    failure = why.error ?? null;
+    // h5ai's items, two levels a request (its search turned off, or not answering).
+    const tree = isApi ? await h5aiTree(root, progress, live, quiet) : null;
+    if (tree && (tree.files.length || tree.dirs.length)) { how = 'tree'; files = tree.files; dirs = tree.dirs; complete = tree.complete; }
+    else {
+      // The walk: the folders, a layer at a time — only when asked for.
+      if (!opts.walk) throw isApi && failure ? failure : new SourceError('noSearch', 'parse');
+      how = 'walk';
+      let layer = ['']; let walked = 0;
+      while (layer.length) {
+        if (!live()) { complete = false; break; }
+        const next: string[] = [];
+        await pool(layer, 4, async (rel) => {
+          let entries: DirEntry[];
+          try { entries = await listFolder(rel ? `${root}${rel}/` : root, true, repo.flavor === 'h5ai'); }
+          catch (e) { complete = false; if (!rel || (fatal(e) && !failure)) failure = e as SourceError; return; }
+          walked++; progress(t('indexWalking', { n: localDigits(walked), files: localDigits(files.length) }));
+          for (const e of entries) {
+            const seg = e.url.replace(/\/+$/, '').split('/').pop() ?? encodeURIComponent(e.name);
+            const p = rel ? `${rel}/${seg}` : seg;
+            if (e.dir) { dirs.push(p); next.push(p); }
+            else if (isBook(e)) files.push({ p, s: e.size, t: e.time });
+          }
+        }, live);
+        layer = next;
+        if (walked > 6000) { complete = false; break; }
+      }
     }
   }
+  // (Nothing at all: the site's own answer said why — a check, a refusal, a page that is not a listing.)
+  if (!files.length && !dirs.length) throw failure ?? new SourceError(t('indexEmptyAnswer'), 'parse');
   const idx: FolderIndex = { v: 2, at: Date.now(), how, complete, files, dirs };
   indexes.set(repo.key, idx);
   await db.setMeta(INDEX_KEY(repo), idx).catch(() => undefined);
@@ -398,14 +470,12 @@ async function h5aiSearch(repo: Repo, rel: string, words: string[]): Promise<{ r
   const word = [...words].sort((a, b) => b.length - a.length)[0]?.replace(/[^\p{L}\p{N}]+/gu, '');
   if (!word) return null;
   try {
-    const href = new URL(rel ? `${root}${rel}/` : root).pathname;
-    const r = await request(`${originOf(root)}/?`, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', referer: root, 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'get', search: { href, pattern: word, ignorecase: true } }), retries: 0, quiet: true });
-    if (r.status >= 400 || !/^\s*\{/.test(r.body)) return null;
-    const j = JSON.parse(r.body) as { search?: { href?: string; size?: unknown; time?: unknown }[] };
-    if (!Array.isArray(j.search)) return null;
+    const folder = rel ? `${root}${rel}/` : root;
+    const j = await h5aiApi<{ search?: Hit[] }>(folder, { action: 'get', search: { href: new URL(folder).pathname, pattern: word, ignorecase: true } }, true);
+    if (!j || !Array.isArray(j.search)) return null;
     const rootPath = new URL(root).pathname;
     return j.search.map((it) => { const p = new URL(it.href ?? '', root).pathname; return { rel: p.startsWith(rootPath) ? p.slice(rootPath.length).replace(/\/$/, '') : '', dir: (it.href ?? '').endsWith('/'), size: num(it.size), time: typeof it.time === 'number' ? it.time : undefined }; }).filter((x) => x.rel);
-  } catch { return null; }
+  } catch (e) { if (fatal(e)) throw e; return null; }
 }
 
 /* ---------- the source ---------- */
@@ -430,6 +500,8 @@ export function fileOf(e: { name: string; url: string; size?: number; ext?: stri
 
 export function folderSource(repo: Repo): Source {
   const root = withSlash(repo.folder ?? repo.url);
+  // (A site its manifest says answers only a browser: the app's own browser from the first request.)
+  if (repo.browser) { try { useBrowserFor(new URL(root).host, 30); } catch { /* an address without a host */ } }
   const srcId = `dir:${repo.key}`;
   const h5ai = repo.flavor === 'h5ai';
   const headers = { referer: `${originOf(root)}/` };

@@ -118,7 +118,7 @@ const SITE = 'http://localhost:5403';
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });
     await page.click('.src-shelves .chip:has-text("Latest")'); await page.waitForTimeout(1200);
     await page.click('.src-grid .src-card:has-text("Locked")'); await page.waitForTimeout(2500);
-    ok('browser check named, with the way through', /browser check/.test(await page.$eval('.src-details', (e) => e.textContent)) && !!(await page.$('.src-details .btn.primary')));
+    ok('browser check named, with the way through', /make sure you’re a person/.test(await page.$eval('.src-details', (e) => e.textContent)) && /Confirm I’m human/.test(await page.$eval('.src-details .btn.primary', (e) => e.textContent)));
     // Removing a repo.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section');
     page.once('dialog', (d) => d.accept());

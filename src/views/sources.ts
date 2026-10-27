@@ -15,7 +15,7 @@ import { SourceError, type Source, type SourceBook, type SourceDetails, type Sou
 import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
-import { passChallenge } from '../sources/http';
+import { passChallenge, forgetSite, openSite } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule } from '../sources/peek';
@@ -72,8 +72,8 @@ function lazy(make: () => Promise<HTMLElement & { dispose?: () => void }>, srcId
     const err = e as SourceError;
     const el = h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon(isDir(srcId) ? 'folder' : 'puzzle')), h('p', null, err instanceof SourceError && err.kind === 'parse' && /noExtension|notRunnable|noRepo/.test(err.message) ? t(err.message === 'notRunnable' ? 'extNotRunnable' : 'extGone') : describe(e)));
     const siteOf = async () => (isDir(srcId) ? (await folderSourceFor(srcId)).site : (await findItem(srcId))?.item.url);
-    if (err instanceof SourceError && err.kind === 'cloudflare') el.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void siteOf().then((u) => (u ? passChallenge(u) : undefined)).then(() => { body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); forgetHandle(srcId); void run(); }) }, icon('globe'), t('passCheck')));
-    else el.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); forgetHandle(srcId); void run(); } }, t('tryAgain')));
+    const again = () => { body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); forgetHandle(srcId); void run(); };
+    el.append(...errorActions(e, () => siteOf().then((u) => u ?? ''), again));
     body.append(el);
   });
   void run();
@@ -244,6 +244,10 @@ function addRepoSheet(after: () => void): void {
       const err = e as SourceError;
       const at = err instanceof SourceError ? /^noIndexAt:(\d+):(.*):(https?:.*)$/.exec(err.message) : null;
       status.textContent = at ? t('repoNoIndexAt', { status: at[1], title: at[2] ? t('repoNoIndexTitle', { title: at[2] }) : '' }) : err instanceof SourceError && err.kind === 'parse' ? (err.message === 'badRepoUrl' ? t('repoBadUrl') : err.message === 'noIndex' ? t('repoNoIndex') : describe(e)) : describe(e);
+      // (A site whose check wants a person: passed from here, then the address is read again.)
+      if (err instanceof SourceError && err.kind === 'cloudflare' && /^https?:\/\//i.test(given) && !sh.body.querySelector('.check-btn')) {
+        status.after(h('button', { type: 'button', class: 'btn tonal check-btn', onclick: (ev: Event) => { (ev.currentTarget as HTMLElement).remove(); void passChallenge(given).then(() => go.click()); } }, icon('globe'), t('passCheck')));
+      }
       go.disabled = false;
     }
   } }, icon('check'), t('addRepo'));
@@ -524,6 +528,8 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   const body = h('div', { class: 'library-body src-body' }, form, shelfRow, tagRow, status, grid, sentinel);
   const topActions = h('div', { class: 'topbar-actions' });
   if (hnd && (hnd.ln?.pluginSettings || hnd.my?.prefs.length)) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
+  // (The site itself, in the app's browser: a sign-in, a check passed there carries over — as Mihon's WebView.)
+  if (/^https?:\/\//i.test(src.site ?? '')) topActions.append(iconButton('globe', t('openInAppBrowser'), () => void openSite(src.site)));
   topActions.append(iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); })));
   const root = h('div', { class: 'view sources-view' },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(src.id.startsWith('dir:') && !q && shelf ? path(src.id, { shelf: shelf.split('/').slice(0, -1).join('/') || undefined }) : q || shelf || tags.length ? path(src.id) : '/sources')), titleEl, topActions),
@@ -578,7 +584,11 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
         run.on = (txt) => { text.textContent = txt; };
         run.end = (ok, e) => {
           if (ok) { cache.delete(key); if (!gone) navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }
-          else { btn.disabled = false; auto = false; text.textContent = (e as SourceError)?.message === 'noSearch' ? t('indexNeedsWalk') : describe(e); }
+          else {
+            btn.disabled = false; auto = false; text.textContent = (e as SourceError)?.message === 'noSearch' ? t('indexNeedsWalk') : describe(e);
+            // (A check in the way: the reader passes it from here, and the index is made at once after.)
+            if ((e as SourceError)?.kind === 'cloudflare' && !line.querySelector('.check-btn')) line.append(h('button', { type: 'button', class: 'btn small primary check-btn', onclick: () => void passChallenge(src.site).then(() => { line.querySelector('.check-btn')?.remove(); start(); }) }, t('passCheck')));
+          }
         };
         if (run.text) text.textContent = run.text;
       };
@@ -1115,11 +1125,19 @@ function chaptersList(d: SourceDetails, id: string, gone: () => boolean): HTMLEl
 }
 
 /* ---------- errors ---------- */
+/** Mihon's hint, for a check that keeps failing: an old Android System WebView fails the sites' checks. */
+function oldWebView(): string {
+  const ua = navigator.userAgent;
+  if (!/Android/.test(ua) || !/; wv\)/.test(ua)) return '';
+  const v = Number(/Chrome\/(\d+)/.exec(ua)?.[1] ?? 0);
+  return v && v < 115 ? ` ${t('webviewOld', { v: String(v) })}` : '';
+}
 function describe(e: unknown): string {
   const err = e as SourceError;
   if (err instanceof SourceError) {
     if (err.kind === 'offline') return t('sourceOffline');
-    if (err.kind === 'cloudflare') return t('sourceCloudflare');
+    if (err.kind === 'cloudflare') return t('sourceCloudflare') + oldWebView();
+    if (err.kind === 'blocked') return t('sourceBlocked', { what: err.detail ? t('siteSaid', { title: err.detail }) : '' }) + oldWebView();
     if (err.kind === 'rate') return t('sourceRate');
     if (err.kind === 'auth') return t('shamelaLinkNeeded');
     if (err.kind === 'cors') return t('sourceNeedsApp');
@@ -1127,12 +1145,21 @@ function describe(e: unknown): string {
   }
   return String((e as Error)?.message ?? e);
 }
-function showError(box: HTMLElement, e: unknown, retry: () => void, src: Source): void {
+/** The ways on from an error: a site's check opened for the reader ("Confirm I'm human"), its cookies cleared
+ *  (a clearance gone stale), a sign-in, or simply trying again. */
+function errorActions(e: unknown, site: () => Promise<string>, retry: () => void): HTMLElement[] {
   const err = e as SourceError;
+  const kind = err instanceof SourceError ? err.kind : '';
+  const out: HTMLElement[] = [];
+  if (kind === 'cloudflare') out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void site().then((u) => (u ? passChallenge(u) : undefined)).then(retry) }, icon('globe'), t('passCheck')));
+  else if (kind === 'auth') out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void link.connect().catch((x) => toast(describe(x), 'error')) }, icon('user'), t('signIn')));
+  else out.push(h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
+  if (kind === 'cloudflare' || kind === 'blocked') out.push(h('button', { type: 'button', class: 'btn text', onclick: () => void site().then((u) => (u ? forgetSite(u) : 0)).then(() => { toast(t('siteCookiesCleared'), 'info', 2500); retry(); }) }, t('clearSiteCookies')));
+  return out;
+}
+function showError(box: HTMLElement, e: unknown, retry: () => void, src: Source): void {
   const el = h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('globe')), h('p', null, describe(e)));
-  if (err instanceof SourceError && err.kind === 'cloudflare') el.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void passChallenge(src.site).then(retry) }, icon('globe'), t('passCheck')));
-  else if (err instanceof SourceError && err.kind === 'auth') el.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void link.connect().catch((x) => toast(describe(x), 'error')) }, icon('user'), t('signIn')));
-  else el.append(h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
+  el.append(...errorActions(e, async () => src.site ?? '', retry));
   box.replaceChildren(el);
 }
 export { describe as describeSourceError };
