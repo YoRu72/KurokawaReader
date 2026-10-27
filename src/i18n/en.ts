@@ -1223,7 +1223,6 @@ export const en = {
   repos: 'Extension repositories',
   noReposYet: 'Novel sources come from extension repositories (LNReader, Mangayomi): add one with the + above.',
   reposSupported: 'Supported: LNReader plugin repositories and Mangayomi novel-extension repositories (their JavaScript extensions). Other apps’ repositories are recognised but their extensions cannot run here.',
-  findReposFor: '{app} repositories',
   addRepo: 'Add a repository',
   addRepoHint: 'A repo page (github.com/…), its index (plugins.min.json, index.json, novel_index.json) or an app’s install link.',
   repoUrl: 'Address',

@@ -1228,7 +1228,6 @@ export const ar: Strings = {
   repos: 'مستودعات الإضافات',
   noReposYet: 'مصادر الروايات تأتي من مستودعات الإضافات (LNReader وMangayomi): أضف واحدًا بزر + أعلاه.',
   reposSupported: 'المدعوم: مستودعات إضافات LNReader ومستودعات إضافات الروايات في Mangayomi (إضافاتها المكتوبة بجافاسكربت). أما مستودعات التطبيقات الأخرى فيُتعرَّف عليها، ولا تعمل إضافاتها هنا.',
-  findReposFor: 'مستودعات {app}',
   addRepo: 'إضافة مستودع',
   addRepoHint: 'صفحة المستودع (github.com/…) أو فهرسه (plugins.min.json أو index.json أو novel_index.json) أو رابط التثبيت من دليل التطبيق.',
   repoUrl: 'العنوان',

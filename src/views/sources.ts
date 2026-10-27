@@ -199,10 +199,8 @@ function addRepoSheet(after: () => void): void {
   const sh = openSheet(t('addRepo'), t('close'));
   const addr = h('input', { type: 'url', placeholder: 'https://github.com/…', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr' }) as HTMLInputElement;
   const status = h('p', { class: 'hint' }, t('addRepoHint'));
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('repoUrl')), addr), status, h('p', { class: 'hint' }, t('reposSupported')),
-    h('div', { class: 'actions-row repo-links' },
-      h('a', { class: 'btn small', href: 'https://wotaku.wiki/ext/lnreader', target: '_blank', rel: 'noopener' }, icon('external'), t('findReposFor', { app: 'LNReader' })),
-      h('a', { class: 'btn small', href: 'https://wotaku.wiki/ext/mangayomi', target: '_blank', rel: 'noopener' }, icon('external'), t('findReposFor', { app: 'Mangayomi' }))));
+  // (No repository is offered: the reader brings the address of the one he found.)
+  sh.body.append(h('label', { class: 'field' }, h('span', null, t('repoUrl')), addr), status, h('p', { class: 'hint' }, t('reposSupported')));
   const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const given = addr.value.trim(); if (!given) { addr.focus(); return; }
     go.disabled = true; status.textContent = t('readingRepo');
