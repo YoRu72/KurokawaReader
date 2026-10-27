@@ -27,6 +27,12 @@ export interface SourceBook {
   files?: SourceFile[];
   /** How many of the series' volumes, of how many, are in the library (a folder's card). */
   have?: number;
+  /** New volumes of a series the reader follows, since the series' page was last opened. */
+  fresh?: number;
+  /** The library's folder a fetched volume goes into (its series). */
+  group?: string;
+  /** For a series' card: the ids of every edition of each of its volumes (one in the library is enough). */
+  volumeIds?: string[][];
 }
 
 /** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
@@ -80,7 +86,7 @@ export interface Source {
    *  is the shelf on screen (a source of folders offers its shelves only at its top). */
   shelves?(current?: string): Promise<SourceTag[]>;
   /** A line about the source's own state shown above its shelf (an index of its files, and how to renew it). */
-  status?(): Promise<{ text: string; auto?: boolean; action?: { label: string; run: (progress: (text: string) => void, live: () => boolean) => Promise<void> } } | null>;
+  status?(): Promise<{ text: string; auto?: boolean; action?: { label: string; run: (progress: (text: string) => void, live: () => boolean, auto?: boolean) => Promise<void> } } | null>;
   /** A page of books: a search, or a shelf when `shelf` is given, with the filters applied. */
   browse(q: string, filters: FilterValues, page: number, shelf?: string): Promise<SourcePage>;
   details(id: string): Promise<SourceDetails>;
@@ -95,6 +101,8 @@ export interface Source {
   /** The same two when already known in this session, at once. */
   peekNow?(b: SourceBook): SourcePeek | undefined;
   folderCoverNow?(shelf: string): SourcePeek | undefined;
+  /** How many new volumes a series has now (a page come back to shows what was seen meanwhile). */
+  freshNow?(shelf: string): number | undefined;
 }
 
 export class SourceError extends Error {

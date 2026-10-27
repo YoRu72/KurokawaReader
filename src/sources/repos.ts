@@ -8,7 +8,7 @@
 // is refused.
 import { db } from '../db';
 import { fetchText, request } from './http';
-import { isListing, isH5ai, parseListing, folderName, forgetListings } from './folder';
+import { isListing, isH5ai, parseListing, folderName, forgetListings, forgetFolder } from './folder';
 import { SourceError } from './types';
 
 export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'folder' | 'unknown';
@@ -291,6 +291,7 @@ export async function removeRepo(key: string): Promise<void> {
   const repos = await listRepos();
   const repo = repos.find((r) => r.key === key);
   await saveRepos(repos.filter((r) => r.key !== key));
+  if (repo?.kind === 'folder') await forgetFolder(key);
   if (repo) for (const it of repo.items) { await db.deleteMeta(codeKey(key, it.id)); setInstalled(pluginKey(key, it.id), null); try { localStorage.removeItem(`kr.ext.store.${pluginKey(key, it.id)}`); localStorage.removeItem(`kr.src.ext:${key}:${encodeURIComponent(it.id)}.filters`); } catch { /* ignore */ } }
 }
 export async function renameRepo(key: string, name: string): Promise<void> {

@@ -134,11 +134,13 @@ const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://localhost:${port}`); const p = u.pathname;
   // The h5ai folder.
   const isApi = req.method === 'POST' && (p === '/' || p.startsWith(OTL));
-  if (p.startsWith(OTL.replace(/\/$/, '')) || isApi || p === '/__otl/posts' || p === '/__otl/ranges' || p === '/extensions/otl.json') {
+  if (p.startsWith(OTL.replace(/\/$/, '')) || isApi || p.startsWith('/__otl/') || p === '/extensions/otl.json') {
     res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'); res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Content-Type, Accept-Ranges');
     if (req.method === 'OPTIONS') return res.end();
     if (p === '/__otl/posts') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(posts)); }
     if (p === '/__otl/ranges') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(ranges)); }
+    // (A new volume published in a series, as the site's keepers do.)
+    if (p === '/__otl/add') { otlAdd(u.searchParams.get('folder'), u.searchParams.get('name'), EPUBS[0], 'application/epub+zip', Date.now()); res.setHeader('Content-Type', 'application/json'); return res.end('{"ok":true}'); }
     // (The extension's manifest, as the app's repository keeps it.)
     if (p === '/extensions/otl.json') { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, '../../extensions/otl.json'))); }
     if (isApi) {

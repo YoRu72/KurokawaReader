@@ -21,7 +21,8 @@ import { folderSource } from '../sources/folder';
 import { schedule } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
+import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
+import { parseName } from '../sources/folder';
 
 export const SOURCES: Source[] = [archiveSource, shamelaSource];
 const sourceById = (id: string) => SOURCES.find((s) => s.id === id);
@@ -89,8 +90,8 @@ function hubView(): HTMLElement & { dispose?: () => void } {
   const off = onUpdatesChanged(() => void drawBell());
   root.dispose = () => off();
   const drawBell = async () => {
-    const c = await pendingCounts().catch(() => ({ chapters: 0, books: 0, extensions: 0 }));
-    const n = c.books + c.extensions;
+    const c = await pendingCounts().catch(() => ({ chapters: 0, books: 0, extensions: 0, series: 0 }));
+    const n = c.books + c.extensions + c.series;
     bell.querySelector('.count')?.remove();
     if (n) bell.append(h('span', { class: 'count' }, localDigits(n)));
     bell.classList.toggle('busy', isChecking());
@@ -266,7 +267,7 @@ function updatesSheet(after: () => void): void {
     btn.addEventListener('click', async () => {
       btn.disabled = true; track.hidden = false;
       void askNotifyPermission().catch(() => false);
-      try { const r = await checkAll({ quiet: false, notify: false, force: true, onProgress: (d, tot, title) => { bar.style.width = `${tot ? (d / tot) * 100 : 100}%`; line.textContent = t('checkingBook', { title }); } }); toast(r.chapters.length || r.extensions.length ? t('checkFound') : t('checkNothing')); }
+      try { const r = await checkAll({ quiet: false, notify: false, force: true, onProgress: (d, tot, title) => { bar.style.width = `${tot ? (d / tot) * 100 : 100}%`; line.textContent = t('checkingBook', { title }); } }); toast(r.chapters.length || r.extensions.length || r.volumes?.length ? t('checkFound') : t('checkNothing')); }
       catch (e) { toast(describe(e), 'error'); }
       finally { track.hidden = true; void draw(); after(); }
     });
@@ -295,8 +296,16 @@ function updatesSheet(after: () => void): void {
       }
       body.append(list);
     }
+    // New volumes of the series followed in the web folders: a row per series, opening its page.
+    const vols = await folderNews().catch(() => []);
+    if (vols.length) {
+      body.append(h('h3', { class: 'section-title' }, t('notifyTitleVolumes')));
+      const list = h('ul', { class: 'plain-list' });
+      for (const v of vols) list.append(h('li', null, h('button', { type: 'button', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, icon('books'), h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}`)), h('span', { class: 'badge new' }, `+${localDigits(v.n)}`))));
+      body.append(list);
+    }
     if (rep?.failed.length) body.append(h('p', { class: 'hint warn' }, t('checkFailedSome', { n: localDigits(rep.failed.length), titles: rep.failed.slice(0, 3).map((f) => f.title).join('، ') })));
-    if (!novels.length && !rep?.extensions.length) body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('nothingNew'))));
+    if (!novels.length && !rep?.extensions.length && !vols.length) body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('nothingNew'))));
   };
   void draw();
 }
@@ -325,18 +334,18 @@ async function fetchVolume(src: Source, id: string, title: string, file: SourceF
   return added[0];
 }
 /** A file's contents as a short list — the first entries, the rest behind a button. */
-function tocBlock(toc: { label: string; depth: number }[], first = 6): HTMLElement {
+function tocBlock(toc: { label: string; depth: number }[], first = 4): HTMLElement {
   const box = h('div', { class: 'vol-toc' });
   const list = h('ol', { class: 'vol-toc-list' });
   const draw = (all: boolean) => {
     list.replaceChildren(...toc.slice(0, all ? toc.length : first).map((e) => h('li', { dir: 'auto', style: { paddingInlineStart: `${Math.min(e.depth, 4) * 14}px` } }, e.label)));
   };
   draw(false);
-  box.append(h('b', { class: 'vol-toc-head' }, `${t('contents')} · ${localDigits(toc.length)}`), list);
+  box.append(h('b', { class: 'vol-toc-head' }, `${t('contents')} · ${localDigits(toc.length, 'prose')}`), list);
   if (toc.length > first) {
     let all = false;
-    const more = h('button', { type: 'button', class: 'btn small text vol-toc-more' }, t('showAllN', { n: localDigits(toc.length) })) as HTMLButtonElement;
-    more.addEventListener('click', () => { all = !all; draw(all); more.textContent = all ? t('showLess') : t('showAllN', { n: localDigits(toc.length) }); });
+    const more = h('button', { type: 'button', class: 'btn small text vol-toc-more' }, t('showAllN', { n: localDigits(toc.length, 'prose') })) as HTMLButtonElement;
+    more.addEventListener('click', () => { all = !all; draw(all); more.textContent = all ? t('showLess') : t('showAllN', { n: localDigits(toc.length, 'prose') }); });
     box.append(more);
   }
   return box;
@@ -365,7 +374,7 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
     dl.addEventListener('click', async () => {
       dl.disabled = true;
       try {
-        const book = await fetchVolume(src, a.id, b.title, a.file, (p) => { dl.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : '…')); });
+        const book = await fetchVolume(src, a.id, b.title, a.file, (p) => { dl.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : '…')); }, b.group ? await libraryFolder(b.group) : undefined);
         lib.set(a.id, book.id); if (cur === a) draw(); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
       } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); toast(describe(e), 'error'); }
     });
@@ -418,12 +427,14 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   const [c1, c2] = coverColors(b.title);
   const cover = h('div', { class: 'series-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, icon('books'));
   const status = h('small', { class: 'series-status', hidden: true });
-  const missing = () => files.filter((f) => !lib.has(`f:${f.id}`));
-  const btn = h('button', { type: 'button', class: 'btn primary' }) as HTMLButtonElement;
-  const label = () => { const n = missing().length; btn.disabled = !n; btn.className = n ? 'btn primary' : 'btn tonal'; btn.replaceChildren(icon(n ? 'download' : 'check'), h('span', null, n ? t('downloadAllVolumes', { n: countVolumes(n) }) : t('allInLibrary'))); };
+  // (A volume is in the library when any of its editions is.)
+  const has = (i: number) => (b.volumeIds?.[i] ?? [`f:${files[i].id}`]).some((id) => lib.has(id));
+  const missing = () => files.filter((_, i) => !has(i));
+  const btn = h('button', { type: 'button', class: 'btn primary series-all' }) as HTMLButtonElement;
+  const label = () => { const n = missing().length; btn.disabled = !n; btn.className = `${n ? 'btn primary' : 'btn tonal'} series-all`; btn.replaceChildren(icon(n ? 'download' : 'check'), h('span', null, n ? t('downloadAllVolumes', { n: countVolumes(n) }) : t('allInLibrary'))); };
   label();
   // (A volume fetched by its own button leaves one fewer for this one.)
-  rows.set(HEAD, () => { if (!btn.disabled || !missing().length) label(); });
+  rows.set(HEAD, () => { if (!btn.disabled || !missing().length) label(); labelNext(); });
   // (A run already going — the page left and opened again — shows its progress here.)
   const attach = (run: { text: string; on?: (text: string) => void; done?: () => void }) => {
     btn.disabled = true; status.hidden = false; status.textContent = run.text;
@@ -431,16 +442,35 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
     run.done = () => { status.hidden = true; label(); };
   };
   const going = seriesRuns.get(runKey); if (going) attach(going);
+  // The next volume after the last one in the library (a reader going on with the series), a tap away.
+  const next = h('button', { type: 'button', class: 'btn tonal series-next', hidden: true }) as HTMLButtonElement;
+  const nextOf = () => { let last = -1; files.forEach((_, i) => { if (has(i)) last = i; }); return last >= 0 && last + 1 < files.length && !has(last + 1) ? files[last + 1] : undefined; };
+  const labelNext = () => {
+    const f = nextOf(); next.hidden = !f || seriesRuns.has(runKey); if (!f) return;
+    const v = parseName(f.name ?? f.id);
+    next.replaceChildren(icon('download'), h('span', null, t('seriesNext', { title: v.marked && v.num !== undefined ? t('volumeN', { n: localDigits(String(v.num), 'prose') }) : v.base })));
+  };
+  next.addEventListener('click', async () => {
+    const f = nextOf(); if (!f) return;
+    next.disabled = true;
+    try {
+      const id = `f:${f.id}`;
+      const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => { next.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : '…')); }, b.id !== 'a:' ? await libraryFolder(b.title) : undefined);
+      lib.set(id, book.id); rows.get(id)?.(book.id); toast(t('addedToLibrary'));
+    } catch (e) { toast(describe(e), 'error'); }
+    finally { next.disabled = false; label(); labelNext(); }
+  });
+  labelNext();
   btn.addEventListener('click', async () => {
     const todo = missing(); if (!todo.length || seriesRuns.has(runKey)) return;
     const run: { text: string; on?: (text: string) => void; done?: () => void } = { text: '' };
     seriesRuns.set(runKey, run); attach(run);
     let done = 0;
     try {
-      const folderId = await libraryFolder(b.title);
+      const folderId = b.id !== 'a:' ? await libraryFolder(b.title) : undefined;
       for (const [i, f] of todo.entries()) {
         const id = `f:${f.id}`;
-        if (lib.has(id)) continue;   // (fetched meanwhile by its own button)
+        if (lib.has(id) || has(files.indexOf(f))) continue;   // (fetched meanwhile, by its own button or another edition)
         const say = (extra: string) => { run.text = `${t('fetchingVolume', { n: localDigits(i + 1), total: localDigits(todo.length) })}${extra ? ` · ${extra}` : ''}`; run.on?.(run.text); };
         say('');
         const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : ''), folderId);
@@ -459,7 +489,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
-      h('div', { class: 'series-actions' }, btn), status));
+      h('div', { class: 'series-actions' }, next, btn), status));
   // (The cover is the first volume's: an EPUB before a PDF.)
   const v1 = files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
@@ -536,24 +566,25 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       const act = st.action;
       const btn = h('button', { type: 'button', class: 'btn small tonal' }, t('indexUpdate')) as HTMLButtonElement;
       btn.textContent = act.label;
+      let auto = false;
       const start = () => {
         btn.disabled = true;
         let run = indexRuns.get(src.id);
         if (!run) {
           const r: IndexRun = { text: '', done: Promise.resolve() };
-          r.done = act.run((txt) => { r.text = txt; r.on?.(txt); }, () => true).then(() => { indexRuns.delete(src.id); r.end?.(true); }, (e) => { indexRuns.delete(src.id); r.end?.(false, e); });
+          r.done = act.run((txt) => { r.text = txt; r.on?.(txt); }, () => true, auto).then(() => { indexRuns.delete(src.id); r.end?.(true); }, (e) => { indexRuns.delete(src.id); r.end?.(false, e); });
           indexRuns.set(src.id, r); run = r;
         }
         run.on = (txt) => { text.textContent = txt; };
         run.end = (ok, e) => {
           if (ok) { cache.delete(key); if (!gone) navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }
-          else { btn.disabled = false; text.textContent = describe(e); }
+          else { btn.disabled = false; auto = false; text.textContent = (e as SourceError)?.message === 'noSearch' ? t('indexNeedsWalk') : describe(e); }
         };
         if (run.text) text.textContent = run.text;
       };
-      btn.addEventListener('click', start);
+      btn.addEventListener('click', () => { auto = false; start(); });
       line.append(btn);
-      if (indexRuns.has(src.id) || (st.auto && !autoTried.has(src.id))) { autoTried.add(src.id); start(); }
+      if (indexRuns.has(src.id) || (st.auto && !autoTried.has(src.id))) { autoTried.add(src.id); auto = true; start(); }
     }).catch(() => line.remove());
   }
 
@@ -584,8 +615,12 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     if (b.look === 'folder' && b.openShelf !== undefined && src.folderCover) {
       // (The series' volumes in the library: counted on its card.)
       const mine = [...lib.keys()].filter((k) => k.startsWith(`f:${b.openShelf}/`)).length;
+      // (New volumes as they are now: a series seen since the shelf was drawn has none any more.)
+      const fresh = src.freshNow?.(b.openShelf) ?? b.fresh ?? 0;
+      const freshMark = () => (fresh ? h('span', { class: 'fresh-mark', title: t('notifyTitleVolumes') }, `+${localDigits(fresh)}`) : null);
+      if (fresh) cover.append(freshMark()!);
       const fill = (p: { cover?: string; count?: number } | null) => {
-        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), h('span', { class: 'folder-mark' }, icon('folder'))); }
+        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), h('span', { class: 'folder-mark' }, icon('folder')), ...(fresh ? [freshMark()!] : [])); }
         if (p?.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
         if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p?.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
       };

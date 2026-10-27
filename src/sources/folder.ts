@@ -306,8 +306,9 @@ function seriesOf(idx: FolderIndex): Map<string, SeriesInfo> {
 
 /** Make the index: h5ai's search asked once for every file under the folder; a server without it walked,
  *  folder by folder (four at a time), as far as `live` allows — what was walked is kept either way. */
-export async function buildIndex(repo: Repo, progress: (text: string) => void, live: () => boolean = () => true): Promise<FolderIndex> {
+export async function buildIndex(repo: Repo, progress: (text: string) => void, live: () => boolean = () => true, opts: { walk?: boolean; quiet?: boolean } = {}): Promise<FolderIndex> {
   const root = withSlash(repo.folder ?? repo.url);
+  const before = await loadIndex(repo);
   const rootPath = new URL(root).pathname;
   const files: IndexFile[] = []; const dirs: string[] = [];
   const relOf = (u: string) => { const p = new URL(u, root).pathname; return p.startsWith(rootPath) ? p.slice(rootPath.length).replace(/\/$/, '') : ''; };
@@ -317,7 +318,7 @@ export async function buildIndex(repo: Repo, progress: (text: string) => void, l
   type Hit = { href?: string; size?: unknown; time?: unknown };
   let found = null as Hit[] | null;
   try {
-    const r = await request(`${originOf(root)}/?`, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', referer: root, 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'get', search: { href: rootPath, pattern: '.', ignorecase: true } }), retries: 1 });
+    const r = await request(`${originOf(root)}/?`, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', referer: root, 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'get', search: { href: rootPath, pattern: '.', ignorecase: true } }), retries: 1, quiet: opts.quiet });
     if (r.status < 400 && /^\s*\{/.test(r.body)) { const j = JSON.parse(r.body) as { search?: unknown }; if (Array.isArray(j.search) && j.search.length) found = j.search as Hit[]; }
   } catch (e) { if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'offline') throw e; }
   if (found) {
@@ -328,7 +329,8 @@ export async function buildIndex(repo: Repo, progress: (text: string) => void, l
       else if (isBook({ ext: (/\.([a-z0-9]{1,5})$/i.exec(rel)?.[1] ?? '').toLowerCase() })) files.push({ p: rel, s: num(it.size), t: typeof it.time === 'number' ? it.time : undefined });
     }
   } else {
-    // The walk: the folders, a layer at a time.
+    // The walk: the folders, a layer at a time — only when asked for (it is a request per folder).
+    if (!opts.walk) throw new SourceError('noSearch', 'parse');
     how = 'walk';
     let layer = ['']; let walked = 0;
     while (layer.length) {
@@ -352,7 +354,43 @@ export async function buildIndex(repo: Repo, progress: (text: string) => void, l
   const idx: FolderIndex = { v: 2, at: Date.now(), how, complete, files, dirs };
   indexes.set(repo.key, idx);
   await db.setMeta(INDEX_KEY(repo), idx).catch(() => undefined);
+  // (Listings read before the index was made again are read again: a series' page shows what is new.)
+  forgetListings(root);
+  // What arrived since the index before, for the series the reader follows (has a volume of in the library).
+  if (before) {
+    const had = new Set(before.files.map((f) => f.p));
+    const fresh = files.filter((f) => !had.has(f.p));
+    if (fresh.length) {
+      const followed = await inLibrary(`dir:${repo.key}`);
+      const news = await newsOf(repo);
+      for (const f of fresh) {
+        const series = f.p.split('/')[0]; if (!followed.has(series) || !f.p.includes('/')) continue;
+        const n = news[series] ?? (news[series] = { n: 0, names: [], at: 0 });
+        n.n++; n.at = Date.now(); if (n.names.length < 5) n.names.push(dec(f.p.split('/').pop() ?? ''));
+      }
+      await db.setMeta(NEWS_KEY(repo), news).catch(() => undefined);
+      newsMem.set(repo.key, news);
+    }
+  }
   return idx;
+}
+/** New volumes of the series the reader follows, by series, until the series' page is opened. */
+export interface SeriesNews { n: number; names: string[]; at: number }
+const NEWS_KEY = (repo: Repo) => `dir:news:${repo.key}`;
+const newsMem = new Map<string, Record<string, SeriesNews>>();
+export async function newsOf(repo: Repo): Promise<Record<string, SeriesNews>> { const news = (await db.getMeta<Record<string, SeriesNews>>(NEWS_KEY(repo)).catch(() => undefined)) ?? {}; newsMem.set(repo.key, news); return news; }
+async function seen(repo: Repo, series: string): Promise<void> { const news = await newsOf(repo); if (!news[series]) return; delete news[series]; newsMem.set(repo.key, news); await db.setMeta(NEWS_KEY(repo), news).catch(() => undefined); }
+/** Forget what a folder source kept (its index, its news) when it is removed. */
+export async function forgetFolder(repoKey: string): Promise<void> { indexes.delete(repoKey); await db.deleteMeta(`dir:index:${repoKey}`).catch(() => undefined); await db.deleteMeta(`dir:news:${repoKey}`).catch(() => undefined); }
+/** The index made again in the background (an h5ai server, one request) when older than `age`: the new
+ *  volumes of the series followed, by series name. */
+export async function refreshIndex(repo: Repo, age: number): Promise<{ series: string; name: string; n: number }[]> {
+  const idx = await loadIndex(repo);
+  if (!idx || repo.flavor !== 'h5ai' || Date.now() - idx.at < age) return [];
+  const old = await newsOf(repo);
+  await buildIndex(repo, () => undefined, () => true, { quiet: true });
+  const news = await newsOf(repo);
+  return Object.entries(news).filter(([k, v]) => v.n > (old[k]?.n ?? 0)).map(([k, v]) => ({ series: k, name: dec(k), n: v.n - (old[k]?.n ?? 0) }));
 }
 /** The whole folder searched by h5ai itself (without an index): every name with the longest word in it. */
 async function h5aiSearch(repo: Repo, rel: string, words: string[]): Promise<{ rel: string; dir: boolean; size?: number; time?: number }[] | null> {
@@ -408,7 +446,7 @@ export function folderSource(repo: Repo): Source {
     const first = g.items[0];
     const mixed = new Set(g.items.map((x) => x.v.ext)).size > 1;
     // ("Volume 14 — The Subtitle" in a series' page when the name says it is a volume; else the file's own name.)
-    const title = opts.full || g.num === undefined || !first.v.marked ? first.v.base : `${t('volumeN', { n: localDigits(String(g.num)) })}${first.v.sub ? ` — ${first.v.sub}` : ''}`;
+    const title = opts.full || g.num === undefined || !first.v.marked ? first.v.base : `${t('volumeN', { n: localDigits(String(g.num), 'prose') })}${first.v.sub ? ` — ${first.v.sub}` : ''}`;
     return {
       id: `f:${first.rel}`, title, look: 'volume', badge: BOOK_EXT[first.v.ext]?.[0] ?? first.v.ext.toUpperCase(), author: opts.where, year: first.e.date,
       file: fileOf(first.e, first.rel),
@@ -422,7 +460,7 @@ export function folderSource(repo: Repo): Source {
     const by = String(f.sort ?? 'name');
     return list.sort((a, b) => by === 'newest' ? (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name) : by === 'biggest' ? b.volumes - a.volumes || natural(a.name, b.name) : natural(a.name, b.name));
   };
-  const seriesCard = (s: SeriesInfo, f: FilterValues): SourceBook => folderCard(s.name, s.rel, { author: s.publishers.slice(0, 2).join(' · ') || undefined, badge: s.volumes ? countVolumes(s.volumes) : undefined, year: s.time && String(f.sort) === 'newest' ? stamp(s.time)?.slice(0, 10) : undefined });
+  const seriesCard = (s: SeriesInfo, f: FilterValues, news?: Record<string, SeriesNews>): SourceBook => folderCard(s.name, s.rel, { author: s.publishers.slice(0, 2).join(' · ') || undefined, badge: s.volumes ? countVolumes(s.volumes) : undefined, year: s.time && String(f.sort) === 'newest' ? stamp(s.time)?.slice(0, 10) : undefined, fresh: news?.[s.rel]?.n });
   const byPublisher = (f: FilterValues) => { const ps = Array.isArray(f.publisher) ? f.publisher : []; return (s: SeriesInfo) => !ps.length || s.publishers.some((p) => ps.includes(p)); };
   /** A series' card: its name, its place, how many volumes and how big, its publishers and formats, the
    *  files "Download all" fetches (the chosen edition of each volume). */
@@ -430,7 +468,7 @@ export function folderSource(repo: Repo): Source {
     const crumbs = crumbsOf(rel);
     const total = groups.reduce((n, g) => n + (g.items[0].e.size ?? 0), 0);
     const pubs = [...new Set(books.map((e) => parseName(e.name).publisher).filter(Boolean))] as string[];
-    return { id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
+    return { id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
   };
   // A search's matches are gathered once and paged from memory.
   const searches = new Map<string, { items: SourceBook[]; partial: boolean }>();
@@ -454,7 +492,7 @@ export function folderSource(repo: Repo): Source {
       }
       // (Grouped by series and volume, the editions of one volume in one row.)
       const bySeries = new Map<string, Vol[]>(); for (const v of vols) { const s = v.rel.split('/')[0]; const l = bySeries.get(s); if (l) l.push(v); else bySeries.set(s, [v]); }
-      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(dec(a[0]), dec(b[0])))) for (const g of groupVolumes(list, storeFirst(f), scans(f))) items.push(volumeRow(g, { full: true, where: dec(s) }));
+      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(dec(a[0]), dec(b[0])))) for (const g of groupVolumes(list, storeFirst(f), scans(f))) items.push({ ...volumeRow(g, { full: true, where: dec(s) }), group: shownName(dec(s)) });
       const res = { items, partial: !idx.complete };
       searches.set(key, res); return res;
     }
@@ -523,9 +561,11 @@ export function folderSource(repo: Repo): Source {
     },
     async status() {
       const idx = await loadIndex(repo);
-      const run = async (progress: (text: string) => void, live: () => boolean) => { const made = await buildIndex(repo, progress, live); searches.clear(); progress(t('indexMade', { series: countSeries(seriesOf(made).size), n: countVolumes(made.files.length) })); };
-      // (An h5ai server gives its whole list in one answer: made at once, the first time the folder is opened.)
+      const run = async (progress: (text: string) => void, live: () => boolean, auto = false) => { const made = await buildIndex(repo, progress, live, { walk: !auto }); searches.clear(); progress(t('indexMade', { series: countSeries(seriesOf(made).size), n: countVolumes(made.files.length) })); };
+      // (An h5ai server gives its whole list in one answer: made at once, the first time the folder is opened —
+      // and again when a day old. A walk through every folder is made only when asked for.)
       if (!idx) return { text: t('indexNone'), auto: h5ai, action: { label: t('indexMake'), run } };
+      if (h5ai && Date.now() - idx.at > 86400000) return { text: t('indexOld'), auto: true, action: { label: t('indexUpdate'), run } };
       const ago = Math.round((Date.now() - idx.at) / 86400000);
       return { text: `${t('indexState', { series: countSeries(seriesOf(idx).size), n: countVolumes(idx.files.length) })} · ${ago < 1 ? t('today') : daysAgo(ago)}${idx.complete ? '' : ` · ${t('indexPartial')}`}`, action: { label: t('indexUpdate'), run } };
     },
@@ -544,7 +584,7 @@ export function folderSource(repo: Repo): Source {
       // The newest volumes of the whole folder.
       if (special === '::new' && idx) {
         const latest = idx.files.filter((x) => x.t).sort((a, b) => (b.t ?? 0) - (a.t ?? 0)).slice(0, 240);
-        const rows = latest.map((x) => { const name = dec(x.p.split('/').pop() ?? ''); const where = x.p.split('/').slice(0, -1).map(dec).join(' / '); return volumeRow({ key: x.p, num: undefined, items: [{ e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }] }, { full: true, where }); });
+        const rows = latest.map((x) => { const name = dec(x.p.split('/').pop() ?? ''); const where = x.p.split('/').slice(0, -1).map(dec).join(' / '); return { ...volumeRow({ key: x.p, num: undefined, items: [{ e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }] }, { full: true, where }), group: x.p.includes('/') ? shownName(dec(x.p.split('/')[0])) : undefined }; });
         return paged(rows, undefined, t('shelfNewVolumes'));
       }
       // The top: the series (from the index when there is one: counted, with their publishers).
@@ -553,7 +593,11 @@ export function folderSource(repo: Repo): Source {
         if (idx) {
           let series = [...seriesOf(idx).values()].filter((s) => s.files.length || idx.dirs.includes(s.rel)).filter(byPublisher(f));
           if (special === '::mine') { const mine = await inLibrary(srcId); series = series.filter((s) => mine.has(s.rel)); }
-          list = sortSeries(series, special === '::recent' ? { ...f, sort: 'newest' } : f).map((s) => seriesCard(s, special === '::recent' ? { ...f, sort: 'newest' } : f));
+          const news = await newsOf(repo);
+          // (The series with new volumes first on "In my library".)
+          const sorted = sortSeries(series, special === '::recent' ? { ...f, sort: 'newest' } : f);
+          if (special === '::mine') sorted.sort((a, b) => (news[b.rel]?.n ?? 0) - (news[a.rel]?.n ?? 0));
+          list = sorted.map((s) => seriesCard(s, special === '::recent' ? { ...f, sort: 'newest' } : f, news));
           // (Books lying at the top itself, beside the series.)
           if (!special) topBooks = idx.files.filter((x) => !x.p.includes('/')).map((x) => { const name = dec(x.p); return { e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }; }).filter((x) => wanted(f)(x.e));
         } else {
@@ -570,11 +614,14 @@ export function folderSource(repo: Repo): Source {
         return paged(list, head, special === '::recent' ? t('shelfRecentSeries') : special === '::mine' ? t('shelfInMyLibrary') : undefined);
       }
       // A series (or any folder with books in it): its card, its volumes in reading order, then its side folders.
+      void seen(repo, rel.split('/')[0]);
       const all = await listFolder(urlOf(root, rel), false, h5ai);
       const folders = all.filter((e) => e.dir);
       const books = all.filter((e) => isBook(e) && wanted(f)(e));
       const groups = groupVolumes(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(rel, e) })), storeFirst(f), scans(f));
-      const rows = groups.map((g) => volumeRow(g));
+      // (A volume fetched from a series' page goes into the library's folder of that series.)
+      const series = shownName(crumbs[0] ?? '');
+      const rows = groups.map((g) => ({ ...volumeRow(g), group: series }));
       const list: SourceBook[] = [...rows, ...folders.map((e) => folderCard(e.name, childRel(rel, e)))];
       const head = groups.length ? seriesHeadOf(rel, groups, books) : undefined;
       return paged(list, head, title);
@@ -607,6 +654,7 @@ export function folderSource(repo: Repo): Source {
       return peekFile(fl.url, fl.ext, fl.size, { noCover: noCover(), headers });
     },
     peekNow: (b) => (b.file ? peekKnown(b.file.url, b.file.size, noCover()) : undefined),
+    freshNow: (rel) => { const news = newsMem.get(repo.key); return news ? news[rel]?.n ?? 0 : undefined; },
     folderCoverNow: (rel) => known(`peek:dir:${keyOf(urlOf(root, rel))}`),
     async folderCover(rel) {
       // A folder's own picture (cover.jpg…) when it has one, else its first volume's cover (the index says

@@ -6,12 +6,14 @@ import { db, type Book } from '../db';
 import { pool } from './http';
 import { listRepos, refreshRepo, extensionUpdates, type Repo, type ExtItem } from './repos';
 import { checkNovel } from './ext/source';
-import { t, countChapters, countNovels } from '../i18n';
+import { t, countChapters, countNovels, countVolumes, countSeries } from '../i18n';
 
 export interface UpdateReport {
   at: number;
   chapters: { bookId: string; title: string; n: number }[];      // this check's new chapters
   extensions: { repoKey: string; repoName: string; pluginId: string; name: string; from: string; to: string }[];
+  /** New volumes in the web folders, for the series the reader follows (has a volume of in the library). */
+  volumes?: { repoKey: string; repoName: string; series: string; name: string; n: number }[];
   failed: { title: string; error: string }[];
 }
 const META = 'sources:updates';
@@ -30,17 +32,27 @@ export async function trackedNovels(): Promise<Book[]> {
 }
 
 /** What is waiting to be seen: chapters not yet opened (summed over the books) and extension updates. */
-export async function pendingCounts(): Promise<{ chapters: number; books: number; extensions: number }> {
+export async function pendingCounts(): Promise<{ chapters: number; books: number; extensions: number; series: number }> {
   const books = (await trackedNovels()).filter((b) => (b.remote?.newChapters ?? 0) > 0);
   const ext = await extensionUpdates().catch(() => []);
-  return { chapters: books.reduce((n, b) => n + (b.remote?.newChapters ?? 0), 0), books: books.length, extensions: ext.length };
+  return { chapters: books.reduce((n, b) => n + (b.remote?.newChapters ?? 0), 0), books: books.length, extensions: ext.length, series: (await folderNews()).length };
+}
+/** The series with new volumes in every web folder, newest first. */
+export async function folderNews(): Promise<{ repoKey: string; repoName: string; series: string; name: string; n: number; at: number; names: string[] }[]> {
+  const out: { repoKey: string; repoName: string; series: string; name: string; n: number; at: number; names: string[] }[] = [];
+  const { newsOf } = await import('./folder');
+  for (const r of await listRepos().catch(() => [] as Repo[])) {
+    if (r.kind !== 'folder') continue;
+    for (const [series, v] of Object.entries(await newsOf(r))) out.push({ repoKey: r.key, repoName: r.name, series, name: (() => { try { return decodeURIComponent(series).replace(/^!+\s*/, ''); } catch { return series; } })(), n: v.n, at: v.at, names: v.names });
+  }
+  return out.sort((a, b) => b.at - a.at);
 }
 
 /** Ask every source: the novels' sites for chapters, the repos for versions. One check at a time. */
 export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, total: number, title: string) => void; notify?: boolean; force?: boolean } = {}): Promise<UpdateReport> {
   if (running) return running;
   running = (async () => {
-    const report: UpdateReport = { at: Date.now(), chapters: [], extensions: [], failed: [] };
+    const report: UpdateReport = { at: Date.now(), chapters: [], extensions: [], volumes: [], failed: [] };
     const novels = await trackedNovels();
     let done = 0;
     await pool(novels, 2, async (b) => {
@@ -50,6 +62,14 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
       opts.onProgress?.(++done, novels.length, b.title);
     });
     // The repos: their indexes again (an hour old at least), then the versions against what is on the device.
+    // The web folders an h5ai server keeps: their index made again (one request each), the new volumes of
+    // the series followed told.
+    const { refreshIndex } = await import('./folder');
+    for (const repo of await listRepos()) {
+      if (repo.kind !== 'folder' || repo.flavor !== 'h5ai') continue;
+      try { for (const v of await refreshIndex(repo, opts.force ? 0 : EVERY)) report.volumes!.push({ repoKey: repo.key, repoName: repo.name, ...v }); }
+      catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e) }); }
+    }
     for (const repo of await listRepos()) {
       if (repo.kind === 'folder') continue;
       if (!opts.force && repo.fetchedAt && Date.now() - repo.fetchedAt < 3600000) continue;
@@ -59,7 +79,7 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
     await db.setMeta(META, report);
     localStorage.setItem('kr.sources.checkedAt', String(report.at));
     emit();
-    if (opts.notify !== false && (report.chapters.length || report.extensions.length)) await announce(report).catch(() => undefined);
+    if (opts.notify !== false && (report.chapters.length || report.extensions.length || report.volumes?.length)) await announce(report).catch(() => undefined);
     return report;
   })();
   running.finally(() => { running = null; });
@@ -69,17 +89,20 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
 /** A notification of the system's, when there is something new (and the platform allows one). */
 async function announce(r: UpdateReport): Promise<void> {
   const seen = (await db.getMeta<{ key: string }>('sources:announced'))?.key;
-  const key = JSON.stringify([r.chapters.map((c) => `${c.bookId}:${c.n}`), r.extensions.map((e) => `${e.pluginId}:${e.to}`)]);
+  const key = JSON.stringify([r.chapters.map((c) => `${c.bookId}:${c.n}`), r.extensions.map((e) => `${e.pluginId}:${e.to}`), (r.volumes ?? []).map((v) => `${v.series}:${v.n}`)]);
   if (seen === key) return;
   await db.setMeta('sources:announced', { key });
   const total = r.chapters.reduce((n, c) => n + c.n, 0);
   const lines: string[] = [];
   if (r.chapters.length === 1) lines.push(t('notifyChaptersOne', { title: r.chapters[0].title, n: countChapters(r.chapters[0].n) }));
   else if (r.chapters.length) lines.push(t('notifyChaptersMany', { n: countChapters(total), books: countNovels(r.chapters.length) }));
+  const vols = r.volumes ?? [];
+  if (vols.length === 1) lines.push(t('notifyVolumesOne', { series: vols[0].name, n: countVolumes(vols[0].n) }));
+  else if (vols.length) lines.push(t('notifyVolumesMany', { n: countVolumes(vols.reduce((n, v) => n + v.n, 0)), series: countSeries(vols.length) }));
   if (r.extensions.length) lines.push(t('notifyExtensions', { n: r.extensions.length }));
-  const title = r.chapters.length ? t('notifyTitleChapters') : t('notifyTitleExtensions');
+  const title = r.chapters.length ? t('notifyTitleChapters') : vols.length ? t('notifyTitleVolumes') : t('notifyTitleExtensions');
   const body = lines.join(' · ');
-  const hash = r.chapters.length === 1 ? `/read/${r.chapters[0].bookId}` : '/sources';
+  const hash = r.chapters.length === 1 ? `/read/${r.chapters[0].bookId}` : !r.chapters.length && vols.length === 1 ? `/sources/dir:${vols[0].repoKey}?shelf=${encodeURIComponent(vols[0].series)}` : '/sources';
   const cap = (window as unknown as { Capacitor?: { isNativePlatform?(): boolean; Plugins?: { Kurokawa?: { notify?(o: { id: number; title: string; body: string; hash: string }): Promise<unknown> } } } }).Capacitor;
   if (cap?.isNativePlatform?.() && cap.Plugins?.Kurokawa?.notify) { await cap.Plugins.Kurokawa.notify({ id: 7100, title, body, hash }); return; }
   const desk = (window as unknown as { kurokawaDesktop?: { notify?(o: { title: string; body: string; hash: string }): Promise<unknown> } }).kurokawaDesktop;
@@ -109,7 +132,7 @@ export function scheduleUpdateChecks(): void {
     if (!due() || navigator.onLine === false || localStorage.getItem('kr.sources.autoCheck') === 'off') return;
     const repos = await listRepos().catch(() => []); if (!repos.length) return;
     const novels = await trackedNovels().catch(() => []);
-    if (!novels.length && !repos.some((r) => r.items.some((i) => i.runnable))) return;
+    if (!novels.length && !repos.some((r) => r.items.some((i) => i.runnable) || (r.kind === 'folder' && r.flavor === 'h5ai'))) return;
     void checkAll({ quiet: true }).catch(() => undefined);
   };
   setTimeout(() => void maybe(), 25000);
