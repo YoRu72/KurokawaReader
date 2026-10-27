@@ -10,8 +10,11 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3])
   page.on('pageerror', (e) => console.log('pageerror', e.message)); page.on('dialog', (d) => { console.log('dialog:', d.message()); void d.accept(process.env.PW || ''); }); page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console', m.text().includes('P2D') ? m.text() : m.text().slice(0, 300)); });
   if (!process.env.NOLO) await page.addInitScript((l) => { globalThis.krDebugP2D = true; if (l[2]) globalThis.krNoLow = true; if (l[0]) globalThis.krDebugLine = l[0]; if (l[1]) globalThis.krDebugCtx = +l[1]; }, [process.env.LINE || "", process.env.CTX || "", process.env.NOLOW || ""]); await page.goto('http://localhost:5197/'); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [pdf]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(500);
-  const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sheet');
-  await page.click('.sheet button:has-text("Convert")'); await page.waitForSelector('.convert-target');
+  // (A long press selects the card; the selection's actions hold Convert — behind «More» on a narrow screen.)
+  const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
+  if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); }
+  else await page.click('.sel-actions button:has-text("Convert")');
+  await page.waitForSelector('.convert-target');
   // PROF=file.json: a CPU profile of the page's main thread during the conversion, its hottest functions printed.
   if (process.env.TIMING) await page.evaluate(() => { globalThis.krTiming = {}; });
   const cdp = process.env.PROF ? await page.context().newCDPSession(page) : null;

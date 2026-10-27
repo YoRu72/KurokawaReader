@@ -1,7 +1,8 @@
 // Floating toolbar that appears over selected text: Copy · Search · Define ·
 // Translate · Highlight · Speak.
-import { joinLine, cleanPdfText, attachMarks, findColumns, type LinePiece } from '../pdftext';
+import { joinLine, cleanPdfText, attachMarks, findColumns, isRtlText as rtlByCount, type LinePiece } from '../pdftext';
 import { h, icon, toast, openSheet } from './dom';
+import { joinColumn } from '../pdfvertical';
 import { t, isRtlText } from '../i18n';
 import { getSettings } from '../settings';
 import { showDefinition, showTranslation, showReadings } from './lookup';
@@ -48,7 +49,7 @@ export function selectionText(sel: Selection): string {
   };
   const vSpans = spans.filter((el) => el.dataset.v);
   let vText = '';
-  for (const el of vSpans) vText += cut(el) + (el.dataset.br ? '\n' : '');
+  for (const el of vSpans) vText = joinColumn(vText, cut(el)) + (el.dataset.br ? '\n' : '');
   vText = vText.trim();
   if (vSpans.length === spans.length) return vText;
   // Geometry decides the order: pieces are grouped into lines by their vertical position, and
@@ -80,6 +81,8 @@ export function selectionText(sel: Selection): string {
   // the layer laid them; within a block, lines by their vertical position.
   const blocks = new Map<number, Piece[]>();
   for (const p of pieces) { const list = blocks.get(p.b); if (list) list.push(p); else blocks.set(p.b, [p]); }
+  // (The page's own direction, for the lines of both scripts: what the whole layer holds, not the selection.)
+  const pageRtl = rtlByCount((layer.closest('.pdf-page') ?? layer).textContent ?? '');
   const texts: string[] = [];
   for (const b of [...blocks.keys()].sort((x, y) => x - y)) {
     const kept = attachMarks(blocks.get(b)!);
@@ -94,7 +97,7 @@ export function selectionText(sel: Selection): string {
       if (isRtlText(kept.map((p) => p.text).join(''))) byCol.reverse();
       ordered = byCol.flat();
     }
-    texts.push(...ordered.map((line) => joinLine(line).text).filter(Boolean));
+    texts.push(...ordered.map((line) => joinLine(line, pageRtl).text).filter(Boolean));
   }
   const out = texts.join('\n');
   const flat = fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));

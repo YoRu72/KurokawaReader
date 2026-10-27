@@ -7,8 +7,8 @@
 //  - each line cut into words, every word one box exactly over its letters on the page,
 //  - the boxes in reading order (right to left on Arabic lines), so a selection follows the text.
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { findVertical, plainVerticalForms, type VPiece } from './pdfvertical';
-import { ltrRunsForward, joinLine, attachMarks, orientBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece, findColumns } from './pdftext';
+import { findVertical, plainVerticalForms, joinColumn, type VPiece } from './pdfvertical';
+import { ltrRunsForward, joinLine, lineDirection, joinNumberRuns, VIRAMA_END, attachMarks, orientBrackets, cleanPdfText, COMBINING, dropBuriedSpaces, fixLoneBrackets, isRtlText, logicalNeutral, logicalRtlPiece, findColumns } from './pdftext';
 
 type Item = { str: string; transform: number[]; width: number; height: number; dir?: string; fontName?: string; krLead?: boolean };
 type Piece = { text: string; l: number; r: number; y: number; h: number; space?: boolean; keep?: boolean; hint?: boolean; glued?: boolean; font?: string };
@@ -38,9 +38,11 @@ export function measure(text: string, size: number): number {
 }
 
 
-/** The words of one line, in reading order. */
-function wordsOf(line: Piece[]): Word[] {
-  const rtl = isRtlText(line.map((p) => p.text).join(''));
+/** The words of one line, in reading order. `base`: the page's direction, which a line of both scripts
+ *  follows (see lineDirection). */
+function wordsOf(line: Piece[], base?: boolean): Word[] {
+  const rtl = lineDirection(line.map((p) => p.text).join(''), base);
+  line = joinNumberRuns(line);
   const sorted = dropBuriedSpaces(line, (p) => !!p.space || !!p.hint).sort((a, b) => (rtl ? b.r - a.r || b.l - a.l : a.l - b.l || a.r - b.r));
   const fixed = fixLoneBrackets(sorted, rtl);
   sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
@@ -63,13 +65,16 @@ function wordsOf(line: Piece[]): Word[] {
     // change of type size, as for a raised note number.)
     const hinted: boolean = !marked && hintNext && gap > p.h * 0.1 && !/^[.,،؛:!?؟)\]»”’}]/.test(text) && !(cur && /[(\[«“‘{]$/.test(cur.text));
     // (Pieces cut from one run, placed by estimate: only a drawn space parts them from their neighbours.)
-    const brk: boolean = breakNext || (!(p.glued || (cur as Word | null)?.glued) && (hinted || (gap > p.h * (marked ? 0.3 : 0.18) && !COMBINING.test(text[0]))));
+    const brk: boolean = breakNext || (!(p.glued || (cur as Word | null)?.glued) && !(cur && VIRAMA_END.test(cur.text)) && (hinted || (gap > p.h * (marked ? 0.3 : 0.18) && !COMBINING.test(text[0]))));
     const split = !cur || brk || (d && curDir && d !== curDir);
     if (split) {
       cur = { text, l: p.l, r: p.r, y: p.y, h: p.h, rtl: d ? d === 'r' : rtl, brk: !!cur && !!brk, glued: p.glued };
       words.push(cur); curDir = d;
     } else {
-      cur!.text += text; cur!.l = Math.min(cur!.l, p.l); cur!.r = Math.max(cur!.r, p.r); cur!.h = Math.max(cur!.h, p.h);
+      // (A word of the other script, set glyph by glyph: its pieces come in the line's order, which is the
+      // reverse of its own — "عربي" on a Latin line arrives as ي، ب، ر، ع.)
+      const against = curDir && (curDir === 'r') !== rtl;
+      cur!.text = against ? text + cur!.text : cur!.text + text; cur!.l = Math.min(cur!.l, p.l); cur!.r = Math.max(cur!.r, p.r); cur!.h = Math.max(cur!.h, p.h);
       if (d && !curDir) { curDir = d; cur!.rtl = d === 'r'; }
     }
     edge = rtl ? (split ? p.l : Math.min(edge, p.l)) : (split ? p.r : Math.max(edge, p.r));
@@ -132,11 +137,12 @@ function dropDoubleDrawn(pieces: Piece[]): void {
 export type LaidLine = { text: string; rtl: boolean; l: number; r: number; y: number; h: number; font?: string; brk: boolean };
 export function pageBlocks(items: Item[], viewport: { scale: number; transform: number[]; height: number }): { lines: LaidLine[] }[] {
   const { blocks, vert } = layText(items, viewport);
+  const pageRtl = isRtlText(blocks.flat(2).map((p) => p.text).join(''));
   const out: { lines: LaidLine[] }[] = blocks.map((lines) => ({ lines: lines.map((line): LaidLine => {
-    const words = wordsOf(line);
+    const words = wordsOf(line, pageRtl);
     // (Where the line was cut into words at a space, a blank marker keeps the break when they are joined again.)
     const lineRtl = isRtlText(line.map((p) => p.text).join(''));
-    const { text, rtl } = joinLine(words.flatMap((w) => (!w.brk || /^[.,،؛:!?؟)\]»”’}]/.test(w.text) ? [w] : [{ ...w, text: ' ', l: lineRtl ? w.r : w.l, r: lineRtl ? w.r : w.l }, w])));
+    const { text, rtl } = joinLine(words.flatMap((w) => (!w.brk || /^[.,،؛:!?؟)\]»”’}]/.test(w.text) ? [w] : [{ ...w, text: ' ', l: lineRtl ? w.r : w.l, r: lineRtl ? w.r : w.l }, w])), pageRtl);
     // (The line's size is its letters' usual size, not a mark's or a raised number's.)
     const hs = line.filter((p) => !p.space && !p.hint && p.text.trim()).map((p) => p.h).sort((a, b) => a - b);
     const h = hs.length ? hs[hs.length >> 1] : Math.max(...line.map((p) => p.h)), l = Math.min(...words.map((w) => w.l)), r = Math.max(...words.map((w) => w.r));
@@ -144,14 +150,14 @@ export function pageBlocks(items: Item[], viewport: { scale: number; transform: 
   }).filter((ln) => ln.text.trim()) })).filter((b) => b.lines.length);
   // Columns of vertical writing become blocks of their own, where they stand.
   let para = '', top = Infinity, size = 0;
-  for (const g of vert.segments) { para += plainVerticalForms(g.text); top = Math.min(top, g.t); size = Math.max(size, g.r - g.l); if (g.breakAfter) { out.push({ lines: [{ text: para, rtl: false, l: g.l, r: g.r, y: top, h: size, font: undefined, brk: false }] }); para = ''; top = Infinity; size = 0; } }
+  for (const g of vert.segments) { para = joinColumn(para, plainVerticalForms(g.text)); top = Math.min(top, g.t); size = Math.max(size, g.r - g.l); if (g.breakAfter) { out.push({ lines: [{ text: para, rtl: false, l: g.l, r: g.r, y: top, h: size, font: undefined, brk: false }] }); para = ''; top = Infinity; size = 0; } }
   if (para) out.push({ lines: [{ text: para, rtl: false, l: 0, r: 0, y: top, h: size, font: undefined, brk: false }] });
   return out;
 }
 
 export interface PdfTextLayer { cancel(): void }
 
-type Turned = { text: string; tx: number[]; w: number; h: number; angle: number };
+type Turned = { text: string; tx: number[]; w: number; h: number; angle: number; space?: boolean };
 type Laid = { blocks: Piece[][][]; lines: Piece[][]; vert: ReturnType<typeof findVertical>; turned: Turned[]; vTurned: Set<number> };
 
 /** The page's text as a reader sees it: lines (pieces by baseline, harakat back in their letters), vertical
@@ -176,7 +182,12 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
     // (U+2009 marks a space the page draws, see scripts/patch-pdfjs.mjs; pdf.js's own " " items only fill gaps.)
     if (/^\u2009+$/.test(text)) { pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, space: true }); continue; }
     if (!h) continue;
-    if (!text.trim()) { if (w > 0 && Math.abs(angle) <= 0.02) pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, hint: true }); continue; }
+    if (!text.trim()) {
+      if (w > 0 && Math.abs(angle) <= 0.02) pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, hint: true });
+      // (A space drawn turned, down a column: Mongolian sets its words apart with them.)
+      else if (w > 0 && Math.abs(angle - Math.PI / 2) < 0.05) turned.push({ text: ' ', tx, w, h, angle, space: true });
+      continue;
+    }
     if (Math.abs(angle) > 0.02) { turned.push({ text, tx, w, h, angle }); continue; }
     pieces.push({ text, l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, keep: !!raw.krLead, font: raw.fontName });
   }
@@ -203,7 +214,7 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
   // laid as columns; the rest is read in lines. A word turned on its side within a column joins it.
   const vp: VPiece[] = pieces.map((p) => ({ text: p.hint ? '' : p.text, l: p.l, r: p.r, y: p.y, h: p.h }));
   const turnedV: number[] = [];
-  turned.forEach((t, k) => { if (Math.abs(t.angle - Math.PI / 2) < 0.05) { vp.push({ text: t.text, l: t.tx[4] - t.h * 0.12, r: t.tx[4] + t.h * 0.88, y: t.tx[5] + t.w, h: t.h, t: t.tx[5], b: t.tx[5] + t.w }); turnedV.push(k); } });
+  turned.forEach((t, k) => { if (Math.abs(t.angle - Math.PI / 2) < 0.05) { vp.push({ text: t.text, l: t.tx[4] - t.h * 0.12, r: t.tx[4] + t.h * 0.88, y: t.tx[5] + t.w, h: t.h, t: t.tx[5], b: t.tx[5] + t.w, space: t.space }); turnedV.push(k); } });
   const vert = findVertical(vp);
   const vTurned = new Set(turnedV.filter((_, j) => vert.vertical.has(pieces.length + j)));
   const flat = vert.vertical.size ? pieces.filter((_, i) => !vert.vertical.has(i)) : pieces;
@@ -389,6 +400,7 @@ export function readingTextFromItems(items: Item[], vp: PlanViewport): string {
   const { blocks: laidBlocks, vert, turned, vTurned } = layText(items, vp);
   const blocks: { y: number; text: string }[] = [];
   const dbgRow = (globalThis as { krDebugRows?: string }).krDebugRows;
+  const rtlPage = isRtlText(laidBlocks.flat(2).map((p) => p.text).join(''));
   // The top of each block as laid, so a vertical column or turned text finds its place among them.
   const tops = laidBlocks.map((b) => Math.min(...b.map((line) => line[0].y)));
   const keyAt = (y: number) => { const i = tops.findIndex((t) => t >= y); return (i < 0 ? tops.length : i) - 0.5; };
@@ -398,7 +410,7 @@ export function readingTextFromItems(items: Item[], vp: PlanViewport): string {
   // (on its own baseline) stays in its line.
   // (Where a line was cut into words at a space, a blank marker keeps the break when the words are joined
   // again: zero-wide, at the word's edge on the side the previous word lies.)
-  const words = lines.flatMap((line) => wordsOf(line).flatMap((w) => {
+  const words = lines.flatMap((line) => wordsOf(line, rtlPage).flatMap((w) => {
     const word = { text: w.text, l: w.l, r: w.r, h: w.h, y: w.y, mid: w.y - w.h * 0.35 };
     if (!w.brk || /^[.,،؛:!?؟)\]»”’}]/.test(w.text)) return [word];
     const x = isRtlText(line.map((p) => p.text).join('')) ? w.r : w.l;
@@ -410,7 +422,6 @@ export function readingTextFromItems(items: Item[], vp: PlanViewport): string {
   // Columns the cut did not find (a gutter no row's word crosses, with text on both sides of it in most rows)
   // cut the rows into columns read one after the other (the right one first on a right-to-left page).
   const columns = findColumns(rows);
-  const rtlPage = isRtlText(words.map((w) => w.text).join(''));
   const groups: (typeof rows)[] = columns ? columns.map(([a, b]) => rows.map((row) => row.filter((w) => (w.l + w.r) / 2 >= a && (w.l + w.r) / 2 < b)).filter((r) => r.length)) : [rows];
   if (columns && rtlPage) groups.reverse();
   for (const group of groups) {
@@ -420,7 +431,7 @@ export function readingTextFromItems(items: Item[], vp: PlanViewport): string {
     const edgeR = Math.max(...group.map((row) => Math.max(...row.map((w) => w.r)))), edgeL = Math.min(...group.map((row) => Math.min(...row.map((w) => w.l))));
     let fullPrev = false;
     for (const row of group) {
-      const t = joinLine(row).text; if (!t) continue;
+      const t = joinLine(row, rtlPage).text; if (!t) continue;
       if (dbgRow && t.includes(dbgRow)) console.warn('KR row', JSON.stringify(row.map((w) => [w.text, +w.l.toFixed(1), +w.r.toFixed(1), +w.h.toFixed(1)])));
       text += (fullPrev ? joinBreak(text, t) : text ? '\n' : '') + t;
       const h = Math.max(...row.map((w) => w.h)), r = Math.max(...row.map((w) => w.r)), l = Math.min(...row.map((w) => w.l));
@@ -430,9 +441,9 @@ export function readingTextFromItems(items: Item[], vp: PlanViewport): string {
   }
   }
   let para = '', top = Infinity;
-  for (const g of vert.segments) { para += plainVerticalForms(g.text); top = Math.min(top, g.t); if (g.breakAfter) { blocks.push({ y: keyAt(top), text: para }); para = ''; top = Infinity; } }
+  for (const g of vert.segments) { para = joinColumn(para, plainVerticalForms(g.text)); top = Math.min(top, g.t); if (g.breakAfter) { blocks.push({ y: keyAt(top), text: para }); para = ''; top = Infinity; } }
   if (para) blocks.push({ y: keyAt(top), text: para });
-  turned.forEach((t, k) => { if (!vTurned.has(k)) blocks.push({ y: keyAt(t.tx[5]), text: t.text }); });
+  turned.forEach((t, k) => { if (!vTurned.has(k) && !t.space) blocks.push({ y: keyAt(t.tx[5]), text: t.text }); });
   blocks.sort((a, b) => a.y - b.y);
   return blocks.map((b) => b.text).join('\n');
 }
@@ -458,7 +469,7 @@ export type PlanViewport = { width: number; height: number; scale: number; trans
  *  worker: `viewport` is the page as shown, `laid` the page upright (the same when it is not turned). */
 export function planTextLayer(items: Item[], viewport: PlanViewport, laid: PlanViewport): TextPlan {
   const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
-  if (dbg) for (const it of items) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
+  if (dbg) for (const it of items) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName, +Math.atan2(it.transform[1], it.transform[0]).toFixed(2), +Math.hypot(it.transform[2], it.transform[3]).toFixed(1)]));
   // A page shown turned (its /Rotate): the text is laid out as the page was written, upright, and each box
   // is then turned with the page.
   const rot = ((viewport.rotation ?? 0) % 360 + 360) % 360;
@@ -475,8 +486,9 @@ export function planTextLayer(items: Item[], viewport: PlanViewport, laid: PlanV
   // Lines in reading order: block by block as the page was cut, and column by column where a block still has
   // columns (so a selection across the page copies as it is read), the right column first on a right-to-left page.
   const ordered: { line: Piece[]; words: Word[]; b: number }[] = [];
+  const rtlOfPage = isRtlText(blocks.flat(2).map((p) => p.text).join(''));
   blocks.forEach((lines, b) => {
-    const lineWords = lines.map((line) => wordsOf(line));
+    const lineWords = lines.map((line) => wordsOf(line, rtlOfPage));
     const pageCols = findColumns(lineWords);
     let part = lines.map((line, i) => ({ line, words: lineWords[i], b }));
     if (pageCols) {

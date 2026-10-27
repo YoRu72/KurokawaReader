@@ -6,7 +6,7 @@
 
 /** A piece of text on the page: `l`..`r` across, `y` its baseline (top-down), `h` its size; `t`..`b` its
  *  extent down the page when known (a column drawn as one item). */
-export type VPiece = { text: string; l: number; r: number; y: number; h: number; t?: number; b?: number };
+export type VPiece = { text: string; l: number; r: number; y: number; h: number; t?: number; b?: number; space?: boolean };
 
 /** One column's run of text: its box and what follows it — a new paragraph, or the same one continuing. */
 export type VSegment = { text: string; l: number; r: number; t: number; b: number; size: number; items: number[]; breakAfter: boolean };
@@ -43,29 +43,43 @@ export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segment
     if (!p.text.trim() || !isVerticalScript(p.text)) return;
     const isColumn = p.t !== undefined && p.b !== undefined && p.b - p.t > (p.r - p.l) * 1.5 && [...p.text].length > 1;
     if (isColumn) { vert.add(i); return; }
+    // (A run drawn turned down the page — Mongolian, a word of Latin — is a column however short.)
+    if (p.t !== undefined && p.b !== undefined && MONGOLIAN.test(p.text)) { vert.add(i); return; }
     let below = false, across = false;
     for (const j of near(p)) {
       if (j === i) continue; const q = pieces[j]; if (!q.text.trim()) continue;
       const h = Math.max(p.h, q.h);
       if (Math.abs(cx(q) - cx(p)) < h * 0.3 && Math.abs(q.y - p.y) > h * 0.5 && Math.abs(q.y - p.y) < h * 1.45) below = true;
-      if (Math.abs(q.y - p.y) < h * 0.3 && ((q.l - p.r) > -h * 0.2 && (q.l - p.r) < h * 0.35 || (p.l - q.r) > -h * 0.2 && (p.l - q.r) < h * 0.35)) across = true;
+      // (A character of another size beside this one is ruby beside its word, or the word beside its ruby:
+      // not text running across.)
+      const rubyPair = Math.min(p.h, q.h) <= Math.max(p.h, q.h) * 0.62;
+      if (!rubyPair && Math.abs(q.y - p.y) < h * 0.3 && ((q.l - p.r) > -h * 0.2 && (q.l - p.r) < h * 0.35 || (p.l - q.r) > -h * 0.2 && (p.l - q.r) < h * 0.35)) across = true;
     }
     if (below && !across) vert.add(i);
   });
   // Characters wedged in a column (a digit pair set across, a word turned on its side) join it, and so does
   // punctuation set beside its character (a Korean full stop sits off the column's middle, at its end too).
   const PUNCT = /^[.,!?;:'"’”)\]」』）、。，．！？…·・]+$/;
+  const vertList = [...vert];
   pieces.forEach((p, i) => {
-    if (vert.has(i) || !p.text.trim()) return;
+    if (vert.has(i) || (!p.space && !p.text.trim())) return;
     let up = false, down = false, beside = false;
-    for (const j of near(p)) {
+    // (A column drawn as one run is long: a space between two runs is far from the bottoms the grid is keyed
+    // by, so these look through every column item.)
+    const wedge = p.space || p.r - p.l < 0.05 || (p.b !== undefined && p.t !== undefined && p.b - p.t < 0.05);
+    for (const j of wedge ? vertList : near(p)) {
       if (!vert.has(j)) continue; const q = pieces[j]; const h = Math.max(q.h, p.h);
       if (Math.abs(cx(q) - cx(p)) < h * 0.35) { if (q.y < p.y) up = true; else down = true; }
       if (PUNCT.test(p.text.trim()) && Math.abs(cx(q) - cx(p)) < h * 0.8 && Math.abs(q.y - p.y) < h * 1.5) beside = true;
+      // (A glyph with no advance of its own, or a space, wedged in a column: its run's neighbours are above and below.)
+      if (wedge && Math.abs(cx(q) - cx(p)) < h * 0.5) {
+        if (top(q) <= top(p) + 0.01 && bottom(q) >= top(p) - h * 1.5) up = true;
+        if (bottom(q) >= bottom(p) - 0.01 && top(q) <= bottom(p) + h * 1.5) down = true;
+      }
     }
     if ((up && down) || beside) vert.add(i);
   });
-  if (vert.size < 8) return none;
+  if (vert.size < 8 && ![...vert].some((i) => MONGOLIAN.test(pieces[i].text))) return none;
   // Columns: by their middle across the page.
   const idx = [...vert].sort((a, b) => cx(pieces[b]) - cx(pieces[a]));
   const cols: { x: number; h: number; items: number[] }[] = [];
@@ -73,9 +87,13 @@ export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segment
     const p = pieces[i]; const c = cols.find((k) => Math.abs(k.x - cx(p)) < Math.max(k.h, p.h) * 0.5);
     if (c) { c.items.push(i); c.x += (cx(p) - c.x) / c.items.length; c.h = Math.max(c.h, p.h); } else cols.push({ x: cx(p), h: p.h, items: [i] });
   }
+  // Ruby (furigana): a column of small characters set beside a column of full-size ones is the reading of
+  // its words, not text of its own — kept out of what is read, as a reader copying the passage would.
+  const ruby = new Set(cols.filter((c) => cols.some((k) => k !== c && c.h <= k.h * 0.62 && Math.abs(k.x - c.x) < k.h * 1.3 && Math.abs(k.x - c.x) > k.h * 0.4)));
   // Each column cut where a gap down it is wider than a line of space (a new block of text).
   const segs: VSegment[] = [];
   for (const c of cols) {
+    if (ruby.has(c)) continue;
     c.items.sort((a, b) => top(pieces[a]) - top(pieces[b]));
     let cur: VSegment | null = null; let lastB = 0;
     for (const i of c.items) {
@@ -83,8 +101,9 @@ export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segment
       if (cur && top(p) - lastB > c.h * 1.6) { segs.push(cur); cur = null; }
       // (A gap down the column is a space between words: Korean, and Latin words set upright, have them.)
       const gapBefore = cur ? top(p) - lastB : 0;
-      if (!cur) cur = { text: '', l: p.l, r: p.r, t: top(p), b: bottom(p), size: p.h, items: [], breakAfter: false };
-      else if (gapBefore > p.h * 0.3 && !/\s$/.test(cur.text) && /[\uac00-\ud7afA-Za-z0-9]/.test(cur.text.slice(-1) + p.text[0]) && !/^[.,!?;:)\]」』）、。，．！？]/.test(p.text)) cur.text += ' ';
+      if (!cur) { if (p.space) continue; cur = { text: '', l: p.l, r: p.r, t: top(p), b: bottom(p), size: p.h, items: [], breakAfter: false }; }
+      else if (p.space) { if (!/\s$/.test(cur.text)) cur.text += ' '; cur.items.push(i); lastB = Math.max(lastB, bottom(p)); continue; }
+      else if (gapBefore > p.h * 0.3 && !/\s$/.test(cur.text) && /[\uac00-\ud7afA-Za-z0-9\u1800-\u18AF]/.test(cur.text.slice(-1) + p.text[0]) && !/^[.,!?;:)\]」』）、。，．！？]/.test(p.text)) cur.text += ' ';
       cur.text += p.text; cur.items.push(i); cur.l = Math.min(cur.l, p.l); cur.r = Math.max(cur.r, p.r); cur.t = Math.min(cur.t, top(p)); cur.b = Math.max(cur.b, bottom(p)); cur.size = Math.max(cur.size, p.h);
       lastB = bottom(p);
     }
@@ -124,6 +143,12 @@ export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segment
  *  their own. */
 export function verticalText(segs: VSegment[]): string {
   let s = '';
-  for (const g of segs) s += plainVerticalForms(g.text) + (g.breakAfter ? '\n' : '');
+  for (const g of segs) s = joinColumn(s, plainVerticalForms(g.text)) + (g.breakAfter ? '\n' : '');
   return s.trim();
+}
+/** A column's text after the one before it in the same paragraph: Mongolian breaks its lines between words,
+ *  so a space goes between; the scripts set without spaces run on. */
+export function joinColumn(before: string, next: string): string {
+  if (before && next && !/\s$/.test(before) && MONGOLIAN.test(before.slice(-1)) && MONGOLIAN.test(next[0])) return before + ' ' + next;
+  return before + next;
 }

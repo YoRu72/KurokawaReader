@@ -9,8 +9,13 @@
 export type LinePiece = { text: string; l: number; r: number; h: number; keep?: boolean };
 
 const RTL_CHAR_G = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/g;
+const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 // Arabic harakat, shadda, sukun, superscript alef, Quranic marks; Hebrew points.
 export const COMBINING = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0591-\u05C7]/;
+
+/** A virama (the mark that joins Indic consonants into a conjunct): a piece ending in one has not ended its
+ *  word, whatever the gap after it — the conjunct's own glyph is wider than the advance the PDF gave it. */
+export const VIRAMA_END = /[\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D\u0DCA\u0E3A\u1039\u1B44\uA9C0]$/;
 
 /** Control characters (glyphs with no Unicode) are not text. */
 export function cleanPdfText(s: string): string {
@@ -147,34 +152,66 @@ export function ltrRunsForward<T>(seq: T[], text: (x: T) => string): { seq: T[];
   return { seq: out, inRun };
 }
 
-/** One line of pieces (any order) → its text in reading order. */
-export function joinLine<T extends LinePiece>(line: T[]): { text: string; rtl: boolean } {
-  const rtl = isRtlText(line.map((p) => p.text).join(''));
+const LTR_LETTER = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
+const DIGITS_RUN = /^[\p{Nd}\u066B\u066C.,:/'\u2044-]+$/u;
+/** Digits drawn one by one with the separators between them (a Chromium page sets "١/٢" as three glyphs) are
+ *  one number, read left to right whatever the line's direction: such neighbours are joined into one piece. */
+export function joinNumberRuns<T extends LinePiece>(line: T[]): T[] {
+  const byX = [...line].sort((a, b) => a.l - b.l);
+  const out: T[] = [];
+  for (const p of byX) {
+    const last = out[out.length - 1];
+    const num = (x: T) => DIGITS_RUN.test(x.text) && /\p{Nd}/u.test(x.text);
+    const sep = (x: T) => /^[.,:/'\u2044-]$/.test(x.text);
+    if (last && (num(p) || (sep(p) && num(last))) && (num(last) || sep(last)) && p.l - last.r < Math.min(p.h, last.h) * 0.25) {
+      out[out.length - 1] = { ...last, text: last.text + p.text, r: Math.max(last.r, p.r), l: Math.min(last.l, p.l) }; continue;
+    }
+    out.push(p);
+  }
+  // (A separator left dangling at the end of a number — "١٢." — was the sentence's, not the number's.)
+  return out.length === line.length ? line : out;
+}
+/** One line of pieces (any order) → its text in reading order. `base` is the direction of the page or block
+ *  the line belongs to: a line of both scripts (a Latin phrase in an Arabic paragraph, with an Arabic word
+ *  after it) follows it, the way the page laid the line out, rather than whichever script has more letters. */
+export function lineDirection(text: string, base?: boolean): boolean {
+  return RTL_CHAR.test(text) && LTR_LETTER.test(text) && base !== undefined ? base : isRtlText(text);
+}
+export function joinLine<T extends LinePiece>(line: T[], base?: boolean): { text: string; rtl: boolean } {
+  const rtl = lineDirection(line.map((p) => p.text).join(''), base);
+  line = joinNumberRuns(line);
   const sorted = dropBuriedSpaces(line, (p) => p.text === '\u2009').sort((a, b) => (rtl ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));
   const fixed = fixLoneBrackets(sorted, rtl);
   sorted.forEach((p, i) => { if (fixed[i] !== p.text) sorted[i] = { ...p, text: fixed[i] }; });
   const marked = sorted.some((p) => p.text === '\u2009');
   const { seq: ordered, inRun } = rtl ? ltrRunsForward(sorted, (p) => p.text) : { seq: sorted, inRun: new Set<T>() };
   let s = '';
-  let prev: LinePiece | null = null; let prevIn = false; const depth = { n: 0 };
+  let prev: LinePiece | null = null; let prevIn = false; const depth = { n: 0 }; let stop = '';
   for (const p of ordered) {
     // (A drawn space, however narrow — a justified line squeezes it — is a word break.)
     if (p.text === '\u2009' || !p.text.trim()) { if (s && !/\s$/.test(s)) s += ' '; continue; }
-    const text = rtl ? orientBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true), depth) : p.text;
+    const inR = inRun.has(p);
+    // (The run of Latin ended: the stop kept from its first piece comes now, before anything else.)
+    if (stop && !inR) { s = s.replace(/\s+$/, '') + stop + ' '; stop = ''; }
+    let text = rtl ? orientBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true), depth) : p.text;
+    // A Latin phrase on a right-to-left line that ends a sentence: the page set its full stop on its left, the
+    // line's side (".Hello world" as drawn, the stop before the first word); read in order it comes last.
+    if (rtl && (!inR || !prevIn) && LTR_LETTER.test(text) && !RTL_CHAR.test(text)) { const m = /^([.,;:!?]+)(\S.*)$/.exec(text); if (m) { text = m[2]; if (inR) stop = m[1]; else text += m[1]; } }
     if (prev) {
       // (Where the page draws its spaces, a gap is still a word break when it is wide: a stretched line may
       // set some words apart by position alone.)
       // (Within a left-to-right run the gap is measured left to right; across its ends, on the line's side.)
       const fwd = !rtl || (prevIn && inRun.has(p));
       const gap = fwd ? p.l - prev.r : prev.l - p.r;
-      if (gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18) && !/\s$/.test(s) && !/^\s/.test(text) && !COMBINING.test(text[0])) s += ' ';
+      if (gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18) && !/\s$/.test(s) && !/^\s/.test(text) && !COMBINING.test(text[0]) && !VIRAMA_END.test(prev.text)) s += ' ';
     }
     s += text;
     // A piece inside the previous one (a mark over its letter) must not move the edge back.
     const fwdNow = !rtl || inRun.has(p);
-    prev = prev && (fwdNow ? p.r < prev.r : p.l > prev.l) && prevIn === inRun.has(p) ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
-    prevIn = inRun.has(p);
+    prev = prev && (fwdNow ? p.r < prev.r : p.l > prev.l) && prevIn === inR ? { ...p, l: Math.min(prev.l, p.l), r: Math.max(prev.r, p.r) } : p;
+    prevIn = inR;
   }
+  if (stop) s = s.replace(/\s+$/, '') + stop;
   // A haraka with no letter before it (at the start of the line) has lost its place: drop it.
   return { text: s.replace(/\s+/g, ' ').trim().replace(/^[\u064B-\u065F\u0670]+\s*/, ''), rtl };
 }
