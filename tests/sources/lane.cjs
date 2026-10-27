@@ -4,7 +4,9 @@
 // apart). Plain requests refused: the site reached through the app's browser, added, indexed, searched, a
 // volume's cover and file fetched. A check the browser cannot pass alone: the reader asked once ("confirm you
 // are human"), then everything goes on. No browser in the app: the refusal said plainly, no empty index kept.
-// h5ai's search turned off: the index from its items, two levels a request.
+// h5ai's search turned off: the index from its items, two levels a request. Plain connections cut outright:
+// the browser tried and kept. A site refusing even a browser: said so. The site opened in the app's browser
+// for the reader (as Mihon's WebView).
 // node tests/sources/lane.cjs <dir with alice-in-wonderland.epub>
 const { chromium, devices } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
 const DIST = path.resolve(__dirname, '../../dist'); const BOOKS = path.resolve(process.argv[2] || '.');
