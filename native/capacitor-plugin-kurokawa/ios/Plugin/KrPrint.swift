@@ -41,7 +41,7 @@ final class KrPrint: NSObject, WKNavigationDelegate {
             // Out of sight, behind the app's own page.
             if let host = host { host.insertSubview(p.web, at: 0) }
             p.web.loadHTMLString(html, baseURL: nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 180) { p.finish(nil, "timed out") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak p] in p?.finish(nil, "timed out") }
         }
     }
 
