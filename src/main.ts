@@ -3,7 +3,7 @@ import './styles/fonts.css';
 import './styles/base.css';
 import './styles/reader.css';
 import { applyDocumentLang, onLangChange } from './i18n';
-import { onRoute, parseRoute, navigate, type Route } from './router';
+import { onRoute, parseRoute, navigate, lastMove, type Route } from './router';
 import { h } from './ui/dom';
 import { libraryView } from './views/library';
 import { readerView } from './views/reader';
@@ -30,10 +30,47 @@ function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): 
   return shell;
 }
 
+/* The way back: a view left is remembered as it was — how far each of its scrolling parts was scrolled, which
+ * of its sections were open — and shown so again when the reader comes back to it (the views are built
+ * anew each time). Kept per address, for the session. */
+interface ViewState { scrolls: { path: number[]; top: number; left: number }[]; open: string[] }
+const states = new Map<string, ViewState>();
+let currentPath = '';
+const pathOf = (root: Element, el: Element): number[] => { const p: number[] = []; for (let e: Element = el; e !== root && e.parentElement; e = e.parentElement) p.unshift(Array.prototype.indexOf.call(e.parentElement.children, e)); return p; };
+const at = (root: Element, path: number[]): HTMLElement | null => { let e: Element | null = root; for (const i of path) { e = e?.children[i] ?? null; if (!e) return null; } return e as HTMLElement; };
+function snapshot(view: HTMLElement): ViewState {
+  const scrolls: ViewState['scrolls'] = [];
+  for (const el of Array.from(view.querySelectorAll<HTMLElement>('*'))) if (el.scrollTop > 0 || el.scrollLeft !== 0) scrolls.push({ path: pathOf(view, el), top: el.scrollTop, left: el.scrollLeft });
+  const open = Array.from(view.querySelectorAll('section.card[id]')).filter((c) => !c.classList.contains('collapsed')).map((c) => c.id);
+  return { scrolls, open };
+}
+function restore(view: HTMLElement, s: ViewState): void {
+  for (const c of Array.from(view.querySelectorAll('section.card[id]'))) c.classList.toggle('collapsed', !s.open.includes(c.id));
+  if (!s.scrolls.length) return;
+  // (A view still arriving — a list drawn in batches, a page fetched — is scrolled as far as it reaches, again
+  // and again for a while, until every part is where it was; a touch of the reader's ends it.)
+  let tries = 0; let stop = false;
+  const halt = () => { stop = true; };
+  view.addEventListener('touchstart', halt, { once: true, passive: true }); view.addEventListener('wheel', halt, { once: true, passive: true }); view.addEventListener('keydown', halt, { once: true });
+  const step = () => {
+    if (stop || !view.isConnected) return;
+    let pending = false;
+    for (const sc of s.scrolls) {
+      const el = at(view, sc.path);
+      if (!el) { pending = true; continue; }
+      if (Math.abs(el.scrollTop - sc.top) > 1) { el.scrollTop = sc.top; if (Math.abs(el.scrollTop - sc.top) > 1) pending = true; }
+      if (sc.left !== 0 && Math.abs(el.scrollLeft - sc.left) > 1) el.scrollLeft = sc.left;
+    }
+    if (pending && ++tries < 40) setTimeout(step, 100);
+  };
+  requestAnimationFrame(step);
+}
+
 function mount(route: Route): void {
   const key = JSON.stringify(route);
   if (key === currentKey && current) return;
   currentKey = key;
+  if (current && currentPath && !currentPath.startsWith('/read/')) { try { states.set(currentPath, snapshot(current)); } catch { /* not kept */ } }
   current?.dispose?.();
   current?.remove();
   document.querySelectorAll('.sheet, .sheet-scrim, .sel-toolbar, .lightbox').forEach((e) => e.remove());
@@ -48,6 +85,9 @@ function mount(route: Route): void {
   }
   app.appendChild(current);
   window.scrollTo(0, 0);
+  currentPath = location.hash.replace(/^#/, '') || '/';
+  const kept = lastMove() === 'pop' && route.name !== 'read' ? states.get(currentPath) : undefined;
+  if (kept) restore(current, kept);
 }
 
 registerNativePlugins();

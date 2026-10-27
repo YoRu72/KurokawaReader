@@ -85,7 +85,7 @@ function hubView(): HTMLElement & { dispose?: () => void } {
   const bell = iconButton('bell', t('srcWhatsNew'), () => updatesSheet(() => void drawBell()));
   bell.classList.add('bell-btn');
   const actions = h('div', { class: 'topbar-actions' }, bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
-  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/settings')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
   const off = onUpdatesChanged(() => void drawBell());
   root.dispose = () => off();
   const drawBell = async () => {

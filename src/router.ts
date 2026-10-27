@@ -36,10 +36,14 @@ export function parseRoute(hash = location.hash): Route {
 const current = () => location.hash.replace(/^#/, '') || '/';
 const stack: string[] = [current()];
 let pushing: string | null = null;
+/** How the view on screen was reached: opened from another (push), come back to (pop), put in place of the
+ *  one before (replace), or the first of the session (start). A view come back to is shown as it was left. */
+let move: 'start' | 'push' | 'pop' | 'replace' = 'start';
+export const lastMove = () => move;
 
 export function navigate(path: string, replace = false): void {
   const url = `#${path}`;
-  if (replace) { history.replaceState(null, '', url); stack[stack.length - 1] = path; emit(); return; }
+  if (replace) { history.replaceState(null, '', url); stack[stack.length - 1] = path; move = 'replace'; emit(); return; }
   if (location.hash === url || (path === '/' && (location.hash === '' || location.hash === '#'))) return;
   pushing = path;
   location.hash = path;
@@ -65,9 +69,9 @@ export function onRoute(fn: (r: Route) => void): void {
 
 window.addEventListener('hashchange', () => {
   const p = current();
-  if (pushing === p) stack.push(p);
-  else if (stack.length > 1 && stack[stack.length - 2] === p) stack.pop();
-  else if (stack[stack.length - 1] !== p) stack.push(p);
+  if (pushing === p) { stack.push(p); move = 'push'; }
+  else if (stack.length > 1 && stack[stack.length - 2] === p) { stack.pop(); move = 'pop'; }
+  else if (stack[stack.length - 1] !== p) { stack.push(p); move = 'push'; }
   pushing = null;
   emit();
 });

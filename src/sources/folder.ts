@@ -175,7 +175,7 @@ export async function listFolder(url: string, quiet = false): Promise<DirEntry[]
   let entries = parseListing(base, r.body, r.headers['content-type'] ?? '');
   // (h5ai draws its list with a script; when its page has no table to read, its own API is asked.)
   if (!entries.length && /\/_h5ai\//.test(r.body)) {
-    const api = await request(base, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json' }, body: JSON.stringify({ action: 'get', items: { href: new URL(base).pathname, what: 1 } }), quiet, retries: 1 }).catch(() => null);
+    const api = await request(`${base}?`, { method: 'POST', headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json' }, body: JSON.stringify({ action: 'get', items: { href: new URL(base).pathname, what: 1 } }), quiet, retries: 1 }).catch(() => null);
     if (api && api.status < 400) entries = parseListing(base, api.body, 'application/json');
   }
   // (The listing's own order is whatever the server chose; folders first, then the names in order, is what a reader expects.)
