@@ -53,7 +53,18 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "differentialPackage": true
+      "differentialPackage": true,
+      "allowElevation": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerLanguages": [
+        "en_US",
+        "ar_SA"
+      ],
+      "shortcutName": "KurokawaReader",
+      "uninstallDisplayName": "KurokawaReader",
+      "deleteAppDataOnUninstall": false
     },
     "mac": {
       "target": [

@@ -89,6 +89,9 @@ export interface VisualSettings {
   /* Library */
   libraryView: 'cards' | 'chips';
   autoUpdateCheck: boolean;
+  updateChannel: 'stable' | 'beta';   // beta: pre-releases too
+  updateEvery: 'launch' | 'daily' | 'weekly'; // how often the start-up check runs
+  updateAutoDownload: boolean;       // desktop: fetch the update in the background and install it on quit
   /** Long work (conversions) shows its progress in notifications. */
   jobNotify: boolean;
   tapToTurn: boolean;
@@ -231,6 +234,9 @@ export const DEFAULTS: VisualSettings = {
   hideSystemBars: true,
   libraryView: 'cards',
   autoUpdateCheck: true,
+  updateChannel: 'stable',
+  updateEvery: 'launch',
+  updateAutoDownload: false,
   jobNotify: true,
   tapToTurn: true,
   showStatusLine: false,

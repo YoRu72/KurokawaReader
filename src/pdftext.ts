@@ -14,7 +14,8 @@ export const COMBINING = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0591-\
 
 /** Control characters (glyphs with no Unicode) are not text. */
 export function cleanPdfText(s: string): string {
-  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD\u200B]/g, '').replace(/\u00A0/g, ' ');
+  // (A kasratan never stands before an alef: a font's map that says so meant the fathatan of «ـًا».)
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD\u200B]/g, '').replace(/\u00A0/g, ' ').replace(/\u064D(?=\u0627)/g, '\u064B');
 }
 
 export function isRtlText(s: string): boolean {

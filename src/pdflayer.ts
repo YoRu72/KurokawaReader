@@ -18,12 +18,23 @@ const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0
 const RTL_CHAR = /[֐-ࣿיִ-﷿ﹰ-﻿]/;
 const LTR_CHAR = /[A-Za-zÀ-ɏͰ-ϿЀ-ӿ]/;
 
-let measureCtx: CanvasRenderingContext2D | null = null;
-function measure(text: string, size: number): number {
-  measureCtx ??= document.createElement('canvas').getContext('2d');
-  if (!measureCtx) return text.length * size * 0.5;
-  measureCtx.font = `${size}px sans-serif`;
-  return measureCtx.measureText(text).width;
+// Text widths, for fitting a box over its letters: measured once per string at 100 px (a scalable face is
+// linear in size) in whichever canvas this thread has — an OffscreenCanvas in the layout worker — so the
+// font is set once and most words are never measured twice.
+let measureCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null | undefined;
+const widths = new Map<string, number>();
+export function measure(text: string, size: number): number {
+  let w = widths.get(text);
+  if (w === undefined) {
+    if (measureCtx === undefined) {
+      measureCtx = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(8, 8).getContext('2d') : typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+      if (measureCtx) measureCtx.font = '100px sans-serif';
+    }
+    w = measureCtx ? measureCtx.measureText(text).width : text.length * 50;
+    if (widths.size > 20000) widths.clear();
+    widths.set(text, w);
+  }
+  return (w * size) / 100;
 }
 
 
@@ -69,6 +80,33 @@ function wordsOf(line: Piece[]): Word[] {
   return rtl ? ltrRunsForward(clean, (w) => w.text).seq : clean;
 }
 
+/** A hamza drawn as a piece of its own over or under an alef ("ا" with "ء" set above it, as some typesetting
+ *  systems do) is the letter أ or إ: put into the alef, with whatever marks either piece carried. */
+function attachHamza(pieces: Piece[]): void {
+  for (let i = pieces.length - 1; i >= 0; i--) {
+    const p = pieces[i];
+    if (p.space || p.hint || !/^ء[\u064B-\u0652\u0670]*$/.test(p.text)) continue;
+    const cx = (p.l + p.r) / 2;
+    let best: Piece | null = null, bd = Infinity;
+    for (const q of pieces) {
+      if (q === p || q.space || q.hint) continue;
+      const m = /^(ل?)([اويى])([\u064B-\u0652\u0670]*)$/.exec(q.text); if (!m) continue;
+      if (Math.abs(q.y - p.y) > Math.max(q.h, p.h) * 0.9) continue;
+      const w = Math.max(1, q.r - q.l); if (cx < q.l - w * 0.6 || cx > q.r + w * 0.6) continue;
+      const d = Math.abs(cx - (q.l + q.r) / 2) + Math.abs(q.y - p.y) * 0.5;
+      if (d < bd) { bd = d; best = q; }
+    }
+    if (!best) continue;
+    const m = /^(ل?)([اويى])([\u064B-\u0652\u0670]*)$/.exec(best.text)!;
+    const above = p.y <= best.y - best.h * 0.1;   // (viewport: y grows downwards)
+    // (Over an alef it is أ, under it إ; over a waw ؤ; over a ya — or an alef maqsura, the same shape — ئ.)
+    const carrier = m[2] === 'ا' ? (above ? 'أ' : 'إ') : m[2] === 'و' ? (above ? 'ؤ' : null) : (above ? 'ئ' : null);
+    if (!carrier) continue;
+    best.text = `${m[1]}${carrier}${m[3]}${p.text.slice(1)}`;
+    pieces.splice(i, 1);
+  }
+}
+
 /** Pieces that repeat an earlier piece's text at (nearly) its place are taken out, in drawing order. */
 function dropDoubleDrawn(pieces: Piece[]): void {
   const seen = new Map<string, Piece[]>();
@@ -79,7 +117,10 @@ function dropDoubleDrawn(pieces: Piece[]): void {
     const list = seen.get(key);
     if (list) {
       const tol = Math.max(0.5, p.h * 0.25);
-      const twin = list.find((q) => Math.abs(q.y - p.y) < tol && Math.abs(q.l - p.l) < tol * 1.2 && Math.abs((q.r - q.l) - (p.r - p.l)) < Math.max(tol, (p.r - p.l) * 0.2));
+      // (A twin sits on the first drawing — within a fraction of the letter's own width: a shadow or a bold
+      // pass is a hair off, while two narrow letters side by side, "تت", are a whole letter apart.)
+      const near = Math.max(0.6, Math.min(tol * 1.2, (p.r - p.l) * 0.6));
+      const twin = list.find((q) => Math.abs(q.y - p.y) < tol && Math.abs(q.l - p.l) < near && Math.abs((q.r - q.l) - (p.r - p.l)) < Math.max(tol, (p.r - p.l) * 0.2));
       if (twin) { pieces.splice(i, 1); i--; continue; }
       list.push(p);
     } else seen.set(key, [p]);
@@ -125,6 +166,13 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
     const h = Math.hypot(tx[2], tx[3]);
     const angle = Math.atan2(tx[1], tx[0]);
     const w = raw.width * viewport.scale;
+    // Kashida (ـ) stretches a word to justify the line; it is not part of the text. A piece that is nothing
+    // but kashida stays as a filler, so the letters either side of it remain one word.
+    if (/\u0640/.test(text)) {
+      const only = /^[\u0640\s]+$/.test(text);
+      text = text.replace(/\u0640+/g, '');
+      if (only && h && Math.abs(angle) <= 0.02) { pieces.push({ text: '', l: tx[4], r: tx[4] + Math.max(w, 0.01), y: tx[5], h, glued: true, font: raw.fontName }); continue; }
+    }
     // (U+2009 marks a space the page draws, see scripts/patch-pdfjs.mjs; pdf.js's own " " items only fill gaps.)
     if (/^\u2009+$/.test(text)) { pieces.push({ text: ' ', l: tx[4], r: tx[4] + w, y: tx[5], h, space: true }); continue; }
     if (!h) continue;
@@ -135,6 +183,7 @@ function layText(items: Item[], viewport: { scale: number; transform: number[] }
   // Text drawn twice in the same place — a heading's shadow or outline under it, a fake bold made of two
   // passes a hair apart — is one text to the reader: the second drawing goes.
   dropDoubleDrawn(pieces);
+  attachHamza(pieces);
   // A run with a space inside it over which another run is drawn (a letter the run's font lacks, set from
   // another font into the gap the run left for it — "بہت" as "ب ت" with "ہ" drawn between): the run is cut at
   // its spaces so the pieces take their own places in the line.
@@ -322,7 +371,22 @@ function segment(pieces: Piece[]): Piece[][] {
 export async function pageReadingText(page: PDFPageProxy): Promise<string> {
   const tc = await page.getTextContent();
   const vp = page.getViewport({ scale: 1, rotation: 0 }); // (as written, whatever way the page is shown)
-  const { blocks: laidBlocks, vert, turned, vTurned } = layText(tc.items as Item[], vp);
+  return readingTextAsync(tc.items as Item[], { width: vp.width, height: vp.height, scale: vp.scale, transform: vp.transform });
+}
+
+/** The same, off the main thread when the layout worker is there. */
+export async function readingTextAsync(items: Item[], vp: PlanViewport): Promise<string> {
+  const w = (globalThis as { krDebugRows?: string; krDebugItems?: string }).krDebugRows || (globalThis as { krDebugItems?: string }).krDebugItems ? null : layoutWorker();
+  if (!w) return readingTextFromItems(items, vp);
+  const id = ++seq;
+  try {
+    return await new Promise<string>((ok, fail) => { waitingText.set(id, { ok, fail }); w.postMessage({ id, op: 'text', items: items.map((it) => ({ str: it.str, transform: it.transform, width: it.width, height: it.height, dir: it.dir, fontName: it.fontName })), viewport: { width: vp.width, height: vp.height, scale: vp.scale, transform: [...vp.transform] } }); });
+  } catch { return readingTextFromItems(items, vp); }
+}
+
+/** A page's text in reading order, from its text items (pure, so the layout worker can run it). */
+export function readingTextFromItems(items: Item[], vp: PlanViewport): string {
+  const { blocks: laidBlocks, vert, turned, vTurned } = layText(items, vp);
   const blocks: { y: number; text: string }[] = [];
   const dbgRow = (globalThis as { krDebugRows?: string }).krDebugRows;
   // The top of each block as laid, so a vertical column or turned text finds its place among them.
@@ -385,38 +449,28 @@ export function joinBreak(before: string, next: string): string {
   return '\n';
 }
 
-/** Fill `container` (a .textLayer the size of the page) with the page's words. */
-export async function buildTextLayer(page: PDFPageProxy, viewport: { width: number; height: number; scale: number; transform: number[] }, container: HTMLElement): Promise<PdfTextLayer> {
-  let cancelled = false;
-  const handle = { cancel: () => { cancelled = true; } };
-  const tc = await page.getTextContent();
-  if (cancelled) return handle;
+export type PlannedSpan = { text: string; left: number; top: number; size: number; scaleX: number; rtl: boolean; angle: number; b: number };
+export type PlannedCol = { text: string; left: number; top: number; size: number; len: number; br: boolean };
+export type TextPlan = { rot: number; spans: PlannedSpan[]; cols: PlannedCol[] };
+export type PlanViewport = { width: number; height: number; scale: number; transform: number[]; rotation?: number };
+
+/** Where every word's box goes on the page — pure arithmetic over pdf.js's text items, so it can run in a
+ *  worker: `viewport` is the page as shown, `laid` the page upright (the same when it is not turned). */
+export function planTextLayer(items: Item[], viewport: PlanViewport, laid: PlanViewport): TextPlan {
   const dbg = (globalThis as { krDebugItems?: string }).krDebugItems;
-  if (dbg) for (const it of tc.items as Item[]) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
+  if (dbg) for (const it of items) if (typeof it.str === 'string' && (dbg.startsWith('@') ? it.transform[4] > +dbg.slice(1) : it.str.includes(dbg))) console.warn('KR item', JSON.stringify([it.str, +it.transform[4].toFixed(1), +it.transform[5].toFixed(1), +it.width.toFixed(1), it.dir, it.fontName]));
   // A page shown turned (its /Rotate): the text is laid out as the page was written, upright, and each box
   // is then turned with the page.
-  const rot = (((viewport as { rotation?: number }).rotation ?? 0) % 360 + 360) % 360;
-  const laid = rot ? page.getViewport({ scale: viewport.scale, rotation: 0 }) : viewport;
-  const { blocks, vert, turned, vTurned } = layText(tc.items as Item[], laid);
+  const rot = ((viewport.rotation ?? 0) % 360 + 360) % 360;
+  const { blocks, vert, turned, vTurned } = layText(items, laid);
   if (dbg) console.warn('KR blocks', JSON.stringify(blocks.map((b) => [b.length, +Math.min(...b.map((l) => l[0].y)).toFixed(0), +Math.min(...b.flat().map((p) => p.l)).toFixed(0), +Math.max(...b.flat().map((p) => p.r)).toFixed(0), b[0].map((p) => p.text).join('').slice(0, 20)])));
-  const frag = document.createDocumentFragment();
   const W = viewport.width, H = viewport.height, W0 = laid.width, H0 = laid.height;
   const place = (x: number, y: number): [number, number] => (rot === 90 ? [H0 - y, x] : rot === 180 ? [W0 - x, H0 - y] : rot === 270 ? [y, W0 - x] : [x, y]);
   const rotRad = (rot * Math.PI) / 180;
-  container.dataset.rot = String(rot);
-  let blockNo = 0;
-  const span = (text: string, left: number, top: number, size: number, scaleX: number, rtl: boolean, angle = 0) => {
-    const s = document.createElement('span');
-    s.textContent = text;
-    s.dir = rtl ? 'rtl' : 'ltr';
-    s.dataset.b = String(blockNo);
-    [left, top] = place(left, top); angle += rotRad;
-    s.style.left = `${(100 * left / W).toFixed(3)}%`;
-    s.style.top = `${(100 * top / H).toFixed(3)}%`;
-    s.style.fontSize = `${size.toFixed(2)}px`;
-    s.style.fontFamily = 'sans-serif';
-    s.style.transform = `${angle ? `rotate(${angle}rad) ` : ''}scaleX(${scaleX.toFixed(4)})`;
-    frag.appendChild(s);
+  const spans: PlannedSpan[] = [];
+  const span = (text: string, left: number, top: number, size: number, scaleX: number, rtl: boolean, b: number, angle = 0) => {
+    [left, top] = place(left, top);
+    spans.push({ text, left: +(100 * left / W).toFixed(3), top: +(100 * top / H).toFixed(3), size: +size.toFixed(2), scaleX: +scaleX.toFixed(4), rtl, angle: angle + rotRad, b });
   };
   // Lines in reading order: block by block as the page was cut, and column by column where a block still has
   // columns (so a selection across the page copies as it is read), the right column first on a right-to-left page.
@@ -434,7 +488,6 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     ordered.push(...part);
   });
   for (const { line, words, b } of ordered) {
-    blockNo = b;
     if (dbg && line.some((p) => p.text.includes(dbg))) console.warn('KR line', JSON.stringify(line.map((p) => [p.text, +p.l.toFixed(1), +p.r.toFixed(1), +p.y.toFixed(1), +p.h.toFixed(1), !!p.space, !!p.keep])));
     words.forEach((wd, i) => {
       const last = i === words.length - 1;
@@ -444,33 +497,88 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
       const k = Math.max(0.05, (wd.r - wd.l) / natural);
       const text = last ? wd.text : `${wd.text} `;
       const left = !last && wd.rtl ? wd.l - measure(' ', wd.h) * k : wd.l;
-      span(text, left, wd.y - wd.h * 0.82, wd.h, k, wd.rtl);
+      span(text, left, wd.y - wd.h * 0.82, wd.h, k, wd.rtl, b);
     });
   }
   // Columns: one box each, set vertically, in reading order; a paragraph's end is marked for copying.
+  const cols: PlannedCol[] = [];
   for (const g of vert.segments) {
-    const s = document.createElement('span');
     const text = plainVerticalForms(g.text);
-    s.textContent = text; s.dataset.v = '1'; if (g.breakAfter) s.dataset.br = '1';
-    s.style.writingMode = 'vertical-rl';
     const size = Math.max(1, g.r - g.l);
-    const natural = Math.max(1, [...text].length * size);
     const [gl, gt] = place(g.l, g.t);
-    s.style.left = `${(100 * gl / W).toFixed(3)}%`;
-    s.style.top = `${(100 * gt / H).toFixed(3)}%`;
-    s.style.fontSize = `${size.toFixed(2)}px`;
-    s.style.lineHeight = '1';
-    s.style.fontFamily = 'sans-serif';
-    s.style.transform = `${rot ? `rotate(${rotRad}rad) ` : ''}scaleY(${Math.max(0.05, (g.b - g.t) / natural).toFixed(4)})`;
-    s.dataset.len = String(g.b - g.t);
-    frag.appendChild(s);
+    cols.push({ text, left: +(100 * gl / W).toFixed(3), top: +(100 * gt / H).toFixed(3), size: +size.toFixed(2), len: g.b - g.t, br: !!g.breakAfter });
   }
   for (const [k, t] of turned.entries()) {
     if (vTurned.has(k)) continue;
     const natural = Math.max(1, measure(t.text, t.h));
-    span(t.text, t.tx[4] + t.h * 0.82 * Math.sin(t.angle), t.tx[5] - t.h * 0.82 * Math.cos(t.angle), t.h, Math.max(0.05, t.w / natural), isRtlText(t.text), t.angle);
+    span(t.text, t.tx[4] + t.h * 0.82 * Math.sin(t.angle), t.tx[5] - t.h * 0.82 * Math.cos(t.angle), t.h, Math.max(0.05, t.w / natural), isRtlText(t.text), -1, t.angle);
   }
+  return { rot, spans, cols };
+}
+
+// The plan is worked out off the main thread when there is a worker for it (src/pdflayout.worker.ts): a page
+// of a few hundred words costs tens of milliseconds, which on a phone was a hitch right after each scroll.
+let worker: Worker | null | undefined;
+let seq = 0;
+const waiting = new Map<number, { ok: (p: TextPlan) => void; fail: (e: unknown) => void }>();
+const waitingText = new Map<number, { ok: (t: string) => void; fail: (e: unknown) => void }>();
+function layoutWorker(): Worker | null {
+  if (worker !== undefined) return worker;
+  try {
+    worker = new Worker(new URL('./pdflayout.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (e: MessageEvent<{ id: number; plan?: TextPlan; text?: string; error?: string }>) => {
+      const wt = waitingText.get(e.data.id);
+      if (wt) { waitingText.delete(e.data.id); if (typeof e.data.text === 'string') wt.ok(e.data.text); else wt.fail(new Error(e.data.error ?? 'text')); return; }
+      const w = waiting.get(e.data.id); if (!w) return; waiting.delete(e.data.id); if (e.data.plan) w.ok(e.data.plan); else w.fail(new Error(e.data.error ?? 'layout'));
+    };
+    worker.onerror = () => { for (const w of waiting.values()) w.fail(new Error('layout worker')); for (const w of waitingText.values()) w.fail(new Error('layout worker')); waiting.clear(); waitingText.clear(); worker?.terminate(); worker = null; };
+  } catch { worker = null; }
+  return worker;
+}
+export async function planTextLayerAsync(items: Item[], viewport: PlanViewport, laid: PlanViewport): Promise<TextPlan> {
+  const w = (globalThis as { krDebugItems?: string }).krDebugItems ? null : layoutWorker();
+  if (!w) return planTextLayer(items, viewport, laid);
+  const id = ++seq;
+  const plain = (v: PlanViewport): PlanViewport => ({ width: v.width, height: v.height, scale: v.scale, transform: [...v.transform], rotation: v.rotation });
+  try {
+    return await new Promise<TextPlan>((ok, fail) => { waiting.set(id, { ok, fail }); w.postMessage({ id, items: items.map((it) => ({ str: it.str, transform: it.transform, width: it.width, height: it.height, dir: it.dir, fontName: it.fontName })), viewport: plain(viewport), laid: plain(laid) }); });
+  } catch { return planTextLayer(items, viewport, laid); }
+}
+
+/** Fill `container` (a .textLayer the size of the page) with the page's words. */
+export async function buildTextLayer(page: PDFPageProxy, viewport: { width: number; height: number; scale: number; transform: number[] }, container: HTMLElement): Promise<PdfTextLayer> {
+  let cancelled = false;
+  const handle = { cancel: () => { cancelled = true; } };
+  const tc = await page.getTextContent();
   if (cancelled) return handle;
+  const rot = (((viewport as { rotation?: number }).rotation ?? 0) % 360 + 360) % 360;
+  const laid = rot ? page.getViewport({ scale: viewport.scale, rotation: 0 }) : viewport;
+  const plan = await planTextLayerAsync(tc.items as Item[], { width: viewport.width, height: viewport.height, scale: viewport.scale, transform: viewport.transform, rotation: rot }, { width: laid.width, height: laid.height, scale: laid.scale, transform: laid.transform });
+  if (cancelled) return handle;
+  renderTextPlan(plan, container);
+  return handle;
+}
+
+/** The planned boxes as elements in `container`. */
+export function renderTextPlan(plan: TextPlan, container: HTMLElement): void {
+  const frag = document.createDocumentFragment();
+  container.dataset.rot = String(plan.rot);
+  for (const sp of plan.spans) {
+    const s = document.createElement('span');
+    s.textContent = sp.text;
+    s.dir = sp.rtl ? 'rtl' : 'ltr';
+    if (sp.b >= 0) s.dataset.b = String(sp.b);
+    s.style.cssText = `left:${sp.left}%;top:${sp.top}%;font-size:${sp.size}px;font-family:sans-serif;transform:${sp.angle ? `rotate(${sp.angle}rad) ` : ''}scaleX(${sp.scaleX})`;
+    frag.appendChild(s);
+  }
+  for (const c of plan.cols) {
+    const s = document.createElement('span');
+    s.textContent = c.text; s.dataset.v = '1'; if (c.br) s.dataset.br = '1';
+    const natural = Math.max(1, [...c.text].length * c.size);
+    s.style.cssText = `left:${c.left}%;top:${c.top}%;font-size:${c.size}px;line-height:1;font-family:sans-serif;writing-mode:vertical-rl;transform:${plan.rot ? `rotate(${(plan.rot * Math.PI) / 180}rad) ` : ''}scaleY(${Math.max(0.05, c.len / natural).toFixed(4)})`;
+    s.dataset.len = String(c.len);
+    frag.appendChild(s);
+  }
   container.appendChild(frag);
   // A column's length as laid out (fonts differ in how they set punctuation and digits upright): measured
   // once in place, and each column scaled to the length it has on the page.
@@ -480,5 +588,4 @@ export async function buildTextLayer(page: PDFPageProxy, viewport: { width: numb
     const lens = cols.map((el) => el.offsetHeight);
     cols.forEach((el, i) => { if (lens[i] > 0) el.style.transform = `scaleY(${Math.max(0.05, +el.dataset.len! / lens[i]).toFixed(4)})`; delete el.dataset.len; });
   }
-  return handle;
 }

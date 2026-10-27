@@ -552,34 +552,52 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     return best || doc.book.title;
   }
 
+  // (All reads first, then all writes: a write between two reads would make the browser lay the page out
+  // again in the middle of a scroll.)
+  const unitWords = new WeakMap<Element, { start: number; after: number[] }>();
+  const wordsLeft = (doc: OpenDoc, unit: Element, block: number): number => {
+    let u = unitWords.get(unit);
+    if (!u) {
+      // The unit's blocks are one run of allBlocks; the words after each one, summed once.
+      let start = -1, endAt = doc.allBlocks.length;
+      for (let i = 0; i < doc.allBlocks.length; i++) { const inside = unit.contains(doc.allBlocks[i]); if (inside && start < 0) start = i; else if (!inside && start >= 0) { endAt = i; break; } }
+      if (start < 0) { start = 0; endAt = 0; }
+      const after = new Array<number>(endAt - start + 1).fill(0);
+      for (let i = endAt - 1; i >= start; i--) after[i - start] = after[i - start + 1] + wordCount(doc.allBlocks[i]);
+      u = { start, after }; unitWords.set(unit, u);
+    }
+    const i = Math.min(u.after.length - 1, Math.max(0, block - u.start));
+    return u.after[i];
+  };
+  let lastLabel = '', lastTitleDoc: OpenDoc | null = null;
   const updateChrome = throttle(() => {
     const cur = currentLocator();
     if (!cur) return;
     const label = labelFor(cur.doc, cur.loc.block ?? 0);
-    clear(title);
-    title.append(document.createTextNode(cur.doc.book.title), h('small', { dir: 'auto' }, label !== cur.doc.book.title ? label : (cur.doc.book.author ?? '')));
-    title.setAttribute('dir', 'auto');
-    footerWhere.textContent = docs.length > 1 ? `${docs.indexOf(cur.doc) + 1}/${docs.length} · ${label}` : label;
-    footerWhere.setAttribute('dir', 'auto');
     const pct = Math.round(cur.loc.pct * 100);
-    footerPct.textContent = `${localDigits(pct)}%`;
-    footerBar.style.width = `${pct}%`;
-    // Moon+-style status line: chapter · screen x/y · clock · battery · %
-    statusWhere.textContent = label; statusWhere.setAttribute('dir', 'auto');
     const unitEl = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
     const sr = scroll.getBoundingClientRect(); const ur = unitEl.getBoundingClientRect();
     const total = Math.max(1, Math.ceil(ur.height / Math.max(1, sr.height)));
     const page = Math.min(total, Math.max(1, Math.floor((sr.top - ur.top) / Math.max(1, sr.height)) + 1));
-    statusPage.textContent = `(${localDigits(page)}/${localDigits(total)})`;
-    statusPct.textContent = `${localDigits(pct)}%`;
     // Minutes left in the chapter at the reader's own pace (once a pace is known).
     const speed = getSettings().showTimeLeft ? trackers.get(cur.doc)?.speed() : null;
-    if (speed) {
-      const block = cur.loc.block ?? 0; const unit = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
-      let left = 0; for (let i = block; i < cur.doc.allBlocks.length; i++) { const b = cur.doc.allBlocks[i]; if (!unit.contains(b)) { if (i > block) break; continue; } left += wordCount(b); }
-      const mins = Math.ceil(left / speed);
-      statusLeft.textContent = mins > 0 ? `⏳${localDigits(mins)}${getLang() === 'ar' ? ' د' : 'm'}` : '';
-    } else statusLeft.textContent = '';
+    const mins = speed ? Math.ceil(wordsLeft(cur.doc, unitEl, cur.loc.block ?? 0) / speed) : 0;
+    // — writes —
+    if (label !== lastLabel || cur.doc !== lastTitleDoc) {
+      lastLabel = label; lastTitleDoc = cur.doc;
+      clear(title);
+      title.append(document.createTextNode(cur.doc.book.title), h('small', { dir: 'auto' }, label !== cur.doc.book.title ? label : (cur.doc.book.author ?? '')));
+      title.setAttribute('dir', 'auto');
+      footerWhere.textContent = docs.length > 1 ? `${docs.indexOf(cur.doc) + 1}/${docs.length} · ${label}` : label;
+      footerWhere.setAttribute('dir', 'auto');
+      statusWhere.textContent = label; statusWhere.setAttribute('dir', 'auto');
+    }
+    const pctText = `${localDigits(pct)}%`;
+    if (footerPct.textContent !== pctText) { footerPct.textContent = pctText; footerBar.style.width = `${pct}%`; statusPct.textContent = pctText; }
+    const pageText = `(${localDigits(page)}/${localDigits(total)})`;
+    if (statusPage.textContent !== pageText) statusPage.textContent = pageText;
+    const leftText = mins > 0 ? `⏳${localDigits(mins)}${getLang() === 'ar' ? ' د' : 'm'}` : '';
+    if (statusLeft.textContent !== leftText) statusLeft.textContent = leftText;
   }, 150);
 
   function scheduleSave(): void {
@@ -1572,20 +1590,23 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     const r = el.getBoundingClientRect();
     return { page: Number(el.dataset.page), x: (clientX - r.left) / r.width, y: (clientY - r.top) / r.height };
   };
-  viewer.scroll.addEventListener('contextmenu', (e) => { if (document.getSelection()?.isCollapsed === false) return; const p = pointOnPage(e.clientX, e.clientY); if (p) { e.preventDefault(); pinSheet(p); } });
+  // A note on a spot of the page: right-click with a mouse, or «Note on this page» in the menu, then a tap where
+  // it goes. (Holding a finger on the page no longer opens one: that is how a selection starts.)
+  let lastPointer = 'mouse';
+  viewer.scroll.addEventListener('pointerdown', (e) => { lastPointer = e.pointerType || 'mouse'; }, { passive: true });
+  viewer.scroll.addEventListener('contextmenu', (e) => { if (lastPointer !== 'mouse' || document.getSelection()?.isCollapsed === false) return; const p = pointOnPage(e.clientX, e.clientY); if (p) { e.preventDefault(); pinSheet(p); } });
+  let placingNote = false;
+  const placeNote = () => { placingNote = true; viewer.root.classList.add('placing-note'); toast(t('tapWhereNote'), 'info', 4000); };
   viewer.scroll.addEventListener('click', (e) => {
     if (document.getSelection()?.isCollapsed === false) return;
     if ((e.target as HTMLElement).closest('.pdf-pin')) return;
     const p = pointOnPage(e.clientX, e.clientY);
     if (!p) return;
+    if (placingNote) { placingNote = false; viewer.root.classList.remove('placing-note'); e.preventDefault(); e.stopPropagation(); pinSheet(p); return; }
     const hl = (book.pdfHighlights ?? []).find((x) => x.page === p.page && x.rects.some(([rx, ry, rw, rh]) => p.x >= rx && p.x <= rx + rw && p.y >= ry && p.y <= ry + rh));
     if (!hl) return;
     e.preventDefault(); e.stopPropagation(); pdfHighlightSheet(hl);
   });
-  let pressTimer = 0; let pressPt: { x: number; y: number } | null = null;
-  viewer.scroll.addEventListener('touchstart', (e) => { if (e.touches.length !== 1) { window.clearTimeout(pressTimer); return; } pressPt = { x: e.touches[0].clientX, y: e.touches[0].clientY }; pressTimer = window.setTimeout(() => { if (!pressPt || document.getSelection()?.isCollapsed === false) return; const p = pointOnPage(pressPt.x, pressPt.y); if (p && !(document.elementFromPoint(pressPt.x, pressPt.y) as HTMLElement)?.closest('.textLayer span')) pinSheet(p); }, 650); }, { passive: true });
-  viewer.scroll.addEventListener('touchmove', (e) => { if (pressPt && Math.hypot(e.touches[0].clientX - pressPt.x, e.touches[0].clientY - pressPt.y) > 10) { window.clearTimeout(pressTimer); pressPt = null; } }, { passive: true });
-  viewer.scroll.addEventListener('touchend', () => { window.clearTimeout(pressTimer); pressPt = null; });
   renderPins();
   onDispose(onSettingsChange(() => renderPins()));
 
@@ -1688,6 +1709,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('file', t('toolExtract'), () => void import('../ui/pdftools').then((m) => m.extractFromBook(book))),
         item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
         item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
+        item('note', t('noteOnPage'), placeNote),
         item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
         item('type', t('visualOptions'), openPdfOptions),
         item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),

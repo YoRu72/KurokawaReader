@@ -105,7 +105,7 @@ self.addEventListener('fetch', (e) => {
 }
 
 const buildOptions = {
-  entryPoints: { app: path.join(root, 'src/main.ts'), scanworker: path.join(root, 'src/scanworker.ts') },
+  entryPoints: { app: path.join(root, 'src/main.ts'), scanworker: path.join(root, 'src/scanworker.ts'), pdflayout: path.join(root, 'src/pdflayout.worker.ts') },
   bundle: true,
   format: 'esm',
   platform: 'browser',

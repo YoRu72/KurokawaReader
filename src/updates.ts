@@ -12,6 +12,7 @@ export const WEB_APP_URL = 'https://yoru72.github.io/KurokawaReader/';
 export const ALTSTORE_SOURCE = `${WEB_APP_URL}altstore.json`;
 const REPO = 'YoRu72/KurokawaReader';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
+const API_ALL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour
 
 export interface ReleaseInfo { version: string; url: string; notes: string; publishedAt?: string; assets: { name: string; url: string; size: number }[] }
@@ -23,10 +24,15 @@ function cmp(a: string, b: string): number {
   return 0;
 }
 
+type RawRelease = { tag_name: string; html_url: string; body?: string; published_at?: string; prerelease?: boolean; draft?: boolean; assets: { name: string; browser_download_url: string; size: number }[] };
 export async function fetchLatest(): Promise<ReleaseInfo> {
-  const r = await fetch(API, { headers: { accept: 'application/vnd.github+json' }, cache: 'no-store' });
+  // The beta channel takes pre-releases too: the newest release of either kind.
+  const beta = getSettings().updateChannel === 'beta';
+  const r = await fetch(beta ? API_ALL : API, { headers: { accept: 'application/vnd.github+json' }, cache: 'no-store' });
   if (!r.ok) throw new Error(String(r.status));
-  const j = (await r.json()) as { tag_name: string; html_url: string; body?: string; published_at?: string; assets: { name: string; browser_download_url: string; size: number }[] };
+  const raw = (await r.json()) as RawRelease | RawRelease[];
+  const j = Array.isArray(raw) ? raw.filter((x) => !x.draft).sort((a, b) => cmp(b.tag_name, a.tag_name))[0] : raw;
+  if (!j) throw new Error('no release');
   localStorage.setItem('kr.update.lastCheck', String(Date.now()));
   return { version: j.tag_name.replace(/^v/, ''), url: j.html_url, notes: j.body ?? '', publishedAt: j.published_at, assets: j.assets.map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })) };
 }
@@ -43,9 +49,28 @@ export async function checkForUpdate(ignoreSkipped = false): Promise<ReleaseInfo
 
 /** Start-up check (respects the setting, the interval and connectivity). */
 export function scheduleAutoCheck(): void {
-  if (!getSettings().autoUpdateCheck || !navigator.onLine) return;
-  if (Date.now() - lastChecked() < CHECK_EVERY_MS) return;
+  const s = getSettings();
+  if (!s.autoUpdateCheck || !navigator.onLine) return;
+  const every = s.updateEvery === 'weekly' ? 7 * 86400000 : s.updateEvery === 'daily' ? 86400000 : CHECK_EVERY_MS;
+  if (Date.now() - lastChecked() < every) return;
+  // Desktop, with background updates on: the installed build fetches the difference itself and installs it
+  // when the app quits; the sheet is only shown when that is not possible.
+  const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { downloadUpdate?(o: { beta: boolean }): Promise<'downloaded' | 'none' | 'unsupported'> }) | undefined;
+  if (s.updateAutoDownload && d?.downloadUpdate) {
+    setTimeout(() => { void d.downloadUpdate!({ beta: s.updateChannel === 'beta' }).then((r) => { localStorage.setItem('kr.update.lastCheck', String(Date.now())); if (r === 'downloaded') offerRestart(); else if (r === 'unsupported') void checkForUpdate().then((rel) => rel && showUpdateSheet(rel)).catch(() => undefined); }).catch(() => undefined); }, 15000);
+    return;
+  }
   setTimeout(() => { checkForUpdate().then((rel) => { if (!rel) return; showUpdateSheet(rel); void import('./ui/pcshell').then((m) => m.railUpdate(() => showUpdateSheet(rel))); }).catch(() => undefined); }, 3000);
+}
+
+/** Desktop: the update is downloaded and will install on quit; offer to restart now. */
+export function offerRestart(): void {
+  const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installDownloadedUpdate?(): Promise<void> }) | undefined;
+  const el = h('div', { class: 'toast update-toast', role: 'status' }, h('span', null, t('updateReady')),
+    h('button', { type: 'button', class: 'btn small primary', onclick: () => { el.remove(); void d?.installDownloadedUpdate?.(); } }, icon('rotate'), t('restartNow')),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('later'), onclick: () => el.remove() }, icon('close')));
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 60000);
 }
 
 function offerUpdate(rel: ReleaseInfo): void {
@@ -133,10 +158,10 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
     return;
   }
   if (platform === 'desktop' && /\.(exe|dmg|AppImage)$/i.test(asset.name)) {
-    const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string): Promise<void>; onUpdateProgress?(cb: (p: number | Progress) => void): void }) | undefined;
+    const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string, opts?: { beta: boolean }): Promise<void>; onUpdateProgress?(cb: (p: number | Progress) => void): void }) | undefined;
     if (!d?.installUpdate) throw new Error('desktop');
     d.onUpdateProgress?.((p) => onProgress(typeof p === 'number' ? { pct: p, got: 0, total: asset.size, speed: 0 } : p));
-    await d.installUpdate(asset.url);
+    await d.installUpdate(asset.url, { beta: getSettings().updateChannel === 'beta' });
     return;
   }
   // Anything else: download in-app and hand the file over (share sheet / Downloads); when the
@@ -254,5 +279,14 @@ export function renderUpdateCard(container: HTMLElement): void {
     catch { status.textContent = navigator.onLine ? t('updateFailed') : t('offlineService'); }
     btn.disabled = false;
   } }, icon('rotate'), t('checkUpdates'));
-  container.append(h('p', null, `${t('version')} ${APP_VERSION}`), h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } }, btn, h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, cb, h('i')), h('span', null, t('autoCheck')))), status);
+  const s0 = getSettings();
+  const seg = <T extends string>(opts: [T, string][], value: T, on: (v: T) => void) => h('div', { class: 'segmented small', role: 'radiogroup' }, ...opts.map(([id, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(id === value), onclick: (e: Event) => { on(id); (e.currentTarget as HTMLElement).parentElement?.querySelectorAll('button').forEach((b) => b.setAttribute('aria-checked', String(b === e.currentTarget))); } }, label)));
+  const channel = seg<'stable' | 'beta'>([['stable', t('channelStable')], ['beta', t('channelBeta')]], s0.updateChannel, (v) => { updateSettings({ updateChannel: v }); localStorage.removeItem('kr.update.lastCheck'); });
+  const every = seg<'launch' | 'daily' | 'weekly'>([['launch', t('everyLaunch')], ['daily', t('everyDay')], ['weekly', t('everyWeek')]], s0.updateEvery, (v) => updateSettings({ updateEvery: v }));
+  const desk = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { downloadUpdate?: unknown }) | undefined;
+  const bg = h('input', { type: 'checkbox', onchange: () => updateSettings({ updateAutoDownload: bg.checked }) }) as HTMLInputElement; bg.checked = s0.updateAutoDownload;
+  container.append(h('p', null, `${t('version')} ${APP_VERSION}`), h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } }, btn, h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, cb, h('i')), h('span', null, t('autoCheck')))), status,
+    h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateChannel')), channel),
+    h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateEvery')), every),
+    ...(desk?.downloadUpdate ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownload'))), h('p', { class: 'hint' }, t('updateAutoDownloadHint'))] : []));
 }

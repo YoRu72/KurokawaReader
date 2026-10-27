@@ -497,8 +497,8 @@ export class PdfViewer {
       el.querySelector('.textLayer')?.remove();
       const textDiv = h('div', { class: 'textLayer' });
       el.appendChild(textDiv);
-      // Our own layer: words in reading order, harakat inside their letters (see src/pdflayer.ts).
       const at = this.scale;
+      // Our own layer: words in reading order, harakat inside their letters (see src/pdflayer.ts).
       const pending = buildTextLayer(page, page.getViewport({ scale: at }), textDiv);
       s.textCancel = () => void pending.then((l) => l.cancel());
       await pending;
@@ -545,45 +545,127 @@ export class PdfViewer {
     return Math.max(0, (this.scroll.scrollTop - this.layoutTops()[n - 1]) / Math.max(1, this.pageHeight(n)));
   }
 
-  /** Two-finger pinch: live CSS preview, then a real re-render at the new scale. */
+  /** Pinch and double-tap zoom, as in Drive's viewer: the page scales live under the fingers (the point between
+   *  them stays put, and two fingers pan as well), zooming out below the width springs back to it, and on
+   *  release the pages are laid out at the new size with nothing jumping — the picture under the fingers is
+   *  exactly where it was. A single finger never waits for this code: the blocking listener exists only while
+   *  two fingers are down, so scrolling stays smooth. */
   private attachPinch(): void {
-    let startDist = 0, startScale = 1, factor = 1, anchorPage = 1, anchorRel = 0;
+    const el = this.scroll;
+    let active = false, startDist = 0, startScale = 1, f = 1, dx = 0, dy = 0;
+    let fx = 0, fy = 0;        // the focal point, in content coordinates (what stays under the fingers)
+    let mx0 = 0, my0 = 0;      // the midpoint between the fingers at the start, in the viewport
     const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    this.scroll.addEventListener('touchstart', (e) => {
-      if (!this.pinchZoom || e.touches.length !== 2) { startDist = 0; return; }
-      startDist = dist(e.touches); startScale = this.scale; factor = 1;
-      anchorPage = this.current; anchorRel = this.relativeOffset(anchorPage);
-      const r = this.scroll.getBoundingClientRect();
-      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top + this.scroll.scrollTop;
-      this.inner.style.transformOrigin = `${cx}px ${cy}px`;
-    }, { passive: true });
-    this.scroll.addEventListener('touchmove', (e) => {
-      if (!startDist || e.touches.length !== 2) return;
-      e.preventDefault();
-      factor = Math.min(4 / startScale, Math.max(0.4 / startScale, dist(e.touches) / startDist));
-      this.inner.style.transform = `scale(${factor})`;
-    }, { passive: false });
-    const end = () => {
-      if (!startDist) return;
-      startDist = 0;
-      this.inner.style.transform = '';
-      this.fitWidth = false;
-      const target = Math.min(4, Math.max(0.4, startScale * factor));
-      this.rescale(target);
-      this.goTo(anchorPage, anchorRel);
+    const mid = (t: TouchList) => { const r = el.getBoundingClientRect(); return [(t[0].clientX + t[1].clientX) / 2 - r.left, (t[0].clientY + t[1].clientY) / 2 - r.top]; };
+    const minScale = () => this.computeFitScale();
+    const render = () => { this.inner.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${f.toFixed(4)})`; };
+    const move = (e: TouchEvent) => {
+      if (!active || e.touches.length !== 2) return;
+      if (e.cancelable) e.preventDefault();
+      const [mx, my] = mid(e.touches);
+      let want = (dist(e.touches) / startDist) * startScale;
+      // Past the limits the zoom gives way, like a spring: a third of the way, so it is felt but not followed.
+      const lo = minScale(), hi = 4;
+      if (want < lo) want = lo - (lo - want) * 0.35; if (want > hi) want = hi + (want - hi) * 0.35;
+      f = want / startScale; dx = mx - mx0; dy = my - my0;
+      render();
     };
-    this.scroll.addEventListener('touchend', end); this.scroll.addEventListener('touchcancel', end);
+    const begin = (e: TouchEvent) => {
+      active = true; startDist = dist(e.touches); startScale = this.scale; f = 1; dx = dy = 0;
+      [mx0, my0] = mid(e.touches);
+      fx = el.scrollLeft + mx0; fy = el.scrollTop + my0;
+      this.inner.style.transformOrigin = `${fx}px ${fy}px`;
+      this.inner.style.willChange = 'transform';
+      el.addEventListener('touchmove', move, { passive: false });
+    };
+    const finish = () => {
+      if (!active) return;
+      active = false;
+      el.removeEventListener('touchmove', move);
+      const target = Math.min(4, Math.max(minScale(), startScale * f));
+      this.inner.style.transform = ''; this.inner.style.transformOrigin = ''; this.inner.style.willChange = '';
+      this.fitWidth = Math.abs(target - minScale()) < 0.002;
+      this.zoomAbout(target, fx, fy, mx0 + dx, my0 + dy);
+    };
+    el.addEventListener('touchstart', (e) => {
+      if (!this.pinchZoom) return;
+      if (e.touches.length === 2) begin(e); else if (active) finish();
+    }, { passive: true });
+    el.addEventListener('touchend', (e) => { if (active && e.touches.length < 2) finish(); }, { passive: true });
+    el.addEventListener('touchcancel', () => finish(), { passive: true });
+    // Double tap: zoom in on the spot (two and a half times the width), or back to the width when zoomed.
+    let lastTap = 0, lastX = 0, lastY = 0;
+    el.addEventListener('touchend', (e) => {
+      if (!this.pinchZoom || e.touches.length || e.changedTouches.length !== 1 || active) return;
+      const t = e.changedTouches[0]; const now = performance.now();
+      const quick = now - lastTap < 320 && Math.hypot(t.clientX - lastX, t.clientY - lastY) < 28;
+      lastTap = now; lastX = t.clientX; lastY = t.clientY;
+      if (!quick) return;
+      lastTap = 0;
+      if ((e.target as HTMLElement).closest('a, button, .textLayer span, .pdf-pin')) return;
+      const r = el.getBoundingClientRect(); const vx = t.clientX - r.left, vy = t.clientY - r.top;
+      const fit = minScale();
+      const to = this.scale > fit * 1.3 ? fit : Math.min(4, fit * 2.5);
+      this.fitWidth = to === fit;
+      this.animateZoom(to, el.scrollLeft + vx, el.scrollTop + vy, vx, vy);
+    }, { passive: true });
+  }
+
+  /** Lay the pages out at `scale` so that the content point (cx, cy) — in the current layout's scrolled
+   *  coordinates — ends up at (vx, vy) in the viewport. */
+  private zoomAbout(scale: number, cx: number, cy: number, vx: number, vy: number): void {
+    const ratio = scale / this.scale;
+    if (Math.abs(ratio - 1) < 0.001) { this.frame(); return; }
+    // (Pages scale with the zoom but the gaps between them do not: the point is carried through its page.)
+    const n = this.pageAt(cy); const top = this.layoutTops()[n - 1];
+    const pageEl = this.pages[n - 1];
+    const leftOf = () => pageEl.offsetLeft + (pageEl.offsetParent === this.inner ? this.inner.offsetLeft : 0);
+    const within = cy - top, withinX = cx - leftOf();
+    this.scale = scale;
+    this.pages.forEach((p, i) => this.sizePage(p, i + 1));
+    this.tops = null;
+    for (const [k, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[k - 1].dataset.res = 'low'; }
+    this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
+    this.running?.cancel();
+    const newTop = this.layoutTops()[n - 1] + within * ratio;
+    this.scroll.scrollTop = newTop - vy;
+    this.scroll.scrollLeft = leftOf() + withinX * ratio - vx;
+    this.updateCurrent();
+    this.frame();
+  }
+
+  /** A short animated zoom (double tap, the zoom buttons): the picture scales with a transition, then the
+   *  pages are laid out at the new size with the same point in the same place. */
+  private animateZoom(scale: number, cx: number, cy: number, vx: number, vy: number): void {
+    const target = Math.min(4, Math.max(0.4, scale));
+    const f = target / this.scale;
+    if (Math.abs(f - 1) < 0.001) return;
+    const inner = this.inner;
+    inner.style.transformOrigin = `${cx}px ${cy}px`;
+    inner.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
+    inner.style.willChange = 'transform';
+    requestAnimationFrame(() => { inner.style.transform = `scale(${f.toFixed(4)})`; });
+    const done = () => {
+      inner.removeEventListener('transitionend', done);
+      inner.style.transition = ''; inner.style.transform = ''; inner.style.transformOrigin = ''; inner.style.willChange = '';
+      this.zoomAbout(target, cx, cy, vx, vy);
+    };
+    inner.addEventListener('transitionend', done);
+    window.setTimeout(() => { if (inner.style.transition) done(); }, 320);
   }
 
   pageElement(n: number): HTMLElement | undefined { return this.pages[n - 1]; }
 
   zoom(delta: number): void {
     this.fitWidth = false;
-    this.rescale(Math.min(4, Math.max(0.4, this.scale * (1 + delta))));
+    const vx = this.scroll.clientWidth / 2, vy = this.scroll.clientHeight / 2;
+    this.animateZoom(this.scale * (1 + delta), this.scroll.scrollLeft + vx, this.scroll.scrollTop + vy, vx, vy);
   }
   fitToWidth(): void {
     this.fitWidth = true;
-    this.rescale(this.computeFitScale());
+    const vx = this.scroll.clientWidth / 2, vy = this.scroll.clientHeight / 2;
+    this.animateZoom(this.computeFitScale(), this.scroll.scrollLeft + vx, this.scroll.scrollTop + vy, vx, vy);
   }
   setInvert(v: boolean): void { this.root.dataset.invert = String(v); }
 
@@ -726,14 +808,16 @@ export class PdfViewer {
   }
 
   /** Render one page to a PNG blob at the given width (for saving / sharing). */
-  async pageToBlob(n: number, width = 1600): Promise<Blob> {
+  async pageToBlob(n: number, width = 1600, type: 'image/png' | 'image/jpeg' = 'image/png'): Promise<Blob> {
     const page = await this.doc.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: width / base.width });
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-    await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-    return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/png'));
+    const ctx = canvas.getContext('2d')!;
+    if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+    return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), type, 0.92));
   }
 
   /** Small thumbnail (data URL) for the pages grid. */

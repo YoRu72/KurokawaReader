@@ -120,11 +120,28 @@ ipcMain.handle('kr:ready', () => { flush(); return true; });
 // on quit — so an update is a few MB, not the whole program again. It needs the installed build (Windows
 // NSIS, Linux AppImage); the portable EXE and the unsigned macOS app cannot use it, and if it fails for any
 // reason the full-download path below takes over, so an update never breaks the app that is running.
-async function differentialUpdate(e) {
-  if (process.env.PORTABLE_EXECUTABLE_DIR || process.platform === 'darwin' || !app.isPackaged) return false;
-  let updater;
-  try { ({ autoUpdater: updater } = require('electron-updater')); } catch { return false; }
-  updater.autoDownload = false; updater.autoInstallOnAppQuit = true; updater.allowDowngrade = false; updater.logger = null;
+function updaterOrNull() {
+  if (process.env.PORTABLE_EXECUTABLE_DIR || process.platform === 'darwin' || !app.isPackaged) return null;
+  try { const { autoUpdater } = require('electron-updater'); autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; autoUpdater.allowDowngrade = false; autoUpdater.logger = null; return autoUpdater; } catch { return null; }
+}
+// Background updates (Settings → download in the background): the difference is fetched quietly and installed
+// when the app quits; the window is told when it is ready so it can offer a restart.
+let downloadedVersion = null;
+ipcMain.handle('kr:update-download', async (e, o) => {
+  const updater = updaterOrNull(); if (!updater) return 'unsupported';
+  if (downloadedVersion) return 'downloaded';
+  updater.allowPrerelease = !!(o && o.beta);
+  const r = await updater.checkForUpdates().catch(() => null);
+  if (!r || !r.updateInfo || !r.updateInfo.version || r.updateInfo.version === app.getVersion()) return 'none';
+  try { const files = await updater.downloadUpdate(); if (!files || !files.length) return 'none'; } catch (err) { console.warn('background update failed:', err && err.message); return 'none'; }
+  downloadedVersion = r.updateInfo.version;
+  return 'downloaded';
+});
+ipcMain.handle('kr:update-install', () => { const updater = updaterOrNull(); if (updater && downloadedVersion) setTimeout(() => updater.quitAndInstall(false, true), 300); return !!downloadedVersion; });
+
+async function differentialUpdate(e, beta) {
+  const updater = updaterOrNull(); if (!updater) return false;
+  updater.allowPrerelease = !!beta;
   const r = await updater.checkForUpdates().catch(() => null);
   if (!r || !r.updateInfo || !r.updateInfo.version || r.updateInfo.version === app.getVersion()) return false;
   const onProgress = (p) => { try { e.sender.send('kr:update-progress', { pct: Math.round(p.percent || 0), got: p.transferred || 0, total: p.total || 0, speed: p.bytesPerSecond || 0 }); } catch { /* window gone */ } };
@@ -142,8 +159,8 @@ async function differentialUpdate(e) {
   return true;
 }
 
-ipcMain.handle('kr:install-update', async (e, url) => {
-  if (await differentialUpdate(e)) return 'differential';
+ipcMain.handle('kr:install-update', async (e, url, opts) => {
+  if (await differentialUpdate(e, opts && opts.beta)) return 'differential';
   const res = await net.fetch(url);
   if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
   const total = Number(res.headers.get('content-length') || 0);

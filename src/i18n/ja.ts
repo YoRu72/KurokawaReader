@@ -5,7 +5,7 @@ export const ja: Partial<Strings> = {
   appName: '黒川リーダー',
   tagline: '読めるものなら何でも読めるリーダー。',
 
-  library: 'ライブラリ', importBooks: '本を追加', images: '画像', settings: '設定', back: '戻る', close: '閉じる', cancel: 'キャンセル', done: '完了', delete: '削除', open: '開く', openTogether: 'まとめて読む', select: '選択', selectAll: 'すべて選択', selectNone: '選択解除', shareFile: 'ファイルを共有', selectedCount: '{n} 件を選択', more: 'その他',
+  library: 'ライブラリ', importBooks: '本を追加', images: '画像', settings: '設定', back: '戻る', close: '閉じる', cancel: 'キャンセル', done: '完了', delete: '削除', open: '開く', openTogether: 'まとめて読む', select: '選択', selectAll: 'すべて選択', selectNone: '選択解除', shareFile: 'ファイルを共有', selectedCount: '{n} 件を選択', more: 'その他', updateReady: '更新をダウンロードしました — 終了時にインストールします', restartNow: '今すぐ再起動', updateChannel: '更新', channelStable: '安定版', channelBeta: 'ベータ（プレリリースも）', updateEvery: '確認', everyLaunch: '起動ごと', everyDay: '毎日', everyWeek: '毎週', updateAutoDownload: '更新をバックグラウンドでダウンロードし、終了時にインストール', updateAutoDownloadHint: '変更された部分だけ（数 MB）を取得します。準備ができると再起動を提案し、そうでなければ次にアプリを閉じたときにインストールします。', noteOnPage: 'このページにメモ…', tapWhereNote: 'メモを置く場所をページでタップしてください',
 
   emptyLibraryTitle: 'ライブラリは空です', emptyLibraryBody: 'EPUB・PDF・DOCX・XLSX・PPTX・TXT などを追加できます。すべてこの端末内に保存されます。', dropHint: 'ここにファイルをドロップして追加', importing: '{n}を追加中…', imported: '{n}を追加しました', importFailed: '{name} を追加できません: {error}', searchLibrary: 'ライブラリを検索', sortBy: '並べ替え', sortRecent: '最近開いた順', sortAdded: '追加順', sortTitle: 'タイトル', sortAuthor: '著者', continueReading: '続きを読む', unknownAuthor: '著者不明', deleteConfirm: '{n} 冊をライブラリから削除しますか？ファイルも端末から削除されます。', bookDetails: '詳細', format: '形式', size: 'サイズ', added: '追加日', lastOpened: '最後に開いた日', never: 'なし', progress: '進捗', pages: 'ページ',
 

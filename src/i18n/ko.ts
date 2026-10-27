@@ -5,7 +5,7 @@ export const ko: Partial<Strings> = {
   appName: '쿠로카와 리더',
   tagline: '읽을 수 있는 모든 것을 위한 리더.',
 
-  library: '서재', importBooks: '책 추가', images: '이미지', settings: '설정', back: '뒤로', close: '닫기', cancel: '취소', done: '완료', delete: '삭제', open: '열기', openTogether: '함께 읽기', select: '선택', selectAll: '모두 선택', selectNone: '선택 해제', shareFile: '파일 공유', selectedCount: '{n}개 선택됨', more: '더 보기',
+  library: '서재', importBooks: '책 추가', images: '이미지', settings: '설정', back: '뒤로', close: '닫기', cancel: '취소', done: '완료', delete: '삭제', open: '열기', openTogether: '함께 읽기', select: '선택', selectAll: '모두 선택', selectNone: '선택 해제', shareFile: '파일 공유', selectedCount: '{n}개 선택됨', more: '더 보기', updateReady: '업데이트를 내려받았습니다 — 종료 시 설치됩니다', restartNow: '지금 다시 시작', updateChannel: '업데이트', channelStable: '안정', channelBeta: '베타 (사전 릴리스 포함)', updateEvery: '확인', everyLaunch: '실행할 때마다', everyDay: '매일', everyWeek: '매주', updateAutoDownload: '백그라운드에서 업데이트를 내려받고 종료 시 설치', updateAutoDownloadHint: '바뀐 부분만(몇 MB) 가져옵니다. 준비되면 다시 시작을 제안하고, 아니면 다음에 앱을 닫을 때 설치합니다.', noteOnPage: '이 페이지에 메모…', tapWhereNote: '메모를 둘 곳을 페이지에서 탭하세요',
 
   emptyLibraryTitle: '서재가 비어 있습니다', emptyLibraryBody: 'EPUB, PDF, DOCX, XLSX, PPTX, TXT 등을 추가하세요. 모든 내용은 이 기기에만 저장됩니다.', dropHint: '여기에 파일을 놓아 추가', importing: '{n} 추가 중…', imported: '{n}을(를) 추가했습니다', importFailed: '{name}을(를) 추가할 수 없습니다: {error}', searchLibrary: '서재 검색', sortBy: '정렬', sortRecent: '최근에 연 순', sortAdded: '최근에 추가한 순', sortTitle: '제목', sortAuthor: '저자', continueReading: '이어 읽기', unknownAuthor: '저자 미상', deleteConfirm: '서재에서 책 {n}권을 삭제할까요? 파일도 이 기기에서 삭제됩니다.', bookDetails: '세부 정보', format: '형식', size: '크기', added: '추가한 날', lastOpened: '마지막으로 연 날', never: '없음', progress: '진행률', pages: '페이지',
 
