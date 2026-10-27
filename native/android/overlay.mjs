@@ -158,6 +158,11 @@ await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join
 await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));
 await fs.copyFile(path.join(root, 'native/android/KrJobService.java'), path.join(pkgDir, 'KrJobService.java'));
 await fs.copyFile(path.join(root, 'native/android/KrBrowser.java'), path.join(pkgDir, 'KrBrowser.java'));
+await fs.copyFile(path.join(root, 'native/android/KrPrint.java'), path.join(pkgDir, 'KrPrint.java'));
+// (The print job's callbacks can only be made from the android.print package: that one class lives there.)
+const printDir = path.join(app, 'src/main/java/android/print');
+await fs.mkdir(printDir, { recursive: true });
+await fs.copyFile(path.join(root, 'native/android/KrPdfPrint.java'), path.join(printDir, 'KrPdfPrint.java'));
 // Swap Capacitor's WebView for ours (suppresses the system selection menu). BridgeActivity
 // inflates the library's bridge_layout_main; an app resource of the same name overrides it.
 await fs.writeFile(path.join(app, 'src/main/res/layout/bridge_layout_main.xml'), `<?xml version="1.0" encoding="utf-8"?>

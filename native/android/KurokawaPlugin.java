@@ -252,6 +252,16 @@ public class KurokawaPlugin extends Plugin {
     @PluginMethod
     public void browserForget(PluginCall call) { browser().forget(call); }
 
+    /** A page of HTML printed to a PDF as the system prints (real text, not pictures of pages): {html, width,
+     *  height, margin} in points → {data: base64} (see KrPrint). */
+    @PluginMethod
+    public void printToPdf(PluginCall call) {
+        String html = call.getString("html");
+        if (html == null || html.isEmpty()) { call.reject("no html"); return; }
+        double w = call.getDouble("width", 595.28), h = call.getDouble("height", 841.89), m = call.getDouble("margin", 45.35);
+        getActivity().runOnUiThread(() -> KrPrint.run(getActivity(), html, w, h, m, call));
+    }
+
     /** Downloads a file (following redirects, no CORS) with progress events. Returns file:// path.
      *  Large files that the server can serve in ranges are fetched over several connections at once
      *  (the way aria2 splits a download), each writing its own segment of the file. */

@@ -476,11 +476,23 @@ export async function buildPdf(d: ConvDoc, progress: Progress, opts: ConvOptions
   const fontCss = await readerFontCss(d);
   if ((globalThis as { krDebugLeaves?: boolean }).krDebugLeaves) console.warn('KR stage fonts', fontCss.length);
   const desk = (window as unknown as { kurokawaDesktop?: { printToPdf?(html: string, o?: { pageSize?: string }): Promise<string> } }).kurokawaDesktop;
-  const html = buildHtml(d, inline).replace('</style>', `${fontCss}\nbody{font-family:'Merriweather','Uthman TN1','Noto Naskh Arabic',Georgia,serif${opts.fontSize ? `;font-size:${opts.fontSize}px` : ''}}@page{size:${paper.css};margin:${opts.paper === 'phone' ? '8mm' : '16mm'}}section{page-break-before:always}section:first-of-type{page-break-before:auto}</style>`);
+  // (Every picture loaded before printing: one left to load lazily would be missing from a printed page.)
+  const html = buildHtml(d, inline).replace(/\sloading=(["'])lazy\1/gi, '').replace('</style>', `${fontCss}\nbody{font-family:'Merriweather','Uthman TN1','Noto Naskh Arabic',Georgia,serif${opts.fontSize ? `;font-size:${opts.fontSize}px` : ''}}@page{size:${paper.css};margin:${opts.paper === 'phone' ? '8mm' : '16mm'}}section{page-break-before:always}section:first-of-type{page-break-before:auto}img{break-inside:avoid}</style>`);
   if (desk?.printToPdf) {
     progress('build', 70);
     const b64 = await desk.printToPdf(html, { pageSize: paper.css });
     return b64ToBlob(b64, 'application/pdf');
+  }
+  // The system's own print on a phone (Android, iOS): real text and pictures — sharp, small, searchable — in a
+  // fraction of the time; the pages drawn here as pictures only if it cannot.
+  const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: { printToPdf?(o: { html: string; width: number; height: number; margin: number }): Promise<{ data?: string }> } } } }).Capacitor;
+  const plugin = cap?.getPlatform?.() === 'android' || cap?.getPlatform?.() === 'ios' ? cap.Plugins?.Kurokawa : undefined;
+  if (plugin?.printToPdf) {
+    progress('build', 70);
+    try {
+      const r = await plugin.printToPdf({ html, width: paper.pt[0], height: paper.pt[1], margin: opts.paper === 'phone' ? 22.68 : 45.35 });
+      if (r?.data) return b64ToBlob(r.data, 'application/pdf');
+    } catch (e) { console.warn('[kurokawa] the system could not print it; pages drawn here', e); }
   }
   // Pictures of pages: lay the HTML out at the paper's width, slice by page height, rasterise each slice; the
   // words go on each page as invisible text where they stand, so the PDF can be searched, selected and copied.

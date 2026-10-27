@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 ///  - httpRequest: a request from native code (no CORS), with the clearance a site's check left
 ///  - openWebView / browserFetch / browserReset / browserForget: the app's own browser (KrBrowser.swift), for
 ///    the sites that answer only a browser
+///  - printToPdf: a page of HTML printed to a PDF by the system (KrPrint.swift)
 @objc(KurokawaPlugin)
 public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     private var pickCall: CAPPluginCall?
@@ -148,6 +149,10 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     @objc func browserFetch(_ call: CAPPluginCall) { browser.fetch(call) }
     @objc func browserReset(_ call: CAPPluginCall) { browser.reset(call) }
     @objc func browserForget(_ call: CAPPluginCall) { browser.forget(call) }
+
+    // MARK: printing a page to a PDF (real text, not pictures of pages)
+
+    @objc func printToPdf(_ call: CAPPluginCall) { KrPrint.run(call, host: bridge?.viewController?.view) }
 
     /// HTTP request from native code (no CORS): the sync back-ends and the sources. The shared cookie store goes
     /// with it (a check's clearance is copied there once passed); its answer's text in the charset it names.
