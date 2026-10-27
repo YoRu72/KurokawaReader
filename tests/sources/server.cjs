@@ -79,9 +79,22 @@ const OTL = '/Officially%20Translated%20Light%20Novels/';
 const h5aiPage = (rows) => `<!DOCTYPE html><html class="no-js" lang="en"><head><meta charset="utf-8"><title>index - powered by h5ai v0.30.0 (https://larsjung.de/h5ai/)</title><link rel="stylesheet" href="/_h5ai/public/css/styles.css"><script src="/_h5ai/public/js/scripts.js" data-module="index"></script></head><body class="index" id="root"><div id="fallback-hints"><span class="noJsMsg">⚡ JavaScript is disabled! ⚡</span><span class="backlink"><a href="https://larsjung.de/h5ai/" title="h5ai v0.30.0 - Modern HTTP web server index.">powered by h5ai</a></span></div>`
   + (rows ? `<div id="fallback"><table><tr><th class="fb-i"></th><th class="fb-n"><span>Name</span></th><th class="fb-d"><span>Last modified</span></th><th class="fb-s"><span>Size</span></th></tr><tr><td class="fb-i"><img src="/_h5ai/public/images/fallback/folder-parent.png" alt="folder-parent"/></td><td class="fb-n"><a href="..">Parent Directory</a></td><td class="fb-d"></td><td class="fb-s"></td></tr>`
   + rows.map(([href, name, size]) => `<tr><td class="fb-i"><img src="/_h5ai/public/images/fallback/${size === null ? 'folder' : 'file'}.png" alt="${size === null ? 'folder' : 'file'}"/></td><td class="fb-n"><a href="${href}">${name}</a></td><td class="fb-d">2024-05-01 12:00</td><td class="fb-s">${size === null ? '' : Math.floor(size / 1000) + ' KB'}</td></tr>`).join('') + '</table></div>' : '') + '</body></html>';
-const otlFiles = {}; const otlDirs = {};
-const otlAdd = (folder, name, fixture, mime) => { const href = OTL + (folder ? encodeURIComponent(folder) + '/' : '') + encodeURIComponent(name); otlFiles[href] = [fixture, mime]; (otlDirs[folder] = otlDirs[folder] || []).push([href, name, fs.existsSync(path.join(dir, fixture)) ? fs.statSync(path.join(dir, fixture)).size : 1000]); };
-for (const f of ['Alpha Saga', 'Beta Tales', 'Gamma Chronicles']) (otlDirs[''] = otlDirs[''] || []).push([OTL + encodeURIComponent(f) + '/', f, null]);
+// The tree, shaped like the real one: series folders named as the publishers' series, volumes named
+// "<Series> - Volume 01 [Publisher][Edition].epub" (J-Novel Club's in two editions, Premium and Kobo), a
+// "{v2}", a "Volume 01.5 - …", "!Side Stories" and scan ("!Ozymandias", [OCR]) subfolders; Alpha Saga with a
+// PDF, Beta Tales with its own cover.jpg, Gamma Chronicles' page drawn by script (no table).
+const otlFiles = {}; const otlDirs = {}; const otlTimes = {};
+const T0 = Date.UTC(2024, 0, 1);
+const otlAdd = (folder, name, fixture, mime, time) => {
+  const href = OTL + (folder ? folder.split('/').map(encodeURIComponent).join('/') + '/' : '') + encodeURIComponent(name);
+  otlFiles[href] = [fixture, mime];
+  const size = fs.existsSync(path.join(dir, fixture)) ? fs.statSync(path.join(dir, fixture)).size : 1000;
+  (otlDirs[folder] = otlDirs[folder] || []).push([href, name, size, time ?? T0]);
+};
+const otlDir = (parent, name, time) => { const href = OTL + (parent ? parent.split('/').map(encodeURIComponent).join('/') + '/' : '') + encodeURIComponent(name) + '/'; (otlDirs[parent] = otlDirs[parent] || []).push([href, name, null, time ?? T0]); otlDirs[parent ? `${parent}/${name}` : name] = otlDirs[parent ? `${parent}/${name}` : name] || []; };
+const pad = (n) => String(n).padStart(2, '0');
+const EPUBS = ['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'];
+otlDir('', 'Alpha Saga', T0 + 5 * 86400000); otlDir('', 'Beta Tales', T0 + 4 * 86400000); otlDir('', 'Gamma Chronicles', T0 + 3 * 86400000);
 otlAdd('Alpha Saga', 'Alpha Saga - Side Story.pdf', 'sample.pdf', 'application/pdf');
 otlAdd('Alpha Saga', 'Alpha Saga Vol. 1.epub', 'alice-in-wonderland.epub', 'application/epub+zip');
 otlAdd('Alpha Saga', 'Alpha Saga Vol. 10.epub', 'alice-in-wonderland.epub', 'application/epub+zip');
@@ -90,33 +103,77 @@ otlAdd('Beta Tales', 'Beta Tales 1.epub', 'maqamat-al-hariri.epub', 'application
 otlAdd('Beta Tales', 'cover.jpg', 'beta-cover.jpg', 'image/jpeg');
 otlAdd('Gamma Chronicles', 'Gamma Chronicles v01.epub', 'alice-in-wonderland.epub', 'application/epub+zip');
 otlAdd('Gamma Chronicles', 'Gamma Chronicles v02.epub', 'maqamat-al-hariri.epub', 'application/epub+zip');
+const NAMES = ['Spice and Wolf', "Didn't I Say to Make My Abilities Average", 'Re:Zero -Starting Life in Another World-', 'Monogatari Series', 'Goblin Slayer', 'Ascendance of a Bookworm', 'The Apothecary Diaries', 'Black Summoner', 'Mushoku Tensei', 'Solo Leveling'];
+const PUBS = [['Yen Press', ['Kobo']], ['J-Novel Club', ['Premium', 'Kobo']], ['Seven Seas', ['Kobo']], ['Dark Horse', ['Google Play']], ['Vertical', ['Kobo']]];
+for (let i = 0; i < 110; i++) {
+  const name = NAMES[i] ?? `Series ${String(i + 1).padStart(3, '0')} Chronicle of ${['Ash', 'Dawn', 'Frost', 'Ink', 'Tides'][i % 5]}`;
+  const [pub, eds] = PUBS[i % PUBS.length];
+  const nv = 2 + (i * 7) % 11;
+  const t = T0 + (10 + i) * 86400000;
+  otlDir('', name, t + nv * 3600000);
+  for (let v = 1; v <= nv; v++) {
+    const ver = name === 'Spice and Wolf' && v === 2 ? '{v2}' : '';
+    for (const [k, ed] of eds.entries()) {
+      if (k > 0 && v % 2) continue;   // (the Kobo edition of J-Novel Club's even volumes only)
+      otlAdd(name, `${name} - Volume ${pad(v)} [${pub}]${ver}[${ed}].epub`, EPUBS[(i + v + k) % 2], 'application/epub+zip', t + v * 3600000);
+    }
+    if (ver) otlAdd(name, `${name} - Volume ${pad(v)} [${pub}][${eds[0]}].epub`, EPUBS[(i + v) % 2], 'application/epub+zip', t + v * 3600000 - 60000);
+  }
+  if (name === 'Monogatari Series') otlAdd(name, `${name} - Volume 01.5 - Bakemonogatari (Part 2) [${pub}][OCR_Samachan].epub`, EPUBS[0], 'application/epub+zip', t + 2000);
+  if (i % 9 === 5) {
+    otlDir(name, '!Side Stories', t); otlAdd(`${name}/!Side Stories`, `${name} - Side Story Collection [${pub}][Kobo].epub`, EPUBS[1], 'application/epub+zip', t);
+    otlDir(name, '!Ozymandias', t); otlAdd(`${name}/!Ozymandias`, `${name} - Volume 01 [${pub}][OCR][Ozymandias].epub`, EPUBS[0], 'application/epub+zip', t);
+  }
+  if (name === 'Goblin Slayer') otlAdd(name, `${name} - Volume 01 [${pub}][OCR][Anon].epub`, EPUBS[1], 'application/epub+zip', t + 1000);
+}
+const otlWalk = (folder, fn) => { for (const it of otlDirs[folder] ?? []) { fn(it, folder); if (it[2] === null) otlWalk(folder ? `${folder}/${it[1]}` : it[1], fn); } };
+const otlItem = ([href, , size, time]) => ({ href, time, size, managed: true, fetched: false });
 const posts = [];
 const folderFiles = { '/library/Alpha%20Series/Alpha%201.epub': ['alice-in-wonderland.epub', 'application/epub+zip'], '/library/Alpha%20Series/Alpha%202.epub': ['maqamat-al-hariri.epub', 'application/epub+zip'], '/library/sample.pdf': ['sample.pdf', 'application/pdf'], '/library/Beta/Deep/deep.pdf': ['sample.pdf', 'application/pdf'], '/library/readme.txt': ['plain.txt', 'text/plain'], '/library/Beta/notes.txt': ['notes.md', 'text/plain'] };
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://localhost:${port}`); const p = u.pathname;
   // The h5ai folder.
-  if (p.startsWith(OTL.replace(/\/$/, '')) || p === '/__otl/posts' || p === '/__otl/ranges') {
+  const isApi = req.method === 'POST' && (p === '/' || p.startsWith(OTL));
+  if (p.startsWith(OTL.replace(/\/$/, '')) || isApi || p === '/__otl/posts' || p === '/__otl/ranges' || p === '/extensions/otl.json') {
     res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'); res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Content-Type, Accept-Ranges');
     if (req.method === 'OPTIONS') return res.end();
     if (p === '/__otl/posts') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(posts)); }
     if (p === '/__otl/ranges') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(ranges)); }
+    // (The extension's manifest, as the app's repository keeps it.)
+    if (p === '/extensions/otl.json') { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, '../../extensions/otl.json'))); }
+    if (isApi) {
+      let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+        posts.push(body);
+        let j = {}; try { j = JSON.parse(body); } catch { /* */ }
+        res.setHeader('Content-Type', 'application/json');
+        if (j.action !== 'get') { res.statusCode = 400; return res.end('{"err":"ERR_UNSUPPORTED"}'); }
+        const folderOf = (href) => { const e = String(href || '').split('/').map((x) => encodeURIComponent(decodeURIComponent(x))).join('/'); return e === OTL ? '' : e.startsWith(OTL) ? decodeURIComponent(e.slice(OTL.length).replace(/\/$/, '')) : null; };
+        const out = {};
+        if (j.items) {
+          // (As h5ai answers: the folder's content and the content of every folder above it.)
+          const f = folderOf(j.items.href);
+          if (f === null || !otlDirs[f]) { res.statusCode = 404; return res.end('{"err":"ERR_NOT_FOUND"}'); }
+          const items = [{ href: OTL, time: T0, size: null, managed: true, fetched: true }, ...otlDirs[''].map(otlItem)];
+          if (f) { const parts = f.split('/'); for (let k = 1; k <= parts.length; k++) { const at = parts.slice(0, k).join('/'); if (k < parts.length || true) items.push(...(otlDirs[at] ?? []).map(otlItem)); } }
+          out.items = items;
+        }
+        if (j.search) {
+          const f = folderOf(j.search.href); const pat = String(j.search.pattern || '').toLowerCase();
+          if (f === null || !pat) { res.statusCode = 500; return res.end('{"err":"ERR_FAILED"}'); }
+          const found = []; otlWalk(f, (it) => { if (it[1].toLowerCase().includes(pat)) found.push(otlItem(it)); });
+          out.search = found;
+        }
+        res.end(JSON.stringify(out));
+      });
+      return;
+    }
     const enc = p.split('/').map((seg) => encodeURIComponent(decodeURIComponent(seg))).join('/');
     const folder = enc === OTL ? '' : enc.startsWith(OTL) && enc.endsWith('/') ? decodeURIComponent(enc.slice(OTL.length, -1)) : null;
-    if (folder === null && !otlFiles[enc] && otlDirs[decodeURIComponent(enc.slice(OTL.length))]) { res.statusCode = 301; res.setHeader('Location', enc + '/'); return res.end(); }
+    if (folder === null && !otlFiles[enc] && otlDirs[decodeURIComponent(enc.slice(OTL.length))]) { res.statusCode = 301; res.setHeader('Location', enc + '/'); return res.end('<html><head><title>301 Moved Permanently</title></head><body><center><h1>301 Moved Permanently</h1></center></body></html>'); }
     if (folder !== null && otlDirs[folder]) {
-      if (req.method === 'POST') {
-        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
-          posts.push(body);
-          let j = {}; try { j = JSON.parse(body); } catch { /* */ }
-          if (j.action !== 'get') { res.statusCode = 400; return res.end('{}'); }
-          const items = [{ href: enc, time: 1714564800000, size: null, managed: true, fetched: true }, ...otlDirs[folder].map(([href, , size]) => ({ href, time: 1714564800000, size, managed: true, fetched: false }))];
-          res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ items }));
-        });
-        return;
-      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       // (Gamma's page is the scripted one, without the table.)
-      return res.end(h5aiPage(folder === 'Gamma Chronicles' ? null : otlDirs[folder]));
+      return res.end(h5aiPage(folder === 'Gamma Chronicles' ? null : otlDirs[folder].map(([href, name, size]) => [href, name, size])));
     }
     const f = otlFiles[enc]; if (f) { const file = f[0] === 'beta-cover.jpg' ? path.join(require('os').tmpdir(), 'kr-beta-cover.jpg') : path.join(dir, f[0]); if (fs.existsSync(file)) return sendFile(req, res, file, f[1]); }
     res.statusCode = 404; return res.end('not here');

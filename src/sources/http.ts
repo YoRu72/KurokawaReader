@@ -98,7 +98,7 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
   if (!isWebOnly() && !headers['user-agent']) headers['user-agent'] = navigator.userAgent;
   const host = hostOf(url);
   return lane(host, async () => {
-    let r: HttpResult | null = null; let passed = false; let tries = 0;
+    let r: HttpResult | null = null; let passed = false; let tries = 0; let hops = 0;
     const retries = init.retries ?? 2;
     for (;;) {
       try { r = await http(url, { ...init, headers }); }
@@ -113,6 +113,16 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
         throw new SourceError('cloudflare', 'cloudflare', r.status);
       }
       if ((r.status === 429 || (r.status === 503 && r.headers['retry-after'])) && tries < retries) { tries++; await sleep(retryAfter(r, tries)); continue; }
+      // A redirect the platform did not follow — Android's own client will not go from https to http, which a
+      // server behind a proxy often asks for ("…/folder" → "http://…/folder/") — is followed here, kept on
+      // https for the same site. (A POST is asked again as a GET only for 303, as browsers do.)
+      if (r.status >= 300 && r.status < 400 && r.headers.location && hops < 5) {
+        let next: URL; try { next = new URL(r.headers.location, url); } catch { return r; }
+        const from = new URL(url);
+        if (next.protocol === 'http:' && from.protocol === 'https:' && next.host === from.host) next.protocol = 'https:';
+        if (next.href !== url) { hops++; url = next.href; if (r.status === 303) { init = { ...init, method: 'GET', body: undefined }; } continue; }
+      }
+      if (r && !r.url) r.url = url;
       return r;
     }
   });

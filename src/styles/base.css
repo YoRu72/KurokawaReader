@@ -1446,7 +1446,19 @@ html[dir='rtl'] .source-head > svg:last-child { transform: scaleX(-1); }
 .src-cover .folder-mark svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 1.8; }
 .src-card.folder .src-title { font-weight: 650; }
 /* A folder of volumes: the series' card, then a row per volume (the grid's whole width). */
-.src-grid > .series-head, .src-grid > .vol-row { grid-column: 1 / -1; min-width: 0; }
+.src-grid > .series-block, .src-grid > .vol-row { grid-column: 1 / -1; min-width: 0; }
+.series-block { border-bottom: 1px solid var(--md-outline-variant); margin-bottom: 4px; padding-bottom: 8px; }
+.series-block .series-head { border-bottom: 0; margin-bottom: 0; }
+.series-about { margin: 4px 0 0; font-size: 14px; line-height: 1.6; white-space: pre-line; color: var(--md-on-surface); cursor: pointer; overflow-wrap: anywhere; }
+.series-about.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.vol-editions { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+.vol-editions .chip { min-height: 28px; padding: 2px 10px; font-size: 12px; }
+.vol-editions .chip.have::after { content: '✓'; margin-inline-start: 4px; font-weight: 700; }
+.src-index { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 0 0 8px; border-radius: 10px; background: color-mix(in srgb, var(--md-on-surface) 4%, transparent); }
+.src-index > svg { width: 16px; height: 16px; flex: none; stroke: var(--md-primary); fill: none; stroke-width: 1.8; }
+.src-index small { color: var(--md-on-surface-dim); font-size: 12.5px; line-height: 1.4; min-width: 0; }
+.src-badge.right.have { background: var(--md-primary); color: var(--md-on-primary); display: inline-flex; align-items: center; gap: 2px; }
+.src-badge.right.have svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2.4; }
 .series-head { display: flex; gap: 14px; align-items: flex-start; padding: 4px 0 10px; border-bottom: 1px solid var(--md-outline-variant); margin-bottom: 4px; }
 .series-cover { flex: none; width: 112px; aspect-ratio: 2 / 3; border-radius: 12px; overflow: hidden; display: grid; place-items: center; box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
 .series-cover > svg { width: 40%; height: 40%; stroke: #fff; fill: none; stroke-width: 1.4; opacity: .9; }

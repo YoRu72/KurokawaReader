@@ -21,12 +21,16 @@ export interface SourceBook {
   look?: 'folder' | 'series' | 'volume';
   /** The file a volume row fetches. */
   file?: SourceFile;
+  /** The other editions of the same volume (a store's EPUB, a premium one, a scan…), the row's own first. */
+  alts?: { label: string; id: string; file: SourceFile }[];
   /** The files a series' card fetches. */
   files?: SourceFile[];
+  /** How many of the series' volumes, of how many, are in the library (a folder's card). */
+  have?: number;
 }
 
 /** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
-export interface SourcePeek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; count?: number }
+export interface SourcePeek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; count?: number; description?: string; publisher?: string }
 
 /** A filter as a Mihon filter sheet shows it: a choice, a set of choices, a sort order, or text. */
 export type SourceFilter =
@@ -72,8 +76,11 @@ export interface Source {
   site: string;
   /** The filters offered (with their defaults). */
   filters(): SourceFilter[];
-  /** Shelves to browse before searching: a few entry points (collections, categories, authors). */
-  shelves?(): Promise<SourceTag[]>;
+  /** Shelves to browse before searching: a few entry points (collections, categories, authors). `current`
+   *  is the shelf on screen (a source of folders offers its shelves only at its top). */
+  shelves?(current?: string): Promise<SourceTag[]>;
+  /** A line about the source's own state shown above its shelf (an index of its files, and how to renew it). */
+  status?(): Promise<{ text: string; auto?: boolean; action?: { label: string; run: (progress: (text: string) => void, live: () => boolean) => Promise<void> } } | null>;
   /** A page of books: a search, or a shelf when `shelf` is given, with the filters applied. */
   browse(q: string, filters: FilterValues, page: number, shelf?: string): Promise<SourcePage>;
   details(id: string): Promise<SourceDetails>;

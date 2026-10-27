@@ -16,11 +16,11 @@ const SITE = 'http://localhost:5403';
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404|503|ERR_|net::/.test(m.text())) errors.push(m.text()); });
   let fails = 0; const ok = (name, cond) => { console.log((cond ? 'ok  ' : 'FAIL'), name); if (!cond) fails++; };
   const base = 'http://localhost:5404/';
-  const addRepo = async (url) => { await page.click('.sources-view .topbar-actions button[aria-label="Add a repository"]'); await page.waitForSelector('.sheet input[type=url]'); await page.fill('.sheet input[type=url]', url); await page.click('.sheet .btn.primary'); await page.waitForTimeout(1500); };
+  const addRepo = async (url) => { await page.click('.sources-view .topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]'); await page.fill('.sheet input[type=url]', url); await page.click('.sheet .btn.primary'); await page.waitForTimeout(1500); };
   try {
     await page.goto(base); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.sources.autoCheck', 'off'); }); await page.reload(); await page.waitForSelector('.library-view');
     await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
-    ok('hub shows no repo by default, only the +', !!(await page.$('.repos-empty')) && !(await page.$('.repo-section')) && !!(await page.$('.topbar-actions button[aria-label="Add a repository"]')));
+    ok('hub shows no repo by default, only the +', !!(await page.$('.repos-empty')) && !(await page.$('.repo-section')) && !!(await page.$('.topbar-actions button[data-icon="plus"]')));
     // An LNReader repo, from its index.
     await addRepo(`${SITE}/repo/plugins.min.json`);
     await page.waitForSelector('.repo-section', { timeout: 15000 });

@@ -8,7 +8,7 @@
 // is refused.
 import { db } from '../db';
 import { fetchText, request } from './http';
-import { isListing, parseListing, folderName, forgetListings } from './folder';
+import { isListing, isH5ai, parseListing, folderName, forgetListings } from './folder';
 import { SourceError } from './types';
 
 export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'folder' | 'unknown';
@@ -42,6 +42,12 @@ export interface Repo {
   items: ExtItem[];
   count?: { novel: number; other: number };
   error?: string;
+  /** A web folder's server, when known: h5ai lists its folders through its own API as well as its page. */
+  flavor?: 'h5ai';
+  /** A web folder added from an extension's manifest: the folder's address (the repo's `url` is the manifest). */
+  folder?: string;
+  /** The manifest's version. */
+  version?: string;
 }
 
 const META = 'sources:repos';
@@ -57,8 +63,10 @@ async function saveRepos(list: Repo[]): Promise<void> { cache = list; await db.s
 /* ---------- addresses ---------- */
 /** Addresses known by a word typed in the + sheet. They are shown nowhere: whoever knows the word (or the
  *  address itself) adds the source; nobody else meets it. */
+// (Each word stands for an extension kept in the app's repository — its manifest, listed nowhere — added
+// like any other: fetched, installed, refreshed from there. Nothing of it is in the app itself.)
 const HIDDEN: Record<string, string> = {
-  otl: 'https://server.elscione.com/Officially%20Translated%20Light%20Novels/',
+  otl: 'https://raw.githubusercontent.com/YoRu72/KurokawaReader/main/extensions/otl.json',
 };
 export const hiddenAddress = (given: string): string | undefined => HIDDEN[given.trim().toLowerCase()];
 
@@ -124,14 +132,16 @@ export function candidates(given: string): string[] {
     for (const b of branches) { add(`https://gitlab.com/${owner}/${repo}/-/raw/${b}/index.json`); add(`https://gitlab.com/${owner}/${repo}/-/raw/${b}/plugins.min.json`); add(`https://gitlab.com/${owner}/${repo}/-/raw/${b}/index.min.json`); }
     return out;
   }
-  // A site of its own (repo.shosetsu.app/universe, a Pages site): the index at the usual names.
+  // A site of its own (repo.shosetsu.app/universe, a Pages site, a folder of books): the address as given — a
+  // folder's with its slash, which a server answers without sending it elsewhere first — then the index at the usual names.
   const bare = url.replace(/\/+$/, '');
+  if (url.endsWith('/')) add(url);
   add(bare); add(`${bare}/novel_index.json`); add(`${bare}/index.json`); add(`${bare}/plugins.min.json`); add(`${bare}/.dist/plugins.min.json`); add(`${bare}/index.min.json`); add(`${bare}/runners.json`);
   return out;
 }
 
 /* ---------- reading an index ---------- */
-interface Parsed { kind: RepoKind; name?: string; items: ExtItem[]; count: { novel: number; other: number } }
+interface Parsed { kind: RepoKind; name?: string; items: ExtItem[]; count: { novel: number; other: number }; flavor?: 'h5ai'; folder?: string; version?: string }
 const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
 
 export function parseIndex(url: string, text: string): Parsed | null {
@@ -139,6 +149,12 @@ export function parseIndex(url: string, text: string): Parsed | null {
   try { data = JSON.parse(text); } catch { return null; }
   const base = url.replace(/[^/]*$/, '');
   const abs = (u: string) => { if (!u) return ''; try { return new URL(u, base).href; } catch { return u; } };
+  // This reader's own: a web folder of books described by a manifest — {"kurokawa": "folder", name, url, server, version}.
+  if (data && typeof data === 'object' && !Array.isArray(data) && (data as Record<string, unknown>).kurokawa === 'folder' && typeof (data as Record<string, unknown>).url === 'string') {
+    const d = data as Record<string, unknown>;
+    const folder = abs(str(d.url)); if (!/^https?:\/\//i.test(folder)) return null;
+    return { kind: 'folder', name: str(d.name) || undefined, items: [], count: { novel: 0, other: 0 }, flavor: d.server === 'h5ai' ? 'h5ai' : undefined, folder: folder.endsWith('/') ? folder : `${folder}/`, version: str(d.version) || undefined };
+  }
   // LNReader: [{id, name, site, lang, version, url, iconUrl}]
   if (Array.isArray(data) && data.length && data.every((e) => e && typeof e === 'object' && typeof (e as Record<string, unknown>).id === 'string' && 'site' in (e as object) && 'url' in (e as object))) {
     const items = (data as Record<string, unknown>[]).map((e): ExtItem => ({ id: str(e.id), name: str(e.name), lang: str(e.lang), site: str(e.site), version: str(e.version), icon: abs(str(e.iconUrl)), url: abs(str(e.url)), kind: 'lnreader', runnable: true, itemType: 'novel' }));
@@ -196,25 +212,31 @@ export function parseIndex(url: string, text: string): Parsed | null {
 export async function resolveRepo(given: string): Promise<{ url: string; parsed: Parsed }> {
   const list = candidates(hiddenAddress(given) ?? given);
   if (!list.length) throw new SourceError('badRepoUrl', 'parse');
-  let lastError: unknown = null; let sawSomething = false; let folder: string | null = null;
+  let lastError: unknown = null; let sawSomething = false; let folder: string | null = null; let flavor: 'h5ai' | undefined;
+  // (What the address itself answered, for the message when nothing is found there.)
+  let first: { status: number; title: string; url: string } | null = null;
+  const pageUrls = list.filter((u) => !/\.(json|pb|txt)(\?.*)?$/i.test(u)).slice(0, 2);
   for (const url of list) {
     let text: string;
     try {
       const r = await request(url, { retries: 0, headers: { accept: 'text/html,application/json;q=0.9,*/*;q=0.8' } });
+      if (pageUrls.includes(url) && !first) first = { status: r.status, title: /<title[^>]*>([^<]{0,80})/i.exec(r.body)?.[1]?.trim() ?? '', url: r.url ?? url };
       if (r.status === 429) throw new SourceError('rate', 'rate', 429);
       if (r.status === 401) throw new SourceError('auth', 'auth', 401);
       if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
       text = r.body;
       const type = r.headers['content-type'] ?? '';
-      if (!folder && url === list[0] && !/json/i.test(type) && !/\.(json|pb|txt)(\?.*)?$/i.test(url) && isListing(r.url && /^https?:/.test(r.url) ? r.url : url, text, type)) {
+      if (!folder && pageUrls.includes(url) && !/json/i.test(type) && isListing(r.url && /^https?:/.test(r.url) ? r.url : url, text, type)) {
         folder = (r.url && /^https?:/.test(r.url) ? r.url : url).replace(/[?#].*$/, '').replace(/\/?$/, '/');
+        if (isH5ai(text)) flavor = 'h5ai';
         // (A folder that does not hold an extension index is a folder of books: no need to ask for the index files.)
-        if (!parseListing(folder, text, type).some((e) => /^((novel_)?index(\.min)?|plugins(\.min)?|runners|sources|modules|repo)\.json$/i.test(e.name))) return { url: folder, parsed: { kind: 'folder', name: folderName(folder), items: [], count: { novel: 0, other: 0 } } };
+        if (!parseListing(folder, text, type).some((e) => /^((novel_)?index(\.min)?|plugins(\.min)?|runners|sources|modules|repo)\.json$/i.test(e.name))) return { url: folder, parsed: { kind: 'folder', name: folderName(folder), items: [], count: { novel: 0, other: 0 }, flavor } };
       }
     }
     catch (e) { lastError = e; if ((e as SourceError).kind === 'offline' || (e as SourceError).kind === 'cors') throw e; continue; }
     sawSomething = true;
     const parsed = parseIndex(url, text);
+    if (parsed?.kind === 'folder') return { url, parsed };
     if (parsed && (parsed.items.length || parsed.kind !== 'unknown')) {
       // (Mangayomi keeps the novels apart in novel_index.json: when the index found has none, the one beside
       // it is looked for; a repo.json names the repo and nothing more.)
@@ -226,8 +248,19 @@ export async function resolveRepo(given: string): Promise<{ url: string; parsed:
       return { url, parsed };
     }
   }
-  if (folder) return { url: folder, parsed: { kind: 'folder', name: folderName(folder), items: [], count: { novel: 0, other: 0 } } };
+  if (folder) return { url: folder, parsed: { kind: 'folder', name: folderName(folder), items: [], count: { novel: 0, other: 0 }, flavor } };
+  // An h5ai server drawing its folders by script, asked through its API: the folder is one if it answers so.
+  const page = pageUrls[0];
+  if (page && /^https?:/.test(page)) {
+    try {
+      const u = new URL(page.endsWith('/') ? page : `${page}/`);
+      const r = await request(`${u.origin}/?`, { method: 'POST', retries: 0, headers: { 'content-type': 'application/json;charset=utf-8', accept: 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'get', items: { href: u.pathname, what: 1 } }) });
+      if (r.status < 400 && /"items"\s*:/.test(r.body) && parseListing(u.href, r.body, 'application/json').length) return { url: u.href, parsed: { kind: 'folder', name: folderName(u.href), items: [], count: { novel: 0, other: 0 }, flavor: 'h5ai' } };
+    } catch { /* not h5ai */ }
+  }
   if (lastError && !sawSomething) throw lastError;
+  // (Said plainly: what the address answered — a status, a page's title — so the reader knows what is there.)
+  if (first) throw new SourceError(`noIndexAt:${first.status}:${first.title}:${first.url}`, 'parse', first.status);
   throw new SourceError('noIndex', 'parse');
 }
 
@@ -236,14 +269,15 @@ export async function addRepo(given: string): Promise<{ repo: Repo; added: boole
   const repos = await listRepos();
   // (Already here under the word or the address typed: refused before anything is fetched.)
   const asked = normalizeUrl(hiddenAddress(given) ?? given);
-  const known = repos.find((r) => normalizeUrl(r.url) === asked || normalizeUrl(hiddenAddress(r.given) ?? r.given) === asked);
+  const known = repos.find((r) => normalizeUrl(r.url) === asked || (r.folder && normalizeUrl(r.folder) === asked) || normalizeUrl(hiddenAddress(r.given) ?? r.given) === asked);
   if (known) return { repo: known, added: false };
   const { url, parsed } = await resolveRepo(given);
   const norm = normalizeUrl(url);
-  const dup = repos.find((r) => normalizeUrl(r.url) === norm || normalizeUrl(r.given) === normalizeUrl(given) || (r.items.length && r.items.length === parsed.items.length && r.kind === parsed.kind && r.items.every((it, i) => it.id === parsed.items[i]?.id && it.url === parsed.items[i]?.url)));
+  const folderNorm = parsed.folder ? normalizeUrl(parsed.folder) : null;
+  const dup = repos.find((r) => normalizeUrl(r.url) === norm || (folderNorm && (normalizeUrl(r.url) === folderNorm || (r.folder && normalizeUrl(r.folder) === folderNorm))) || normalizeUrl(r.given) === normalizeUrl(given) || (r.items.length && r.items.length === parsed.items.length && r.kind === parsed.kind && r.items.every((it, i) => it.id === parsed.items[i]?.id && it.url === parsed.items[i]?.url)));
   if (dup) return { repo: dup, added: false };
   const name = parsed.name || nameOf(url, parsed.kind);
-  const repo: Repo = { key: hashKey(norm), url, given, name, kind: parsed.kind, addedAt: Date.now(), fetchedAt: Date.now(), items: parsed.items, count: parsed.count };
+  const repo: Repo = { key: hashKey(norm), url, given, name, kind: parsed.kind, addedAt: Date.now(), fetchedAt: Date.now(), items: parsed.items, count: parsed.count, flavor: parsed.flavor, folder: parsed.folder, version: parsed.version };
   await saveRepos([...repos, repo]);
   return { repo, added: true };
 }
@@ -265,8 +299,12 @@ export async function renameRepo(key: string, name: string): Promise<void> {
 /** Fetch the index again; the items change, the key stays. Returns the items whose version moved. */
 export async function refreshRepo(key: string): Promise<{ repo: Repo; updated: ExtItem[] }> {
   const repos = await listRepos(); const r = repos.find((x) => x.key === key); if (!r) throw new SourceError('noRepo', 'parse');
-  // (A folder has no index: its listings are fetched again as they are opened.)
-  if (r.kind === 'folder') { forgetListings(r.url); r.fetchedAt = Date.now(); r.error = undefined; await saveRepos([...repos]); return { repo: r, updated: [] }; }
+  // (A folder has no index of extensions: its manifest, if it came from one, is read again; its listings are
+  // fetched again as they are opened.)
+  if (r.kind === 'folder') {
+    if (r.folder) { const p = parseIndex(r.url, await fetchText(r.url)); if (p?.kind === 'folder' && p.folder) { r.folder = p.folder; r.flavor = p.flavor; r.version = p.version; if (p.name) r.name = p.name; } }
+    forgetListings(r.folder ?? r.url); r.fetchedAt = Date.now(); r.error = undefined; await saveRepos([...repos]); return { repo: r, updated: [] };
+  }
   const text = await fetchText(r.url);
   const parsed = parseIndex(r.url, text); if (!parsed) throw new SourceError('noIndex', 'parse');
   const updated: ExtItem[] = [];

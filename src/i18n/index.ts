@@ -208,6 +208,19 @@ export function countVolumes(n: number): string {
   return arCount(n, { one: 'مجلد واحد', two: 'مجلدان', few: 'مجلدات', many: 'مجلدًا', hundred: 'مجلدٍ' });
 }
 
+/** "3 series" — in Arabic: سلسلة واحدة · سلسلتان · ٣–١٠ سلاسل · ١١–٩٩ سلسلةً · ١٠٠ سلسلةٍ. */
+export function countSeries(n: number): string {
+  if (current !== 'ar') return `${n} series`;
+  return arCount(n, { one: 'سلسلة واحدة', two: 'سلسلتان', few: 'سلاسل', many: 'سلسلةً', hundred: 'سلسلةٍ' });
+}
+/** "yesterday", "3 days ago" — in Arabic: أمس · قبل يومين · قبل ٣ أيام · قبل ١١ يومًا · قبل ١٠٠ يومٍ. */
+export function daysAgo(n: number): string {
+  if (current !== 'ar') return n === 1 ? 'yesterday' : `${n} days ago`;
+  if (n === 1) return 'أمس';
+  if (n === 2) return 'قبل يومين';
+  return `قبل ${arCount(n, { one: 'يوم', two: 'يومين', few: 'أيام', many: 'يومًا', hundred: 'يومٍ' })}`;
+}
+
 /** "3 files" — in Arabic: ملف واحد · ملفان · ٣–١٠ ملفات · ١١–٩٩ ملفًا · ١٠٠ ملفٍ. */
 export function countFiles(n: number): string {
   if (current !== 'ar') return `${n} ${n === 1 ? 'file' : 'files'}`;

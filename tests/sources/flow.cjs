@@ -22,16 +22,16 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     // (A couple of sections opened on the way down, so the Sources button sits below the first screen.)
     for (const name of ['Appearance', 'Reader']) await page.click(`section.card h3:has-text("${name}")`).catch(() => undefined);
     await page.click('section.card h3:has-text("Sources")'); await page.waitForTimeout(300);
-    await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Sources: Internet Archive/.test(x.textContent || '')); b.scrollIntoView({ block: 'center' }); }); await page.waitForTimeout(300);
+    await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Sources: Internet Archive, Shamela and yours/.test(x.textContent || '')); b.scrollIntoView({ block: 'center' }); }); await page.waitForTimeout(300);
     ok('the settings scrolled to the Sources section', await page.evaluate(() => document.querySelector('.settings-body').scrollTop > 200));
-    await page.click('button:has-text("Sources: Internet Archive")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
+    await page.click('button:has-text("Sources: Internet Archive, Shamela and yours")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     ok('hub lists both sources', (await page.$$('.source-card')).length === 2);
     // Back from the sources: the settings as they were left — the Sources section open, scrolled where it was.
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.settings-body', { timeout: 15000 }); await page.waitForTimeout(600);
     const settingsBack = await page.evaluate(() => { const card = [...document.querySelectorAll('section.card')].find((c) => /Sources/.test(c.querySelector('h3')?.textContent || '')); const r = card?.querySelector('button')?.getBoundingClientRect(); return { hash: location.hash, open: card && !card.classList.contains('collapsed'), visible: !!r && r.top >= 0 && r.bottom <= window.innerHeight }; });
     ok('back from the sources: the settings, the Sources section still open and in view', settingsBack.hash === '#/settings' && settingsBack.open && settingsBack.visible);
     if (!(settingsBack.hash === '#/settings' && settingsBack.open && settingsBack.visible)) console.log('  settings:', JSON.stringify(settingsBack));
-    await page.click('button:has-text("Sources: Internet Archive")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
+    await page.click('button:has-text("Sources: Internet Archive, Shamela and yours")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(__dirname, 'hub.png') });
     // archive.org: the default shelf.
     await page.click('.source-card >> nth=0 >> .source-head'); await page.waitForSelector('.src-grid .src-card', { timeout: 15000 }); await page.waitForTimeout(300);
@@ -165,7 +165,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('EPUB: back from the page is the library', ['#/', '', '#'].includes(await page.evaluate(() => location.hash)) && !!(await page.$('.library-view')));
     // A web folder, added by its address from the + sheet: its listing read (Apache's table), browsed, searched, fetched from.
     await page.goto(base + '#/sources'); await page.reload(); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
-    await page.click('.topbar-actions button[aria-label="Add a repository"], .topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]');
+    await page.click('.topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]');
     await page.fill('.sheet input[type=url]', 'http://localhost:5401/library'); await page.press('.sheet input[type=url]', 'Enter');
     await page.waitForSelector('.folder-card', { timeout: 20000 }); await page.waitForTimeout(400);
     ok('a web folder added by its address (sent to its slash, read as a listing)', /library/.test(await page.$eval('.folder-card b', (e) => e.textContent)) && /localhost:5401\/library/.test(await page.$eval('.folder-card small', (e) => e.textContent)));
@@ -218,7 +218,9 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]');
     await page.fill('.sheet input[type=url]', 'http://localhost:5401/library/'); await page.press('.sheet input[type=url]', 'Enter'); await page.waitForTimeout(1500);
     ok('the same folder again is refused', /already/i.test(await page.$eval('.sheet .hint', (e) => e.textContent)) && (await page.$$('.folder-card')).length === 1);
-    // The hidden word: "OTL" in the + sheet adds server.elscione.com's folder (an h5ai server, here the mock).
+    // The hidden extension: "OTL" in the + sheet fetches its manifest from the app's repository (listed
+    // nowhere) and adds server.elscione.com's folder — an h5ai server, here a mock shaped like the real one.
+    await ctx.route('https://raw.githubusercontent.com/YoRu72/KurokawaReader/main/extensions/otl.json', async (route) => route.fulfill({ response: await route.fetch({ url: 'http://localhost:5401/extensions/otl.json' }) }));
     await ctx.route('https://server.elscione.com/**', async (route) => {
       const req = route.request(); const u = new URL(req.url());
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' } });
@@ -231,25 +233,64 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.fill('.sheet input[type=url]', 'OTL'); await page.press('.sheet input[type=url]', 'Enter');
     await page.waitForFunction(() => document.querySelectorAll('.folder-card').length === 2, null, { timeout: 20000 }); await page.waitForTimeout(300);
     const otl = await page.$$eval('.folder-card', (cs) => cs.map((c) => `${c.querySelector('b')?.textContent}|${c.querySelector('small')?.textContent}`));
-    ok('"OTL" adds the Officially Translated Light Novels folder', otl.some((x) => x === 'Officially Translated Light Novels|server.elscione.com/Officially Translated Light Novels'));
-    await page.click('.folder-card:has-text("Officially Translated") .source-head'); await page.waitForSelector('.src-card.folder', { timeout: 20000 });
-    await page.waitForFunction(() => document.querySelectorAll('.src-card.folder .src-cover.has-img img').length === 3 && document.querySelectorAll('.src-card.folder .src-badge').length === 3, null, { timeout: 40000 });
-    const series = await page.$$eval('.src-card.folder', (cs) => cs.map((c) => `${c.querySelector('.src-title')?.textContent}|${c.querySelector('.src-badge')?.textContent}`));
-    ok('its series as a shelf of covers — each its first volume\'s (or its own picture) — with how many volumes', series.join() === 'Alpha Saga|4 volumes,Beta Tales|1 volume,Gamma Chronicles|2 volumes');
-    if (series.join() !== 'Alpha Saga|4 volumes,Beta Tales|1 volume,Gamma Chronicles|2 volumes') console.log('  series:', JSON.stringify(series));
+    ok('"OTL" installs the extension from its manifest: the Officially Translated Light Novels folder, under "Web folders"', otl.some((x) => x === 'Officially Translated Light Novels|server.elscione.com/Officially Translated Light Novels') && /Web folders/.test(await page.$eval('.repos', (e) => e.textContent)));
+    // Opened: indexed at once — one request to h5ai's search — and the series shelf drawn from the index.
+    await page.click('.folder-card:has-text("Officially Translated") .source-head');
+    await page.waitForFunction(() => /Indexed: 113 series/.test(document.querySelector('.src-index')?.textContent || '') && document.querySelectorAll('.src-card.folder .src-badge').length >= 20, null, { timeout: 40000 });
     const posted = await (await fetch('http://localhost:5401/__otl/posts')).json();
-    ok('a folder h5ai draws by script is listed through h5ai\'s API', posted.some((b) => /"action":"get"/.test(b) && /Gamma%20Chronicles/.test(b)));
+    ok('opened: indexed by one request to h5ai\'s search; every series counted', posted.filter((b) => /"search"/.test(b)).length === 1 && /Indexed: 113 series, \d+ volumes · Today/.test(await page.$eval('.src-index', (e) => e.textContent)));
+    const shelf = await page.$$eval('.src-card.folder', (cs) => cs.slice(0, 14).map((c) => `${c.querySelector('.src-title')?.textContent}|${c.querySelector('.src-badge.left')?.textContent ?? ''}|${c.querySelector('.src-author')?.textContent ?? ''}`));
+    ok('the series by name, each with its volumes counted and its publisher', shelf.length === 14 && shelf[0] === 'Alpha Saga|4 volumes|' && shelf.some((x) => x === 'Spice and Wolf|2 volumes|Yen Press') && shelf.some((x) => /^Didn't I Say to Make My Abilities Average\|\d+ volumes\|J-Novel Club$/.test(x)));
+    if (shelf[0] !== 'Alpha Saga|4 volumes|' || !shelf.some((x) => /^Spice/.test(x))) console.log('  shelf:', JSON.stringify(shelf));
+    ok('the shelves of the top: All, Recently updated, New volumes, In my library', (await page.$$eval('.src-shelves .chip', (cs) => cs.map((c) => c.textContent))).join() === 'All,Recently updated,New volumes,In my library');
+    await page.waitForFunction(() => document.querySelectorAll('.src-card.folder .src-cover.has-img img').length >= 6, null, { timeout: 60000 });
+    ok('the first volume\'s cover on each series as it comes near (Beta Tales its own picture)', (await page.$$('.src-card.folder .src-cover.has-img img')).length >= 6);
     await page.screenshot({ path: path.join(__dirname, 'otl.png') });
-    await page.click('.src-card.folder:has-text("Alpha Saga")'); await page.waitForSelector('.series-head', { timeout: 20000 });
-    // (Covers come as their rows come near: scrolled down the page, as a reader would.)
+    const otlHash = await page.evaluate(() => location.hash);
+    // Searching the whole folder from the index; three searches, then back: the page before, not each search.
+    for (const q of ['goblin', 'monogatari', 'spice']) { await page.fill('.src-search', q); await page.press('.src-search', 'Enter'); await page.waitForFunction((w) => new RegExp(w, 'i').test(document.querySelector('.src-grid')?.textContent || '') && /found/.test(document.querySelector('.topbar .title')?.textContent || ''), q, { timeout: 20000 }); }
+    const found = await page.evaluate(() => ({ series: [...document.querySelectorAll('.src-card.folder .src-title')].map((e) => e.textContent), rows: [...document.querySelectorAll('.vol-row .vol-title')].map((e) => e.textContent), title: document.querySelector('.topbar .title')?.textContent }));
+    ok('a search over the index: the series, then its volumes (editions together, one row each)', found.series.join() === 'Spice and Wolf' && found.rows.length === 2 && /^Spice and Wolf - Volume 01$/.test(found.rows[0]) && /^3 found/.test(found.title));
+    if (found.rows.length !== 2) console.log('  found:', JSON.stringify(found));
+    await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.sources-hub', { timeout: 15000 });
+    ok('three searches, then back once: the sources (no step per search)', (await page.evaluate(() => location.hash)) === '#/sources');
+    await page.goto(base + otlHash); await page.waitForSelector('.src-card.folder', { timeout: 20000 });
+    // The newest volumes of the whole folder.
+    await page.click('.src-shelves .chip:has-text("New volumes")'); await page.waitForSelector('.vol-row', { timeout: 20000 });
+    ok('"New volumes": the latest files of every series, newest first', /^Series 110 Chronicle of Tides - Volume 06$/.test(await page.$eval('.vol-row .vol-title', (e) => e.textContent)) && (await page.$$('.vol-row')).length >= 20);
+    await page.click('.src-shelves .chip:has-text("All")'); await page.waitForSelector('.src-card.folder', { timeout: 20000 });
+    // A series of J-Novel Club's: two editions of the even volumes, Premium first; another chosen, fetched.
+    await page.fill('.src-search', "didn't i say"); await page.press('.src-search', 'Enter'); await page.waitForSelector('.src-card.folder', { timeout: 20000 });
+    await page.click('.src-card.folder'); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(400);
+    const dis = await page.evaluate(() => [...document.querySelectorAll('.vol-row')].map((r) => `${r.querySelector('.vol-title')?.textContent}|${[...r.querySelectorAll('.vol-editions .chip')].map((c) => c.textContent + (c.classList.contains('on') ? '*' : '')).join('/')}`));
+    ok('a series\' page: "Volume N" rows, the editions of a volume together (Premium chosen first)', dis[0] === 'Volume 1|' && dis[1] === 'Volume 2|Premium*/Kobo' && dis.length >= 2);
+    if (dis[1] !== 'Volume 2|Premium*/Kobo') console.log('  editions:', JSON.stringify(dis));
+    await page.waitForFunction(() => !!document.querySelector('.series-about:not([hidden])')?.textContent, null, { timeout: 30000 });
+    ok('the series\' blurb (its first volume\'s), folded to a few lines', (await page.$eval('.series-about', (e) => e.classList.contains('clamped') && e.textContent.length > 40)));
+    await page.click('.vol-row >> nth=1 >> .vol-editions .chip:has-text("Kobo")'); await page.waitForTimeout(300);
+    ok('another edition chosen', await page.$eval('.vol-row >> nth=1', (r) => r.querySelector('.vol-editions .chip.on')?.textContent === 'Kobo'));
+    await page.click('.vol-row >> nth=1 >> .vol-actions button'); await page.waitForSelector('.vol-row >> nth=1 >> .vol-actions .btn.primary', { timeout: 60000 });
+    ok('… fetched: the row opens it, its chip marked', await page.$eval('.vol-row >> nth=1', (r) => r.querySelector('.vol-editions .chip.have')?.textContent === 'Kobo'));
+    await page.screenshot({ path: path.join(__dirname, 'otl-series.png') });
+    // Side folders of a series ("!Side Stories", a scan group's) after its volumes; a volume "01.5" with its subtitle.
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Ascendance%20of%20a%20Bookworm')); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(300);
+    ok('side folders after the volumes, named plainly', (await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent))).join() === 'Ozymandias,Side Stories');
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Monogatari%20Series')); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(300);
+    ok('"Volume 01.5 - Bakemonogatari (Part 2)" read as volume 1.5 with its subtitle', (await page.$$eval('.vol-row .vol-title', (es) => es.map((e) => e.textContent))).includes('Volume 1.5 — Bakemonogatari (Part 2)'));
+    // A scan beside a store edition: shown, or left out when the reader says so.
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Goblin%20Slayer')); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(300);
+    ok('a scan beside the store edition (the store\'s first)', (await page.$eval('.vol-row', (r) => [...r.querySelectorAll('.vol-editions .chip')].map((c) => c.textContent).join('/'))) === 'Kobo/OCR · Anon');
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.scans = false; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.reload(); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(300);
+    ok('… scans left out when asked', !(await page.$('.vol-row .vol-editions')) && !/OCR/.test(await page.$eval('.vol-row', (r) => r.textContent)));
+    // Volumes in reading order (1, 2, 10, then the side story); one fetched by its own button.
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Alpha%20Saga')); await page.waitForSelector('.series-block', { timeout: 20000 });
     await page.waitForFunction(() => { const b = document.querySelector('.sources-view .src-body'); if (b) b.scrollTop += 300; return document.querySelectorAll('.vol-row .vol-cover img').length === 4; }, null, { timeout: 60000, polling: 400 });
     await page.evaluate(() => { document.querySelector('.sources-view .src-body').scrollTop = 0; });
     const saga = await page.$$eval('.vol-row', (rs) => rs.map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-kind')?.textContent}`));
-    ok('a series\' page: the volumes in reading order (1, 2, 10, then the side story), every one with its cover', saga.join() === 'Alpha Saga Vol. 1|EPUB,Alpha Saga Vol. 2|EPUB,Alpha Saga Vol. 10|EPUB,Alpha Saga - Side Story|PDF');
-    if (saga.length !== 4) console.log('  saga:', JSON.stringify(saga));
+    ok('the volumes in reading order (1, 2, 10, then the side story), every one with its cover', saga.join() === 'Volume 1|EPUB,Volume 2|EPUB,Volume 10|EPUB,Alpha Saga - Side Story|PDF');
+    if (saga.length !== 4 || saga[0] !== 'Volume 1|EPUB') console.log('  saga:', JSON.stringify(saga));
     ok('… with a button for all of them', /Download all 4 volumes/.test(await page.$eval('.series-head button', (e) => e.textContent)) && /4 volumes/.test(await page.$eval('.series-head .src-chips', (e) => e.textContent)));
-    await page.screenshot({ path: path.join(__dirname, 'otl-series.png') });
-    // One volume by its own button.
     await page.click('.vol-row >> nth=1 >> .vol-actions button'); await page.waitForSelector('.vol-row >> nth=1 >> .vol-actions .btn.primary', { timeout: 60000 });
     ok('one volume by its own button; the series\' button counts the rest', /Download all 3 volumes/.test(await page.$eval('.series-head button', (e) => e.textContent)));
     // Back from a volume — its page, or the reader — is the series where it was left, not the main page.
@@ -258,12 +299,11 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.evaluate(() => { const body = document.querySelector('.sources-view .src-body'); const row = document.querySelectorAll('.vol-row')[2]; body.scrollTop = row.offsetTop - body.offsetTop - 80; }); await page.waitForTimeout(400);
     const before = await placeOf();
     await page.click('.vol-row >> nth=2 >> .vol-cover'); await page.waitForSelector('.src-files .src-file, .src-files .btn', { timeout: 30000 }); await page.waitForTimeout(300);
-    ok('a volume\'s page from its cover', /\/book\/f%3AAlpha%2520Saga%2FAlpha%2520Saga%2520Vol\.%252010\.epub$/.test(await page.evaluate(() => location.hash)) || /book\/f/.test(await page.evaluate(() => location.hash)));
+    ok('a volume\'s page from its cover', /book\/f/.test(await page.evaluate(() => location.hash)));
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.vol-row', { timeout: 15000 }); await page.waitForTimeout(500);
     const after = await placeOf();
     ok('back from a volume\'s page: the series, scrolled where it was', after.hash === seriesHash && after.rows === 4 && before.top > 100 && Math.abs(after.top - before.top) <= 4 && Math.abs(after.rowTop - before.rowTop) <= 4);
     if (!(after.hash === seriesHash && Math.abs(after.top - before.top) <= 4)) console.log('  place:', JSON.stringify({ before, after, seriesHash }));
-    // The volume fetched above, read and left: back on the series again.
     await page.evaluate(() => { const body = document.querySelector('.sources-view .src-body'); const row = document.querySelectorAll('.vol-row')[1]; body.scrollTop = row.offsetTop - body.offsetTop - 40; }); await page.waitForTimeout(400);
     const before2 = await placeOf();
     await page.click('.vol-row >> nth=1 >> .vol-actions .btn.primary'); await page.waitForSelector('.reader-view, .reader-scroll', { timeout: 30000 }); await page.waitForTimeout(1500);
@@ -272,14 +312,17 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     const after2 = await placeOf();
     ok('back from the reader: the series, scrolled where it was (not the library)', after2.hash === seriesHash && Math.abs(after2.top - before2.top) <= 4);
     if (!(after2.hash === seriesHash && Math.abs(after2.top - before2.top) <= 4)) console.log('  place2:', JSON.stringify({ before2, after2, seriesHash }));
-    // And on: the shelf of series, then the hub.
-    await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.src-card.folder', { timeout: 15000 }); await page.waitForTimeout(400);
-    ok('… back: the shelf of series', (await page.$$('.src-card.folder .src-cover.has-img img')).length === 3 && !(await page.$('.series-head')));
-    await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.sources-hub', { timeout: 15000 });
-    ok('… back: the sources', (await page.evaluate(() => location.hash)) === '#/sources');
+    // The series with books in the library, on their own shelf and marked on their covers.
+    await page.goto(base + otlHash); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
+    await page.click('.src-shelves .chip:has-text("In my library")'); await page.waitForFunction(() => document.querySelectorAll('.src-card.folder').length === 2, null, { timeout: 20000 });
+    await page.waitForFunction(() => document.querySelectorAll('.src-card.folder .src-badge.have').length === 2, null, { timeout: 30000 });
+    const mine = await page.$$eval('.src-card.folder', (cs) => cs.map((c) => `${c.querySelector('.src-title')?.textContent}|${c.querySelector('.src-badge.have')?.textContent}`));
+    ok('"In my library": the series with volumes fetched, each marked with how many of how many', mine.join() === "Alpha Saga|1/4,Didn't I Say to Make My Abilities Average|1/" + mine[1]?.split('/')[1] && /^Didn't I Say/.test(mine[1] ?? ''));
+    if (!/^Alpha Saga\|1\/4$/.test(mine[0] ?? '')) console.log('  mine:', JSON.stringify(mine));
+    // And the word again: already added.
     await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     await page.click('.topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]');
     await page.fill('.sheet input[type=url]', 'otl'); await page.press('.sheet input[type=url]', 'Enter'); await page.waitForTimeout(1200);
-    ok('"otl" again: already added', /already/i.test(await page.$eval('.sheet .hint', (e) => e.textContent)) && (await page.$$('.folder-card')).length === 2);
+    ok('"otl" again: already in your sources', /already in your sources/i.test(await page.$eval('.sheet .hint', (e) => e.textContent)) && (await page.$$('.folder-card')).length === 2);
   } finally { console.log('errors', errors); await browser.close(); server.close(); mock.kill(); }
 })();

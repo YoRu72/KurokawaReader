@@ -6,7 +6,7 @@ import { request, bytesOf } from './http';
 import { db } from '../db';
 import { SourceError } from './types';
 
-export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number }
+export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean }
 
 const h32 = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
 
@@ -17,8 +17,9 @@ const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u
 
 interface Got { bytes: Uint8Array; start: number; total?: number; whole: boolean }
 /** Bytes `from`–`to` (inclusive) of a file, or its last `-from` bytes when `from` is negative. */
+const extra = new Map<string, Record<string, string>>();
 async function range(url: string, from: number, to?: number): Promise<Got> {
-  const r = await request(url, { headers: { range: from < 0 ? `bytes=${from}` : `bytes=${from}-${to ?? ''}` }, binary: true, quiet: true, retries: 1 });
+  const r = await request(url, { headers: { ...(extra.get(hostOf(url)) ?? {}), range: from < 0 ? `bytes=${from}` : `bytes=${from}-${to ?? ''}` }, binary: true, quiet: true, retries: 1 });
   if (r.status === 416) throw new SourceError('range', 'http', 416);
   if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
   const bytes = bytesOf(r.body);
@@ -144,7 +145,7 @@ function resolve(dir: string, href: string): string {
   try { return decodeURIComponent(new URL(href.split('#')[0], `zip://x/${dir}`).pathname.slice(1)); } catch { return href; }
 }
 
-async function peekEpub(url: string): Promise<Peek> {
+async function peekEpub(url: string, noCover = false): Promise<Peek> {
   const z = new RemoteZip(url);
   await z.open();
   const container = (await z.read(['META-INF/container.xml'])).get('META-INF/container.xml');
@@ -160,6 +161,10 @@ async function peekEpub(url: string): Promise<Peek> {
   const meta = byTag(opf, 'metadata')[0];
   const title = meta ? textOf(byTag(meta, 'title')[0]) : '';
   const author = meta ? byTag(meta, 'creator').map(textOf).filter(Boolean).slice(0, 2).join(', ') : '';
+  // (The publisher's blurb, kept as plain text: the series' page shows it.)
+  const blurb = meta ? (byTag(meta, 'description')[0]?.textContent ?? '') : '';
+  const description = blurb ? new DOMParser().parseFromString(blurb, 'text/html').body.textContent?.replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 2000) : '';
+  const publisher = meta ? textOf(byTag(meta, 'publisher')[0]) : '';
   const items = byTag(opf, 'item').map((i) => ({ id: i.getAttribute('id') ?? '', href: i.getAttribute('href') ?? '', type: i.getAttribute('media-type') ?? '', props: i.getAttribute('properties') ?? '' }));
   const isImg = (t: string) => /^image\//i.test(t);
   // The cover: the one the package names, else a picture called so, else the picture of the cover page.
@@ -183,8 +188,8 @@ async function peekEpub(url: string): Promise<Peek> {
   const ncxId = byTag(opf, 'spine')[0]?.getAttribute('toc');
   const ncxItem = items.find((i) => i.id === ncxId) ?? items.find((i) => /ncx/.test(i.type));
   const tocPath = navItem ? resolve(dir, navItem.href) : ncxItem ? resolve(dir, ncxItem.href) : '';
-  // (A picture too big to be worth fetching for a thumbnail is left out.)
-  if (coverPath && (z.entries.get(coverPath)?.csize ?? 0) > 6 * 1024 * 1024) coverPath = '';
+  // (A picture too big to be worth fetching for a thumbnail is left out; none at all when covers are off.)
+  if (noCover || (coverPath && (z.entries.get(coverPath)?.csize ?? 0) > 6 * 1024 * 1024)) coverPath = '';
   const later = [tocPath, coverPath].filter((p) => p && !first.has(p));
   const more = later.length ? await z.read(later) : new Map<string, Uint8Array>();
   const get = (p: string) => first.get(p) ?? more.get(p);
@@ -202,7 +207,7 @@ async function peekEpub(url: string): Promise<Peek> {
   }
   const coverBytes = coverPath ? get(coverPath) : undefined;
   const thumbUrl = coverBytes ? await thumb(coverBytes, cover?.type || 'image/jpeg').catch(() => undefined) : undefined;
-  return { title: title || undefined, author: author || undefined, cover: thumbUrl, toc, at: Date.now() };
+  return { title: title || undefined, author: author || undefined, cover: thumbUrl, toc, at: Date.now(), description: description || undefined, publisher: publisher || undefined, noCover: noCover || undefined };
 }
 
 /* ---------- a PDF ---------- */
@@ -294,22 +299,25 @@ export async function recall(key: string, maxAge = Infinity): Promise<Peek | und
 export function remember(key: string, p: Peek): void { mem.set(key, p); void keep(key, p); }
 /** What is already known in this session, at once (a page drawn again shows it without waiting). */
 export const known = (key: string): Peek | undefined => mem.get(key);
-export const peekKnown = (url: string, size?: number): Peek | undefined => mem.get(`peek:${h32(`${url}|${size ?? ''}`)}`);
+export const peekKnown = (url: string, size?: number, noCover = false): Peek | undefined => { const p = mem.get(`peek:${h32(`${url}|${size ?? ''}`)}`); return p && (!p.noCover || noCover) ? p : undefined; };
 export const keyOf = (s: string) => h32(s);
 
 /** What a file on a server holds — cover, title, contents — for an EPUB or a PDF; kept once found. A file is
  *  known by its address and size (a new upload under the same name is looked at again). */
-export function peekFile(url: string, ext: string, size?: number): Promise<Peek | null> {
+export function peekFile(url: string, ext: string, size?: number, opts: { noCover?: boolean; headers?: Record<string, string> } = {}): Promise<Peek | null> {
   const key = `peek:${h32(`${url}|${size ?? ''}`)}`;
-  const had = mem.get(key); if (had) return Promise.resolve(had);
+  if (opts.headers) extra.set(hostOf(url), opts.headers);
+  // (One read without its cover — covers were off — is read again when they are on.)
+  const usable = (p: Peek | undefined) => !!p && (!p.noCover || !!opts.noCover);
+  const had = mem.get(key); if (usable(had)) return Promise.resolve(had!);
   const run = running.get(key); if (run) return run;
   const p = (async (): Promise<Peek | null> => {
     const stored = await db.getMeta<Peek>(key).catch(() => undefined);
-    if (stored) { mem.set(key, stored); return stored; }
+    if (usable(stored)) { mem.set(key, stored!); return stored!; }
     // (A server that sends whole files for ranges is not asked for its big ones.)
     if (wholeHosts.has(hostOf(url)) && (size ?? Infinity) > 6 * 1024 * 1024) return null;
     try {
-      const peek = ext === 'epub' ? await peekEpub(url) : ext === 'pdf' ? await peekPdf(url, size) : null;
+      const peek = ext === 'epub' ? await peekEpub(url, !!opts.noCover) : ext === 'pdf' ? (opts.noCover ? null : await peekPdf(url, size)) : null;
       if (!peek) return null;
       mem.set(key, peek); void keep(key, peek);
       return peek;

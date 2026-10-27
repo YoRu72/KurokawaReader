@@ -114,8 +114,10 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     // (No repository comes with the app: the reader adds the ones he wants with the + above.)
     reposBox.replaceChildren();
     if (!repos.length) { reposBox.append(h('p', { class: 'hint repos-empty' }, t('noReposYet'))); return; }
-    reposBox.append(h('h3', { class: 'section-title' }, t('repos')));
-    for (const r of repos) reposBox.append(r.kind === 'folder' ? folderSection(r, () => void drawRepos()) : repoSection(r, () => void drawRepos()));
+    // (Folders of books apart from the repositories of extensions: two kinds of source, said so.)
+    const folders = repos.filter((r) => r.kind === 'folder'); const exts = repos.filter((r) => r.kind !== 'folder');
+    if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
+    if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
   };
   void drawRepos();
   return root;
@@ -188,7 +190,8 @@ function repoSection(r: Repo, redraw: () => void): HTMLElement {
 }
 /** A web folder the reader added: a source card like the built-in ones, opening its root. */
 function folderSection(r: Repo, redraw: () => void): HTMLElement {
-  let where = r.url; try { const u = new URL(r.url); where = `${u.host}${u.pathname === '/' ? '' : decodeURIComponent(u.pathname).replace(/\/$/, '')}`; } catch { /* as given */ }
+  const address = r.folder ?? r.url;
+  let where = address; try { const u = new URL(address); where = `${u.host}${u.pathname === '/' ? '' : decodeURIComponent(u.pathname).replace(/\/$/, '')}`; } catch { /* as given */ }
   const card = h('article', { class: 'source-card folder-card' });
   const head = h('button', { type: 'button', class: 'source-head', onclick: () => navigate(path(`${DIR_PREFIX}${r.key}`)) },
     h('span', { class: 'source-icon' }, icon('folder')),
@@ -238,7 +241,8 @@ function addRepoSheet(after: () => void): void {
       toast(repo.kind === 'folder' ? t('folderAdded', { name }) : runnable ? t('repoAdded', { name, n: localDigits(runnable) }) : t('repoAddedNotRunnable', { name, app: KIND_APP[repo.kind] }), 'info', 4000);
     } catch (e) {
       const err = e as SourceError;
-      status.textContent = err instanceof SourceError && err.kind === 'parse' ? (err.message === 'badRepoUrl' ? t('repoBadUrl') : t('repoNoIndex')) : describe(e);
+      const at = err instanceof SourceError ? /^noIndexAt:(\d+):(.*):(https?:.*)$/.exec(err.message) : null;
+      status.textContent = at ? t('repoNoIndexAt', { status: at[1], title: at[2] ? t('repoNoIndexTitle', { title: at[2] }) : '' }) : err instanceof SourceError && err.kind === 'parse' ? (err.message === 'badRepoUrl' ? t('repoBadUrl') : err.message === 'noIndex' ? t('repoNoIndex') : describe(e)) : describe(e);
       go.disabled = false;
     }
   } }, icon('check'), t('addRepo'));
@@ -342,45 +346,70 @@ const HEAD = '\u0000head';
 /** A volume: its cover and contents (read from the file as the row comes near), its size, its button —
  *  "Download", the progress, then "Open" once it is in the library. */
 function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
-  const f = b.file!;
+  // The editions of the volume (the row's own first): the one in the library shown if there is one.
+  const alts = b.alts?.length ? b.alts : [{ label: '', id: b.id, file: b.file! }];
+  let cur = alts.find((a) => lib.has(a.id)) ?? alts[0];
   const [c1, c2] = coverColors(b.title);
-  const kind = h('span', { class: 'vol-kind' }, b.badge ?? f.label);
-  const cover = h('button', { type: 'button', class: 'vol-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` }, 'aria-label': b.title, onclick: () => navigate(bookPath(src.id, b.id)) }, h('span', { class: 'vol-cover-title', dir: 'auto' }, b.title), kind);
+  const kind = h('span', { class: 'vol-kind' }, b.badge ?? cur.file.label);
+  const coverTitle = h('span', { class: 'vol-cover-title', dir: 'auto' }, b.title);
+  const cover = h('button', { type: 'button', class: 'vol-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` }, 'aria-label': b.title, onclick: () => navigate(bookPath(src.id, cur.id)) }, coverTitle, kind);
+  const sub = h('small', { class: 'vol-sub', dir: 'auto' });
   const extra = h('small', { class: 'vol-meta', dir: 'auto', hidden: true });
   const tocSlot = h('div');
   const actions = h('div', { class: 'vol-actions' });
+  const chips = alts.length > 1 ? h('div', { class: 'vol-editions', role: 'tablist' }) : null;
   const openBtn = (bookId: string) => h('button', { type: 'button', class: 'btn primary small', onclick: () => navigate(`/read/${bookId}`) }, icon('play'), t('open'));
-  const setOpen = (bookId: string) => { actions.replaceChildren(openBtn(bookId)); };
-  rows.set(b.id, setOpen);
-  const dl = h('button', { type: 'button', class: 'btn tonal small' }, icon('download'), h('span', null, t('download'))) as HTMLButtonElement;
-  dl.addEventListener('click', async () => {
-    dl.disabled = true;
-    try {
-      const book = await fetchVolume(src, b.id, b.title, f, (p) => { dl.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : '…')); });
-      lib.set(b.id, book.id); setOpen(book.id); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
-    } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); toast(describe(e), 'error'); }
-  });
-  const have = lib.get(b.id);
-  actions.append(have ? openBtn(have) : dl);
-  const row = h('article', { class: 'vol-row' }, cover,
-    h('div', { class: 'vol-text' },
-      h('b', { class: 'vol-title', dir: 'auto' }, b.title),
-      h('small', { class: 'vol-sub', dir: 'auto' }, [b.author, f.size !== undefined ? formatBytes(f.size) : '', (b.year ?? '').replace(/[ T]\d{1,2}:\d{2}.*$/, '')].filter(Boolean).join(' · ')),
-      extra, actions, tocSlot));
-  const fill = (p: { cover?: string; title?: string; author?: string; toc?: { label: string; depth: number }[] }) => {
-    if (p.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), kind); }
-    const line = [p.title && p.title.toLowerCase() !== b.title.toLowerCase() ? p.title : '', p.author].filter(Boolean).join(' — ');
-    if (line) { extra.textContent = line; extra.hidden = false; }
-    if (p.toc?.length) tocSlot.replaceChildren(tocBlock(p.toc));
+  const download = () => {
+    const a = cur;
+    const dl = h('button', { type: 'button', class: 'btn tonal small' }, icon('download'), h('span', null, t('download'))) as HTMLButtonElement;
+    dl.addEventListener('click', async () => {
+      dl.disabled = true;
+      try {
+        const book = await fetchVolume(src, a.id, b.title, a.file, (p) => { dl.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : '…')); });
+        lib.set(a.id, book.id); if (cur === a) draw(); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
+      } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); toast(describe(e), 'error'); }
+    });
+    return dl;
   };
-  // (Read before in this session: drawn at once, so a page come back to keeps its height and its place.)
-  const now = src.peekNow?.(b);
-  if (now) fill(now);
-  else if (src.peek) observe(row, async () => { const p = await src.peek!(b).catch(() => null); if (p) fill(p); });
+  // (Whoever fetches one of its editions — the series' button — tells the row.)
+  for (const a of alts) rows.set(a.id, (bookId) => { lib.set(a.id, bookId); if (cur === a) draw(); });
+  let token = 0;
+  const draw = () => {
+    const f = cur.file;
+    sub.textContent = [b.author, !chips && b.description ? b.description : '', f.size !== undefined ? formatBytes(f.size) : '', (b.year ?? '').replace(/[ T]\d{1,2}:\d{2}.*$/, '')].filter(Boolean).join(' · ');
+    const have = lib.get(cur.id);
+    actions.replaceChildren(have ? openBtn(have) : download());
+    if (chips) chips.querySelectorAll('.chip').forEach((c, i) => { c.classList.toggle('on', alts[i] === cur); c.setAttribute('aria-selected', String(alts[i] === cur)); if (lib.has(alts[i].id)) c.classList.add('have'); });
+  };
+  if (chips) alts.forEach((a) => chips.append(h('button', { type: 'button', class: 'chip small', role: 'tab', onclick: () => { if (cur === a) return; cur = a; draw(); look(); } }, a.label)));
+  const row = h('article', { class: 'vol-row' }, cover,
+    h('div', { class: 'vol-text' }, h('b', { class: 'vol-title', dir: 'auto' }, b.title), sub, chips, extra, actions, tocSlot));
+  draw();
+  const fill = (p: { cover?: string; title?: string; author?: string; toc?: { label: string; depth: number }[] }, mine: number) => {
+    if (mine !== token) return;
+    cover.classList.toggle('has-img', !!p.cover);
+    cover.replaceChildren(...(p.cover ? [h('img', { src: p.cover, alt: '' })] : [coverTitle]), kind);
+    const line = [p.title && p.title.toLowerCase() !== b.title.toLowerCase() ? p.title : '', p.author].filter(Boolean).join(' — ');
+    extra.textContent = line; extra.hidden = !line;
+    tocSlot.replaceChildren(...(p.toc?.length ? [tocBlock(p.toc)] : []));
+  };
+  // Cover and contents of the edition shown — at once when read before in this session (a page come back to
+  // keeps its height and its place), else as the row comes near.
+  const look = () => {
+    const mine = ++token; const shown: SourceBook = { ...b, id: cur.id, file: cur.file };
+    const now = src.peekNow?.(shown);
+    if (now) fill(now, mine);
+    else if (src.peek) observe(row, async () => { const p = await src.peek!(shown).catch(() => null); if (p) fill(p, mine); });
+  };
+  look();
   return row;
 }
 /** The head of a folder of volumes: the first volume's cover, the name, how many and how big, and a button
  *  to fetch them all — into a folder of the library named after the series, skipping those already there. */
+/** Indexes being made: one per source, carried on when its page is left and shown again when it comes back. */
+interface IndexRun { text: string; done: Promise<void>; on?: (text: string) => void; end?: (ok: boolean, e?: unknown) => void }
+const indexRuns = new Map<string, IndexRun>();
+const autoTried = new Set<string>();
 /** Series being fetched whole: one run per series however often its page is opened meanwhile. */
 const seriesRuns = new Map<string, { text: string; on?: (text: string) => void; done?: () => void }>();
 function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
@@ -421,19 +450,30 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       seriesRuns.delete(runKey); run.done?.();
     } catch (e) { seriesRuns.delete(runKey); toast(describe(e), 'error'); run.done?.(); status.hidden = false; status.textContent = describe(e); }
   });
+  const byline = h('p', { class: 'src-author-line', dir: 'auto', hidden: true });
+  const about = h('p', { class: 'series-about clamped', dir: 'auto', hidden: true, title: t('seriesAbout') });
+  about.addEventListener('click', () => about.classList.toggle('clamped'));
   const head = h('article', { class: 'series-head' }, cover,
     h('div', { class: 'series-text' },
       h('h2', { dir: 'auto' }, b.title),
+      byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
       h('div', { class: 'series-actions' }, btn), status));
   // (The cover is the first volume's: an EPUB before a PDF.)
   const v1 = files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
+  // (The first volume's cover, and its publisher's blurb as the series' — folded to a few lines, a tap opens it.)
+  const fill = (p: { cover?: string; description?: string; author?: string } | null | undefined) => {
+    if (!p) return;
+    if (p.cover) cover.replaceChildren(h('img', { src: p.cover, alt: '' }));
+    if (p.author && !byline.textContent) { byline.textContent = p.author; byline.hidden = false; }
+    if (p.description && !about.textContent) { about.textContent = p.description; about.hidden = false; }
+  };
   const now = v1b ? src.peekNow?.(v1b) : undefined;
-  if (now?.cover) cover.replaceChildren(h('img', { src: now.cover, alt: '' }));
-  else if (v1b && src.peek) observe(head, async () => { const p = await src.peek!(v1b).catch(() => null); if (p?.cover) cover.replaceChildren(h('img', { src: p.cover, alt: '' })); });
-  return head;
+  if (now) fill(now);
+  else if (v1b && src.peek) observe(head, async () => fill(await src.peek!(v1b).catch(() => null)));
+  return h('div', { class: 'series-block' }, head, about);
 }
 
 /* ---------- browsing a source ---------- */
@@ -446,7 +486,9 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   const tagRow = h('div', { class: 'folder-chips src-tags', hidden: true });
   const shelfRow = h('div', { class: 'folder-chips src-shelves', hidden: true });
   const input = h('input', { type: 'search', class: 'src-search', placeholder: t('searchSource', { name: src.name }), value: q, dir: 'auto', 'aria-label': t('search') }) as HTMLInputElement;
-  const form = h('form', { class: 'src-search-row', onsubmit: (e: Event) => { e.preventDefault(); navigate(path(src.id, { q: input.value.trim(), shelf, tags })); } },
+  // (A search, a shelf, a tag is the same page seen otherwise: it takes the page's place in the history, so
+  // the way back leaves the page instead of going through every search made on it.)
+  const form = h('form', { class: 'src-search-row', onsubmit: (e: Event) => { e.preventDefault(); navigate(path(src.id, { q: input.value.trim(), shelf, tags }), true); } },
     input, h('button', { type: 'submit', class: 'icon-btn', 'aria-label': t('search') }, icon('search')));
   const titleEl = h('div', { class: 'title' }, h('span', { dir: 'auto' }, src.name));
   const body = h('div', { class: 'library-body src-body' }, form, shelfRow, tagRow, status, grid, sentinel);
@@ -473,13 +515,47 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
 
   // Shelves (collections, categories, popular/latest) when nothing is searched.
-  if (src.shelves) void src.shelves().then((list) => {
+  if (src.shelves) void src.shelves(shelf).then((list) => {
     if (gone || !list.length) return;
     shelfRow.hidden = false;
-    if (!hnd) shelfRow.append(h('button', { type: 'button', class: 'chip' + (!shelf ? ' on' : ''), onclick: () => navigate(path(src.id, { q, tags })) }, h('span', null, t('allShelves'))));
-    for (const s of list) shelfRow.append(h('button', { type: 'button', class: 'chip' + ((shelf ?? (hnd ? 'popular' : '')) === s.id ? ' on' : ''), onclick: () => navigate(path(src.id, { q, shelf: s.id, tags })) }, h('span', { dir: 'auto' }, shelfLabel(s)), s.count ? h('small', null, ` ${localDigits(s.count)}`) : null));
+    if (!hnd) shelfRow.append(h('button', { type: 'button', class: 'chip' + (!shelf ? ' on' : ''), onclick: () => navigate(path(src.id, { q, tags }), true) }, h('span', null, t('allShelves'))));
+    for (const s of list) shelfRow.append(h('button', { type: 'button', class: 'chip' + ((shelf ?? (hnd ? 'popular' : '')) === s.id ? ' on' : ''), onclick: () => navigate(path(src.id, { q, shelf: s.id, tags }), true) }, h('span', { dir: 'auto' }, shelfLabel(s)), s.count ? h('small', null, ` ${localDigits(s.count)}`) : null));
     if (shelf && !hnd) { const cur = list.find((s) => s.id === shelf); if (cur) titleEl.replaceChildren(h('span', { dir: 'auto' }, cur.label), h('small', null, src.name)); }
   }).catch(() => undefined);
+
+  // The source's own state (a folder's index): a line with its button, at the top of the source only.
+  if (src.status && !q && (!shelf || shelf.startsWith('::'))) {
+    const line = h('div', { class: 'src-index' });
+    const text = h('small', { class: 'grow', dir: 'auto' });
+    line.append(icon('search'), text);
+    body.insertBefore(line, status);
+    void src.status().then((st) => {
+      if (gone || !st) { line.remove(); return; }
+      text.textContent = st.text;
+      if (!st.action) return;
+      const act = st.action;
+      const btn = h('button', { type: 'button', class: 'btn small tonal' }, t('indexUpdate')) as HTMLButtonElement;
+      btn.textContent = act.label;
+      const start = () => {
+        btn.disabled = true;
+        let run = indexRuns.get(src.id);
+        if (!run) {
+          const r: IndexRun = { text: '', done: Promise.resolve() };
+          r.done = act.run((txt) => { r.text = txt; r.on?.(txt); }, () => true).then(() => { indexRuns.delete(src.id); r.end?.(true); }, (e) => { indexRuns.delete(src.id); r.end?.(false, e); });
+          indexRuns.set(src.id, r); run = r;
+        }
+        run.on = (txt) => { text.textContent = txt; };
+        run.end = (ok, e) => {
+          if (ok) { cache.delete(key); if (!gone) navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }
+          else { btn.disabled = false; text.textContent = describe(e); }
+        };
+        if (run.text) text.textContent = run.text;
+      };
+      btn.addEventListener('click', start);
+      line.append(btn);
+      if (indexRuns.has(src.id) || (st.auto && !autoTried.has(src.id))) { autoTried.add(src.id); start(); }
+    }).catch(() => line.remove());
+  }
 
   const drawTags = () => {
     const shown = new Map<string, SourceTag>();
@@ -488,7 +564,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     tagRow.replaceChildren(); tagRow.hidden = !shown.size;
     for (const tg of shown.values()) {
       const on = tags.includes(tg.id);
-      tagRow.append(h('button', { type: 'button', class: 'chip tag' + (on ? ' on' : ''), onclick: () => navigate(path(src.id, { q, shelf, tags: on ? tags.filter((x) => x !== tg.id) : [...tags, tg.id] })) }, icon('tag'), h('span', { dir: 'auto' }, tg.label), tg.count ? h('small', null, ` ${localDigits(tg.count)}`) : null));
+      tagRow.append(h('button', { type: 'button', class: 'chip tag' + (on ? ' on' : ''), onclick: () => navigate(path(src.id, { q, shelf, tags: on ? tags.filter((x) => x !== tg.id) : [...tags, tg.id] }), true) }, icon('tag'), h('span', { dir: 'auto' }, tg.label), tg.count ? h('small', null, ` ${localDigits(tg.count)}`) : null));
     }
   };
   const card = (b: SourceBook): HTMLElement => {
@@ -506,9 +582,12 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       b.description && src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? h('span', { class: 'src-snippet', dir: 'auto' }, b.description) : null);
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
     if (b.look === 'folder' && b.openShelf !== undefined && src.folderCover) {
+      // (The series' volumes in the library: counted on its card.)
+      const mine = [...lib.keys()].filter((k) => k.startsWith(`f:${b.openShelf}/`)).length;
       const fill = (p: { cover?: string; count?: number } | null) => {
         if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), h('span', { class: 'folder-mark' }, icon('folder'))); }
-        if (p?.count) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
+        if (p?.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
+        if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p?.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
       };
       const now = src.folderCoverNow?.(b.openShelf);
       if (now) fill(now);
@@ -525,7 +604,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       if (gone) return;
       page++; hasMore = r.hasMore; items.push(...r.items);
       if (r.tags?.length && page === 1) { allTags = r.tags; drawTags(); }
-      if (r.title && page === 1 && (q || !shelf || !src.shelves)) titleEl.replaceChildren(h('span', { dir: 'auto' }, r.title), h('small', null, src.name));
+      if (r.title && page === 1 && (q || !shelf || !src.shelves || src.id.startsWith('dir:'))) titleEl.replaceChildren(h('span', { dir: 'auto' }, r.title), h('small', null, src.name));
       for (const b of r.items) grid.append(card(b));
       status.textContent = items.length ? '' : t('noResults');
       cache.set(key, { items: [...items], page, hasMore, tags: allTags, title: r.title, scroll: 0 });
@@ -542,7 +621,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // (A folder's rows know which of its files are in the library before they are drawn.)
   const ready = src.id.startsWith('dir:') ? fromSource(src.id).then((m) => { for (const [k, v] of m) lib.set(k, v); }).catch(() => undefined) : Promise.resolve();
   void ready.then(() => { if (!gone) io.observe(sentinel); });
-  if (had) void ready.then(() => { if (gone) return; items = [...had.items]; page = had.page; hasMore = had.hasMore; allTags = had.tags; drawTags(); for (const b of items) grid.append(card(b)); if (had.title && (q || !shelf || !src.shelves)) titleEl.replaceChildren(h('span', { dir: 'auto' }, had.title), h('small', null, src.name)); requestAnimationFrame(() => { body.scrollTop = had.scroll; }); });
+  if (had) void ready.then(() => { if (gone) return; items = [...had.items]; page = had.page; hasMore = had.hasMore; allTags = had.tags; drawTags(); for (const b of items) grid.append(card(b)); if (had.title && (q || !shelf || !src.shelves || src.id.startsWith('dir:'))) titleEl.replaceChildren(h('span', { dir: 'auto' }, had.title), h('small', null, src.name)); requestAnimationFrame(() => { body.scrollTop = had.scroll; }); });
   else void ready.then(() => void more());
   if (src.needsApp && isWeb()) status.replaceChildren(h('p', { class: 'hint warn' }, t('sourceNeedsApp')));
   if (src.id === 'shamela' && q && String(filters.mode) !== 'titles' && !link.isConnected() && (String(filters.mode) === 'chapters' || String(filters.engine) === 'link' || /^(root|wild)$/.test(String(filters.match)))) status.replaceChildren(signInNote());
