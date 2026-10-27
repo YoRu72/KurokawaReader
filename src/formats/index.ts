@@ -11,6 +11,7 @@ import { pdfMeta } from './pdf';
 import { mobiHandler } from './mobi';
 import { readAudioMeta } from './audio';
 import { shamelaHandler } from './shamela';
+import { webnovelHandler } from './webnovel';
 import { prewarmEpub } from './epub';
 
 /**
@@ -95,6 +96,7 @@ const HANDLERS: Partial<Record<Format, Handler>> = {
   pdf: { kind: 'pdf', format: 'pdf', readMeta: pdfMeta },
   mobi: mobiHandler,
   shamela: shamelaHandler,
+  webnovel: webnovelHandler,
   anki: { kind: 'deck', format: 'anki', readMeta: async (file) => { const { deckMeta } = await import('../anki'); const m = await deckMeta(file); return { title: m.title, pageCount: m.cards }; } },
   audio: { kind: 'audio', format: 'audio', readMeta: async (file, name) => { const m = await readAudioMeta(file, name); return { title: m.title, author: m.author, cover: m.cover }; } },
 };

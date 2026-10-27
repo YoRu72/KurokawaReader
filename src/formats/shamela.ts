@@ -5,7 +5,6 @@
 import type { FlowHandler, FlowRender, TocItem } from './types';
 import type { ShamelaBook, ShamelaPageData, ShamelaToc } from '../sources/shamela';
 import { SHAMELA } from '../sources/shamela';
-import { db } from '../db';
 
 const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
 const arNum = (n: string | number) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
@@ -51,7 +50,7 @@ export const shamelaHandler: FlowHandler = {
     let gone = false; const wanted = new Set<number>(); let running = 0; let io: IntersectionObserver | null = null;
     const online = !!ctx.bookId && Object.keys(content).length < info.pages;
     const pump = async () => {
-      if (gone || running >= 2 || !wanted.size) return;
+      if (gone || running >= 3 || !wanted.size) return;
       const n = [...wanted].sort((a, b) => a - b)[0]; wanted.delete(n); running++;
       try {
         const { page } = await import('../sources/shamela');
@@ -68,10 +67,9 @@ export const shamelaHandler: FlowHandler = {
     const save = async () => {
       if (!ctx.bookId) return;
       try {
-        const next: ShamelaBook = { ...info, content };
-        const f = new File([JSON.stringify(next)], file instanceof File ? file.name : `${info.title}.shamela.json`, { type: 'application/x-kurokawa-shamela+json' });
-        await db.putFile(ctx.bookId, f);
-        if (Object.keys(content).length >= info.pages) await db.updateBook(ctx.bookId, (b) => { if (b.remote) b.remote.online = false; });
+        // (Over what the file holds now: the contents completed meanwhile, pages fetched by a download.)
+        const { mergeFile } = await import('../sources/shamela');
+        await mergeFile(ctx.bookId, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }));
       } catch { /* kept for this reading */ }
     };
     if (online) {
@@ -79,9 +77,9 @@ export const shamelaHandler: FlowHandler = {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
           const n = Number((e.target as HTMLElement).dataset.page);
-          for (let k = n; k <= Math.min(info.pages, n + 3); k++) if (!content[k] && pages.has(k)) wanted.add(k);
+          for (let k = n; k <= Math.min(info.pages, n + 6); k++) if (!content[k] && pages.has(k)) wanted.add(k);
         }
-        void pump(); void pump();
+        void pump(); void pump(); void pump();
       }, { rootMargin: '150% 0px' });
       for (const [n, pg] of pages) if (!content[n]) io.observe(pg);
     }

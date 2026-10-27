@@ -1,6 +1,6 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels } from '../i18n';
 import { navigate } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -136,10 +136,17 @@ export function settingsView(): HTMLElement {
   body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts));
 
   // Books from the web: the sources (archive.org, Shamela) and the OPDS catalogues.
-  body.append(h('section', { class: 'card' }, h('h3', null, t('sources')), h('p', null, t('sourcesHint')),
+  const srcNews = h('p', { class: 'hint', hidden: true });
+  body.append(h('section', { class: 'card' }, h('h3', null, t('sources')), h('p', null, t('sourcesHint')), srcNews,
     h('div', { class: 'actions-row' },
       h('button', { class: 'btn tonal small', onclick: () => navigate('/sources') }, icon('globe'), t('sourcesMenu')),
+      h('button', { class: 'btn small', onclick: () => navigate('/sources') }, icon('plus'), t('addRepo')),
       h('button', { class: 'btn small', onclick: () => navigate('/catalog') }, icon('books'), t('catalogs')))));
+  // (What waits at the sources: new chapters for the library's novels, newer extensions.)
+  void import('../sources/updates').then((u) => u.pendingCounts()).then((c) => {
+    if (!c.books && !c.extensions) return;
+    srcNews.hidden = false; srcNews.replaceChildren(icon('bell'), ' ', [c.books ? t('settingsNewChapters', { n: countChapters(c.chapters), books: countNovels(c.books) }) : '', c.extensions ? t('settingsExtUpdates', { n: localDigits(c.extensions) }) : ''].filter(Boolean).join(' · '));
+  }).catch(() => undefined);
 
   // Starter books
   body.append(h('section', { class: 'card' }, h('h3', null, t('sampleBooks')), h('p', null, t('sampleBooksBody')),

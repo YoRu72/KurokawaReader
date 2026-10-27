@@ -117,6 +117,7 @@ function repaint(): void {
 
 let opening: string | null = null;
 async function handleUrl(url: string): Promise<void> {
+  if (/^kurokawareader:\/\/open\b/i.test(url)) { const to = new URL(url).searchParams.get('to'); if (to && to.startsWith('/')) navigate(to); return; }
   if (/^kurokawareader:/i.test(url)) { void import('./sync').then((m) => m.handleOAuthRedirect(url)).catch((e) => toast(String((e as Error).message ?? e), 'error')); return; }
   if (!/^(content|file):/i.test(url)) return;
   if (opening === url) return; // getLaunchUrl and appUrlOpen can both report the same file
@@ -194,7 +195,8 @@ export function initNativeBridges(): void {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
     (window.kurokawaDesktop as DesktopBridge & { onOpenUrl?(cb: (u: string) => void): void }).onOpenUrl?.((u) => void handleUrl(u));
     // Menu / keyboard commands from the shell: views listen for `kr:command`; a few are global.
-    (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string) => void): void }).onCommand?.((c) => {
+    (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string | { open: string }) => void): void }).onCommand?.((c) => {
+      if (typeof c === 'object') { if (c?.open) navigate(c.open); return; }
       if (c === 'library') navigate('/');
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));

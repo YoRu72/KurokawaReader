@@ -72,6 +72,16 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     // Text search asks for the sign-in.
     await page.evaluate(() => localStorage.setItem('kr.src.shamela.filters', JSON.stringify({ mode: 'texts' })));
     await page.goto(base + '#/sources/shamela?q=' + encodeURIComponent('الذكر') + '&v=1'); await page.waitForTimeout(1200);
-    ok('text search asks to sign in', await page.evaluate(() => /sign in/i.test(document.querySelector('.src-status')?.textContent || '')));
+    ok('text search on the site, no account: hits with the page and a snippet', (await page.$$('.src-grid .src-card')).length >= 3 && /ص 5/.test(await page.$eval('.src-grid .src-card', (e) => e.textContent)) && /نتيجة/.test(await page.$eval('.title', (e) => e.textContent)));
+    await page.evaluate(() => { document.querySelector('.src-body').scrollTop = 99999; window.scrollTo(0, 99999); }); await page.waitForTimeout(1200);
+    ok('every page of hits (the short pages ask for the next)', (await page.$$('.src-grid .src-card')).length === 4);
+    // Chapter titles need وصلة الشاملة: a sign-in note, not an error.
+    await page.evaluate(() => localStorage.setItem('kr.src.shamela.filters', JSON.stringify({ mode: 'chapters' })));
+    await page.goto(base + '#/sources/shamela?q=الإيمان&v=2'); await page.waitForTimeout(1500);
+    ok('chapter-title search asks to sign in', await page.evaluate(() => /sign in/i.test(document.querySelector('.src-status')?.textContent || '')));
+    // Searching inside a book, on the site.
+    await page.goto(base + '#/sources/shamela/book/6388'); await page.waitForSelector('.src-book-search input', { timeout: 15000 }); await page.waitForTimeout(400);
+    await page.fill('.src-book-search input', 'الإيمان'); await page.press('.src-book-search input', 'Enter'); await page.waitForTimeout(1500);
+    ok('in-book search on the site finds the pages', (await page.$$('.src-hits .src-hit')).length === 2 && /mark/.test(await page.$eval('.src-hits', (e) => e.innerHTML)));
   } finally { console.log('errors', errors); await browser.close(); server.close(); mock.kill(); }
 })();

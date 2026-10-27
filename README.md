@@ -14,6 +14,7 @@ EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · Fiction
 - Snapshots of selected text, built-in / device / AI translation, PNG export
 - Cloud sync (Dropbox · WebDAV · a Drive folder), portable backups, in-app updates on every platform
 - Online catalogs (OPDS): Project Gutenberg and other free libraries, or your own Calibre-Web, Kavita, Komga or Nextcloud shelf, browsed and fetched from inside the app
+- Sources, browsed the way Mihon browses its extensions: the Internet Archive; the Shamela library of Arabic works, read page by page from the site or fetched whole, with the site's own full-text search (no account) and وصلة الشاملة as an option; extension repositories you add yourself — LNReader plugins and Mangayomi novel extensions run inside the app (sandboxed) — novels read chapter by chapter online or fetched for offline, with new-chapter and extension-update checks, a bell, a mark on the book and a notification; browser checks (Cloudflare) passed by the app itself
 
 ```bash
 npm install && npm run build            # web → dist/

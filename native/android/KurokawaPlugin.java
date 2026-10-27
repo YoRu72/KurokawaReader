@@ -83,6 +83,50 @@ public class KurokawaPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("granted", getPermissionState("notifications") == PermissionState.GRANTED); call.resolve(r);
     }
 
+    /** A notification of the app's (new chapters, extension updates): {id, title, body, hash}; a tap opens the
+     *  app at `hash` (a route of the web side). Asks for the permission the first time on Android 13+. */
+    @PluginMethod
+    public void notify(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) { requestPermissionForAlias("notifications", call, "notifyThenPost"); return; }
+        postNotification(call);
+    }
+
+    @PermissionCallback
+    private void notifyThenPost(PluginCall call) {
+        if (getPermissionState("notifications") == PermissionState.GRANTED) postNotification(call);
+        else { JSObject r = new JSObject(); r.put("shown", false); call.resolve(r); }
+    }
+
+    private void postNotification(PluginCall call) {
+        try {
+            android.content.Context c = getContext();
+            final String ch = "kr_updates";
+            if (Build.VERSION.SDK_INT >= 26) {
+                android.app.NotificationManager nm = c.getSystemService(android.app.NotificationManager.class);
+                if (nm != null && nm.getNotificationChannel(ch) == null) {
+                    @SuppressWarnings("deprecation") boolean ar = "ar".equals(c.getResources().getConfiguration().locale.getLanguage());
+                    nm.createNotificationChannel(new android.app.NotificationChannel(ch, ar ? "جديد الكتب والمصادر" : "New chapters and extension updates", android.app.NotificationManager.IMPORTANCE_DEFAULT));
+                }
+            }
+            int id = call.getInt("id", 7100);
+            String hash = call.getString("hash", "/");
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("kurokawareader://open?to=" + Uri.encode(hash)), c, MainActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(c, id, i, android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+            String body = call.getString("body", "");
+            android.app.Notification n = new androidx.core.app.NotificationCompat.Builder(c, ch)
+                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                .setContentTitle(call.getString("title", "KurokawaReader"))
+                .setContentText(body)
+                .setStyle(new androidx.core.app.NotificationCompat.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build();
+            androidx.core.app.NotificationManagerCompat.from(c).notify(id, n);
+            JSObject r = new JSObject(); r.put("shown", true); call.resolve(r);
+        } catch (Exception e) { JSObject r = new JSObject(); r.put("shown", false); call.resolve(r); }
+    }
+
     @PluginMethod
     public void jobProgress(PluginCall call) {
         KrWebView.keepAwake = true;
@@ -149,7 +193,8 @@ public class KurokawaPlugin extends Plugin {
                 conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
                 boolean hasUa = false, hasCookie = false;
                 java.util.Iterator<String> it = headers.keys();
-                while (it.hasNext()) { String k = it.next(); conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; if (k.equalsIgnoreCase("cookie")) hasCookie = true; }
+                // (Compression is the connection's own business: a caller naming an encoding would get raw gzip back.)
+                while (it.hasNext()) { String k = it.next(); if (k.equalsIgnoreCase("accept-encoding")) continue; conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; if (k.equalsIgnoreCase("cookie")) hasCookie = true; }
                 // The app's own identity and cookies go with the request (a Cloudflare clearance passed in the
                 // app's web view is bound to both), and what the site sets comes back into the same jar.
                 if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
@@ -162,49 +207,98 @@ public class KurokawaPlugin extends Plugin {
                 if (in != null) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) bos.write(buf, 0, n); }
                 JSObject ret = new JSObject();
                 ret.put("status", code);
-                ret.put("body", binary ? Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP) : new String(bos.toByteArray(), "UTF-8"));
+                byte[] bytes = bos.toByteArray();
+                ret.put("body", binary ? Base64.encodeToString(bytes, Base64.NO_WRAP) : new String(bytes, charsetOf(conn.getContentType(), bytes)));
                 JSObject hs = new JSObject();
                 for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
                 ret.put("headers", hs);
+                ret.put("url", conn.getURL().toString());
                 call.resolve(ret);
             } catch (Exception e) { call.reject("Request failed: " + e.getMessage(), e); }
         }).start();
     }
 
-    /** Opens a page in a web view of the app's own (its cookies are the app's), so a site's browser check can be
-     *  passed by hand; resolves when the view is closed. */
+    private static boolean ok(java.util.concurrent.Callable<Boolean> c) { try { return Boolean.TRUE.equals(c.call()); } catch (Exception e) { return false; } }
+
+    /** The charset a page's text is in: the header's, else a <meta> in its first bytes, else UTF-8. */
+    private static java.nio.charset.Charset charsetOf(String contentType, byte[] body) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("charset=\"?'?([\\w-]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(contentType == null ? "" : contentType);
+            if (m.find()) return java.nio.charset.Charset.forName(m.group(1));
+            String head = new String(body, 0, Math.min(body.length, 2048), "ISO-8859-1");
+            java.util.regex.Matcher mm = java.util.regex.Pattern.compile("<meta[^>]+charset=\"?'?([\\w-]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(head);
+            if (mm.find()) return java.nio.charset.Charset.forName(mm.group(1));
+        } catch (Exception ignored) {}
+        return java.nio.charset.StandardCharsets.UTF_8;
+    }
+
+    /** Opens a page in a web view of the app's own (its cookies and identity are those the requests carry), so a
+     *  site's browser check can be passed: out of sight (`hidden`, a view of one pixel behind the app, given
+     *  `timeout` ms — the plain JavaScript checks pass by themselves) or in a dialog the reader can act in.
+     *  Resolves {passed} — true once the site answered with a page of its own and new cookies came with it. */
     @PluginMethod
     public void openWebView(PluginCall call) {
         final String url = call.getString("url", "");
+        final boolean hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false));
+        final int timeout = call.getInt("timeout", hidden ? 14000 : 180000);
         if (url.isEmpty()) { call.reject("No url"); return; }
         getActivity().runOnUiThread(() -> {
             try {
-                final android.app.Dialog dialog = new android.app.Dialog(getActivity(), android.R.style.Theme_DeviceDefault_NoActionBar);
-                final android.widget.LinearLayout box = new android.widget.LinearLayout(getActivity());
-                box.setOrientation(android.widget.LinearLayout.VERTICAL);
-                final android.widget.Button close = new android.widget.Button(getActivity());
-                close.setText("✓  تم / Done");
-                close.setOnClickListener(v -> dialog.dismiss());
+                final android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance();
+                final String before = String.valueOf(cm.getCookie(url));
                 final android.webkit.WebView web = new android.webkit.WebView(getActivity());
                 web.getSettings().setJavaScriptEnabled(true);
                 web.getSettings().setDomStorageEnabled(true);
                 web.getSettings().setUserAgentString(android.webkit.WebSettings.getDefaultUserAgent(getContext()));
-                android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+                cm.setAcceptThirdPartyCookies(web, true);
+                final boolean[] done = { false }; final boolean[] passed = { false };
+                final android.view.ViewGroup content = getActivity().findViewById(android.R.id.content);
+                final android.app.Dialog[] dialog = { null };
+                final Runnable finish = () -> {
+                    if (done[0]) return; done[0] = true;
+                    try { cm.flush(); } catch (Exception ignored) {}
+                    try { if (dialog[0] != null && dialog[0].isShowing()) dialog[0].dismiss(); } catch (Exception ignored) {}
+                    try { if (hidden) content.removeView(web); web.destroy(); } catch (Exception ignored) {}
+                    JSObject r = new JSObject(); r.put("passed", passed[0]); call.resolve(r);
+                };
+                // (A check is passed when the site answers with a page of its own — not the check's — and the
+                // cookies are not what they were: the clearance the check leaves behind.)
+                final java.util.concurrent.Callable<Boolean> cleared = () -> {
+                    String title = web.getTitle(); String now = String.valueOf(cm.getCookie(url));
+                    boolean page = title != null && !title.isEmpty() && !title.contains("Just a moment") && !title.contains("Attention Required") && !title.contains("لحظة") && !title.contains("Один момент") && !title.contains("DDoS-Guard") && !title.contains("Verifying") && !title.contains("Checking your browser");
+                    return page && !now.equals(before) && (now.contains("cf_clearance") || now.contains("__ddg") || !before.contains("cf_clearance"));
+                };
                 web.setWebViewClient(new android.webkit.WebViewClient() {
                     @Override public void onPageFinished(android.webkit.WebView view, String u) {
-                        // (Once the site answers with a page of its own — no longer the check — the view goes away on its own.)
-                        String title = view.getTitle();
-                        if (title != null && !title.isEmpty() && !title.contains("Just a moment") && !title.contains("Attention Required") && !title.contains("لحظة")) {
-                            String ck = android.webkit.CookieManager.getInstance().getCookie(u);
-                            if (ck != null && ck.contains("cf_clearance")) view.postDelayed(dialog::dismiss, 800);
-                        }
+                        if (ok(cleared)) { passed[0] = true; view.postDelayed(finish, 600); }
                     }
                 });
-                box.addView(close, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-                box.addView(web, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-                dialog.setContentView(box);
-                dialog.setOnDismissListener(d -> { try { android.webkit.CookieManager.getInstance().flush(); web.destroy(); } catch (Exception ignored) {} call.resolve(); });
-                dialog.show();
+                if (hidden) {
+                    content.addView(web, new android.view.ViewGroup.LayoutParams(1, 1));
+                    final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+                    final long start = android.os.SystemClock.uptimeMillis();
+                    final Runnable[] poll = new Runnable[1];
+                    poll[0] = () -> {
+                        if (done[0]) return;
+                        if (ok(cleared)) { passed[0] = true; finish.run(); return; }
+                        if (android.os.SystemClock.uptimeMillis() - start > timeout) { finish.run(); return; }
+                        h.postDelayed(poll[0], 500);
+                    };
+                    h.postDelayed(poll[0], 700);
+                } else {
+                    dialog[0] = new android.app.Dialog(getActivity(), android.R.style.Theme_DeviceDefault_NoActionBar);
+                    final android.widget.LinearLayout box = new android.widget.LinearLayout(getActivity());
+                    box.setOrientation(android.widget.LinearLayout.VERTICAL);
+                    final android.widget.Button close = new android.widget.Button(getActivity());
+                    close.setText("✓  تم / Done");
+                    close.setOnClickListener(v -> { if (ok(cleared)) passed[0] = true; finish.run(); });
+                    box.addView(close, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+                    box.addView(web, new android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+                    dialog[0].setContentView(box);
+                    dialog[0].setOnDismissListener(d -> { if (ok(cleared)) passed[0] = true; finish.run(); });
+                    dialog[0].show();
+                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(finish, timeout);
+                }
                 web.loadUrl(url);
             } catch (Exception e) { call.reject("WebView failed: " + e.getMessage()); }
         });

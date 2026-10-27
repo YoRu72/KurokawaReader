@@ -453,6 +453,16 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .kr-content.kr-shamela .kr-page-mark { display: inline-block; font-family: var(--font-ui); font-size: .72em; color: var(--r-dim); margin-inline-end: .6em; vertical-align: baseline; user-select: none; -webkit-user-select: none; }
 .kr-content.kr-shamela .kr-page-wait { color: var(--r-dim); font-size: .85em; }
 .kr-content.kr-shamela .kr-page-wait.failed { color: var(--r-link); }
+/* A novel from an extension: a card, then each chapter a section whose text arrives as it comes near. */
+.kr-content.kr-webnovel .kr-novel-title { text-align: center; }
+.kr-content.kr-webnovel .kr-novel-author { text-align: center; color: var(--r-dim); }
+.kr-content.kr-webnovel .kr-novel-genres { text-align: center; color: var(--r-dim); font-size: .85em; }
+.kr-content.kr-webnovel .kr-chap.pending { min-height: 3em; color: var(--r-dim); }
+.kr-content.kr-webnovel .kr-page-wait { color: var(--r-dim); text-align: center; }
+.kr-content.kr-webnovel .kr-page-wait.failed { color: var(--r-link); }
+.kr-content.kr-webnovel .kr-img { max-width: 100%; height: auto; display: block; margin: .8em auto; }
+.kr-content.kr-webnovel .kr-center { text-align: center; } .kr-content.kr-webnovel .kr-right { text-align: right; } .kr-content.kr-webnovel .kr-left { text-align: left; }
+.kr-content.kr-webnovel .kr-chap > .kr-heading { font-size: 1.15em; margin: 1em 0 .5em; }
 .kr-content.kr-shamela .kr-para { margin: 0 0 .55em; }
 .kr-content.kr-shamela .kr-para.kr-center { text-align: center; }
 .kr-content.kr-shamela .kr-hamesh { font-size: .86em; color: var(--r-dim); line-height: 1.6; }

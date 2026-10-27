@@ -37,6 +37,7 @@ export interface SourceDetails extends SourceBook {
   volumes?: { name: string; from: number; to: number }[];
   meta?: { label: string; value: string }[];
   url?: string;                         // the book's page on the site
+  raw?: unknown;                        // the source's own record of the book, for what adds it to the library
 }
 
 export interface SourcePage { items: SourceBook[]; hasMore: boolean; tags?: SourceTag[]; title?: string }

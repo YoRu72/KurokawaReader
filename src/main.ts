@@ -59,6 +59,7 @@ void loadFonts();
 initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);
 scheduleAutoCheck();
+setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
 onSettingsChange((s) => applyChrome(s));

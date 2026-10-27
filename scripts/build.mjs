@@ -123,11 +123,19 @@ const buildOptions = {
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version) },
 };
 
+// The extension sandbox's runtime: built alone (no app code, no chunks), inlined into a frame at run time.
+const runtimeOptions = {
+  entryPoints: { 'ext-runtime': path.join(root, 'src/sources/ext/rt/runtime.ts') },
+  bundle: true, format: 'iife', platform: 'browser', target: ['es2020', 'chrome90', 'safari15', 'firefox100'],
+  outdir: path.join(dist, 'assets'), entryNames: '[name]', minify: !watch && !process.env.NOMINIFY, sourcemap: false, logLevel: 'warning',
+};
+
 await copyStatic();
 if (watch || serve) {
   const ctx = await esbuild.context(buildOptions);
-  if (watch) await ctx.watch();
-  else await ctx.rebuild();
+  const rctx = await esbuild.context(runtimeOptions);
+  if (watch) { await ctx.watch(); await rctx.watch(); }
+  else { await ctx.rebuild(); await rctx.rebuild(); }
   if (!watch) await preloadStartupChunks();
   await writeServiceWorker();
   if (serve) {
@@ -136,6 +144,7 @@ if (watch || serve) {
   }
 } else {
   await esbuild.build(buildOptions);
+  await esbuild.build(runtimeOptions);
   const n = await preloadStartupChunks();
   await writeServiceWorker();
   console.log(`Built → dist/ (${n} startup chunks preloaded)`);

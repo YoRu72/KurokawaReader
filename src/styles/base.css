@@ -1360,9 +1360,9 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .catalog-hint { color: var(--md-on-surface-dim); line-height: 1.6; margin: 6px 0 14px; }
 .catalog-view .section-title { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--md-on-surface-dim); margin: 18px 0 6px; }
 html[dir='rtl'] .catalog-view .section-title { letter-spacing: 0; text-transform: none; font-size: 14px; }
-.catalog-list .catalog-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.catalog-list .catalog-name b { font-weight: 600; }
-.catalog-list .catalog-name small { color: var(--md-on-surface-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-list .catalog-name, .plain-list .catalog-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.catalog-list .catalog-name b, .plain-list .catalog-name b { font-weight: 600; }
+.catalog-list .catalog-name small, .plain-list .catalog-name small { color: var(--md-on-surface-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .catalog-view .empty.small { margin-top: 4vh; padding: 18px; gap: 10px; }
 .catalog-view .empty.small .glyph { width: 72px; height: 72px; }
 .catalog-view .empty.small .glyph svg { width: 34px; height: 34px; }
@@ -1466,3 +1466,43 @@ html[dir='rtl'] .source-head > svg:last-child { transform: scaleX(-1); }
 .src-hit .ctx { font-size: 14px; line-height: 1.6; }
 .src-hit mark { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: 3px; padding: 0 2px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+/* Repositories of extensions in the hub: a section each, its extensions as small cards. */
+.sheet-body .source-row, .sheet-body .plain-list, .sheet-body .switch-row, .sheet-body .field, .sheet-body .section-title, .sheet-body .empty { font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
+.sheet-body .section-title { font-size: 14px; font-weight: 700; color: var(--md-on-surface-dim); margin: 14px 0 6px; }
+.sheet-body .plain-list .badge { margin-inline-start: auto; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: var(--sh-full); background: var(--md-error, #b3261e); color: var(--md-on-error, #fff); flex: none; }
+.repo-section { border-radius: var(--sh-lg, 16px); background: var(--md-surface-container, color-mix(in srgb, var(--md-on-surface) 5%, transparent)); padding: 8px 14px 12px; margin: 12px 0; }
+.repo-head { display: flex; align-items: center; gap: 12px; padding: 4px 0 6px; }
+.repo-head .source-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.repo-head .source-text small { color: var(--md-on-surface-dim); font-size: 12.5px; }
+.repos-empty { margin: 8px 0 14px; }
+.repo-links { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 12px; }
+.repo-links .btn { text-decoration: none; }
+.ext-langs { margin: 4px 0 8px; }
+.ext-find { width: 100%; margin: 4px 0 10px; }
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.ext-card { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--md-on-surface) 4%, transparent); color: inherit; font: inherit; text-align: start; cursor: pointer; min-width: 0; position: relative; }
+.ext-card:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.ext-card:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
+.ext-card.off { opacity: .55; cursor: default; }
+.ext-icon { width: 36px; height: 36px; border-radius: 9px; flex: none; display: grid; place-items: center; overflow: hidden; color: #fff; }
+.ext-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ext-icon svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.ext-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ext-text b { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ext-text small { color: var(--md-on-surface-dim); font-size: 11.5px; }
+.ext-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--md-tertiary, #d08b10); flex: none; box-shadow: 0 0 0 2px var(--md-surface-container, #fff); }
+.bell-btn { position: relative; }
+.bell-btn .count { position: absolute; top: 3px; inset-inline-end: 3px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--md-error, #b3261e); color: var(--md-on-error, #fff); font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; pointer-events: none; }
+.bell-btn.busy svg { animation: kr-bell-swing 1.2s ease-in-out infinite; transform-origin: 50% 20%; }
+@keyframes kr-bell-swing { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(14deg); } 75% { transform: rotate(-14deg); } }
+.cover .badge.alert { background: var(--md-error, #b3261e); color: var(--md-on-error, #fff); font-weight: 800; padding: 2px 6px; letter-spacing: 0; }
+.cover .badge.alert small { font-weight: 600; margin-inline-start: 2px; font-size: 10px; }
+.novel-in-library { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.novel-chapters li { content-visibility: auto; contain-intrinsic-size: auto 44px; }
+.src-toc-tree ul.sub { margin-inline-start: 14px; border-inline-start: 2px solid color-mix(in srgb, var(--md-on-surface) 12%, transparent); padding-inline-start: 4px; }
+.src-toc-tree li { display: flex; flex-wrap: wrap; align-items: center; }
+.src-toc-tree li > button:first-child { flex: 1; min-width: 0; }
+.src-toc-tree li > ul { flex-basis: 100%; }
+.toc-toggle { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; color: var(--md-on-surface-dim); font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 8px; cursor: pointer; flex: none; }
+.toc-toggle svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+.toc-toggle:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }

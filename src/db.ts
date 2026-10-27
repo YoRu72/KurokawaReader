@@ -4,7 +4,7 @@
 
 export type Format =
   | 'epub' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'txt' | 'md' | 'html'
-  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'unknown';
+  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'webnovel' | 'unknown';
 
 export interface Locator {
   /** Which opened document (book id). */
@@ -113,9 +113,10 @@ export interface Book {
   ink?: InkStroke[];
   /** Where the file lives when it is linked instead of copied into the app (scan import). */
   source?: FileSource;
-  /** A book from an online source (a Shamela book read from the site): where it came from, and whether its
-   *  text still lives there (`online`) or has been fetched into its file. */
-  remote?: { source: string; id: string; online?: boolean };
+  /** A book from an online source (a Shamela book read from the site, a novel from an extension): where it
+   *  came from, and whether its text still lives there (`online`) or has been fetched into its file; for a
+   *  novel, how many chapters arrived since it was last opened and when the site was last asked. */
+  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number };
   pdfHighlights?: PdfHighlight[];
   /** Cached per-book override of the visual settings (optional). */
   prefs?: Record<string, unknown>;
@@ -237,6 +238,9 @@ export const db = {
   },
   async setMeta<T>(key: string, value: T): Promise<void> {
     await tx('meta', 'readwrite', (s) => s.put(value, key));
+  },
+  async deleteMeta(key: string): Promise<void> {
+    await tx('meta', 'readwrite', (s) => s.delete(key)).catch(() => undefined);
   },
   async clearAll(): Promise<void> {
     await tx('books', 'readwrite', (s) => s.clear());

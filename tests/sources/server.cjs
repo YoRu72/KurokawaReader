@@ -26,7 +26,8 @@ const books = [
 ];
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://localhost:${port}`); const p = u.pathname;
-  res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') { res.end(); return; }
   const html = (s) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(s); };
   const json = (o) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(o)); };
   // shamela.ws
@@ -37,6 +38,17 @@ const server = http.createServer((req, res) => {
   if (/^\/book\/\d+$/.test(p)) return html(wrap(read('book.html')));
   { const m = /^\/book\/(\d+)\/(\d+)$/.exec(p); if (m) { if (+m[2] === 50 && u.searchParams.get('cf') !== 'ok') { /* a Cloudflare-looking refusal once */ } return html(pageHtml(m[1], +m[2])); } }
   if (/^\/ajax\/titlechilds\//.test(p)) return html(`<li>-<a href="/book/23635/3">فصل فرعي أ</a></li><li>-<a href="/book/23635/5">فصل فرعي ب</a></li>`);
+  // The site's own text search (POST /ajax/search, as its search page does): hits with snippets, the count, a next page.
+  if (p === '/ajax/search' && req.method === 'POST') {
+    let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+      const form = new URLSearchParams(body); const term = form.get('term') || ''; const pageNo = Number(form.get('page') || 1); const books = form.getAll('books[]').filter((b) => b !== '-1');
+      const word = term.replace(/[+"]/g, ' ').trim().split(/\s+/)[0] || '';
+      const all = [{ book: 6388, page: 5, title: 'الفقه الأكبر', author: 'أبو حنيفة' }, { book: 6388, page: 9, title: 'الفقه الأكبر', author: 'أبو حنيفة' }, { book: 23635, page: 2, title: 'مفاتيح الغيب', author: 'الرازي' }, { book: 23635, page: 7, title: 'مفاتيح الغيب', author: 'الرازي' }].filter((h) => !books.length || books.includes(String(h.book)));
+      const per = 3; const slice = all.slice((pageNo - 1) * per, pageNo * per);
+      const items = slice.map((h) => `<div><a href="https://shamela.ws/book/${h.book}/${h.page}" class="list-group-item"><b>${h.title}</b> <span class="text-gray">[${h.author}]</span><p class="srch-snippet">ومن ذلك قوله في <b>${word}</b> وما يتصل به من الكلام</p></a></div>`).join('');
+      html(`<div class="srch-head">النتائج ${(pageNo - 1) * per + 1} إلى ${Math.min(pageNo * per, all.length)} من ${all.length}</div>${items}${pageNo * per < all.length ? `<a id="bu_srch_more" data-page="${pageNo + 1}" href="#">المزيد</a>` : ''}`);
+    }); return;
+  }
   // archive.org
   if (p === '/advancedsearch.php') {
     const q = u.searchParams.get('q') || ''; const page = +(u.searchParams.get('page') || 1);

@@ -64,7 +64,8 @@ export async function removeBooks(ids: string[]): Promise<void> {
 }
 
 export async function touchBook(id: string): Promise<void> {
-  await db.updateBook(id, (b) => { b.lastOpenedAt = Date.now(); });
+  // (Opening a novel is seeing its new chapters: the mark on it goes.)
+  await db.updateBook(id, (b) => { b.lastOpenedAt = Date.now(); if (b.remote?.newChapters) b.remote.newChapters = 0; });
 }
 
 let coverUrls = new Map<string, string>();

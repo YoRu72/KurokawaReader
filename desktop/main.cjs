@@ -256,11 +256,18 @@ ipcMain.handle('kr:scan-device', async (_e, exts) => {
 // a plain Chrome's (the Electron token in the user agent gets a browser check from some sites).
 app.userAgentFallback = app.userAgentFallback.replace(/ ?Electron\/[\d.]+/, '').replace(/ ?KurokawaReader\/[\d.]+/, '');
 ipcMain.handle('kr:http', async (_e, o) => {
-  const res = await net.fetch(o.url, { method: o.method || 'GET', headers: o.headers || {}, body: o.body == null ? undefined : (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body), useSessionCookies: true });
+  const headers = {}; for (const [k, v] of Object.entries(o.headers || {})) if (k.toLowerCase() !== 'accept-encoding') headers[k] = v;
+  const res = await net.fetch(o.url, { method: o.method || 'GET', headers, body: o.body == null ? undefined : (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body), useSessionCookies: true });
   const buf = Buffer.from(await res.arrayBuffer());
-  const headers = {}; res.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-  return { status: res.status, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
+  const hs = {}; res.headers.forEach((v, k) => { hs[k.toLowerCase()] = v; });
+  return { status: res.status, headers: hs, body: o.binary ? buf.toString('base64') : decodeText(buf, hs['content-type']), url: res.url };
 });
+// A page's text in its own charset: the header's, else a <meta> in its first bytes, else UTF-8.
+function decodeText(buf, contentType) {
+  let cs = /charset=["']?([\w-]+)/i.exec(contentType || '')?.[1];
+  if (!cs) cs = /<meta[^>]+charset=["']?([\w-]+)/i.exec(buf.subarray(0, 2048).toString('latin1'))?.[1];
+  try { return new TextDecoder(cs || 'utf-8').decode(buf); } catch { return buf.toString('utf8'); }
+}
 // Long work under way (a conversion): its progress on the taskbar icon, and full speed while the window is
 // minimised or behind others (Chromium slows a hidden page's timers).
 ipcMain.on('kr:progress', (e, p) => {
@@ -269,14 +276,40 @@ ipcMain.on('kr:progress', (e, p) => {
   w.setProgressBar(busy ? Math.min(1, p) : -1);
   e.sender.setBackgroundThrottling(!busy);
 });
-// A window on a site, sharing the app's session, so a browser check can be passed by hand; resolves when closed.
-ipcMain.handle('kr:open-webview', async (_e, url) => new Promise((resolve) => {
-  const w = new BrowserWindow({ width: 900, height: 760, parent: win || undefined, title: String(url), webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+// A window on a site, sharing the app's session, so a browser check can be passed: out of sight ({hidden},
+// for {timeout} ms — the plain JavaScript checks pass by themselves) or shown for the reader to act in.
+// Resolves {passed}: true once the site answered with a page of its own and the cookies changed (the clearance).
+const CHECK_TITLE = /Just a moment|Attention Required|لحظة|Один момент|DDoS-Guard|Verifying|Checking your browser|Please wait/i;
+ipcMain.handle('kr:open-webview', async (_e, arg) => new Promise((resolve) => {
+  const o = typeof arg === 'string' ? { url: arg } : (arg || {});
+  const url = String(o.url || ''); const hidden = !!o.hidden; const timeout = Number(o.timeout) || (hidden ? 14000 : 180000);
+  const w = new BrowserWindow({ width: 900, height: 760, show: !hidden, parent: hidden ? undefined : (win || undefined), title: url, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
   w.setMenuBarVisibility(false);
-  w.webContents.on('did-finish-load', () => { const title = w.webContents.getTitle(); if (title && !/Just a moment|Attention Required|لحظة/.test(title)) w.webContents.session.cookies.get({ url: String(url) }).then((cs) => { if (cs.some((c) => c.name === 'cf_clearance')) setTimeout(() => { if (!w.isDestroyed()) w.close(); }, 800); }).catch(() => {}); });
-  w.on('closed', () => resolve(true));
-  w.loadURL(String(url)).catch(() => {});
+  const jar = () => w.webContents.session.cookies.get({ url }).then((cs) => cs.map((c) => `${c.name}=${c.value}`).sort().join('; ')).catch(() => '');
+  let before = ''; let done = false; let passed = false;
+  const finish = () => { if (done) return; done = true; clearInterval(timer); clearTimeout(limit); resolve({ passed }); if (!w.isDestroyed()) w.close(); };
+  const check = async () => {
+    if (done || w.isDestroyed()) return;
+    const title = w.webContents.getTitle(); const now = await jar();
+    if (title && !CHECK_TITLE.test(title) && now !== before && (/cf_clearance|__ddg/.test(now) || !/cf_clearance/.test(before))) { passed = true; setTimeout(finish, 600); }
+  };
+  const timer = setInterval(check, 500);
+  const limit = setTimeout(finish, timeout);
+  w.webContents.on('did-finish-load', check);
+  w.on('closed', () => { if (!done) { done = true; clearInterval(timer); clearTimeout(limit); resolve({ passed }); } });
+  jar().then((j) => { before = j; return w.loadURL(url); }).catch(() => {});
 }));
+// A system notification (new chapters, extension updates); a click brings the app forward and opens the hash given.
+ipcMain.handle('kr:notify', async (e, o) => {
+  try {
+    const { Notification } = require('electron');
+    if (!Notification.isSupported()) return false;
+    const n = new Notification({ title: String(o?.title || 'KurokawaReader'), body: String(o?.body || ''), silent: !!o?.silent });
+    n.on('click', () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (o?.hash) e.sender.send('kr:command', { open: String(o.hash) }); } });
+    n.show();
+    return true;
+  } catch { return false; }
+});
 ipcMain.handle('kr:folder-pick', async () => { const { dialog } = require('electron'); const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('fs/promises').readFile(String(p), 'utf8'); } catch { return null; } });
 // Downloads into the app's data folder (learning decks), with progress. Uses aria2c when it is
