@@ -5,7 +5,7 @@ import { h, icon, iconButton, toast, coverColors } from '../ui/dom';
 import { volumesOf } from '../series';
 import { t, formatBytes, formatDuration, localDigits, countChapters, getLang, formatLabel } from '../i18n';
 import { db, FAV_TAG, type Book } from '../db';
-import { coverUrl } from '../library';
+import { coverUrl, forgetCover, shrinkCover } from '../library';
 import { navigate, back } from '../router';
 import { getSettings } from '../settings';
 import { liveStatsOf } from '../stats';
@@ -70,6 +70,16 @@ export function bookView(id: string): HTMLElement {
   // Chapters picked (a hold, a right-click, Ctrl+click) for marking together.
   const picked = new Set<number>(); let picking = false;
 
+  /** A picture of the reader's own for the cover, or the original back — the page drawn again either way. */
+  function coverEdit(book: Book): import('../ui/coverview').CoverEdit {
+    const after = (b: Book | undefined): string | null => { forgetCover(book.id); blurs.delete(book.id); if (b) { Object.assign(book, { cover: b.cover, coverOrig: b.coverOrig }); if (!('coverOrig' in b) || b.coverOrig === undefined) delete book.coverOrig; render(book); } return b ? coverUrl(b) : null; };
+    return {
+      custom: () => book.coverOrig !== undefined,
+      set: async (picture) => { const small = await shrinkCover(picture); return after(await db.updateBook(book.id, (b) => { if (b.coverOrig === undefined) b.coverOrig = b.cover ?? null; b.cover = small; })) ?? ''; },
+      restore: async () => after(await db.updateBook(book.id, (b) => { b.cover = b.coverOrig ?? undefined; delete b.coverOrig; })),
+    };
+  }
+
   function render(book: Book): void {
     const url = coverUrl(book); const [c1, c2] = coverColors(book.title);
     const stats = liveStatsOf(book.id) ?? book.stats;
@@ -78,11 +88,19 @@ export function bookView(id: string): HTMLElement {
     const done = book.done ?? pct >= 98;
     const status = done ? t('statusFinished') : book.progress ? t('statusReading') : t('statusNew');
 
+    // The cover, tapped: on its own, full screen (Mihon's cover view) — with a picture of one's own to put in its
+    // place; a book with none goes straight to choosing one.
+    const coverEl = url ? h('img', { class: 'book-hero-cover cover-tap', src: url, alt: '', title: t('coverTitle') }) : h('button', { type: 'button', class: 'book-hero-cover gen cover-tap', title: t('editCover'), style: { background: `linear-gradient(135deg, ${c1}, ${c2})` } }, h('span', { dir: 'auto' }, book.title));
+    coverEl.addEventListener('click', () => void import('../ui/coverview').then((m) => {
+      const edit = coverEdit(book);
+      if (url) m.showCover({ url, title: book.title, bytes: async () => (await db.getBook(book.id))?.cover ?? book.cover!, edit });
+      else m.editCoverSheet(edit, () => {});
+    }));
     const bg = h('div', { class: 'book-hero-bg', style: url ? {} : { background: `linear-gradient(135deg, ${c1}, ${c2})` } });
     if (url) void coverBlur(book).then((b) => { if (b) bg.style.backgroundImage = `url("${b}")`; else bg.style.background = `linear-gradient(135deg, ${c1}, ${c2})`; });
     const hero = h('div', { class: 'book-hero' }, bg,
       h('div', { class: 'book-hero-row' },
-        url ? h('img', { class: 'book-hero-cover', src: url, alt: '' }) : h('div', { class: 'book-hero-cover gen', style: { background: `linear-gradient(135deg, ${c1}, ${c2})` } }, h('span', { dir: 'auto' }, book.title)),
+        coverEl,
         h('div', { class: 'book-hero-text' },
           h('h1', { dir: 'auto' }, book.title),
           book.author ? h('p', { dir: 'auto' }, icon('user'), h('span', null, book.author)) : null,

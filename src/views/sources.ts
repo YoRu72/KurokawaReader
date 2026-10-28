@@ -945,8 +945,25 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     body.replaceChildren();
     titleEl.replaceChildren(h('span', { dir: 'auto' }, d.title));
     const [c1, c2] = coverColors(d.title);
+    const bigCover = h('div', { class: 'src-cover big' + (d.cover ? ' cover-tap' : ''), style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, d.cover ? coverImg(d.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, d.title));
+    // The cover tapped: on its own, full screen, to share or save (Mihon's cover view) — and, for a title in the
+    // library, a picture of one's own in its place.
+    if (d.cover) bigCover.addEventListener('click', () => {
+      const img = bigCover.querySelector('img'); if (!img) return;
+      void Promise.all([import('../ui/coverview'), fromSource(src.id)]).then(async ([m, mine]) => {
+        const libId = mine.get(d.id) ?? mine.get(id);
+        const book = libId ? await db.getBook(libId) : undefined;
+        const headers = hnd ? (hnd.ln?.imageRequestInit?.headers as Record<string, string> | undefined) ?? hnd.my?.headers ?? { referer: hnd.item.site } : undefined;
+        const edit: import('../ui/coverview').CoverEdit | undefined = book ? {
+          custom: () => book.coverOrig !== undefined,
+          set: async (picture) => { const { shrinkCover, forgetCover, coverUrl } = await import('../library'); const small = await shrinkCover(picture); const b = await db.updateBook(book.id, (x) => { if (x.coverOrig === undefined) x.coverOrig = x.cover ?? null; x.cover = small; }); forgetCover(book.id); if (b) book.coverOrig = b.coverOrig; return (b && coverUrl(b)) || ''; },
+          restore: async () => { const { forgetCover, coverUrl } = await import('../library'); const b = await db.updateBook(book.id, (x) => { x.cover = x.coverOrig ?? undefined; delete x.coverOrig; }); forgetCover(book.id); delete book.coverOrig; return b ? coverUrl(b) : null; },
+        } : undefined;
+        m.showCover({ url: img.currentSrc || img.src, title: d.title, bytes: () => m.coverBytes(img.currentSrc || img.src, headers), edit });
+      });
+    });
     const head = h('div', { class: 'src-head' },
-      h('div', { class: 'src-cover big', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, d.cover ? coverImg(d.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, d.title)),
+      bigCover,
       h('div', { class: 'src-head-text' },
         copyOnHold(h('h2', { dir: 'auto' }, d.title)),
         d.author ? h('p', { class: 'src-author-line', dir: 'auto' }, d.author) : null,
