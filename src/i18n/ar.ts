@@ -331,6 +331,14 @@ export const ar: Strings = {
   minsLeftBook: 'بقي من الكتاب {n}',
   hoursMinutes: '{h} س {m} د',
   today: 'اليوم',
+  yesterday: 'أمس',
+  history: 'السجلّ',
+  historyEmpty: 'لم تقرأ شيئًا بعد. تظهر هنا الكتب التي تفتحها، أحدثها أولًا.',
+  removeFromHistory: 'إزالة من السجلّ',
+  removedFromHistory: 'أُزيل من السجلّ (ويبقى الكتاب في المكتبة)',
+  clearHistory: 'مسح السجلّ',
+  clearHistoryConfirm: 'أتمسح سجلّ القراءة كله؟ تبقى الكتب في المكتبة.',
+  historyCleared: 'مُسح السجلّ',
 
   // إحصاءات القراءة
   readingStats: 'إحصاءات القراءة',
