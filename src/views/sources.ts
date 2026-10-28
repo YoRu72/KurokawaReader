@@ -506,6 +506,8 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
   if (chips) alts.forEach((a) => chips.append(h('button', { type: 'button', class: 'chip small', role: 'tab', onclick: () => { if (cur === a) return; cur = a; draw(); look(); } }, a.label)));
   const row = h('article', { class: 'vol-row' }, cover,
     h('div', { class: 'vol-text' }, h('b', { class: 'vol-title', dir: 'auto' }, b.title), sub, chips, extra, actions, tocSlot));
+  // (Held: the quick way in — into the library with tags, or to the device.)
+  onHoldOrContext(cover, () => void quickAdd(src, { ...b, file: cur.file, id: cur.id }, lib, null, rows));
   draw();
   const fill = (p: { cover?: string; title?: string; author?: string; toc?: { label: string; depth: number }[] }, mine: number) => {
     if (mine !== token) return;
@@ -761,6 +763,8 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       b.author ? h('span', { class: 'src-author', dir: 'auto' }, b.author) : null,
       formatMarks(b.formats),
       b.description && src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? h('span', { class: 'src-snippet', dir: 'auto' }, b.description) : null);
+    // Held: added to the library from here, with the tags asked (as Mihon's long press in Browse).
+    onHoldOrContext(el, () => void quickAdd(src, b, lib, hnd ?? null, rows));
     // A book already in the library (fetched from here before): marked so, and opened from its card.
     if (b.look !== 'folder' && (lib.has(b.id) || b.alts?.some((a) => lib.has(a.id)))) { el.classList.add('in-library'); cover.append(h('span', { class: 'have-mark' }, icon('check'), t('inLibrary'))); }
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
@@ -928,6 +932,44 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     if (d.toc?.length) body.append(tocBlock(d.toc, 40));
   })();
   return root;
+}
+
+/** Held on a card (as Mihon adds a title from Browse with a long press): the book or series added to the
+ *  library from here — a file fetched, a web novel followed — with the tags asked, or the file to the device. */
+async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>): Promise<void> {
+  const sh = openSheet(b.title, t('close'));
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  if (b.author) sh.body.append(h('p', { class: 'hint', dir: 'auto' }, b.author));
+  const list = h('div', { class: 'dest-list' }); sh.body.append(list);
+  const row = (ic: string, label: string, fn: () => void | Promise<void>, cls = '') => list.append(h('button', { type: 'button', class: `dest-row ${cls}`, onclick: () => { sh.close(); void Promise.resolve(fn()).catch((e) => { if (!/^(cancelled|deviceOnly)$/.test((e as Error)?.message ?? '')) toast(describe(e), 'error'); }); } }, icon(ic), h('span', { class: 'name', dir: 'auto' }, label)));
+  const inLib = lib.get(b.id) ?? (b.alts ?? []).map((a) => lib.get(a.id)).find(Boolean);
+  if (inLib) row('play', `${t('inLibrary')} · ${t('open')}`, () => navigate(`/read/${inLib}`));
+  if (b.file && !inLib) {
+    const file = b.file; const title = b.title;
+    const go = async (deviceOnly: boolean) => {
+      const place = deviceOnly ? { deviceOnly: true } : b.group ? await askPlacement(`${src.id}|${b.group}`, b.group) : await askPlacement(`${src.id}|${b.id}`, title);
+      if (place.deviceOnly && !deviceOnly) { /* chosen in the sheet */ }
+      const book = await fetchVolume(src, b.id, title, file, () => undefined, b.group ? { name: b.group, index: b.volume, source: src.id, shelf: b.shelf } : undefined, place.tags, place.deviceOnly || deviceOnly);
+      lib.set(b.id, book.id); rows.get(b.id)?.(book.id); toast(t('addedToLibrary'));
+    };
+    row('plus', t('addToLibrary'), () => go(false));
+    row('download', t('deviceOnly'), () => go(true));
+  }
+  if (b.look === 'series' || (b.look === 'folder' && b.openShelf !== undefined)) {
+    row('download', t('seriesInSource'), () => navigate(b.look === 'series' ? bookPath(src.id, b.id) : path(src.id, { shelf: b.openShelf })));
+  }
+  if (hnd && !b.file && b.look !== 'folder' && b.look !== 'series') {
+    // A web novel: followed in the library (its chapters read online, fetched later from its page).
+    row('plus', t('addToLibrary'), async () => {
+      const d = await src.details(b.id); const novel = d.raw as WebNovel;
+      const had = await findInLibrary(novel.src, novel.path);
+      const book = had ?? await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
+      const place = await askPlacement(`${src.id}|${b.id}`, b.title);
+      if (place.tags?.length) await db.updateBook(book.id, (x) => { x.tags = [...new Set([...(x.tags ?? []), ...place.tags!])]; });
+      lib.set(b.id, book.id); toast(t('addedToLibrary'));
+    });
+  }
+  row('info', t('details'), () => navigate(b.openShelf !== undefined ? path(src.id, { shelf: b.openShelf }) : bookPath(src.id, b.id)));
 }
 
 /** What a book can be fetched in, told at a glance (the archive says so for every book): EPUB — the format
