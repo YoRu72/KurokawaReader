@@ -481,7 +481,9 @@ async function downloadSegmented(e, url, file, id = '') {
   final = probe.url || url;
   const cr = probe.headers.get('content-range');
   if (probe.status === 206 && cr && cr.includes('/')) { total = Number(cr.split('/').pop()); ranged = total > 0; }
-  try { await probe.arrayBuffer(); } catch { /* drain */ }
+  // (A server that ignores the range sends the whole file now: written from this answer, not fetched twice.)
+  const whole = probe.status === 200 && probe.body ? probe : null;
+  if (!whole) { try { await probe.body?.cancel(); } catch { /* done */ } }
   let got = 0, lastT = Date.now(), lastGot = 0, speed = 0, conns = 1;
   const report = () => { const now = Date.now(); if (now - lastT < 400) return; const inst = (got - lastGot) / ((now - lastT) / 1000); speed = speed ? speed * 0.6 + inst * 0.4 : inst; lastT = now; lastGot = got; e.sender.send('kr:download-progress', { id, pct: total ? Math.round((got / total) * 100) : 0, got, total, speed, connections: conns }); };
   if (ranged && total > 2 * 1048576) {
@@ -503,13 +505,14 @@ async function downloadSegmented(e, url, file, id = '') {
               if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
               const reader = res.body.getReader();
               for (;;) { const { done, value } = await reader.read(); if (done) break; await fh.write(Buffer.from(value), 0, value.length, pos); pos += value.length; got += value.length; report(); }
-            } catch (err) { if (attempt >= 4) throw err; await new Promise((r) => setTimeout(r, 400 * (attempt + 1))); }
+              if (pos <= to) throw new Error('connection closed early');
+            } catch (err) { if (attempt >= 5) throw err; await new Promise((r) => setTimeout(r, 400 * (attempt + 1))); }
           }
         }
       }));
     } finally { await fh.close(); }
   } else {
-    const res = await net.fetch(url, fetchOpts({}));
+    const res = whole ?? await net.fetch(url, fetchOpts({}));
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
     total = Number(res.headers.get('content-length') || 0);
     const out = fs.createWriteStream(file); let err = null; out.on('error', (x) => { err = x; });

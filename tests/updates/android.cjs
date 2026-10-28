@@ -57,6 +57,14 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   const said = await status();
   await page.click('.update-sheet .upd-go'); await page.waitForTimeout(400);
   ok('an update downloaded before is installed again without downloading', /Already downloaded/.test(said) && (await page.evaluate(() => window.krDl.calls)) === calls && (await page.evaluate(() => window.krDl.installs.length)) === 2);
+  // A download left running with the dialog closed, the dialog opened again: when it ends, one installer only.
+  await page.evaluate(() => { window.krDl.cache = {}; }); await closeAll(); await page.waitForTimeout(200);
+  await open(); await page.waitForSelector('.update-sheet .upd-go:not([disabled])'); await page.waitForTimeout(400);
+  await page.click('.update-sheet .upd-go'); await page.waitForTimeout(200);
+  await closeAll(); await page.waitForTimeout(200); await open(); await page.waitForTimeout(600);
+  const before = await page.evaluate(() => window.krDl.installs.length);
+  await page.evaluate(() => window.krDl.finish()); await page.waitForTimeout(600);
+  ok('closed and opened again mid-way: the installer starts once', (await page.evaluate(() => window.krDl.installs.length)) === before + 1);
   console.log(fails ? `${fails} FAILED` : 'all passed', 'errors', errors);
   await browser.close(); server.close(); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

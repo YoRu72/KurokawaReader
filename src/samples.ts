@@ -18,10 +18,11 @@ export async function importSamples(): Promise<Book[]> {
   let lastError: unknown = null;
   for (const s of SAMPLES) {
     try {
-      let r = await fetch(s.path).catch(() => null);
-      if (!r?.ok) r = await fetch(WEB_SAMPLES + s.path);
-      if (!r.ok) throw new Error(`${s.name}: ${r.status}`);
-      files.push(new File([await r.blob()], s.name, { type: 'application/epub+zip' }));
+      // (Only a real EPUB counts: the desktop app answers a file it lacks with its own page, and says "OK".)
+      const epub = async (url: string) => { const r = await fetch(url).catch(() => null); if (!r?.ok) return null; const b = await r.blob(); const head = new Uint8Array(await b.slice(0, 2).arrayBuffer()); return head[0] === 0x50 && head[1] === 0x4b ? b : null; };
+      const blob = (await epub(s.path)) ?? (await epub(WEB_SAMPLES + s.path));
+      if (!blob) throw new Error(`${s.name}: not available`);
+      files.push(new File([blob], s.name, { type: 'application/epub+zip' }));
     } catch (e) { lastError = e; }
   }
   // (Offline, the one the app carries comes in alone.)

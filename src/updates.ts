@@ -182,7 +182,9 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
 }
 
 /** Download `asset` and hand it to the platform installer (or save/share it when there is none). */
-async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<void> {
+/** `alive`: whether the dialog that asked is still open — one closed meanwhile does not start the installer when
+ *  the download ends (the update is kept; opening the dialog again installs it, once). */
+async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, alive: () => boolean = () => true): Promise<void> {
   const platform = nativePlatform();
   if (platform === 'android') {
     const p = androidPlugins(); if (!p) throw new Error('native');
@@ -193,6 +195,7 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
     if (path) onProgress({ pct: 100, got: asset.size, total: asset.size, speed: 0 });
     else if (kr.downloadFile) path = await fetchApk(kr, asset, onProgress, signal);
     else { const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal); ({ uri: path } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true })); }
+    if (!alive()) return;
     if (/\.apk$/i.test(asset.name)) {
       // Android 8+: the installer refuses silently unless this app may install unknown apps.
       const perm = p.kr as AndroidPlugin & { canInstall?(): Promise<{ granted: boolean }>; requestInstallPermission?(): Promise<{ granted: boolean }> };
@@ -298,7 +301,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
     install.hidden = true; choose.disabled = true; later.hidden = true; cancel.hidden = false; ctl = new AbortController();
     status.textContent = t('preparing'); wave.hidden = false; wave.classList.add('indet'); setPct(0);
     try {
-      await installAsset(asset, onProgress, ctl.signal);
+      await installAsset(asset, (p) => { if (s.el.isConnected) onProgress(p); }, ctl.signal, () => s.el.isConnected);
       setPct(100); wave.classList.remove('indet'); wave.classList.add('done'); dl.classList.add('ok');
       status.textContent = t('installStarted');
     } catch (err) {
