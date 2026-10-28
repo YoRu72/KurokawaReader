@@ -1167,9 +1167,9 @@ export const en = {
   tryAgain: 'Try again',
   edit: 'Edit',
   // Sources (archive.org, Shamela)
-  sources: 'Sources',
+  sources: 'Browse',
   sourcesHint: "Books from the web, browsed and fetched into your library. Built in: the Internet Archive (millions of free books) and the Shamela library of Arabic works. With + you add your own: a folder of books on the web, by its address, or an extension repository for web novels (LNReader, Mangayomi).",
-  sourcesMenu: 'Sources: Internet Archive, Shamela and yours',
+  sourcesMenu: 'Browse: the Internet Archive, Shamela and your own sources',
   sourceNeedsApp: 'This site does not let a web page read it; the app for Android, iOS, Windows, macOS or Linux can.',
   shamelaLinkOn: 'Signed in: texts, chapter titles and the catalogue can be searched.',
   shamelaLinkOff: 'Optional: sign in (a free account) for its search engine — chapter titles, roots and wildcards. The site’s own search needs no account.',

@@ -71,9 +71,11 @@ export function libraryView(): HTMLElement {
   const randomBtn = iconButton('target', t('randomBook'), () => randomBook()); randomBtn.classList.add('tool-btn');
   const searchBooksBtn = iconButton('search', t('searchBooks'), () => void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder)));
   searchBooksBtn.classList.add('tool-btn');
+  // Browse: books from the web (the Internet Archive, Shamela, web folders, extensions), a tap from the library.
+  const browseBtn = iconButton('globe', t('sources'), () => navigate('/sources')); browseBtn.classList.add('tool-btn', 'browse-btn');
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, browseBtn),
     chips,
     tagChips,
     fmtChips,

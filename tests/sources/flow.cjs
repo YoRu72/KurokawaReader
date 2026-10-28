@@ -21,17 +21,17 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.goto(base + '#/settings'); await page.waitForSelector('.settings-view, .view');
     // (A couple of sections opened on the way down, so the Sources button sits below the first screen.)
     for (const name of ['Appearance', 'Reader']) await page.click(`section.card h3:has-text("${name}")`).catch(() => undefined);
-    await page.click('section.card h3:has-text("Sources")'); await page.waitForTimeout(300);
-    await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Sources: Internet Archive, Shamela and yours/.test(x.textContent || '')); b.scrollIntoView({ block: 'center' }); }); await page.waitForTimeout(300);
+    await page.click('section.card h3:has-text("Browse")'); await page.waitForTimeout(300);
+    await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Browse: the Internet Archive, Shamela and your own sources/.test(x.textContent || '')); b.scrollIntoView({ block: 'center' }); }); await page.waitForTimeout(300);
     ok('the settings scrolled to the Sources section', await page.evaluate(() => document.querySelector('.settings-body').scrollTop > 200));
-    await page.click('button:has-text("Sources: Internet Archive, Shamela and yours")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
+    await page.click('button:has-text("Browse: the Internet Archive, Shamela and your own sources")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     ok('hub lists both sources', (await page.$$('.source-card')).length === 2);
     // Back from the sources: the settings as they were left — the Sources section open, scrolled where it was.
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForSelector('.settings-body', { timeout: 15000 }); await page.waitForTimeout(600);
-    const settingsBack = await page.evaluate(() => { const card = [...document.querySelectorAll('section.card')].find((c) => /Sources/.test(c.querySelector('h3')?.textContent || '')); const r = card?.querySelector('button')?.getBoundingClientRect(); return { hash: location.hash, open: card && !card.classList.contains('collapsed'), visible: !!r && r.top >= 0 && r.bottom <= window.innerHeight }; });
+    const settingsBack = await page.evaluate(() => { const card = [...document.querySelectorAll('section.card')].find((c) => /Browse/.test(c.querySelector('h3')?.textContent || '')); const r = card?.querySelector('button')?.getBoundingClientRect(); return { hash: location.hash, open: card && !card.classList.contains('collapsed'), visible: !!r && r.top >= 0 && r.bottom <= window.innerHeight }; });
     ok('back from the sources: the settings, the Sources section still open and in view', settingsBack.hash === '#/settings' && settingsBack.open && settingsBack.visible);
     if (!(settingsBack.hash === '#/settings' && settingsBack.open && settingsBack.visible)) console.log('  settings:', JSON.stringify(settingsBack));
-    await page.click('button:has-text("Sources: Internet Archive, Shamela and yours")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
+    await page.click('button:has-text("Browse: the Internet Archive, Shamela and your own sources")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(__dirname, 'hub.png') });
     // archive.org: the default shelf.
     await page.click('.source-card >> nth=0 >> .source-head'); await page.waitForSelector('.src-grid .src-card', { timeout: 15000 }); await page.waitForTimeout(300);

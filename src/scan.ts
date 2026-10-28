@@ -466,10 +466,14 @@ function paperLight(lum: Float32Array, w: number, h: number): Float32Array {
   const bs = Math.max(8, Math.round(Math.max(w, h) / 56));
   const gw = Math.ceil(w / bs), gh = Math.ceil(h / bs);
   const grid = new Float32Array(gw * gh);
+  // (The 90th percentile of each block by a histogram: no array sorted per block.)
+  const hist = new Uint32Array(1024);
   for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
-    const vals: number[] = [];
-    for (let y = gy * bs; y < Math.min(h, (gy + 1) * bs); y += 2) for (let x = gx * bs; x < Math.min(w, (gx + 1) * bs); x += 2) vals.push(lum[y * w + x]);
-    vals.sort((a, b) => a - b); grid[gy * gw + gx] = vals[Math.floor(vals.length * 0.9)] ?? 255;
+    hist.fill(0); let n = 0;
+    for (let y = gy * bs; y < Math.min(h, (gy + 1) * bs); y += 2) for (let x = gx * bs; x < Math.min(w, (gx + 1) * bs); x += 2) { hist[Math.max(0, Math.min(1023, (lum[y * w + x] * 4) | 0))]++; n++; }
+    let want = Math.floor(n * 0.9), v = 255;
+    for (let b = 0; b < 1024; b++) { if (hist[b] > want) { v = (b + 0.5) / 4; break; } want -= hist[b]; }
+    grid[gy * gw + gx] = n ? v : 255;
   }
   // A block that is all ink (a picture) takes its neighbours' light, but only one block's reach: further than
   // that, a darker area is more likely a shadow on the paper than ink. Then smooth.
@@ -615,19 +619,33 @@ export type Adjust = { brightness?: number; contrast?: number };
  */
 function glareOf(lum: Float32Array, light: Float32Array, w: number, h: number): Float32Array | null {
   const bs = Math.max(8, Math.round(Math.max(w, h) / 48)); const gw = Math.ceil(w / bs), gh = Math.ceil(h / bs), nb = gw * gh;
-  const g = new Float32Array(nb), dark = new Float32Array(nb); const vals: number[] = [];
+  const g = new Float32Array(nb), dark = new Float32Array(nb);
+  // (The darkest 3% of each block by a histogram of its luminance, quarter levels: no sorting.)
+  const hist = new Uint32Array(1024);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
     g[y * gw + x] = light[Math.min(h - 1, y * bs + (bs >> 1)) * w + Math.min(w - 1, x * bs + (bs >> 1))];
-    vals.length = 0;
-    for (let yy = y * bs; yy < Math.min(h, (y + 1) * bs); yy += 2) for (let xx = x * bs; xx < Math.min(w, (x + 1) * bs); xx += 2) vals.push(lum[yy * w + xx]);
-    vals.sort((a, b) => a - b); dark[y * gw + x] = vals[Math.floor(vals.length * 0.03)] ?? 255;
+    hist.fill(0); let n = 0;
+    for (let yy = y * bs; yy < Math.min(h, (y + 1) * bs); yy += 2) for (let xx = x * bs; xx < Math.min(w, (x + 1) * bs); xx += 2) { hist[Math.max(0, Math.min(1023, (lum[yy * w + xx] * 4) | 0))]++; n++; }
+    let want = Math.floor(n * 0.03), v = 255;
+    for (let b = 0; b < 1024; b++) { if (hist[b] > want) { v = (b + 0.5) / 4; break; } want -= hist[b]; }
+    dark[y * gw + x] = n ? v : 255;
   }
-  // The typical light around each block: low in what is over a wide window (a lamp's glare can be big).
+  // The typical light around each block: low (35th percentile) in what is over a wide window (a lamp's glare
+  // can be big) — by a prefix-summed histogram of the blocks' light rather than a sort per block.
   const R = Math.max(3, Math.round(Math.max(gw, gh) / 2)); const typ = new Float32Array(nb);
+  const BINS = 256; const pre = new Uint32Array((gw + 1) * (gh + 1) * BINS);
+  const at = (x: number, y: number) => (y * (gw + 1) + x) * BINS;
+  for (let y = 1; y <= gh; y++) for (let x = 1; x <= gw; x++) {
+    const o = at(x, y), a = at(x - 1, y), b = at(x, y - 1), c = at(x - 1, y - 1);
+    const bin = Math.max(0, Math.min(BINS - 1, g[(y - 1) * gw + (x - 1)] | 0));
+    for (let k = 0; k < BINS; k++) pre[o + k] = pre[a + k] + pre[b + k] - pre[c + k] + (k === bin ? 1 : 0);
+  }
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
-    vals.length = 0;
-    for (let yy = Math.max(0, y - R); yy <= Math.min(gh - 1, y + R); yy++) for (let xx = Math.max(0, x - R); xx <= Math.min(gw - 1, x + R); xx++) vals.push(g[yy * gw + xx]);
-    vals.sort((a, b) => a - b); typ[y * gw + x] = vals[Math.floor(vals.length * 0.35)];
+    const x0 = Math.max(0, x - R), x1 = Math.min(gw - 1, x + R), y0 = Math.max(0, y - R), y1 = Math.min(gh - 1, y + R);
+    const o11 = at(x1 + 1, y1 + 1), o01 = at(x0, y1 + 1), o10 = at(x1 + 1, y0), o00 = at(x0, y0);
+    const total = (x1 - x0 + 1) * (y1 - y0 + 1); let want = Math.floor(total * 0.35), v = 255;
+    for (let k = 0; k < BINS; k++) { const c = pre[o11 + k] - pre[o01 + k] - pre[o10 + k] + pre[o00 + k]; if (c > want) { v = k; break; } want -= c; }
+    typ[y * gw + x] = v;
   }
   const wgt = new Float32Array(nb); let any = false;
   for (let i = 0; i < nb; i++) { wgt[i] = clamp((g[i] / Math.max(1, typ[i]) - 1.07) / 0.1, 0, 1); if (wgt[i] > 0) any = true; }
