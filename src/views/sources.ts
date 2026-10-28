@@ -52,6 +52,36 @@ async function folderSourceFor(srcId: string): Promise<Source> {
   return folderSource(repo);
 }
 
+
+
+/** The AniList tracking button of a title on its source (as Mihon has it on an entry's page): for web folders
+ *  and the extensions, not for archive.org or Shamela, whose books are no manga or novel entries. It opens the
+ *  tracking sheet of the title's book in the library; a title not yet there must be added first. */
+function trackButton(srcId: string, bookId: () => Promise<string | undefined>, after: () => void): HTMLElement | null {
+  if (srcId === archiveSource.id || srcId === shamelaSource.id) return null;
+  const btn = h('button', { type: 'button', class: 'btn tonal src-track' }, icon('globe'), t('tracking')) as HTMLButtonElement;
+  const label = async () => { const id = await bookId(); const b = id ? await db.getBook(id) : undefined; btn.replaceChildren(icon('globe'), b?.track ? t('tracked') : t('tracking')); btn.classList.toggle('on', !!b?.track); };
+  btn.addEventListener('click', async () => {
+    const { anilistOn, linked } = await import('../anilist');
+    if (!anilistOn()) { toast(t('trackTurnOn')); navigate('/settings'); return; }
+    if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; }
+    const id = await bookId(); const b = id ? await db.getBook(id) : undefined;
+    if (!b) { toast(t('trackAddFirst')); return; }
+    const { trackSheet } = await import('../ui/track');
+    trackSheet(b, () => { void label(); after(); });
+  });
+  void label();
+  return btn;
+}
+
+/** A title copied by a long press (the selection handles stay off it, as in Mihon); the text copied is the
+ *  element's own. */
+function copyOnHold(el: HTMLElement, text?: () => string): HTMLElement {
+  el.classList.add('copy-hold');
+  onHoldOrContext(el, () => { const v = (text ? text() : el.textContent ?? '').trim(); if (!v) return; void navigator.clipboard.writeText(v).then(() => toast(t('copiedTitle')), () => toast(t('copyTextFailed'), 'error')); });
+  return el;
+}
+
 export function sourcesView(srcId?: string, bookId?: string, q?: string, shelf?: string, tags?: string[]): HTMLElement & { dispose?: () => void } {
   if (srcId && isExt(srcId)) return lazy(async () => { const hnd = await extHandle(srcId); return bookId ? detailsView(hnd.source, bookId, hnd) : browseView(hnd.source, q ?? '', shelf, tags ?? [], hnd); }, srcId);
   if (srcId && isDir(srcId)) return lazy(async () => { const src = await folderSourceFor(srcId); return bookId ? detailsView(src, bookId) : browseView(src, q ?? '', shelf, tags ?? []); }, srcId);
@@ -505,7 +535,7 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
   };
   if (chips) alts.forEach((a) => chips.append(h('button', { type: 'button', class: 'chip small', role: 'tab', onclick: () => { if (cur === a) return; cur = a; draw(); look(); } }, a.label)));
   const row = h('article', { class: 'vol-row' }, cover,
-    h('div', { class: 'vol-text' }, h('b', { class: 'vol-title', dir: 'auto' }, b.title), sub, chips, extra, actions, tocSlot));
+    h('div', { class: 'vol-text' }, copyOnHold(h('b', { class: 'vol-title', dir: 'auto' }, b.title)), sub, chips, extra, actions, tocSlot));
   // (Held: the quick way in — into the library with tags, or to the device.)
   onHoldOrContext(cover, () => void quickAdd(src, { ...b, file: cur.file, id: cur.id }, lib, null, rows));
   draw();
@@ -603,11 +633,11 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   about.addEventListener('click', () => about.classList.toggle('clamped'));
   const head = h('article', { class: 'series-head' }, cover,
     h('div', { class: 'series-text' },
-      h('h2', { dir: 'auto' }, b.title),
+      copyOnHold(h('h2', { dir: 'auto' }, b.title)),
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
-      h('div', { class: 'series-actions' }, next, btn), status));
+      h('div', { class: 'series-actions' }, next, btn, trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
@@ -916,7 +946,7 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     const head = h('div', { class: 'src-head' },
       h('div', { class: 'src-cover big', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, d.cover ? coverImg(d.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, d.title)),
       h('div', { class: 'src-head-text' },
-        h('h2', { dir: 'auto' }, d.title),
+        copyOnHold(h('h2', { dir: 'auto' }, d.title)),
         d.author ? h('p', { class: 'src-author-line', dir: 'auto' }, d.author) : null,
         h('div', { class: 'src-chips' }, ...[d.year, d.lang, d.pages ? (hnd ? countChapters(d.pages) : t('pagesN', { n: localDigits(d.pages) })) : '', d.volumes?.length ? t('volumesN', { n: localDigits(d.volumes.length) }) : '', d.badge].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
         d.url ? h('a', { class: 'src-site', href: d.url, target: '_blank', rel: 'noopener' }, icon('external'), ' ', src.site.replace(/^https?:\/\//, '')) : null));
@@ -925,7 +955,7 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     if (hnd) await novelActions(actions, d, hnd, () => gone);
     else if (src.id === 'shamela') await shamelaActions(actions, d, id, () => gone);
     else fileActions(actions, src, d);
-    if (d.description) { const p = h('p', { class: 'src-desc', dir: 'auto' }, d.description); const long = d.description.length > 420; if (long) { p.classList.add('clamped'); p.addEventListener('click', () => p.classList.toggle('clamped')); } body.append(p); }
+    if (d.description) { const p = h('p', { class: 'src-desc', dir: 'auto' }, d.description); const long = d.description.length > 420; if (long) { p.classList.add('clamped'); p.addEventListener('click', () => p.classList.toggle('clamped')); } onHoldOrContext(p, () => { if (window.getSelection()?.toString().trim()) return; void navigator.clipboard.writeText(d.description!).then(() => toast(t('copiedSynopsis')), () => toast(t('copyTextFailed'), 'error')); }); body.append(p); }
     if (d.tags.length) body.append(h('div', { class: 'folder-chips src-tags' }, ...d.tags.slice(0, 30).map((tg) => h('button', { type: 'button', class: 'chip tag', onclick: () => navigate(path(src.id, hnd ? { q: tg.label } : { tags: [tg.id] })) }, icon('tag'), h('span', { dir: 'auto' }, tg.label)))));
     if (d.meta?.length && !hnd) body.append(h('dl', { class: 'src-meta' }, ...d.meta.flatMap((m) => [h('dt', null, m.label), h('dd', { dir: 'auto' }, m.value)])));
     if (d.chapters?.length) body.append(hnd ? novelChapters(d, hnd) : chaptersList(d, id, () => gone));
@@ -1127,6 +1157,7 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
       finally { epub.disabled = false; say(t('saveAsEpub')); }
     });
     row.append(epub);
+    { const tb = trackButton(hnd.source.id, async () => book?.id, () => void draw()); if (tb) row.append(tb); }
     box.append(row);
     if (book) {
       const checkBtn = h('button', { type: 'button', class: 'btn small' }, icon('refresh'), t('checkChapters')) as HTMLButtonElement;

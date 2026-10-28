@@ -127,6 +127,9 @@ export const en = {
   // Selection tools
   copySelected: 'Copy',
   copied: 'Copied',
+  copiedTitle: 'Title copied',
+  copyTextFailed: 'Could not copy here',
+  copiedSynopsis: 'Synopsis copied',
   searchSelected: 'Search',
   defineSelected: 'Define',
   translateSelected: 'Translate',
@@ -447,6 +450,8 @@ export const en = {
   anilistUnlink: 'Unlink',
   anilistLinkedAs: 'Linked as {name}',
   anilistLinkFirst: 'Link your AniList account in settings first',
+  trackTurnOn: 'Turn on AniList tracking in settings first',
+  trackAddFirst: 'Add a volume to the library first, then track it',
   anilistAutoProgress: 'Send chapters read as progress',
   searchAnilist: 'Search AniList',
   trackLinked: 'Linked to AniList',

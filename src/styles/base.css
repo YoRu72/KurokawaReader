@@ -1648,3 +1648,8 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .toc-toggle { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; color: var(--md-on-surface-dim); font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 8px; cursor: pointer; flex: none; }
 .toc-toggle svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
 .toc-toggle:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+
+/* Titles on a source's pages are copied by a long press (no selection handles on them); a synopsis can still be selected. */
+.copy-hold, .series-head, .src-head, .vol-text, .src-chips, .src-actions, .series-actions { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.copy-hold { cursor: default; }
+.src-desc, .series-about { -webkit-user-select: text; user-select: text; }

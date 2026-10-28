@@ -132,6 +132,9 @@ export const ar: Strings = {
   // أدوات التحديد
   copySelected: 'نسخ',
   copied: 'نُسخ',
+  copiedTitle: 'نُسخ العنوان',
+  copyTextFailed: 'تعذّر النسخ هنا',
+  copiedSynopsis: 'نُسخ الملخّص',
   searchSelected: 'بحث',
   defineSelected: 'المعنى',
   translateSelected: 'ترجمة',
@@ -452,6 +455,8 @@ export const ar: Strings = {
   anilistUnlink: 'فكّ الربط',
   anilistLinkedAs: 'مربوطٌ باسم {name}',
   anilistLinkFirst: 'اربط حسابك في AniList من الإعدادات أولًا',
+  trackTurnOn: 'شغّل تتبّع AniList من الإعدادات أولًا',
+  trackAddFirst: 'أضف مجلدًا إلى المكتبة أولًا، ثم تتبّعه',
   anilistAutoProgress: 'إرسال الفصول المقروءة تقدّمًا',
   searchAnilist: 'ابحث في AniList',
   trackLinked: 'رُبط بـ AniList',

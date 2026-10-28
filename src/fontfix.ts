@@ -126,16 +126,25 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const upem = sources.length === 1 ? sources[0].upem : 1000;
   // A glyph read as a space is a word break, not the font's space (a legacy font may file a letter under the
   // space code); the space comes from spaceGid or meta.space.
-  lines = lines.flatMap((l) => { const out: Use[][] = [[]]; for (const u of l) { if (u[1] && !u[1].trim()) out.push([]); else out[out.length - 1].push(u); } return out.filter((x) => x.length).map((x) => Object.assign(x, { rtl: (l as RtlLine).rtl })); });
+  lines = lines.flatMap((l) => { const out: Use[][] = [[]]; for (const u of l) { if (u[1] && /^[\s\u200b-\u200f\u2060\ufeff]+$/.test(u[1])) out.push([]); else out[out.length - 1].push(u); } return out.filter((x) => x.length).map((x) => Object.assign(x, { rtl: (l as RtlLine).rtl })); });
   // The same glyph met in several sources (the subsets of one font, a page each) is one glyph: told by its
   // outline. Otherwise a long book's font would hold a copy of each letter form per page, and its shaping
   // rules — one set per copy — would outgrow what a GSUB table can hold.
+  // Glyphs with no outline (a space, an invisible glyph) are never read as marks on the letter beside them —
+  // a space drawn with no text of its own would otherwise turn the font's space into a mark, and every word
+  // would run into the next.
+  const blank = new Set<number>();
+  const isBlank = (gid: number): boolean => { try { const src = sources[Math.floor(gid / 65536)]; return !!src && !src.outline(gid % 65536).contours.length; } catch { return false; } };
+  for (const l of lines) for (const u of l) if (u[0] && !blank.has(u[0]) && !u[1] && isBlank(u[0])) blank.add(u[0]);
+  if (blank.size) lines = lines.map((l) => Object.assign(l.filter((u) => !blank.has(u[0]) || u[1]), { rtl: (l as RtlLine).rtl })).filter((l) => l.length);
   if (sources.length > 1) {
     const canon = new Map<number, number>(); const byShape = new Map<string, number>();
     const keyOf = (gid: number): string | null => {
       try {
         const src = sources[Math.floor(gid / 65536)]; if (!src) return null;
         const o = src.outline(gid % 65536); const k = 1000 / src.upem;
+        // (A glyph with no outline — a space, a blank mark — is never shared: told apart only by its use.)
+        if (!o.contours.length) return null;
         let key = `${Math.round(o.adv * k)}`;
         for (const c of o.contours) { key += '|'; for (const pt of c) key += `${Math.round(pt.x * k)},${Math.round(pt.y * k)}${pt.on ? '' : '~'};`; }
         return key;
@@ -149,6 +158,12 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     }
     if (spaceGid !== undefined) spaceGid = canon.get(spaceGid) ?? spaceGid;
   }
+  // The width the PDF gives each glyph (its /Widths, em): what the page's lines were measured with. A font
+  // whose own advances differ (a producer that re-measured it) would set the lines longer or shorter than the
+  // page, wrapping a word the page kept; the PDF's widths win.
+  const pdfAdv = new Map<number, number[]>();
+  for (const l of lines) for (const u of l) if (u[0] && u[5] > 0 && u[5] < 4) { const a = pdfAdv.get(u[0]); if (a) { if (a.length < 24) a.push(u[5]); } else pdfAdv.set(u[0], [u[5]]); }
+  const medianOf = (a: number[]) => { const v = [...a].sort((x, y) => x - y); return v[v.length >> 1]; };
   const tally = <K>(m: Map<K, Map<number, number>>, k: K, g: number) => { let x = m.get(k); if (!x) m.set(k, x = new Map()); x.set(g, (x.get(g) ?? 0) + 1); };
   const top = (x: Map<number, number>) => [...x.entries()].sort((a, b) => b[1] - a[1])[0][0];
   const letterForm = new Map<string, Map<number, number>>(); // `${char}|${form}` → glyph uses
@@ -176,7 +191,7 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
       if (!gid) continue;
       allGids.add(gid);
       // (A code with no real text comes as a control or private-use character.)
-      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd);
+      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd && !(c >= 0x200b && c <= 0x200f) && c !== 0x2060 && c !== 0xfeff);
       if (text === '\uffff') { cls.push({ gid, cps: [], marks: [], x, y, em, adv: w * em, mpos: [], bad: true }); continue; }
       if (w > 0 && !(cps.length && cps.every(isMark))) cls.push({ gid, cps, marks: [], x, y, em, adv: w * em, mpos: [], span: span || undefined });
       else loose.push({ gid, x, y, cps, span: span || undefined });
@@ -483,7 +498,9 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     if (g >= ADDED) { outlines.push({ contours: [], adv: 0 }); continue; }
     const src = sources[Math.floor(g / 65536)]; if (!src) { outlines.push({ contours: [], adv: 0 }); continue; }
     const o = src.outline(g % 65536); const k = upem / src.upem;
-    outlines.push(k === 1 ? o : { adv: o.adv * k, contours: o.contours.map((c) => c.map((q) => ({ x: Math.round(q.x * k), y: Math.round(q.y * k), on: q.on }))) });
+    const out = k === 1 ? { adv: o.adv, contours: o.contours } : { adv: o.adv * k, contours: o.contours.map((c) => c.map((q) => ({ x: Math.round(q.x * k), y: Math.round(q.y * k), on: q.on }))) };
+    const pw = pdfAdv.get(g0); if (pw && out.contours.length) { const w = Math.round(medianOf(pw) * upem); if (w > 0 && Math.abs(w - out.adv) > upem * 0.004) out.adv = w; }
+    outlines.push(out);
   }
   // Marks take no room (a legacy font may give them an advance; the PDF placed them itself) — unless the glyph
   // is also some letter's own.

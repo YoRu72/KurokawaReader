@@ -45,7 +45,7 @@ type Region = { cols: Block[][]; edges: [number, number][] };
 type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] };
 /** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
-type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number } };
+type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -1176,6 +1176,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
   const find = (k: string): string => { let r = k; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(k, r); return r; };
   const union = (a: string, b: string) => { const x = find(a), y = find(b); if (x !== y) parent.set(y, x); };
   const used = [...fonts].filter(([, f]) => f.uses && f.src);
+  if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) for (const [k, f] of fonts) if (!(f.uses && f.src)) console.warn('P2D font-unused', k, f.family, f.uses, !!f.src, !!f.raw, f.legacy, f.wordFont);
   for (const [k] of used) parent.set(k, k);
   const byFace = new Map<string, string>();
   for (const [k, f] of used) { const key = `${f.family}|${f.bold}|${f.italic}`; const o = byFace.get(key); if (o) union(o, k); else byFace.set(key, k); }
@@ -1207,7 +1208,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
       let cov: Set<number> | null = null; try { cov = cmapCoverage(lead.raw); } catch { /* unreadable */ }
       if (cov?.size) {
         const used = new Set<number>();
-        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !COMBINING.test(ch)) used.add(c); } });
+        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !(c >= 0x200b && c <= 0x200f) && !COMBINING.test(ch)) used.add(c); } });
         let ok = 0; for (const c of used) if (cov.has(c)) ok++;
         if (!used.size || ok / used.size >= 0.97) continue;
       }
@@ -1607,7 +1608,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       top: Math.max(6, colTop !== null ? H - colTop : H - body[0].base - BASE * firstPitchC),
       // Generous room below: a column that runs a little long must not push the next column onto a new page.
       bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
-      left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
+      left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6, slack: [3, 3] as [number, number],
     };
     const gridsC = [...new Set(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])).flat().filter((l) => l.grid).map((l) => l.grid!))];
     const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
@@ -1649,8 +1650,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const near = vals.filter((x) => Math.abs(x - best) <= tol);
     return outer(1, 0) ? Math.max(...near) : Math.min(...near);
   };
-  const L = edge(ref.map((l) => l.l), (a, b) => a < b, W * 0.1);
-  const R = edge(ref.map((l) => l.r), (a, b) => a > b, W * 0.9);
+  let L = edge(ref.map((l) => l.l), (a, b) => a < b, W * 0.1);
+  let R = edge(ref.map((l) => l.r), (a, b) => a > b, W * 0.9);
+  // A line of the text wider than the measure the others set (a title over a narrow list) must fit too, or
+  // it wraps and pushes the page's end onto another page; a short note out in the margin does not count.
+  for (const l of block) if (l.r - l.l >= (R - L) * 0.6) { if (l.l < L - 1) L = l.l; if (l.r > R + 1) R = l.r; }
   const bodySize = median(body.flatMap((l) => Array(Math.max(1, l.pieces.reduce((n, p) => n + p.text.length, 0))).fill(l.size))) || 12;
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D page', JSON.stringify({ W, H, L, R, bodySize, rule, lines: textLines.map((l) => ({ b: +l.base.toFixed(1), s: +l.size.toFixed(1), l: +l.l.toFixed(1), r: +l.r.toFixed(1), z: header.includes(l) ? 'H' : footer.includes(l) ? 'F' : notesLines.includes(l) ? 'N' : 'B', t: l.pieces.map((p) => p.text).join('|').slice(0, 60), ps: l.pieces.map((p) => [p.text.slice(0, 12), +p.l.toFixed(0), +p.r.toFixed(0), +p.y.toFixed(1), +p.h.toFixed(1)]), gaps: l.pieces.filter((p) => p.text.trim()).sort((x, y) => x.l - y.l).map((p, i, a) => (i ? +(p.l - a[i - 1].r).toFixed(1) : 0)).filter((g) => g > 8) })) }));
   const formulas: Box[] = [];
@@ -1695,9 +1699,13 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     // About a line to spare below the last line: invisible, and it absorbs small drift instead of spilling a line.
     bottom: lowest ? Math.max(8, lowest.base - (1 - BASE) * pitchOf(lowest.size) - pitchOf(lowest.size)) : 72,
     // A little tolerance on each side: another font's slightly wider glyphs must not push a word to a new line.
-    left: Math.max(10, L - 3), right: Math.max(10, W - R - 3),
-    header: 6, footer: 6,
+    // (Three points and a little over one per cent of the measure on each side: a reader's font sets a word
+    // a hair wider than the page's and justified text hides the difference, but a word wrapped to a new line
+    // pushes the page's last line onto the next.)
+    left: Math.max(10, L - 3 - (R - L) * 0.012), right: Math.max(10, W - R - 3 - (R - L) * 0.012),
+    header: 6, footer: 6, slack: [0, 0] as [number, number],
   };
+  m.slack = [L - m.left, W - R - m.right];
   const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
   lap('layout');
   const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
@@ -1813,6 +1821,16 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   };
   // A stretched paragraph set in a rebuilt font keeps the page's tatweels and is justified by its spaces.
   const ownStretch = (b: Para): Para => (b.kashida && b.runs.every((r) => !r.text.trim() || exact.has(r.font)) ? { ...b, kashida: false, runs: b.runs.map((r) => (r.kText ? { ...r, text: r.kText } : r)) } : b);
+  // The page's margins leave a little room beyond the text's edges (see analysePage): a paragraph takes it back
+  // on the side it is aligned to, so its text stands where the page has it, and keeps it on the other side as
+  // the room a slightly wider rendering may need.
+  let slackNow: [number, number] = [0, 0];
+  const indentOf = (b: Para) => {
+    const [sl, sr] = slackNow; const start = b.rtl ? sr : sl, end = b.rtl ? sl : sr;
+    const addStart = b.align === 'start' || b.align === 'both' || b.align === 'center' ? start : 0;
+    const addEnd = b.align === 'end' || b.align === 'center' ? end : 0;
+    return { start: Math.round((b.indStart + addStart) * PT), end: Math.round((b.indEnd + addEnd) * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) };
+  };
   const paraFor = (b0: Para, footnotes: Map<number, number> | null, extra: { before?: number; colBreak?: boolean } = {}) => { const b = ownStretch(b0); return new Paragraph({
     bidirectional: b.rtl,
     run: markRun(b),
@@ -1820,7 +1838,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // (Justified by its spaces even where the page used tatweels: a line ending in a line break is stretched by
     // Word and LibreOffice alike only that way.)
     alignment: alignOf(b.align, false),
-    indent: { start: Math.round(b.indStart * PT), end: Math.round(b.indEnd * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) },
+    indent: indentOf(b),
     spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: LineRuleType.EXACT },
     tabStops: b.tabs?.map((t) => ({ type: t.type === 'right' ? TabStopType.RIGHT : t.type === 'center' ? TabStopType.CENTER : TabStopType.LEFT, position: Math.round(t.pos * PT) })),
     children: [...(extra.colBreak ? [new ColumnBreak()] : []), ...b.runs.map((r) => runFor(r, footnotes))],
@@ -1833,7 +1851,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const pad = cols === 2 ? Math.round((v.gap / 2) * PT) : 0;
     const colW = Math.round(((v.width * PT) - midW) / 2) + pad;
     const widths = cols === 3 ? [colW, midW, colW] : [colW, colW];
-    const indent = Math.round(v.indStart * PT) - pad;
+    const indent = Math.round((v.indStart + (v.rtl ? slackNow[1] : slackNow[0])) * PT) - pad;
     return new Table({
       visuallyRightToLeft: v.rtl,
       layout: TableLayoutType.FIXED,
@@ -1871,7 +1889,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       layout: TableLayoutType.FIXED,
       width: { size: colTw.reduce((a, b) => a + b, 0), type: WidthType.DXA },
       columnWidths: order(colTw),
-      indent: { size: Math.round((g.indStart + 3 + pad) * PT), type: WidthType.DXA },
+      indent: { size: Math.round((g.indStart + (g.rtl ? slackNow[1] : slackNow[0]) + pad) * PT), type: WidthType.DXA },
       borders: { top: line, bottom: line, left: line, right: line, insideHorizontal: line, insideVertical: line },
       rows: g.rows.map((row, i) => new TableRow({
         height: { value: Math.round(g.rowH[i] * PT), rule: HeightRule.ATLEAST },
@@ -1901,6 +1919,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const footnoteDefs: Record<number, { children: InstanceType<typeof Paragraph>[] }> = {};
   let noteId = 1;
   const sections = pages.flatMap((pg) => {
+    slackNow = pg.m.slack ?? [0, 0];
     const map = new Map<number, number>();
     // Real Word footnotes when every note is numbered and called from the text; otherwise the note area
     // is placed as a block exactly where the page has it.
@@ -2068,7 +2087,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // (Its symbol table too: codes kept as drawn — a sign font's — are looked up there.)
     const cov = new Set([...(f.cov ??= cmapCoverage(f.raw)), ...(f.winCov ??= cmapCoverage(f.raw, true))]);
     let ok = 0, total = 0;
-    for (const c of used) { if (c <= 0x20 || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
+    for (const c of used) { if (c <= 0x20 || (c >= 0x200b && c <= 0x200f) || c === 0x2060 || c === 0xfeff || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D font', f.family, face, ok, '/', total, [...used].filter((c) => c > 0x20 && !COMBINING.test(String.fromCodePoint(c)) && !cov.has(c)).map((c) => c.toString(16)).join(' '));
     if (!total || ok / total < 0.97) continue; // a missing character or two falls back in Word
     // (Several fonts of one family and style — subsets of it — compete: the one that covers most, a rebuilt
