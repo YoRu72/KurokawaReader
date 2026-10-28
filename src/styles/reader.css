@@ -396,7 +396,20 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .pdf-view.inking .pdf-page { touch-action: none; cursor: crosshair; }
 .pdf-view.inking .textLayer, .pdf-view.inking .pdf-pin, .pdf-view.inking .pdf-hl { pointer-events: none; }
 .pdf-view[data-ink="erase"] .pdf-page { cursor: cell; }
-.ink-bar { position: absolute; top: calc(var(--topbar-h, 56px) + 8px); left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 24px; background: var(--md-surface-container-high); box-shadow: 0 4px 18px rgb(0 0 0 / .3); max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
+.ink-bar { position: absolute; top: calc(var(--topbar-h, 56px) + 8px); left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 24px; background: var(--md-surface-container-high); box-shadow: 0 4px 18px rgb(0 0 0 / .3); max-width: calc(100% - 24px); flex-wrap: nowrap; justify-content: center; }
+.ink-palette { display: flex; align-items: center; gap: 6px; }
+.ink-swatch { display: none; }
+.ink-swatch-dot { display: block; border-radius: 50%; box-shadow: 0 0 0 2px var(--md-surface-container-high), 0 0 0 3.5px var(--md-outline); }
+/* A phone: one short row at the bottom, the palette above it on a tap of the swatch. */
+@media (max-width: 699px) {
+  .ink-bar { top: auto; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); gap: 2px; padding: 4px 6px; }
+  .ink-bar .icon-btn { width: 42px; height: 42px; }
+  .ink-swatch { display: inline-grid; place-items: center; }
+  .ink-palette { display: none; position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 22px; background: var(--md-surface-container-high); box-shadow: 0 6px 22px rgb(0 0 0 / .35); }
+  .ink-palette.open { display: flex; animation: ink-pop .16s var(--ease-emph, ease-out); }
+  .ink-palette .ink-colors, .ink-palette .ink-widths { display: flex; gap: 8px; }
+}
+@keyframes ink-pop { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .ink-bar .icon-btn[aria-pressed="true"] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .ink-colors, .ink-widths { display: inline-flex; gap: 6px; align-items: center; }
 .ink-color { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
@@ -475,3 +488,6 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .kr-content.kr-shamela .kr-shamela-sub { font-size: 1.1em; margin: 1.1em 0 .6em; }
 .kr-content.kr-shamela .kr-shamela-card { font-size: .92em; color: var(--r-dim); }
 .kr-content.kr-shamela .kr-shamela-card b { color: var(--r-fg); }
+
+/* While the pen is on, the viewer's own bar steps aside: the ink bar is the one in use. */
+.reader-view.inking .pdf-bar { opacity: 0; pointer-events: none; transition: opacity var(--dur-short, .15s); }

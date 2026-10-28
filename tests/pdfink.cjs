@@ -34,6 +34,7 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3] 
   // (The tap before it is a dot, a stroke of its own: three in all.)
   ok('a stroke drawn with a finger is kept too (and a tap is a dot)', n2 === 3 && (await page.$$('.pdf-page[data-page="1"] svg.pdf-ink path')).length === 3);
   await page.screenshot({ path: path.join(out, 'ink.png') });
+  if (await page.$('.ink-swatch:visible')) { await page.click('.ink-swatch'); await page.waitForTimeout(250); await page.screenshot({ path: path.join(out, 'ink-palette.png') }); await page.click('.ink-swatch'); }
   // Undo takes the last one back.
   await page.click('.ink-bar button[aria-label="Undo"]'); await page.waitForTimeout(600);
   ok('undo removes the last stroke', (await strokes()) === 2);

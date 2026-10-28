@@ -67,7 +67,7 @@ export function inkLayer(o: InkOptions): Ink {
     const page = win.querySelector<HTMLElement>(':scope > .pdf-sheet') ?? win;
     e.preventDefault(); e.stopPropagation();
     const n = Number(win.dataset.page);
-    if (mode === 'erase') { eraseAt(e, page, n); live = { page, n, pts: [], el: null as unknown as SVGPathElement, id: e.pointerId }; return; }
+    if (mode === 'erase') { eraseAt(e, page, n, true); live = { page, n, pts: [], el: null as unknown as SVGPathElement, id: e.pointerId }; root.setPointerCapture?.(e.pointerId); return; }
     const [x, y] = frac(e, page);
     const s: InkStroke = { id: 'live', page: n, color, w: width, pts: [x, y], createdAt: 0 };
     const el = pathEl(s, ratioOf(page)); layerOf(page).append(el);
@@ -86,19 +86,51 @@ export function inkLayer(o: InkOptions): Ink {
   };
   const up = (e: PointerEvent) => {
     if (!live || e.pointerId !== live.id) return;
-    const l = live; live = null;
-    if (mode === 'erase') return;
+    const l = live; live = null; strokeEnded = Date.now();
+    if (mode === 'erase') { lastErase = null; return; }
     l.el.remove();
     const s: InkStroke = { id: uid(), page: l.n, color, w: width, pts: l.pts.map((v) => Math.round(v * 10000) / 10000), createdAt: Date.now() };
     o.save([...o.strokes(), s]); undone.length = 0; render(l.n); syncBar();
   };
-  const eraseAt = (e: PointerEvent, page: HTMLElement, n: number) => {
+  // The eraser takes every stroke its path comes near: the distance measured to the stroke's segments (not only
+  // its sampled points — a touch between two of them counts), along the eraser's own path from where it last was
+  // (a quick swipe does not jump over a stroke).
+  let lastErase: [number, number] | null = null;
+  const segDist = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+    const dx = bx - ax, dy = by - ay; const len = dx * dx + dy * dy;
+    const u = len ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len)) : 0;
+    return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
+  };
+  const eraseAt = (e: PointerEvent, page: HTMLElement, n: number, first = false) => {
     const [x, y] = frac(e, page); const ratio = ratioOf(page);
-    const hit = o.strokes().filter((s) => { if (s.page !== n) return false; const tol = Math.max(0.012, s.w * 2); for (let i = 0; i < s.pts.length; i += 2) if (Math.hypot(s.pts[i] - x, (s.pts[i + 1] - y) * ratio) < tol) return true; return false; });
+    const from = first || !lastErase ? [x, y] : lastErase; lastErase = [x, y];
+    const steps = Math.max(1, Math.ceil(Math.hypot(x - from[0], (y - from[1]) * ratio) / 0.004));
+    const probes: [number, number][] = []; for (let k = 0; k <= steps; k++) probes.push([from[0] + ((x - from[0]) * k) / steps, (from[1] + ((y - from[1]) * k) / steps) * ratio]);
+    const near = (s: InkStroke) => {
+      if (s.page !== n) return false;
+      const tol = Math.max(0.012, s.w * 2); const p = s.pts;
+      for (const [qx, qy] of probes) {
+        if (p.length === 2) { if (Math.hypot(p[0] - qx, p[1] * ratio - qy) < tol) return true; continue; }
+        for (let i = 2; i < p.length; i += 2) if (segDist(qx, qy, p[i - 2], p[i - 1] * ratio, p[i], p[i + 1] * ratio) < tol) return true;
+      }
+      return false;
+    };
+    const hit = o.strokes().filter(near);
     if (!hit.length) return;
     const ids = new Set(hit.map((s) => s.id));
-    o.save(o.strokes().filter((s) => !ids.has(s.id)), [...ids]); render(n);
+    o.save(o.strokes().filter((s) => !ids.has(s.id)), [...ids]); render(n); syncBar();
   };
+  // (While the pen is on, a tap or a click on a page is the pen's: the reader's tap zones — its bars shown or
+  // hidden, a page turned — would move the page under the pen.)
+  // (The click that ends a stroke lands on the viewer itself — the pointer was captured there — so it is
+  // known by its time: a click right after a stroke or an erasure is the pen's too.)
+  let strokeEnded = 0;
+  const swallow = (e: Event) => {
+    if (!on || (e.target as HTMLElement).closest?.('.ink-bar')) return;
+    if ((e.target as HTMLElement).closest?.('.pdf-page') || Date.now() - strokeEnded < 600) { e.stopPropagation(); e.preventDefault(); }
+  };
+  root.addEventListener('click', swallow, true);
+  root.addEventListener('dblclick', swallow, true);
   root.addEventListener('pointerdown', down, true);
   root.addEventListener('pointermove', move, true);
   root.addEventListener('pointerup', up, true);
@@ -116,18 +148,25 @@ export function inkLayer(o: InkOptions): Ink {
   const colors = h('div', { class: 'ink-colors', role: 'radiogroup', 'aria-label': t('color') }, ...INK_COLORS.map((c) => h('button', { type: 'button', role: 'radio', class: 'ink-color', style: { background: c }, 'aria-label': c, 'aria-checked': String(c === color), onclick: () => { color = c; mode = 'pen'; remember(); syncBar(); } })));
   const widths = h('div', { class: 'ink-widths', role: 'radiogroup', 'aria-label': t('inkWidth') }, ...WIDTHS.map((w, i) => h('button', { type: 'button', role: 'radio', class: 'ink-width', 'aria-label': `${i + 1}`, 'aria-checked': String(w === width), onclick: () => { width = w; mode = 'pen'; remember(); syncBar(); } }, h('i', { style: { height: `${3 + i * 3}px` } }))));
   const closeBtn = h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => setOn(false) }, icon('close'));
-  const toolbar = h('div', { class: 'ink-bar', hidden: true, role: 'toolbar', 'aria-label': t('inkNotes') }, penBtn, colors, widths, eraseBtn, undoBtn, redoBtn, closeBtn);
+  // The colours and widths: in the bar on a wide screen; on a phone behind one swatch (the pen's colour and
+  // width), opening above the bar — so the bar stays one short row at the bottom, off the page.
+  const palette = h('div', { class: 'ink-palette' }, colors, widths);
+  const swatch = h('i', { class: 'ink-swatch-dot' });
+  const styleBtn = h('button', { type: 'button', class: 'icon-btn ink-swatch', title: t('color'), 'aria-label': t('color'), 'aria-expanded': 'false', onclick: () => { const open = !palette.classList.contains('open'); palette.classList.toggle('open', open); styleBtn.setAttribute('aria-expanded', String(open)); } }, swatch);
+  palette.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('button')) { palette.classList.remove('open'); styleBtn.setAttribute('aria-expanded', 'false'); } });
+  const toolbar = h('div', { class: 'ink-bar', hidden: true, role: 'toolbar', 'aria-label': t('inkNotes') }, penBtn, eraseBtn, palette, styleBtn, undoBtn, redoBtn, closeBtn);
   const syncBar = () => {
     penBtn.setAttribute('aria-pressed', String(mode === 'pen')); eraseBtn.setAttribute('aria-pressed', String(mode === 'erase'));
     colors.querySelectorAll('.ink-color').forEach((b) => b.setAttribute('aria-checked', String(b.getAttribute('aria-label') === color)));
     widths.querySelectorAll('.ink-width').forEach((b, i) => b.setAttribute('aria-checked', String(WIDTHS[i] === width)));
+    swatch.style.background = color; swatch.style.width = swatch.style.height = `${10 + WIDTHS.indexOf(width) * 4}px`;
     undoBtn.disabled = !o.strokes().length; redoBtn.disabled = !undone.length;
     root.dataset.ink = on ? mode : '';
   };
-  const setOn = (v: boolean) => { on = v; toolbar.hidden = !v; root.classList.toggle('inking', v); if (v) mode = 'pen'; syncBar(); };
+  const setOn = (v: boolean) => { on = v; toolbar.hidden = !v; root.classList.toggle('inking', v); root.closest('.reader-view')?.classList.toggle('inking', v); if (v) mode = 'pen'; syncBar(); };
   syncBar();
   return {
     toolbar, render, setOn, get on() { return on; },
-    dispose() { root.removeEventListener('pointerdown', down, true); root.removeEventListener('pointermove', move, true); root.removeEventListener('pointerup', up, true); root.removeEventListener('pointercancel', up, true); },
+    dispose() { root.removeEventListener('click', swallow, true); root.removeEventListener('dblclick', swallow, true); root.removeEventListener('pointerdown', down, true); root.removeEventListener('pointermove', move, true); root.removeEventListener('pointerup', up, true); root.removeEventListener('pointercancel', up, true); },
   };
 }
