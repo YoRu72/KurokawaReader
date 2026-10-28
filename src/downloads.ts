@@ -64,7 +64,19 @@ export function cancelDownload(id: string): void {
   persist(); changed();
 }
 
+// A few at a time (as download managers do): the rest wait their turn, so a dozen volumes asked for at once
+// do not fight for the connection.
+const AT_ONCE = 3;
+let active = 0; const turns: (() => void)[] = [];
+const takeTurn = () => new Promise<void>((ok) => { if (active < AT_ONCE) { active++; ok(); } else turns.push(() => { active++; ok(); }); });
+const giveTurn = () => { active--; turns.shift()?.(); };
+
 async function run(d: Download): Promise<void> {
+  await takeTurn();
+  if (d.state !== 'running') { giveTurn(); waiting.get(d.id)?.fail(new Error('cancelled')); waiting.delete(d.id); persist(); changed(); return; }
+  try { await runNow(d); } finally { giveTurn(); }
+}
+async function runNow(d: Download): Promise<void> {
   const progress = (p: Progress) => {
     if (d.state !== 'running') return;
     d.got = p.got; if (p.total) d.total = p.total; d.speed = p.speed ?? d.speed; d.pct = d.total ? Math.min(100, Math.round((d.got / d.total) * 100)) : p.pct;

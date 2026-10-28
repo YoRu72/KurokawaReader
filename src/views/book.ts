@@ -13,7 +13,7 @@ import { setJump } from './reader';
 import { anilistOn, linked } from '../anilist';
 
 /** Did the book come from a source other than archive.org or Shamela (an extension, a web folder)? */
-const fromSource = (b: Book): boolean => !!b.remote?.source && b.remote.source !== 'archive' && b.remote.source !== 'shamela';
+const fromSource = (b: Book): boolean => !!b.remote?.source && b.remote.source !== 'archive' && b.remote.source !== 'shamela' && b.remote.source !== 'link';
 
 const CHAPTERED = new Set(['epub', 'fb2', 'mobi', 'azw', 'azw3', 'kf8']);
 /** Whether tapping this book opens its page first. */

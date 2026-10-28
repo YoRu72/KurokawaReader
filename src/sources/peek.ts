@@ -34,6 +34,7 @@ function learned(set: Set<string>, host: string): void {
 const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u; } };
 /** What went wrong lately when looking into files (for the reader to show when covers stay away). */
 export const peekLog: string[] = [];
+(globalThis as { krPeekLog?: string[] }).krPeekLog = peekLog; // (read by the tests)
 export function logPeek(line: string): void { peekLog.push(`${new Date().toISOString().slice(11, 19)} ${line}`); if (peekLog.length > 60) peekLog.shift(); }
 /** A host whose files a static web server serves (an h5ai folder's): taken to answer ranges until it says
  *  otherwise — its very first files asked for both ends at once. */

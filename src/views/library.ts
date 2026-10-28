@@ -144,11 +144,38 @@ export function libraryView(): HTMLElement {
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
+        h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void fromLink(); } }, icon('globe'), t('importFromLink'))),
         canScan() ? h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))) : null,
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/sources'); } }, icon('globe'), t('sourcesMenu'))),
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/catalog'); } }, icon('books'), t('catalogsMenu'))),
         canScan() ? h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void removeMissing(); } }, icon('trash'), t('removeMissing'))) : null));
     });
+  }
+  /** A book from a link (a PDF or an EPUB on the web, as a download manager takes one from the clipboard): fetched
+   *  through the downloads — in the background, with its progress — into the library. The clipboard's link, when
+   *  it holds one, is offered. */
+  async function fromLink(): Promise<void> {
+    const { openSheet } = await import('../ui/dom');
+    const sh = openSheet(t('importFromLink'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    const addr = h('input', { type: 'url', placeholder: 'https://…/book.epub', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr' }) as HTMLInputElement;
+    const status = h('p', { class: 'hint' }, t('importFromLinkHint'));
+    sh.body.append(h('label', { class: 'field' }, h('span', null, t('link')), addr), status);
+    try { const clip = (await navigator.clipboard?.readText?.())?.trim(); if (clip && /^https?:\/\/\S+$/i.test(clip)) addr.value = clip; } catch { /* no leave */ }
+    const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+      let url = addr.value.trim(); if (!url) { addr.focus(); return; }
+      if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+      let u: URL; try { u = new URL(url); } catch { status.textContent = t('badLink'); return; }
+      const name = decodeURIComponent(u.pathname.split('/').pop() || '') || u.host;
+      go.disabled = true; status.textContent = t('downloadStartedBg');
+      const { startDownload } = await import('../downloads');
+      sh.close();
+      try { await startDownload({ url, name: /\.[a-z0-9]{2,5}$/i.test(name) ? name : `${name}.bin`, title: name.replace(/\.[a-z0-9]{2,5}$/i, ''), then: { srcId: 'link', itemId: url, title: name } }); toast(t('addedToLibrary')); await refresh(); }
+      catch (e) { if (String((e as Error)?.message) !== 'cancelled') toast(String((e as Error)?.message ?? e), 'error', 6000); }
+    } }, icon('download'), t('download')) as HTMLButtonElement;
+    sh.actions.append(go);
+    addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go.click(); } });
+    setTimeout(() => addr.focus(), 60);
   }
   /** Books whose linked files are gone from the device: listed, and removed when confirmed. */
   async function removeMissing(): Promise<void> {
