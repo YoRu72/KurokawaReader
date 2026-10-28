@@ -4,23 +4,28 @@
 // spacing and line pitch, runs with their font, size, weight and colour, two-column verse as a
 // borderless table, the running head in the page header, and footnotes as Word footnotes.
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
-import { yieldNow } from './jobs';
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
-import { loadPdfjs, offscreen } from './formats/pdf';
+import { loadPdfjs, offscreen } from './pdfjsload';
 import { type ZipLike } from './ziputil';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
 
 type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
-type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; winCov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
+export type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; winCov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
 /** How the document uses its embedded fonts' glyphs: runs of glyphs along a line, cut where a word ends (each
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
-type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>>;
+export type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>>;
   /** The same font under two names (a second copy of the document names its fonts afresh): the other name → the first. */
-  same?: Map<string, string>; byFile?: Map<string, string> };
+  same?: Map<string, string>; byFile?: Map<string, string>;
+  /** For a reader of only some of the pages (a lane, see pdf2docx.lane.ts): the page's fonts in the order its text
+   *  meets them, the fonts whose glyph words a word font found on an earlier page would have read otherwise, and
+   *  a word on each font as it is first met. */
+  pageFonts?: string[]; stickyMiss?: Set<string>; onFont?: (name: string, info: FontInfo, fo: unknown) => void;
+  /** Every glyph run kept (a lane: the cap on uses is applied where the lanes' pages come together). */
+  keepAll?: boolean };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
 type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number } };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
@@ -45,7 +50,7 @@ type Region = { cols: Block[][]; edges: [number, number][] };
 type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] };
 /** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
-type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
+export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -1284,9 +1289,13 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
 function fnv(b: Uint8Array): number { let h = 0x811c9dc5; const step = (i: number) => { h ^= b[i]; h = Math.imul(h, 0x01000193); }; for (let i = 0; i < Math.min(1024, b.length); i++) step(i); for (let i = Math.max(1024, b.length - 1024); i < b.length; i++) step(i); return h >>> 0; }
 
 /** Text already asked of the worker for a page (the next page's, fetched while this one is being laid out). */
+/** A page's drawing and text asked of pdf.js now, to be ready when the page is read. */
+export function askAhead(pg: import('pdfjs-dist').PDFPageProxy): void { void pg.getOperatorList(); prefetched.set(pg, pg.getTextContent()); }
+/** The pictures of the pages read so far, still being encoded (taken: the next page starts a new list). */
+export function takePendingPngs(): Promise<void>[] { const p = pendingPngs; pendingPngs = []; return p; }
 const prefetched = new WeakMap<object, Promise<Awaited<ReturnType<import('pdfjs-dist').PDFPageProxy['getTextContent']>>>>();
 
-async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: [], seen: new Map() }): Promise<PageModel> {
+export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: [], seen: new Map() }): Promise<PageModel> {
   const [, , W, H] = page.view;
   const T = (globalThis as { krTiming?: Record<string, number> }).krTiming; let t0 = performance.now();
   const lap = (k: string) => { if (T) { const n = performance.now(); T[k] = (T[k] ?? 0) + n - t0; t0 = n; } };
@@ -1323,6 +1332,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
         else store.byFile.set(key, it.fontName);
       }
     }
+    if (store.pageFonts && it.fontName && !store.pageFonts.includes(it.fontName)) store.pageFonts.push(it.fontName);
     if (it.fontName && !fonts.has(it.fontName)) {
       let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
@@ -1341,6 +1351,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       else if (!/\s/.test(info.family)) info.family = info.family.replace(/CJK(jp|kr|sc|tc|hk)$/i, (_m, r: string) => `CJK ${r.toUpperCase()}`).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D fontname', fo?.name, '→', info.family, '| own:', own);
       fonts.set(it.fontName, info);
+      store.onFont?.(it.fontName, info, fo);
       if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) { const x = fo as unknown as { data?: Uint8Array; type?: string; subtype?: string; toFontChar?: Record<string, number>; mimetype?: string; composite?: boolean }; console.warn('P2D fontdata', info.family, x?.type, x?.subtype, x?.mimetype, x?.composite, x?.data?.length, x?.data ? String.fromCharCode(...x.data.subarray(0, 4)).replace(/[^\x20-\x7e]/g, '.') : '', JSON.stringify(Object.entries(x?.toFontChar ?? {}).slice(0, 5))); }
     }
     // (The glyphs of one /ActualText span are one cluster: its letter and that letter's marks.)
@@ -1349,7 +1360,10 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       // letters, those codes are gibberish that sets nothing like the word; kept as they are, the font (carried
       // in the document) draws each word exactly as the page does.
       const fi = fonts.get(it.fontName);
-      if (fi && seq.length && isWordFont(fi, seq)) {
+      const wf = !!fi && seq.length > 0 && isWordFont(fi, seq);
+      // (A reader of only some of the pages tells which fonts a word font met on an earlier page would change.)
+      if (fi && seq.length && !fi.wordFont && !wf) store.stickyMiss?.add(it.fontName);
+      if (fi && wf) {
         fi.wordFont = true;
         const ordered = [...seq].sort((a, b) => b[2] - a[2]); // right to left: reading order
         let txt = ''; let edge = Infinity;
@@ -1472,7 +1486,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       for (const [font, u] of seq) {
         const fi = fonts.get(font); if (!fi) continue;
         const seen = store.seen.get(font) ?? store.seen.set(font, new Set()).get(font)!;
-        if ((fi.uses ?? 0) < USE_CAP || !seen.has(u[0])) keep = true;
+        if ((fi.uses ?? 0) < USE_CAP || !seen.has(u[0]) || store.keepAll) keep = true;
       }
       if (keep) for (const [font, u] of seq) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); }
       if (keep) store.seqs.push(Object.assign(seq, { rtl: l.rtl }));
@@ -1722,8 +1736,92 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
 /* Writing                                                             */
 /* ------------------------------------------------------------------ */
 
+/** How many lanes (page readers in workers of their own, see pdf2docx.lane.ts) a book is read in: none on a
+ *  device with few cores (the app's thread and pdf.js's worker are all it has), else one lane for each two cores
+ *  beyond the app's own, up to four. */
+function laneCount(pages: number, size: number): number {
+  const forced = (globalThis as { krLanes?: number }).krLanes;
+  if (forced !== undefined) return forced;
+  if (pages < 8 || size > 80 * 1024 * 1024 || typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') return 0;
+  const cores = navigator.hardwareConcurrency ?? 2;
+  return Math.min(4, Math.floor((cores - 2) / 2), Math.ceil(pages / 4), size > 40 * 1024 * 1024 ? 2 : 4);
+}
+
+/**
+ * The pages read in lanes, put together here in page order exactly as one reader would have them: each font
+ * known by its id in the file, first met where one reader would first meet it; glyph runs kept under the cap in
+ * page order; and a page that a font of whole-word glyphs met on an earlier page (read in another lane) would
+ * have read otherwise, read again. Null when the lanes could not do it (the caller reads the pages itself).
+ */
+async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fonts: Map<string, FontInfo>, store: UseStore, progress: Progress): Promise<PageModel[] | null> {
+  type Lane = { w: Worker; out: number };
+  const lanes: Lane[] = [];
+  const done = new Map<number, import('./pdf2docx.lane').LanePage>();
+  const defs = new Map<string, FontInfo>();
+  let next = 1, failed: string | null = null, wake: (() => void) | null = null;
+  const poke = () => { const w = wake; wake = null; w?.(); };
+  const QUEUE = 3;
+  // (Never far ahead of the page being put together: pages done early wait here, pictures and all.)
+  let at = 1; const AHEAD = 8 * nLanes;
+  const feed = (l: Lane) => { while (l.out < QUEUE && next <= nPages && next < at + AHEAD) { l.w.postMessage({ t: 'page', n: next++ }); l.out++; } };
+  const redoing = new Set<number>();
+  try {
+    await Promise.all(Array.from({ length: nLanes }, (_, i) => new Promise<void>((ready, fail) => {
+      const w = new Worker(new URL('./pdf2docxlane.js', import.meta.url), { type: 'module' });
+      const l: Lane = { w, out: 0 }; lanes.push(l);
+      w.onerror = (e) => { failed = e.message || 'lane failed'; fail(new Error(failed)); poke(); };
+      w.onmessage = (e: MessageEvent<import('./pdf2docx.lane').LaneOut>) => {
+        const m = e.data;
+        if (m.t === 'ready') { if (m.pages !== nPages) { failed = 'pages'; fail(new Error(failed)); } else ready(); }
+        else if (m.t === 'error') { failed = m.message; fail(new Error(m.message)); poke(); }
+        else { l.out--; done.set(m.n, m); redoing.delete(m.n); feed(l); poke(); }
+      };
+      const copy = bytes.slice().buffer;
+      w.postMessage({ t: 'open', bytes: copy, lane: i }, [copy]);
+    })));
+    for (const l of lanes) feed(l);
+    const pages: PageModel[] = [];
+    const words = new Set<string>();
+    for (let n = 1; n <= nPages; n++) {
+      while (!done.has(n) || redoing.has(n)) { if (failed) throw new Error(failed); await new Promise<void>((r) => { wake = r; }); }
+      const r = done.get(n)!;
+      // A font of whole-word glyphs met on an earlier page that this page's lane did not know of: read again.
+      if (r.stickyMiss.some((id) => words.has(id))) {
+        done.delete(n); redoing.add(n);
+        const l = lanes.reduce((a, b) => (b.out < a.out ? b : a)); l.out++;
+        l.w.postMessage({ t: 'page', n, force: [...words] }); n--; continue;
+      }
+      done.delete(n);
+      for (const [id, info] of r.fonts) if (!defs.has(id)) defs.set(id, info);
+      for (const id of r.pageFonts) if (!fonts.has(id)) { const d = defs.get(id); if (d) fonts.set(id, { ...d }); }
+      for (const s of r.seqs) {
+        let keep = false;
+        for (const [font, u] of s.uses) {
+          const fi = fonts.get(font); if (!fi) continue;
+          const seen = store.seen.get(font) ?? store.seen.set(font, new Set()).get(font)!;
+          if ((fi.uses ?? 0) < USE_CAP || !seen.has(u[0])) keep = true;
+        }
+        if (keep) { for (const [font, u] of s.uses) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); } store.seqs.push(Object.assign(s.uses, { rtl: s.rtl })); }
+      }
+      for (const [id, add] of r.gaps) { const fi = fonts.get(id); if (!fi) continue; const g = (fi.gaps ??= []); for (const x of add) { if (g.length >= 400) break; g.push(x); } }
+      const found = r.wordFound.filter((id) => !words.has(id));
+      if (found.length) { for (const id of found) { words.add(id); const fi = fonts.get(id); if (fi) fi.wordFont = true; } for (const l of lanes) l.w.postMessage({ t: 'word', ids: found }); }
+      pages.push(r.model);
+      at = n + 1; for (const l of lanes) feed(l);
+      progress('pdfPage', Math.round((n / nPages) * 80));
+    }
+    return pages;
+  } catch (e) {
+    console.warn('[kurokawa] PDF → Word lanes: reading on this thread instead', e);
+    return null;
+  } finally {
+    for (const l of lanes) { l.w.postMessage({ t: 'close' }); setTimeout(() => l.w.terminate(), 2000); }
+  }
+}
+
 export async function pdfToDocx(book: Book, file: Blob, progress: Progress, password?: string): Promise<Blob> {
   const pdfjs = await loadPdfjs();
+  const { yieldNow } = await import('./jobs');
   const RES = new URL('./pdfjs/', import.meta.url).href;
   // A protected file opens with the password given or remembered for it; one whose text pdf.js cannot read
   // (it comes out as control characters) is read from a copy decrypted here instead.
@@ -1736,34 +1834,45 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     if (looksGarbled(text, text.length)) opened = (await reopenDecrypted(pdfjs, opened, jsOpts)) ?? opened;
   }
   const doc = opened.doc;
-  // On a device with cores to spare, a second copy of the document in a worker of its own reads the even pages
-  // while the first reads the odd ones: pdf.js parses a page's drawing and its text in one thread, and that
-  // thread, not this one, is what a long book waits on. (The fonts the second copy loads are the first's again
-  // under other names; buildDocFonts makes one of each face.)
-  const twice = doc.numPages >= 6 && !opened.encrypted && file.size < 60 * 1024 * 1024 && ((globalThis as { krTwoWorkers?: boolean }).krTwoWorkers ?? (navigator.hardwareConcurrency ?? 2) >= 4);
-  const opened2 = twice ? await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }).catch(() => null) : null;
-  const doc2 = opened2 && opened2.doc.numPages === doc.numPages ? opened2.doc : null;
-  if (opened2 && !doc2) void opened2.destroy();
-  const docOf = (n: number) => (doc2 && n % 2 === 0 ? doc2 : doc);
-  const task = { destroy: async () => { await opened.destroy(); if (doc2) await opened2!.destroy(); } };
   const fonts = new Map<string, FontInfo>();
-  const store: UseStore = { seqs: [], seen: new Map(), ...(doc2 ? { same: new Map(), byFile: new Map() } : {}) };
-  const pages: PageModel[] = [];
+  let store: UseStore = { seqs: [], seen: new Map() };
+  let pages: PageModel[] = [];
   pendingPngs = [];
-  // The worker reads the next pages (their drawing and their text) while this one is laid out here — a couple
-  // ahead, so that neither side waits for the other (each page's pictures let go once it is laid out).
-  const AHEAD = Number((globalThis as { krAhead?: number }).krAhead ?? (doc2 ? 3 : 2));
-  const ask = (n: number) => docOf(n).getPage(n).then((pg) => { void pg.getOperatorList(); prefetched.set(pg, pg.getTextContent()); return pg; });
-  const asked = new Map<number, Promise<import('pdfjs-dist').PDFPageProxy>>();
-  for (let p = 1; p <= doc.numPages; p++) {
-    for (let k = p; k <= Math.min(doc.numPages, p + AHEAD); k++) if (!asked.has(k)) asked.set(k, ask(k));
-    progress('pdfPage', Math.round((p / doc.numPages) * 80));
-    const page = await asked.get(p)!; asked.delete(p);
-    pages.push(await analysePage(pdfjs, page, fonts, true, store));
-    if (p % 8 === 0) await yieldNow();
+  // On a device with cores to spare, the pages are read in lanes (workers of their own, each with its copy of
+  // the document) and only put together here.
+  const nLanes = opened.encrypted ? 0 : laneCount(doc.numPages, file.size);
+  const laned = nLanes > 1 ? await readInLanes(new Uint8Array(await file.arrayBuffer()), doc.numPages, nLanes, fonts, store, progress) : null;
+  if (laned) { pages = laned; await opened.destroy(); }
+  else {
+    fonts.clear();
+    // On a device with cores to spare, a second copy of the document in a worker of its own reads the even pages
+    // while the first reads the odd ones: pdf.js parses a page's drawing and its text in one thread, and that
+    // thread, not this one, is what a long book waits on. (The fonts the second copy loads are the first's again
+    // under other names; buildDocFonts makes one of each face.)
+    const twice = doc.numPages >= 6 && !opened.encrypted && file.size < 60 * 1024 * 1024 && ((globalThis as { krTwoWorkers?: boolean }).krTwoWorkers ?? (navigator.hardwareConcurrency ?? 2) >= 4);
+    const opened2 = twice ? await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }).catch(() => null) : null;
+    const doc2 = opened2 && opened2.doc.numPages === doc.numPages ? opened2.doc : null;
+    if (opened2 && !doc2) void opened2.destroy();
+    const docOf = (n: number) => (doc2 && n % 2 === 0 ? doc2 : doc);
+    const task = { destroy: async () => { await opened.destroy(); if (doc2) await opened2!.destroy(); } };
+    store = { seqs: [], seen: new Map(), ...(doc2 ? { same: new Map(), byFile: new Map() } : {}) };
+    pages = [];
+    pendingPngs = [];
+    // The worker reads the next pages (their drawing and their text) while this one is laid out here — a couple
+    // ahead, so that neither side waits for the other (each page's pictures let go once it is laid out).
+    const AHEAD = Number((globalThis as { krAhead?: number }).krAhead ?? (doc2 ? 3 : 2));
+    const ask = (n: number) => docOf(n).getPage(n).then((pg) => { void pg.getOperatorList(); prefetched.set(pg, pg.getTextContent()); return pg; });
+    const asked = new Map<number, Promise<import('pdfjs-dist').PDFPageProxy>>();
+    for (let p = 1; p <= doc.numPages; p++) {
+      for (let k = p; k <= Math.min(doc.numPages, p + AHEAD); k++) if (!asked.has(k)) asked.set(k, ask(k));
+      progress('pdfPage', Math.round((p / doc.numPages) * 80));
+      const page = await asked.get(p)!; asked.delete(p);
+      pages.push(await analysePage(pdfjs, page, fonts, true, store));
+      if (p % 8 === 0) await yieldNow();
+    }
+    await task.destroy();
+    await Promise.all(pendingPngs); pendingPngs = [];
   }
-  await task.destroy();
-  await Promise.all(pendingPngs); pendingPngs = [];
   progress('build', 85);
   const TT = (globalThis as { krTiming?: Record<string, number> }).krTiming; const tb = performance.now();
 

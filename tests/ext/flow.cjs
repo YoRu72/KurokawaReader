@@ -146,12 +146,31 @@ const SITE = 'http://localhost:5403';
     await page.dispatchEvent('.novel-chapters li:nth-child(3) button', 'contextmenu'); await page.waitForTimeout(150);
     await page.click('.chapter-sel button[title="Remove the offline copies"]'); await page.waitForTimeout(1200);
     ok('the offline copy of a picked chapter removed, the others kept', (await page.$$('.novel-chapters button.have')).length === 2 && !(await page.$('.novel-chapters li:nth-child(3) button.have')));
+    // Read marks and bookmarks (LNReader's and Mihon's): two chapters marked read, one bookmarked; the filters.
+    const rows = () => page.$$eval('.novel-chapters li', (els) => els.map((e) => (e.className || '-') + (e.querySelector('.star') ? '*' : '') + (e.querySelector('.have') ? '+' : '')));
+    await page.dispatchEvent('.novel-chapters li:nth-child(1) button', 'contextmenu'); await page.waitForTimeout(100);
+    await page.click('.novel-chapters li:nth-child(2) button'); await page.waitForTimeout(100);
+    await page.click('.chapter-sel button[title="Mark read"]'); await page.waitForTimeout(600);
+    await page.dispatchEvent('.novel-chapters li:nth-child(4) button', 'contextmenu'); await page.waitForTimeout(100);
+    await page.click('.chapter-sel button[title="Bookmark"]'); await page.waitForTimeout(600);
+    const marked = await rows();
+    await page.click('.src-chapter-tools button[data-icon="filter"]'); await page.waitForTimeout(200);
+    const unreadOnly = (await page.$$('.novel-chapters li')).length;
+    await page.click('.src-chapter-tools button[data-icon="filter"]'); await page.click('.src-chapter-tools button[data-icon="bookmark"]'); await page.waitForTimeout(200);
+    const starredOnly = await rows();
+    await page.click('.src-chapter-tools button[data-icon="bookmark"]'); await page.click('.src-chapter-tools button[data-icon="sortAsc"]'); await page.waitForTimeout(200);
+    const lastFirst = await page.$eval('.novel-chapters li button', (e) => e.textContent);
+    await page.click('.src-chapter-tools button[data-icon="sortAsc"]'); await page.waitForTimeout(200);
+    await page.screenshot({ path: path.join(__dirname, 'chapters.png') });
+    ok('chapters marked read and bookmarked; hide read, bookmarked only, newest first', /read/.test(marked[0]) && /read/.test(marked[1]) && /\*/.test(marked[3]) && unreadOnly === marked.length - 2 && starredOnly.length === 1 && /\*/.test(starredOnly[0]) && !/Chapter 1\b/.test(lastFirst));
+    if (!(unreadOnly === marked.length - 2 && starredOnly.length === 1)) console.log('  rows', marked, unreadOnly, starredOnly, lastFirst);
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
     ok('Mangayomi chapter text read', /Chapter 1 of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
     // Extension settings sheet.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=1 >> .ext-card:not(.off)'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });
     await page.click('.topbar-actions button[aria-label="Extension settings"]'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
     ok('extension settings list the site address', /Site address/.test(await page.$eval('.sheet', (e) => e.textContent)));
+    ok('… and how fast its chapters are fetched (at once, pause)', /Chapters at once/.test(await page.$eval('.sheet', (e) => e.textContent)) && /Pause after each chapter/.test(await page.$eval('.sheet', (e) => e.textContent)));
     await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
     // A site behind a browser check.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });

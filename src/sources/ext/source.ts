@@ -305,6 +305,14 @@ export async function forgetChapters(book: Book, paths: Set<string>): Promise<nu
   await saveNovelFile(book, (cur) => { const content = { ...(cur.content ?? {}) }; for (const p of paths) if (content[p]) { delete content[p]; n++; } return { ...cur, content, fetchedAt: undefined }; });
   return n;
 }
+/** How a source's chapters are fetched for offline: how many at once, and the pause after each (some sites
+ *  turn away a reader that asks too fast — LNReader and Mihon let it be slowed down per source). */
+export type Pace = { at: number; pause: number };
+export function paceOf(key: string): Pace {
+  try { const v = JSON.parse(localStorage.getItem(`kr.ext.pace.${key}`) ?? 'null') as Partial<Pace> | null; return { at: Math.min(4, Math.max(1, Number(v?.at) || 2)), pause: Math.min(30000, Math.max(0, Number(v?.pause) || 0)) }; } catch { return { at: 2, pause: 0 }; }
+}
+export function setPace(key: string, p: Pace): void { try { localStorage.setItem(`kr.ext.pace.${key}`, JSON.stringify(p)); } catch { /* full */ } }
+
 /** Fetch every chapter not yet in the file, a few at a time; `live` says whether to go on. */
 export async function downloadNovel(book: Book, onProgress: (done: number, total: number) => void, live?: () => boolean, only?: Set<string>): Promise<boolean> {
   const info = await readNovelFile(book.id); if (!info) throw new SourceError('parse', 'parse');
@@ -315,11 +323,13 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   const wanted = scope.filter((c) => !content[c.path]);
   let done = scope.length - wanted.length; onProgress(done, scope.length);
   let failed = 0; let since = 0;
-  await pool(wanted, 2, async (c) => {
+  const pace = paceOf(h.key);
+  await pool(wanted, pace.at, async (c) => {
     try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; }
     catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'blocked' || (e as SourceError).kind === 'offline') throw e; }
     onProgress(++done, scope.length);
     if (++since >= 10) { since = 0; await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } })); }
+    if (pace.pause && (!live || live())) await new Promise((r) => setTimeout(r, pace.pause));
   }, live);
   const complete = wanted.every((c) => content[c.path]) && (!live || live());
   const whole = complete && info.chapters.every((c) => content[c.path]);

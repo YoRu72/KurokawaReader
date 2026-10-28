@@ -102,6 +102,8 @@ export interface Book {
   /** Chapters marked read (1) or unread (0) by hand, by contents index — over and above the position. */
   chapterMarks?: Record<string, 0 | 1>;
   chapterMarksAt?: number;
+  /** Chapters bookmarked (as LNReader and Mihon bookmark chapters), by contents index. */
+  chapterStars?: Record<string, 1>;
   /** How many chapters the book really has, as the reader says (a contents list carries covers, credits…). */
   chapters?: number;
   chaptersAt?: number;
@@ -255,4 +257,11 @@ export const db = {
 
 export function uid(): string {
   return (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/-/g, '').slice(0, 20);
+}
+
+/** Whether the chapter at this contents index is read: marked so by hand, else before where the reading stands
+ *  (or within the chapters marked read up to an index). */
+export function chapterRead(book: Book, i: number): boolean {
+  const m = book.chapterMarks?.[String(i)];
+  return m !== undefined ? m === 1 : i < (book.progress?.toc ?? 0) || i <= (book.readToc ?? -1);
 }

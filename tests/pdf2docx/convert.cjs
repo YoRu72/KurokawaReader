@@ -8,6 +8,13 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3])
   await new Promise((r) => server.listen(5197, r));
   const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true }); const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('pageerror', e.message)); page.on('dialog', (d) => { console.log('dialog:', d.message()); void d.accept(process.env.PW || ''); }); page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console', m.text().includes('P2D') ? m.text() : m.text().slice(0, 300)); });
+  if (process.env.PROFW) await page.addInitScript(() => { Worker.prototype.terminate = function () { /* kept alive for the profile */ }; });
+  // INIT=file.js: a script run in the page before the app (to count or time things while debugging).
+  if (process.env.INIT) await page.addInitScript({ path: path.resolve(process.env.INIT) });
+  // LANES=n: read the pages in n lanes (workers of their own); LANES=0: on the app's thread.
+  if (process.env.LANES !== undefined) await page.addInitScript((v) => { globalThis.krLanes = v; }, Number(process.env.LANES));
+  // AHEAD=n: how many pages the worker reads ahead of the one being laid out.
+  if (process.env.AHEAD) await page.addInitScript((v) => { globalThis.krAhead = v; }, Number(process.env.AHEAD));
   // TWO=1 / TWO=0: force (or forbid) the second pdf.js worker, whatever the machine's cores.
   if (process.env.TWO !== undefined) await page.addInitScript((v) => { globalThis.krTwoWorkers = v === '1'; }, process.env.TWO);
   if (!process.env.NOLO) await page.addInitScript((l) => { globalThis.krDebugP2D = true; if (l[2]) globalThis.krNoLow = true; if (l[0]) globalThis.krDebugLine = l[0]; if (l[1]) globalThis.krDebugCtx = +l[1]; }, [process.env.LINE || "", process.env.CTX || "", process.env.NOLOW || ""]); await page.goto('http://localhost:5197/'); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
@@ -21,6 +28,16 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3])
   if (process.env.TIMING) await page.evaluate(() => { globalThis.krTiming = {}; });
   const cdp = process.env.PROF ? await page.context().newCDPSession(page) : null;
   if (cdp) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 200 }); await cdp.send('Profiler.start'); }
+  // PROFW=dir: CPU profiles of the page's workers too (pdf.js, layout), each one's hottest functions printed.
+  const wprof = [];
+  if (process.env.PROFW) {
+    // (Dedicated workers hang off the page: auto-attached through its session, spoken to by message.)
+    const ps = await page.context().newCDPSession(page); let seq = 1; const waits = new Map();
+    ps.on('Target.receivedMessageFromTarget', (e) => { const m = JSON.parse(e.message); if (m.id && waits.has(m.id)) { waits.get(m.id)(m.result); waits.delete(m.id); } });
+    const sendTo = (sessionId, method, params = {}) => new Promise((res) => { const id = seq++; waits.set(id, res); ps.send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method, params }) }).catch(() => res(null)); });
+    ps.on('Target.attachedToTarget', async ({ sessionId, targetInfo: ti }) => { if (!/worker/.test(ti.type)) return; await sendTo(sessionId, 'Profiler.enable'); await sendTo(sessionId, 'Profiler.setSamplingInterval', { interval: 200 }); await sendTo(sessionId, 'Profiler.start'); wprof.push({ sessionId, url: ti.url, sendTo }); });
+    await ps.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: false });
+  }
   const t0 = Date.now();
   // TARGET picks another output (its label in the sheet: "Text", "EPUB", "PDF"…); the file is then only saved.
   const target = process.env.TARGET || 'Word';
@@ -30,7 +47,16 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3])
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('.convert-result button:has-text("Save")')]);
   const docx = path.join(out, target === 'Word' ? 'out.docx' : `out.${path.extname(dl.suggestedFilename()).slice(1) || 'bin'}`); await dl.saveAs(docx);
   console.log('docx', fs.statSync(docx).size, 'B in', Date.now() - t0, 'ms');
+  if (process.env.INIT) console.log('init', JSON.stringify(await page.evaluate(() => globalThis.krInitOut ?? null)));
   if (process.env.TIMING) console.log('timing', JSON.stringify(await page.evaluate(() => Object.fromEntries(Object.entries(globalThis.krTiming || {}).map(([k, v]) => [k, Math.round(v)])))));
+  for (const w of wprof) {
+    const r = await Promise.race([w.sendTo(w.sessionId, 'Profiler.stop'), new Promise((res) => setTimeout(() => res(null), 5000))]); if (!r?.profile) { console.log('worker', w.url.slice(-60), 'no profile'); continue; }
+    const profile = r.profile; fs.writeFileSync(path.join(process.env.PROFW, `w${wprof.indexOf(w)}.cpuprofile`), JSON.stringify(profile));
+    const dt = {}; const byId = new Map(profile.nodes.map((n) => [n.id, n])); let tot = 0;
+    for (let i = 0; i < profile.samples.length; i++) { const n = byId.get(profile.samples[i]); const k = `${n.callFrame.functionName || '(anon)'} ${path.basename(n.callFrame.url)}:${n.callFrame.lineNumber}`; dt[k] = (dt[k] || 0) + (profile.timeDeltas[i] || 0); tot += profile.timeDeltas[i] || 0; }
+    console.log('== worker', path.basename(w.url), 'total', (tot / 1000).toFixed(0), 'ms');
+    for (const [k, v] of Object.entries(dt).sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log((v / 1000).toFixed(0).padStart(7), 'ms', k);
+  }
   if (cdp) {
     const { profile } = await cdp.send('Profiler.stop'); fs.writeFileSync(process.env.PROF, JSON.stringify(profile));
     const dt = {}; const byId = new Map(profile.nodes.map((n) => [n.id, n]));

@@ -559,7 +559,18 @@ export async function buildPdfWorker(outFile) {
         if (this.krNeedsUse && properties.toUnicode) properties.toUnicode.forEach((code, u) => { if ((u === 0x20 || u === " ") && this.krSpaceCode === undefined) this.krSpaceCode = +code; });
       } catch { this.krNeedsUse = false; }
     }`, 'font raw keep');
-  src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "krLegacy", "cMap",`, 'export extra');
+  // Which font of the file a loaded font is, the same in every copy of the document that loads it: the PDF
+  // converter reads pages in several workers at once, each with its own copy, whose fonts are named in the order
+  // each copy met them; this tells them apart and together (one font for one descriptor and its encoding, as
+  // pdf.js itself shares them; else the font's own object).
+  src = replaceOnce(src, `    font.loadedName = \`\${this.idFactory.getDocId()}_\${fontID}\`;
+    this.translateFont(preEvaluatedFont).then(async translatedFont => {
+`, `    font.loadedName = \`\${this.idFactory.getDocId()}_\${fontID}\`;
+    const krId = hash && descriptor instanceof Dict ? \`d\${descriptor.objId ?? "?"}:\${hash}\` : fontRefIsRef ? \`r\${fontRef.toString()}\` : null;
+    this.translateFont(preEvaluatedFont).then(async translatedFont => {
+      if (translatedFont && krId) translatedFont.krId = krId;
+`, 'font id');
+  src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "krLegacy", "krId", "cMap",`, 'export extra');
 
   const out = await esbuild.transform(src, { minify: !process.env.NOMINIFY, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);

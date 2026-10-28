@@ -172,10 +172,10 @@ export function arCount(n: number, f: { one: string; two: string; few: string; m
 
 /** "1 page / 2 pages" — in Arabic: صفحة واحدة · صفحتان · ٣–١٠ صفحات · ١١–٩٩ صفحةً · ١٠٠ صفحةٍ. */
 /** Counted nouns in Japanese, Chinese and Korean: a counter word after the figure, no plural. */
-const CJK_COUNT: Record<string, Record<'page' | 'minute' | 'card' | 'book' | 'chapter', string>> = {
-  ja: { page: '{n}ページ', minute: '{n}分', card: '{n}枚', book: '{n}冊', chapter: '{n}章' },
-  zh: { page: '{n} 页', minute: '{n} 分钟', card: '{n} 张', book: '{n} 本', chapter: '{n} 章' },
-  ko: { page: '{n}쪽', minute: '{n}분', card: '카드 {n}장', book: '{n}권', chapter: '{n}장' },
+const CJK_COUNT: Record<string, Record<'page' | 'minute' | 'card' | 'book' | 'chapter' | 'second', string>> = {
+  ja: { page: '{n}ページ', minute: '{n}分', card: '{n}枚', book: '{n}冊', chapter: '{n}章', second: '{n}秒' },
+  zh: { page: '{n} 页', minute: '{n} 分钟', card: '{n} 张', book: '{n} 本', chapter: '{n} 章', second: '{n} 秒' },
+  ko: { page: '{n}쪽', minute: '{n}분', card: '카드 {n}장', book: '{n}권', chapter: '{n}장', second: '{n}초' },
 };
 const cjkCount = (n: number, what: keyof (typeof CJK_COUNT)['ja']): string | null => (CJK_COUNT[current] ? CJK_COUNT[current][what].replace('{n}', String(n)) : null);
 export function countPages(n: number): string {
@@ -231,6 +231,12 @@ export function countFiles(n: number): string {
 export function countMinutes(n: number): string {
   if (current !== 'ar') return cjkCount(n, 'minute') ?? `${n} min`;
   return arCount(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: 'دقائق', many: 'دقيقةً', hundred: 'دقيقةٍ' });
+}
+
+/** "3 seconds" — in Arabic: ثانية واحدة · ثانيتان · ٣–١٠ ثوانٍ · ١١–٩٩ ثانيةً · ١٠٠ ثانيةٍ. */
+export function countSeconds(n: number): string {
+  if (current !== 'ar') return cjkCount(n, 'second') ?? `${n} ${n === 1 ? 'second' : 'seconds'}`;
+  return arCount(n, { one: 'ثانية واحدة', two: 'ثانيتان', few: 'ثوانٍ', many: 'ثانيةً', hundred: 'ثانيةٍ' });
 }
 
 /** "12 cards" — in Arabic: بطاقة واحدة · بطاقتان · ٣–١٠ بطاقات · ١١–٩٩ بطاقةً · ١٠٠ بطاقةٍ. */
