@@ -44,6 +44,7 @@ export function dropBuriedSpaces<T extends { l: number; r: number; text: string 
 /** Inside one piece, a bracket type written one way only ("[النور: ٤٥[" — a PDF that names both by one
  *  glyph) is made to pair up: opening, closing, opening… */
 export function balanceBrackets(text: string): string {
+  if (!BRACKET_CHAR.test(text)) return text;
   let out = text;
   // A bracket named by its shape in a font set for right-to-left text comes out mirrored: a word that begins
   // with a closing bracket (")فقه") or ends with an opening one ("اللغة(") is turned the right way round.
@@ -64,7 +65,9 @@ export function balanceBrackets(text: string): string {
  * word, or comes while none is open, opens; one that ends a word, or comes while one is open, closes. A piece
  * that is nothing but a bracket was settled by its neighbours already and only moves the count.
  */
+const BRACKET_CHAR = /[()[\]{}«»﴾﴿]/;
 export function orientBrackets(text: string, depth: { n: number }): string {
+  if (!BRACKET_CHAR.test(text)) return text;
   const OPEN = '([{«﴿', CLOSE = ')]}»﴾';
   const chars = [...text];
   const lone = chars.every((c) => OPEN.includes(c) || CLOSE.includes(c) || /\s/.test(c));
@@ -95,6 +98,8 @@ export function fixLoneBrackets<T extends { text: string; l: number; r: number; 
   // (Only letters and digits tell: a bracket clings to punctuation either way — «».»، .)
   const word = (p: T | undefined) => !!p && /[\p{L}\p{N}]/u.test(p.text);
   for (let i = 0; i < seq.length; i++) {
+    // (Most pieces hold no bracket at all: nothing to settle, nothing to count.)
+    if (!BRACKET_CHAR.test(seq[i].text)) continue;
     const t0 = seq[i].text.trim();
     // A bracket alone, or with punctuation only ("،(" — a closing bracket and the comma after it).
     const bs = [...t0].filter((ch) => BRACKETS[ch]);
@@ -178,6 +183,15 @@ export function lineDirection(text: string, base?: boolean): boolean {
   return RTL_CHAR.test(text) && LTR_LETTER.test(text) && base !== undefined ? base : isRtlText(text);
 }
 export function joinLine<T extends LinePiece>(line: T[], base?: boolean): { text: string; rtl: boolean } {
+  // One piece (the converter asks for each piece's own reading): nothing to sort, join or space — the same
+  // result as the whole way below, without it.
+  if (line.length === 1) {
+    const p = line[0]; const rtl = lineDirection(p.text, base);
+    if (p.text === '\u2009' || !p.text.trim()) return { text: '', rtl };
+    let text = rtl ? orientBrackets(logicalNeutral(logicalRtlPiece(p.text, p.keep), true), { n: 0 }) : p.text;
+    if (rtl && LTR_LETTER.test(text) && !RTL_CHAR.test(text)) { const m = /^([.,;:!?]+)(\S.*)$/.exec(text); if (m) text = m[2] + m[1]; }
+    return { text: text.replace(/\s+/g, ' ').trim().replace(/^[\u064B-\u065F\u0670]+\s*/, ''), rtl };
+  }
   const rtl = lineDirection(line.map((p) => p.text).join(''), base);
   line = joinNumberRuns(line);
   const sorted = dropBuriedSpaces(line, (p) => p.text === '\u2009').sort((a, b) => (rtl ? b.l - a.l || b.r - a.r : a.l - b.l || a.r - b.r));

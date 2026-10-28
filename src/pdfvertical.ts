@@ -32,6 +32,8 @@ const cx = (p: VPiece) => (p.l + p.r) / 2;
 export function findVertical(pieces: VPiece[]): { vertical: Set<number>; segments: VSegment[] } {
   const none = { vertical: new Set<number>(), segments: [] };
   const n = pieces.length; if (n < 6 || n > 20000) return none;
+  // (No character of a vertical script at all — most pages: nothing to look for.)
+  if (!pieces.some((p) => isVerticalScript(p.text))) return none;
   // Neighbour lookup on a grid of cells about one character in size.
   const sizes = pieces.map((p) => p.h).filter((h) => h > 0).sort((a, b) => a - b); const cell = Math.max(1, sizes[sizes.length >> 1] || 10);
   const grid = new Map<string, number[]>();

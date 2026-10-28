@@ -4,7 +4,7 @@
 import { h, icon, iconButton, toast, coverColors } from '../ui/dom';
 import { volumesOf } from '../series';
 import { t, formatBytes, formatDuration, localDigits, countChapters, getLang, formatLabel } from '../i18n';
-import { db, FAV_TAG, type Book } from '../db';
+import { db, FAV_TAG, chapterRead, type Book } from '../db';
 import { coverUrl, forgetCover, shrinkCover } from '../library';
 import { navigate, back } from '../router';
 import { getSettings } from '../settings';
@@ -58,7 +58,7 @@ export function bookView(id: string): HTMLElement {
   const top = h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }), h('span', { class: 'spacer' }));
   root.append(top, body);
   // The chapter list's own state, kept while the page is open.
-  let reversed = false, hideRead = false, query = '';
+  let reversed = false, hideRead = false, onlyStars = false, query = '';
   void (async () => {
     const book = await db.getBook(id);
     if (!book) { navigate('/', true); return; }
@@ -66,7 +66,7 @@ export function bookView(id: string): HTMLElement {
     render(book);
   })();
 
-  const isRead = (book: Book, i: number) => { const m = book.chapterMarks?.[String(i)]; return m !== undefined ? m === 1 : i < (book.progress?.toc ?? 0) || i <= (book.readToc ?? -1); };
+  const isRead = chapterRead;
   // Chapters picked (a hold, a right-click, Ctrl+click) for marking together.
   const picked = new Set<number>(); let picking = false;
 
@@ -173,6 +173,7 @@ export function bookView(id: string): HTMLElement {
       h('span', { class: 'spacer' }),
       iconButton('search', t('searchChapters'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { query = ''; search.value = ''; paintList(); } }),
       iconButton('filter', t('hideRead'), () => { hideRead = !hideRead; paintChapters(book, toc, host); }, { pressed: hideRead }),
+      Object.keys(book.chapterStars ?? {}).length ? iconButton('bookmark', t('onlyBookmarked'), () => { onlyStars = !onlyStars; paintChapters(book, toc, host); }, { pressed: onlyStars }) : null,
       iconButton('sortAsc', t('reverseOrder'), () => { reversed = !reversed; paintChapters(book, toc, host); }, { pressed: reversed }));
     const list = h('ol', { class: 'chapter-list' });
     const open = (i: number) => { setJump({ bookId: book.id, kind: 'toc', id: String(i) }); navigate(`/read/${book.id}`); };
@@ -183,6 +184,15 @@ export function bookView(id: string): HTMLElement {
       book.chapterMarks = marks; book.chapterMarksAt = Date.now();
       await db.updateBook(book.id, (b) => { b.chapterMarks = marks; b.chapterMarksAt = book.chapterMarksAt; });
       void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined);
+      picked.clear(); picking = false; paintChapters(book, toc, host);
+    };
+    // Bookmarks: the chapters picked bookmarked, or (all of them bookmarked already) no longer.
+    const star = async (indices: number[]) => {
+      const stars = { ...(book.chapterStars ?? {}) };
+      const on = !indices.every((i) => stars[String(i)]);
+      for (const i of indices) { if (on) stars[String(i)] = 1; else delete stars[String(i)]; }
+      book.chapterStars = stars;
+      await db.updateBook(book.id, (b) => { b.chapterStars = stars; });
       picked.clear(); picking = false; paintChapters(book, toc, host);
     };
     const pick = (i: number) => { if (picked.has(i)) picked.delete(i); else picked.add(i); if (!picked.size) picking = false; paintBar(); paintList(); };
@@ -202,15 +212,16 @@ export function bookView(id: string): HTMLElement {
           act('undo', t('markUnread'), () => void mark([...picked], false)),
           act('chevronUp', t('markReadUpTo'), () => void mark(all.filter((i) => i <= Math.max(...picked)), true)),
           act('chevronDown', t('markUnreadFrom'), () => void mark(all.filter((i) => i >= Math.min(...picked)), false)),
+          act('bookmark', [...picked].every((i) => book.chapterStars?.[String(i)]) ? t('removeBookmark') : t('bookmarkChapter'), () => void star([...picked])),
           n === 1 ? act('play', t('open'), () => open([...picked][0])) : null));
     };
     const paintList = () => {
       const q = query.trim().toLowerCase();
-      const rows = toc.map((c, i) => ({ c, i })).filter(({ c, i }) => (!hideRead || !isRead(book, i)) && (!q || c.label.toLowerCase().includes(q)));
+      const rows = toc.map((c, i) => ({ c, i })).filter(({ c, i }) => (!hideRead || !isRead(book, i)) && (!onlyStars || !!book.chapterStars?.[String(i)]) && (!q || c.label.toLowerCase().includes(q)));
       if (reversed) rows.reverse();
       list.replaceChildren(...rows.map(({ c, i }) => {
         // A tap opens the chapter; a hold, a right-click or Ctrl/⌘ + click picks it (and taps then pick more).
-        const btn = h('button', { type: 'button', dir: 'auto', 'aria-pressed': picking ? String(picked.has(i)) : undefined, onclick: (e: MouseEvent) => { if (picking) pick(i); else if (e.ctrlKey || e.metaKey) startPick(i); else open(i); } }, h('i', { class: 'dot' }), h('span', null, c.label), picking ? h('i', { class: 'tick' }, icon('check')) : null);
+        const btn = h('button', { type: 'button', dir: 'auto', 'aria-pressed': picking ? String(picked.has(i)) : undefined, onclick: (e: MouseEvent) => { if (picking) pick(i); else if (e.ctrlKey || e.metaKey) startPick(i); else open(i); } }, h('i', { class: 'dot' }), h('span', null, c.label), book.chapterStars?.[String(i)] ? h('i', { class: 'star', title: t('bookmarkChapter') }, icon('bookmark')) : null, picking ? h('i', { class: 'tick' }, icon('check')) : null);
         void import('../ui/tags').then((m) => m.onHoldOrContext(btn, () => { if (!picking) startPick(i); else pick(i); }));
         return h('li', { class: (isRead(book, i) && i !== at ? 'read' : i === at ? 'current' : '') + ` d${Math.min(3, c.depth)}` + (picked.has(i) ? ' picked' : '') }, btn);
       }));

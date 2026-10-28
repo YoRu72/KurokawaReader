@@ -1389,6 +1389,15 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .chapter-pick .sel-act { display: grid; justify-items: center; gap: 3px; padding: 6px 8px; border: 0; background: none; color: var(--text); font-size: 11px; border-radius: 10px; min-width: 64px; }
 .chapter-pick .sel-act svg { width: 20px; height: 20px; }
 .chapter-list li.picked button { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.chapter-list .star, .novel-chapters .star { display: inline-flex; color: var(--md-primary); flex: none; }
+.chapter-list .star svg, .novel-chapters .star svg { width: 16px; height: 16px; }
+.src-chapters-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.src-chapters-head .section-title { flex: 1; min-width: 0; }
+.src-chapter-tools { display: flex; gap: 2px; }
+.novel-chapters li.read button { color: var(--text-dim); }
+.novel-chapters li.current button { box-shadow: inset 3px 0 0 var(--md-primary); }
+[dir="rtl"] .novel-chapters li.current button { box-shadow: inset -3px 0 0 var(--md-primary); }
+.novel-chapters li.none { padding: 14px 16px; color: var(--text-dim); list-style: none; }
 .chapter-list .tick { margin-inline-start: auto; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--md-outline); }
 .chapter-list .tick svg { width: 14px; height: 14px; opacity: 0; }
 .chapter-list li.picked .tick { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
@@ -1670,7 +1679,7 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .chapter-sel { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin: 0 0 6px; border-radius: 14px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .chapter-sel .sel-count { font-weight: 600; }
 .novel-chapters button.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-.novel-chapters .have-mark { display: inline-flex; opacity: .55; }
+.novel-chapters .have-mark { position: static; display: inline-flex; flex: none; padding: 0; background: none; box-shadow: none; color: var(--md-primary); opacity: .85; }
 .novel-chapters .have-mark svg { width: 16px; height: 16px; }
 .novel-chapters button > .grow { flex: 1; min-width: 0; }
 
@@ -1699,3 +1708,23 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .downloads-btn.busy svg { animation: dl-bob 1.2s ease-in-out infinite; }
 @keyframes dl-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
 @media (prefers-reduced-motion: reduce) { .downloads-btn.busy svg { animation: none; } }
+
+/* One search, every source: a row of covers for each. */
+.gs-form { padding: 8px 16px 0; }
+.gs-form .src-search { width: 100%; }
+.global-search .gs-hint, .global-search .gs-status { padding: 4px 16px; }
+.gs-section { margin: 6px 0 4px; }
+.gs-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 16px 6px; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; text-align: start; }
+.gs-head b { font-size: 15px; }
+.gs-head small { color: var(--text-dim); font-size: 12px; }
+.gs-head .spacer { flex: 1; }
+.gs-head svg { width: 18px; height: 18px; color: var(--text-dim); }
+[dir="rtl"] .gs-head svg { transform: scaleX(-1); }
+.gs-row { display: flex; gap: 10px; overflow-x: auto; padding: 2px 16px 10px; scroll-snap-type: x proximity; scrollbar-width: thin; min-height: 40px; align-items: flex-start; }
+.gs-row > .hint { margin: 0; padding: 4px 0; }
+.gs-card { flex: none; width: 104px; display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: start; cursor: pointer; scroll-snap-align: start; }
+.gs-card .src-cover { width: 104px; aspect-ratio: 2 / 3; border-radius: 10px; overflow: hidden; position: relative; display: grid; place-items: center; }
+.gs-card .src-cover img { width: 100%; height: 100%; object-fit: cover; }
+.gs-card .gs-title { font-size: 12.5px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gs-section.none .gs-row { min-height: 0; }
+.gs-empty .gs-section { opacity: .75; }

@@ -6,9 +6,9 @@
 // or fetched whole for offline. A bell tells what came: new chapters for the novels of the library, newer
 // versions of the extensions.
 import { h, icon, iconButton, toast, openSheet, coverColors, pickButton } from '../ui/dom';
-import { t, localDigits, getLang, countChapters, countBooks, countVolumes, formatBytes } from '../i18n';
+import { t, localDigits, getLang, countChapters, countSeconds, countBooks, countVolumes, formatBytes } from '../i18n';
 import { navigate, back } from '../router';
-import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
+import { db, uid, FAV_TAG, chapterRead, type Book, type Folder, type TagDef } from '../db';
 import { importFiles } from '../library';
 import { setJump } from './reader';
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceChapter, type SourceFile } from '../sources/types';
@@ -19,7 +19,7 @@ import { passChallenge, forgetSite, openSite } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
-import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
+import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
@@ -83,6 +83,7 @@ function copyOnHold(el: HTMLElement, text?: () => string): HTMLElement {
 }
 
 export function sourcesView(srcId?: string, bookId?: string, q?: string, shelf?: string, tags?: string[]): HTMLElement & { dispose?: () => void } {
+  if (srcId === ALL) return globalSearchView(q ?? '');
   if (srcId && isExt(srcId)) return lazy(async () => { const hnd = await extHandle(srcId); return bookId ? detailsView(hnd.source, bookId, hnd) : browseView(hnd.source, q ?? '', shelf, tags ?? [], hnd); }, srcId);
   if (srcId && isDir(srcId)) return lazy(async () => { const src = await folderSourceFor(srcId); return bookId ? detailsView(src, bookId) : browseView(src, q ?? '', shelf, tags ?? []); }, srcId);
   const src = srcId ? sourceById(srcId) : undefined;
@@ -111,12 +112,65 @@ function lazy(make: () => Promise<HTMLElement & { dispose?: () => void }>, srcId
   return shell;
 }
 
+/* ---------- one search, every source (LNReader's and Mihon's global search) ---------- */
+const ALL = '~all';
+function globalSearchView(q0: string): HTMLElement & { dispose?: () => void } {
+  const body = h('div', { class: 'library-body global-search' });
+  const input = h('input', { type: 'search', class: 'src-search', value: q0, placeholder: t('searchAllSources'), dir: 'auto', enterkeyhint: 'search' }) as HTMLInputElement;
+  const form = h('form', { class: 'gs-form', onsubmit: (e: Event) => { e.preventDefault(); const q = input.value.trim(); if (q) navigate(path(ALL, { q }), true); } }, input);
+  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/sources')), h('div', { class: 'title' }, t('searchAllSources'))), form, body) as HTMLElement & { dispose?: () => void };
+  let gone = false; root.dispose = () => { gone = true; };
+  if (!q0.trim()) { body.append(h('p', { class: 'hint gs-hint' }, t('searchAllHint'))); setTimeout(() => input.focus(), 50); return root; }
+  void (async () => {
+    // Every runnable extension the reader has added, then the built-in catalogues.
+    const repos = await listRepos().catch(() => [] as Repo[]);
+    const list: { id: string; name: string; sub: string; get: () => Promise<{ src: Source; hnd?: Handle }> }[] = [];
+    for (const r of repos) if (r.kind !== 'folder') for (const i of installedItems(r).filter((x) => x.runnable)) { const id = sourceIdOf(r, i); list.push({ id, name: i.name, sub: langLabel(i.lang), get: async () => { const hnd = await extHandle(id); return { src: hnd.source, hnd }; } }); }
+    for (const s of SOURCES) if (!(s.needsApp && isWeb())) list.push({ id: s.id, name: s.name, sub: s.site.replace(/^https?:\/\//, ''), get: async () => ({ src: s }) });
+    if (!list.length) { body.append(h('p', { class: 'hint' }, t('noReposYet'))); return; }
+    const found = h('div', { class: 'gs-found' }), empty = h('div', { class: 'gs-empty' });
+    const status = h('p', { class: 'hint gs-status' });
+    body.append(status, found, empty);
+    let done = 0;
+    const say = () => { status.textContent = done < list.length ? t('searchingSources', { n: localDigits(done), total: localDigits(list.length) }) : ''; status.hidden = done >= list.length; };
+    say();
+    const sections = list.map((x) => {
+      const row = h('div', { class: 'gs-row' }, h('div', { class: 'spinner small' }));
+      const sec = h('section', { class: 'gs-section' }, h('button', { type: 'button', class: 'gs-head', onclick: () => navigate(path(x.id, { q: q0 })) }, h('b', { dir: 'auto' }, x.name), h('small', null, x.sub), h('span', { class: 'spacer' }), icon('arrowRight')), row);
+      found.append(sec);
+      return { x, sec, row };
+    });
+    const { pool } = await import('../sources/http');
+    await pool(sections, 3, async ({ x, sec, row }) => {
+      try {
+        const { src, hnd } = await x.get();
+        const base: FilterValues = {}; for (const f of src.filters()) base[f.id] = f.value;
+        const page = await src.browse(q0, base, 1);
+        if (gone) return;
+        const items = page.items.filter((b) => !b.shelf).slice(0, 12);
+        if (!items.length) { sec.classList.add('none'); row.replaceChildren(h('p', { class: 'hint' }, t('noResults'))); empty.append(sec); }
+        else row.replaceChildren(...items.map((b) => {
+          const [c1, c2] = coverColors(b.title);
+          const card = h('button', { type: 'button', class: 'gs-card', title: b.title, onclick: () => navigate(bookPath(x.id, b.id)) },
+            h('div', { class: 'src-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, b.cover ? coverImg(b.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, b.title)),
+            h('span', { class: 'gs-title', dir: 'auto' }, b.title));
+          return card;
+        }));
+      } catch (e) {
+        if (gone) return;
+        sec.classList.add('none'); row.replaceChildren(h('p', { class: 'hint warn' }, describe(e))); empty.append(sec);
+      } finally { done++; if (!gone) say(); }
+    });
+  })();
+  return root;
+}
+
 /* ---------- the hub ---------- */
 function hubView(): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'library-body sources-hub' });
   const bell = iconButton('bell', t('srcWhatsNew'), () => updatesSheet(() => void drawBell()));
   bell.classList.add('bell-btn');
-  const actions = h('div', { class: 'topbar-actions' }, bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
+  const actions = h('div', { class: 'topbar-actions' }, iconButton('search', t('searchAllSources'), () => navigate(path(ALL))), bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
   const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/settings')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
   const off = onUpdatesChanged(() => void drawBell());
   root.dispose = () => off();
@@ -676,7 +730,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // Search from the top bar wherever the page is scrolled to (as Mihon's search icon): the search row comes
   // back into view and takes the focus.
   topActions.append(iconButton('search', t('search'), () => { body.scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => { input.focus(); input.select(); }, 250); }));
-  if (hnd && (hnd.ln?.pluginSettings || hnd.my?.prefs.length)) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
+  if (hnd) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
   // (The site itself, in the app's browser: a sign-in, a check passed there carries over — as Mihon's WebView.)
   if (/^https?:\/\//i.test(src.site ?? '')) topActions.append(iconButton('globe', t('openInAppBrowser'), () => void openSite(src.site)));
   // (What went wrong with covers and files lately, for a web folder: shown on a long press of the title.)
@@ -898,6 +952,13 @@ function extSettingsSheet(hnd: Handle): void {
   const store = readStore(hnd.key);
   const changes: Record<string, unknown> = {};
   const save = (k: string, v: unknown) => { changes[k] = v; };
+  // Ours, for every source: how fast its chapters are fetched for offline (kept at once, not on «Done»).
+  const pace = paceOf(hnd.key);
+  sh.body.append(h('h3', { class: 'section-title' }, t('fetchPace')),
+    h('div', { class: 'field' }, h('span', null, t('chaptersAtOnce')), pickButton(t('chaptersAtOnce'), [1, 2, 3, 4].map((n): [string, string] => [String(n), localDigits(String(n))]), String(pace.at), (v) => { pace.at = Number(v); setPace(hnd.key, pace); }, t('close'))),
+    h('div', { class: 'field' }, h('span', null, t('pauseBetween')), pickButton(t('pauseBetween'), [0, 1000, 3000, 5000, 10000].map((ms): [string, string] => [String(ms), ms ? countSeconds(ms / 1000) : t('noPause')]), String(pace.pause), (v) => { pace.pause = Number(v); setPace(hnd.key, pace); }, t('close'))),
+    h('p', { class: 'hint' }, t('fetchPaceHint')));
+  if (hnd.ln?.pluginSettings || hnd.my?.prefs.length) sh.body.append(h('h3', { class: 'section-title' }, t('extOwnSettings')));
   if (hnd.ln?.pluginSettings) {
     for (const [k, s] of Object.entries(hnd.ln.pluginSettings)) {
       const cur = (store[k] as { value?: unknown } | undefined)?.value ?? s.value;
@@ -1132,9 +1193,11 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
       navigate(`/read/${book.id}`);
     };
     const row = h('div', { class: 'src-files' });
-    row.append(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => void open().catch((e) => toast(describe(e), 'error')) }, icon('play'), h('span', { class: 'grow' }, book ? t('open') : t('readOnline'))));
-    if (!book) row.append(h('button', { type: 'button', class: 'btn tonal src-file', onclick: async () => { try { book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd)); toast(t('addedToLibrary')); void draw(); } catch (e) { toast(describe(e), 'error'); } } }, icon('plus'), h('span', { class: 'grow' }, t('addToLibrary'))));
     const file = book ? await readNovelFile(book.id) : null;
+    // (Where the reading stands, as Mihon's «Resume»: the chapter named.)
+    const at = book?.progress ? file?.chapters[book.progress.toc ?? -1]?.name : undefined;
+    row.append(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => void open().catch((e) => toast(describe(e), 'error')) }, icon('play'), h('span', { class: 'grow', dir: 'auto' }, at ? `${t('resume')} · ${at}` : book ? t('open') : t('readOnline'))));
+    if (!book) row.append(h('button', { type: 'button', class: 'btn tonal src-file', onclick: async () => { try { book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd)); toast(t('addedToLibrary')); void draw(); } catch (e) { toast(describe(e), 'error'); } } }, icon('plus'), h('span', { class: 'grow' }, t('addToLibrary'))));
     const have = file?.content ? Object.keys(file.content).length : 0;
     const total = file?.chapters.length ?? novel.chapters.length;
     const offline = book && !book.remote?.online;
@@ -1184,6 +1247,8 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
       box.append(h('p', { class: 'hint novel-in-library' }, t('novelInLibrary'), ' ', checkBtn));
     }
   };
+  // (A chapter marked or bookmarked below adds the novel to the library: the buttons here say so.)
+  box.parentElement?.addEventListener('kr-in-library', () => { void findInLibrary(novel.src, novel.path).then((b) => { book = b ?? book; void draw(); }); });
   await draw();
 }
 async function coverBlob(url: string | undefined, hnd: Handle): Promise<Blob | undefined> {
@@ -1200,10 +1265,36 @@ function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
   const find = h('input', { type: 'search', class: 'src-search ext-find', placeholder: t('findChapter'), dir: 'auto' }) as HTMLInputElement;
   const bar = h('div', { class: 'selection-bar chapter-sel', hidden: true });
   const title = h('h3', { class: 'section-title' }, `${t('contents')} · ${countChapters(novel.chapters.length)}`);
-  const box = h('section', { class: 'src-chapters-box' }, title, find, bar, list);
+  const tools = h('div', { class: 'chapter-tools src-chapter-tools' });
+  const box = h('section', { class: 'src-chapters-box' }, h('div', { class: 'src-chapters-head' }, title, tools), find, bar, list);
   const picked = new Set<number>();
   let have = new Set<string>();
-  const refreshHave = async () => { const book = await findInLibrary(novel.src, novel.path); const file = book ? await readNovelFile(book.id) : null; have = new Set(Object.keys(file?.content ?? {})); };
+  // The library's copy, when there is one: which chapters are read (where the reading stands, and marks), which
+  // bookmarked — by its own contents index, found from each chapter's address.
+  let lib: Book | undefined; let idxOf = new Map<string, number>();
+  let reversed = false, hideRead = false, onlyHave = false, onlyStars = false;
+  const refreshHave = async () => { const was = lib; lib = await findInLibrary(novel.src, novel.path); if (lib && !was && box.isConnected) box.dispatchEvent(new CustomEvent('kr-in-library', { bubbles: true })); const file = lib ? await readNovelFile(lib.id) : null; have = new Set(Object.keys(file?.content ?? {})); idxOf = new Map((file?.chapters ?? []).map((c, k) => [c.path, k])); };
+  const libIdx = (i: number) => idxOf.get(novel.chapters[i].path);
+  const isRead = (i: number) => { const k = libIdx(i); return !!lib && k !== undefined && chapterRead(lib, k); };
+  const starred = (i: number) => { const k = libIdx(i); return !!lib && k !== undefined && !!lib.chapterStars?.[String(k)]; };
+  const current = () => { const k = lib?.progress?.toc; if (k === undefined || !lib?.progress) return -1; const at = [...idxOf].find(([, v]) => v === k)?.[0]; return at ? novel.chapters.findIndex((c) => c.path === at) : -1; };
+  /** The library's copy, added first when there is none. */
+  const ensure = async () => { if (!lib) { lib = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd)); await refreshHave(); toast(t('addedToLibrary')); } return lib!; };
+  const mark = async (idx: number[], read: boolean) => {
+    const b = await ensure(); const marks = { ...(b.chapterMarks ?? {}) };
+    for (const i of idx) { const k = libIdx(i); if (k !== undefined) marks[String(k)] = read ? 1 : 0; }
+    b.chapterMarks = marks; b.chapterMarksAt = Date.now();
+    await db.updateBook(b.id, (x) => { x.chapterMarks = marks; x.chapterMarksAt = b.chapterMarksAt; });
+    void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined);
+    picked.clear(); draw(find.value);
+  };
+  const star = async (idx: number[]) => {
+    const b = await ensure(); const stars = { ...(b.chapterStars ?? {}) };
+    const on = !idx.every((i) => starred(i));
+    for (const i of idx) { const k = libIdx(i); if (k === undefined) continue; if (on) stars[String(k)] = 1; else delete stars[String(k)]; }
+    b.chapterStars = stars; await db.updateBook(b.id, (x) => { x.chapterStars = stars; });
+    picked.clear(); draw(find.value);
+  };
   const openAt = async (i: number) => {
     let book = await findInLibrary(novel.src, novel.path);
     if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
@@ -1220,6 +1311,9 @@ function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
       h('span', { class: 'grow sel-count' }, countChapters(picked.size)),
       h('button', { type: 'button', class: 'icon-btn', title: t('selectAll'), 'aria-label': t('selectAll'), onclick: () => { novel.chapters.forEach((_, i) => picked.add(i)); draw(find.value); } }, icon('check')),
       h('button', { type: 'button', class: 'icon-btn', title: t('selectBetween'), 'aria-label': t('selectBetween'), onclick: () => { for (let i = idx[0]; i <= idx[idx.length - 1]; i++) picked.add(i); draw(find.value); } }, icon('sort')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('markRead'), 'aria-label': t('markRead'), onclick: () => void mark(idx, true) }, icon('check')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('markUnread'), 'aria-label': t('markUnread'), onclick: () => void mark(idx, false) }, icon('undo')),
+      h('button', { type: 'button', class: 'icon-btn', title: idx.every(starred) ? t('removeBookmark') : t('bookmarkChapter'), 'aria-label': t('bookmarkChapter'), onclick: () => void star(idx) }, icon('bookmark')),
       h('button', { type: 'button', class: 'btn small primary', disabled: !todo.length, onclick: () => void fetchPicked(todo) }, icon('download'), todo.length ? t('downloadN', { n: countChapters(todo.length) }) : t('downloaded')),
       idx.some((i) => have.has(novel.chapters[i].path)) ? h('button', { type: 'button', class: 'icon-btn', title: t('forgetOffline'), 'aria-label': t('forgetOffline'), onclick: () => void forgetPicked(idx) }, icon('trash')) : null,
       h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => { picked.clear(); draw(find.value); } }, icon('close'))].filter((x): x is HTMLElement => !!x));
@@ -1249,15 +1343,25 @@ function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
   const draw = (needle: string) => {
     list.replaceChildren();
     const n = needle.trim().toLowerCase();
-    novel.chapters.forEach((c, i) => {
-      if (n && !c.name.toLowerCase().includes(n)) return;
+    const at = current();
+    const order = novel.chapters.map((_, i) => i); if (reversed) order.reverse();
+    tools.replaceChildren(
+      iconButton('sortAsc', t('reverseOrder'), () => { reversed = !reversed; draw(find.value); }, { pressed: reversed }),
+      iconButton('filter', t('hideRead'), () => { hideRead = !hideRead; draw(find.value); }, { pressed: hideRead }),
+      iconButton('download', t('onlyDownloaded'), () => { onlyHave = !onlyHave; draw(find.value); }, { pressed: onlyHave }),
+      iconButton('bookmark', t('onlyBookmarked'), () => { onlyStars = !onlyStars; draw(find.value); }, { pressed: onlyStars }));
+    for (const i of order) {
+      const c = novel.chapters[i];
+      if (n && !c.name.toLowerCase().includes(n)) continue;
+      if ((hideRead && isRead(i)) || (onlyHave && !have.has(c.path)) || (onlyStars && !starred(i))) continue;
       const on = picked.has(i); const got = have.has(c.path);
       const b = h('button', { type: 'button', 'aria-pressed': String(on), class: (on ? 'on' : '') + (got ? ' have' : ''), onclick: () => { if (selecting()) { if (on) picked.delete(i); else picked.add(i); draw(find.value); } else void openAt(i).catch((e) => toast(describe(e), 'error')); } },
         on ? icon('check') : got ? h('span', { class: 'have-mark', title: t('downloaded') }, icon('download')) : null,
-        h('span', { dir: 'auto', class: 'grow' }, c.name), c.released ? h('span', { class: 'meta' }, shortDate(c.released)) : null);
+        h('span', { dir: 'auto', class: 'grow' }, c.name), starred(i) ? h('i', { class: 'star', title: t('bookmarkChapter') }, icon('bookmark')) : null, c.released ? h('span', { class: 'meta' }, shortDate(c.released)) : null);
       onHoldOrContext(b, () => { if (on) picked.delete(i); else picked.add(i); draw(find.value); });
-      list.append(h('li', null, b));
-    });
+      list.append(h('li', { class: i === at ? 'current' : isRead(i) ? 'read' : undefined }, b));
+    }
+    if (!list.childElementCount) list.append(h('li', { class: 'none' }, t('noResults')));
     drawBar();
   };
   find.addEventListener('input', () => draw(find.value));
