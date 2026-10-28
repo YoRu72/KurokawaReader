@@ -138,6 +138,8 @@ export interface VisualSettings {
   openLastOnLaunch: boolean;  // reopen the last book when the app starts
   coverSize: 'small' | 'medium' | 'large';
   gridColumns: number;     // library cards per row (0: as many as fit)
+  /** How a card looks: title below the cover, over it, the cover alone, or a list of rows. */
+  cardLook: 'comfortable' | 'compact' | 'cover' | 'list';
   showQuote: boolean;      // a line from the reader's highlights on the library page, a new one each day
   // AI (chapter translation, AI voices)
   aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
@@ -287,6 +289,7 @@ export const DEFAULTS: VisualSettings = {
   openLastOnLaunch: false,
   coverSize: 'medium',
   gridColumns: 0,
+  cardLook: 'comfortable',
   showQuote: true,
   aiProvider: 'gemini',
   localEngine: 'device',
@@ -494,6 +497,7 @@ export function applyChrome(s: VisualSettings = current): void {
   for (const [k, v] of Object.entries(s.highlightPalette ?? {})) html.style.setProperty(`--hl-${k}`, v);
   html.style.setProperty('--cover-min', s.coverSize === 'small' ? '104px' : s.coverSize === 'large' ? '176px' : '136px');
   if (s.gridColumns > 0) html.style.setProperty('--lib-cols', String(s.gridColumns)); else html.style.removeProperty('--lib-cols');
+  html.dataset.cardLook = s.cardLook;
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light);
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');

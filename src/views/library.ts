@@ -12,13 +12,14 @@ import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
 import { todayKey, liveStatsOf } from '../stats';
 
-type Sort = 'title' | 'recent' | 'added' | 'author' | 'size' | 'rating';
+type Sort = 'title' | 'recent' | 'added' | 'author' | 'size' | 'rating' | 'progress' | 'length' | 'updated';
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export function libraryView(): HTMLElement {
   let books: Book[] = [];
   let query = '';
   let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'title';
+  let sortDesc = localStorage.getItem('kr.sortDesc') === '1';
   let folders: Folder[] = [];
   let tagDefs: TagDef[] = [];
   let activeFolder: string | null = localStorage.getItem('kr.folder') || null;
@@ -48,12 +49,13 @@ export function libraryView(): HTMLElement {
   }
 
   const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); renderGrid(); } }) as HTMLInputElement;
-  const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['size', t('sortSize'), 'books'], ['rating', t('sortRating'), 'heart']];
+  const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['progress', t('sortProgress'), 'play'], ['length', t('sortLength'), 'file'], ['updated', t('sortUpdated'), 'bell'], ['size', t('sortSize'), 'books'], ['rating', t('sortRating'), 'heart']];
   // Books added since the library was last looked at carry a small «new» mark until opened.
   const lastVisit = Number(localStorage.getItem('kr.libraryVisit') ?? 0);
   localStorage.setItem('kr.libraryVisit', String(Date.now()));
   const sortLabel = h('span', null, SORTS.find((x) => x[0] === sort)?.[1] ?? '');
-  const sortSel = h('button', { type: 'button', class: 'sort-btn', 'aria-label': t('sortBy'), onclick: () => pickSheet(t('sortBy'), SORTS, sort, (v) => { sort = v; localStorage.setItem('kr.sort', sort); sortLabel.textContent = SORTS.find((x) => x[0] === sort)?.[1] ?? ''; renderGrid(); }, t('close')) }, icon('sort'), sortLabel, icon('chevronDown'));
+  const filterBtn = iconButton('filter', t('filters'), () => librarySheet('filter')); filterBtn.classList.add('tool-btn', 'filter-btn');
+  const sortSel = h('button', { type: 'button', class: 'sort-btn', 'aria-label': t('sortBy'), onclick: () => librarySheet('sort') }, icon('sort'), sortLabel, icon('chevronDown'));
 
   const selectBtn = iconButton('check', t('select'), () => setSelecting(!selecting), { pressed: false });
   selectBtn.classList.add('tool-btn');
@@ -78,7 +80,7 @@ export function libraryView(): HTMLElement {
   const browseBtn = iconButton('globe', t('sources'), () => navigate('/sources')); browseBtn.classList.add('tool-btn', 'browse-btn');
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, browseBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, browseBtn),
     chips,
     tagChips,
     fmtChips,
@@ -250,8 +252,12 @@ export function libraryView(): HTMLElement {
       author: (a, b) => natural.compare(a.author ?? '￿', b.author ?? '￿') || natural.compare(a.title, b.title),
       size: (a, b) => b.size - a.size,
       rating: (a, b) => (b.rating ?? 0) - (a.rating ?? 0) || natural.compare(a.title, b.title),
+      progress: (a, b) => (b.progress?.pct ?? 0) - (a.progress?.pct ?? 0) || natural.compare(a.title, b.title),
+      length: (a, b) => (b.pageCount ?? b.chapters ?? 0) - (a.pageCount ?? a.chapters ?? 0) || b.size - a.size,
+      updated: (a, b) => (b.remote?.checkedAt ?? b.addedAt) - (a.remote?.checkedAt ?? a.addedAt),
     };
-    return list.sort(by[sort]);
+    list.sort(by[sort]);
+    return sortDesc ? list.reverse() : list;
   }
 
   function folderCard(f: Folder): HTMLElement {
@@ -388,6 +394,47 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
     });
+  }
+
+  /** The library's sheet, as Mihon has it: Filter, Sort and Display in one place. */
+  function librarySheet(tab: 'filter' | 'sort' | 'display' = 'filter'): void {
+    const sh = openSheet(t('libraryOptions'), t('close'));
+    sh.body.style.fontFamily = 'var(--font-ui)';
+    const panel = h('div', { class: 'lib-sheet-panel' });
+    const tabs = h('div', { class: 'segmented lib-sheet-tabs' });
+    const draw = (which: typeof tab) => {
+      tabs.replaceChildren(...(['filter', 'sort', 'display'] as const).map((id) => h('button', { type: 'button', 'aria-pressed': String(id === which), onclick: () => draw(id) }, t(id === 'filter' ? 'filters' : id === 'sort' ? 'sortBy' : 'displayMode'))));
+      panel.replaceChildren();
+      const row = (label: string, on: boolean, click: () => void, ic?: string) => h('button', { type: 'button', class: 'lib-opt' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => { click(); draw(which); renderGrid(); } }, ic ? icon(ic) : h('span', { class: 'lib-box' }, on ? icon('check') : null), h('span', { class: 'grow', dir: 'auto' }, label));
+      if (which === 'filter') {
+        const st = new Set(getSettings().statusFilter); const fm = new Set(getSettings().formatFilter);
+        panel.append(h('h4', null, t('readingStatus')));
+        for (const [id, label] of [['unread', t('statusUnread')], ['reading', t('statusReading')], ['finished', t('statusFinished')]] as [string, string][]) panel.append(row(label, st.has(id), () => { const n = new Set(st); if (n.has(id)) n.delete(id); else n.add(id); updateSettings({ statusFilter: [...n] }); }));
+        const present = new Set(books.map((b) => groupOf(b.format)));
+        const groups = FORMAT_GROUPS.filter((g) => present.has(g.id));
+        if (groups.length > 1) { panel.append(h('h4', null, t('format'))); for (const g of groups) panel.append(row(g.label, fm.has(g.id), () => { const n = new Set(fm); if (n.has(g.id)) n.delete(g.id); else n.add(g.id); updateSettings({ formatFilter: [...n] }); })); }
+        const tags = allTags();
+        if (tags.length) { panel.append(h('h4', null, t('tags'))); for (const tg of tags) panel.append(row(tg.name === FAV_TAG ? t('favorites') : tg.name, tagFilter === tg.name, () => setTagFilter(tagFilter === tg.name ? null : tg.name), tg.name === FAV_TAG ? 'heart' : undefined)); }
+        if (st.size || fm.size || tagFilter) panel.append(h('button', { type: 'button', class: 'btn tonal small', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); draw(which); renderGrid(); } }, icon('close'), t('clearFilters')));
+      } else if (which === 'sort') {
+        for (const [id, label, ic] of SORTS) panel.append(row(label, sort === id, () => { if (sort === id) sortDesc = !sortDesc; else { sort = id; sortDesc = false; } localStorage.setItem('kr.sort', sort); localStorage.setItem('kr.sortDesc', sortDesc ? '1' : '0'); sortLabel.textContent = label; }, sort === id ? (sortDesc ? 'chevronUp' : 'chevronDown') : ic));
+        panel.append(h('p', { class: 'hint' }, t('sortDirHint')));
+      } else {
+        const cur = getSettings();
+        panel.append(h('h4', null, t('displayMode')));
+        for (const [id, label] of [['compact', t('lookCompact')], ['comfortable', t('lookComfortable')], ['cover', t('lookCover')], ['list', t('lookList')]] as [typeof cur.cardLook, string][]) panel.append(row(label, cur.cardLook === id, () => updateSettings({ cardLook: id })));
+        panel.append(h('h4', null, t('itemsPerRow')));
+        const val = h('b', null, cur.gridColumns ? localDigits(cur.gridColumns) : t('autoFit'));
+        const slider = h('input', { type: 'range', min: '0', max: '7', step: '1', value: String(cur.gridColumns), oninput: () => { const n = +slider.value; updateSettings({ gridColumns: n }); val.textContent = n ? localDigits(n) : t('autoFit'); } }) as HTMLInputElement;
+        panel.append(h('div', { class: 'lib-slider' }, slider, val));
+        panel.append(h('h4', null, t('badges')));
+        panel.append(row(t('showProgressOnCovers'), cur.showProgress, () => updateSettings({ showProgress: !cur.showProgress })));
+        panel.append(row(t('showDoneOnCovers'), cur.showDone, () => updateSettings({ showDone: !cur.showDone })));
+        panel.append(row(t('groupSeries'), cur.groupSeries, () => updateSettings({ groupSeries: !cur.groupSeries })));
+      }
+    };
+    sh.body.append(tabs, panel);
+    draw(tab);
   }
 
   function renderFormatChips() {
