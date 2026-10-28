@@ -1,0 +1,43 @@
+# KittenTTS's models (KittenML on Hugging Face, Apache-2.0) mirrored into this repository's releases, so the app
+# downloads a voice from here — the way the Anki decks are offered — with Hugging Face as the fallback.
+# Run by hand (Actions → this workflow → Run), or when this file changes.
+name: KittenTTS models
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/kittentts-models.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      TAG: models-kittentts-0.8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the models
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for repo in kitten-tts-nano-0.8-int8 kitten-tts-nano-0.8-fp32 kitten-tts-micro-0.8 kitten-tts-mini-0.8; do
+            base="https://huggingface.co/KittenML/$repo/resolve/main"
+            curl -fsSL "$base/config.json" -o "out/$repo.config.json"
+            model=$(jq -r .model_file "out/$repo.config.json"); voices=$(jq -r .voices "out/$repo.config.json")
+            curl -fsSL "$base/$model" -o "out/$repo.$(basename "$model")"
+            curl -fsSL "$base/$voices" -o "out/$repo.$(basename "$voices")"
+          done
+          ls -la out
+      - name: Publish as a release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: KittenTTS 0.8 models (mirror)
+          body: |
+            The KittenTTS 0.8 ONNX models and their voices, mirrored from https://huggingface.co/KittenML for the app's on-device voice (Apache-2.0, © KittenML). Each file is named `<repo>.<file>`; `<repo>.config.json` names the model and voices files.
+          make_latest: false
+          prerelease: true
+          files: out/*

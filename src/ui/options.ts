@@ -232,8 +232,13 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     grid.append(head('behaviour', t('readAloud')));
     grid.append(stepper([t('speechRate'), 'speechRate'], s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
   grid.append(section([t('speechScope'), 'speechScope'], segmented([['chapter', t('speechChapter')], ['book', t('speechBook')]], s.speechScope, (v) => updateSettings({ speechScope: v }))));
-    const engines: [VisualSettings['speechEngine'], string][] = [['system', t('speechSystem')], ['ai', t('speechAi')]];
+    const engines: [VisualSettings['speechEngine'], string][] = [['system', t('speechSystem')], ['kitten', 'KittenTTS'], ['ai', t('speechAi')]];
     grid.append(section([t('speechEngine'), 'speechEngine'], segmented(engines, s.speechEngine, (v) => { updateSettings({ speechEngine: v }); rerender(); })));
+    if (s.speechEngine === 'kitten') {
+      const box = h('div', { class: 'kitten-box' }, h('p', { class: 'hint' }, t('kittenEnglishOnly')));
+      void import('./kittenpanel').then((m) => box.append(m.kittenPanel()));
+      grid.append(section([t('speechKitten'), 'kittenModel'], box));
+    }
     if (s.speechEngine === 'ai') {
       const list = AI_VOICES[s.aiProvider === 'openrouter' || s.aiProvider === 'custom' ? 'openai' : s.aiProvider] ?? [];
       if (list.length) {

@@ -1,5 +1,6 @@
 // Provider, key, model, language and instructions for the AI features (shared by
 // the translator pill and Settings). Choice lists open as stacked M3 sheets.
+import { kittenPanel } from './kittenpanel';
 import { h, icon, openSheet, pickButton, pickSheet, toast } from './dom';
 import { t, isRtlText } from '../i18n';
 import { getSettings, updateSettings, type VisualSettings } from '../settings';
@@ -60,7 +61,8 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
   langField.hidden = s.aiTask !== 'translate'; promptField.hidden = s.aiTask !== 'translate';
 
   // Read-aloud engine and AI voice live here too (same key / provider).
-  const engine = pickButton<VisualSettings['speechEngine']>(t('speechEngine'), [['system', t('speechSystem'), 'speak'], ['ai', t('speechAi'), 'translate']], s.speechEngine, (v) => { updateSettings({ speechEngine: v }); voiceField.hidden = v !== 'ai'; ttsField.hidden = v !== 'ai'; }, t('close'));
+  const engine = pickButton<VisualSettings['speechEngine']>(t('speechEngine'), [['system', t('speechSystem'), 'speak'], ['kitten', t('speechKitten'), 'download'], ['ai', t('speechAi'), 'translate']], s.speechEngine, (v) => { updateSettings({ speechEngine: v }); voiceField.hidden = v !== 'ai'; ttsField.hidden = v !== 'ai'; kittenField.hidden = v !== 'kitten'; }, t('close'));
+  const kittenField = h('div', { class: 'field' }, h('span', { class: 'label' }, t('speechKitten')), kittenPanel()); kittenField.hidden = s.speechEngine !== 'kitten';
   const voicesOf = () => AI_VOICES[s.aiProvider === 'openrouter' || s.aiProvider === 'custom' ? 'openai' : getSettings().aiProvider] ?? AI_VOICES.openai;
   const voice = pickButton(t('aiVoice'), voicesOf().map((v): [string, string] => [v, v]), s.aiVoice || voicesOf()[0], (v) => updateSettings({ aiVoice: v }), t('close'));
   const tts = h('input', { type: 'text', value: s.aiTtsModel, dir: 'ltr', spellcheck: 'false', placeholder: s.aiProvider === 'gemini' ? 'gemini-2.5-flash-preview-tts' : 'gpt-4o-mini-tts', onchange: () => updateSettings({ aiTtsModel: tts.value.trim() }) }) as HTMLInputElement;
@@ -83,6 +85,7 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('readAloud')),
     field(t('speechEngine'), engine),
     field(t('speechScope'), pickButton<VisualSettings['speechScope']>(t('speechScope'), [['chapter', t('speechChapter'), 'books'], ['book', t('speechBook'), 'library']], s.speechScope, (v) => updateSettings({ speechScope: v }), t('close'))),
+    kittenField,
     voiceField,
     ttsField,
   );
