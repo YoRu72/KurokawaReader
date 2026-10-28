@@ -12,6 +12,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   await new Promise((r) => server.listen(5402, r));
   const mock = spawn('node', [path.join(__dirname, 'server.cjs'), '5401', BOOKS], { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 600));
   const browser = await chromium.launch(); const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'en' }); const page = await ctx.newPage();
+  // (The placement asked for a volume — into the library, tagged, or to the device alone — answered «into the library» by a hand of the test's.)
+  await page.addInitScript(() => { setInterval(() => { const b = [...document.querySelectorAll('.sheet .tag-pick')].map((p) => p.closest('.sheet')?.querySelector('.sheet-actions .btn.primary')).find(Boolean); if (b) b.click(); }, 150); });
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/.test(m.text())) errors.push(m.text()); });
   const ok = (name, cond) => console.log((cond ? 'ok  ' : 'FAIL'), name);
   const base = 'http://localhost:5402/';

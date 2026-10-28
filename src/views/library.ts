@@ -9,7 +9,7 @@ import { SUPPORTED_ACCEPT, prewarm } from '../formats';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
-import { openScanSheet, FORMAT_GROUPS, groupOf, canScan } from '../ui/scan';
+import { openScanSheet, FORMAT_GROUPS, groupOf, canScan, canScanWhole } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
 import { todayKey, liveStatsOf } from '../stats';
 
@@ -159,13 +159,22 @@ export function libraryView(): HTMLElement {
     if (!list.length) return;
     const b = list[Math.floor(Math.random() * list.length)]; navigate(`/read/${b.id}`);
   }
-  function openScan() {
+  function openScan(auto = false) {
     openScanSheet({
-      folders, activeFolder,
+      folders, activeFolder, auto,
       existing: new Set(books.map((b) => `${b.fileName}:${b.size}`)),
       fallbackPick: () => void pickFiles(),
       onImport: async (files, dest) => { await doImport(files, await resolveDestination(dest)); },
     });
+  }
+  /** The device's own shelf on the library page: the books lying in its Download folder (Android) or on it,
+   *  browsed and opened from here — as Mihon's local source. */
+  function deviceCard(): HTMLElement {
+    const el = h('button', { class: 'book-card folder-card device-card', type: 'button', title: t('onDevice') },
+      h('div', { class: 'cover folder' }, icon('download')),
+      h('div', { class: 'book-meta' }, h('div', { class: 'bt' }, t('onDevice')), h('div', { class: 'ba' }, t('onDeviceHint'))));
+    el.addEventListener('click', () => openScan(true));
+    return el;
   }
 
   const selBar = h('div', { class: 'selection-bar', hidden: true });
@@ -874,7 +883,7 @@ export function libraryView(): HTMLElement {
     }
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, tagFilter && !query ? t('noTaggedBooks') : activeFolder && !query ? t('emptyFolder') : t('noResults')),
       tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
-    if (getSettings().libraryView === 'cards' && !activeFolder && !query && !tagFilter) folders.forEach((f) => grid.appendChild(folderCard(f)));
+    if (getSettings().libraryView === 'cards' && !activeFolder && !activeSeries && !query && !tagFilter) { folders.forEach((f) => grid.appendChild(folderCard(f))); if (canScanWhole() && getSettings().deviceShelf) grid.appendChild(deviceCard()); }
     // Inside a tag or a folder: the book last read there, to pick up where it was left.
     if ((tagFilter || activeFolder) && !query && !selecting) { const last = list.filter((b) => b.progress && (b.progress.pct ?? 0) < 0.98 && !b.done).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0]; if (last && last.lastOpenedAt) grid.appendChild(continueCard(last)); }
     // A big library's cards come in batches as the grid is scrolled (a thousand cards at once would hold the

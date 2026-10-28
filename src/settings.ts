@@ -93,6 +93,8 @@ export interface VisualSettings {
   libraryView: 'cards' | 'chips';
   /** Volumes of one series shown as one card on the library page. */
   groupSeries: boolean;
+  /** A card for the books lying on the device (its Download folder) on the library page. */
+  deviceShelf: boolean;
   autoUpdateCheck: boolean;
   updateChannel: 'stable' | 'beta';   // beta: pre-releases too
   updateEvery: 'launch' | 'daily' | 'weekly'; // how often the start-up check runs
@@ -246,6 +248,7 @@ export const DEFAULTS: VisualSettings = {
   hideSystemBars: true,
   libraryView: 'cards',
   groupSeries: true,
+  deviceShelf: true,
   autoUpdateCheck: true,
   updateChannel: 'stable',
   updateEvery: 'launch',

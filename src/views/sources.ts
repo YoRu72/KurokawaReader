@@ -397,42 +397,45 @@ async function fromSource(srcId: string): Promise<Map<string, string>> {
 /** Where a fetched volume goes: no folder made for it (the series shows as one entry in the library); the
  *  reader's tags asked for once per series when the library has any (as Mihon asks for a category), and
  *  remembered for the session — or never, when the reader said so. */
-type Placement = { tags?: string[] };
+type Placement = { tags?: string[]; deviceOnly?: boolean };
 const placements = new Map<string, Placement>();
 async function askPlacement(seriesKey: string, seriesName: string): Promise<Placement> {
   const had = placements.get(seriesKey); if (had) return had;
   if (localStorage.getItem('kr.addTagsAsk') === 'off') return {};
   const defs = (await db.getMeta<TagDef[]>('tags')) ?? [];
   const names = [...new Set([...defs.map((d) => d.name), ...(await db.allBooks()).flatMap((b) => b.tags ?? [])])].filter((n) => n !== FAV_TAG);
-  if (!names.length) return {};
   return new Promise<Placement>((resolve) => {
     const sh = openSheet(t('addToTags', { name: `\u2068${seriesName}\u2069` }), t('close'));
     const chosen = new Set<string>();
     const chips = h('div', { class: 'folder-chips tag-pick' });
     for (const n of names) chips.append(h('button', { type: 'button', class: 'chip tag', 'aria-pressed': 'false', onclick: (e: Event) => { const c = e.currentTarget as HTMLElement; if (chosen.has(n)) chosen.delete(n); else chosen.add(n); c.classList.toggle('on', chosen.has(n)); c.setAttribute('aria-pressed', String(chosen.has(n))); } }, icon('tag'), h('span', { dir: 'auto' }, n)));
     const never = h('input', { type: 'checkbox' }) as HTMLInputElement;
-    sh.body.append(h('p', { class: 'hint' }, t('addToTagsHint')), chips, h('label', { class: 'switch-row' }, h('span', null, t('addToTagsNever')), never));
+    sh.body.append(h('p', { class: 'hint' }, t(names.length ? 'addToTagsHint' : 'addToLibraryHint')), chips, h('label', { class: 'switch-row' }, h('span', null, t('addToTagsNever')), never));
     let settled = false;
     const finish = (p: Placement) => { if (settled) return; settled = true; if (never.checked) localStorage.setItem('kr.addTagsAsk', 'off'); placements.set(seriesKey, p); resolve(p); };
+    // (Three ways: into the library with the tags ticked, into the library plain, or to the device alone —
+    // the file saved to Download and the library left as it is.)
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', title: t('deviceOnlyHint'), onclick: () => { finish({ deviceOnly: true }); sh.close(); } }, icon('download'), t('deviceOnly')));
+    if (names.length) sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { finish({}); sh.close(); } }, t('noTag')));
     sh.actions.append(
-      h('button', { type: 'button', class: 'btn tonal', onclick: () => { finish({}); sh.close(); } }, t('noTag')),
-      h('button', { type: 'button', class: 'btn primary', onclick: () => { finish({ tags: [...chosen] }); sh.close(); } }, icon('check'), t('done')));
+      h('button', { type: 'button', class: 'btn primary', onclick: () => { finish({ tags: [...chosen] }); sh.close(); } }, icon('check'), names.length ? t('done') : t('addToLibraryBtn')));
     void import('../ui/pdftools').then((m) => m.onSheetClosed(sh.el, () => finish({})));
   });
 }
 /** One file of a folder into the library, remembered as coming from there (so its row says "Open" after) and
  *  as a volume of its series. */
-async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number; speed?: number }) => void, series?: Book['series'], tags?: string[]): Promise<Book> {
+async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number; speed?: number }) => void, series?: Book['series'], tags?: string[], deviceOnly = false): Promise<Book> {
   // A plain file: the platform's downloader — it goes on when this page is left or the phone is locked, with
   // its speed shown, and the book lands in the library whatever is open then.
   const info = src.downloadInfo?.(file);
   if (info) {
     const { startDownload, onDownloads, downloadOf } = await import('../downloads');
     const off = onDownloads(() => { const d = downloadOf(src.id, id, info.url); if (d && d.state === 'running') onProgress({ pct: d.pct, got: d.got, total: d.total, speed: d.speed }); });
-    try { return await startDownload({ url: info.url, headers: info.headers, name: file.name ?? `${title}.${file.ext}`, mime: file.mime, size: file.size, title, then: { srcId: src.id, itemId: id, title, series, tags } }); }
+    try { return await startDownload({ url: info.url, headers: info.headers, name: file.name ?? `${title}.${file.ext}`, mime: file.mime, size: file.size, title, then: { srcId: src.id, itemId: id, title, series, tags, deviceOnly } }); }
     finally { off(); }
   }
   const got = await src.fetchFile!({ id, title, tags: [], files: [file] }, file, onProgress);
+  if (deviceOnly) { const { downloadBlob } = await import('../ui/share'); downloadBlob(got, got.name); throw new Error('deviceOnly'); }
   const added = await importFiles([got]);
   if (!added.length) throw new Error(t('convertFailed'));
   await db.updateBook(added[0].id, (b) => { b.remote = { source: src.id, id }; if (series) b.series = series; if (tags?.length) b.tags = [...new Set([...(b.tags ?? []), ...tags])]; });
@@ -481,9 +484,9 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
       dl.disabled = true;
       try {
         const place = b.group ? await askPlacement(`${src.id}|${b.group}`, b.group) : {};
-        const book = await fetchVolume(src, a.id, b.title, a.file, show, b.group ? { name: b.group, index: b.volume, source: src.id, shelf: b.shelf } : undefined, place.tags);
+        const book = await fetchVolume(src, a.id, b.title, a.file, show, b.group ? { name: b.group, index: b.volume, source: src.id, shelf: b.shelf } : undefined, place.tags, place.deviceOnly);
         lib.set(a.id, book.id); if (cur === a) draw(); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
-      } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); if ((e as Error)?.message !== 'cancelled') toast(describe(e), 'error'); }
+      } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); if (!/^(cancelled|deviceOnly)$/.test((e as Error)?.message ?? '')) toast(describe(e), 'error'); }
     };
     dl.addEventListener('click', go);
     // (A download of this volume under way from before — the page was left and come back to: followed.)
@@ -568,7 +571,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
     try {
       const id = `f:${f.id}`;
       const place = b.id !== 'a:' ? await askPlacement(`${src.id}|${b.title}`, b.title) : {};
-      const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => { next.replaceChildren(icon('download'), h('span', null, p.total ? `${localDigits(p.pct)}%` : '…')); }, b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags);
+      const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => { next.replaceChildren(icon('download'), h('span', null, p.total ? `${localDigits(p.pct)}%` : '…')); }, b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags, place.deviceOnly);
       lib.set(id, book.id); rows.get(id)?.(book.id); toast(t('addedToLibrary'));
     } catch (e) { toast(describe(e), 'error'); }
     finally { next.disabled = false; label(); labelNext(); }
@@ -586,7 +589,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
         if (lib.has(id) || has(files.indexOf(f))) continue;   // (fetched meanwhile, by its own button or another edition)
         const say = (extra: string) => { run.text = `${t('fetchingVolume', { n: localDigits(i + 1), total: localDigits(todo.length) })}${extra ? ` · ${extra}` : ''}`; run.on?.(run.text); };
         say('');
-        const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${localDigits(p.pct)}%${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : ''), b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags);
+        const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${localDigits(p.pct)}%${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : ''), b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags, place.deviceOnly);
         lib.set(id, book.id); rows.get(id)?.(book.id); done++;
       }
       toast(t('volumesAdded', { n: countVolumes(done), folder: `\u2068${b.title}\u2069` }), 'info', 4000);
@@ -957,7 +960,7 @@ function fileActions(box: HTMLElement, src: Source, d: SourceDetails): void {
         if (!folder) await db.updateBook(added[0].id, (b) => { b.remote ??= { source: src.id, id: d.id }; });
         toast(t('addedToLibrary'));
         btn.replaceWith(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${added[0].id}`) }, icon('play'), h('span', { class: 'grow' }, `${label} · ${t('open')}`)));
-      } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, label)); if (f.size) btn.append(h('small', null, formatBytes(f.size))); if ((e as Error)?.message !== 'cancelled') toast(describe(e), 'error'); }
+      } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, label)); if (f.size) btn.append(h('small', null, formatBytes(f.size))); if (!/^(cancelled|deviceOnly)$/.test((e as Error)?.message ?? '')) toast(describe(e), 'error'); }
     });
     return btn;
   };

@@ -155,6 +155,8 @@ export interface ScanSheetOptions {
   existing: Set<string>;                       // `${fileName}:${size}` of books already in the library
   onImport(files: File[], dest: Destination): Promise<void>;
   fallbackPick(): void;                        // plain file picker when scanning is unavailable
+  /** Opened as the device's own shelf: scanned at once (Download on Android, the device elsewhere), titled so. */
+  auto?: boolean;
 }
 
 /** Learn the Android version once (decides whether whole-device scanning is possible). */
@@ -166,7 +168,7 @@ void primeScan();
 
 export function openScanSheet(o: ScanSheetOptions): void {
   if (!canScan()) { toast(t('notSupportedHere')); o.fallbackPick(); return; }
-  const sheet = openSheet(t('scanDevice'), t('close'));
+  const sheet = openSheet(t(o.auto ? 'onDevice' : 'scanDevice'), t('close'));
   sheet.body.style.fontFamily = 'var(--font-ui)';
   // Pictures are rarely what someone wants to import from a whole device; they start unticked.
   const picked = new Set<string>(FORMAT_GROUPS.filter((g) => g.id !== 'image').map((g) => g.id));
@@ -197,6 +199,7 @@ export function openScanSheet(o: ScanSheetOptions): void {
   const linkCb = h('input', { type: 'checkbox', onchange: () => { link = linkCb.checked; } }) as HTMLInputElement; linkCb.checked = link;
   sheet.body.append(h('label', { class: 'row', style: { marginTop: '10px' } }, h('span', { class: 'label' }, t('linkFiles'), h('span', { class: 'hint' }, t('linkFilesHint'))), h('span', { class: 'switch' }, linkCb, h('i'))));
   sheet.actions.append(importAll, importSel);
+  if (o.auto) setTimeout(() => void scan(cap()?.getPlatform?.() === 'android' && canScanWhole() ? 'downloads' : canScanWhole() ? 'whole' : 'folder'), 50);
 
   const visible = (): ScanEntry[] => (result?.files ?? []).filter((f) => picked.has(groupOf(f.format)));
 
