@@ -66,13 +66,15 @@ export function showCover(o: CoverViewOpts): () => void {
   const img = h('img', { src: o.url, alt: o.title, draggable: 'false' }) as HTMLImageElement;
   const stage = h('div', { class: 'cv-stage' }, img);
   let blob: Promise<Blob> | null = null;
-  const bytes = () => (blob ??= o.bytes().catch((e) => { blob = null; throw e; }));
-  const close = () => { root.remove(); document.removeEventListener('keydown', onKey, true); };
+  // (After a picture of one's own is put in: that picture is what is shared and saved.)
+  let edited: string | null = null;
+  const bytes = () => (blob ??= (edited ? fetch(edited).then((r) => r.blob()) : o.bytes()).catch((e) => { blob = null; throw e; }));
+  const close = () => { root.remove(); document.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', onResize); clearTimeout(tapTimer); };
   const closeBtn = iconButton('close', t('close'), close); closeBtn.classList.add('lb-close');
   const busy = async (b: HTMLButtonElement, fn: () => Promise<void>) => { if (b.disabled) return; b.disabled = true; try { await fn(); } catch (e) { if ((e as Error)?.name !== 'AbortError') toast(t('saveFailed'), 'error'); } finally { b.disabled = false; } };
   const shareBtn = iconButton('share', t('shareImage'), () => void busy(shareBtn, async () => { const b = await bytes(); const { shareFile } = await import('./share'); await shareFile(b, fileName(o.title, b.type), o.title); }));
   const saveBtn = iconButton('download', t('saveImage'), () => void busy(saveBtn, async () => { const b = await bytes(); const { saveImage } = await import('./share'); await saveImage(b, fileName(o.title, b.type)); }));
-  const editBtn = o.edit ? iconButton('pen', t('editCover'), () => editCoverSheet(o.edit!, (url) => { if (url) { img.src = url; blob = null; reset(); } else close(); })) : null;
+  const editBtn = o.edit ? iconButton('pen', t('editCover'), () => editCoverSheet(o.edit!, (url) => { if (url) { img.src = url; edited = url; blob = null; reset(); } else close(); })) : null;
   const bar = h('div', { class: 'cv-bar' }, closeBtn, h('span', { class: 'spacer' }), shareBtn, saveBtn, editBtn);
   const root = h('div', { class: 'cover-view', role: 'dialog', 'aria-label': t('coverTitle') }, stage, bar);
 
@@ -135,7 +137,8 @@ export function showCover(o: CoverViewOpts): () => void {
     else if (e.key === '-') { const r = stage.getBoundingClientRect(); zoomAt(s / 1.4, r.left + r.width / 2, r.top + r.height / 2); }
   };
   document.addEventListener('keydown', onKey, true);
-  window.addEventListener('resize', () => { if (root.isConnected) { clampPan(); apply(); } });
+  const onResize = () => { clampPan(); apply(); };
+  window.addEventListener('resize', onResize);
   document.body.append(root);
   closeBtn.focus({ preventScroll: true });
   return close;

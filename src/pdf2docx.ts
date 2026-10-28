@@ -1758,7 +1758,7 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
   const lanes: Lane[] = [];
   const done = new Map<number, import('./pdf2docx.lane').LanePage>();
   const defs = new Map<string, FontInfo>();
-  let next = 1, failed: string | null = null, wake: (() => void) | null = null;
+  let next = 1, failed: string | null = null, wake: (() => void) | null = null, heard = Date.now();
   const poke = () => { const w = wake; wake = null; w?.(); };
   const QUEUE = 3;
   // (Never far ahead of the page being put together: pages done early wait here, pictures and all.)
@@ -1771,7 +1771,7 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
       const l: Lane = { w, out: 0 }; lanes.push(l);
       w.onerror = (e) => { failed = e.message || 'lane failed'; fail(new Error(failed)); poke(); };
       w.onmessage = (e: MessageEvent<import('./pdf2docx.lane').LaneOut>) => {
-        const m = e.data;
+        const m = e.data; heard = Date.now();
         if (m.t === 'ready') { if (m.pages !== nPages) { failed = 'pages'; fail(new Error(failed)); } else ready(); }
         else if (m.t === 'error') { failed = m.message; fail(new Error(m.message)); poke(); }
         else { l.out--; done.set(m.n, m); redoing.delete(m.n); feed(l); poke(); }
@@ -1783,8 +1783,15 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
     const pages: PageModel[] = [];
     const words = new Set<string>();
     for (let n = 1; n <= nPages; n++) {
-      while (!done.has(n) || redoing.has(n)) { if (failed) throw new Error(failed); await new Promise<void>((r) => { wake = r; }); }
+      while (!done.has(n) || redoing.has(n)) {
+        if (failed) throw new Error(failed);
+        // (A lane that went quiet — its worker gone without a word — is given up after two minutes.)
+        if (Date.now() - heard > 120000) throw new Error('lanes went quiet');
+        await new Promise<void>((r) => { wake = r; setTimeout(r, 5000); });
+      }
       const r = done.get(n)!;
+      // (The fonts a lane tells of once, the first time it meets them: kept even from a page read again.)
+      for (const [id, info] of r.fonts) if (!defs.has(id)) defs.set(id, info);
       // A font of whole-word glyphs met on an earlier page that this page's lane did not know of: read again.
       if (!redone.has(n) && r.stickyMiss.some((id) => words.has(id))) {
         done.delete(n); redoing.add(n); redone.add(n);

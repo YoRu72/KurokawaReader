@@ -233,6 +233,12 @@ export function countMinutes(n: number): string {
   return arCount(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: 'دقائق', many: 'دقيقةً', hundred: 'دقيقةٍ' });
 }
 
+/** "8 connections" — in Arabic: اتصال واحد · اتصالان · ٣–١٠ اتصالات · ١١–٩٩ اتصالًا · ١٠٠ اتصالٍ. */
+export function countConnections(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'connection' : 'connections'}`;
+  return arCount(n, { one: 'اتصال واحد', two: 'اتصالان', few: 'اتصالات', many: 'اتصالًا', hundred: 'اتصالٍ' });
+}
+
 /** "3 seconds" — in Arabic: ثانية واحدة · ثانيتان · ٣–١٠ ثوانٍ · ١١–٩٩ ثانيةً · ١٠٠ ثانيةٍ. */
 export function countSeconds(n: number): string {
   if (current !== 'ar') return cjkCount(n, 'second') ?? `${n} ${n === 1 ? 'second' : 'seconds'}`;

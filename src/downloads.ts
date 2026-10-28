@@ -7,13 +7,13 @@
 // whatever view is open, and the view that asked is told through onDownloads.
 import { db } from './db';
 import { importFiles } from './library';
-import { t, formatBytes, localDigits } from './i18n';
+import { t, formatBytes, localDigits, countConnections } from './i18n';
 import { toast } from './ui/dom';
 import { runJob } from './jobs';
 import { readContentUri, nativePlatform } from './native';
 import type { Book } from './db';
 
-export type Progress = { pct: number; got: number; total: number; speed?: number };
+export type Progress = { pct: number; got: number; total: number; speed?: number; connections?: number };
 /** What to do with the file once it is here: into the library, remembered as coming from its source. */
 export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: Book['series']; tags?: string[]; /** Saved to the device (Download), not into the library. */ deviceOnly?: boolean };
 export type DownloadTask = { url: string; name: string; mime?: string; size?: number; headers?: Record<string, string>; title: string; then: Then };
@@ -41,6 +41,8 @@ export function describeProgress(d: Progress): string {
   const parts: string[] = [];
   if (d.total) parts.push(`${localDigits(d.pct)}%`, `${formatBytes(d.got)} / ${formatBytes(d.total)}`); else if (d.got) parts.push(formatBytes(d.got));
   if (d.speed && d.speed > 0) parts.push(t('perSecond', { n: formatBytes(d.speed) }));
+  // (Over how many connections at once: a file the server serves in ranges comes in several pieces together.)
+  if ((d.connections ?? 1) > 1) parts.push(countConnections(d.connections!));
   return parts.join(' · ');
 }
 
@@ -134,7 +136,7 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
       const { viaBrowser } = await import('./sources/http');
       if (!viaBrowser(new URL(d.url).host)) {
         try {
-          const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 4 });
+          const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 8 });
           const file = await readContentUri(path, d.name, d.mime ?? '');
           void k.deleteDownload?.({ path }).catch(() => undefined);
           return file;

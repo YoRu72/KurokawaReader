@@ -80,8 +80,18 @@ async function pump(): Promise<void> {
       const job = queue.shift()!;
       // The next pages asked now, read by pdf.js's worker while this one is laid out.
       for (const j of [job, ...queue.slice(0, 2)]) if (!asked.has(j.n)) asked.set(j.n, doc.getPage(j.n).then((pg) => { askAhead(pg); return pg; }));
-      const page = await asked.get(job.n)!; asked.delete(job.n);
-      if (job.force) force(job.force);
+      let page: import('pdfjs-dist').PDFPageProxy;
+      try { page = await asked.get(job.n)!; } catch (e) { asked.delete(job.n); post({ t: 'error', n: job.n, message: String((e as Error)?.stack ?? e) }); continue; }
+      asked.delete(job.n);
+      // A page read again (a font of whole-word glyphs met on an earlier page elsewhere): read with exactly the
+      // fonts known as such then — not the ones this lane found on later pages since.
+      let restore: (() => void) | null = null;
+      if (job.force) {
+        for (const id of job.force) forced.add(id);
+        const had = new Map([...fonts].map(([k, f]) => [k, !!f.wordFont]));
+        for (const [name, f] of fonts) f.wordFont = forced.has(idOf.get(name) ?? '') || undefined;
+        restore = () => { for (const [name, f] of fonts) f.wordFont = (had.get(name) || forced.has(idOf.get(name) ?? '') || f.wordFont) || undefined; };
+      }
       const gapsBefore = new Map([...fonts].map(([k, f]) => [k, f.gaps?.length ?? 0]));
       const wordBefore = new Set([...fonts].filter(([, f]) => f.wordFont).map(([k]) => k));
       fresh = []; store.seqs = []; store.pageFonts = []; store.stickyMiss = new Set();
@@ -89,7 +99,8 @@ async function pump(): Promise<void> {
       try {
         model = await analysePage(pdfjs, page, fonts, true, store);
         await Promise.all(takePendingPngs());
-      } catch (e) { post({ t: 'error', n: job.n, message: String((e as Error)?.stack ?? e) }); continue; }
+      } catch (e) { restore?.(); post({ t: 'error', n: job.n, message: String((e as Error)?.stack ?? e) }); continue; }
+      restore?.();
       const id = (name: string) => idOf.get(name) ?? `x${lane}:${name}`;
       const res: LanePage = {
         t: 'page', n: job.n, model,
@@ -111,6 +122,8 @@ async function pump(): Promise<void> {
   } finally { busy = false; }
 }
 
+// (Anything that escapes is told, or the pages being put together would wait for it for ever.)
+self.addEventListener('unhandledrejection', (e) => post({ t: 'error', message: String((e as PromiseRejectionEvent).reason?.stack ?? (e as PromiseRejectionEvent).reason) }));
 self.onmessage = (e: MessageEvent<LaneIn>) => {
   const m = e.data;
   if (m.t === 'open') { lane = m.lane; open(m.bytes).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }

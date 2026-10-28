@@ -2,7 +2,7 @@
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
 import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
-import { t, getLang, dateLocale } from './i18n';
+import { t, getLang, dateLocale, countConnections } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 
@@ -16,7 +16,7 @@ const API_ALL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour
 
 export interface ReleaseInfo { version: string; url: string; notes: string; publishedAt?: string; assets: { name: string; url: string; size: number }[] }
-export interface Progress { pct: number; got: number; total: number; speed: number }
+export interface Progress { pct: number; got: number; total: number; speed: number; connections?: number }
 
 function cmp(a: string, b: string): number {
   const pa = a.replace(/^v/, '').split('.').map(Number), pb = b.replace(/^v/, '').split('.').map(Number);
@@ -162,11 +162,11 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
         const total = d.total > 0 ? d.total : asset.size;
         // (Never backwards: a late event from a connection that finished first does not undo the bar.)
         const got = Math.max(d.got, run.last?.got ?? 0);
-        const p: Progress = { got, total, speed: d.speed, pct: total ? Math.min(100, Math.floor((got / total) * 100)) : d.pct };
+        const p: Progress = { got, total, speed: d.speed, connections: d.connections, pct: total ? Math.min(100, Math.floor((got / total) * 100)) : d.pct };
         run.last = p; for (const fn of subs) fn(p);
       });
       try {
-        if (kr.downloadFile) return (await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 4 })).path;
+        if (kr.downloadFile) return (await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 8 })).path;
         throw new Error('native');
       } finally { sub?.remove(); }
     })();
@@ -182,7 +182,9 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
 }
 
 /** Download `asset` and hand it to the platform installer (or save/share it when there is none). */
-async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<void> {
+/** `alive`: whether the dialog that asked is still open — one closed meanwhile does not start the installer when
+ *  the download ends (the update is kept; opening the dialog again installs it, once). */
+async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, alive: () => boolean = () => true): Promise<void> {
   const platform = nativePlatform();
   if (platform === 'android') {
     const p = androidPlugins(); if (!p) throw new Error('native');
@@ -193,6 +195,7 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
     if (path) onProgress({ pct: 100, got: asset.size, total: asset.size, speed: 0 });
     else if (kr.downloadFile) path = await fetchApk(kr, asset, onProgress, signal);
     else { const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal); ({ uri: path } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true })); }
+    if (!alive()) return;
     if (/\.apk$/i.test(asset.name)) {
       // Android 8+: the installer refuses silently unless this app may install unknown apps.
       const perm = p.kr as AndroidPlugin & { canInstall?(): Promise<{ granted: boolean }>; requestInstallPermission?(): Promise<{ granted: boolean }> };
@@ -286,6 +289,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
     if (p.total && p.got) parts.push(`\u2066${fmtMB(p.got)} / ${fmtMB(p.total)}\u2069`);
     if (p.speed) parts.push(`\u2066${fmtMB(p.speed)}/s\u2069`);
     if (p.speed && p.total > p.got) parts.push(t('timeLeft', { t: shortTime((p.total - p.got) / p.speed) }));
+    if ((p.connections ?? 1) > 1) parts.push(countConnections(p.connections!));
     // (Each part isolated, so numbers and units keep their order inside Arabic text.)
     status.textContent = parts.filter(Boolean).map((x) => `\u2068${x}\u2069`).join(' · ');
   };
@@ -297,7 +301,7 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
     install.hidden = true; choose.disabled = true; later.hidden = true; cancel.hidden = false; ctl = new AbortController();
     status.textContent = t('preparing'); wave.hidden = false; wave.classList.add('indet'); setPct(0);
     try {
-      await installAsset(asset, onProgress, ctl.signal);
+      await installAsset(asset, (p) => { if (s.el.isConnected) onProgress(p); }, ctl.signal, () => s.el.isConnected);
       setPct(100); wave.classList.remove('indet'); wave.classList.add('done'); dl.classList.add('ok');
       status.textContent = t('installStarted');
     } catch (err) {

@@ -326,6 +326,14 @@ export const en = {
   minsLeftBook: '{n} left in book',
   hoursMinutes: '{h}h {m}m',
   today: 'Today',
+  yesterday: 'Yesterday',
+  history: 'History',
+  historyEmpty: 'Nothing read yet. The books you open come here, latest first.',
+  removeFromHistory: 'Remove from the history',
+  removedFromHistory: 'Removed from the history (the book stays in the library)',
+  clearHistory: 'Clear the history',
+  clearHistoryConfirm: 'Clear the whole reading history? The books stay in the library.',
+  historyCleared: 'History cleared',
 
   // Reading statistics
   readingStats: 'Reading statistics',
@@ -1329,6 +1337,7 @@ export const en = {
   folderOtherFiles: 'Nothing here the app can open: the folder holds other kinds of files ({kinds}).',
   folderFiltered: 'Nothing here of the kinds of file chosen in the filters.',
   openFolderOnSite: 'Open this folder on the site',
+  viewCover: 'View the cover',
   coverTitle: 'Cover',
   editCover: 'Edit cover',
   restoreCover: 'Restore the original cover',

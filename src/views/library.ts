@@ -110,6 +110,8 @@ export function libraryView(): HTMLElement {
     importTopBtn,
     syncTopBtn,
     iconButton('chart', t('readingStats'), () => void import('../ui/stats').then((m) => m.showStats())),
+    // What was read and when, latest first (Mihon's History).
+    (() => { const b = iconButton('clock', t('history'), () => void import('../ui/history').then((m) => m.historySheet())); b.classList.add('history-btn'); return b; })(),
     iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );

@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.51.0",
+  "version": "0.51.1",
   "description": "KurokawaReader for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
@@ -29,7 +29,12 @@
       "icon.ico",
       {
         "from": "../dist",
-        "to": "dist"
+        "to": "dist",
+        "filter": [
+          "**/*",
+          "!**/*.map",
+          "!samples/alice-in-wonderland.epub"
+        ]
       }
     ],
     "win": {
@@ -153,7 +158,17 @@
       "owner": "YoRu72",
       "repo": "KurokawaReader",
       "releaseType": "release"
-    }
+    },
+    "electronLanguages": [
+      "en-US",
+      "en-GB",
+      "ar",
+      "ja",
+      "ko",
+      "zh-CN",
+      "zh-TW"
+    ],
+    "compression": "maximum"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"

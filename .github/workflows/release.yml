@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/android-prepare.log
+          { npx cap add android && node native/android/overlay.mjs && npx cap sync android && rm -f android/app/src/main/assets/public/samples/alice-in-wonderland.epub; } 2>&1 | tee $RUNNER_TEMP/android-prepare.log
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -131,7 +131,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { npx cap add ios && node native/ios/overlay.mjs && npx cap sync ios; } 2>&1 | tee $RUNNER_TEMP/ios-prepare.log
+          { npx cap add ios && node native/ios/overlay.mjs && npx cap sync ios && rm -f ios/App/App/public/samples/alice-in-wonderland.epub; } 2>&1 | tee $RUNNER_TEMP/ios-prepare.log
       - name: Archive without signing
         shell: bash
         run: |
@@ -283,7 +283,8 @@ jobs:
             echo "## KurokawaReader v${{ needs.version.outputs.v }}"
             echo
             echo "## What's new"
-            if [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
+            # (Notes written for this version, when there are any — docs/notes/v<version>.md — else the commits.)
+            if [ -s "docs/notes/v${{ needs.version.outputs.v }}.md" ]; then cat "docs/notes/v${{ needs.version.outputs.v }}.md"; elif [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
             if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
             echo
             echo "## Files"

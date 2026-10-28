@@ -116,7 +116,9 @@ const buildOptions = {
   chunkNames: 'chunk-[name]-[hash]',
   assetNames: 'fonts/[name]-[hash]',
   minify: !watch && !process.env.NOMINIFY,
-  sourcemap: true,
+  // (Source maps were a third of what the apps carry — 11 MB of 29 — and no reader uses them: made for a
+  // development build, or when asked with KR_MAPS=1.)
+  sourcemap: watch || !!process.env.KR_MAPS,
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' },
   logLevel: 'info',
   plugins: [(await import('./patch-pdfjs.mjs')).pdfjsMainPlugin],
