@@ -83,6 +83,10 @@ export function libraryView(): HTMLElement {
   const searchBooksBtn = iconButton('search', t('searchBooks'), () => void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder)));
   searchBooksBtn.classList.add('tool-btn');
   // Browse: books from the web (the Internet Archive, Shamela, web folders, extensions), a tap from the library.
+  // The downloads, a button of their own: a count on it while some run.
+  const downloadsBtn = iconButton('download', t('downloads'), () => void import('../ui/downloadsheet').then((m) => m.downloadsSheet())); downloadsBtn.classList.add('tool-btn', 'downloads-btn');
+  { const count = h('span', { class: 'count', hidden: true }); downloadsBtn.append(count);
+    void import('../downloads').then(({ downloadsNow, onDownloads }) => { const refresh = () => { const n = downloadsNow().filter((d) => d.state === 'running').length; count.hidden = !n; count.textContent = localDigits(n); downloadsBtn.classList.toggle('busy', n > 0); }; refresh(); const off = onDownloads(() => { if (!downloadsBtn.isConnected) { off(); return; } refresh(); }); }); }
   const browseBtn = iconButton('globe', t('sources'), () => navigate('/sources')); browseBtn.classList.add('tool-btn', 'browse-btn');
   // (A red mark on the Browse button while something new waits at the sources — new chapters or volumes.)
   { const mark = h('span', { class: 'alert-mark', hidden: true, 'aria-hidden': 'true' }, '!'); browseBtn.append(mark);
@@ -92,7 +96,7 @@ export function libraryView(): HTMLElement {
     void import('../sources/updates').then(({ onUpdatesChanged }) => { const off = onUpdatesChanged(() => { if (!browseBtn.isConnected) { off(); return; } void refresh(); }); }); }
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, browseBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, downloadsBtn, browseBtn),
     chips,
     tagChips,
     fmtChips,
@@ -145,7 +149,6 @@ export function libraryView(): HTMLElement {
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void fromLink(); } }, icon('globe'), t('importFromLink'))),
-        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const { downloadsSheet } = await import('../ui/downloadsheet'); downloadsSheet(); } }, icon('download'), t('downloads'))),
         canScan() ? h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))) : null,
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/sources'); } }, icon('globe'), t('sourcesMenu'))),
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/catalog'); } }, icon('books'), t('catalogsMenu'))),

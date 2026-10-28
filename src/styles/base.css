@@ -1680,3 +1680,10 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .dl-row.failed .dl-line { color: var(--md-error); }
 .dl-row.done .dl-line { color: var(--md-primary); }
 .dl-row .progress-bar { margin-top: 4px; }
+
+/* The downloads button: a count of what runs, on a dot of the accent. */
+.downloads-btn .count { position: absolute; top: 4px; inset-inline-end: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--md-primary); color: var(--md-on-primary); font: 700 11px/18px 'Inter', system-ui, sans-serif; text-align: center; pointer-events: none; }
+.downloads-btn .count[hidden] { display: none; }
+.downloads-btn.busy svg { animation: dl-bob 1.2s ease-in-out infinite; }
+@keyframes dl-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .downloads-btn.busy svg { animation: none; } }
