@@ -170,6 +170,22 @@ export function settingsView(): HTMLElement {
     body.append(card);
   }
 
+  // The app's own browser: any site opened in it (to sign in, pass a check, or just look), its sign-ins forgotten.
+  {
+    const card = h('section', { class: 'card' }, h('h3', null, t('inAppBrowser')), h('p', null, t('inAppBrowserBody')));
+    void import('../sources/http').then(({ hasBrowser, openSite, forgetSite }) => {
+      if (!hasBrowser()) { card.append(h('p', { class: 'hint' }, t('inAppBrowserNone'))); return; }
+      const addr = h('input', { type: 'url', placeholder: 'https://', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr', style: { flex: '1', minWidth: '0' } }) as HTMLInputElement;
+      const go = () => { let u = addr.value.trim(); if (!u) return; if (!/^https?:\/\//i.test(u)) u = `https://${u}`; void openSite(u); };
+      addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+      card.append(
+        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, addr, h('button', { class: 'btn small primary', type: 'button', onclick: go }, icon('globe'), t('open'))),
+        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
+          h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const n = await forgetSite(addr.value.trim() || 'https://example.com/', true); toast(t('sitesForgotten', { n: localDigits(n) })); } }, icon('trash'), t('forgetAllSites'))));
+    });
+    body.append(card);
+  }
+
   // Tracking (AniList) and the book page
   // (Its title is set now, so the card folds and sits in the headings like the others; the rest fills in.)
   const trackCard = h('section', { class: 'card' }, h('h3', null, t('tracking')));
