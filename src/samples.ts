@@ -9,13 +9,23 @@ export const SAMPLES = [
   { path: 'samples/alice-in-wonderland.epub', name: 'alice-in-wonderland.epub' },
 ];
 
+/** Where a sample the app does not carry is fetched from: the web app's own copy (the apps leave Alice out —
+ *  4 MB of engravings — and fetch it when asked). */
+const WEB_SAMPLES = 'https://yoru72.github.io/KurokawaReader/';
+
 export async function importSamples(): Promise<Book[]> {
   const files: File[] = [];
+  let lastError: unknown = null;
   for (const s of SAMPLES) {
-    const r = await fetch(s.path);
-    if (!r.ok) throw new Error(`${s.name}: ${r.status}`);
-    files.push(new File([await r.blob()], s.name, { type: 'application/epub+zip' }));
+    try {
+      let r = await fetch(s.path).catch(() => null);
+      if (!r?.ok) r = await fetch(WEB_SAMPLES + s.path);
+      if (!r.ok) throw new Error(`${s.name}: ${r.status}`);
+      files.push(new File([await r.blob()], s.name, { type: 'application/epub+zip' }));
+    } catch (e) { lastError = e; }
   }
+  // (Offline, the one the app carries comes in alone.)
+  if (!files.length) throw lastError ?? new Error('samples');
   return importFiles(files);
 }
 
