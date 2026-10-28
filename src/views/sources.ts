@@ -83,6 +83,7 @@ function copyOnHold(el: HTMLElement, text?: () => string): HTMLElement {
 }
 
 export function sourcesView(srcId?: string, bookId?: string, q?: string, shelf?: string, tags?: string[]): HTMLElement & { dispose?: () => void } {
+  if (srcId === ALL) return globalSearchView(q ?? '');
   if (srcId && isExt(srcId)) return lazy(async () => { const hnd = await extHandle(srcId); return bookId ? detailsView(hnd.source, bookId, hnd) : browseView(hnd.source, q ?? '', shelf, tags ?? [], hnd); }, srcId);
   if (srcId && isDir(srcId)) return lazy(async () => { const src = await folderSourceFor(srcId); return bookId ? detailsView(src, bookId) : browseView(src, q ?? '', shelf, tags ?? []); }, srcId);
   const src = srcId ? sourceById(srcId) : undefined;
@@ -111,12 +112,65 @@ function lazy(make: () => Promise<HTMLElement & { dispose?: () => void }>, srcId
   return shell;
 }
 
+/* ---------- one search, every source (LNReader's and Mihon's global search) ---------- */
+const ALL = '~all';
+function globalSearchView(q0: string): HTMLElement & { dispose?: () => void } {
+  const body = h('div', { class: 'library-body global-search' });
+  const input = h('input', { type: 'search', class: 'src-search', value: q0, placeholder: t('searchAllSources'), dir: 'auto', enterkeyhint: 'search' }) as HTMLInputElement;
+  const form = h('form', { class: 'gs-form', onsubmit: (e: Event) => { e.preventDefault(); const q = input.value.trim(); if (q) navigate(path(ALL, { q }), true); } }, input);
+  const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/sources')), h('div', { class: 'title' }, t('searchAllSources'))), form, body) as HTMLElement & { dispose?: () => void };
+  let gone = false; root.dispose = () => { gone = true; };
+  if (!q0.trim()) { body.append(h('p', { class: 'hint gs-hint' }, t('searchAllHint'))); setTimeout(() => input.focus(), 50); return root; }
+  void (async () => {
+    // Every runnable extension the reader has added, then the built-in catalogues.
+    const repos = await listRepos().catch(() => [] as Repo[]);
+    const list: { id: string; name: string; sub: string; get: () => Promise<{ src: Source; hnd?: Handle }> }[] = [];
+    for (const r of repos) if (r.kind !== 'folder') for (const i of installedItems(r).filter((x) => x.runnable)) { const id = sourceIdOf(r, i); list.push({ id, name: i.name, sub: langLabel(i.lang), get: async () => { const hnd = await extHandle(id); return { src: hnd.source, hnd }; } }); }
+    for (const s of SOURCES) if (!(s.needsApp && isWeb())) list.push({ id: s.id, name: s.name, sub: s.site.replace(/^https?:\/\//, ''), get: async () => ({ src: s }) });
+    if (!list.length) { body.append(h('p', { class: 'hint' }, t('noReposYet'))); return; }
+    const found = h('div', { class: 'gs-found' }), empty = h('div', { class: 'gs-empty' });
+    const status = h('p', { class: 'hint gs-status' });
+    body.append(status, found, empty);
+    let done = 0;
+    const say = () => { status.textContent = done < list.length ? t('searchingSources', { n: localDigits(done), total: localDigits(list.length) }) : ''; status.hidden = done >= list.length; };
+    say();
+    const sections = list.map((x) => {
+      const row = h('div', { class: 'gs-row' }, h('div', { class: 'spinner small' }));
+      const sec = h('section', { class: 'gs-section' }, h('button', { type: 'button', class: 'gs-head', onclick: () => navigate(path(x.id, { q: q0 })) }, h('b', { dir: 'auto' }, x.name), h('small', null, x.sub), h('span', { class: 'spacer' }), icon('arrowRight')), row);
+      found.append(sec);
+      return { x, sec, row };
+    });
+    const { pool } = await import('../sources/http');
+    await pool(sections, 3, async ({ x, sec, row }) => {
+      try {
+        const { src, hnd } = await x.get();
+        const base: FilterValues = {}; for (const f of src.filters()) base[f.id] = f.value;
+        const page = await src.browse(q0, base, 1);
+        if (gone) return;
+        const items = page.items.filter((b) => !b.shelf).slice(0, 12);
+        if (!items.length) { sec.classList.add('none'); row.replaceChildren(h('p', { class: 'hint' }, t('noResults'))); empty.append(sec); }
+        else row.replaceChildren(...items.map((b) => {
+          const [c1, c2] = coverColors(b.title);
+          const card = h('button', { type: 'button', class: 'gs-card', title: b.title, onclick: () => navigate(bookPath(x.id, b.id)) },
+            h('div', { class: 'src-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, b.cover ? coverImg(b.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, b.title)),
+            h('span', { class: 'gs-title', dir: 'auto' }, b.title));
+          return card;
+        }));
+      } catch (e) {
+        if (gone) return;
+        sec.classList.add('none'); row.replaceChildren(h('p', { class: 'hint warn' }, describe(e))); empty.append(sec);
+      } finally { done++; if (!gone) say(); }
+    });
+  })();
+  return root;
+}
+
 /* ---------- the hub ---------- */
 function hubView(): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'library-body sources-hub' });
   const bell = iconButton('bell', t('srcWhatsNew'), () => updatesSheet(() => void drawBell()));
   bell.classList.add('bell-btn');
-  const actions = h('div', { class: 'topbar-actions' }, bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
+  const actions = h('div', { class: 'topbar-actions' }, iconButton('search', t('searchAllSources'), () => navigate(path(ALL))), bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
   const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/settings')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
   const off = onUpdatesChanged(() => void drawBell());
   root.dispose = () => off();

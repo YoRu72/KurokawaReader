@@ -1764,7 +1764,7 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
   // (Never far ahead of the page being put together: pages done early wait here, pictures and all.)
   let at = 1; const AHEAD = 8 * nLanes;
   const feed = (l: Lane) => { while (l.out < QUEUE && next <= nPages && next < at + AHEAD) { l.w.postMessage({ t: 'page', n: next++ }); l.out++; } };
-  const redoing = new Set<number>();
+  const redoing = new Set<number>(), redone = new Set<number>();
   try {
     await Promise.all(Array.from({ length: nLanes }, (_, i) => new Promise<void>((ready, fail) => {
       const w = new Worker(new URL('./pdf2docxlane.js', import.meta.url), { type: 'module' });
@@ -1786,8 +1786,8 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
       while (!done.has(n) || redoing.has(n)) { if (failed) throw new Error(failed); await new Promise<void>((r) => { wake = r; }); }
       const r = done.get(n)!;
       // A font of whole-word glyphs met on an earlier page that this page's lane did not know of: read again.
-      if (r.stickyMiss.some((id) => words.has(id))) {
-        done.delete(n); redoing.add(n);
+      if (!redone.has(n) && r.stickyMiss.some((id) => words.has(id))) {
+        done.delete(n); redoing.add(n); redone.add(n);
         const l = lanes.reduce((a, b) => (b.out < a.out ? b : a)); l.out++;
         l.w.postMessage({ t: 'page', n, force: [...words] }); n--; continue;
       }
