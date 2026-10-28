@@ -21,13 +21,15 @@ async function pictureBytes(file: Blob): Promise<{ bytes: Uint8Array; kind: 'jpg
     bmp.close(); return r;
   }
   const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' } as ImageBitmapOptions);
-  const canvas = document.createElement('canvas'); canvas.width = bmp.width; canvas.height = bmp.height;
-  const ctx = canvas.getContext('2d')!;
+  // (In a worker, an OffscreenCanvas; on the page, a canvas.)
+  const canvas: OffscreenCanvas | HTMLCanvasElement = typeof document === 'undefined' ? new OffscreenCanvas(bmp.width, bmp.height) : Object.assign(document.createElement('canvas'), { width: bmp.width, height: bmp.height });
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   // (Transparent pictures keep their transparency as PNG; the rest become JPEG.)
   const alpha = file.type === 'image/png' || file.type === 'image/webp' || file.type === 'image/gif';
   if (!alpha) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
   ctx.drawImage(bmp, 0, 0); bmp.close();
-  const out = await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('image'))), alpha ? 'image/png' : 'image/jpeg', 0.92));
+  const type = alpha ? 'image/png' : 'image/jpeg';
+  const out = canvas instanceof OffscreenCanvas ? await canvas.convertToBlob({ type, quality: 0.92 }) : await new Promise<Blob>((res, rej) => (canvas as HTMLCanvasElement).toBlob((b) => (b ? res(b) : rej(new Error('image'))), type, 0.92));
   return { bytes: new Uint8Array(await out.arrayBuffer()), kind: alpha ? 'png' : 'jpg', w: canvas.width, h: canvas.height };
 }
 
@@ -54,7 +56,7 @@ export function jpegOrientation(b: Uint8Array): number {
  *  size, turned to the picture's orientation, with the picture centred within the margin (points). */
 /** Pictures as a PDF, a page each. `overlays`: for each picture, a PDF page of its text alone (invisible, from
  *  OCR) laid exactly over it, so the PDF can be searched and its text selected. */
-export async function imagesToPdf(files: Blob[], opts: { size: PageSize; margin: number; overlays?: (Uint8Array | null | undefined)[] }, progress?: (done: number) => void): Promise<Uint8Array> {
+export async function imagesToPdfHere(files: Blob[], opts: { size: PageSize; margin: number; overlays?: (Uint8Array | null | undefined)[] }, progress?: (done: number) => void): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   let n = 0;
   for (const [fi, f] of files.entries()) {
@@ -96,12 +98,12 @@ export async function loadPdf(s: Source): Promise<PDFDocument> {
 }
 
 /** Page count of a PDF. */
-export async function pageCount(s: Source): Promise<number> {
+export async function pageCountHere(s: Source): Promise<number> {
   return (await loadPdf(s)).getPageCount();
 }
 
 /** Several PDFs, one after another, in the order given (each may be cut to some of its pages). */
-export async function mergePdfs(parts: (Source & { pages?: number[] })[], progress?: (done: number) => void): Promise<Uint8Array> {
+export async function mergePdfsHere(parts: (Source & { pages?: number[] })[], progress?: (done: number) => void): Promise<Uint8Array> {
   const out = await PDFDocument.create();
   let n = 0;
   for (const part of parts) {
@@ -117,7 +119,7 @@ export async function mergePdfs(parts: (Source & { pages?: number[] })[], progre
 /** A new PDF of the given pages (0-based, in the order given; a page may repeat), each turned by its rotation
  *  (degrees, added to its own). Removing pages = keeping the others; extracting = keeping some; reordering =
  *  keeping all in another order. */
-export async function pickPages(s: Source, pages: number[], rotate: Record<number, number> = {}): Promise<Uint8Array> {
+export async function pickPagesHere(s: Source, pages: number[], rotate: Record<number, number> = {}): Promise<Uint8Array> {
   const src = await loadPdf(s);
   const out = await PDFDocument.create();
   const copied = await out.copyPages(src, pages);
@@ -133,7 +135,7 @@ export async function pickPages(s: Source, pages: number[], rotate: Record<numbe
 }
 
 /** The same PDF without its encryption (and so without its printing / copying restrictions). */
-export async function unlockPdf(s: Source): Promise<Uint8Array> {
+export async function unlockPdfHere(s: Source): Promise<Uint8Array> {
   return (await loadPdf(s)).save();
 }
 
@@ -163,7 +165,7 @@ export function parseRanges(text: string, count: number): number[] {
 
 /** The reader's ink drawn into the pages themselves (points are fractions of the page as shown, so a page's
  *  /Rotate is undone first). */
-export async function flattenInk(bytes: Uint8Array, strokes: { page: number; color: string; w: number; pts: number[] }[]): Promise<Uint8Array> {
+export async function flattenInkHere(bytes: Uint8Array, strokes: { page: number; color: string; w: number; pts: number[] }[]): Promise<Uint8Array> {
   const { rgb } = await import('pdf-lib');
   const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const pages = doc.getPages();
@@ -181,3 +183,49 @@ export async function flattenInk(bytes: Uint8Array, strokes: { page: number; col
   }
   return doc.save();
 }
+
+/* ---------- off the main thread ---------- */
+// The work above runs in a worker (pdftools.worker.ts) when the page has one: reading a book of a thousand
+// pages and writing it again takes a second or two on a phone, during which the sheet would otherwise freeze.
+// Without workers (or when this module itself runs in the worker) the work runs here.
+type Op = 'imagesToPdf' | 'pageCount' | 'mergePdfs' | 'pickPages' | 'unlockPdf' | 'flattenInk';
+const HERE: Record<Op, (...a: never[]) => Promise<unknown>> = { imagesToPdf: imagesToPdfHere, pageCount: pageCountHere, mergePdfs: mergePdfsHere, pickPages: pickPagesHere, unlockPdf: unlockPdfHere, flattenInk: flattenInkHere };
+let worker: Worker | null | undefined;
+let seq = 0;
+const waiting = new Map<number, { ok: (v: unknown) => void; fail: (e: Error) => void; progress?: (n: number) => void }>();
+function toolWorker(): Worker | null {
+  if (worker !== undefined) return worker;
+  try {
+    if (typeof document === 'undefined' || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') { worker = null; return null; }
+    worker = new Worker(new URL('./pdftoolsworker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (e: MessageEvent<{ id: number; result?: unknown; error?: string; progress?: number }>) => {
+      const w = waiting.get(e.data.id); if (!w) return;
+      if (e.data.progress !== undefined) { w.progress?.(e.data.progress); return; }
+      waiting.delete(e.data.id);
+      if (e.data.error !== undefined) w.fail(new Error(e.data.error)); else w.ok(e.data.result);
+    };
+    worker.onerror = () => { for (const w of waiting.values()) w.fail(new Error('worker')); waiting.clear(); worker?.terminate(); worker = null; };
+  } catch { worker = null; }
+  return worker;
+}
+async function run<T>(op: Op, args: unknown[], progress?: (n: number) => void): Promise<T> {
+  const w = toolWorker();
+  if (!w) return (HERE[op] as (...a: unknown[]) => Promise<T>)(...args, progress);
+  const id = ++seq;
+  try {
+    return await new Promise<T>((ok, fail) => { waiting.set(id, { ok: ok as (v: unknown) => void, fail, progress }); w.postMessage({ id, op, args }); });
+  } catch (e) {
+    // (The worker itself failing — not the work: a password asked, a broken file — is answered on the page.)
+    if ((e as Error).message === 'worker') return (HERE[op] as (...a: unknown[]) => Promise<T>)(...args, progress);
+    throw e;
+  }
+}
+/** The worker's side: an op by name, its progress reported. */
+export async function runHere(op: Op, args: unknown[], progress?: (n: number) => void): Promise<unknown> { return (HERE[op] as (...a: unknown[]) => Promise<unknown>)(...args, progress); }
+
+export const imagesToPdf = (files: Blob[], opts: { size: PageSize; margin: number; overlays?: (Uint8Array | null | undefined)[] }, progress?: (done: number) => void) => run<Uint8Array>('imagesToPdf', [files, opts], progress);
+export const pageCount = (s: Source) => run<number>('pageCount', [s]);
+export const mergePdfs = (parts: (Source & { pages?: number[] })[], progress?: (done: number) => void) => run<Uint8Array>('mergePdfs', [parts], progress);
+export const pickPages = (s: Source, pages: number[], rotate: Record<number, number> = {}) => run<Uint8Array>('pickPages', [s, pages, rotate]);
+export const unlockPdf = (s: Source) => run<Uint8Array>('unlockPdf', [s]);
+export const flattenInk = (bytes: Uint8Array, strokes: { page: number; color: string; w: number; pts: number[] }[]) => run<Uint8Array>('flattenInk', [bytes, strokes]);

@@ -46,7 +46,7 @@ const [out, pdf, ...photos] = process.argv.slice(2); fs.mkdirSync(out, { recursi
   await p.click('.organize-views button:nth-child(1)'); await p.waitForTimeout(400);
   await p.click('.organize-tools .chip:has-text("نقل")'); await p.waitForTimeout(500);
   console.log('after moving chosen to 1, first places:', await p.$$eval('.organize-grid .page-tile .page-orig', (e) => e.slice(0, 6).map((x) => x.textContent).join(' ')));
-  await p.click('.sheet:last-of-type .sheet-actions .btn.primary'); await p.waitForSelector('.runner-panel .convert-result:not([hidden]) button', { timeout: 120000 });
+  await p.click('.organize-sheet .sheet-actions .btn.primary'); await p.waitForSelector('.runner-panel .convert-result:not([hidden]) button', { timeout: 120000 });
   const box = await (await p.$('.runner-panel .convert-result button')).boundingBox();
   console.log('save button in view without scrolling:', box.y > 0 && box.y + box.height < 880, Math.round(box.y));
   await p.screenshot({ path: path.join(out, '7-saved.png') });

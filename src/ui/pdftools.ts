@@ -365,25 +365,25 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   const gridEl = h('div', { class: 'page-grid organize-grid' });
   const count = h('span', { class: 'src organize-count' });
   const thumbs = new Map<number, string>();
-  const { loadPdfjs, offscreen } = await import('../formats/pdf');
-  const pdfjs = await loadPdfjs();
-  const task = pdfjs.getDocument({ data: src.bytes.slice(), password: src.password } as Parameters<typeof pdfjs.getDocument>[0]);
-  const doc = await task.promise.catch(() => null);
-  // Thumbnails drawn one after another as they come into view (the newest asked first: those are on screen).
+  // The pages drawn by the platform where there is one (Android, iOS), two at a time, the newest asked first
+  // (those are on screen); pdf.js elsewhere.
+  const { openRaster, rasterQueue } = await import('../pdfraster');
+  const doc = await openRaster(src.bytes, { password: src.password }).catch(() => null);
+  const queue = rasterQueue(2);
   const want: number[] = []; const asked = new Set<number>(); let drawing = false;
   const pump = async () => {
     if (drawing || !doc) return; drawing = true;
     while (want.length && sh.el.isConnected) {
-      const i = want.pop()!;
-      try {
-        const page = await doc.getPage(i + 1);
-        const vp0 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 180 / Math.max(vp0.width, vp0.height) });
-        const c = offscreen(document.createElement('canvas')); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
-        await page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp } as Parameters<typeof page.render>[0]).promise;
-        const url = await new Promise<string>((res) => c.toBlob((bl) => res(bl ? URL.createObjectURL(bl) : ''), 'image/jpeg', 0.72));
-        thumbs.set(i, url); page.cleanup();
-        gridEl.querySelectorAll<HTMLImageElement>(`img[data-i="${i}"]`).forEach((im) => { im.src = url; });
-      } catch { /* left blank */ }
+      // (Two pages at once: the device's cores busy, the memory of two pictures only.)
+      const batch = want.splice(-2).reverse();
+      await Promise.all(batch.map(async (i) => {
+        try {
+          const blob = await queue.add(() => doc.render(i + 1, { width: 180, quality: 0.72 }));
+          const url = URL.createObjectURL(blob);
+          thumbs.set(i, url);
+          gridEl.querySelectorAll<HTMLImageElement>(`img[data-i="${i}"]`).forEach((im) => { im.src = url; });
+        } catch { /* left blank */ }
+      }));
     }
     drawing = false;
   };
@@ -459,7 +459,7 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   });
 
   /* One page at a time, large. */
-  let view: 'grid' | 'pages' = 'grid'; let cur = 0; let viewTask: { cancel(): void } | null = null;
+  let view: 'grid' | 'pages' = 'grid'; let cur = 0; let viewSeq = 0;
   const vCanvas = h('canvas', { class: 'organize-page' }) as HTMLCanvasElement;
   const vPos = h('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', class: 'tool-range organize-pos', 'aria-label': t('goToPage') }) as HTMLInputElement;
   const vTotal = h('span', { class: 'src' });
@@ -476,20 +476,17 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   const showPage = async () => {
     paintViewer();
     if (!doc) return;
-    const p = pages[cur]; viewTask?.cancel();
-    const page = await doc.getPage(p.i + 1);
+    const p = pages[cur]; const my = ++viewSeq;
     const box = viewer.getBoundingClientRect();
-    const vp0 = page.getViewport({ scale: 1 });
-    const fit = Math.min((box.width || 360) / vp0.width, ((box.height || 520) - 8) / vp0.height);
+    const size = await doc.size(p.i + 1);
+    const fit = Math.min((box.width || 360) / size.w, ((box.height || 520) - 8) / size.h);
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const vp = page.getViewport({ scale: fit * dpr });
-    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
-    const rt = page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp } as Parameters<typeof page.render>[0]);
-    viewTask = rt;
-    try { await rt.promise; } catch { return; }
-    if (pages[cur] !== p) return;
-    vCanvas.width = c.width; vCanvas.height = c.height; vCanvas.getContext('2d')!.drawImage(c, 0, 0);
-    vCanvas.style.width = `${c.width / dpr}px`; vCanvas.style.height = `${c.height / dpr}px`;
+    let blob: Blob;
+    try { blob = await doc.render(p.i + 1, { width: Math.ceil(size.w * fit * dpr), quality: 0.9 }); } catch { return; }
+    if (pages[cur] !== p || my !== viewSeq) return;
+    const bmp = await createImageBitmap(blob);
+    vCanvas.width = bmp.width; vCanvas.height = bmp.height; vCanvas.getContext('2d')!.drawImage(bmp, 0, 0); bmp.close();
+    vCanvas.style.width = `${vCanvas.width / dpr}px`; vCanvas.style.height = `${vCanvas.height / dpr}px`;
   };
   vSel.addEventListener('click', () => { const p = pages[cur]; p.sel = !p.sel; paint(p); sync(); });
   vPos.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = parseInt(vPos.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10); if (Number.isFinite(v)) { cur = Math.max(0, Math.min(pages.length - 1, v - 1)); void showPage(); } } });
@@ -542,7 +539,7 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   if (extractOnly) sh.actions.append(extract); else sh.actions.append(all, del, extract);
   setView('grid');
   order();
-  const obs = new MutationObserver(() => { if (!sh.el.isConnected) { seen.disconnect(); viewTask?.cancel(); thumbs.forEach((u) => URL.revokeObjectURL(u)); void task.destroy(); obs.disconnect(); } });
+  const obs = new MutationObserver(() => { if (!sh.el.isConnected) { seen.disconnect(); queue.drop(); thumbs.forEach((u) => URL.revokeObjectURL(u)); doc?.close(); obs.disconnect(); } });
   obs.observe(document.body, { childList: true });
 }
 
@@ -569,18 +566,14 @@ async function unlockSheet(src: Source, onDone?: () => void): Promise<void> {
 async function toImagesSheet(src: Source): Promise<void> {
   const sh = openSheet(t('toolToImages'), t('close'), { stack: true });
   sh.body.style.fontFamily = 'var(--font-ui)';
-  const { loadPdfjs, offscreen } = await import('../formats/pdf');
-  const pdfjs = await loadPdfjs();
-  let doc: Awaited<ReturnType<typeof pdfjs.getDocument>['promise']> | null = null;
-  for (let wrong = false; !doc;) {
-    try { doc = await pdfjs.getDocument({ data: src.bytes.slice(), password: src.password } as Parameters<typeof pdfjs.getDocument>[0]).promise; } catch (err) {
-      if ((err as { name?: string }).name !== 'PasswordException') { toast(String((err as Error).message ?? err), 'error'); sh.close(); return; }
-      const pw = window.prompt(wrong ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')); if (!pw) { sh.close(); return; }
-      src.password = pw; wrong = true;
-    }
-  }
-  const n = doc.numPages;
-  { const d = doc; onSheetClosed(sh.el, () => void d.loadingTask.destroy()); }
+  // (The password asked for first, when the file has one: the platform's renderer cannot open those; pdf.js can.)
+  const { pageCount } = await tools();
+  const n = await withPassword(src, pageCount).catch((e) => { toast(String((e as Error).message ?? e), 'error'); return null; });
+  if (!n) { sh.close(); return; }
+  const { openRaster, rasterQueue } = await import('../pdfraster');
+  const doc = await openRaster(src.bytes, { password: src.password }).catch((e) => { toast(String((e as Error).message ?? e), 'error'); return null; });
+  if (!doc) { sh.close(); return; }
+  onSheetClosed(sh.el, () => doc.close());
   let fmt: 'png' | 'jpeg' = 'png'; let dpi = '150';
   const range = h('input', { type: 'text', dir: 'ltr', class: 'tool-range', placeholder: '1-3, 7' }) as HTMLInputElement;
   sh.body.append(h('p', { class: 'src' }, h('bdi', null, src.name), ' · ', t('pageCount', { n })), field(t('pagesOptional'), range),
@@ -593,17 +586,23 @@ async function toImagesSheet(src: Source): Promise<void> {
     const list = range.value.trim() ? parseRanges(range.value, n) : Array.from({ length: n }, (_, i) => i);
     if (!list.length) return null;
     const ext = fmt === 'png' ? 'png' : 'jpg'; const base = baseName(src.name);
-    const one = async (i: number) => {
-      const page = await doc!.getPage(i + 1); const vp = page.getViewport({ scale: +dpi / 72 });
-      const c = offscreen(document.createElement('canvas')); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
-      const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
-      await page.render({ canvas: c, canvasContext: ctx, viewport: vp } as Parameters<typeof page.render>[0]).promise;
-      return new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), `image/${fmt}`, 0.9));
-    };
+    // (Drawn two at a time by the platform or pdf.js; the platform writes the JPEG itself, so nothing is
+    // decoded and encoded again here.)
+    const queue = rasterQueue(2);
+    const one = async (i: number) => { const size = await doc.size(i + 1); return queue.add(() => doc.render(i + 1, { width: Math.ceil(size.w * +dpi / 72), format: fmt, quality: 0.9 })); };
     if (list.length === 1) { const blob = await one(list[0]); return { blob, name: `${base} - p${list[0] + 1}.${ext}` }; }
-    const JSZip = (await import('jszip')).default; const zip = new JSZip();
-    for (let k = 0; k < list.length; k++) { zip.file(`${base} - p${String(list[k] + 1).padStart(String(n).length, '0')}.${ext}`, await one(list[k])); r.progress(((k + 1) / list.length) * 100); }
-    return { blob: await zip.generateAsync({ type: 'blob', compression: 'STORE' }), name: `${base} - ${t('pagesFile', { n: list.length })}.zip` };
+    // (The zip written as the pages come — stored, not compressed: pictures do not shrink — two pages drawn
+    // while the one before is added.)
+    const { zipStore } = await import('../zipstore');
+    const parts: Blob[] = []; let done = 0;
+    const names = list.map((p) => `${base} - p${String(p + 1).padStart(String(n).length, '0')}.${ext}`);
+    // (Two pages ahead at most: a thousand pages at 300 dpi never wait in memory together.)
+    const ahead: Promise<Blob>[] = [];
+    for (let k = 0; k < list.length; k++) {
+      while (ahead.length < Math.min(3, list.length - k)) ahead.push(one(list[k + ahead.length]));
+      parts.push(await ahead.shift()!); r.progress((++done / list.length) * 100);
+    }
+    return { blob: await zipStore(names.map((name, k) => ({ name, blob: parts[k] }))), name: `${base} - ${t('pagesFile', { n: list.length })}.zip` };
   }) }, icon('download'), t('toolToImages')) as HTMLButtonElement;
   sh.actions.append(go);
 }

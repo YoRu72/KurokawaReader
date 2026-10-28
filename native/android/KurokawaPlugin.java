@@ -60,8 +60,6 @@ import java.util.Set;
  */
 @CapacitorPlugin(name = "Kurokawa", permissions = { @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }), @Permission(alias = "notifications", strings = { "android.permission.POST_NOTIFICATIONS" }) })
 public class KurokawaPlugin extends Plugin {
-    private PdfRenderer renderer;
-    private ParcelFileDescriptor pfd;
     private final Object lock = new Object();
 
     /* ---------- long work (conversions): background service and notifications ---------- */
@@ -964,20 +962,40 @@ public class KurokawaPlugin extends Plugin {
         });
     }
 
+    /** The PDFs open for drawing: the reader's (id 0, the default) and the tools' (ids given at open). */
+    private static final class Opened { PdfRenderer renderer; ParcelFileDescriptor pfd; }
+    private final java.util.Map<Integer, Opened> opened = new java.util.HashMap<>();
+    private int openSeq = 0;
+
+    /** {path, keep?} → {id, pageCount, pages: [[w, h] in points…]}. Without `keep`, the document replaces the
+     *  reader's (id 0); with it, the document gets an id of its own and the others stay open — the PDF tools
+     *  draw their thumbnails while a book is being read. */
     @PluginMethod
     public void pdfOpen(PluginCall call) {
         String path = call.getString("path", "");
         if (path.startsWith("file://")) path = path.substring(7);
+        boolean keep = Boolean.TRUE.equals(call.getBoolean("keep", false));
         try {
             synchronized (lock) {
-                closeInternal();
+                int id = keep ? ++openSeq : 0;
+                closeInternal(id);
+                Opened o = new Opened();
                 // Linked books open straight from where they live (no copy in the cache).
-                pfd = path.startsWith("content://")
+                o.pfd = path.startsWith("content://")
                     ? getContext().getContentResolver().openFileDescriptor(Uri.parse(path), "r")
                     : ParcelFileDescriptor.open(new File(path), ParcelFileDescriptor.MODE_READ_ONLY);
-                renderer = new PdfRenderer(pfd);
+                o.renderer = new PdfRenderer(o.pfd);
+                opened.put(id, o);
                 JSObject ret = new JSObject();
-                ret.put("pageCount", renderer.getPageCount());
+                ret.put("id", id);
+                int n = o.renderer.getPageCount();
+                ret.put("pageCount", n);
+                // (The pages' sizes, so the page can lay a grid out before any is drawn — cheap: no drawing.)
+                if (Boolean.TRUE.equals(call.getBoolean("sizes", false))) {
+                    JSArray sizes = new JSArray();
+                    for (int i = 0; i < Math.min(n, 4000); i++) { PdfRenderer.Page pg = o.renderer.openPage(i); try { JSArray wh = new JSArray(); wh.put(pg.getWidth()); wh.put(pg.getHeight()); sizes.put(wh); } finally { pg.close(); } }
+                    ret.put("pages", sizes);
+                }
                 call.resolve(ret);
             }
         } catch (Exception e) {
@@ -988,24 +1006,28 @@ public class KurokawaPlugin extends Plugin {
     private int renderSeq = 0;
 
     /**
-     * One page, or one tile of it, as a JPEG. `width` is the whole page's width in pixels at the size wanted; with
-     * `tileW`/`tileH` only that part of it (from `tileX`, `tileY`) is drawn — a zoomed page is drawn in pieces, never
-     * as one huge picture. With `toFile` the picture is written to the cache and its path returned (the web view
-     * fetches it as bytes), else returned as base64.
+     * One page, or one tile of it, as a JPEG (or a PNG with `format: "png"`). `width` is the whole page's width in
+     * pixels at the size wanted; with `tileW`/`tileH` only that part of it (from `tileX`, `tileY`) is drawn — a
+     * zoomed page is drawn in pieces, never as one huge picture. With `toFile` the picture is written to the cache
+     * and its path returned (the web view fetches it as bytes), else returned as base64. `id` names the document
+     * (the reader's when absent).
      */
     @PluginMethod
     public void pdfRender(PluginCall call) {
+        int id = call.getInt("id", 0);
         int page = call.getInt("page", 1);
         int width = call.getInt("width", 1080);
         int quality = call.getInt("quality", 85);
+        boolean png = "png".equals(call.getString("format", "jpeg"));
         int tileW = call.getInt("tileW", 0), tileH = call.getInt("tileH", 0);
         int tileX = call.getInt("tileX", 0), tileY = call.getInt("tileY", 0);
         boolean toFile = Boolean.TRUE.equals(call.getBoolean("toFile", false));
         try {
             Bitmap bmp; int w, h;
             synchronized (lock) {
-                if (renderer == null) { call.reject("No PDF open"); return; }
-                PdfRenderer.Page p = renderer.openPage(page - 1);
+                Opened o = opened.get(id);
+                if (o == null) { call.reject("No PDF open"); return; }
+                PdfRenderer.Page p = o.renderer.openPage(page - 1);
                 try {
                     if (tileW > 0 && tileH > 0) {
                         w = Math.min(tileW, 4096); h = Math.min(tileH, 4096);
@@ -1016,7 +1038,8 @@ public class KurokawaPlugin extends Plugin {
                         m.setScale(k, k); m.postTranslate(-tileX, -tileY);
                         p.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
                     } else {
-                        w = Math.max(64, Math.min(width, 4096));
+                        // (A whole page up to 5000 px wide — 300 dpi of a Letter page — for the tools' pictures.)
+                        w = Math.max(64, Math.min(width, 5000));
                         h = Math.max(1, (int) Math.round(w * (p.getHeight() / (double) p.getWidth())));
                         bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
                         bmp.eraseColor(Color.WHITE);
@@ -1027,15 +1050,16 @@ public class KurokawaPlugin extends Plugin {
             JSObject ret = new JSObject();
             ret.put("width", w);
             ret.put("height", h);
+            Bitmap.CompressFormat fmt = png ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG;
             if (toFile) {
                 File dir = new File(getContext().getCacheDir(), "kr-pdfr"); dir.mkdirs();
-                File f = new File(dir, "r" + (renderSeq++ % 12) + ".jpg");
-                try (OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(f), 1 << 16)) { bmp.compress(Bitmap.CompressFormat.JPEG, quality, out); }
+                File f = new File(dir, "r" + (renderSeq++ % 12) + (png ? ".png" : ".jpg"));
+                try (OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(f), 1 << 16)) { bmp.compress(fmt, quality, out); }
                 bmp.recycle();
                 ret.put("path", f.getAbsolutePath());
             } else {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
-                bmp.compress(Bitmap.CompressFormat.JPEG, quality, out);
+                bmp.compress(fmt, quality, out);
                 bmp.recycle();
                 ret.put("data", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
             }
@@ -1047,14 +1071,15 @@ public class KurokawaPlugin extends Plugin {
 
     @PluginMethod
     public void pdfClose(PluginCall call) {
-        synchronized (lock) { closeInternal(); }
+        synchronized (lock) { closeInternal(call.getInt("id", 0)); }
         call.resolve();
     }
 
-    private void closeInternal() {
-        try { if (renderer != null) renderer.close(); } catch (Exception ignored) {}
-        try { if (pfd != null) pfd.close(); } catch (Exception ignored) {}
-        renderer = null; pfd = null;
+    private void closeInternal(int id) {
+        Opened o = opened.remove(id);
+        if (o == null) return;
+        try { if (o.renderer != null) o.renderer.close(); } catch (Exception ignored) {}
+        try { if (o.pfd != null) o.pfd.close(); } catch (Exception ignored) {}
     }
 
     // ---- Read aloud: the system's text-to-speech engine (the WebView has no speechSynthesis) ----

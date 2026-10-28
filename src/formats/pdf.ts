@@ -94,12 +94,13 @@ export interface PdfViewerOptions {
 /** A page's printed area, as fractions of the page: left, top, width, height. */
 export type CropBox = [number, number, number, number];
 
-/** Android: render page bitmaps with the platform renderer (system fonts, JBIG2/JPX, fast). */
+/** Android and iOS: render page bitmaps with the platform renderer (system fonts, JBIG2/JPX, fast). */
 interface NativePdf { pdfOpen(o: { path: string }): Promise<{ pageCount: number }>; pdfRender(o: { page: number; width: number; quality?: number; tileX?: number; tileY?: number; tileW?: number; tileH?: number; toFile?: boolean }): Promise<{ data?: string; path?: string; width: number; height: number }>; pdfClose(): Promise<void> }
 interface NativeFs { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }>; stat(o: { path: string; directory: string }): Promise<{ uri: string }> }
 function nativePdf(): { pdf: NativePdf; fs: NativeFs } | null {
   const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: NativePdf; Filesystem?: NativeFs } } }).Capacitor;
-  if (cap?.getPlatform?.() !== 'android' || !cap.Plugins?.Kurokawa || !cap.Plugins.Filesystem) return null;
+  const platform = cap?.getPlatform?.();
+  if ((platform !== 'android' && platform !== 'ios') || !cap?.Plugins?.Kurokawa || !cap.Plugins.Filesystem) return null;
   return { pdf: cap.Plugins.Kurokawa, fs: cap.Plugins.Filesystem };
 }
 

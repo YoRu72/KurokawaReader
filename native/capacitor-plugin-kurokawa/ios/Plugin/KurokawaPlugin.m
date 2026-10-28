@@ -16,4 +16,7 @@ CAP_PLUGIN(KurokawaPlugin, "Kurokawa",
   CAP_PLUGIN_METHOD(browserReset, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(browserForget, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(printToPdf, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(pdfOpen, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(pdfRender, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(pdfClose, CAPPluginReturnPromise);
 )

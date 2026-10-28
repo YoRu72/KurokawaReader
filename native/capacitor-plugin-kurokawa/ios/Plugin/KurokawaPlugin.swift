@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 ///  - openWebView / browserFetch / browserReset / browserForget: the app's own browser (KrBrowser.swift), for
 ///    the sites that answer only a browser
 ///  - printToPdf: a page of HTML printed to a PDF by the system (KrPrint.swift)
+///  - pdfOpen / pdfRender / pdfClose: pages of a PDF drawn by CoreGraphics (KrPdf.swift)
 @objc(KurokawaPlugin)
 public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     private var pickCall: CAPPluginCall?
@@ -153,6 +154,13 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     // MARK: printing a page to a PDF (real text, not pictures of pages)
 
     @objc func printToPdf(_ call: CAPPluginCall) { KrPrint.run(call, host: bridge?.viewController?.view) }
+
+    // MARK: pages of a PDF drawn by the system (KrPdf.swift) — off the main thread, several at once
+
+    private let pdfQueue = DispatchQueue(label: "kr.pdf", qos: .userInitiated, attributes: .concurrent)
+    @objc func pdfOpen(_ call: CAPPluginCall) { pdfQueue.async { KrPdf.open(call) } }
+    @objc func pdfRender(_ call: CAPPluginCall) { pdfQueue.async { KrPdf.render(call) } }
+    @objc func pdfClose(_ call: CAPPluginCall) { pdfQueue.async { KrPdf.close(call) } }
 
     /// HTTP request from native code (no CORS): the sync back-ends and the sources. The shared cookie store goes
     /// with it (a check's clearance is copied there once passed); its answer's text in the charset it names.
