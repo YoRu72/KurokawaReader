@@ -118,7 +118,7 @@ export interface Book {
    *  novel, how many chapters arrived since it was last opened and when the site was last asked. */
   remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number };
   /** The series the book is a volume of, as its source said (a title's own numbering is read otherwise). */
-  series?: { name: string; index?: number };
+  series?: { name: string; index?: number; source?: string; shelf?: string };
   pdfHighlights?: PdfHighlight[];
   /** Cached per-book override of the visual settings (optional). */
   prefs?: Record<string, unknown>;

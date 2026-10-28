@@ -284,9 +284,14 @@ export function libraryView(): HTMLElement {
         selecting ? h('div', { class: 'check' }, icon('check')) : null),
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, name), h('div', { class: 'ba' }, t('seriesCardVolumes', { n: countVolumes(vols.length), read: localDigits(read) }))));
     (el.querySelector('.stack') as HTMLElement).style.setProperty('--c1', c1); (el.querySelector('.stack') as HTMLElement).style.setProperty('--c2', c2);
+    // (A series from a source opens as it shows there — its volumes with their covers and contents, a download
+    // beside each one not yet fetched, all of them with one button — as Mihon opens a title on its source page;
+    // the volumes alone otherwise.)
+    const from = vols.find((b) => b.series?.source && b.series.shelf !== undefined)?.series;
+    const openSeries = () => { if (from?.source) navigate(`/sources/${from.source}?shelf=${encodeURIComponent(from.shelf ?? '')}`); else { activeSeries = key; localStorage.setItem('kr.series', key); renderGrid(); } };
     el.addEventListener('click', () => {
       if (selecting) { const all = vols.every((b) => selected.has(b.id)); for (const b of vols) { if (all) selected.delete(b.id); else selected.add(b.id); } renderGrid(); return; }
-      activeSeries = key; localStorage.setItem('kr.series', key); renderGrid();
+      openSeries();
     });
     onHoldOrContext(el, () => {
       const sh = openSheet(name, t('close'));
@@ -295,6 +300,7 @@ export function libraryView(): HTMLElement {
       sh.body.append(h('div', { class: 'dest-list' },
         next ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(`/read/${next.id}`); } }, icon('play'), h('span', { class: 'name' }, `${t('continueReading')} · `, h('bdi', null, next.title))) : null,
         h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); activeSeries = key; localStorage.setItem('kr.series', key); renderGrid(); } }, icon('books'), h('span', { class: 'name' }, t('seriesVolumes'))),
+        from?.source ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); openSeries(); } }, icon('globe'), h('span', { class: 'name' }, t('seriesInSource'))) : null,
         h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); setSelecting(true); for (const b of vols) selected.add(b.id); renderGrid(); } }, icon('check'), h('span', { class: 'name' }, t('select')))));
     });
     return el;

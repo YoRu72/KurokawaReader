@@ -975,6 +975,7 @@ export const ar: Strings = {
   jobsTitle: 'التحويلات',
   jobsNone: 'لا تحويلات بعد.',
   jobReady: 'جاهز: {name}',
+  seriesInSource: 'السلسلة في مصدرها (كل المجلدات)',
   addToTags: 'وسوم {name}',
   addToTagsHint: 'تدخل مجلداتها المكتبةَ سلسلةً واحدة. وسِمْها أيضًا إن شئت — أو دَعْها.',
   addToTagsNever: 'لا تسألني مرة أخرى',

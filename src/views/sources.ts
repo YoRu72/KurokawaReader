@@ -349,7 +349,7 @@ async function askPlacement(seriesKey: string, seriesName: string): Promise<Plac
 }
 /** One file of a folder into the library, remembered as coming from there (so its row says "Open" after) and
  *  as a volume of its series. */
-async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number; speed?: number }) => void, series?: { name: string; index?: number }, tags?: string[]): Promise<Book> {
+async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number; speed?: number }) => void, series?: Book['series'], tags?: string[]): Promise<Book> {
   // A plain file: the platform's downloader — it goes on when this page is left or the phone is locked, with
   // its speed shown, and the book lands in the library whatever is open then.
   const info = src.downloadInfo?.(file);
@@ -408,7 +408,7 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
       dl.disabled = true;
       try {
         const place = b.group ? await askPlacement(`${src.id}|${b.group}`, b.group) : {};
-        const book = await fetchVolume(src, a.id, b.title, a.file, show, b.group ? { name: b.group, index: b.volume } : undefined, place.tags);
+        const book = await fetchVolume(src, a.id, b.title, a.file, show, b.group ? { name: b.group, index: b.volume, source: src.id, shelf: b.shelf } : undefined, place.tags);
         lib.set(a.id, book.id); if (cur === a) draw(); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
       } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); if ((e as Error)?.message !== 'cancelled') toast(describe(e), 'error'); }
     };
@@ -495,7 +495,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
     try {
       const id = `f:${f.id}`;
       const place = b.id !== 'a:' ? await askPlacement(`${src.id}|${b.title}`, b.title) : {};
-      const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => { next.replaceChildren(icon('download'), h('span', null, p.total ? `${localDigits(p.pct)}%` : '…')); }, b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num } : undefined, place.tags);
+      const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => { next.replaceChildren(icon('download'), h('span', null, p.total ? `${localDigits(p.pct)}%` : '…')); }, b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags);
       lib.set(id, book.id); rows.get(id)?.(book.id); toast(t('addedToLibrary'));
     } catch (e) { toast(describe(e), 'error'); }
     finally { next.disabled = false; label(); labelNext(); }
@@ -513,7 +513,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
         if (lib.has(id) || has(files.indexOf(f))) continue;   // (fetched meanwhile, by its own button or another edition)
         const say = (extra: string) => { run.text = `${t('fetchingVolume', { n: localDigits(i + 1), total: localDigits(todo.length) })}${extra ? ` · ${extra}` : ''}`; run.on?.(run.text); };
         say('');
-        const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${localDigits(p.pct)}%${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : ''), b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num } : undefined, place.tags);
+        const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${localDigits(p.pct)}%${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : ''), b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags);
         lib.set(id, book.id); rows.get(id)?.(book.id); done++;
       }
       toast(t('volumesAdded', { n: countVolumes(done), folder: `\u2068${b.title}\u2069` }), 'info', 4000);

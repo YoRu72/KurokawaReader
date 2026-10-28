@@ -240,10 +240,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
   // Opened from a search across books: at the found passage (its chapter, its place among the chapter's
-  // matches), the matches marked.
+  // matches), the matches marked. (Run once the rest of this function has set up the search — the index and
+  // the block numbers are declared further down.)
+  let setUp: () => void = () => undefined; const ready = new Promise<void>((r) => { setUp = r; });
   {
     const sj = takeSearchJump(docs[0].book.id);
-    if (sj) void searchFlow(sj.q).then((hits) => {
+    if (sj) void ready.then(() => searchFlow(sj.q)).then((hits) => {
       if (!reader.isConnected) return;
       const chapters = [...(docs[0].render?.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter') ?? [])];
       const inUnit = hits.filter((hh) => { const el = hh.range.startContainer.parentElement; const c = el?.closest('.kr-chapter'); return c ? chapters.indexOf(c as HTMLElement) === sj.unit : sj.unit === 0; });
@@ -1373,6 +1375,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   window.addEventListener('keydown', onKey);
   onDispose(() => window.removeEventListener('keydown', onKey));
   scroll.focus({ preventScroll: true });
+  setUp();
 }
 
 /* ------------------------------------------------------------------ */

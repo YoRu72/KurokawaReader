@@ -214,8 +214,14 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     const chips = await page.$$eval('.folder-chips .chip', (es) => es.map((e) => e.textContent));
     ok('the library holds the PDF (by its own title); the volumes as one series card, no folder made for them', lib.includes('Sample Report') && lib.includes('Alpha Series') && !chips.some((c) => /Alpha Series/.test(c)));
     if (chips.some((c) => /Alpha Series/.test(c)) || !lib.includes('Sample Report')) console.log('  library:', JSON.stringify({ lib, chips }));
-    await page.click('.series-card:has-text("Alpha Series")'); await page.waitForTimeout(500);
-    ok('… the series card opens its two volumes', (await page.$$('.book-card')).length === 2 && !!(await page.$('.series-bar')));
+    // (The card opens the series on its source — the volumes with their covers and contents, every one in the
+    // library opening from there; the library's own view of the volumes is behind a long press.)
+    await page.click('.series-card:has-text("Alpha Series")'); await page.waitForSelector('.series-head', { timeout: 20000 }); await page.waitForTimeout(500);
+    ok('… the series card opens the series on its source, its volumes all in the library', /Alpha Series/.test(await page.$eval('.topbar .title', (e) => e.textContent)) && (await page.$$('.vol-row .vol-actions .btn.primary')).length === 2 && /All in the library/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
+    await page.goto(base + '#/'); await page.waitForSelector('.series-card'); await page.waitForTimeout(300);
+    await page.$eval('.series-card:has-text("Alpha Series")', (el) => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
+    await page.waitForSelector('.sheet .dest-row'); await page.click('.sheet .dest-row:has-text("Volumes")'); await page.waitForTimeout(400);
+    ok('… the library\'s own view of the series: its two volumes', (await page.$$('.book-card')).length === 2 && !!(await page.$('.series-bar')));
     await page.click('.series-bar .chip'); await page.waitForTimeout(300);
     ok('… and back to the shelf', !!(await page.$('.series-card')) && !(await page.$('.series-bar')));
     // The folder's address given a second time is refused as already added.

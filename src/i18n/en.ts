@@ -970,6 +970,7 @@ export const en = {
   jobsTitle: 'Conversions',
   jobsNone: 'No conversions yet.',
   jobReady: 'Ready: {name}',
+  seriesInSource: 'The series on its source (all volumes)',
   addToTags: 'Tags for {name}',
   addToTagsHint: 'Its volumes go into the library as one series. Tag them too, if you like — or not.',
   addToTagsNever: 'Don\'t ask again',

@@ -638,7 +638,7 @@ export function folderSource(repo: Repo): Source {
       }
       // (Grouped by series and volume, the editions of one volume in one row.)
       const bySeries = new Map<string, Vol[]>(); for (const v of vols) { const s = v.rel.split('/')[0]; const l = bySeries.get(s); if (l) l.push(v); else bySeries.set(s, [v]); }
-      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(dec(a[0]), dec(b[0])))) for (const g of groupsOf(list, f)) items.push({ ...volumeRow(g, { full: true, where: dec(s) }), group: shownName(dec(s)) });
+      for (const [s, list] of [...bySeries.entries()].sort((a, b) => natural(dec(a[0]), dec(b[0])))) for (const g of groupsOf(list, f)) items.push({ ...volumeRow(g, { full: true, where: dec(s) }), group: shownName(dec(s)), shelf: s });
       const res = { items, partial: !idx.complete };
       searches.set(key, res); return res;
     }
@@ -760,7 +760,7 @@ export function folderSource(repo: Repo): Source {
       // The newest volumes of the whole folder.
       if (special === '::new' && idx) {
         const latest = idx.files.filter((x) => x.t).sort((a, b) => (b.t ?? 0) - (a.t ?? 0)).slice(0, 240);
-        const rows = latest.map((x) => { const name = dec(x.p.split('/').pop() ?? ''); const where = x.p.split('/').slice(0, -1).map(dec).join(' / '); return { ...volumeRow({ key: x.p, num: undefined, items: [{ e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }] }, { full: true, where }), group: x.p.includes('/') ? shownName(dec(x.p.split('/')[0])) : undefined }; });
+        const rows = latest.map((x) => { const name = dec(x.p.split('/').pop() ?? ''); const where = x.p.split('/').slice(0, -1).map(dec).join(' / '); return { ...volumeRow({ key: x.p, num: undefined, items: [{ e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }] }, { full: true, where }), group: x.p.includes('/') ? shownName(dec(x.p.split('/')[0])) : undefined, shelf: x.p.includes('/') ? x.p.split('/')[0] : undefined }; });
         return paged(rows, undefined, t('shelfNewVolumes'));
       }
       // The top: the series (from the index when there is one: counted, with their publishers).
@@ -805,7 +805,7 @@ export function folderSource(repo: Repo): Source {
       const groups = groupsOf(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(rel, e) })), f);
       // (A volume fetched from a series' page goes into the library's folder of that series.)
       const series = shownName(crumbs[0] ?? '');
-      const rows = groups.map((g) => ({ ...volumeRow(g), group: series }));
+      const rows = groups.map((g) => ({ ...volumeRow(g), group: series, shelf: rel }));
       const list: SourceBook[] = [...rows, ...folders.map((e) => folderCard(e.name, childRel(rel, e)))];
       // (A series' card on top when the folder is its volumes, a few side folders beside them — not over a shelf
       // of series with a stray file or two.)

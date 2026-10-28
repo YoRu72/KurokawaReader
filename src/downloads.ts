@@ -15,7 +15,7 @@ import type { Book } from './db';
 
 export type Progress = { pct: number; got: number; total: number; speed?: number };
 /** What to do with the file once it is here: into the library, remembered as coming from its source. */
-export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: { name: string; index?: number }; tags?: string[] };
+export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: Book['series']; tags?: string[] };
 export type DownloadTask = { url: string; name: string; mime?: string; size?: number; headers?: Record<string, string>; title: string; then: Then };
 export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; error?: string; bookId?: string; startedAt: number };
 

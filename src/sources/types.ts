@@ -33,6 +33,8 @@ export interface SourceBook {
   group?: string;
   /** Its number in the series, when the name says. */
   volume?: number;
+  /** The source's shelf (a folder) the series lives on, so the library can open the series' page there. */
+  shelf?: string;
   /** For a series' card: the ids of every edition of each of its volumes (one in the library is enough). */
   volumeIds?: string[][];
   /** The file whose cover a volume's row or a series' card shows: an EPUB edition when there is one (its own
