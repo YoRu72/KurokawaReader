@@ -2,6 +2,7 @@ import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } 
 import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
+import { searchFormOf } from '../formats/types';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
 import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
@@ -18,6 +19,11 @@ const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base
 export function libraryView(): HTMLElement {
   let books: Book[] = [];
   let query = '';
+  // (The words asked for, in their search form — harakat, hamza and letter variants, accents and case aside;
+  // each word must be found, in any order, in a book's title, author, file name, tags or series.)
+  let queryWords: string[] = [];
+  const searchKeys = new WeakMap<Book, { at: number; k: string }>();
+  const keyOf = (b: Book) => { const had = searchKeys.get(b); if (had && had.at === (b.tagsAt ?? 0)) return had.k; const k = searchFormOf(`${b.title} ${b.author ?? ''} ${b.fileName} ${(b.tags ?? []).join(' ')} ${b.series?.name ?? ''} ${partOf(b)?.name ?? ''}`); searchKeys.set(b, { at: b.tagsAt ?? 0, k }); return k; };
   let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'title';
   let sortDesc = localStorage.getItem('kr.sortDesc') === '1';
   let folders: Folder[] = [];
@@ -48,7 +54,7 @@ export function libraryView(): HTMLElement {
     return null;
   }
 
-  const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); renderGrid(); } }) as HTMLInputElement;
+  const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); queryWords = query ? searchFormOf(query).split(/\s+/).filter(Boolean) : []; renderGrid(); } }) as HTMLInputElement;
   const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['progress', t('sortProgress'), 'play'], ['length', t('sortLength'), 'file'], ['updated', t('sortUpdated'), 'bell'], ['size', t('sortSize'), 'books'], ['rating', t('sortRating'), 'heart']];
   // Books added since the library was last looked at carry a small «new» mark until opened.
   const lastVisit = Number(localStorage.getItem('kr.libraryVisit') ?? 0);
@@ -242,7 +248,9 @@ export function libraryView(): HTMLElement {
       if (st.size && !st.has(statusOf(b))) return false;
       if (tagFilter && !(b.tags ?? []).includes(tagFilter)) return false;
       const inFolder = activeSeries ? true : activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
-      return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName} ${(b.tags ?? []).join(' ')}`.toLowerCase().includes(query));
+      if (!inFolder) return false;
+      if (!queryWords.length) return true;
+      const k = keyOf(b); return queryWords.every((w) => k.includes(w));
     });
     if (activeSeries) { const vols = list.filter((b) => partOf(b)?.key === activeSeries); return vols.sort((a, b) => (partOf(a)!.index - partOf(b)!.index) || natural.compare(a.title, b.title)); }
     const by: Record<Sort, (a: Book, b: Book) => number> = {
