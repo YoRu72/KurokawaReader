@@ -21,6 +21,8 @@ export const en = {
   downloadN: 'Download {n}',
   downloaded: 'Downloaded',
   chaptersFetched: '{n} fetched for offline',
+  forgetOffline: 'Remove the offline copies',
+  chaptersForgotten: 'Offline copies removed: {n}',
   selectNone: 'Select none',
   shareFile: 'Share file',
   selectedCount: '{n} selected',

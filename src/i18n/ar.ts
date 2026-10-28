@@ -26,6 +26,8 @@ export const ar: Strings = {
   downloadN: 'تنزيل {n}',
   downloaded: 'منزَّل',
   chaptersFetched: 'جُلب {n} للقراءة دون اتصال',
+  forgetOffline: 'حذف النسخ المحفوظة',
+  chaptersForgotten: 'حُذفت النسخ المحفوظة: {n}',
   selectNone: 'إلغاء التحديد',
   shareFile: 'مشاركة الملفّ',
   selectedCount: 'المحدَّد: {n}',

@@ -299,6 +299,12 @@ export async function saveNovelFile(book: Book, patch: (cur: WebNovel) => WebNov
   await db.updateBook(book.id, (b) => { b.size = file.size; b.pageCount = next.chapters.length; b.chapters = next.chapters.length; if (b.remote) { b.remote.online = have < next.chapters.length; b.remote.chapterCount = next.chapters.length; } });
   return next;
 }
+/** The offline copies of some chapters let go (room on the device given back); they are read online again. */
+export async function forgetChapters(book: Book, paths: Set<string>): Promise<number> {
+  let n = 0;
+  await saveNovelFile(book, (cur) => { const content = { ...(cur.content ?? {}) }; for (const p of paths) if (content[p]) { delete content[p]; n++; } return { ...cur, content, fetchedAt: undefined }; });
+  return n;
+}
 /** Fetch every chapter not yet in the file, a few at a time; `live` says whether to go on. */
 export async function downloadNovel(book: Book, onProgress: (done: number, total: number) => void, live?: () => boolean, only?: Set<string>): Promise<boolean> {
   const info = await readNovelFile(book.id); if (!info) throw new SourceError('parse', 'parse');

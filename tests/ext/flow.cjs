@@ -135,6 +135,10 @@ const SITE = 'http://localhost:5403';
     const haveN = (await page.$$('.novel-chapters button.have')).length;
     ok('chapters picked by a long press, the ones between added, and fetched for offline', picked2 === 2 && picked3 === 3 && haveN === 3 && !(await page.$$('.chapter-sel:not([hidden])')).length);
     if (!(picked2 === 2 && picked3 === 3 && haveN === 3)) console.log('  picked:', picked2, picked3, haveN);
+    // The offline copy of one of them let go: its mark gone, the others kept.
+    await page.dispatchEvent('.novel-chapters li:nth-child(3) button', 'contextmenu'); await page.waitForTimeout(150);
+    await page.click('.chapter-sel button[title="Remove the offline copies"]'); await page.waitForTimeout(1200);
+    ok('the offline copy of a picked chapter removed, the others kept', (await page.$$('.novel-chapters button.have')).length === 2 && !(await page.$('.novel-chapters li:nth-child(3) button.have')));
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
     ok('Mangayomi chapter text read', /Chapter 1 of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
     // Extension settings sheet.
