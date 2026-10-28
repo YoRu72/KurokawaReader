@@ -1026,6 +1026,8 @@ export const en = {
   updWifiOnly: 'Check for new chapters on Wi-Fi only',
   updatesWaiting: 'Something new at your sources',
   updatesSection: 'Checks for new chapters',
+  updateAlreadyDownloaded: 'Already downloaded — it installs without downloading again.',
+  installNow: 'Install',
   downloads: 'Downloads',
   downloadsBody: 'What is being fetched from your sources and from links: progress, speed, what waits its turn, what came and what failed.',
   noDownloads: 'Nothing is being fetched.',

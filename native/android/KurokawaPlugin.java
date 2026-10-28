@@ -318,7 +318,10 @@ public class KurokawaPlugin extends Plugin {
                 boolean ranged = code == 206 && total > 0;
                 probe.disconnect();
                 File dir = persist ? new File(getContext().getFilesDir(), "downloads") : new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
-                File out = new File(dir, name);
+                // (Written under a ".part" name and renamed when whole: a file under its own name is always complete —
+                // a downloaded update is kept and used again, so a half one must never pass for it.)
+                final File done0 = new File(dir, name);
+                File out = new File(dir, name + ".part");
                 final java.util.concurrent.atomic.AtomicLong got = new java.util.concurrent.atomic.AtomicLong();
                 final long fTotal = total;
                 Runnable report = new Runnable() {
@@ -366,13 +369,34 @@ public class KurokawaPlugin extends Plugin {
                     }
                 }
                 if (cancelled.get()) { out.delete(); call.reject("cancelled"); return; }
+                if (fTotal > 0 && out.length() != fTotal) { out.delete(); call.reject("Download failed: incomplete (" + out.length() + " of " + fTotal + ")"); return; }
+                done0.delete();
+                if (!out.renameTo(done0)) { out.delete(); call.reject("Download failed: cannot keep the file"); return; }
                 JSObject done = new JSObject(); done.put("id", id); done.put("got", got.get()); done.put("total", got.get()); done.put("speed", 0); done.put("pct", 100);
                 notifyListeners("downloadProgress", done);
-                JSObject ret = new JSObject(); ret.put("path", "file://" + out.getAbsolutePath()); ret.put("size", got.get());
+                JSObject ret = new JSObject(); ret.put("path", "file://" + done0.getAbsolutePath()); ret.put("size", done0.length());
                 call.resolve(ret);
             } catch (Exception e) { call.reject("Download failed: " + e.getMessage(), e); }
             finally { if (!id.isEmpty()) downloads.remove(id); }
         }).start();
+    }
+
+    /** A file downloaded earlier into the cache (an update not installed yet), when it is there whole: its
+     *  path, else nothing. `prune`: the other APKs there are removed (older updates). */
+    @PluginMethod
+    public void cachedFile(PluginCall call) {
+        String name = call.getString("name", "");
+        long size = call.getLong("size", -1L);
+        File dir = new File(getContext().getCacheDir(), "kr-update");
+        JSObject r = new JSObject();
+        if (name.isEmpty() || name.contains("/") || name.contains("..")) { call.resolve(r); return; }
+        File f = new File(dir, name);
+        if (Boolean.TRUE.equals(call.getBoolean("prune", false))) {
+            File[] all = dir.listFiles();
+            if (all != null) for (File x : all) if (!x.getName().equals(name) && !x.getName().equals(name + ".part") && x.getName().toLowerCase().matches(".*\\.apk(\\.part)?$")) x.delete();
+        }
+        if (f.isFile() && (size <= 0 || f.length() == size)) { r.put("path", "file://" + f.getAbsolutePath()); r.put("size", f.length()); }
+        call.resolve(r);
     }
 
     /** Stops a download by its id; its file is removed. */

@@ -1031,6 +1031,8 @@ export const ar: Strings = {
   updWifiOnly: 'التحقّق من الفصول الجديدة عبر Wi-Fi فقط',
   updatesWaiting: 'جديدٌ في مصادرك',
   updatesSection: 'التحقّق من الفصول الجديدة',
+  updateAlreadyDownloaded: 'نُزِّل من قبل — يُثبَّت دون تنزيل جديد.',
+  installNow: 'تثبيت',
   downloads: 'التنزيلات',
   downloadsBody: 'ما يُجلب من مصادرك ومن الروابط: التقدّم والسرعة، وما ينتظر دوره، وما وصل وما أخفق.',
   noDownloads: 'لا شيء يُجلب الآن.',
