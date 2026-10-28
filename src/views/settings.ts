@@ -170,6 +170,10 @@ export function settingsView(): HTMLElement {
     body.append(card);
   }
 
+  // The downloads: the manager's list, from here as from the library.
+  body.append(h('section', { class: 'card' }, h('h3', null, t('downloads')), h('p', null, t('downloadsBody')),
+    h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const { downloadsSheet } = await import('../ui/downloadsheet'); downloadsSheet(); } }, icon('download'), t('downloads'))));
+
   // The app's own browser: any site opened in it (to sign in, pass a check, or just look), its sign-ins forgotten.
   {
     const card = h('section', { class: 'card' }, h('h3', null, t('inAppBrowser')), h('p', null, t('inAppBrowserBody')));

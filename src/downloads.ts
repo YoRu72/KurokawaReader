@@ -17,7 +17,7 @@ export type Progress = { pct: number; got: number; total: number; speed?: number
 /** What to do with the file once it is here: into the library, remembered as coming from its source. */
 export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: Book['series']; tags?: string[]; /** Saved to the device (Download), not into the library. */ deviceOnly?: boolean };
 export type DownloadTask = { url: string; name: string; mime?: string; size?: number; headers?: Record<string, string>; title: string; then: Then };
-export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; error?: string; bookId?: string; startedAt: number };
+export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; /** Waiting for its turn (three run at a time). */ queued?: boolean; error?: string; bookId?: string; startedAt: number };
 
 const KEY = 'kr.downloads';
 const list: Download[] = [];
@@ -58,6 +58,15 @@ export function startDownload(task: DownloadTask): Promise<Book> {
   return p;
 }
 
+/** A failed or cancelled download asked for again (the same file, the same destination). */
+export function retryDownload(id: string): Promise<Book> | null {
+  const d = list.find((x) => x.id === id); if (!d || d.state === 'running') return null;
+  const i = list.indexOf(d); if (i >= 0) list.splice(i, 1);
+  return startDownload({ url: d.url, name: d.name, mime: d.mime, size: d.size, headers: d.headers, title: d.title, then: d.then });
+}
+/** The finished, failed and cancelled downloads cleared from the list. */
+export function clearDownloads(): void { for (let i = list.length - 1; i >= 0; i--) if (list[i].state !== 'running') list.splice(i, 1); persist(); changed(); }
+
 export function cancelDownload(id: string): void {
   const d = list.find((x) => x.id === id); if (!d || d.state !== 'running') return;
   d.state = 'cancelled'; cancels.get(id)?.(); cancels.delete(id);
@@ -72,7 +81,9 @@ const takeTurn = () => new Promise<void>((ok) => { if (active < AT_ONCE) { activ
 const giveTurn = () => { active--; turns.shift()?.(); };
 
 async function run(d: Download): Promise<void> {
+  d.queued = active >= AT_ONCE; if (d.queued) changed();
   await takeTurn();
+  d.queued = false; changed();
   if (d.state !== 'running') { giveTurn(); waiting.get(d.id)?.fail(new Error('cancelled')); waiting.delete(d.id); persist(); changed(); return; }
   try { await runNow(d); } finally { giveTurn(); }
 }

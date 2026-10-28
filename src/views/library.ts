@@ -145,6 +145,7 @@ export function libraryView(): HTMLElement {
       s.body.append(h('ul', { class: 'plain-list' },
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void pickFiles(); } }, icon('import'), t('importBooks'))),
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); void fromLink(); } }, icon('globe'), t('importFromLink'))),
+        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const { downloadsSheet } = await import('../ui/downloadsheet'); downloadsSheet(); } }, icon('download'), t('downloads'))),
         canScan() ? h('li', null, h('button', { type: 'button', onclick: () => { s.close(); openScan(); } }, icon('folder'), t('scanDevice'))) : null,
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/sources'); } }, icon('globe'), t('sourcesMenu'))),
         h('li', null, h('button', { type: 'button', onclick: () => { s.close(); navigate('/catalog'); } }, icon('books'), t('catalogsMenu'))),
