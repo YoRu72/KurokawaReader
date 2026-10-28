@@ -226,7 +226,7 @@ public class KurokawaPlugin extends Plugin {
         if (bytes.length > 262144 && bodyDir != null) {
             try {
                 bodyDir.mkdirs();
-                File f = new File(bodyDir, "b" + (bodySeq++ % 24) + ".bin");
+                File f = new File(bodyDir, "b" + (bodySeq++ % 8) + ".bin");
                 try (OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(f), 1 << 16)) { out.write(bytes); }
                 ret.put("bodyPath", f.getAbsolutePath()); ret.put("body", ""); ret.put("bodySize", bytes.length);
                 return;

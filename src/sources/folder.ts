@@ -582,6 +582,7 @@ export function folderSource(repo: Repo): Source {
   const scans = (f: FilterValues) => f.scans !== false;
   const format = (f: FilterValues) => (f.format === 'pdf' ? 'pdf' : 'epub');
   const groupsOf = (list: Vol[], f: FilterValues, withScans = scans(f)) => groupVolumes(list, storeFirst(f), withScans, format(f));
+  const HIDDEN_FOLDERS = /^\s*yaoi\s*$/i;
   const folderCard = (name: string, rel: string, extra: Partial<SourceBook> = {}): SourceBook => ({ id: `d:${rel}`, title: shownName(name), openShelf: rel, look: 'folder', ...extra });
   const fileFor = (rel: string, name: string, size?: number): SourceFile => fileOf({ name, url: `${root}${rel}`, size, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, rel);
   /** A row for a group of editions: the best one shown, the others offered beside it. */
@@ -648,7 +649,7 @@ export function folderSource(repo: Repo): Source {
       const items: SourceBook[] = []; const vols: Vol[] = [];
       for (const x of found) {
         const parts = x.rel.split('/'); const name = dec(parts[parts.length - 1]); const where = parts.slice(0, -1).map(dec).join(' / ');
-        if (x.dir) { if (match(name, where)) items.push(folderCard(name, x.rel, { author: where || undefined })); continue; }
+        if (x.dir) { if (match(name, where) && !HIDDEN_FOLDERS.test(name)) items.push(folderCard(name, x.rel, { author: where || undefined })); continue; }
         const e: DirEntry = { name, url: `${root}${x.rel}`, dir: false, size: x.size, time: x.time, date: x.time ? stamp(x.time) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() };
         if (isBook(e) && keep(e) && match(name, where)) vols.push({ e, v: parseName(name), rel: x.rel });
       }
@@ -676,7 +677,7 @@ export function folderSource(repo: Repo): Source {
       });
       layer.push(...next);
     }
-    const items: SourceBook[] = foundWalk.filter((x) => x.e.dir).sort((a, b) => natural(a.e.name, b.e.name)).map((x) => folderCard(x.e.name, x.rel, { author: x.where || undefined }));
+    const items: SourceBook[] = foundWalk.filter((x) => x.e.dir && !HIDDEN_FOLDERS.test(x.e.name)).sort((a, b) => natural(a.e.name, b.e.name)).map((x) => folderCard(x.e.name, x.rel, { author: x.where || undefined }));
     const bySeries = new Map<string, Vol[]>(); for (const x of foundWalk) { if (x.e.dir) continue; const l = bySeries.get(x.where); const v = { e: x.e, v: parseName(x.e.name), rel: x.rel }; if (l) l.push(v); else bySeries.set(x.where, [v]); }
     for (const [where, list] of [...bySeries.entries()].sort((a, b) => natural(a[0], b[0]))) for (const g of groupsOf(list, f)) items.push(volumeRow(g, { full: true, where }));
     const res = { items, partial }; searches.set(key, res); return res;
@@ -779,7 +780,7 @@ export function folderSource(repo: Repo): Source {
           if (!special) topBooks = idx.files.filter((x) => !x.p.includes('/')).map((x) => { const name = dec(x.p); return { e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }; }).filter((x) => wanted(f)(x.e));
         } else {
           const all = await listFolder(root, false, h5ai);
-          let dirs = all.filter((e) => e.dir);
+          let dirs = all.filter((e) => e.dir && !HIDDEN_FOLDERS.test(e.name));
           if (special === '::mine') { const mine = await inLibrary(srcId); dirs = dirs.filter((d) => mine.has(segOf(d))); }
           if (special === '::recent' || f.sort === 'newest') dirs = dirs.sort((a, b) => (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name));
           list = dirs.map((e) => folderCard(e.name, childRel('', e), { year: special === '::recent' ? e.date?.slice(0, 10) : undefined }));
@@ -800,7 +801,8 @@ export function folderSource(repo: Repo): Source {
       void seen(repo, rel.split('/')[0]);
       const { entries: all, fromIndex } = await entriesOf(rel);
       if (fromIndex && idx) checkLater(rel, idx);
-      const folders = all.filter((e) => e.dir);
+      // (Folders never shown: a reader asked for the yaoi one to stay out of sight for good.)
+      const folders = all.filter((e) => e.dir && !HIDDEN_FOLDERS.test(e.name));
       const books = all.filter((e) => isBook(e) && wanted(f)(e));
       const groups = groupsOf(books.map((e) => ({ e, v: parseName(e.name), rel: childRel(rel, e) })), f);
       // (A volume fetched from a series' page goes into the library's folder of that series.)
