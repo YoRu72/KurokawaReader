@@ -500,17 +500,23 @@ final class KrBrowser {
 
     private void send(final Lane l, final PluginCall call, final JSObject o, final boolean binary, final int timeout, final String dlId) {
         final String id = UUID.randomUUID().toString();
-        Pending p = new Pending(call, binary, l);
+        final Pending pend = new Pending(call, binary, l);
         if (dlId != null) {
             // (A download: straight to a file in the cache, nothing held in memory, its progress told.)
-            try { java.io.File dir = new java.io.File(plugin.getContext().getCacheDir(), "kr-http"); dir.mkdirs(); p.file = new java.io.File(dir, "dl-" + dlId.replaceAll("[^A-Za-z0-9_-]", "") + ".bin"); p.out = new java.io.BufferedOutputStream(new java.io.FileOutputStream(p.file), 1 << 16); p.dlId = dlId; }
-            catch (Exception e) { p.file = null; p.out = null; }
+            try { java.io.File dir = new java.io.File(plugin.getContext().getCacheDir(), "kr-http"); dir.mkdirs(); pend.file = new java.io.File(dir, "dl-" + dlId.replaceAll("[^A-Za-z0-9_-]", "") + ".bin"); pend.out = new java.io.BufferedOutputStream(new java.io.FileOutputStream(pend.file), 1 << 16); pend.dlId = dlId; }
+            catch (Exception e) { pend.file = null; pend.out = null; }
         }
-        pending.put(id, p);
+        pending.put(id, pend);
         l.used = SystemClock.uptimeMillis();
         try { l.web.evaluateJavascript("(function(id,o){" + FETCH_JS + "})(" + JSONObject.quote(id) + "," + o.toString() + ")", null); }
-        catch (Exception e) { Pending p = pending.remove(id); if (p != null) call.reject("Browser request failed: " + e.getMessage()); return; }
-        ui.postDelayed(() -> { Pending p = pending.remove(id); if (p != null) p.call.reject("Browser request timed out"); }, timeout + 15000L);
+        catch (Exception e) { Pending gone = pending.remove(id); if (gone != null) { dropFile(gone); call.reject("Browser request failed: " + e.getMessage()); } return; }
+        ui.postDelayed(() -> { Pending gone = pending.remove(id); if (gone != null) { dropFile(gone); gone.call.reject("Browser request timed out"); } }, timeout + 15000L);
+    }
+    /** A download's file given up: its stream closed, the part written deleted. */
+    private static void dropFile(Pending q) {
+        try { if (q.out != null) q.out.close(); } catch (Exception ignored) { }
+        if (q.file != null) { try { q.file.delete(); } catch (Exception ignored) { } }
+        q.out = null; q.file = null;
     }
 
     private void close(Lane l, String why) {

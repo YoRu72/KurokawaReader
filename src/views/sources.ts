@@ -19,7 +19,7 @@ import { passChallenge, forgetSite, openSite } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
-import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
+import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
@@ -1199,12 +1199,13 @@ function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
     if (!selecting()) return;
     const idx = [...picked].sort((a, b) => a - b);
     const todo = idx.filter((i) => !have.has(novel.chapters[i].path));
-    bar.replaceChildren(
+    bar.replaceChildren(...[
       h('span', { class: 'grow sel-count' }, countChapters(picked.size)),
       h('button', { type: 'button', class: 'icon-btn', title: t('selectAll'), 'aria-label': t('selectAll'), onclick: () => { novel.chapters.forEach((_, i) => picked.add(i)); draw(find.value); } }, icon('check')),
       h('button', { type: 'button', class: 'icon-btn', title: t('selectBetween'), 'aria-label': t('selectBetween'), onclick: () => { for (let i = idx[0]; i <= idx[idx.length - 1]; i++) picked.add(i); draw(find.value); } }, icon('sort')),
       h('button', { type: 'button', class: 'btn small primary', disabled: !todo.length, onclick: () => void fetchPicked(todo) }, icon('download'), todo.length ? t('downloadN', { n: countChapters(todo.length) }) : t('downloaded')),
-      h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => { picked.clear(); draw(find.value); } }, icon('close')));
+      idx.some((i) => have.has(novel.chapters[i].path)) ? h('button', { type: 'button', class: 'icon-btn', title: t('forgetOffline'), 'aria-label': t('forgetOffline'), onclick: () => void forgetPicked(idx) }, icon('trash')) : null,
+      h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => { picked.clear(); draw(find.value); } }, icon('close'))].filter((x): x is HTMLElement => !!x));
   };
   const fetchPicked = async (idx: number[]) => {
     const paths = new Set(idx.map((i) => novel.chapters[i].path));
@@ -1220,6 +1221,12 @@ function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
       toast(ok ? t('chaptersFetched', { n: countChapters(paths.size) }) : t('offlineStopped'));
     } catch (e) { toast(describe(e), 'error'); }
     title.textContent = `${t('contents')} · ${countChapters(novel.chapters.length)}`;
+    await refreshHave(); draw(find.value);
+  };
+  const forgetPicked = async (idx: number[]) => {
+    const book = await findInLibrary(novel.src, novel.path); if (!book) return;
+    const n = await forgetChapters(book, new Set(idx.map((i) => novel.chapters[i].path)));
+    picked.clear(); toast(t('chaptersForgotten', { n: countChapters(n) }));
     await refreshHave(); draw(find.value);
   };
   const draw = (needle: string) => {
