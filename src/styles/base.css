@@ -1661,3 +1661,9 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .novel-chapters .have-mark { display: inline-flex; opacity: .55; }
 .novel-chapters .have-mark svg { width: 16px; height: 16px; }
 .novel-chapters button > .grow { flex: 1; min-width: 0; }
+
+/* The red mark on the Browse button while something new waits at the sources: an exclamation with its dot. */
+.tool-btn { position: relative; }
+.alert-mark { position: absolute; top: 4px; inset-inline-end: 7px; min-width: 10px; height: 18px; display: grid; place-items: center; font: 800 15px/1 'Inter', system-ui, sans-serif; color: #ff3b30; text-shadow: 0 0 6px rgba(255,59,48,.55); pointer-events: none; animation: alert-pop .35s var(--ease-emph, ease-out); }
+.alert-mark[hidden] { display: none; }
+@keyframes alert-pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }

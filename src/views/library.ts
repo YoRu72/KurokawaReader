@@ -84,6 +84,12 @@ export function libraryView(): HTMLElement {
   searchBooksBtn.classList.add('tool-btn');
   // Browse: books from the web (the Internet Archive, Shamela, web folders, extensions), a tap from the library.
   const browseBtn = iconButton('globe', t('sources'), () => navigate('/sources')); browseBtn.classList.add('tool-btn', 'browse-btn');
+  // (A red mark on the Browse button while something new waits at the sources — new chapters or volumes.)
+  { const mark = h('span', { class: 'alert-mark', hidden: true, 'aria-hidden': 'true' }, '!'); browseBtn.append(mark);
+    const refresh = async () => { try { const { pendingCounts } = await import('../sources/updates'); const c = await pendingCounts(); const n = c.chapters + c.series; mark.hidden = !n; browseBtn.title = n ? `${t('sources')} · ${t('updatesWaiting')}` : t('sources'); } catch { /* none */ } };
+    void refresh();
+    // (Told when a check ends; the listener leaves with the view.)
+    void import('../sources/updates').then(({ onUpdatesChanged }) => { const off = onUpdatesChanged(() => { if (!browseBtn.isConnected) { off(); return; } void refresh(); }); }); }
   const body = h('div', { class: 'library-body' },
     hero,
     h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, browseBtn),
