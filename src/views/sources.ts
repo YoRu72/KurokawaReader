@@ -1172,28 +1172,71 @@ async function coverBlob(url: string | undefined, hnd: Handle): Promise<Blob | u
   try { const { fetchBytes } = await import('../sources/http'); const bytes = await fetchBytes(url, undefined, { headers: hnd.ln?.imageRequestInit?.headers ?? hnd.my?.headers ?? { referer: hnd.item.site }, retries: 0 }); const { shrinkCover } = await import('../library'); return shrinkCover(new Blob([bytes.buffer as ArrayBuffer])); } catch { return undefined; }
 }
 
-/** The chapters of a novel: a list with a box to find one; a chapter opens the book there. */
+/** The chapters of a novel: a list with a box to find one; a chapter opens the book there. A long press picks
+ *  chapters (as in Mihon): the picked ones can be fetched for offline, or all of them, or the ones between the
+ *  first and the last picked. A chapter already fetched wears a mark. */
 function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
   const novel = d.raw as WebNovel;
   const list = h('ul', { class: 'plain-list src-chapters novel-chapters' });
   const find = h('input', { type: 'search', class: 'src-search ext-find', placeholder: t('findChapter'), dir: 'auto' }) as HTMLInputElement;
-  const box = h('section', { class: 'src-chapters-box' }, h('h3', { class: 'section-title' }, `${t('contents')} · ${countChapters(novel.chapters.length)}`), find, list);
+  const bar = h('div', { class: 'selection-bar chapter-sel', hidden: true });
+  const title = h('h3', { class: 'section-title' }, `${t('contents')} · ${countChapters(novel.chapters.length)}`);
+  const box = h('section', { class: 'src-chapters-box' }, title, find, bar, list);
+  const picked = new Set<number>();
+  let have = new Set<string>();
+  const refreshHave = async () => { const book = await findInLibrary(novel.src, novel.path); const file = book ? await readNovelFile(book.id) : null; have = new Set(Object.keys(file?.content ?? {})); };
   const openAt = async (i: number) => {
     let book = await findInLibrary(novel.src, novel.path);
     if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
     setJump({ bookId: book.id, kind: 'anchor', id: `${book.id}-c${i}` });
     navigate(`/read/${book.id}`);
   };
+  const selecting = () => picked.size > 0;
+  const drawBar = () => {
+    bar.hidden = !selecting();
+    if (!selecting()) return;
+    const idx = [...picked].sort((a, b) => a - b);
+    const todo = idx.filter((i) => !have.has(novel.chapters[i].path));
+    bar.replaceChildren(
+      h('span', { class: 'grow sel-count' }, countChapters(picked.size)),
+      h('button', { type: 'button', class: 'icon-btn', title: t('selectAll'), 'aria-label': t('selectAll'), onclick: () => { novel.chapters.forEach((_, i) => picked.add(i)); draw(find.value); } }, icon('check')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('selectBetween'), 'aria-label': t('selectBetween'), onclick: () => { for (let i = idx[0]; i <= idx[idx.length - 1]; i++) picked.add(i); draw(find.value); } }, icon('sort')),
+      h('button', { type: 'button', class: 'btn small primary', disabled: !todo.length, onclick: () => void fetchPicked(todo) }, icon('download'), todo.length ? t('downloadN', { n: countChapters(todo.length) }) : t('downloaded')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => { picked.clear(); draw(find.value); } }, icon('close')));
+  };
+  const fetchPicked = async (idx: number[]) => {
+    const paths = new Set(idx.map((i) => novel.chapters[i].path));
+    picked.clear(); drawBar();
+    try {
+      let book = await findInLibrary(novel.src, novel.path);
+      if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
+      const key = `${novel.src}|${novel.path}#pick`;
+      const state = { done: 0, total: paths.size, live: true }; downloads.set(key, state);
+      const say = (done: number, total: number) => { title.textContent = `${t('contents')} · ${t('fetchingChapters', { n: localDigits(done), total: localDigits(total) })}`; };
+      const ok = await downloadNovel(book, (done, total) => { state.done = done; state.total = total; say(done, total); }, () => state.live, paths);
+      downloads.delete(key);
+      toast(ok ? t('chaptersFetched', { n: countChapters(paths.size) }) : t('offlineStopped'));
+    } catch (e) { toast(describe(e), 'error'); }
+    title.textContent = `${t('contents')} · ${countChapters(novel.chapters.length)}`;
+    await refreshHave(); draw(find.value);
+  };
   const draw = (needle: string) => {
     list.replaceChildren();
     const n = needle.trim().toLowerCase();
     novel.chapters.forEach((c, i) => {
       if (n && !c.name.toLowerCase().includes(n)) return;
-      list.append(h('li', null, h('button', { type: 'button', onclick: () => void openAt(i).catch((e) => toast(describe(e), 'error')) }, h('span', { dir: 'auto' }, c.name), c.released ? h('span', { class: 'meta' }, shortDate(c.released)) : null)));
+      const on = picked.has(i); const got = have.has(c.path);
+      const b = h('button', { type: 'button', 'aria-pressed': String(on), class: (on ? 'on' : '') + (got ? ' have' : ''), onclick: () => { if (selecting()) { if (on) picked.delete(i); else picked.add(i); draw(find.value); } else void openAt(i).catch((e) => toast(describe(e), 'error')); } },
+        on ? icon('check') : got ? h('span', { class: 'have-mark', title: t('downloaded') }, icon('download')) : null,
+        h('span', { dir: 'auto', class: 'grow' }, c.name), c.released ? h('span', { class: 'meta' }, shortDate(c.released)) : null);
+      onHoldOrContext(b, () => { if (on) picked.delete(i); else picked.add(i); draw(find.value); });
+      list.append(h('li', null, b));
     });
+    drawBar();
   };
   find.addEventListener('input', () => draw(find.value));
   draw('');
+  void refreshHave().then(() => draw(find.value));
   return box;
 }
 function shortDate(s: string): string {

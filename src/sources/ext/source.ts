@@ -300,21 +300,24 @@ export async function saveNovelFile(book: Book, patch: (cur: WebNovel) => WebNov
   return next;
 }
 /** Fetch every chapter not yet in the file, a few at a time; `live` says whether to go on. */
-export async function downloadNovel(book: Book, onProgress: (done: number, total: number) => void, live?: () => boolean): Promise<boolean> {
+export async function downloadNovel(book: Book, onProgress: (done: number, total: number) => void, live?: () => boolean, only?: Set<string>): Promise<boolean> {
   const info = await readNovelFile(book.id); if (!info) throw new SourceError('parse', 'parse');
   const h = await extHandle(info.src);
   const content = { ...(info.content ?? {}) };
-  const wanted = info.chapters.filter((c) => !content[c.path]);
-  let done = info.chapters.length - wanted.length; onProgress(done, info.chapters.length);
+  // (Some chapters only, when asked — the ones picked in the list, as Mihon fetches picked chapters.)
+  const scope = only ? info.chapters.filter((c) => only.has(c.path)) : info.chapters;
+  const wanted = scope.filter((c) => !content[c.path]);
+  let done = scope.length - wanted.length; onProgress(done, scope.length);
   let failed = 0; let since = 0;
   await pool(wanted, 2, async (c) => {
     try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; }
     catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'blocked' || (e as SourceError).kind === 'offline') throw e; }
-    onProgress(++done, info.chapters.length);
+    onProgress(++done, scope.length);
     if (++since >= 10) { since = 0; await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } })); }
   }, live);
   const complete = wanted.every((c) => content[c.path]) && (!live || live());
-  await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content }, fetchedAt: complete ? Date.now() : cur.fetchedAt }));
+  const whole = complete && info.chapters.every((c) => content[c.path]);
+  await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content }, fetchedAt: whole ? Date.now() : cur.fetchedAt }));
   if (failed && !complete) throw new SourceError('incomplete', 'http');
   return complete;
 }

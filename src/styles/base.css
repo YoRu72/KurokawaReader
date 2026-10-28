@@ -1653,3 +1653,11 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .copy-hold, .series-head, .src-head, .vol-text, .src-chips, .src-actions, .series-actions { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .copy-hold { cursor: default; }
 .src-desc, .series-about { -webkit-user-select: text; user-select: text; }
+
+/* A novel's chapters: picked by a long press (a check), fetched ones marked. */
+.chapter-sel { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin: 0 0 6px; border-radius: 14px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.chapter-sel .sel-count { font-weight: 600; }
+.novel-chapters button.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.novel-chapters .have-mark { display: inline-flex; opacity: .55; }
+.novel-chapters .have-mark svg { width: 16px; height: 16px; }
+.novel-chapters button > .grow { flex: 1; min-width: 0; }
