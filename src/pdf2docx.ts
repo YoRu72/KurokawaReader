@@ -22,7 +22,7 @@ type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<
   /** The same font under two names (a second copy of the document names its fonts afresh): the other name → the first. */
   same?: Map<string, string>; byFile?: Map<string, string> };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; w: number; h: number; drop: number } };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number } };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
@@ -176,13 +176,41 @@ async function canvasPng(c: HTMLCanvasElement): Promise<Uint8Array> {
   const u = c.toDataURL('image/png'); const bin = atob(u.split(',')[1]); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a;
 }
 
-type Pic = { png: Uint8Array; x: number; y: number; w: number; h: number };
+type Pic = { png: Uint8Array; kind?: 'png' | 'jpg'; x: number; y: number; w: number; h: number };
 
 /** Pictures still being encoded (the browser encodes them off this thread): the pages go on meanwhile, and the
  *  document is built once they are all in. */
 let pendingPngs: Promise<void>[] = [];
-function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array }): void {
-  pendingPngs.push(canvasPng(c).then((b) => { into.png = b; }));
+function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array; kind?: 'png' | 'jpg' }): void {
+  // A picture with nothing see-through in it — a photograph, a page's coloured background, a scan — is a JPEG
+  // (a tenth of the PNG's bytes: a worksheet book of forty pages came out at seventy megabytes as PNGs); one
+  // with transparent parts, or small, stays a PNG, exact. A very big picture is also drawn a little smaller.
+  const px = c.width * c.height;
+  const opaque = px >= 40000 && isOpaque(c);
+  let src: HTMLCanvasElement = c;
+  if (opaque) {
+    const k = px > 2600000 ? Math.sqrt(2600000 / px) : 1;
+    const flat = document.createElement('canvas'); flat.width = Math.max(1, Math.round(c.width * k)); flat.height = Math.max(1, Math.round(c.height * k));
+    const g = flat.getContext('2d')!; g.fillStyle = '#fff'; g.fillRect(0, 0, flat.width, flat.height); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, flat.width, flat.height);
+    src = flat;
+  }
+  pendingPngs.push(canvasBytes(src, opaque ? 'image/jpeg' : 'image/png', 0.86).then((b) => { into.png = b; into.kind = opaque ? 'jpg' : 'png'; }));
+}
+/** Whether a canvas is painted everywhere (no pixel see-through), judged on a sample of its pixels. */
+function isOpaque(c: HTMLCanvasElement): boolean {
+  const ctx = c.getContext('2d', { willReadFrequently: true }); if (!ctx) return false;
+  const step = Math.max(1, Math.floor(Math.sqrt((c.width * c.height) / 4000)));
+  let clear = 0, n = 0;
+  for (let y = 0; y < c.height; y += step) {
+    const row = ctx.getImageData(0, y, c.width, 1).data;
+    for (let x = 0; x < c.width; x += step) { n++; if (row[x * 4 + 3] < 250) { clear++; if (clear > n * 0.002 + 2) return false; } }
+  }
+  return true;
+}
+async function canvasBytes(c: HTMLCanvasElement, type: string, quality?: number): Promise<Uint8Array> {
+  const blob = await new Promise<Blob | null>((res) => { let done = false; const t = setTimeout(() => { if (!done) { done = true; res(null); } }, 6000); c.toBlob((b) => { if (!done) { done = true; clearTimeout(t); res(b); } }, type, quality); });
+  if (blob) return new Uint8Array(await blob.arrayBuffer());
+  const u = c.toDataURL(type, quality); const bin = atob(u.split(',')[1]); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a;
 }
 /** The page drawn without its text, cut into the pieces that carry ink (header ornament, frame, rules,
  *  pictures) — each cropped tight, so pieces that repeat from page to page are stored once. */
@@ -1645,7 +1673,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     if (r.art) {
       const pic = r.art.pic;
       if (!pic) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art-nopic', r.art.font, r.art.l.toFixed(1), r.art.y.toFixed(1)); return new TextRun({ text: '' }); }
-      return new ImageRun({ type: 'png', data: pic.png, transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) } });
+      return new ImageRun({ type: pic.kind ?? 'png', data: pic.png, transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) } });
     }
     if (r.note !== undefined && footnotes?.has(r.note) && !r.br) return new FootnoteReferenceRun(footnotes.get(r.note)!);
     const key = `${r.font}|${r.bold && r.italic ? 'BoldItalic' : r.bold ? 'Bold' : r.italic ? 'Italic' : 'Regular'}`;
@@ -1778,7 +1806,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // (Stacked in the order the page has them: its drawing first, a formula's or a diagram's picture with its
     // words over it — not by their heights, which is what Word goes by when it is not told.)
     const picRuns = pg.pics.map((pic, i) => new ImageRun({
-      type: 'png', data: pic.png,
+      type: pic.kind ?? 'png', data: pic.png,
       transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) },
       floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(pic.x * EMU) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(pic.y * EMU) }, behindDocument: true, allowOverlap: true, lockAnchor: true, wrap: { type: TextWrappingType.NONE }, zIndex: 1 + i },
     }));

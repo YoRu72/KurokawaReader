@@ -317,8 +317,10 @@ html[dir='rtl'] .switch input:checked + i::after { transform: translateX(-20px);
 .library-tools { display: flex; gap: 10px; align-items: center; margin-bottom: 22px; flex-wrap: wrap; }
 /* On a phone the tool buttons sit in one row that scrolls sideways instead of wrapping into two. */
 @media (max-width: 699px) {
-  .library-tools { gap: 8px; }
-  .library-tools .tool-btn { width: 46px; height: 46px; flex: 0 0 46px; }
+  .library-tools { gap: 6px 6px; margin-bottom: 16px; }
+  .library-tools input[type='search'] { flex: 1 0 100%; }
+  .library-tools select { flex: 1 1 auto; min-width: 0; }
+  .library-tools .tool-btn { width: 44px; height: 44px; flex: 0 0 44px; }
 }
 .library-tools input[type='search'] { flex: 1; min-width: 200px; padding-inline-start: 46px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a3978a' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-size: 20px; background-position: 16px center; }
 html[dir='rtl'] .library-tools input[type='search'] { background-position: calc(100% - 16px) center; }
@@ -643,7 +645,11 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .cover.folder.series .stack img, .cover.folder.series .stack .ph { border-radius: 0; }
 .cover.folder.series .stack img:only-child, .cover.folder.series .stack .ph:only-child { grid-column: 1 / -1; }
 .cover.folder.series .badge.count { position: absolute; top: 6px; inset-inline-start: 6px; z-index: 2; background: var(--md-primary); color: var(--md-on-primary); border-radius: 8px; padding: 1px 7px; font-size: 12px; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
-.series-bar { display: flex; align-items: center; gap: 10px; padding: 2px 0 6px; }
+/* (A long series name shrinks to the room there is — the row never grows past the screen and drags the page sideways.) */
+.series-bar { display: flex; align-items: center; gap: 10px; padding: 2px 0 6px; min-width: 0; max-width: 100%; overflow: hidden; }
+.series-bar .chip { min-width: 0; max-width: 100%; flex: 0 1 auto; }
+.series-bar .chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.series-bar .src { flex: 0 0 auto; white-space: nowrap; }
 .tag-pick { margin: 8px 0 14px; }
 .folder-card.add .cover.folder { background: transparent; box-shadow: inset 0 0 0 2px dashed var(--md-outline-variant); border: 2px dashed var(--md-outline-variant); color: var(--md-on-surface-dim); }
 .folder-card.drop .cover { transform: scale(1.06); box-shadow: 0 0 0 3px var(--md-primary), var(--el-3); }
