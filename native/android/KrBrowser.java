@@ -144,6 +144,9 @@ final class KrBrowser {
         web.setFocusable(false);
         web.setFocusableInTouchMode(false);
         web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        // (Fully transparent: whatever shows through the app's own view — a moment of transition, a page drawn
+        // without a background — never lets the site's page be seen. Still visible to its own scripts.)
+        web.setAlpha(0f);
         content.addView(web, 0, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 

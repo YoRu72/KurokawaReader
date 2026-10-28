@@ -1216,6 +1216,8 @@ export const ar: Strings = {
   folderOtherFiles: 'لا شيء هنا يفتحه التطبيق؛ في المجلّد ملفاتٌ من أنواعٍ أخرى ({kinds}).',
   folderFiltered: 'لا شيء هنا من أنواع الملفات المختارة في التصفية.',
   openFolderOnSite: 'افتح هذا المجلّد في الموقع',
+  coverLog: 'الأغلفة والملفات: ما تعذّر مؤخّرًا',
+  coverLogEmpty: 'لم يتعذّر شيء.',
   downloadAllVolumes: 'تنزيل الكل: {n}',
   allInLibrary: 'كلها في المكتبة',
   fetchingVolume: 'المجلد {n} من {total}',

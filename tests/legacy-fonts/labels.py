@@ -24,10 +24,10 @@ FAN = L("AE=لأ C127=ث C131=ج C138=خ C141=د C142=د C143=ذ C144=ذ C145=ر
         "caron=و cedilla=ه cent=ط circumflex=م colon=: comma=، currency=ع d=ء daggerdbl=ف dieresis=ن dotaccent=ن eight=٨ "
         "ellipsis=ك emdash=و eth=ح exclamdown=ط ffi=ج ffl=ج fi=غ five=٥ four=٤ fraction=ظ g=أ grave=ل guillemotleft=غ "
         "guillemotright=ك guilsinglleft=غ hungarumlaut=ه j=ؤ k=إ m=ئ macron=م n=ئ nine=٩ ogonek=ه one=١ onehalf=خ "
-        "onequarter=ح ordfeminine=لإ p=ئ paragraph=ف periodcentered=ض plus=+ plusminus=خ q=ا questiondown=ل "
+        "onequarter=ح ordfeminine=لإ p=ئ paragraph=ف periodcentered=ف plus=+ plusminus=خ q=ا questiondown=ل "
         "quotedblbase=ق quotedblleft=ع quotedblright=ق quotesinglbase=ق quotesingle=ع r=ا ring=ن s=ب section=ع seven=٧ "
         "six=٦ space=\u200b t=ب thorn=ح three=٣ tilde=م two=٢ u=ب v=ب w=ة x=ة y=ت yen=ظ z=ت zero=٠ "
-        "A=. B=\u0640 I=\u064b J=\u064c K=\u064e L=\u064f M=\u0651 N=\u0652 P=\u200b T=\u064e\u0651 U=\u064f\u0651 V=\u0650\u0651 ampersand=× hyphen=- parenleft=( parenright=) period=، slash=/ perthousand=لك sterling=ظ")
+        "A=. B=\u0640 I=\u064b J=\u064c K=\u064e L=\u064f M=\u0651 N=\u0652 P=\u200b T=\u064e\u0651 U=\u064f\u0651 V=\u0650\u0651 ampersand=× hyphen=- parenleft=( parenright=) period=، slash=/ perthousand=ك sterling=ظ")
 SCHEMES = {'Adv_Lots_Ma': ISO, 'Adv_Lots_Ba': ISO, 'Adv.QAM603': ISO, 'Font260': FORMS, 'Font323': FORMS,
            'Font261': FORMS2, 'Font324': FORMS2, 'Font533': F533, 'Font534': F534, 'Adv.Fan5Bd': FAN, 'Adv.Fan7-L': FAN}
 Q = {
@@ -62,3 +62,7 @@ Q = {
  'AdvTT4ff65459': L("braceleft=۞"),
 }
 SCHEMES.update(Q)
+# Glyphs of another edition of these fonts (a 2021 3B2 book), labelled by eye.
+EXTRA = {'Adv.Fan5Bd': L("greater=[ question=] at=\u0640 h=أ braceright=ث"), 'Adv.Fan7-L': L("semicolon=؛ greater=[ question=] e=آ braceright=ث"),
+         'Font533': L("parenleft=ب parenright=ت hyphen=ج period=ح six=ف less=ه M=ف P=ل d=ر k=ظ s=ن w=ي"), 'Adv_IslSymb': {'Y': 'رحمه_الله'}, 'Adv_Lots_Ma': L("bracketleft=] bracketright=[")}
+for _n, _m in EXTRA.items(): SCHEMES.setdefault(_n, {}).update(_m)

@@ -1211,6 +1211,8 @@ export const en = {
   folderOtherFiles: 'Nothing here the app can open: the folder holds other kinds of files ({kinds}).',
   folderFiltered: 'Nothing here of the kinds of file chosen in the filters.',
   openFolderOnSite: 'Open this folder on the site',
+  coverLog: 'Covers and files: what went wrong lately',
+  coverLogEmpty: 'Nothing went wrong.',
   downloadAllVolumes: 'Download all {n}',
   allInLibrary: 'All in the library',
   fetchingVolume: 'Volume {n} of {total}',

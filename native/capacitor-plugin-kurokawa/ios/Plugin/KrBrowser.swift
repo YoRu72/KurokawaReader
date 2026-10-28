@@ -141,6 +141,7 @@ final class KrBrowser: NSObject {
         web.frame = win.bounds
         web.isUserInteractionEnabled = false
         web.accessibilityElementsHidden = true
+        web.alpha = 0.01   // (never seen through the app's own screen; still drawn, so its scripts run on)
         win.insertSubview(web, at: 0)
     }
 

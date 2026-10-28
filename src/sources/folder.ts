@@ -855,13 +855,13 @@ export function folderSource(repo: Repo): Source {
       const key = `peek:dir:${keyOf(urlOf(root, rel))}`;
       const had = await recall(key, 7 * 86400000); if (had && (had.cover || noCover())) return had;
       // (A folder that could not be read for a cover — a page of its own — is not asked again this session.)
-      if (coverless.has(rel)) return { at: Date.now() };
+      if ((coverless.get(rel) ?? 0) > Date.now()) return { at: Date.now() };
       try { return await coverOf(rel, key); }
-      catch (e) { if (!fatal(e)) coverless.add(rel); throw e; }
+      catch (e) { if (!fatal(e)) coverless.set(rel, Date.now() + 60000); throw e; }
     },
   };
   /** A folder's cover looked for (see folderCover). */
-  const coverless = new Set<string>();
+  const coverless = new Map<string, number>();
   const coverOf = async (rel: string, key: string): Promise<Peek> => {
     const idx = await loadIndex(repo);
     const s = idx && !rel.includes('/') ? seriesOf(idx).get(rel) : undefined;

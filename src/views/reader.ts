@@ -1599,9 +1599,10 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         const n = Number(cell.dataset.page);
         void viewer.thumbnail(n).then((url) => { const img = cell.querySelector('img'); if (img) img.src = url; });
       }
-    }, { root: overlay.querySelector('.gallery-body'), rootMargin: '400px 0px' });
+    }, { root: overlay.querySelector('.gallery-body'), rootMargin: '200px 0px' });
     for (let n = 1; n <= viewer.total; n++) {
-      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { back.remember(); viewer.goTo(n); close(); } }, h('img', { alt: String(n) }), h('span', null, String(n)));
+      // (The picture's place is a blank page until it is drawn — never a broken-picture mark.)
+      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { back.remember(); viewer.goTo(n); close(); } }, h('img', { alt: '' }), h('span', null, String(n)));
       grid.append(cell); io.observe(cell);
     }
     window.addEventListener('keydown', onKey);

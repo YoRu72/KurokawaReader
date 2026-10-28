@@ -10,7 +10,7 @@ import { request, bytesOf } from './http';
 import { db } from '../db';
 import { SourceError } from './types';
 
-export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean; /** a folder's: the file whose cover it shows */ ref?: string }
+export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean; /** a folder's: the file whose cover it shows */ ref?: string; /** a file that could not be read (for a minute) */ failed?: boolean }
 /** A peek as kept on the device: its cover a picture of its own (a data URL in what older versions kept). */
 type Stored = Omit<Peek, 'cover'> & { cover?: string; coverBlob?: Blob };
 
@@ -32,6 +32,9 @@ function learned(set: Set<string>, host: string): void {
   try { localStorage.setItem(HOSTS, JSON.stringify({ whole: [...wholeHosts].slice(-50), range: [...rangeHosts].slice(-50) })); } catch { /* kept for the session */ }
 }
 const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u; } };
+/** What went wrong lately when looking into files (for the reader to show when covers stay away). */
+export const peekLog: string[] = [];
+export function logPeek(line: string): void { peekLog.push(`${new Date().toISOString().slice(11, 19)} ${line}`); if (peekLog.length > 60) peekLog.shift(); }
 /** A host whose files a static web server serves (an h5ai folder's): taken to answer ranges until it says
  *  otherwise — its very first files asked for both ends at once. */
 export function assumeRanges(url: string): void { const h = hostOf(url); if (!wholeHosts.has(h)) rangeHosts.add(h); }
@@ -44,7 +47,14 @@ async function range(url: string, from: number, to?: number): Promise<Got> {
   if (r.status === 416) throw new SourceError('range', 'http', 416);
   if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
   const bytes = bytesOf(r.body);
-  if (r.status !== 206) { learned(wholeHosts, hostOf(url)); return { bytes, start: 0, total: bytes.length, whole: true }; }
+  if (r.status !== 206) {
+    // (Whole: counted against the host only when the answer was really more than the piece asked for — a small
+    // file answered whole for a range beyond its size is no sign.)
+    const asked = from < 0 ? -from : to === undefined ? Infinity : to - from + 1;
+    if (bytes.length > asked * 1.5 + 4096) learned(wholeHosts, hostOf(url));
+    logPeek(`whole ${r.status} ${bytes.length}B for ${from}-${to ?? ''} ${url.split('/').pop()?.slice(0, 50)}`);
+    return { bytes, start: 0, total: bytes.length, whole: true };
+  }
   learned(rangeHosts, hostOf(url));
   const m = /bytes\s+(\d+)-(\d+)\/(\d+|\*)/i.exec(r.headers['content-range'] ?? '');
   return { bytes, start: m ? Number(m[1]) : Math.max(0, from), total: m && m[3] !== '*' ? Number(m[3]) : undefined, whole: false };
@@ -427,7 +437,7 @@ export const known = (key: string): Peek | undefined => {
   return p;
 };
 const fileKey = (url: string, size?: number) => `peek:${h32(`${url}|${size ?? ''}`)}`;
-export const peekKnown = (url: string, size?: number, noCover = false): Peek | undefined => { const p = memGet(fileKey(url, size)); return p && (!p.noCover || noCover) ? p : undefined; };
+export const peekKnown = (url: string, size?: number, noCover = false): Peek | undefined => { const p = memGet(fileKey(url, size)); return p && !p.failed && (!p.noCover || noCover) ? p : undefined; };
 export const keyOf = (s: string) => h32(s);
 export const peekKeyOf = fileKey;
 
@@ -437,22 +447,25 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
   const key = fileKey(url, size);
   if (opts.headers) extra.set(hostOf(url), opts.headers);
   // (One read without its cover — covers were off — is read again when they are on.)
-  const usable = (p: Peek | undefined) => !!p && (!p.noCover || !!opts.noCover);
+  const usable = (p: Peek | undefined) => !!p && (!p.noCover || !!opts.noCover) && !p.failed;
   const had = memGet(key); if (usable(had)) return Promise.resolve(had!);
+  if (had?.failed) return Promise.resolve(null);
   const run = running.get(key); if (run) return run;
   const p = (async (): Promise<Peek | null> => {
     const stored = await recall(key);
     if (usable(stored)) return stored!;
     // (A server that sends whole files for ranges is not asked for its big ones.)
-    if (wholeHosts.has(hostOf(url)) && (size ?? Infinity) > 6 * 1024 * 1024) return null;
+    if (wholeHosts.has(hostOf(url)) && (size ?? Infinity) > 6 * 1024 * 1024) { logPeek(`skip: host sends whole files · ${url.split('/').pop()?.slice(0, 60)}`); return null; }
     try {
       const got = ext === 'epub' ? await peekEpub(url, !!opts.noCover) : ext === 'pdf' ? (opts.noCover ? null : await peekPdf(url, size)) : null;
       if (!got) return null;
       const { cover, ...rest } = got;
       return store(key, { ...rest, at: Date.now(), noCover: opts.noCover || undefined }, cover);
     } catch (e) {
-      // (What cannot be read is remembered as such for this session, not retried on every scroll.)
-      if ((e as SourceError).kind !== 'offline' && (e as SourceError).kind !== 'cloudflare' && (e as SourceError).kind !== 'blocked') memSet(key, { at: Date.now() });
+      const err = e as SourceError;
+      logPeek(`fail ${err.kind ?? ''} ${err.status ?? ''} ${err.message?.slice(0, 80)} · ${url.split('/').pop()?.slice(0, 60)}`);
+      // (What cannot be read is set aside for a minute, not asked again on every scroll — and then tried once more.)
+      if (err.kind !== 'offline' && err.kind !== 'cloudflare' && err.kind !== 'blocked') { memSet(key, { at: Date.now(), failed: true } as Peek); setTimeout(() => { if (mem.get(key)?.failed) mem.delete(key); }, 60000); }
       return null;
     }
   })();

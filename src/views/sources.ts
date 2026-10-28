@@ -18,7 +18,7 @@ import * as link from '../sources/shamelalink';
 import { passChallenge, forgetSite, openSite } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
-import { schedule } from '../sources/peek';
+import { schedule, peekLog } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
@@ -414,7 +414,7 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
     const mine = ++token; const shown: SourceBook = { ...b, id: cur.id, file: cur.file.ext === 'epub' || !epub ? cur.file : epub };
     const now = src.peekNow?.(shown);
     if (now) fill(now, mine);
-    else if (src.peek) observe(row, async () => { const p = await src.peek!(shown).catch(() => null); if (p) fill(p, mine); });
+    else if (src.peek) observe(row, async () => { cover.classList.add('loading'); try { const p = await src.peek!(shown).catch(() => null); if (p) fill(p, mine); } finally { cover.classList.remove('loading'); } });
   };
   look();
   return row;
@@ -532,6 +532,8 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   if (hnd && (hnd.ln?.pluginSettings || hnd.my?.prefs.length)) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
   // (The site itself, in the app's browser: a sign-in, a check passed there carries over — as Mihon's WebView.)
   if (/^https?:\/\//i.test(src.site ?? '')) topActions.append(iconButton('globe', t('openInAppBrowser'), () => void openSite(src.site)));
+  // (What went wrong with covers and files lately, for a web folder: shown on a long press of the title.)
+  if (src.id.startsWith('dir:')) { let hold = 0; const show = () => { const sh = openSheet(t('coverLog'), t('close')); const pre = h('pre', { class: 'cover-log', dir: 'ltr' }, peekLog.length ? peekLog.join('\n') : t('coverLogEmpty')); sh.body.append(h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'btn small tonal', onclick: () => void navigator.clipboard?.writeText(peekLog.join('\n')).then(() => toast(t('copied'))) }, icon('copy'), t('copySelected'))), pre); }; titleEl.addEventListener('pointerdown', () => { hold = window.setTimeout(show, 700); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) titleEl.addEventListener(ev, () => clearTimeout(hold)); }
   topActions.append(iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); })));
   const root = h('div', { class: 'view sources-view' },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(src.id.startsWith('dir:') && !q && shelf ? path(src.id, { shelf: shelf.split('/').slice(0, -1).join('/') || undefined }) : q || shelf || tags.length ? path(src.id) : '/sources')), titleEl, topActions),
@@ -658,7 +660,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       };
       const now = src.folderCoverNow?.(b.openShelf);
       if (now) fill(now);
-      else observe(el, async () => fill(await src.folderCover!(b.openShelf!).catch(() => null)));
+      else observe(el, async () => { cover.classList.add('loading'); try { fill(await src.folderCover!(b.openShelf!).catch(() => null)); } finally { cover.classList.remove('loading'); } });
     }
     return el;
   };

@@ -961,14 +961,40 @@ export class PdfViewer {
     return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), type, 0.92));
   }
 
-  /** Small thumbnail (data URL) for the pages grid. */
-  async thumbnail(n: number, width = 180): Promise<string> {
+  /** Small thumbnails for the pages grid and the strip: drawn two at a time, the ones asked for last (those on
+   *  the screen now) first, by the device's own renderer where there is one, each kept once drawn. */
+  private thumbs = new Map<string, Promise<string>>();
+  private thumbQueue: { key: string; n: number; width: number; ok: (u: string) => void; fail: (e: unknown) => void }[] = [];
+  private thumbBusy = 0;
+  thumbnail(n: number, width = 180): Promise<string> {
+    const key = `${n}:${width}`;
+    const had = this.thumbs.get(key); if (had) return had;
+    const p = new Promise<string>((ok, fail) => { this.thumbQueue.push({ key, n, width, ok, fail }); this.pumpThumbs(); });
+    this.thumbs.set(key, p);
+    p.catch(() => this.thumbs.delete(key));
+    return p;
+  }
+  private pumpThumbs(): void {
+    while (this.thumbBusy < 2 && this.thumbQueue.length) {
+      const job = this.thumbQueue.pop()!;   // the last asked for: what the reader is looking at now
+      this.thumbBusy++;
+      void this.drawThumb(job.n, job.width).then(job.ok, job.fail).finally(() => { this.thumbBusy--; this.pumpThumbs(); });
+    }
+  }
+  private async drawThumb(n: number, width: number): Promise<string> {
+    if (this.destroyed) throw new Error('closed');
+    const px = Math.round(width * Math.min(2, this.device()));
+    const canvas = offscreen(document.createElement('canvas'));
+    if (this.native) {
+      canvas.width = px; canvas.height = Math.round(px * (this.baseHeights[n - 1] / this.baseWidths[n - 1] || 1.4));
+      if (await this.nativeDraw(n, canvas, { width: px }).catch(() => false)) return canvas.toDataURL('image/jpeg', 0.7);
+    }
     const page = await this.doc.getPage(n);
     const base = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: width / base.width });
-    const canvas = offscreen(document.createElement('canvas'));
+    const viewport = page.getViewport({ scale: px / base.width });
     canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-    await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
+    const ctx = canvas.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvas, canvasContext: ctx, viewport }).promise;
     return canvas.toDataURL('image/jpeg', 0.7);
   }
 
