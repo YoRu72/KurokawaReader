@@ -1334,6 +1334,7 @@ export const ar: Strings = {
   folderOtherFiles: 'لا شيء هنا يفتحه التطبيق؛ في المجلّد ملفاتٌ من أنواعٍ أخرى ({kinds}).',
   folderFiltered: 'لا شيء هنا من أنواع الملفات المختارة في التصفية.',
   openFolderOnSite: 'افتح هذا المجلّد في الموقع',
+  viewCover: 'عرض الغلاف',
   coverTitle: 'الغلاف',
   editCover: 'تعديل الغلاف',
   restoreCover: 'استعادة الغلاف الأصلي',

@@ -301,73 +301,26 @@ public class KurokawaPlugin extends Plugin {
         if (!id.isEmpty()) downloads.put(id, cancelled);
         new Thread(() -> {
             try {
-                // Resolve redirects once (GitHub → signed storage URL) with a 1-byte range probe.
                 java.net.URL url = new java.net.URL(urlStr);
-                java.net.HttpURLConnection probe = null; int code = 0;
-                for (int hop = 0; hop < 8; hop++) {
-                    probe = open(url, headers); probe.setRequestProperty("Range", "bytes=0-0");
-                    code = probe.getResponseCode();
-                    if (code >= 300 && code < 400) { String loc = probe.getHeaderField("Location"); probe.disconnect(); url = new java.net.URL(url, loc); continue; }
-                    break;
-                }
-                if (code >= 400) { call.reject("HTTP " + code); return; }
-                long total = -1;
-                String cr = probe.getHeaderField("Content-Range");
-                if (code == 206 && cr != null && cr.contains("/")) try { total = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) {}
-                if (total < 0) { try { total = Long.parseLong(probe.getHeaderField("Content-Length")); if (code == 206 && total == 1) total = -1; } catch (Exception ignored) {} }
-                boolean ranged = code == 206 && total > 0;
-                probe.disconnect();
                 File dir = persist ? new File(getContext().getFilesDir(), "downloads") : new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
                 // (Written under a ".part" name and renamed when whole: a file under its own name is always complete —
                 // a downloaded update is kept and used again, so a half one must never pass for it.)
                 final File done0 = new File(dir, name);
                 File out = new File(dir, name + ".part");
                 final java.util.concurrent.atomic.AtomicLong got = new java.util.concurrent.atomic.AtomicLong();
-                final long fTotal = total;
+                final KrDownloader.Result info = new KrDownloader.Result();
                 Runnable report = new Runnable() {
                     long lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0;
-                    public void run() {
+                    public synchronized void run() {
                         long now = System.currentTimeMillis(); if (now - lastT < 300) return;
-                        long g = got.get(); speed = speed * 0.5 + 0.5 * ((g - lastGot) / ((now - lastT) / 1000.0)); lastT = now; lastGot = g;
-                        JSObject ev = new JSObject(); ev.put("id", id); ev.put("got", g); ev.put("total", fTotal); ev.put("speed", speed); ev.put("pct", fTotal > 0 ? (int) (g * 100 / fTotal) : 0);
+                        long g = got.get(); double inst = (g - lastGot) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + 0.4 * inst; lastT = now; lastGot = g;
+                        long tot = info.total;
+                        JSObject ev = new JSObject(); ev.put("id", id); ev.put("got", g); ev.put("total", tot); ev.put("speed", speed); ev.put("pct", tot > 0 ? (int) (g * 100 / tot) : 0); ev.put("connections", info.connections);
                         notifyListeners("downloadProgress", ev);
                     }
                 };
-                if (ranged && total > 4L * 1024 * 1024 && connections > 1) {
-                    try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "rw")) { raf.setLength(total); }
-                    int n = (int) Math.min(connections, Math.max(1, total / (1024 * 1024)));
-                    long seg = (total + n - 1) / n;
-                    final java.net.URL fUrl = url;
-                    final Exception[] fail = { null };
-                    Thread[] workers = new Thread[n];
-                    for (int i = 0; i < n; i++) {
-                        final long from = i * seg, to = Math.min(total - 1, from + seg - 1);
-                        workers[i] = new Thread(() -> {
-                            long pos = from;
-                            for (int attempt = 0; attempt < 4 && pos <= to && fail[0] == null && !cancelled.get(); attempt++) {
-                                try {
-                                    java.net.HttpURLConnection c = open(fUrl, headers);
-                                    c.setRequestProperty("Range", "bytes=" + pos + "-" + to);
-                                    if (c.getResponseCode() != 206) throw new java.io.IOException("HTTP " + c.getResponseCode());
-                                    try (InputStream in = c.getInputStream(); java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "rw")) {
-                                        raf.seek(pos); byte[] buf = new byte[1 << 16]; int r;
-                                        while (pos <= to && !cancelled.get() && (r = in.read(buf)) > 0) { raf.write(buf, 0, r); pos += r; got.addAndGet(r); synchronized (report) { report.run(); } }
-                                    }
-                                } catch (Exception e) { if (attempt == 3) fail[0] = e; }
-                            }
-                        });
-                        workers[i].start();
-                    }
-                    for (Thread w : workers) w.join();
-                    if (fail[0] != null && !cancelled.get()) throw fail[0];
-                } else {
-                    java.net.HttpURLConnection conn = open(url, headers);
-                    if (conn.getResponseCode() >= 400) { call.reject("HTTP " + conn.getResponseCode()); return; }
-                    try (InputStream in = conn.getInputStream(); FileOutputStream fo = new FileOutputStream(out)) {
-                        byte[] buf = new byte[1 << 16]; int r;
-                        while (!cancelled.get() && (r = in.read(buf)) > 0) { fo.write(buf, 0, r); got.addAndGet(r); report.run(); }
-                    }
-                }
+                KrDownloader.Result res = KrDownloader.fetch(url, out, connections, u -> open(u, headers), cancelled, got, info, report);
+                final long fTotal = res.total;
                 if (cancelled.get()) { out.delete(); call.reject("cancelled"); return; }
                 if (fTotal > 0 && out.length() != fTotal) { out.delete(); call.reject("Download failed: incomplete (" + out.length() + " of " + fTotal + ")"); return; }
                 done0.delete();

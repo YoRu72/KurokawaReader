@@ -1329,6 +1329,7 @@ export const en = {
   folderOtherFiles: 'Nothing here the app can open: the folder holds other kinds of files ({kinds}).',
   folderFiltered: 'Nothing here of the kinds of file chosen in the filters.',
   openFolderOnSite: 'Open this folder on the site',
+  viewCover: 'View the cover',
   coverTitle: 'Cover',
   editCover: 'Edit cover',
   restoreCover: 'Restore the original cover',

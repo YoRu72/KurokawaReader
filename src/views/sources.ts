@@ -593,7 +593,7 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
   const row = h('article', { class: 'vol-row' }, cover,
     h('div', { class: 'vol-text' }, copyOnHold(h('b', { class: 'vol-title', dir: 'auto' }, b.title)), sub, chips, extra, actions, tocSlot));
   // (Held: the quick way in — into the library with tags, or to the device.)
-  onHoldOrContext(cover, () => void quickAdd(src, { ...b, file: cur.file, id: cur.id }, lib, null, rows));
+  onHoldOrContext(cover, () => void quickAdd(src, { ...b, file: cur.file, id: cur.id }, lib, null, rows, cover));
   draw();
   const fill = (p: { cover?: string; title?: string; author?: string; toc?: { label: string; depth: number }[] }, mine: number) => {
     if (mine !== token) return;
@@ -629,6 +629,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   const runKey = `${src.id}|${b.id}`;
   const [c1, c2] = coverColors(b.title);
   const cover = h('div', { class: 'series-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, icon('books'));
+  coverTap(cover, src, b.title);
   const status = h('small', { class: 'series-status', hidden: true });
   // (A volume is in the library when any of its editions is.)
   const has = (i: number) => (b.volumeIds?.[i] ?? [`f:${files[i].id}`]).some((id) => lib.has(id));
@@ -700,7 +701,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   // (The first volume's cover, and its publisher's blurb as the series' — folded to a few lines, a tap opens it.)
   const fill = (p: { cover?: string; description?: string; author?: string } | null | undefined) => {
     if (!p) return;
-    if (p.cover) cover.replaceChildren(h('img', { src: p.cover, alt: '' }));
+    if (p.cover) { cover.classList.add('cover-tap'); cover.replaceChildren(h('img', { src: p.cover, alt: '' })); }
     if (p.author && !byline.textContent) { byline.textContent = p.author; byline.hidden = false; }
     if (p.description && !about.textContent) { about.textContent = p.description; about.hidden = false; }
   };
@@ -850,7 +851,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       formatMarks(b.formats),
       b.description && src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? h('span', { class: 'src-snippet', dir: 'auto' }, b.description) : null);
     // Held: added to the library from here, with the tags asked (as Mihon's long press in Browse).
-    onHoldOrContext(el, () => void quickAdd(src, b, lib, hnd ?? null, rows));
+    onHoldOrContext(el, () => void quickAdd(src, b, lib, hnd ?? null, rows, el));
     // A book already in the library (fetched from here before): marked so, and opened from its card.
     if (b.look !== 'folder' && (lib.has(b.id) || b.alts?.some((a) => lib.has(a.id)))) { el.classList.add('in-library'); cover.append(h('span', { class: 'have-mark' }, icon('check'), t('inLibrary'))); }
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
@@ -911,6 +912,32 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
 
 /** A cover from a site: loaded as a picture; one the site refuses to a bare request is fetched with the
  *  extension's headers. */
+/** A cover that opens on its own when tapped (Mihon's cover view): whatever picture it holds then — given by the
+ *  source, or read from the file later. For a title in the library (`ids`: the source's ids for it), a picture
+ *  of one's own can take its place. */
+function coverTap(el: HTMLElement, src: Source, title: string, hnd?: Handle, ids: string[] = []): void {
+  el.addEventListener('click', (e) => {
+    const img = el.querySelector('img'); if (!img) return;
+    e.preventDefault(); e.stopPropagation();
+    openCover(img, src, title, hnd, ids);
+  });
+}
+function openCover(img: HTMLImageElement, src: Source, title: string, hnd?: Handle, ids: string[] = []): void {
+  {
+    void Promise.all([import('../ui/coverview'), fromSource(src.id)]).then(async ([m, mine]) => {
+      const libId = ids.map((x) => mine.get(x)).find(Boolean);
+      const book = libId ? await db.getBook(libId) : undefined;
+      const headers = hnd ? (hnd.ln?.imageRequestInit?.headers as Record<string, string> | undefined) ?? hnd.my?.headers ?? { referer: hnd.item.site } : undefined;
+      const edit: import('../ui/coverview').CoverEdit | undefined = book ? {
+        custom: () => book.coverOrig !== undefined,
+        set: async (picture) => { const { shrinkCover, forgetCover, coverUrl } = await import('../library'); const small = await shrinkCover(picture); const b = await db.updateBook(book.id, (x) => { if (x.coverOrig === undefined) x.coverOrig = x.cover ?? null; x.cover = small; }); forgetCover(book.id); if (b) book.coverOrig = b.coverOrig; return (b && coverUrl(b)) || ''; },
+        restore: async () => { const { forgetCover, coverUrl } = await import('../library'); const b = await db.updateBook(book.id, (x) => { x.cover = x.coverOrig ?? undefined; delete x.coverOrig; }); forgetCover(book.id); delete book.coverOrig; return b ? coverUrl(b) : null; },
+      } : undefined;
+      const url = img.currentSrc || img.src;
+      m.showCover({ url, title, bytes: () => m.coverBytes(url, headers), edit });
+    });
+  }
+}
 function coverImg(url: string, hnd?: Handle): HTMLElement {
   const img = h('img', { src: url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
   img.addEventListener('error', () => {
@@ -1009,20 +1036,13 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     const bigCover = h('div', { class: 'src-cover big' + (d.cover ? ' cover-tap' : ''), style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, d.cover ? coverImg(d.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, d.title));
     // The cover tapped: on its own, full screen, to share or save (Mihon's cover view) — and, for a title in the
     // library, a picture of one's own in its place.
-    if (d.cover) bigCover.addEventListener('click', () => {
-      const img = bigCover.querySelector('img'); if (!img) return;
-      void Promise.all([import('../ui/coverview'), fromSource(src.id)]).then(async ([m, mine]) => {
-        const libId = mine.get(d.id) ?? mine.get(id);
-        const book = libId ? await db.getBook(libId) : undefined;
-        const headers = hnd ? (hnd.ln?.imageRequestInit?.headers as Record<string, string> | undefined) ?? hnd.my?.headers ?? { referer: hnd.item.site } : undefined;
-        const edit: import('../ui/coverview').CoverEdit | undefined = book ? {
-          custom: () => book.coverOrig !== undefined,
-          set: async (picture) => { const { shrinkCover, forgetCover, coverUrl } = await import('../library'); const small = await shrinkCover(picture); const b = await db.updateBook(book.id, (x) => { if (x.coverOrig === undefined) x.coverOrig = x.cover ?? null; x.cover = small; }); forgetCover(book.id); if (b) book.coverOrig = b.coverOrig; return (b && coverUrl(b)) || ''; },
-          restore: async () => { const { forgetCover, coverUrl } = await import('../library'); const b = await db.updateBook(book.id, (x) => { x.cover = x.coverOrig ?? undefined; delete x.coverOrig; }); forgetCover(book.id); delete book.coverOrig; return b ? coverUrl(b) : null; },
-        } : undefined;
-        m.showCover({ url: img.currentSrc || img.src, title: d.title, bytes: () => m.coverBytes(img.currentSrc || img.src, headers), edit });
-      });
-    });
+    coverTap(bigCover, src, d.title, hnd, [d.id, id]);
+    // (A file's own cover, read from it, when the source gives none: a volume of a web folder.)
+    if (!d.cover && src.peek && d.files.length) {
+      const f = d.files.find((x) => x.ext === 'epub') ?? d.files.find((x) => x.ext === 'pdf') ?? d.files[0];
+      const sb: SourceBook = { id: d.id, title: d.title, file: f };
+      void Promise.resolve(src.peekNow?.(sb) ?? src.peek(sb)).then((p) => { if (p?.cover && !gone) { bigCover.classList.add('cover-tap'); bigCover.replaceChildren(h('img', { src: p.cover, alt: '' })); } }).catch(() => undefined);
+    }
     const head = h('div', { class: 'src-head' },
       bigCover,
       h('div', { class: 'src-head-text' },
@@ -1046,7 +1066,7 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
 
 /** Held on a card (as Mihon adds a title from Browse with a long press): the book or series added to the
  *  library from here — a file fetched, a web novel followed — with the tags asked, or the file to the device. */
-async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>): Promise<void> {
+async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>, coverEl?: HTMLElement): Promise<void> {
   const sh = openSheet(b.title, t('close'));
   sh.body.style.fontFamily = 'var(--font-ui)';
   if (b.author) sh.body.append(h('p', { class: 'hint', dir: 'auto' }, b.author));
@@ -1054,6 +1074,9 @@ async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hn
   const row = (ic: string, label: string, fn: () => void | Promise<void>, cls = '') => list.append(h('button', { type: 'button', class: `dest-row ${cls}`, onclick: () => { sh.close(); void Promise.resolve(fn()).catch((e) => { if (!/^(cancelled|deviceOnly)$/.test((e as Error)?.message ?? '')) toast(describe(e), 'error'); }); } }, icon(ic), h('span', { class: 'name', dir: 'auto' }, label)));
   const inLib = lib.get(b.id) ?? (b.alts ?? []).map((a) => lib.get(a.id)).find(Boolean);
   if (inLib) row('play', `${t('inLibrary')} · ${t('open')}`, () => navigate(`/read/${inLib}`));
+  // (The card's cover, on its own: Mihon's cover view, from the shelf.)
+  const shown = coverEl?.querySelector('img');
+  if (shown) row('images', t('viewCover'), () => openCover(shown, src, b.title, hnd ?? undefined, [b.id]));
   if (b.file && !inLib) {
     const file = b.file; const title = b.title;
     const go = async (deviceOnly: boolean) => {

@@ -77,6 +77,14 @@ const SITE = 'http://localhost:5403';
     ok('search every source: each source a row, Beta found, its page opens', gs.cards.length >= 1 && gs.cards.every((c) => /Beta/.test(c)) && gs.sections >= 2 && /Beta/.test(opened));
     if (!(gs.cards.length >= 1 && /Beta/.test(opened))) console.log('  gs', JSON.stringify(gs), opened);
     await page.evaluate((h) => { location.hash = h; }, here); await page.waitForSelector('.src-grid .src-card'); await page.waitForTimeout(300);
+    // Held on the shelf: the card's cover on its own.
+    await page.waitForSelector('.src-grid .src-card .src-cover img', { timeout: 10000 }).catch(() => {});
+    await page.dispatchEvent('.src-grid .src-card', 'contextmenu'); await page.waitForSelector('.sheet .dest-row');
+    const viewRow = await page.$('.sheet .dest-row:has-text("View the cover")');
+    if (viewRow) { await viewRow.click(); await page.waitForSelector('.cover-view img', { timeout: 5000 }).catch(() => {}); }
+    ok('held on a shelf: «View the cover» opens it', !!viewRow && !!(await page.$('.cover-view img')));
+    if (await page.$('.cover-view')) await page.click('.cover-view .lb-close'); else await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
     await page.click('.topbar-actions button[aria-label="Filters"]'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
     ok('filter sheet shows the plugin filters', /Sort by/.test(await page.$eval('.sheet', (e) => e.textContent)) && /Genres/.test(await page.$eval('.sheet', (e) => e.textContent)));
     await page.click('.sheet .chip:has-text("Romance")'); await page.click('.sheet .btn.primary'); await page.waitForTimeout(1500);

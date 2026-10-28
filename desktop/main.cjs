@@ -482,22 +482,29 @@ async function downloadSegmented(e, url, file, id = '') {
   const cr = probe.headers.get('content-range');
   if (probe.status === 206 && cr && cr.includes('/')) { total = Number(cr.split('/').pop()); ranged = total > 0; }
   try { await probe.arrayBuffer(); } catch { /* drain */ }
-  let got = 0, lastT = Date.now(), lastGot = 0, speed = 0;
-  const report = () => { const now = Date.now(); if (now - lastT < 400) return; speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; e.sender.send('kr:download-progress', { id, pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); };
-  if (ranged && total > 4 * 1048576) {
-    const n = Math.min(8, Math.max(1, Math.floor(total / 1048576)));
-    const seg = Math.ceil(total / n);
+  let got = 0, lastT = Date.now(), lastGot = 0, speed = 0, conns = 1;
+  const report = () => { const now = Date.now(); if (now - lastT < 400) return; const inst = (got - lastGot) / ((now - lastT) / 1000); speed = speed ? speed * 0.6 + inst * 0.4 : inst; lastT = now; lastGot = got; e.sender.send('kr:download-progress', { id, pct: total ? Math.round((got / total) * 100) : 0, got, total, speed, connections: conns }); };
+  if (ranged && total > 2 * 1048576) {
+    // (Cut into chunks of a few megabytes taken in turn by eight connections: a slow one holds up only its own
+    // chunk — the way download managers fetch.)
+    const n = Math.min(8, Math.max(1, Math.floor(total / 524288)));
+    const chunk = Math.max(1048576, Math.min(8 * 1048576, Math.floor(total / (n * 4))));
+    conns = n;
     const fh = await fs.promises.open(file, 'w'); await fh.truncate(total);
+    let next = 0;
     try {
-      await Promise.all(Array.from({ length: n }, async (_, i) => {
-        let pos = i * seg; const to = Math.min(total - 1, pos + seg - 1);
-        for (let attempt = 0; attempt < 4 && pos <= to; attempt++) {
-          try {
-            const res = await net.fetch(final, fetchOpts({ Range: `bytes=${pos}-${to}` }));
-            if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
-            const reader = res.body.getReader();
-            for (;;) { const { done, value } = await reader.read(); if (done) break; await fh.write(Buffer.from(value), 0, value.length, pos); pos += value.length; got += value.length; report(); }
-          } catch (err) { if (attempt === 3) throw err; }
+      await Promise.all(Array.from({ length: n }, async () => {
+        for (;;) {
+          const from = next; next += chunk; if (from >= total) return;
+          const to = Math.min(total - 1, from + chunk - 1); let pos = from;
+          for (let attempt = 0; pos <= to; attempt++) {
+            try {
+              const res = await net.fetch(attempt >= 2 ? url : final, fetchOpts({ Range: `bytes=${pos}-${to}` }));
+              if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
+              const reader = res.body.getReader();
+              for (;;) { const { done, value } = await reader.read(); if (done) break; await fh.write(Buffer.from(value), 0, value.length, pos); pos += value.length; got += value.length; report(); }
+            } catch (err) { if (attempt >= 4) throw err; await new Promise((r) => setTimeout(r, 400 * (attempt + 1))); }
+          }
         }
       }));
     } finally { await fh.close(); }

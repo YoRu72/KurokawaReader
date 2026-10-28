@@ -189,6 +189,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     const pic = (src) => /^blob:|^data:image\//.test(src);
     ok('every volume\'s cover and contents, read from the file without fetching it', sub.rows.every((r) => pic(r.cover) && r.toc >= 3) && /Show all/.test(sub.rows[0].more || '') && /Lewis Carroll/.test(sub.rows[0].meta || '') && pic(sub.cover));
     if (!sub.rows.every((r) => pic(r.cover) && r.toc >= 3)) console.log('  sub:', JSON.stringify(sub));
+    // The series' cover opens on its own (Mihon's cover view); so does a volume's, on its page (read from the file).
+    await page.click('.series-head .series-cover'); await page.waitForSelector('.cover-view img', { timeout: 5000 }).catch(() => {});
+    const seriesView = !!(await page.$('.cover-view img'));
+    if (seriesView) await page.click('.cover-view .lb-close');
+    const here = await page.evaluate(() => location.hash);
+    await page.click('.vol-row .vol-cover'); await page.waitForSelector('.src-head .src-cover.big img', { timeout: 15000 }).catch(() => {});
+    await page.click('.src-head .src-cover.big'); await page.waitForSelector('.cover-view img', { timeout: 5000 }).catch(() => {});
+    const volView = !!(await page.$('.cover-view img'));
+    if (volView) await page.click('.cover-view .lb-close');
+    ok('covers open on their own: the series\' and a volume\'s (read from its file)', seriesView && volView);
+    await page.goBack(); await page.waitForSelector('.series-head', { timeout: 15000 }); await page.waitForTimeout(400);
+    if ((await page.evaluate(() => location.hash)) !== here) console.log('  not back at', here);
     const got = await (await fetch('http://localhost:5401/__otl/ranges')).json();
     ok('… by ranges of the files (never a whole volume)', got.some((r) => /^alice-in-wonderland\.epub \d+-\d+$/.test(r)) && got.every((r) => { const [a, b] = r.split(' ')[1].split('-').map(Number); return b - a < 1024 * 1024; }));
     await page.screenshot({ path: path.join(__dirname, 'folder-series.png') });
