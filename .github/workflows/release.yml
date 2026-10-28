@@ -118,6 +118,9 @@ jobs:
     needs: version
     name: iOS IPA (unsigned, for AltStore / SideStore)
     runs-on: macos-14
+    # (A macOS runner that never comes is not a reason to hold the release: the IPA is attached when it does.)
+    timeout-minutes: 40
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -258,12 +261,17 @@ jobs:
   release:
     name: Publish release
     needs: [version, web, android, ios, windows, macos, linux]
+    # Published when every build but the iOS one succeeded (that one may be missing when no macOS runner came).
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.macos.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
+      - name: Note a missing IPA
+        if: ${{ needs.ios.result != 'success' }}
+        run: echo "IOS_NOTE=- _The iOS build did not run this time (no macOS runner came); the previous release's IPA still works, and the next release will carry a new one._" >> $GITHUB_ENV
       - name: Release notes
         run: |
           # What's new: commit subjects since the previous release, split into bullets.
@@ -276,6 +284,7 @@ jobs:
             echo
             echo "## What's new"
             if [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
+            if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
             echo
             echo "## Files"
             echo
