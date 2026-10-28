@@ -9,7 +9,7 @@ import { findVertical, plainVerticalForms } from './pdfvertical';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
 import { loadPdfjs, offscreen } from './formats/pdf';
-import { packDocx, type ZipLike } from './ziputil';
+import { type ZipLike } from './ziputil';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
@@ -22,7 +22,7 @@ type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<
   /** The same font under two names (a second copy of the document names its fonts afresh): the other name → the first. */
   same?: Map<string, string>; byFile?: Map<string, string> };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; w: number; h: number; drop: number } };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number } };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
@@ -41,9 +41,11 @@ type Note = { num: number; paras: Block[] };
 type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean };
 /** Part of a page: full width (one column) or set in columns (blocks per column in reading order, column edges in page x). */
 type Region = { cols: Block[][]; edges: [number, number][] };
+/** A box of text at its own place on a designed page (points from the page's top-left corner). */
+type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] };
 /** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
-type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number } };
+type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -176,13 +178,41 @@ async function canvasPng(c: HTMLCanvasElement): Promise<Uint8Array> {
   const u = c.toDataURL('image/png'); const bin = atob(u.split(',')[1]); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a;
 }
 
-type Pic = { png: Uint8Array; x: number; y: number; w: number; h: number };
+type Pic = { png: Uint8Array; kind?: 'png' | 'jpg'; x: number; y: number; w: number; h: number };
 
 /** Pictures still being encoded (the browser encodes them off this thread): the pages go on meanwhile, and the
  *  document is built once they are all in. */
 let pendingPngs: Promise<void>[] = [];
-function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array }): void {
-  pendingPngs.push(canvasPng(c).then((b) => { into.png = b; }));
+function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array; kind?: 'png' | 'jpg' }): void {
+  // A picture with nothing see-through in it — a photograph, a page's coloured background, a scan — is a JPEG
+  // (a tenth of the PNG's bytes: a worksheet book of forty pages came out at seventy megabytes as PNGs); one
+  // with transparent parts, or small, stays a PNG, exact. A very big picture is also drawn a little smaller.
+  const px = c.width * c.height;
+  const opaque = px >= 40000 && isOpaque(c);
+  let src: HTMLCanvasElement = c;
+  if (opaque) {
+    const k = px > 2600000 ? Math.sqrt(2600000 / px) : 1;
+    const flat = document.createElement('canvas'); flat.width = Math.max(1, Math.round(c.width * k)); flat.height = Math.max(1, Math.round(c.height * k));
+    const g = flat.getContext('2d')!; g.fillStyle = '#fff'; g.fillRect(0, 0, flat.width, flat.height); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, flat.width, flat.height);
+    src = flat;
+  }
+  pendingPngs.push(canvasBytes(src, opaque ? 'image/jpeg' : 'image/png', 0.86).then((b) => { into.png = b; into.kind = opaque ? 'jpg' : 'png'; }));
+}
+/** Whether a canvas is painted everywhere (no pixel see-through), judged on a sample of its pixels. */
+function isOpaque(c: HTMLCanvasElement): boolean {
+  const ctx = c.getContext('2d', { willReadFrequently: true }); if (!ctx) return false;
+  const step = Math.max(1, Math.floor(Math.sqrt((c.width * c.height) / 4000)));
+  let clear = 0, n = 0;
+  for (let y = 0; y < c.height; y += step) {
+    const row = ctx.getImageData(0, y, c.width, 1).data;
+    for (let x = 0; x < c.width; x += step) { n++; if (row[x * 4 + 3] < 250) { clear++; if (clear > n * 0.002 + 2) return false; } }
+  }
+  return true;
+}
+async function canvasBytes(c: HTMLCanvasElement, type: string, quality?: number): Promise<Uint8Array> {
+  const blob = await new Promise<Blob | null>((res) => { let done = false; const t = setTimeout(() => { if (!done) { done = true; res(null); } }, 6000); c.toBlob((b) => { if (!done) { done = true; clearTimeout(t); res(b); } }, type, quality); });
+  if (blob) return new Uint8Array(await blob.arrayBuffer());
+  const u = c.toDataURL(type, quality); const bin = atob(u.split(',')[1]); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a;
 }
 /** The page drawn without its text, cut into the pieces that carry ink (header ornament, frame, rules,
  *  pictures) — each cropped tight, so pieces that repeat from page to page are stored once. */
@@ -782,7 +812,9 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     if (ls.length === 1 && !first.rtl && pitch > size * 1.2) pitch = size * 1.15;
     let align: Para['align'];
     if (ls.every(centered)) align = 'center';
-    else if (ls.length > 1 && ls.slice(0, -1).every((l, i) => (i === 0 ? endGap(l) < tolOf(l) : full(l)))) align = 'both';
+    // (Two lines are not justified: the first already fills the measure, and a stretch — Word's letters being a
+    // hair wider or narrower — would only shift words over a title's drawn shadow.)
+    else if (ls.length > 2 && ls.slice(0, -1).every((l, i) => (i === 0 ? endGap(l) < tolOf(l) : full(l)))) align = 'both';
     // (An indented block — a list item whose lines all start inside the margin — fills its own width.)
     else if (ls.length > 2 && (() => { const rest = ls.slice(1, -1); const lo = Math.min(...ls.map((l) => l.l)), hi = Math.max(...rest.map((l) => l.r)); return endGap(first) < tolOf(first) && rest.every((l) => l.l - lo < tolOf(l) && hi - l.r < tolOf(l)); })()) align = 'both';
     else if (ls.length === 1 && full(first)) align = 'both';
@@ -1056,6 +1088,68 @@ function findGutter(lines: Line[], W: number): [number, number] | null {
   return best;
 }
 
+/** Text boxes scattered over a designed page (a worksheet, a slide): lines cut where a wide gap separates
+ *  side-by-side texts, then gathered into boxes by nearness and overlap. Null for a page of running text —
+ *  one column of lines down the page, verse in two halves, a title over a text — which flows as a document. */
+function findPlacedBoxes(body: Line[], W: number, H: number): { lines: Line[]; l: number; r: number }[] | null {
+  if (body.length < 4) return null;
+  // Segments: the stretches of each line between gaps wider than three letters' heights.
+  const segs: Line[] = [];
+  for (const l of body) {
+    const ps = l.pieces.filter((p) => p.text.trim() && p.text !== ' ').sort((a, b) => a.l - b.l);
+    if (!ps.length) continue;
+    let cur: Piece[] = [ps[0]]; let hi = ps[0].r;
+    for (let i = 1; i < ps.length; i++) { const p = ps[i]; if (p.l - hi > Math.max(l.size * 3, 14)) { segs.push(subLine(l, cur)); cur = []; } cur.push(p); hi = Math.max(hi, p.r); }
+    segs.push(subLine(l, cur));
+  }
+  if (segs.length === body.length) {
+    // (No line is cut: scattered only if the lines themselves stand at many different places.)
+    const lefts = new Set(body.map((l) => Math.round(l.l / 12))), rights = new Set(body.map((l) => Math.round(l.r / 12)));
+    if (lefts.size < 4 || rights.size < 4) return null;
+  }
+  // Boxes: a segment joins the box whose last line is just above it and overlaps it sideways.
+  type B = { lines: Line[]; l: number; r: number };
+  const boxes: B[] = [];
+  const overlap = (a: { l: number; r: number }, b: { l: number; r: number }) => Math.min(a.r, b.r) - Math.max(a.l, b.l);
+  for (const s of segs.sort((a, b) => b.base - a.base)) {
+    let best: B | null = null; let bestGap = Infinity;
+    for (const b of boxes) {
+      const last = b.lines[b.lines.length - 1]; const gap = last.base - s.base;
+      if (gap < -0.5 || gap > Math.max(last.size, s.size) * 2.2) continue;
+      if (overlap(b, s) < Math.min(b.r - b.l, s.r - s.l) * 0.3) continue;
+      if (gap < bestGap) { best = b; bestGap = gap; }
+    }
+    if (best) { best.lines.push(s); best.l = Math.min(best.l, s.l); best.r = Math.max(best.r, s.r); } else boxes.push({ lines: [s], l: s.l, r: s.r });
+  }
+  const dbg = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
+  if (dbg) console.warn('P2D placed-scan', segs.length, body.length, boxes.length, JSON.stringify(boxes.map((b) => [Math.round(b.l), Math.round(b.r), b.lines.length, b.lines[0].pieces.map((p) => p.text).join('').slice(0, 15)])));
+  if (boxes.length < 3) return null;
+  // Scattered: boxes stand beside one another at heights of their own (not the two halves of verse, whose
+  // lines share every baseline), and no box is a column of text down the page.
+  const spanOf = (b: B) => [b.lines[b.lines.length - 1].base, b.lines[0].base];
+  let beside = 0;
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const a = boxes[i], b = boxes[j]; if (overlap(a, b) > 0) continue;
+    const [a0, a1] = spanOf(a), [b0, b1] = spanOf(b); if (Math.min(a1, b1) - Math.max(a0, b0) < 0) continue;
+    const shared = a.lines.every((la) => b.lines.some((lb) => Math.abs(la.base - lb.base) < 1)) || b.lines.every((lb) => a.lines.some((la) => Math.abs(la.base - lb.base) < 1));
+    if (!shared) beside++;
+  }
+  // Or boxes narrow and set at many different places across the page, off its middle (a page of running text
+  // has its paragraphs between two edges, its headings in the middle; a poem its halves in two columns).
+  const span = [Math.min(...boxes.map((b) => b.l)), Math.max(...boxes.map((b) => b.r))];
+  const narrow = boxes.filter((b) => b.r - b.l < (span[1] - span[0]) * 0.55);
+  const offMid = narrow.filter((b) => Math.abs((b.l + b.r) / 2 - (span[0] + span[1]) / 2) > W * 0.08);
+  const scattered = boxes.length >= 4 && narrow.length >= boxes.length * 0.6 && offMid.length >= 3 && new Set(narrow.map((b) => Math.round(b.l / 12))).size >= 3 && new Set(narrow.map((b) => Math.round(b.r / 12))).size >= 3;
+  if (dbg) console.warn('P2D placed-beside', beside, 'scattered', scattered, narrow.length, offMid.length);
+  if (beside < 2 && !scattered) return null;
+  // (Boxes whose edges all fall on two lines down the page are columns, whatever cut them.)
+  if (new Set(boxes.map((b) => Math.round(b.l / 12))).size <= 2 && new Set(boxes.map((b) => Math.round(b.r / 12))).size <= 2) return null;
+  const tall = boxes.filter((b) => b.lines.length >= 6 && b.r - b.l > W * 0.5);
+  if (tall.length && tall.reduce((n, b) => n + b.lines.length, 0) > body.length * 0.6) return null;
+  if (H <= 0) return null;
+  return boxes.map((b) => ({ ...b, lines: b.lines.sort((x, y) => y.base - x.base) }));
+}
+
 function subLine(l: Line, pieces: Piece[]): Line {
   return { pieces, base: l.base, size: l.size, l: Math.min(...pieces.map((p) => p.l)), r: Math.max(...pieces.map((p) => p.r)), rtl: isRtlText(pieces.map((p) => p.text).join('')) };
 }
@@ -1082,6 +1176,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
   const find = (k: string): string => { let r = k; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(k, r); return r; };
   const union = (a: string, b: string) => { const x = find(a), y = find(b); if (x !== y) parent.set(y, x); };
   const used = [...fonts].filter(([, f]) => f.uses && f.src);
+  if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) for (const [k, f] of fonts) if (!(f.uses && f.src)) console.warn('P2D font-unused', k, f.family, f.uses, !!f.src, !!f.raw, f.legacy, f.wordFont);
   for (const [k] of used) parent.set(k, k);
   const byFace = new Map<string, string>();
   for (const [k, f] of used) { const key = `${f.family}|${f.bold}|${f.italic}`; const o = byFace.get(key); if (o) union(o, k); else byFace.set(key, k); }
@@ -1113,7 +1208,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
       let cov: Set<number> | null = null; try { cov = cmapCoverage(lead.raw); } catch { /* unreadable */ }
       if (cov?.size) {
         const used = new Set<number>();
-        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !COMBINING.test(ch)) used.add(c); } });
+        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !(c >= 0x200b && c <= 0x200f) && !COMBINING.test(ch)) used.add(c); } });
         let ok = 0; for (const c of used) if (cov.has(c)) ok++;
         if (!used.size || ok / used.size >= 0.97) continue;
       }
@@ -1149,7 +1244,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     if (sp !== undefined) { try { if (sources[idx.get(keys[0])!].outline(sp).contours.length) sp = undefined; } catch { sp = undefined; } }
     let built: Uint8Array | null = null;
     try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
-    if (debug) console.warn('P2D rebuilt', lead.family, keys.map((k) => fonts.get(k)!.family).join('+'), lines.length, built?.length);
+    if (debug) console.warn('P2D rebuilt', lead.family, keys.length, lines.length, built?.length, built ? (() => { try { const c = cmapCoverage(built); return `cov=${c.size} ${[...c].slice(0, 12).map((x) => x.toString(16)).join(' ')}`; } catch (e) { return `cov-err ${String(e)}`; } })() : '', JSON.stringify(lines.slice(0, 2).map((l) => l.slice(0, 4).map((u) => [u[0] >> 16, u[0] & 0xffff, u[1]]))));
     if (!built) continue;
     lead.raw = built; lead.cov = undefined; lead.rebuilt = true; lead.noUnicode = false;
     for (const k of keys.slice(1)) { const f = fonts.get(k)!; if (f.family !== lead.family) alias.set(f.family, lead.family); f.raw = undefined; }
@@ -1180,7 +1275,7 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
     }
   };
   const block = (b: Block) => { if (b.kind === 'p') fix(b.runs); else for (const row of b.rows) for (const cell of row) fix(cell); };
-  for (const b of [...pg.body, ...pg.header, ...pg.footer, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) block(b);
+  for (const b of [...pg.body, ...pg.header, ...pg.footer, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat()), ...(pg.placed ?? []).flatMap((x) => x.blocks)]) block(b);
   for (const f of pg.furniture) fix(f.runs);
   for (const pp of pg.vert?.paras ?? []) fix(pp.runs);
 }
@@ -1200,7 +1295,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
   prefetched.delete(page);
   const pieces: Piece[] = [];
   let spanSeq = 0;
-  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean }[]) {
+  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; hidden?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean }[]) {
     if (typeof it.str !== 'string') continue;
     let text = cleanPdfText(it.str);
     if (/^\u2009+$/.test(text)) text = '\u2009'; else if (!text.trim()) continue;
@@ -1216,7 +1311,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     if (store.same?.has(it.fontName)) it.fontName = store.same.get(it.fontName)!;
     // Fill+stroke "bold": Word's own synthetic bold strokes about 1/35 em; a much thinner stroke is
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
-    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}) });
+    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.hidden ? { hidden: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}) });
     if (it.fontName && !fonts.has(it.fontName)) {
       let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
@@ -1262,6 +1357,34 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
         pieces[pieces.length - 1].text = txt;
       }
     }
+  }
+  // Text drawn twice in the same place (a design tool's "bold" made of two prints a hair apart, or a stray
+  // second print) is one piece of text, not two words run together ("أحوالأحوال").
+  if (pieces.length > 1) {
+    const seen = new Map<string, Piece>();
+    for (let i = 0; i < pieces.length; i++) {
+      const p = pieces[i]; if (p.text === ' ' || p.conn) continue;
+      const key = `${p.font}|${p.text}`;
+      const q = seen.get(key);
+      if (q && Math.abs(q.l - p.l) <= Math.max(0.8, p.h * 0.06) && Math.abs(q.y - p.y) <= Math.max(0.8, p.h * 0.06)) {
+        if (Math.abs(q.l - p.l) > 0.15 || Math.abs(q.y - p.y) > 0.15) q.bold = true;
+        // (The drawn copy stays, not an invisible one laid over it.)
+        if (q.hidden && !p.hidden) { q.hidden = false; q.color = p.color; }
+        pieces.splice(i, 1); i--; continue;
+      }
+      seen.set(key, p);
+    }
+  }
+  // Invisible text (render mode 3) over a page that has text of its own: words laid over a title drawn as
+  // outlines or a picture, so that it can be searched. The drawing shows those words; set again as text they
+  // would show twice. (A scanned page carries only such text — that stays, there is nothing else to read.)
+  if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D hidden', pieces.filter((p) => p.hidden).length, '/', pieces.length);
+  if (pieces.some((p) => p.hidden)) {
+    const visible = pieces.some((p) => !p.hidden && p.text.trim() && p.text !== '\u2009');
+    // (Small drawn paths — letters as outlines — where the invisible words stand: the drawing has the words.)
+    const inks = visible ? [] : findShapes(pdfjs, ol, true).filter((b) => b.top - b.bottom < 80 && b.r - b.l < 120);
+    const outlined = (p: Piece) => { let n = 0; for (const b of inks) { const cx = (b.l + b.r) / 2, cy = (b.top + b.bottom) / 2; if (cx > p.l - 2 && cx < p.r + 2 && cy > p.y - p.h * 0.4 && cy < p.y + p.h * 1.1) n++; } return n >= 2; };
+    for (let i = pieces.length - 1; i >= 0; i--) if (pieces[i].hidden && (visible || outlined(pieces[i]))) pieces.splice(i, 1);
   }
   // An honorific drawn as one glyph ("ﷺ" read out as "صلى الله عليه وسلم"): its one character, or the words
   // would take a phrase's room where the page has a sign's.
@@ -1401,6 +1524,24 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
   // and runs of lines set in two columns.
   const gutter = findGutter(body, W);
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D gutter', JSON.stringify(gutter), body.length);
+  // A designed page (a worksheet, a slide, an infographic): text in boxes scattered over the page, not a column
+  // of text. Each box keeps its place on the page as a frame, over the page's drawing.
+  // (Every line of the page is a candidate: a designed page has no running head to set apart.)
+  const placedBoxes = gutter ? null : findPlacedBoxes([...header, ...body, ...footer].sort((a, b) => b.base - a.base), W, H);
+  if (placedBoxes) {
+    const pitchP = pitchTable(placedBoxes.map((b) => b.lines));
+    const placed: PlacedBox[] = placedBoxes.map((b) => {
+      const first = b.lines[0], last = b.lines[b.lines.length - 1];
+      const top = H - (first.base + BASE * pitchP(first.size));
+      const bottom = H - (last.base - (1 - BASE) * pitchP(last.size));
+      return { x: b.l, y: top, w: b.r - b.l, h: Math.max(bottom - top, first.size), blocks: buildBlocks(b.lines, fonts, b.l, b.r, pitchP, null) };
+    });
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D placed', JSON.stringify(placed.map((b) => [Math.round(b.x), Math.round(b.y), Math.round(b.w), Math.round(b.h), b.blocks.map((k) => (k.kind === 'p' ? k.runs.map((x) => x.text).join('').slice(0, 20) : k.kind))])));
+    const furnitureP: Furniture[] = [];
+    const picsP = withGraphics ? await renderGraphics(page, 2, keepFonts, [], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
+    page.cleanup();
+    return { vert, w: W, h: H, pics: picsP, furniture: furnitureP, placed, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: { top: 18, bottom: 18, left: 18, right: 18, header: 6, footer: 6 } };
+  }
   if (gutter) {
     const [g0, g1] = gutter;
     const crosses = (l: Line) => l.pieces.some((p) => p.text.trim() && p.l < g1 - 1 && p.r > g0 + 1);
@@ -1467,7 +1608,7 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
       top: Math.max(6, colTop !== null ? H - colTop : H - body[0].base - BASE * firstPitchC),
       // Generous room below: a column that runs a little long must not push the next column onto a new page.
       bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
-      left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6,
+      left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6, slack: [3, 3] as [number, number],
     };
     const gridsC = [...new Set(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])).flat().filter((l) => l.grid).map((l) => l.grid!))];
     const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
@@ -1509,8 +1650,11 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     const near = vals.filter((x) => Math.abs(x - best) <= tol);
     return outer(1, 0) ? Math.max(...near) : Math.min(...near);
   };
-  const L = edge(ref.map((l) => l.l), (a, b) => a < b, W * 0.1);
-  const R = edge(ref.map((l) => l.r), (a, b) => a > b, W * 0.9);
+  let L = edge(ref.map((l) => l.l), (a, b) => a < b, W * 0.1);
+  let R = edge(ref.map((l) => l.r), (a, b) => a > b, W * 0.9);
+  // A line of the text wider than the measure the others set (a title over a narrow list) must fit too, or
+  // it wraps and pushes the page's end onto another page; a short note out in the margin does not count.
+  for (const l of block) if (l.r - l.l >= (R - L) * 0.6) { if (l.l < L - 1) L = l.l; if (l.r > R + 1) R = l.r; }
   const bodySize = median(body.flatMap((l) => Array(Math.max(1, l.pieces.reduce((n, p) => n + p.text.length, 0))).fill(l.size))) || 12;
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D page', JSON.stringify({ W, H, L, R, bodySize, rule, lines: textLines.map((l) => ({ b: +l.base.toFixed(1), s: +l.size.toFixed(1), l: +l.l.toFixed(1), r: +l.r.toFixed(1), z: header.includes(l) ? 'H' : footer.includes(l) ? 'F' : notesLines.includes(l) ? 'N' : 'B', t: l.pieces.map((p) => p.text).join('|').slice(0, 60), ps: l.pieces.map((p) => [p.text.slice(0, 12), +p.l.toFixed(0), +p.r.toFixed(0), +p.y.toFixed(1), +p.h.toFixed(1)]), gaps: l.pieces.filter((p) => p.text.trim()).sort((x, y) => x.l - y.l).map((p, i, a) => (i ? +(p.l - a[i - 1].r).toFixed(1) : 0)).filter((g) => g > 8) })) }));
   const formulas: Box[] = [];
@@ -1555,9 +1699,13 @@ async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy
     // About a line to spare below the last line: invisible, and it absorbs small drift instead of spilling a line.
     bottom: lowest ? Math.max(8, lowest.base - (1 - BASE) * pitchOf(lowest.size) - pitchOf(lowest.size)) : 72,
     // A little tolerance on each side: another font's slightly wider glyphs must not push a word to a new line.
-    left: Math.max(10, L - 3), right: Math.max(10, W - R - 3),
-    header: 6, footer: 6,
+    // (Three points and a little over one per cent of the measure on each side: a reader's font sets a word
+    // a hair wider than the page's and justified text hides the difference, but a word wrapped to a new line
+    // pushes the page's last line onto the next.)
+    left: Math.max(10, L - 3 - (R - L) * 0.012), right: Math.max(10, W - R - 3 - (R - L) * 0.012),
+    header: 6, footer: 6, slack: [0, 0] as [number, number],
   };
+  m.slack = [L - m.left, W - R - m.right];
   const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
   lap('layout');
   const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
@@ -1624,7 +1772,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   // Fonts whose text Word stretches with kashidas (verses, tatweel-justified paragraphs, tatweels kept in the
   // text) keep their tatweel; the others lose it, or LibreOffice would stretch every justified line with it.
   const stretched = new Set<string>();
-  for (const pg of pages) for (const b of [...pg.body, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) {
+  for (const pg of pages) for (const b of [...pg.body, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat()), ...(pg.placed ?? []).flatMap((x) => x.blocks)]) {
     if (b.kind === 'verse') { for (const row of b.rows) for (const cell of row) for (const r of cell) stretched.add(r.font); }
     else if (b.kind === 'grid') { for (const row of b.rows) for (const cell of row) for (const r of cell) if (r.text.includes('\u0640')) stretched.add(r.font); }
     else for (const r of b.runs) if (b.kashida || r.text.includes('\u0640')) stretched.add(r.font);
@@ -1637,230 +1785,208 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   store.seqs = [];
   if (alias.size) for (const pg of pages) renameRuns(pg, alias);
 
-  const docx = await import('docx');
-  const { Document, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LineRuleType, FootnoteReferenceRun, Header, Footer, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, SectionType, TableLayoutType, CharacterSet, Tab, TabStopType, Column, ColumnBreak, HeightRule, VerticalMergeType, VerticalAlign, ShadingType } = docx;
+  // The document's XML, written straight (src/docxwrite.ts): a paragraph, a run, a table each a string.
+  const W_ = await import('./docxwrite');
+  const allBlocks = pages.flatMap((p) => [...p.body, ...(p.regions ?? []).flatMap((r) => r.cols.flat()), ...(p.placed ?? []).flatMap((b) => b.blocks)]);
+  const rtlDoc = allBlocks.filter((b) => b.rtl).length > allBlocks.length / 2;
+  const writer = new W_.DocxWriter({ creator: 'KurokawaReader', title: book.title, rtl: rtlDoc, defaultFont: rtlDoc ? { ascii: 'Times New Roman', cs: 'Traditional Arabic', hAnsi: 'Times New Roman', eastAsia: 'Times New Roman' } : 'Times New Roman' });
 
   const usedChars = new Map<string, Set<number>>();
-  const runFor = (r: Run, footnotes: Map<number, number> | null) => {
+  const runFor = (r: Run, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => {
     if (r.art) {
       const pic = r.art.pic;
-      if (!pic) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art-nopic', r.art.font, r.art.l.toFixed(1), r.art.y.toFixed(1)); return new TextRun({ text: '' }); }
-      return new ImageRun({ type: 'png', data: pic.png, transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) } });
+      if (!pic) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art-nopic', r.art.font, r.art.l.toFixed(1), r.art.y.toFixed(1)); return ''; }
+      return W_.inlineImage(part, pic.png, pic.kind ?? 'png', Math.max(1, Math.round(pic.w * 96 / 72)), Math.max(1, Math.round(pic.h * 96 / 72)));
     }
-    if (r.note !== undefined && footnotes?.has(r.note) && !r.br) return new FootnoteReferenceRun(footnotes.get(r.note)!);
+    if (r.note !== undefined && footnotes?.has(r.note) && !r.br) return W_.footnoteRef(footnotes.get(r.note)!);
     const key = `${r.font}|${r.bold && r.italic ? 'BoldItalic' : r.bold ? 'Bold' : r.italic ? 'Italic' : 'Regular'}`;
     let set = usedChars.get(key); if (!set) usedChars.set(key, set = new Set());
     for (const ch of r.text) set.add(ch.codePointAt(0)!);
     const half = Math.max(2, Math.round(r.size * 2));
-    return new TextRun({
-      ...(r.tab !== undefined ? { children: [new Tab(), r.text] } : { text: r.text }),
-      break: r.br ? 1 : undefined,
-      font: { ascii: r.font, hAnsi: r.font, cs: r.font, eastAsia: r.font },
-      size: half, sizeComplexScript: half,
-      ...(r.cs && r.cs !== 100 ? { scale: r.cs } : {}),
-      ...(r.spacing ? { characterSpacing: Math.round(r.spacing * PT) } : {}),
-      bold: r.bold, boldComplexScript: r.bold, italics: r.italic, italicsComplexScript: r.italic,
+    return W_.textRun(r.text, {
+      font: r.font, size: half,
+      scale: r.cs && r.cs !== 100 ? r.cs : undefined,
+      spacing: r.spacing ? Math.round(r.spacing * PT) : undefined,
+      bold: r.bold, italic: r.italic,
       color: r.color && r.color !== '000000' ? r.color : undefined,
-      rightToLeft: r.rtl || undefined,
+      rtl: r.rtl || undefined,
       // Raised by exactly what the page raises it, at its own size (Word's superscript would shrink it again).
-      ...(r.sup ? (r.raise ? { position: `${r.raise}pt` } : { superScript: true }) : {}),
-    });
+      ...(r.sup ? (r.raise ? { position: Math.round(r.raise * 2) } : { superScript: true }) : {}),
+    }, { br: !!r.br, tab: r.tab !== undefined });
   };
-  const alignOf = (a: Para['align'], kashida = false) => (a === 'center' ? AlignmentType.CENTER : a === 'both' ? (kashida ? AlignmentType.MEDIUM_KASHIDA : AlignmentType.BOTH) : a === 'end' ? AlignmentType.END : AlignmentType.START);
-  const markRun = (b: { runs?: Run[]; rtl: boolean; size: number }) => {
+  const alignOf = (a: Para['align']): import('./docxwrite').Align => (a === 'center' ? 'center' : a === 'both' ? 'both' : a === 'end' ? 'end' : 'start');
+  const markRun = (b: { runs?: Run[]; rtl: boolean; size: number }): import('./docxwrite').RunProps => {
     const r = b.runs?.find((x) => x.text.trim()); const half = Math.max(2, Math.round((r?.size ?? b.size) * 2));
-    return r ? { font: { ascii: r.font, hAnsi: r.font, cs: r.font, eastAsia: r.font }, size: half, sizeComplexScript: half, rightToLeft: b.rtl || undefined } : { size: half, sizeComplexScript: half, rightToLeft: b.rtl || undefined };
+    return r ? { font: r.font, size: half, rtl: b.rtl || undefined } : { size: half, rtl: b.rtl || undefined };
   };
   // A stretched paragraph set in a rebuilt font keeps the page's tatweels and is justified by its spaces.
   const ownStretch = (b: Para): Para => (b.kashida && b.runs.every((r) => !r.text.trim() || exact.has(r.font)) ? { ...b, kashida: false, runs: b.runs.map((r) => (r.kText ? { ...r, text: r.kText } : r)) } : b);
-  const paraFor = (b0: Para, footnotes: Map<number, number> | null, extra: { before?: number; colBreak?: boolean } = {}) => { const b = ownStretch(b0); return new Paragraph({
-    bidirectional: b.rtl,
-    run: markRun(b),
-    widowControl: false,
-    // (Justified by its spaces even where the page used tatweels: a line ending in a line break is stretched by
-    // Word and LibreOffice alike only that way.)
-    alignment: alignOf(b.align, false),
-    indent: { start: Math.round(b.indStart * PT), end: Math.round(b.indEnd * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) },
-    spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: LineRuleType.EXACT },
-    tabStops: b.tabs?.map((t) => ({ type: t.type === 'right' ? TabStopType.RIGHT : t.type === 'center' ? TabStopType.CENTER : TabStopType.LEFT, position: Math.round(t.pos * PT) })),
-    children: [...(extra.colBreak ? [new ColumnBreak()] : []), ...b.runs.map((r) => runFor(r, footnotes))],
-  }); };
-  const none = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
-  const verseFor = (v: Verse, footnotes: Map<number, number> | null) => {
+  // The page's margins leave a little room beyond the text's edges (see analysePage): a paragraph takes it back
+  // on the side it is aligned to, so its text stands where the page has it, and keeps it on the other side as
+  // the room a slightly wider rendering may need.
+  let slackNow: [number, number] = [0, 0];
+  const indentOf = (b: Para) => {
+    const [sl, sr] = slackNow; const start = b.rtl ? sr : sl, end = b.rtl ? sl : sr;
+    const addStart = b.align === 'start' || b.align === 'both' || b.align === 'center' ? start : 0;
+    const addEnd = b.align === 'end' || b.align === 'center' ? end : 0;
+    return { start: Math.round((b.indStart + addStart) * PT), end: Math.round((b.indEnd + addEnd) * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) };
+  };
+  const paraFor = (b0: Para, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>, extra: { before?: number; colBreak?: boolean; frame?: import('./docxwrite').Frame } = {}): string => {
+    const b = ownStretch(b0);
+    return W_.paragraph({
+      bidi: b.rtl, mark: markRun(b), widowControl: false,
+      // (Justified by its spaces even where the page used tatweels: a line ending in a line break is stretched by
+      // Word and LibreOffice alike only that way.)
+      align: alignOf(b.align),
+      indent: indentOf(b),
+      spacing: { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: 'exact' },
+      tabs: b.tabs?.map((t) => ({ type: t.type, pos: Math.round(t.pos * PT) })),
+      frame: extra.frame,
+    }, (extra.colBreak ? W_.columnBreak() : '') + b.runs.map((r) => runFor(r, footnotes, part)).join(''));
+  };
+  const none: import('./docxwrite').Border = { style: 'none', size: 0, color: 'FFFFFF' };
+  const verseFor = (v: Verse, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => {
     const cols = v.rows[0].length;
     const midW = cols === 3 ? Math.round(Math.max(v.midW, v.size * 2.5) * PT) : 0;
     // The gap between the halves becomes cell padding (half on each side of each cell), so the table grows by it.
     const pad = cols === 2 ? Math.round((v.gap / 2) * PT) : 0;
     const colW = Math.round(((v.width * PT) - midW) / 2) + pad;
     const widths = cols === 3 ? [colW, midW, colW] : [colW, colW];
-    const indent = Math.round(v.indStart * PT) - pad;
-    return new Table({
-      visuallyRightToLeft: v.rtl,
-      layout: TableLayoutType.FIXED,
-      width: { size: widths.reduce((a, b) => a + b, 0), type: WidthType.DXA },
-      columnWidths: widths,
-      indent: indent ? { size: indent, type: WidthType.DXA } : undefined,
-      borders: { top: none, bottom: none, left: none, right: none, insideHorizontal: none, insideVertical: none },
-      rows: v.rows.map((row, i) => new TableRow({
-        children: row.map((runs, c) => new TableCell({
-          width: { size: widths[c], type: WidthType.DXA },
-          margins: { top: 0, bottom: 0, left: pad, right: pad },
-          children: [new Paragraph({
-            bidirectional: v.rtl,
-            // Each half-line fills its cell the way the book stretches it (Word adds the kashidas).
-            // (In a rebuilt font the half-line keeps the page's own tatweels, which give it its width.)
-            alignment: cols === 3 && c === 1 ? AlignmentType.CENTER : AlignmentType.DISTRIBUTE,
-            widowControl: false,
-            spacing: { before: i === 0 ? Math.round(v.before * PT) : 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
-            children: runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: dropStretch(r.text) }, footnotes)),
-          })],
-        })),
-      })),
-    });
+    const indent = Math.round((v.indStart + (v.rtl ? slackNow[1] : slackNow[0])) * PT) - pad;
+    return W_.table({ rtl: v.rtl, width: widths.reduce((a, b) => a + b, 0), columns: widths, indent: indent || undefined, borders: none },
+      v.rows.map((row, i) => W_.tableRow({}, row.map((runs, c) => W_.tableCell({ width: widths[c], margins: { top: 0, bottom: 0, left: pad, right: pad } },
+        W_.paragraph({
+          bidi: v.rtl,
+          // Each half-line fills its cell the way the book stretches it (Word adds the kashidas).
+          // (In a rebuilt font the half-line keeps the page's own tatweels, which give it its width.)
+          align: cols === 3 && c === 1 ? 'center' : 'distribute',
+          widowControl: false,
+          spacing: { before: i === 0 ? Math.round(v.before * PT) : 0, after: 0, line: Math.round(v.pitch * PT), lineRule: 'exact' },
+        }, runs.map((r) => runFor(exact.has(r.font) ? r : { ...r, text: dropStretch(r.text) }, footnotes, part)).join('')))).join(''))).join(''));
   };
   // A ruled table: its columns and rows as the page draws them, each cell's lines as the page breaks them.
-  const gridFor = (g: Grid, footnotes: Map<number, number> | null) => {
+  const gridFor = (g: Grid, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => {
     const pad = g.pad; // points of room inside each cell
     const order = <T,>(a: T[]) => (g.rtl ? [...a].reverse() : a);
     const sz = Math.max(2, Math.min(24, Math.round(g.spec.rule * 8)));
-    const line = { style: BorderStyle.SINGLE, size: sz, color: '000000' };
+    const line: import('./docxwrite').Border = { style: 'single', size: sz, color: '000000' };
     const colTw = g.colW.map((w) => Math.round(w * PT));
     const colsIn = (c0: number, span: number) => colTw.slice(c0, c0 + span).reduce((a, b) => a + b, 0);
-    return new Table({
-      visuallyRightToLeft: g.rtl,
-      layout: TableLayoutType.FIXED,
-      width: { size: colTw.reduce((a, b) => a + b, 0), type: WidthType.DXA },
-      columnWidths: order(colTw),
-      indent: { size: Math.round((g.indStart + 3 + pad) * PT), type: WidthType.DXA },
-      borders: { top: line, bottom: line, left: line, right: line, insideHorizontal: line, insideVertical: line },
-      rows: g.rows.map((row, i) => new TableRow({
-        height: { value: Math.round(g.rowH[i] * PT), rule: HeightRule.ATLEAST },
-        children: order(row.map((runs, k) => ({ runs, meta: g.cells[i][k], spec: g.spec.rows[i][k] }))).map(({ runs, meta, spec }) => new TableCell({
-          width: { size: colsIn(spec.c0, spec.span), type: WidthType.DXA },
-          ...(meta.span > 1 ? { columnSpan: meta.span } : {}),
-          ...(meta.vmerge ? { verticalMerge: meta.vmerge === 'restart' ? VerticalMergeType.RESTART : VerticalMergeType.CONTINUE } : {}),
-          verticalAlign: meta.vcenter ? VerticalAlign.CENTER : VerticalAlign.TOP,
-          ...(spec.fill ? { shading: { fill: spec.fill, type: ShadingType.CLEAR, color: 'auto' } } : {}),
+    return W_.table({ rtl: g.rtl, width: colTw.reduce((a, b) => a + b, 0), columns: order(colTw), indent: Math.round((g.indStart + (g.rtl ? slackNow[1] : slackNow[0]) + pad) * PT), borders: line },
+      g.rows.map((row, i) => W_.tableRow({ height: { value: Math.round(g.rowH[i] * PT), rule: 'atLeast' } },
+        order(row.map((runs, k) => ({ runs, meta: g.cells[i][k], spec: g.spec.rows[i][k] }))).map(({ runs, meta, spec }) => W_.tableCell({
+          width: colsIn(spec.c0, spec.span), span: meta.span > 1 ? meta.span : undefined, vMerge: meta.vmerge, vAlign: meta.vcenter ? 'center' : 'top', fill: spec.fill,
           margins: { top: 0, bottom: 0, left: Math.round(pad * PT), right: Math.round(pad * PT) },
-          children: [new Paragraph({
-            bidirectional: g.rtl, widowControl: false,
-            alignment: alignOf(meta.align),
-            spacing: { before: i === 0 ? 0 : 0, after: 0, line: Math.round(meta.pitch * PT), lineRule: LineRuleType.EXACT },
-            children: runs.map((r) => runFor(r, footnotes)),
-          })],
-        })),
-      })),
-    });
+        }, W_.paragraph({ bidi: g.rtl, widowControl: false, align: alignOf(meta.align), spacing: { before: 0, after: 0, line: Math.round(meta.pitch * PT), lineRule: 'exact' } }, runs.map((r) => runFor(r, footnotes, part)).join('')))).join(''))).join(''));
   };
+  const hairline = (before: number, children = ''): string => W_.paragraph({ spacing: { before: Math.round(before), after: 0, line: 20, lineRule: 'exact' } }, children || W_.textRun('', { size: 2 }));
   // (A table has no space above of its own: an empty line of that height goes before it.)
   // (As space before a hairline paragraph, so it goes where a paragraph's space before would — none at the top
   // of a column.)
-  const gridBlock = (g: Grid, footnotes: Map<number, number> | null) => (g.before > 1 ? [new Paragraph({ spacing: { before: Math.round((g.before - 1) * PT), after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new TextRun({ text: '', size: 2 })] }), gridFor(g, footnotes)] : [gridFor(g, footnotes)]);
-  const blocksFor = (bs: Block[], footnotes: Map<number, number> | null) => bs.flatMap((b) => (b.kind === 'p' ? [paraFor(b, footnotes)] : b.kind === 'grid' ? gridBlock(b, footnotes) : [verseFor(b, footnotes)]));
+  const gridBlock = (g: Grid, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => (g.before > 1 ? hairline((g.before - 1) * PT) : '') + gridFor(g, footnotes, part);
+  const blocksFor = (bs: Block[], footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => bs.map((b) => (b.kind === 'p' ? paraFor(b, footnotes, part) : b.kind === 'grid' ? gridBlock(b, footnotes, part) : verseFor(b, footnotes, part))).join('');
+  const emptyPara = '<w:p/>';
 
-  const footnoteDefs: Record<number, { children: InstanceType<typeof Paragraph>[] }> = {};
-  let noteId = 1;
-  const sections = pages.flatMap((pg) => {
+  const sections: import('./docxwrite').Section[] = pages.flatMap((pg): import('./docxwrite').Section[] => {
+    slackNow = pg.m.slack ?? [0, 0];
+    const body = writer.body;
     const map = new Map<number, number>();
-    // Real Word footnotes when every note is numbered and called from the text; otherwise the note area
-    // is placed as a block exactly where the page has it.
-    const allCalled = REAL_FOOTNOTES && pg.notes.length > 0 && pg.notes.every((n) => n.num >= 0 && pg.body.some((b) => (b.kind === 'p' ? [b.runs] : b.rows.flat()).some((rs) => rs.some((r) => r.note === n.num))));
-    for (const n of allCalled ? pg.notes : []) {
-      if (n.num < 0 || map.has(n.num)) continue;
-      const referenced = pg.body.some((b) => (b.kind === 'p' ? [b.runs] : b.rows.flat()).some((rs) => rs.some((r) => r.note === n.num)));
-      if (!referenced) continue;
-      map.set(n.num, noteId);
-      footnoteDefs[noteId] = { children: n.paras.flatMap((p) => (p.kind === 'p' ? [paraFor(p, null, { before: 0 })] : blocksFor([p], null))) as InstanceType<typeof Paragraph>[] };
-      noteId++;
-    }
-    // Otherwise the note area stays in the page's flow, numbers and all, right where the page has it.
-    const flowNotes = allCalled ? [] : pg.notesRaw;
+    // (Real Word footnotes are off — REAL_FOOTNOTES — so the note area stays in the page's flow, numbers and all,
+    // right where the page has it.)
+    const flowNotes = pg.notesRaw;
+    const hdr = writer.newPart(), ftr = writer.newPart();
     // (Stacked in the order the page has them: its drawing first, a formula's or a diagram's picture with its
     // words over it — not by their heights, which is what Word goes by when it is not told.)
-    const picRuns = pg.pics.map((pic, i) => new ImageRun({
-      type: 'png', data: pic.png,
-      transformation: { width: Math.max(1, Math.round(pic.w * 96 / 72)), height: Math.max(1, Math.round(pic.h * 96 / 72)) },
-      floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(pic.x * EMU) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(pic.y * EMU) }, behindDocument: true, allowOverlap: true, lockAnchor: true, wrap: { type: TextWrappingType.NONE }, zIndex: 1 + i },
-    }));
+    const picRuns = pg.pics.map((pic, i) => W_.anchoredImage(hdr, pic.png, pic.kind ?? 'png', Math.max(1, Math.round(pic.w * 96 / 72)), Math.max(1, Math.round(pic.h * 96 / 72)), Math.round(pic.x * EMU), Math.round(pic.y * EMU), 1 + i)).join('');
     // Running heads and page numbers: plain header/footer paragraphs placed by spacing (the 4/5 baseline rule)
     // with each item on a centre tab stop at its original centre — exact in any word processor and font.
-    const pinned = (items: Furniture[], fromTop: boolean, startAt: number) => {
+    const pinned = (items: Furniture[], startAt: number, part: InstanceType<typeof W_.Part>) => {
       const lines: Furniture[][] = [];
-      for (const f of [...items].sort((a, b) => (fromTop ? a.base - b.base : a.base - b.base))) { const g = lines.find((x) => Math.abs(x[0].base - f.base) < 3); if (g) g.push(f); else lines.push([f]); }
-      let cursor = startAt; const out: InstanceType<typeof Paragraph>[] = [];
+      for (const f of [...items].sort((a, b) => a.base - b.base)) { const g = lines.find((x) => Math.abs(x[0].base - f.base) < 3); if (g) g.push(f); else lines.push([f]); }
+      let cursor = startAt; let out = '';
       for (const ln of lines) {
         const size = Math.max(...ln.map((f) => f.size)); const L = Math.max(size * 1.3, 6);
         const top = ln[0].base - BASE * L;
         const sorted = [...ln].sort((a, b) => a.cx - b.cx);
-        out.push(new Paragraph({
-          bidirectional: false, alignment: AlignmentType.LEFT, widowControl: false,
-          indent: { left: 0, right: 0 },
-          spacing: { before: Math.max(0, Math.round((top - cursor) * PT)), after: 0, line: Math.round(L * PT), lineRule: LineRuleType.EXACT },
-          tabStops: sorted.map((f) => ({ type: TabStopType.CENTER, position: Math.max(0, Math.round((f.cx - pg.m.left) * PT)) })),
-          children: sorted.flatMap((f) => [new TextRun({ children: [new Tab()] }), ...f.runs.map((r) => runFor(r, null))]),
-        }));
+        out += W_.paragraph({
+          align: 'left', widowControl: false, indent: { left: 0, right: 0 },
+          spacing: { before: Math.max(0, Math.round((top - cursor) * PT)), after: 0, line: Math.round(L * PT), lineRule: 'exact' },
+          tabs: sorted.map((f) => ({ type: 'center' as const, pos: Math.max(0, Math.round((f.cx - pg.m.left) * PT)) })),
+        }, sorted.map((f) => W_.tabRun() + f.runs.map((r) => runFor(r, null, part)).join('')).join(''));
         cursor = top + L;
       }
       return { paras: out, end: cursor };
     };
-    const headerPinned = pinned(pg.furniture.filter((f) => f.top), true, pg.m.header + (pg.pics.length ? 1 : 0));
+    const headerPinned = pinned(pg.furniture.filter((f) => f.top), pg.m.header + (pg.pics.length ? 1 : 0), hdr);
     const footerItems = pg.furniture.filter((f) => !f.top);
-    let footerPinned: { paras: InstanceType<typeof Paragraph>[]; end: number } = { paras: [], end: 0 };
+    let footerPinned = { paras: '', end: 0 };
     let footerDist = pg.m.footer;
     if (footerItems.length) {
       // The footer's top is where its first line's box starts; Word then measures the footer distance from its bottom.
       const firstTop = Math.min(...footerItems.map((f) => f.base - BASE * Math.max(f.size * 1.3, 6)));
-      footerPinned = pinned(footerItems, true, firstTop);
+      footerPinned = pinned(footerItems, firstTop, ftr);
       footerDist = Math.max(4, pg.h - footerPinned.end);
     }
-    const frames = headerPinned.paras;
-    const tiny = { size: 2, sizeComplexScript: 2 };
-    const headerChildren = [
-      ...(picRuns.length ? [new Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [...picRuns, new TextRun({ text: '', ...tiny })] })] : []),
-      ...frames,
-      ...blocksFor(pg.header, null),
-    ];
-    const footerChildren = [...footerPinned.paras, ...blocksFor(pg.footer, null)];
+    const headerXml = (picRuns ? hairline(0, picRuns + W_.textRun('', { size: 2 })) : '') + headerPinned.paras + blocksFor(pg.header, null, hdr);
+    const footerXml = footerPinned.paras + blocksFor(pg.footer, null, ftr);
     // The pinned lines live in the page's header part with the decorations: positioned against the page, taking
     // no room, and keeping the body free to start like any page (LibreOffice mis-reads a section that opens
     // with frames before a table).
-    const bottom = pg.m.bottom;
-    const page = { size: { width: Math.round(pg.w * PT), height: Math.round(pg.h * PT) }, margin: { top: Math.round(pg.m.top * PT), bottom: Math.round(bottom * PT), left: Math.round(pg.m.left * PT), right: Math.round(pg.m.right * PT), header: Math.round(pg.m.header * PT), footer: Math.round(footerDist * PT), gutter: 0 } };
-    const headers = { default: new Header({ children: headerChildren.length ? headerChildren : [new Paragraph({ children: [] })] }) };
-    const footers = { default: new Footer({ children: footerChildren.length ? footerChildren : [new Paragraph({ children: [] })] }) };
+    const page: import('./docxwrite').PageSetup = { width: Math.round(pg.w * PT), height: Math.round(pg.h * PT), margin: { top: Math.round(pg.m.top * PT), bottom: Math.round(pg.m.bottom * PT), left: Math.round(pg.m.left * PT), right: Math.round(pg.m.right * PT), header: Math.round(pg.m.header * PT), footer: Math.round(footerDist * PT), gutter: 0 } };
+    const header = { xml: headerXml || emptyPara, part: hdr };
+    const footer = footerXml ? { xml: footerXml, part: ftr } : undefined;
     if (pg.vert) {
       // Vertical writing: the page's text flows top to bottom, columns right to left; the margins are where its
       // columns stand, the line pitch the distance between columns, a paragraph's first column set lower by its
       // indent.
       const v = pg.vert;
-      const vpage = { ...page, margin: { ...page.margin, top: Math.round(Math.max(18, v.top - v.size * 0.1) * PT), bottom: Math.round(Math.max(18, v.bottom - v.size * 0.05) * PT), left: Math.round(Math.max(18, v.left - v.pitch * 1.2) * PT), right: Math.round(Math.max(18, v.right - (v.pitch - v.size) / 2) * PT) }, textDirection: docx.PageTextDirectionType.TOP_TO_BOTTOM_RIGHT_TO_LEFT };
-      const kids = v.paras.map((pp) => new Paragraph({
+      const vpage: import('./docxwrite').PageSetup = { ...page, margin: { ...page.margin, top: Math.round(Math.max(18, v.top - v.size * 0.1) * PT), bottom: Math.round(Math.max(18, v.bottom - v.size * 0.05) * PT), left: Math.round(Math.max(18, v.left - v.pitch * 1.2) * PT), right: Math.round(Math.max(18, v.right - (v.pitch - v.size) / 2) * PT) }, textDirection: 'tbRl' };
+      const kids = v.paras.map((pp) => W_.paragraph({
         widowControl: false,
         indent: pp.firstLine > v.size * 0.4 ? { firstLine: Math.round(pp.firstLine * PT) } : undefined,
-        spacing: { before: 0, after: 0, line: Math.round(v.pitch * PT), lineRule: LineRuleType.EXACT },
+        spacing: { before: 0, after: 0, line: Math.round(v.pitch * PT), lineRule: 'exact' },
         // (Two or three digits or letters stand across in their column, as the page sets them: tate-chu-yoko.)
-        children: pp.runs.flatMap((r) => r.text.split(/([0-9A-Za-z]{1,3}(?![0-9A-Za-z]))/).filter(Boolean).map((t) => runFor({ ...r, text: /^[0-9A-Za-z]{1,3}$/.test(t) && /[0-9A-Za-z]/.test(t) ? `\uE000${t}` : t }, null))),
-      }));
-      const rest = [...blocksFor(pg.body, map), ...blocksFor(flowNotes, null)];
-      return [{ properties: { type: SectionType.NEXT_PAGE, page: vpage }, headers, footers: footerChildren.length ? footers : undefined, children: kids.length || rest.length ? [...kids, ...rest] : [new Paragraph({ children: [] })] }];
+      }, pp.runs.flatMap((r) => r.text.split(/([0-9A-Za-z]{1,3}(?![0-9A-Za-z]))/).filter(Boolean).map((t) => runFor({ ...r, text: /^[0-9A-Za-z]{1,3}$/.test(t) && /[0-9A-Za-z]/.test(t) ? `${t}` : t }, null, body))).join('')));
+      const rest = blocksFor(pg.body, map, body) + blocksFor(flowNotes, null, body);
+      return [{ type: 'nextPage', page: vpage, header, footer, children: kids.length || rest ? [...kids, rest] : [emptyPara] }];
+    }
+    if (pg.placed?.length) {
+      // A designed page: each box of text is a frame at its own place on the page (paragraphs with the same
+      // frame settings, one after another, are one frame in Word), over the page's drawing in the header.
+      const kids: string[] = [];
+      for (const b of pg.placed) {
+        // (A hairline of plain text between two frames: LibreOffice otherwise lets a frame's paragraphs loose
+        // into the page's own text when another frame follows them.)
+        if (kids.length) kids.push(hairline(0));
+        // (The slack goes on the side the text runs away from: a right-to-left box keeps its right edge.)
+        const rtlBox = b.blocks.filter((k) => k.rtl).length * 2 >= b.blocks.length;
+        const fw = b.w * 1.04 + 6;
+        const frame: import('./docxwrite').Frame = { x: Math.round((rtlBox ? b.x + b.w + 2 - fw : b.x - 2) * PT), y: Math.round(b.y * PT), w: Math.round(fw * PT), h: Math.round(b.h * PT), rule: 'atLeast', anchorLock: true };
+        for (const k of b.blocks) {
+          if (k.kind !== 'p') { kids.push(blocksFor([k], null, body)); continue; }
+          kids.push(paraFor(k, null, body, { frame }));
+        }
+      }
+      if (!kids.length) kids.push(emptyPara);
+      return [{ type: 'nextPage', page, header, footer, children: kids }];
     }
     if (pg.regions?.length) {
       // A page in columns: one continuous section per region, each with its own column layout; the columns'
       // widths and gap follow the page, and a column break starts each column after the first.
       const textL = pg.m.left, textR = pg.w - pg.m.right;
-      return pg.regions.map((rg, i) => {
-        const kids: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = [];
+      return pg.regions.map((rg, i): import('./docxwrite').Section => {
+        const kids: string[] = [];
         rg.cols.forEach((bs, c) => {
           // The second column starts with a column break inside its first paragraph (a paragraph of its own
           // would add its height to the column).
-          if (c > 0 && bs[0]?.kind === 'p') { kids.push(paraFor(bs[0], null, { colBreak: true }), ...blocksFor(bs.slice(1), null)); return; }
+          if (c > 0 && bs[0]?.kind === 'p') { kids.push(paraFor(bs[0], null, body, { colBreak: true }), blocksFor(bs.slice(1), null, body)); return; }
           // (A table first in its column: the break goes in the hairline paragraph that sets its space above.)
-          if (c > 0 && bs[0]?.kind === 'grid') { const g = bs[0]; kids.push(new Paragraph({ spacing: { before: Math.round(Math.max(0, g.before - 1) * PT), after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new ColumnBreak()] }), gridFor(g, null), ...blocksFor(bs.slice(1), null)); return; }
-          if (c > 0) kids.push(new Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [new ColumnBreak()] }));
-          kids.push(...blocksFor(bs, null));
+          if (c > 0 && bs[0]?.kind === 'grid') { const g = bs[0]; kids.push(hairline(Math.max(0, g.before - 1) * PT, W_.columnBreak()), gridFor(g, null, body), blocksFor(bs.slice(1), null, body)); return; }
+          if (c > 0) kids.push(hairline(0, W_.columnBreak()));
+          kids.push(blocksFor(bs, null, body));
         });
-        if (!kids.length) kids.push(new Paragraph({ children: [] }));
-        let column: object | undefined;
+        if (!kids.join('')) kids.push(emptyPara);
+        let columns: import('./docxwrite').Columns | undefined;
         if (rg.cols.length > 1) {
           // Visual left-to-right column boxes, then in the section's reading order.
           const boxes = rg.edges.map(([a, b]) => [Math.max(textL, a - 3), Math.min(textR, b + 3)] as [number, number]).sort((x, y) => x[0] - y[0]);
@@ -1868,23 +1994,13 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
           const space = Math.max(6, textR - textL - widths[0] - widths[1]);
           const rtlCols = rg.edges[0][0] > rg.edges[1][0];
           const ordered = rtlCols ? [widths[1], widths[0]] : widths;
-          column = { count: 2, equalWidth: false, space: Math.round(space * PT), children: [new Column({ width: Math.round(ordered[0] * PT), space: Math.round(space * PT) }), new Column({ width: Math.round(ordered[1] * PT) })] };
+          columns = { space: Math.round(space * PT), widths: ordered.map((w) => Math.round(w * PT)) };
         }
-        return {
-          properties: { type: i === 0 ? SectionType.NEXT_PAGE : SectionType.CONTINUOUS, page, ...(column ? { column } : {}) },
-          ...(i === 0 ? { headers, footers } : {}),
-          children: kids,
-        };
+        return { type: i === 0 ? 'nextPage' : 'continuous', page, columns, ...(i === 0 ? { header, footer } : {}), children: kids };
       });
     }
-    const children = [...blocksFor(pg.body, map), ...blocksFor(flowNotes, null)];
-    if (!children.length) children.push(new Paragraph({ children: [] }));
-    return [{
-      properties: { type: SectionType.NEXT_PAGE, page },
-      headers,
-      footers: footerChildren.length ? footers : undefined,
-      children,
-    }];
+    const children = blocksFor(pg.body, map, body) + blocksFor(flowNotes, null, body);
+    return [{ type: 'nextPage', page, header, footer, children: [children || emptyPara] }];
   });
 
   // Embed the PDF's own fonts — each face (regular, bold, …) under its family — where they can draw
@@ -1900,7 +2016,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // (Its symbol table too: codes kept as drawn — a sign font's — are looked up there.)
     const cov = new Set([...(f.cov ??= cmapCoverage(f.raw)), ...(f.winCov ??= cmapCoverage(f.raw, true))]);
     let ok = 0, total = 0;
-    for (const c of used) { if (c <= 0x20 || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
+    for (const c of used) { if (c <= 0x20 || (c >= 0x200b && c <= 0x200f) || c === 0x2060 || c === 0xfeff || COMBINING.test(String.fromCodePoint(c))) continue; total++; if (cov.has(c)) ok++; }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D font', f.family, face, ok, '/', total, [...used].filter((c) => c > 0x20 && !COMBINING.test(String.fromCodePoint(c)) && !cov.has(c)).map((c) => c.toString(16)).join(' '));
     if (!total || ok / total < 0.97) continue; // a missing character or two falls back in Word
     // (Several fonts of one family and style — subsets of it — compete: the one that covers most, a rebuilt
@@ -1911,32 +2027,21 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     let m = faces.get(f.family); if (!m) faces.set(f.family, m = new Map());
     m.set(face, f.raw);
   }
-  const embedded: { name: string; data: Uint8Array; characterSet?: (typeof CharacterSet)[keyof typeof CharacterSet] }[] = [];
+  const embedded: import('./docxwrite').EmbeddedFont[] = [];
   const extraFaces: { family: string; face: Face; data: Uint8Array }[] = [];
   const sigs = new Map<string, Os2>();
   for (const [family, m] of faces) {
     const arabic = [...(usedChars.get(`${family}|Regular`) ?? []), ...(usedChars.get(`${family}|Bold`) ?? [])].some((c) => c >= 0x600 && c <= 0x6ff);
     const first = (m.get('Regular') ?? m.values().next().value)!;
     const firstFace = [...m.entries()].find(([, v]) => v === first)![0];
-    embedded.push({ name: family, data: first, characterSet: arabic ? CharacterSet.ARABIC : CharacterSet.ANSI });
+    embedded.push({ name: family, data: first, arabic });
     for (const [face, data] of m) if (data !== first) extraFaces.push({ family, face, data });
     if (firstFace !== 'Regular') extraFaces.push({ family, face: firstFace, data: new Uint8Array(0) }); // marks: move embedRegular to this face
     const os2 = readOs2(first); if (os2) sigs.set(family, os2);
   }
 
-  const allBlocks = pages.flatMap((p) => [...p.body, ...(p.regions ?? []).flatMap((r) => r.cols.flat())]);
-  const rtlDoc = allBlocks.filter((b) => b.rtl).length > allBlocks.length / 2;
-  const d = new Document({
-    creator: 'KurokawaReader', title: book.title,
-    fonts: embedded.length ? (embedded as never) : undefined,
-    footnotes: footnoteDefs,
-    styles: { default: { document: { run: { font: rtlDoc ? { ascii: 'Times New Roman', cs: 'Traditional Arabic', hAnsi: 'Times New Roman', eastAsia: 'Times New Roman' } : 'Times New Roman' }, paragraph: { spacing: { after: 0 } } } } },
-    sections,
-  });
   progress('build', 92);
   if (TT) TT.build = performance.now() - tb;
-  // (The package as docx makes it, before it is zipped: finished and zipped once — not zipped, opened again
-  // and zipped a second time — its pictures stored, not squeezed for nothing.)
   // Fonts that are neither carried in the file nor common: named after a common font of the same kind.
   const subs = new Map<string, { latin: string; cs: string; ea: string }>();
   for (const key of usedChars.keys()) {
@@ -1950,7 +2055,12 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const sub = fontSubstitute(family, info);
     if (sub) subs.set(family, sub);
   }
-  const blob = await packDocx(d, (zip) => finishDocx(zip, rtlDoc, extraFaces, sigs, subs));
+  const tc0 = performance.now();
+  const zip = await writer.pack(sections, embedded);
+  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs);
+  if (TT) TT.compile = performance.now() - tc0;
+  const { zipOut } = await import('./ziputil');
+  const blob = await zipOut(zip as unknown as ZipLike, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   if (TT) TT.pack = performance.now() - tb - TT.build;
   progress('build', 100);
   return blob;

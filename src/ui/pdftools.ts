@@ -10,7 +10,7 @@ import { shareFile, downloadBlob, fileNameField } from './share';
 import { sortable, placeNumber } from './sortable';
 import type { Source, PageSize } from '../pdftools';
 
-type Tool = 'docs' | 'images' | 'scan' | 'merge' | 'extract' | 'organize' | 'unlock' | 'toImages';
+type Tool = 'docs' | 'images' | 'scan' | 'merge' | 'extract' | 'organize' | 'unlock' | 'protect' | 'toImages';
 const TOOLS: [Tool, string, string, string][] = [
   ['docs', 'toolDocsToPdf', 'note', 'toolDocsToPdfSub'],
   ['scan', 'toolScan', 'camera', 'toolScanSub'],
@@ -19,6 +19,7 @@ const TOOLS: [Tool, string, string, string][] = [
   ['merge', 'toolMerge', 'books', 'toolMergeSub'],
   ['organize', 'toolOrganize', 'grid', 'toolOrganizeSub'],
   ['unlock', 'toolUnlock', 'target', 'toolUnlockSub'],
+  ['protect', 'toolProtect', 'lock', 'toolProtectSub'],
   ['toImages', 'toolToImages', 'download', 'toolToImagesSub'],
 ];
 
@@ -41,7 +42,7 @@ export function pdfToolsSheet(books: Book[], book?: Book, onDone?: () => void): 
     else if (id === 'docs') docsSheet(books, onDone);
     else if (id === 'scan') void import('./scanner').then((m) => m.scannerSheet(onDone));
     else if (id === 'merge') mergeSheet(pdfs, book, onDone);
-    else void chooseSource(pdfs, book, (src) => (id === 'organize' || id === 'extract' ? organizeSheet(src, onDone, id === 'extract') : id === 'unlock' ? unlockSheet(src, onDone) : toImagesSheet(src)));
+    else void chooseSource(pdfs, book, (src) => (id === 'organize' || id === 'extract' ? organizeSheet(src, onDone, id === 'extract') : id === 'unlock' ? unlockSheet(src, onDone) : id === 'protect' ? protectSheet(src, onDone) : toImagesSheet(src)));
   };
 }
 
@@ -559,6 +560,31 @@ async function unlockSheet(src: Source, onDone?: () => void): Promise<void> {
   }) }, icon('target'), t('toolUnlock')) as HTMLButtonElement;
   sh.actions.append(go);
   go.click();
+}
+
+/* ---------- a password on the file ---------- */
+
+/** The PDF under a password (AES-256, as Acrobat sets it): the password to open it, an owner password that
+ *  keeps every right, and what a reader may do without it. */
+async function protectSheet(src: Source, onDone?: () => void): Promise<void> {
+  const sh = openSheet(t('toolProtect'), t('close'), { stack: true });
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  const user = h('input', { type: 'password', autocomplete: 'new-password', dir: 'ltr', class: 'tool-range' }) as HTMLInputElement;
+  const owner = h('input', { type: 'password', autocomplete: 'new-password', dir: 'ltr', class: 'tool-range', placeholder: t('protectOwnerSame') }) as HTMLInputElement;
+  const perms = { print: true, copy: true, modify: false, annotate: true };
+  const sw = (k: keyof typeof perms, label: string) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: perms[k], onchange: (e: Event) => { perms[k] = (e.target as HTMLInputElement).checked; } }));
+  sh.body.append(h('p', { class: 'src', dir: 'auto' }, src.name), h('p', { class: 'hint' }, t('protectBody')),
+    field(t('protectUser'), user), field(t('protectOwner'), owner),
+    h('p', { class: 'label' }, t('protectAllow')), sw('print', t('permPrint')), sw('copy', t('permCopy')), sw('annotate', t('permAnnotate')), sw('modify', t('permModify')));
+  const r = runner(sh.body, onDone);
+  const go = h('button', { class: 'btn small primary', type: 'button', onclick: () => void r.run([go], async () => {
+    if (!user.value && !owner.value) { toast(t('protectNeedPassword'), 'error'); user.focus(); return null; }
+    const { protectPdf } = await tools();
+    const bytes = await withPassword(src, (s) => protectPdf(s, user.value, owner.value || user.value, perms)); if (!bytes) return null;
+    return { blob: pdfBlob(bytes), name: `${baseName(src.name)} (${t('protectedMark')}).pdf` };
+  }) }, icon('lock'), t('toolProtect')) as HTMLButtonElement;
+  sh.actions.append(go);
+  setTimeout(() => user.focus(), 80);
 }
 
 /* ---------- pages → pictures ---------- */

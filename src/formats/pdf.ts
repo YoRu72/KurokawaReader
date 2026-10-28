@@ -1016,7 +1016,8 @@ async function prunePdfCache(fs: unknown, keep: string): Promise<void> {
   const f = fs as { readdir(o: { path: string; directory: string }): Promise<{ files: { name: string; mtime?: number }[] }>; deleteFile(o: { path: string; directory: string }): Promise<void> };
   try {
     const { files } = await f.readdir({ path: 'kr-pdf', directory: 'CACHE' });
-    const old = files.filter((x) => x.name !== keep).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)).slice(2);
+    // (The book open and the one before it: a cache of PDFs the size of two books, not of a shelf.)
+    const old = files.filter((x) => x.name !== keep).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)).slice(1);
     for (const x of old) await f.deleteFile({ path: `kr-pdf/${x.name}`, directory: 'CACHE' }).catch(() => {});
   } catch { /* nothing cached */ }
 }

@@ -70,6 +70,8 @@ async function nativeRequest(o, byBrowser) {
       };
     }, withBrowser);
     const page = await ctx.newPage();
+  // (The placement asked for a volume — into the library, tagged, or to the device alone — answered «into the library» by a hand of the test's.)
+  await page.addInitScript(() => { setInterval(() => { const b = [...document.querySelectorAll('.sheet .tag-pick')].map((p) => p.closest('.sheet')?.querySelector('.sheet-actions .btn.primary')).find(Boolean); if (b) b.click(); }, 150); });
     page.on('pageerror', (e) => errors.push(String(e)));
     await page.goto(base); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
     return { ctx, page, log };

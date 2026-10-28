@@ -17,7 +17,7 @@ export type Progress = { pct: number; got: number; total: number; speed?: number
 /** What to do with the file once it is here: into the library, remembered as coming from its source. */
 export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: Book['series']; tags?: string[]; /** Saved to the device (Download), not into the library. */ deviceOnly?: boolean };
 export type DownloadTask = { url: string; name: string; mime?: string; size?: number; headers?: Record<string, string>; title: string; then: Then };
-export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; error?: string; bookId?: string; startedAt: number };
+export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; /** Waiting for its turn (three run at a time). */ queued?: boolean; error?: string; bookId?: string; startedAt: number };
 
 const KEY = 'kr.downloads';
 const list: Download[] = [];
@@ -58,13 +58,36 @@ export function startDownload(task: DownloadTask): Promise<Book> {
   return p;
 }
 
+/** A failed or cancelled download asked for again (the same file, the same destination). */
+export function retryDownload(id: string): Promise<Book> | null {
+  const d = list.find((x) => x.id === id); if (!d || d.state === 'running') return null;
+  const i = list.indexOf(d); if (i >= 0) list.splice(i, 1);
+  return startDownload({ url: d.url, name: d.name, mime: d.mime, size: d.size, headers: d.headers, title: d.title, then: d.then });
+}
+/** The finished, failed and cancelled downloads cleared from the list. */
+export function clearDownloads(): void { for (let i = list.length - 1; i >= 0; i--) if (list[i].state !== 'running') list.splice(i, 1); persist(); changed(); }
+
 export function cancelDownload(id: string): void {
   const d = list.find((x) => x.id === id); if (!d || d.state !== 'running') return;
   d.state = 'cancelled'; cancels.get(id)?.(); cancels.delete(id);
   persist(); changed();
 }
 
+// A few at a time (as download managers do): the rest wait their turn, so a dozen volumes asked for at once
+// do not fight for the connection.
+const AT_ONCE = 3;
+let active = 0; const turns: (() => void)[] = [];
+const takeTurn = () => new Promise<void>((ok) => { if (active < AT_ONCE) { active++; ok(); } else turns.push(() => { active++; ok(); }); });
+const giveTurn = () => { active--; turns.shift()?.(); };
+
 async function run(d: Download): Promise<void> {
+  d.queued = active >= AT_ONCE; if (d.queued) changed();
+  await takeTurn();
+  d.queued = false; changed();
+  if (d.state !== 'running') { giveTurn(); waiting.get(d.id)?.fail(new Error('cancelled')); waiting.delete(d.id); persist(); changed(); return; }
+  try { await runNow(d); } finally { giveTurn(); }
+}
+async function runNow(d: Download): Promise<void> {
   const progress = (p: Progress) => {
     if (d.state !== 'running') return;
     d.got = p.got; if (p.total) d.total = p.total; d.speed = p.speed ?? d.speed; d.pct = d.total ? Math.min(100, Math.round((d.got / d.total) * 100)) : p.pct;
@@ -102,17 +125,26 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
   const safe = d.name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim() || 'book';
   if (plat === 'android') {
     const k = (window as unknown as { Capacitor: { Plugins: { Kurokawa: AndroidDl } } }).Capacitor.Plugins.Kurokawa;
+    // (Progress from either way of fetching — the plain downloader, or the browser lane after it — under the id.)
     const sub = await k.addListener?.('downloadProgress', (p) => { if (!p.id || p.id === d.id) onProgress(p); });
     cancels.set(d.id, () => void k.cancelDownload?.({ id: d.id }).catch(() => undefined));
     try {
-      const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 4 });
-      const file = await readContentUri(path, d.name, d.mime ?? '');
-      void k.deleteDownload?.({ path }).catch(() => undefined);
-      return file;
-    } catch (e) {
-      // (A site that turns the plain downloader away — a check only its browser lane passes: the sources' own
-      // request, which knows the way.)
-      if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e;
+      // (A site reached through the browser lane already — a check only a browser passes — is not asked the
+      // plain way first: its download goes through the lane, to a file, with its progress.)
+      const { viaBrowser } = await import('./sources/http');
+      if (!viaBrowser(new URL(d.url).host)) {
+        try {
+          const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 4 });
+          const file = await readContentUri(path, d.name, d.mime ?? '');
+          void k.deleteDownload?.({ path }).catch(() => undefined);
+          return file;
+        } catch (e) {
+          if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e;
+        }
+      }
+      const { fetchBytes: lane } = await import('./sources/http');
+      const bytes = await lane(d.url, onProgress, { headers: d.headers, downloadId: d.id });
+      return new File([bytes.buffer as ArrayBuffer], d.name, { type: d.mime ?? '' });
     } finally { sub?.remove(); }
   }
   const dk = window.kurokawaDesktop as unknown as DesktopDl | undefined;

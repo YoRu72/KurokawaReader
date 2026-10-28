@@ -27,6 +27,8 @@ export interface RequestInit extends HttpInit {
   quiet?: boolean;
   /** How many times to ask again after a "busy" answer (429 / 503 with Retry-After); 2 by default. */
   retries?: number;
+  /** A download: the browser lane writes the answer to a file and tells its progress under this id. */
+  downloadId?: string;
 }
 
 /** The answer looks like a browser check (Cloudflare's, DDoS-Guard's…) rather than the page. */
@@ -54,7 +56,7 @@ function titleOf(r: HttpResult, binary: boolean): string {
 }
 
 /* ---------- the app's own browser ---------- */
-type BrowserInit = { url: string; method?: string; headers?: Record<string, string>; body?: string | null; bodyBase64?: boolean; binary?: boolean; timeout?: number; page?: string; openTimeout?: number };
+type BrowserInit = { url: string; method?: string; headers?: Record<string, string>; body?: string | null; bodyBase64?: boolean; binary?: boolean; timeout?: number; page?: string; openTimeout?: number; downloadId?: string };
 type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean };
 type CheckResult = { passed?: boolean; blocked?: boolean; title?: string };
 interface Browser {
@@ -205,7 +207,7 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
     for (;;) {
       try {
         r = inBrowser && b?.fetch
-          ? await b.fetch({ url, method: init.method ?? 'GET', headers, body: init.body ?? null, bodyBase64: !!init.bodyBase64, binary: !!init.binary, timeout: init.binary ? 180000 : 90000, openTimeout: 20000 })
+          ? await b.fetch({ url, method: init.method ?? 'GET', headers, body: init.body ?? null, bodyBase64: !!init.bodyBase64, binary: !!init.binary, timeout: init.downloadId ? 1800000 : init.binary ? 180000 : 90000, openTimeout: 20000, ...(init.downloadId ? { downloadId: init.downloadId } : {}) })
           : await http(url, { ...init, headers });
       } catch (e) {
         // (The app's browser could not reach the site at all — no network, a page that would not load: the

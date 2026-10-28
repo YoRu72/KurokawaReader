@@ -158,6 +158,38 @@ export function settingsView(): HTMLElement {
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup')))));
 
+  // Checks for new chapters at the sources (the same choices as the bell in Browse offers).
+  {
+    const card = h('section', { class: 'card' }, h('h3', null, t('updatesSection')), h('p', null, t('updatesSectionBody')));
+    void import('../sources/updates').then(({ updatePrefs, setUpdatePref }) => {
+      const pref = updatePrefs();
+      const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
+      card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')),
+        h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));
+    });
+    body.append(card);
+  }
+
+  // The downloads: the manager's list, from here as from the library.
+  body.append(h('section', { class: 'card' }, h('h3', null, t('downloads')), h('p', null, t('downloadsBody')),
+    h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const { downloadsSheet } = await import('../ui/downloadsheet'); downloadsSheet(); } }, icon('download'), t('downloads'))));
+
+  // The app's own browser: any site opened in it (to sign in, pass a check, or just look), its sign-ins forgotten.
+  {
+    const card = h('section', { class: 'card' }, h('h3', null, t('inAppBrowser')), h('p', null, t('inAppBrowserBody')));
+    void import('../sources/http').then(({ hasBrowser, openSite, forgetSite }) => {
+      if (!hasBrowser()) { card.append(h('p', { class: 'hint' }, t('inAppBrowserNone'))); return; }
+      const addr = h('input', { type: 'url', placeholder: 'https://', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr', style: { flex: '1', minWidth: '0' } }) as HTMLInputElement;
+      const go = () => { let u = addr.value.trim(); if (!u) return; if (!/^https?:\/\//i.test(u)) u = `https://${u}`; void openSite(u); };
+      addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+      card.append(
+        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, addr, h('button', { class: 'btn small primary', type: 'button', onclick: go }, icon('globe'), t('open'))),
+        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
+          h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const n = await forgetSite(addr.value.trim() || 'https://example.com/', true); toast(t('sitesForgotten', { n: localDigits(n) })); } }, icon('trash'), t('forgetAllSites'))));
+    });
+    body.append(card);
+  }
+
   // Tracking (AniList) and the book page
   // (Its title is set now, so the card folds and sits in the headings like the others; the rest fills in.)
   const trackCard = h('section', { class: 'card' }, h('h3', null, t('tracking')));

@@ -197,7 +197,7 @@ export async function buildPdfWorker(outFile) {
       if (krAT) { krAT.depth++; return; }
       const v = props instanceof Dict ? props.get("ActualText") : null;
       if (typeof v !== "string") return;
-      krAT = { str: stringToPDFString(v), depth: 1, minX: Infinity, maxX: -Infinity, anchor: null, first: null, fontName: null, color: textState.krFill || null, bold: textState.krTr === 2, strokeEm: 0 };
+      krAT = { str: stringToPDFString(v), depth: 1, minX: Infinity, maxX: -Infinity, anchor: null, first: null, fontName: null, color: textState.krFill || null, bold: textState.krTr === 2, hidden: textState.krTr === 3 || textState.krTr === 7 || textState.krCa === 0, strokeEm: 0 };
       krPageAT = true;
     }
     function krSpanCodes(codes, str) {
@@ -225,6 +225,7 @@ export async function buildPdfWorker(outFile) {
         hasEOL: false,
         color: at.color,
         fakeBold: at.bold,
+        hidden: at.hidden || undefined,
         strokeEm: at.strokeEm,
         // One glyph: the span's text is that glyph's text; several: each glyph's own.
         // The span's text belongs to its one spacing glyph (the others are its marks); with several spacing
@@ -253,7 +254,7 @@ export async function buildPdfWorker(outFile) {
           const s = Math.hypot(t0[0], t0[1]);
           const tr = [...t0]; tr[4] = t0[4] + ink[0] * s;
           const u = /[\ufdf0-\ufdfd]/.test(glyph.unicode) ? glyph.unicode.normalize("NFKC") : glyph.unicode;
-          textContent.items.push({ str: u, dir: /[\u0600-\u06ff]/.test(u) ? "rtl" : "ltr", width: Math.max(0.01, (ink[1] - ink[0]) * s), height: Math.hypot(t0[2], t0[3]), transform: tr, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, ...(font.krNeedsUse ? { krCodes: [originalCharCode, u, t0[4], t0[5], Math.hypot(t0[2], t0[3]), glyph.width * textState.fontMatrix[0]] } : {}) });
+          textContent.items.push({ str: u, dir: /[\u0600-\u06ff]/.test(u) ? "rtl" : "ltr", width: Math.max(0.01, (ink[1] - ink[0]) * s), height: Math.hypot(t0[2], t0[3]), transform: tr, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, hidden: (textState.krTr === 3 || textState.krTr === 7 || textState.krCa === 0) || undefined, ...(font.krNeedsUse ? { krCodes: [originalCharCode, u, t0[4], t0[5], Math.hypot(t0[2], t0[3]), glyph.width * textState.fontMatrix[0]] } : {}) });
           resetLastChars();
           textState.translateTextMatrix((glyph.width * textState.fontMatrix[0] * textState.fontSize + baseCharSpacing) * textState.textHScale, 0);
           continue;
@@ -315,7 +316,7 @@ export async function buildPdfWorker(outFile) {
             const ik = krInkX(font, glyph);
             const cx = ik ? mx + ((ik[0] + ik[1]) / 2) * em * textState.textHScale : null;
             // Word draws a line's harakat before its letters: hold the mark until the letters are in.
-            krPending.push({ mark: glyph.unicode, x: cx ?? mx, y: t0[5], age: 0, item: { str: glyph.unicode, dir: "rtl", width: 0, height: Math.hypot(t0[2], t0[3]), transform: t0, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, krMark: true } });
+            krPending.push({ mark: glyph.unicode, x: cx ?? mx, y: t0[5], age: 0, item: { str: glyph.unicode, dir: "rtl", width: 0, height: Math.hypot(t0[2], t0[3]), transform: t0, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, hidden: (textState.krTr === 3 || textState.krTr === 7 || textState.krCa === 0) || undefined, krMark: true } });
             continue;
           }
         }
@@ -388,6 +389,7 @@ export async function buildPdfWorker(outFile) {
       textContentItem.initialized = true;`, `      textContentItem.hasEOL = false;
       textContentItem.krColor = textState.krFill || null;
       textContentItem.krBold = textState.krTr === 2;
+      textContentItem.krHidden = textState.krTr === 3 || textState.krTr === 7 || textState.krCa === 0;
       textContentItem.krStrokeEm = krStrokeEm();
       textContentItem.krRepaired = !!textState.font?.krToUnicodeRepaired;
       textContentItem.initialized = true;`, 'item init');
@@ -410,6 +412,7 @@ export async function buildPdfWorker(outFile) {
         hasEOL: textChunk.hasEOL,
         color: textChunk.krColor,
         fakeBold: textChunk.krBold,
+        hidden: textChunk.krHidden || undefined,
         strokeEm: textChunk.krStrokeEm,
         krCodes: textChunk.krCodes || undefined
       };
@@ -467,6 +470,26 @@ export async function buildPdfWorker(outFile) {
             if (krAT) krAT.depth++;
             if (includeMarkedContent) {
               markedContentData.level++;`, 'BMC');
+  // A graphics state whose fill is fully transparent hides the text drawn under it (words laid invisibly over
+  // a title drawn as outlines, as design tools do): such text says so.
+  src = replaceOnce(src, `          case OPS.setGState:
+            isValidName = args[0] instanceof Name;
+            name = args[0].name;
+            if (isValidName && emptyGStateCache.getByName(name)) {
+              break;
+            }
+            next(new Promise(function (resolveGState, rejectGState) {`, `          case OPS.setGState:
+            isValidName = args[0] instanceof Name;
+            name = args[0].name;
+            try {
+              const krGs = isValidName ? resources.get("ExtGState")?.get(name) : null;
+              const krCa = krGs instanceof Dict ? krGs.get("ca") : undefined;
+              if (typeof krCa === "number") { if (((textState.krCa ?? 1) === 0) !== (krCa === 0)) flushTextContentItem(); textState.krCa = krCa; }
+            } catch (e) { /* no state */ }
+            if (isValidName && emptyGStateCache.getByName(name)) {
+              break;
+            }
+            next(new Promise(function (resolveGState, rejectGState) {`, 'text gs alpha');
   src = replaceOnce(src, `          case OPS.beginMarkedContentProps:
             flushTextContentItem();
             if (includeMarkedContent) {

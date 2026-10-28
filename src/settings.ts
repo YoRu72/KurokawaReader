@@ -160,7 +160,11 @@ export interface VisualSettings {
   autoReadings: boolean;      // show furigana / pinyin as soon as CJK text is selected          // show ruby readings in Japanese books
   aiTtsModel: string;
   aiVoice: string;
-  speechEngine: 'system' | 'ai';
+  speechEngine: 'system' | 'ai' | 'kitten';
+  /** KittenTTS on the device: the model downloaded and chosen, its voice and speed. */
+  kittenModel: string;
+  kittenVoice: string;
+  kittenSpeed: number;
   readerToolbar: string[];    // ids of the floating toolbar buttons, in order
   systemFonts: string[];      // system font families picked on desktop
   highlightPalette: Record<'amber' | 'rose' | 'mint' | 'sky' | 'violet', string>;
@@ -311,6 +315,9 @@ export const DEFAULTS: VisualSettings = {
   aiTtsModel: '',
   aiVoice: '',
   speechEngine: 'system',
+  kittenModel: '',
+  kittenVoice: 'leo',
+  kittenSpeed: 1,
   readerToolbar: ['toc', 'search', 'images', 'bookmark', 'sep', 'type', 'more'],
   systemFonts: [],
   shortcuts: {},

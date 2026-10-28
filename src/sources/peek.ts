@@ -34,6 +34,7 @@ function learned(set: Set<string>, host: string): void {
 const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u; } };
 /** What went wrong lately when looking into files (for the reader to show when covers stay away). */
 export const peekLog: string[] = [];
+(globalThis as { krPeekLog?: string[] }).krPeekLog = peekLog; // (read by the tests)
 export function logPeek(line: string): void { peekLog.push(`${new Date().toISOString().slice(11, 19)} ${line}`); if (peekLog.length > 60) peekLog.shift(); }
 /** A host whose files a static web server serves (an h5ai folder's): taken to answer ranges until it says
  *  otherwise — its very first files asked for both ends at once. */
@@ -224,7 +225,9 @@ async function peekEpub(url: string, noCover = false): Promise<Read> {
   // (When the server must be asked for these anyway, the picture called the cover comes with them: the package
   // nearly always names that one, and a round trip is saved.)
   const asking = firstNames.some((n) => z.entries.has(n) && !z.isHere(n));
-  const coverGuess = asking && !noCover ? names.filter((n) => /\.(jpe?g|png|webp|gif)$/i.test(n) && /cover/i.test(n.split('/').pop() ?? '') && (z.entries.get(n)?.csize ?? 0) < 6 * 1024 * 1024).sort((a, b) => (z.entries.get(b)?.csize ?? 0) - (z.entries.get(a)?.csize ?? 0))[0] : undefined;
+  // (Of several pictures called the cover, the smallest that is still a picture — not an icon — is read: a
+  // thumbnail is what is wanted, and the big one costs a reader on mobile data a megabyte or two a book.)
+  const coverGuess = asking && !noCover ? pickCover(names.filter((n) => /\.(jpe?g|png|webp|gif)$/i.test(n) && /cover/i.test(n.split('/').pop() ?? '')).map((n) => [n, z.entries.get(n)?.csize ?? 0] as [string, number])) : undefined;
   const first = await z.read([...firstNames, ...(coverGuess ? [coverGuess] : [])]);
   const container = first.get('META-INF/container.xml');
   let opfPath = container ? byTag(xml(container), 'rootfile')[0]?.getAttribute('full-path') ?? '' : '';
@@ -256,7 +259,9 @@ async function peekEpub(url: string, noCover = false): Promise<Read> {
   const coverPage = !coverPath && !noCover ? byTag(opf, 'reference').find((r) => r.getAttribute('type') === 'cover')?.getAttribute('href') ?? items.find((i) => /cover/i.test(i.id) && /html/.test(i.type))?.href : undefined;
   const pagePath = coverPage ? resolve(dir, coverPage) : '';
   // (A picture too big to be worth fetching for a thumbnail is left out; none at all when covers are off.)
-  if (noCover || (coverPath && (z.entries.get(coverPath)?.csize ?? 0) > 6 * 1024 * 1024)) coverPath = '';
+  // (The package's cover too big for the connection: a smaller picture called the cover when there is one, else none.)
+  if (coverPath && (z.entries.get(coverPath)?.csize ?? 0) > coverCap()) { const alt = pickCover(names.filter((n) => n !== coverPath && /\.(jpe?g|png|webp)$/i.test(n) && /cover/i.test(n.split('/').pop() ?? '')).map((n) => [n, z.entries.get(n)?.csize ?? 0] as [string, number])); if (alt) coverPath = alt; else logPeek(`skip cover: ${Math.round((z.entries.get(coverPath)?.csize ?? 0) / 1024)} KB over the cap · ${url.split('/').pop()?.slice(0, 60)}`); }
+  if (noCover || (coverPath && (z.entries.get(coverPath)?.csize ?? 0) > coverCap())) coverPath = '';
   const later = [tocPath, coverPath, pagePath].filter((p) => p && !first.has(p));
   const more = later.length ? await z.read(later) : new Map<string, Uint8Array>();
   const get = (p: string) => first.get(p) ?? more.get(p);
@@ -267,7 +272,7 @@ async function peekEpub(url: string, noCover = false): Promise<Read> {
       const src = d.querySelector('img')?.getAttribute('src') ?? Array.from(d.getElementsByTagName('image'))[0]?.getAttribute('xlink:href') ?? Array.from(d.getElementsByTagName('image'))[0]?.getAttribute('href');
       if (src) {
         coverPath = resolve(pagePath.slice(0, pagePath.lastIndexOf('/') + 1), src); cover = { id: '', href: src, type: /\.png$/i.test(src) ? 'image/png' : 'image/jpeg', props: '' };
-        if ((z.entries.get(coverPath)?.csize ?? 0) > 6 * 1024 * 1024) coverPath = '';
+        if ((z.entries.get(coverPath)?.csize ?? 0) > coverCap()) coverPath = '';
         else if (coverPath) for (const [k, v] of await z.read([coverPath])) more.set(k, v);
       }
     }
@@ -336,6 +341,23 @@ function blank(ctx: CanvasRenderingContext2D, w: number, h: number): boolean {
     for (let i = 0; i < d.length; i += step) if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) ink++;
     return ink / (d.length / step) < 0.01;
   } catch { return false; }
+}
+
+/** How big a cover picture may be before it is left unread: smaller on mobile data (or when the system asks
+ *  to save data), so a shelf of covers does not eat the plan — Mihon's thumbnails are a few tens of kilobytes. */
+export function coverCap(): number {
+  const c = (navigator as Navigator & { connection?: { type?: string; saveData?: boolean; effectiveType?: string } }).connection;
+  if (c?.saveData || c?.type === 'cellular' || /^(slow-)?2g$/.test(c?.effectiveType ?? '')) return 700 * 1024;
+  return 4 * 1024 * 1024;
+}
+/** Of the pictures called the cover, the one to read: the smallest that is a real picture (over 24 KB), else
+ *  the biggest under the cap. */
+function pickCover(list: [string, number][]): string | undefined {
+  const cap = coverCap();
+  const real = list.filter(([, n]) => n >= 24 * 1024 && n <= cap).sort((a, b) => a[1] - b[1]);
+  if (real.length) return real[0][0];
+  const under = list.filter(([, n]) => n <= cap).sort((a, b) => b[1] - a[1]);
+  return under[0]?.[0];
 }
 
 /* ---------- a picture made small ---------- */
@@ -491,6 +513,7 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
       const got = ext === 'epub' ? await peekEpub(url, !!opts.noCover) : ext === 'pdf' ? (opts.noCover ? null : await peekPdf(url, size)) : null;
       if (!got) return null;
       const { cover, ...rest } = got;
+      logPeek(`ok ${ext} cover=${cover ? 'y' : 'n'} toc=${rest.toc?.length ?? 0} desc=${rest.description?.length ?? 0} title=${rest.title ? 'y' : 'n'} · ${url.split('/').pop()?.slice(0, 60)}`);
       return store(key, { ...rest, at: Date.now(), noCover: opts.noCover || undefined }, cover);
     } catch (e) {
       const err = e as SourceError;

@@ -126,7 +126,44 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const upem = sources.length === 1 ? sources[0].upem : 1000;
   // A glyph read as a space is a word break, not the font's space (a legacy font may file a letter under the
   // space code); the space comes from spaceGid or meta.space.
-  lines = lines.flatMap((l) => { const out: Use[][] = [[]]; for (const u of l) { if (u[1] && !u[1].trim()) out.push([]); else out[out.length - 1].push(u); } return out.filter((x) => x.length).map((x) => Object.assign(x, { rtl: (l as RtlLine).rtl })); });
+  lines = lines.flatMap((l) => { const out: Use[][] = [[]]; for (const u of l) { if (u[1] && /^[\s\u200b-\u200f\u2060\ufeff]+$/.test(u[1])) out.push([]); else out[out.length - 1].push(u); } return out.filter((x) => x.length).map((x) => Object.assign(x, { rtl: (l as RtlLine).rtl })); });
+  // The same glyph met in several sources (the subsets of one font, a page each) is one glyph: told by its
+  // outline. Otherwise a long book's font would hold a copy of each letter form per page, and its shaping
+  // rules — one set per copy — would outgrow what a GSUB table can hold.
+  // Glyphs with no outline (a space, an invisible glyph) are never read as marks on the letter beside them —
+  // a space drawn with no text of its own would otherwise turn the font's space into a mark, and every word
+  // would run into the next.
+  const blank = new Set<number>();
+  const isBlank = (gid: number): boolean => { try { const src = sources[Math.floor(gid / 65536)]; return !!src && !src.outline(gid % 65536).contours.length; } catch { return false; } };
+  for (const l of lines) for (const u of l) if (u[0] && !blank.has(u[0]) && !u[1] && isBlank(u[0])) blank.add(u[0]);
+  if (blank.size) lines = lines.map((l) => Object.assign(l.filter((u) => !blank.has(u[0]) || u[1]), { rtl: (l as RtlLine).rtl })).filter((l) => l.length);
+  if (sources.length > 1) {
+    const canon = new Map<number, number>(); const byShape = new Map<string, number>();
+    const keyOf = (gid: number): string | null => {
+      try {
+        const src = sources[Math.floor(gid / 65536)]; if (!src) return null;
+        const o = src.outline(gid % 65536); const k = 1000 / src.upem;
+        // (A glyph with no outline — a space, a blank mark — is never shared: told apart only by its use.)
+        if (!o.contours.length) return null;
+        let key = `${Math.round(o.adv * k)}`;
+        for (const c of o.contours) { key += '|'; for (const pt of c) key += `${Math.round(pt.x * k)},${Math.round(pt.y * k)}${pt.on ? '' : '~'};`; }
+        return key;
+      } catch { return null; }
+    };
+    for (const l of lines) for (const u of l) {
+      const g = u[0]; if (!g) continue;
+      let c = canon.get(g);
+      if (c === undefined) { const key = keyOf(g); c = key === null ? g : (byShape.get(key) ?? g); if (key !== null && !byShape.has(key)) byShape.set(key, g); canon.set(g, c); }
+      u[0] = c;
+    }
+    if (spaceGid !== undefined) spaceGid = canon.get(spaceGid) ?? spaceGid;
+  }
+  // The width the PDF gives each glyph (its /Widths, em): what the page's lines were measured with. A font
+  // whose own advances differ (a producer that re-measured it) would set the lines longer or shorter than the
+  // page, wrapping a word the page kept; the PDF's widths win.
+  const pdfAdv = new Map<number, number[]>();
+  for (const l of lines) for (const u of l) if (u[0] && u[5] > 0 && u[5] < 4) { const a = pdfAdv.get(u[0]); if (a) { if (a.length < 24) a.push(u[5]); } else pdfAdv.set(u[0], [u[5]]); }
+  const medianOf = (a: number[]) => { const v = [...a].sort((x, y) => x - y); return v[v.length >> 1]; };
   const tally = <K>(m: Map<K, Map<number, number>>, k: K, g: number) => { let x = m.get(k); if (!x) m.set(k, x = new Map()); x.set(g, (x.get(g) ?? 0) + 1); };
   const top = (x: Map<number, number>) => [...x.entries()].sort((a, b) => b[1] - a[1])[0][0];
   const letterForm = new Map<string, Map<number, number>>(); // `${char}|${form}` → glyph uses
@@ -154,7 +191,7 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
       if (!gid) continue;
       allGids.add(gid);
       // (A code with no real text comes as a control or private-use character.)
-      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd);
+      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd && !(c >= 0x200b && c <= 0x200f) && c !== 0x2060 && c !== 0xfeff);
       if (text === '\uffff') { cls.push({ gid, cps: [], marks: [], x, y, em, adv: w * em, mpos: [], bad: true }); continue; }
       if (w > 0 && !(cps.length && cps.every(isMark))) cls.push({ gid, cps, marks: [], x, y, em, adv: w * em, mpos: [], span: span || undefined });
       else loose.push({ gid, x, y, cps, span: span || undefined });
@@ -461,7 +498,9 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     if (g >= ADDED) { outlines.push({ contours: [], adv: 0 }); continue; }
     const src = sources[Math.floor(g / 65536)]; if (!src) { outlines.push({ contours: [], adv: 0 }); continue; }
     const o = src.outline(g % 65536); const k = upem / src.upem;
-    outlines.push(k === 1 ? o : { adv: o.adv * k, contours: o.contours.map((c) => c.map((q) => ({ x: Math.round(q.x * k), y: Math.round(q.y * k), on: q.on }))) });
+    const out = k === 1 ? { adv: o.adv, contours: o.contours } : { adv: o.adv * k, contours: o.contours.map((c) => c.map((q) => ({ x: Math.round(q.x * k), y: Math.round(q.y * k), on: q.on }))) };
+    const pw = pdfAdv.get(g0); if (pw && out.contours.length) { const w = Math.round(medianOf(pw) * upem); if (w > 0 && Math.abs(w - out.adv) > upem * 0.004) out.adv = w; }
+    outlines.push(out);
   }
   // Marks take no room (a legacy font may give them an advance; the PDF placed them itself) — unless the glyph
   // is also some letter's own.
@@ -586,7 +625,7 @@ function buildGsub(singles: Record<Form, Map<number, number>>, ligLookups: LigLo
 }
 
 /** GSUB/GPOS common part: scripts DFLT and arab (default language: every feature), features, lookups. */
-function layoutTable(features: { tag: string; idx: number[] }[], lookups: number[][]): Uint8Array {
+function layoutTable(features: { tag: string; idx: number[] }[], lookups: number[][], extType = 7): Uint8Array {
   features.sort((x, y) => (x.tag < y.tag ? -1 : x.tag > y.tag ? 1 : 0));
   const feats = features.map((_, i) => i);
   const sl = new W(); sl.u16(2);
@@ -595,9 +634,37 @@ function layoutTable(features: { tag: string; idx: number[] }[], lookups: number
   const fl = new W(); fl.u16(features.length);
   const fAt = features.map((f) => { fl.tag(f.tag); const p = fl.len; fl.u16(0); return p; });
   features.forEach((f, i) => { fl.at(fAt[i], fl.len); fl.u16(0).u16(f.idx.length); for (const x of f.idx) fl.u16(x); });
+  // The lookup list's offsets are 16-bit: a list that would outgrow them (a long book's many contextual
+  // variants) is written with extension lookups, each pointing 32 bits away to its subtable, kept after
+  // the list.
+  const plainLen = 2 + lookups.length * 2 + lookups.reduce((n, lk) => n + lk.length, 0);
   const ll = new W(); ll.u16(lookups.length);
   const lAt = lookups.map(() => { const p = ll.len; ll.u16(0); return p; });
-  lookups.forEach((lk, i) => { ll.at(lAt[i], ll.len); pushAll(ll.b, lk); });
+  if (plainLen <= 0xfff0) lookups.forEach((lk, i) => { ll.at(lAt[i], ll.len); pushAll(ll.b, lk); });
+  else {
+    const parts: { lk: number[]; type: number; flag: number; subs: [number, number][] }[] = lookups.map((lk) => {
+      const type = (lk[0] << 8) | lk[1], flag = (lk[2] << 8) | lk[3], count = (lk[4] << 8) | lk[5];
+      const offs: number[] = []; for (let i = 0; i < count; i++) offs.push((lk[6 + i * 2] << 8) | lk[7 + i * 2]);
+      const sorted = [...offs].sort((a, b) => a - b);
+      return { lk, type, flag, subs: offs.map((o) => [o, sorted[sorted.indexOf(o) + 1] ?? lk.length]) };
+    });
+    // (Each lookup: its header and extension records; the subtables themselves follow the whole list.)
+    let tail = 0;
+    for (const prt of parts) tail += 6 + prt.subs.length * 2 + prt.subs.length * 8;
+    const blob = new W(); const base = ll.len + tail; // where the blob starts, from the list's start
+    parts.forEach((prt, i) => {
+      ll.at(lAt[i], ll.len); const start = ll.len;
+      ll.u16(extType).u16(prt.flag).u16(prt.subs.length);
+      const eAt = prt.subs.map(() => { const p = ll.len; ll.u16(0); return p; });
+      prt.subs.forEach(([a, z], k) => {
+        ll.at(eAt[k], ll.len - start);
+        const here = ll.len; // the extension record's own position
+        ll.u16(1).u16(prt.type); ll.u32(base + blob.len - here);
+        for (let j = a; j < z; j++) blob.b.push(prt.lk[j]);
+      });
+    });
+    pushAll(ll.b, blob.b);
+  }
   const g = new W(); g.u32(0x00010000); g.u16(10); g.u16(10 + sl.len); g.u16(10 + sl.len + fl.len);
   pushAll(g.b, sl.b); pushAll(g.b, fl.b); pushAll(g.b, ll.b);
   return g.bytes();
@@ -651,7 +718,7 @@ function buildGpos(anchors: Map<number, Map<number, [number, number]>>, fbMarks:
     const cls = new Map(marks.map((m, i) => [m, i]));
     lookups.push(markBase(marks, (m) => [cls.get(m)!, 0, 0], bases, (b, k) => anchors.get(b)!.get(marks[k]) ?? null, marks.length));
   }
-  return layoutTable([{ tag: 'mark', idx: lookups.map((_, i) => i) }], lookups);
+  return layoutTable([{ tag: 'mark', idx: lookups.map((_, i) => i) }], lookups, 9);
 }
 
 /** Glyph classes: marks (so ligatures skip them and they attach to letters), ligatures; the rest bases. */

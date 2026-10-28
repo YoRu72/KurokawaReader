@@ -12,6 +12,9 @@ import { liveStatsOf } from '../stats';
 import { setJump } from './reader';
 import { anilistOn, linked } from '../anilist';
 
+/** Did the book come from a source other than archive.org or Shamela (an extension, a web folder)? */
+const fromSource = (b: Book): boolean => !!b.remote?.source && b.remote.source !== 'archive' && b.remote.source !== 'shamela' && b.remote.source !== 'link';
+
 const CHAPTERED = new Set(['epub', 'fb2', 'mobi', 'azw', 'azw3', 'kf8']);
 /** Whether tapping this book opens its page first. */
 export function wantsBookPage(book: Book): boolean {
@@ -95,7 +98,9 @@ export function bookView(id: string): HTMLElement {
     const tiles = h('div', { class: 'book-tiles' },
       favTile,
       tile('clock', stats?.ms ? formatDuration(stats.ms) : t('notStarted'), !!stats?.ms, async () => { const { showBookInfo } = await import('../ui/bookinfo'); showBookInfo({ book, stats: stats ?? { ms: 0, words: 0, days: {} }, speed: null, pages: book.pageCount, pct: book.progress?.pct ?? 0 }); }),
-      anilistOn() ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
+      // (Tracking is for titles that came from a source — an extension, a web folder — as Mihon tracks its
+      // entries; a book of one's own files gets it once an AniList account is linked.)
+      anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
       tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
       tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }));
 

@@ -125,6 +125,16 @@ const SITE = 'http://localhost:5403';
     await page.click('.src-grid .src-card:has-text("Beta")'); await page.waitForSelector('.src-details .src-chapters', { timeout: 20000 }); await page.waitForTimeout(300);
     const my = await page.evaluate(() => ({ chapters: document.querySelectorAll('.novel-chapters li').length, first: document.querySelector('.novel-chapters li')?.textContent, status: document.querySelector('.src-chips')?.textContent }));
     ok('Mangayomi novel: chapters in reading order, status', my.chapters === 4 && /Chapter 1/.test(my.first) && /Completed/.test(my.status));
+    // Chapters picked (a long press), the ones between added, fetched for offline: marked afterwards.
+    await page.dispatchEvent('.novel-chapters li:nth-child(2) button', 'contextmenu'); await page.waitForTimeout(150);
+    await page.dispatchEvent('.novel-chapters li:nth-child(4) button', 'contextmenu'); await page.waitForTimeout(150);
+    const picked2 = (await page.$$('.novel-chapters button.on')).length;
+    await page.click('.chapter-sel button[title="Select the chapters between"]'); await page.waitForTimeout(150);
+    const picked3 = (await page.$$('.novel-chapters button.on')).length;
+    await page.click('.chapter-sel .btn.primary'); await page.waitForTimeout(3000);
+    const haveN = (await page.$$('.novel-chapters button.have')).length;
+    ok('chapters picked by a long press, the ones between added, and fetched for offline', picked2 === 2 && picked3 === 3 && haveN === 3 && !(await page.$$('.chapter-sel:not([hidden])')).length);
+    if (!(picked2 === 2 && picked3 === 3 && haveN === 3)) console.log('  picked:', picked2, picked3, haveN);
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
     ok('Mangayomi chapter text read', /Chapter 1 of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
     // Extension settings sheet.

@@ -30,6 +30,7 @@ import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
+import { kittenReady, kittenSpeak, kittenCanRead } from '../kittentts';
 import { takeJump as takeSearchJump, storedPages, storePages } from '../booksearch';
 import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
@@ -1222,7 +1223,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     toast(why === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
   };
   function speak(chunks: string[], startBlock?: { doc: OpenDoc; index: number }): void {
-    if (!ttsAvailable() && !(getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady())) { toast(t('speechUnavailable'), 'error', 6000); return; }
+    if (!ttsAvailable() && !(getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady()) && !(getSettings().speechEngine === 'kitten' && kittenReady())) { toast(t('speechUnavailable'), 'error', 6000); return; }
     stopSpeaking();
     speaking = true;
     keepAwake(true);
@@ -1260,15 +1261,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       say(text);
     };
     const say = (text: string) => {
-      if (getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady()) {
-        // AI voice: fetch this passage (prefetched when possible), play it, prefetch the next one.
+      // A voice that makes audio of a passage (the AI's, or KittenTTS on the device for English): fetched
+      // (prefetched when possible), played, the next one made meanwhile.
+      const eng = getSettings().speechEngine;
+      const maker = eng === 'ai' && aiTtsSupported() && aiReady() ? aiSpeak : eng === 'kitten' && kittenReady() && kittenCanRead(text) ? (tx: string) => kittenSpeak(tx) : null;
+      if (maker) {
         const play = async () => {
           try {
-            const blob = aiQueue.get(text) ?? await aiSpeak(text);
+            const blob = aiQueue.get(text) ?? await maker(text);
             aiQueue.delete(text);
             if (!speaking) return;
             const nextText = chunks[i] ?? (startBlock ? (startBlock.doc.allBlocks[startBlock.index + i]?.textContent ?? '').trim() : '');
-            if (nextText && !aiQueue.has(nextText)) aiSpeak(nextText).then((b) => aiQueue.set(nextText, b)).catch(() => undefined);
+            if (nextText && !aiQueue.has(nextText) && (eng !== 'kitten' || kittenCanRead(nextText))) maker(nextText).then((b) => aiQueue.set(nextText, b)).catch(() => undefined);
             const url = URL.createObjectURL(blob);
             aiAudio = new Audio(url);
             aiAudio.playbackRate = getSettings().speechRate;
@@ -1506,6 +1510,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     speak: (text) => {
       stopSpeech();
       const lang = speechLangOf(text, book.language);
+      if (getSettings().speechEngine === 'kitten' && kittenReady() && kittenCanRead(text)) { void kittenSpeak(text.replace(/\s+/g, ' ').trim()).then((b) => { const a = new Audio(URL.createObjectURL(b)); a.playbackRate = getSettings().speechRate; a.onended = () => URL.revokeObjectURL(a.src); return a.play(); }).catch((e) => toast(String((e as Error).message ?? e), 'error', 5000)); return; }
       void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => undefined, () => undefined).then((r) => {
         if (r === 'missing-data') { toast(t('voiceDataMissing', { lang: languageName(lang) }), 'info', 7000); void installVoices(); }
         else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);

@@ -299,3 +299,77 @@ function finish(context: PDFContext): PDFDocument {
   const Doc = PDFDocument as unknown as new (c: PDFContext, ignoreEncryption: boolean, updateMetadata: boolean) => PDFDocument;
   return new Doc(context, true, false);
 }
+
+/* ---------------------------------------------------------------- protecting */
+
+/** What a reader without the owner password may do (the /P flags, ISO 32000-2 table 22). */
+export type Permissions = { print?: boolean; copy?: boolean; modify?: boolean; annotate?: boolean };
+function permissionBits(p: Permissions): number {
+  // (Bits 1–2 and 7–8 are reserved and set; 13–32 set, as the standard asks.)
+  let v = 0xfffff0c0;
+  if (p.print !== false) v |= 1 << 2 | 1 << 11;   // print, and at full quality
+  if (p.modify !== false) v |= 1 << 3;
+  if (p.copy !== false) v |= 1 << 4 | 1 << 9;     // copy, and extract for accessibility
+  if (p.annotate !== false) v |= 1 << 5 | 1 << 8; // annotate and fill forms
+  return v | 0;
+}
+
+/**
+ * The document encrypted with AES-256 (revision 6, ISO 32000-2): the user password opens it (an empty one
+ * opens it without asking, only the permissions binding), the owner password opens it with every right. Every
+ * string and stream is encrypted and the file is saved without object streams (whose strings would otherwise
+ * stay in the clear). Returns the file's bytes.
+ */
+export async function protectPdf(doc: PDFDocument, userPassword: string, ownerPassword: string, perms: Permissions = {}): Promise<Uint8Array> {
+  const utf8 = (s: string) => new TextEncoder().encode(s.normalize('NFKC')).subarray(0, 127);
+  const rnd = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+  const key = rnd(32);
+  const aesNoPad = (k: Uint8Array, data: Uint8Array) => aesCbcEncryptNoPad(k, new Uint8Array(16), data);
+  const upw = utf8(userPassword), opw = utf8(ownerPassword || userPassword);
+  // U and UE (algorithm 8), O and OE (algorithm 9), Perms (algorithm 10).
+  const uvs = rnd(8), uks = rnd(8);
+  const U = cat(await hash6(upw, uvs, new Uint8Array(0)), uvs, uks);
+  const UE = aesNoPad(await hash6(upw, uks, new Uint8Array(0)), key);
+  const ovs = rnd(8), oks = rnd(8);
+  const O = cat(await hash6(opw, ovs, U), ovs, oks);
+  const OE = aesNoPad(await hash6(opw, oks, U), key);
+  const P = permissionBits(perms);
+  const permsPlain = Uint8Array.of(P & 0xff, (P >> 8) & 0xff, (P >> 16) & 0xff, (P >>> 24) & 0xff, 0xff, 0xff, 0xff, 0xff, 0x54, 0x61, 0x64, 0x62, ...rnd(4));
+  const Perms = aesNoPad(key, permsPlain);
+  await doc.flush();
+  const ctx = doc.context;
+  const aesKey = await crypto.subtle.importKey('raw', key as BufferSource, 'AES-CBC', false, ['encrypt']);
+  const encryptData = async (data: Uint8Array): Promise<Uint8Array> => {
+    const iv = rnd(16);
+    return cat(iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, aesKey, data as BufferSource)));
+  };
+  // Every string, wherever it sits, becomes the hex of its ciphertext; every stream's bytes are encrypted and
+  // its object made a plain stream of those bytes.
+  const seen = new Set<PDFObject>();
+  const walk = async (o: PDFObject): Promise<PDFObject> => {
+    if (o instanceof PDFString || o instanceof PDFHexString) return PDFHexString.of(hex(await encryptData(o.asBytes())));
+    if (o instanceof PDFArray) { if (seen.has(o)) return o; seen.add(o); for (let i = 0; i < o.size(); i++) o.set(i, await walk(o.get(i))); return o; }
+    if (o instanceof PDFDict) { if (seen.has(o)) return o; seen.add(o); for (const [k, v] of o.entries()) o.set(k, await walk(v)); return o; }
+    return o;
+  };
+  const refs = ctx.enumerateIndirectObjects();
+  for (const [ref, obj] of refs) {
+    if (obj instanceof PDFRawStream || (obj as { dict?: PDFDict; getContents?: () => Uint8Array }).getContents) {
+      const s = obj as PDFRawStream & { getContents(): Uint8Array };
+      const dict = s.dict;
+      if (dict.get(PDFName.of('Type'))?.toString() === '/XRef') continue;
+      await walk(dict);
+      const enc = await encryptData(s.getContents());
+      dict.set(PDFName.of('Length'), PDFNumber.of(enc.length));
+      ctx.assign(ref, PDFRawStream.of(dict, enc));
+    } else await walk(obj);
+  }
+  // The trailer's ID (any two strings; not encrypted) and the Encrypt dictionary (its strings not encrypted).
+  const id = hex(rnd(16));
+  ctx.trailerInfo.ID = ctx.obj([PDFHexString.of(id), PDFHexString.of(id)]);
+  const cf = ctx.obj({ StdCF: ctx.obj({ CFM: PDFName.of('AESV3'), AuthEvent: PDFName.of('DocOpen'), Length: PDFNumber.of(32) }) });
+  const encDict = ctx.obj({ Filter: PDFName.of('Standard'), V: PDFNumber.of(5), R: PDFNumber.of(6), Length: PDFNumber.of(256), CF: cf, StmF: PDFName.of('StdCF'), StrF: PDFName.of('StdCF'), P: PDFNumber.of(P), O: PDFHexString.of(hex(O)), U: PDFHexString.of(hex(U)), OE: PDFHexString.of(hex(OE)), UE: PDFHexString.of(hex(UE)), Perms: PDFHexString.of(hex(Perms)) });
+  ctx.trailerInfo.Encrypt = ctx.register(encDict);
+  return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
+}
+const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');

@@ -52,13 +52,13 @@ import org.json.JSONObject;
  */
 final class KrBrowser {
     private static final long IDLE = 4 * 60_000L;          // a view unused this long is closed
-    private final Plugin plugin;
+    private final KurokawaPlugin plugin;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Map<String, Lane> lanes = new HashMap<>();                  // the main thread's only
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private boolean sweeping = false;
 
-    KrBrowser(Plugin plugin) { this.plugin = plugin; }
+    KrBrowser(KurokawaPlugin plugin) { this.plugin = plugin; }
 
     /* ---------- a page's state, read by a script ---------- */
 
@@ -79,10 +79,10 @@ final class KrBrowser {
         + "var init={method:o.method||'GET',headers:h,credentials:'include',cache:'no-store',redirect:'follow'};"
         + "if(o.body!=null){if(o.bodyBase64){var s=atob(o.body),a=new Uint8Array(s.length);for(var i=0;i<s.length;i++)a[i]=s.charCodeAt(i);init.body=a;}else init.body=o.body;}"
         + "var ctl=typeof AbortController=='function'?new AbortController():null,tm=0;if(ctl){init.signal=ctl.signal;tm=setTimeout(function(){ctl.abort();},o.timeout||90000);}"
-        + "var CH=393216,buf=new Uint8Array(0);"
+        + "var CH=o.dl?1048576:393216,buf=new Uint8Array(0);"
         + "function b64(u){var s='';for(var j=0;j<u.length;j+=8192)s+=String.fromCharCode.apply(null,u.subarray(j,j+8192));return btoa(s);}"
         + "function flush(all){while(buf.length>=CH||(all&&buf.length)){var n=Math.min(CH,buf.length);B.chunk(id,b64(buf.subarray(0,n)));buf=buf.slice(n);}}"
-        + "fetch(o.url,init).then(function(r){var hs={};r.headers.forEach(function(v,n){hs[n.toLowerCase()]=v;});"
+        + "fetch(o.url,init).then(function(r){var hs={};r.headers.forEach(function(v,n){hs[n.toLowerCase()]=v;});if(o.dl&&B.meta)B.meta(id,parseInt(hs['content-length']||'0',10)||0);"
         + "function end(){flush(true);if(tm)clearTimeout(tm);B.done(id,r.status,JSON.stringify(hs),r.url||o.url);}"
         + "if(!r.body||!r.body.getReader)return r.arrayBuffer().then(function(ab){buf=new Uint8Array(ab);end();});"
         + "var rd=r.body.getReader();"
@@ -307,27 +307,50 @@ final class KrBrowser {
     private interface Waiter { void ready(Lane l); void failed(String why, String title); }
     private static final class Pending {
         final PluginCall call; final boolean binary; final Lane lane; final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        /** A download: written to a file as it comes, its progress told (downloadProgress events under `dlId`). */
+        String dlId; java.io.File file; java.io.OutputStream out; long got, total, lastT, lastGot; double speed;
         Pending(PluginCall call, boolean binary, Lane lane) { this.call = call; this.binary = binary; this.lane = lane; }
     }
 
     /** The page's half of a request, called from the page (on the bridge's thread): its answer in pieces. */
     public final class Bridge {
+        @JavascriptInterface public void meta(String id, long total) { Pending p = pending.get(id); if (p != null) synchronized (p) { p.total = total; } }
         @JavascriptInterface public void chunk(String id, String b64) {
             Pending p = pending.get(id);
             if (p == null || b64 == null) return;
-            try { byte[] b = Base64.decode(b64, Base64.DEFAULT); synchronized (p) { p.bytes.write(b, 0, b.length); } } catch (Exception ignored) {}
+            try {
+                byte[] b = Base64.decode(b64, Base64.DEFAULT);
+                synchronized (p) {
+                    if (p.out != null) p.out.write(b, 0, b.length); else p.bytes.write(b, 0, b.length);
+                    p.got += b.length;
+                    if (p.dlId != null) {
+                        long now = System.currentTimeMillis();
+                        if (p.lastT == 0) { p.lastT = now; }
+                        else if (now - p.lastT >= 300) {
+                            p.speed = p.speed * 0.5 + 0.5 * ((p.got - p.lastGot) / ((now - p.lastT) / 1000.0)); p.lastT = now; p.lastGot = p.got;
+                            JSObject ev = new JSObject(); ev.put("id", p.dlId); ev.put("got", p.got); ev.put("total", p.total); ev.put("speed", p.speed); ev.put("pct", p.total > 0 ? (int) (p.got * 100 / p.total) : 0);
+                            plugin.notifyEvent("downloadProgress", ev);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
         }
         @JavascriptInterface public void done(String id, int status, String headers, String url) {
             Pending p = pending.remove(id);
             if (p == null) return;
             try {
                 byte[] bytes;
-                synchronized (p) { bytes = p.bytes.toByteArray(); }
+                synchronized (p) { if (p.out != null) { try { p.out.close(); } catch (Exception ignored) {} } bytes = p.bytes.toByteArray(); }
                 JSObject hs = new JSObject(headers == null || headers.isEmpty() ? "{}" : headers);
                 JSObject ret = new JSObject();
                 ret.put("status", status);
                 ret.put("headers", hs);
-                if (p.binary) KurokawaPlugin.putBinaryBody(ret, bytes); else ret.put("body", new String(bytes, KurokawaPlugin.charsetOf(hs.optString("content-type", ""), bytes)));
+                if (p.file != null) {
+                    // (The file as it came: a page in error — a check's page — small enough comes back as text too.)
+                    if (status >= 400 && p.file.length() < 262144) { byte[] small = java.nio.file.Files.readAllBytes(p.file.toPath()); ret.put("body", new String(small, KurokawaPlugin.charsetOf(hs.optString("content-type", ""), small))); }
+                    else { ret.put("bodyPath", p.file.getAbsolutePath()); ret.put("body", ""); ret.put("bodySize", p.file.length()); }
+                    if (p.dlId != null) { JSObject ev = new JSObject(); ev.put("id", p.dlId); ev.put("got", p.got); ev.put("total", p.got); ev.put("speed", 0); ev.put("pct", 100); plugin.notifyEvent("downloadProgress", ev); }
+                } else if (p.binary) KurokawaPlugin.putBinaryBody(ret, bytes); else ret.put("body", new String(bytes, KurokawaPlugin.charsetOf(hs.optString("content-type", ""), bytes)));
                 ret.put("url", url == null ? "" : url);
                 ret.put("via", "browser");
                 p.call.resolve(ret);
@@ -335,7 +358,7 @@ final class KrBrowser {
         }
         @JavascriptInterface public void fail(String id, String message) {
             Pending p = pending.remove(id);
-            if (p != null) p.call.reject("Browser request failed: " + message);
+            if (p != null) { synchronized (p) { if (p.out != null) { try { p.out.close(); } catch (Exception ignored) {} if (p.file != null) p.file.delete(); } } p.call.reject("Browser request failed: " + message); }
         }
     }
 
@@ -359,8 +382,10 @@ final class KrBrowser {
         if (body != null) o.put("body", body);
         o.put("bodyBase64", Boolean.TRUE.equals(call.getBoolean("bodyBase64", false)));
         o.put("timeout", timeout);
+        final String dlId = call.getString("downloadId", null);
+        if (dlId != null) o.put("dl", dlId);
         ui.post(() -> open(origin, page, openTimeout, new Waiter() {
-            @Override public void ready(Lane l) { send(l, call, o, binary, timeout); }
+            @Override public void ready(Lane l) { send(l, call, o, binary, timeout, dlId); }
             @Override public void failed(String why, String title) {
                 if (why.startsWith("error:")) call.reject("Browser could not open the site: " + why.substring(6));
                 else call.resolve(refusal(url, "blocked".equals(why), title, binary));
@@ -473,9 +498,15 @@ final class KrBrowser {
         for (Waiter x : ws) x.failed(why, title);
     }
 
-    private void send(final Lane l, final PluginCall call, final JSObject o, final boolean binary, final int timeout) {
+    private void send(final Lane l, final PluginCall call, final JSObject o, final boolean binary, final int timeout, final String dlId) {
         final String id = UUID.randomUUID().toString();
-        pending.put(id, new Pending(call, binary, l));
+        Pending p = new Pending(call, binary, l);
+        if (dlId != null) {
+            // (A download: straight to a file in the cache, nothing held in memory, its progress told.)
+            try { java.io.File dir = new java.io.File(plugin.getContext().getCacheDir(), "kr-http"); dir.mkdirs(); p.file = new java.io.File(dir, "dl-" + dlId.replaceAll("[^A-Za-z0-9_-]", "") + ".bin"); p.out = new java.io.BufferedOutputStream(new java.io.FileOutputStream(p.file), 1 << 16); p.dlId = dlId; }
+            catch (Exception e) { p.file = null; p.out = null; }
+        }
+        pending.put(id, p);
         l.used = SystemClock.uptimeMillis();
         try { l.web.evaluateJavascript("(function(id,o){" + FETCH_JS + "})(" + JSONObject.quote(id) + "," + o.toString() + ")", null); }
         catch (Exception e) { Pending p = pending.remove(id); if (p != null) call.reject("Browser request failed: " + e.getMessage()); return; }

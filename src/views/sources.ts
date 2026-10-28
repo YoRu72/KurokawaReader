@@ -21,7 +21,7 @@ import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
+import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 
@@ -50,6 +50,36 @@ async function folderSourceFor(srcId: string): Promise<Source> {
   const repo = (await listRepos()).find((r) => r.kind === 'folder' && `${DIR_PREFIX}${r.key}` === srcId);
   if (!repo) throw new SourceError('noRepo', 'parse');
   return folderSource(repo);
+}
+
+
+
+/** The AniList tracking button of a title on its source (as Mihon has it on an entry's page): for web folders
+ *  and the extensions, not for archive.org or Shamela, whose books are no manga or novel entries. It opens the
+ *  tracking sheet of the title's book in the library; a title not yet there must be added first. */
+function trackButton(srcId: string, bookId: () => Promise<string | undefined>, after: () => void): HTMLElement | null {
+  if (srcId === archiveSource.id || srcId === shamelaSource.id) return null;
+  const btn = h('button', { type: 'button', class: 'btn tonal src-track' }, icon('globe'), t('tracking')) as HTMLButtonElement;
+  const label = async () => { const id = await bookId(); const b = id ? await db.getBook(id) : undefined; btn.replaceChildren(icon('globe'), b?.track ? t('tracked') : t('tracking')); btn.classList.toggle('on', !!b?.track); };
+  btn.addEventListener('click', async () => {
+    const { anilistOn, linked } = await import('../anilist');
+    if (!anilistOn()) { toast(t('trackTurnOn')); navigate('/settings'); return; }
+    if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; }
+    const id = await bookId(); const b = id ? await db.getBook(id) : undefined;
+    if (!b) { toast(t('trackAddFirst')); return; }
+    const { trackSheet } = await import('../ui/track');
+    trackSheet(b, () => { void label(); after(); });
+  });
+  void label();
+  return btn;
+}
+
+/** A title copied by a long press (the selection handles stay off it, as in Mihon); the text copied is the
+ *  element's own. */
+function copyOnHold(el: HTMLElement, text?: () => string): HTMLElement {
+  el.classList.add('copy-hold');
+  onHoldOrContext(el, () => { const v = (text ? text() : el.textContent ?? '').trim(); if (!v) return; void navigator.clipboard.writeText(v).then(() => toast(t('copiedTitle')), () => toast(t('copyTextFailed'), 'error')); });
+  return el;
 }
 
 export function sourcesView(srcId?: string, bookId?: string, q?: string, shelf?: string, tags?: string[]): HTMLElement & { dispose?: () => void } {
@@ -350,6 +380,8 @@ function updatesSheet(after: () => void): void {
     const autoOn = localStorage.getItem('kr.sources.autoCheck') !== 'off';
     body.append(h('label', { class: 'switch-row' }, h('span', null, t('srcAutoCheck')), h('input', { type: 'checkbox', checked: autoOn, onchange: (e: Event) => { localStorage.setItem('kr.sources.autoCheck', (e.target as HTMLInputElement).checked ? 'on' : 'off'); if ((e.target as HTMLInputElement).checked) void askNotifyPermission().catch(() => false); } })));
     body.append(h('label', { class: 'switch-row' }, h('span', null, t('extAutoUpdate')), h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: (e: Event) => localStorage.setItem('kr.ext.autoUpdate', (e.target as HTMLInputElement).checked ? 'on' : 'off') })));
+    { const pref = updatePrefs(); const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: pref[k], onchange: (e: Event) => setUpdatePref(k, (e.target as HTMLInputElement).checked) }));
+      body.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch'))); }
     if (novels.length) {
       body.append(h('h3', { class: 'section-title' }, t('newChapters')));
       const list = h('ul', { class: 'plain-list' });
@@ -505,7 +537,9 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
   };
   if (chips) alts.forEach((a) => chips.append(h('button', { type: 'button', class: 'chip small', role: 'tab', onclick: () => { if (cur === a) return; cur = a; draw(); look(); } }, a.label)));
   const row = h('article', { class: 'vol-row' }, cover,
-    h('div', { class: 'vol-text' }, h('b', { class: 'vol-title', dir: 'auto' }, b.title), sub, chips, extra, actions, tocSlot));
+    h('div', { class: 'vol-text' }, copyOnHold(h('b', { class: 'vol-title', dir: 'auto' }, b.title)), sub, chips, extra, actions, tocSlot));
+  // (Held: the quick way in — into the library with tags, or to the device.)
+  onHoldOrContext(cover, () => void quickAdd(src, { ...b, file: cur.file, id: cur.id }, lib, null, rows));
   draw();
   const fill = (p: { cover?: string; title?: string; author?: string; toc?: { label: string; depth: number }[] }, mine: number) => {
     if (mine !== token) return;
@@ -601,11 +635,11 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   about.addEventListener('click', () => about.classList.toggle('clamped'));
   const head = h('article', { class: 'series-head' }, cover,
     h('div', { class: 'series-text' },
-      h('h2', { dir: 'auto' }, b.title),
+      copyOnHold(h('h2', { dir: 'auto' }, b.title)),
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
-      h('div', { class: 'series-actions' }, next, btn), status));
+      h('div', { class: 'series-actions' }, next, btn, trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
@@ -639,12 +673,18 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   const titleEl = h('div', { class: 'title' }, h('span', { dir: 'auto' }, src.name));
   const body = h('div', { class: 'library-body src-body' }, form, shelfRow, tagRow, status, grid, sentinel);
   const topActions = h('div', { class: 'topbar-actions' });
+  // Search from the top bar wherever the page is scrolled to (as Mihon's search icon): the search row comes
+  // back into view and takes the focus.
+  topActions.append(iconButton('search', t('search'), () => { body.scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => { input.focus(); input.select(); }, 250); }));
   if (hnd && (hnd.ln?.pluginSettings || hnd.my?.prefs.length)) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
   // (The site itself, in the app's browser: a sign-in, a check passed there carries over — as Mihon's WebView.)
   if (/^https?:\/\//i.test(src.site ?? '')) topActions.append(iconButton('globe', t('openInAppBrowser'), () => void openSite(src.site)));
   // (What went wrong with covers and files lately, for a web folder: shown on a long press of the title.)
   if (src.id.startsWith('dir:')) { let hold = 0; const show = () => { const sh = openSheet(t('coverLog'), t('close')); const pre = h('pre', { class: 'cover-log', dir: 'ltr' }, peekLog.length ? peekLog.join('\n') : t('coverLogEmpty')); sh.body.append(h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'btn small tonal', onclick: () => void navigator.clipboard?.writeText(peekLog.join('\n')).then(() => toast(t('copied'))) }, icon('copy'), t('copySelected'))), pre); }; titleEl.addEventListener('pointerdown', () => { hold = window.setTimeout(show, 700); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) titleEl.addEventListener(ev, () => clearTimeout(hold)); }
-  topActions.append(iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); })));
+  const filterBtn = iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }));
+  // (How many filters stand away from their defaults, on the icon.)
+  { const defs = src.filters(); const changed = defs.filter((d) => { const v = filters[d.id]; if (v === undefined) return false; const dv = d.value; return Array.isArray(dv) ? (v as unknown[]).length > 0 : v !== dv; }).length + tags.length; if (changed) { filterBtn.append(h('span', { class: 'count' }, localDigits(changed))); filterBtn.classList.add('has-count'); } }
+  topActions.append(filterBtn);
   const root = h('div', { class: 'view sources-view' },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(src.id.startsWith('dir:') && !q && shelf ? path(src.id, { shelf: shelf.split('/').slice(0, -1).join('/') || undefined }) : q || shelf || tags.length ? path(src.id) : '/sources')), titleEl, topActions),
     body) as HTMLElement & { dispose?: () => void };
@@ -755,6 +795,8 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       b.author ? h('span', { class: 'src-author', dir: 'auto' }, b.author) : null,
       formatMarks(b.formats),
       b.description && src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? h('span', { class: 'src-snippet', dir: 'auto' }, b.description) : null);
+    // Held: added to the library from here, with the tags asked (as Mihon's long press in Browse).
+    onHoldOrContext(el, () => void quickAdd(src, b, lib, hnd ?? null, rows));
     // A book already in the library (fetched from here before): marked so, and opened from its card.
     if (b.look !== 'folder' && (lib.has(b.id) || b.alts?.some((a) => lib.has(a.id)))) { el.classList.add('in-library'); cover.append(h('span', { class: 'have-mark' }, icon('check'), t('inLibrary'))); }
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
@@ -906,7 +948,7 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     const head = h('div', { class: 'src-head' },
       h('div', { class: 'src-cover big', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, d.cover ? coverImg(d.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, d.title)),
       h('div', { class: 'src-head-text' },
-        h('h2', { dir: 'auto' }, d.title),
+        copyOnHold(h('h2', { dir: 'auto' }, d.title)),
         d.author ? h('p', { class: 'src-author-line', dir: 'auto' }, d.author) : null,
         h('div', { class: 'src-chips' }, ...[d.year, d.lang, d.pages ? (hnd ? countChapters(d.pages) : t('pagesN', { n: localDigits(d.pages) })) : '', d.volumes?.length ? t('volumesN', { n: localDigits(d.volumes.length) }) : '', d.badge].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
         d.url ? h('a', { class: 'src-site', href: d.url, target: '_blank', rel: 'noopener' }, icon('external'), ' ', src.site.replace(/^https?:\/\//, '')) : null));
@@ -922,6 +964,44 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     if (d.toc?.length) body.append(tocBlock(d.toc, 40));
   })();
   return root;
+}
+
+/** Held on a card (as Mihon adds a title from Browse with a long press): the book or series added to the
+ *  library from here — a file fetched, a web novel followed — with the tags asked, or the file to the device. */
+async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>): Promise<void> {
+  const sh = openSheet(b.title, t('close'));
+  sh.body.style.fontFamily = 'var(--font-ui)';
+  if (b.author) sh.body.append(h('p', { class: 'hint', dir: 'auto' }, b.author));
+  const list = h('div', { class: 'dest-list' }); sh.body.append(list);
+  const row = (ic: string, label: string, fn: () => void | Promise<void>, cls = '') => list.append(h('button', { type: 'button', class: `dest-row ${cls}`, onclick: () => { sh.close(); void Promise.resolve(fn()).catch((e) => { if (!/^(cancelled|deviceOnly)$/.test((e as Error)?.message ?? '')) toast(describe(e), 'error'); }); } }, icon(ic), h('span', { class: 'name', dir: 'auto' }, label)));
+  const inLib = lib.get(b.id) ?? (b.alts ?? []).map((a) => lib.get(a.id)).find(Boolean);
+  if (inLib) row('play', `${t('inLibrary')} · ${t('open')}`, () => navigate(`/read/${inLib}`));
+  if (b.file && !inLib) {
+    const file = b.file; const title = b.title;
+    const go = async (deviceOnly: boolean) => {
+      const place = deviceOnly ? { deviceOnly: true } : b.group ? await askPlacement(`${src.id}|${b.group}`, b.group) : await askPlacement(`${src.id}|${b.id}`, title);
+      if (place.deviceOnly && !deviceOnly) { /* chosen in the sheet */ }
+      const book = await fetchVolume(src, b.id, title, file, () => undefined, b.group ? { name: b.group, index: b.volume, source: src.id, shelf: b.shelf } : undefined, place.tags, place.deviceOnly || deviceOnly);
+      lib.set(b.id, book.id); rows.get(b.id)?.(book.id); toast(t('addedToLibrary'));
+    };
+    row('plus', t('addToLibrary'), () => go(false));
+    row('download', t('deviceOnly'), () => go(true));
+  }
+  if (b.look === 'series' || (b.look === 'folder' && b.openShelf !== undefined)) {
+    row('download', t('seriesInSource'), () => navigate(b.look === 'series' ? bookPath(src.id, b.id) : path(src.id, { shelf: b.openShelf })));
+  }
+  if (hnd && !b.file && b.look !== 'folder' && b.look !== 'series') {
+    // A web novel: followed in the library (its chapters read online, fetched later from its page).
+    row('plus', t('addToLibrary'), async () => {
+      const d = await src.details(b.id); const novel = d.raw as WebNovel;
+      const had = await findInLibrary(novel.src, novel.path);
+      const book = had ?? await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
+      const place = await askPlacement(`${src.id}|${b.id}`, b.title);
+      if (place.tags?.length) await db.updateBook(book.id, (x) => { x.tags = [...new Set([...(x.tags ?? []), ...place.tags!])]; });
+      lib.set(b.id, book.id); toast(t('addedToLibrary'));
+    });
+  }
+  row('info', t('details'), () => navigate(b.openShelf !== undefined ? path(src.id, { shelf: b.openShelf }) : bookPath(src.id, b.id)));
 }
 
 /** What a book can be fetched in, told at a glance (the archive says so for every book): EPUB — the format
@@ -1079,6 +1159,7 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
       finally { epub.disabled = false; say(t('saveAsEpub')); }
     });
     row.append(epub);
+    { const tb = trackButton(hnd.source.id, async () => book?.id, () => void draw()); if (tb) row.append(tb); }
     box.append(row);
     if (book) {
       const checkBtn = h('button', { type: 'button', class: 'btn small' }, icon('refresh'), t('checkChapters')) as HTMLButtonElement;
@@ -1093,28 +1174,71 @@ async function coverBlob(url: string | undefined, hnd: Handle): Promise<Blob | u
   try { const { fetchBytes } = await import('../sources/http'); const bytes = await fetchBytes(url, undefined, { headers: hnd.ln?.imageRequestInit?.headers ?? hnd.my?.headers ?? { referer: hnd.item.site }, retries: 0 }); const { shrinkCover } = await import('../library'); return shrinkCover(new Blob([bytes.buffer as ArrayBuffer])); } catch { return undefined; }
 }
 
-/** The chapters of a novel: a list with a box to find one; a chapter opens the book there. */
+/** The chapters of a novel: a list with a box to find one; a chapter opens the book there. A long press picks
+ *  chapters (as in Mihon): the picked ones can be fetched for offline, or all of them, or the ones between the
+ *  first and the last picked. A chapter already fetched wears a mark. */
 function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
   const novel = d.raw as WebNovel;
   const list = h('ul', { class: 'plain-list src-chapters novel-chapters' });
   const find = h('input', { type: 'search', class: 'src-search ext-find', placeholder: t('findChapter'), dir: 'auto' }) as HTMLInputElement;
-  const box = h('section', { class: 'src-chapters-box' }, h('h3', { class: 'section-title' }, `${t('contents')} · ${countChapters(novel.chapters.length)}`), find, list);
+  const bar = h('div', { class: 'selection-bar chapter-sel', hidden: true });
+  const title = h('h3', { class: 'section-title' }, `${t('contents')} · ${countChapters(novel.chapters.length)}`);
+  const box = h('section', { class: 'src-chapters-box' }, title, find, bar, list);
+  const picked = new Set<number>();
+  let have = new Set<string>();
+  const refreshHave = async () => { const book = await findInLibrary(novel.src, novel.path); const file = book ? await readNovelFile(book.id) : null; have = new Set(Object.keys(file?.content ?? {})); };
   const openAt = async (i: number) => {
     let book = await findInLibrary(novel.src, novel.path);
     if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
     setJump({ bookId: book.id, kind: 'anchor', id: `${book.id}-c${i}` });
     navigate(`/read/${book.id}`);
   };
+  const selecting = () => picked.size > 0;
+  const drawBar = () => {
+    bar.hidden = !selecting();
+    if (!selecting()) return;
+    const idx = [...picked].sort((a, b) => a - b);
+    const todo = idx.filter((i) => !have.has(novel.chapters[i].path));
+    bar.replaceChildren(
+      h('span', { class: 'grow sel-count' }, countChapters(picked.size)),
+      h('button', { type: 'button', class: 'icon-btn', title: t('selectAll'), 'aria-label': t('selectAll'), onclick: () => { novel.chapters.forEach((_, i) => picked.add(i)); draw(find.value); } }, icon('check')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('selectBetween'), 'aria-label': t('selectBetween'), onclick: () => { for (let i = idx[0]; i <= idx[idx.length - 1]; i++) picked.add(i); draw(find.value); } }, icon('sort')),
+      h('button', { type: 'button', class: 'btn small primary', disabled: !todo.length, onclick: () => void fetchPicked(todo) }, icon('download'), todo.length ? t('downloadN', { n: countChapters(todo.length) }) : t('downloaded')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => { picked.clear(); draw(find.value); } }, icon('close')));
+  };
+  const fetchPicked = async (idx: number[]) => {
+    const paths = new Set(idx.map((i) => novel.chapters[i].path));
+    picked.clear(); drawBar();
+    try {
+      let book = await findInLibrary(novel.src, novel.path);
+      if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
+      const key = `${novel.src}|${novel.path}#pick`;
+      const state = { done: 0, total: paths.size, live: true }; downloads.set(key, state);
+      const say = (done: number, total: number) => { title.textContent = `${t('contents')} · ${t('fetchingChapters', { n: localDigits(done), total: localDigits(total) })}`; };
+      const ok = await downloadNovel(book, (done, total) => { state.done = done; state.total = total; say(done, total); }, () => state.live, paths);
+      downloads.delete(key);
+      toast(ok ? t('chaptersFetched', { n: countChapters(paths.size) }) : t('offlineStopped'));
+    } catch (e) { toast(describe(e), 'error'); }
+    title.textContent = `${t('contents')} · ${countChapters(novel.chapters.length)}`;
+    await refreshHave(); draw(find.value);
+  };
   const draw = (needle: string) => {
     list.replaceChildren();
     const n = needle.trim().toLowerCase();
     novel.chapters.forEach((c, i) => {
       if (n && !c.name.toLowerCase().includes(n)) return;
-      list.append(h('li', null, h('button', { type: 'button', onclick: () => void openAt(i).catch((e) => toast(describe(e), 'error')) }, h('span', { dir: 'auto' }, c.name), c.released ? h('span', { class: 'meta' }, shortDate(c.released)) : null)));
+      const on = picked.has(i); const got = have.has(c.path);
+      const b = h('button', { type: 'button', 'aria-pressed': String(on), class: (on ? 'on' : '') + (got ? ' have' : ''), onclick: () => { if (selecting()) { if (on) picked.delete(i); else picked.add(i); draw(find.value); } else void openAt(i).catch((e) => toast(describe(e), 'error')); } },
+        on ? icon('check') : got ? h('span', { class: 'have-mark', title: t('downloaded') }, icon('download')) : null,
+        h('span', { dir: 'auto', class: 'grow' }, c.name), c.released ? h('span', { class: 'meta' }, shortDate(c.released)) : null);
+      onHoldOrContext(b, () => { if (on) picked.delete(i); else picked.add(i); draw(find.value); });
+      list.append(h('li', null, b));
     });
+    drawBar();
   };
   find.addEventListener('input', () => draw(find.value));
   draw('');
+  void refreshHave().then(() => draw(find.value));
   return box;
 }
 function shortDate(s: string): string {
