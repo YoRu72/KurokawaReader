@@ -327,7 +327,7 @@ final class KrBrowser {
                 JSObject ret = new JSObject();
                 ret.put("status", status);
                 ret.put("headers", hs);
-                ret.put("body", p.binary ? Base64.encodeToString(bytes, Base64.NO_WRAP) : new String(bytes, KurokawaPlugin.charsetOf(hs.optString("content-type", ""), bytes)));
+                if (p.binary) KurokawaPlugin.putBinaryBody(ret, bytes); else ret.put("body", new String(bytes, KurokawaPlugin.charsetOf(hs.optString("content-type", ""), bytes)));
                 ret.put("url", url == null ? "" : url);
                 ret.put("via", "browser");
                 p.call.resolve(ret);

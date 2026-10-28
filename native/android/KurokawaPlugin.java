@@ -181,6 +181,7 @@ public class KurokawaPlugin extends Plugin {
     /** Generic HTTP request from native code (no CORS): used for sync back-ends. Body/response as text. */
     @PluginMethod
     public void httpRequest(PluginCall call) {
+        if (bodyDir == null) bodyDir = new File(getContext().getCacheDir(), "kr-http");
         final String urlStr = call.getString("url", "");
         final String method = call.getString("method", "GET");
         final String body = call.getString("body", null);
@@ -208,7 +209,7 @@ public class KurokawaPlugin extends Plugin {
                 JSObject ret = new JSObject();
                 ret.put("status", code);
                 byte[] bytes = bos.toByteArray();
-                ret.put("body", binary ? Base64.encodeToString(bytes, Base64.NO_WRAP) : new String(bytes, charsetOf(conn.getContentType(), bytes)));
+                if (binary) putBinaryBody(ret, bytes); else ret.put("body", new String(bytes, charsetOf(conn.getContentType(), bytes)));
                 JSObject hs = new JSObject();
                 for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
                 ret.put("headers", hs);
@@ -219,6 +220,24 @@ public class KurokawaPlugin extends Plugin {
     }
 
     /** The charset a page's text is in: the header's, else a <meta> in its first bytes, else UTF-8. */
+    /** A binary answer for the page: small ones as base64 in the result; big ones (a cover, a file) written to a
+     *  file the page reads itself through the app's file server — a megabyte of base64 pushed through the bridge
+     *  as JSON, parsed on the page's main thread, dropped frames while the reader scrolled. */
+    private static int bodySeq = 0;
+    static void putBinaryBody(JSObject ret, byte[] bytes) {
+        if (bytes.length > 262144 && bodyDir != null) {
+            try {
+                bodyDir.mkdirs();
+                File f = new File(bodyDir, "b" + (bodySeq++ % 24) + ".bin");
+                try (OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(f), 1 << 16)) { out.write(bytes); }
+                ret.put("bodyPath", f.getAbsolutePath()); ret.put("body", ""); ret.put("bodySize", bytes.length);
+                return;
+            } catch (Exception ignored) { /* as base64, then */ }
+        }
+        ret.put("body", Base64.encodeToString(bytes, Base64.NO_WRAP));
+    }
+    static File bodyDir = null;
+
     static java.nio.charset.Charset charsetOf(String contentType, byte[] body) {
         try {
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("charset=\"?'?([\\w-]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(contentType == null ? "" : contentType);
@@ -242,7 +261,7 @@ public class KurokawaPlugin extends Plugin {
 
     /** A request made by a page of the site itself, in the app's own browser (see KrBrowser.fetch). */
     @PluginMethod
-    public void browserFetch(PluginCall call) { browser().fetch(call); }
+    public void browserFetch(PluginCall call) { if (bodyDir == null) bodyDir = new File(getContext().getCacheDir(), "kr-http"); browser().fetch(call); }
 
     /** The site's browser view closed: the next request opens it again with the cookies as they are now. */
     @PluginMethod

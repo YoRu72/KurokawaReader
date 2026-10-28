@@ -15,7 +15,7 @@
 // (In the spirit of Mihon's Cloudflare interceptor — the same identity for the app and its web view, one
 // cookie jar, a stale clearance dropped before a check is passed again — with the browser itself making the
 // requests where the clearance is not enough.)
-import { http, isWebOnly, type HttpInit, type HttpResult } from '../net';
+import { http, isWebOnly, withBody, bodyBytes, type HttpInit, type HttpResult } from '../net';
 import { SourceError } from './types';
 import { t } from '../i18n';
 
@@ -71,7 +71,7 @@ function browser(): Browser | null {
   const k = cap?.isNativePlatform?.() ? cap.Plugins?.Kurokawa : undefined;
   if (k) return {
     check: k.openWebView ? (o) => k.openWebView!(o).then((r) => (r ?? {})) : undefined,
-    fetch: k.browserFetch ? (o) => k.browserFetch!(o) : undefined,
+    fetch: k.browserFetch ? async (o) => withBody(await k.browserFetch!(o)) : undefined,
     reset: k.browserReset ? (url) => k.browserReset!({ url }) : undefined,
     forget: k.browserForget ? (url, all) => k.browserForget!({ url, all }) : undefined,
   };
@@ -272,6 +272,9 @@ export async function fetchDoc(url: string, init: RequestInit = {}): Promise<Doc
   return new DOMParser().parseFromString(html, 'text/html');
 }
 
+/** The bytes of a binary answer (as bytes when the platform handed them so, else its base64 decoded by the
+ *  browser itself — a cover's megabyte decoded character by character in script would stall the screen). */
+export const bytesOfAsync = bodyBytes;
 /** Base64 to bytes. */
 export function bytesOf(b64: string): Uint8Array {
   const bin = atob(b64); const bytes = new Uint8Array(bin.length);
@@ -284,7 +287,7 @@ export async function fetchBytes(url: string, onProgress?: (p: { pct: number; go
   onProgress?.({ pct: 0, got: 0, total: 0 });
   const r = await request(url, { ...init, binary: true, headers: { accept: '*/*', ...init.headers } });
   if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, r.status === 429 ? 'rate' : 'http', r.status);
-  const bytes = bytesOf(r.body);
+  const bytes = await bodyBytes(r);
   onProgress?.({ pct: 100, got: bytes.length, total: bytes.length });
   return bytes;
 }

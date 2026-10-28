@@ -6,7 +6,7 @@
 // The covers are kept the way Mihon keeps its own: a small picture (a blob, WebP where the platform writes it)
 // on the device, found again by the file's address and size, and a few hundred of them at hand in memory for
 // the session; the ones on the screen are fetched first, those scrolled past are dropped from the queue.
-import { request, bytesOf } from './http';
+import { request, bytesOf, bytesOfAsync } from './http';
 import { db } from '../db';
 import { SourceError } from './types';
 
@@ -46,7 +46,7 @@ async function range(url: string, from: number, to?: number): Promise<Got> {
   const r = await request(url, { headers: { ...(extra.get(hostOf(url)) ?? {}), range: from < 0 ? `bytes=${from}` : `bytes=${from}-${to ?? ''}` }, binary: true, quiet: true, retries: 1 });
   if (r.status === 416) throw new SourceError('range', 'http', 416);
   if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
-  const bytes = bytesOf(r.body);
+  const bytes = await bytesOfAsync(r);
   if (r.status !== 206) {
     // (Whole: counted against the host only when the answer was really more than the piece asked for — a small
     // file answered whole for a range beyond its size is no sign.)
@@ -177,6 +177,11 @@ class RemoteZip {
 
 /** Raw DEFLATE: the browser's own stream when it has one, else JSZip over a zip of that one entry. */
 async function inflateRaw(data: Uint8Array, e: ZEntry): Promise<Uint8Array> {
+  if (data.length > 64 * 1024) {
+    const copy = data.slice().buffer as ArrayBuffer;
+    const job = inWorker({ op: 'inflate', bytes: copy }, [copy]);
+    if (job) { try { const r = await job; if (r.bytes) return new Uint8Array(r.bytes); } catch { /* below */ } }
+  }
   if (typeof DecompressionStream !== 'undefined') {
     try {
       const ds = new DecompressionStream('deflate-raw' as CompressionFormat);
@@ -340,8 +345,34 @@ const THUMB_H = 540;
 function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((ok) => canvas.toBlob((b) => ok(b), 'image/jpeg', 0.82));
 }
+/** The worker that makes covers small (and inflates zip entries) off the main thread, when the platform has
+ *  pictures in workers (OffscreenCanvas); the shelf keeps scrolling smoothly while covers are decoded. */
+let worker: Worker | null | undefined;
+let workSeq = 0; const workWaiting = new Map<number, { ok: (v: { blob?: Blob; bytes?: ArrayBuffer }) => void; fail: (e: Error) => void }>();
+function thumbWorker(): Worker | null {
+  if (worker !== undefined) return worker;
+  try {
+    if (typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') { worker = null; return null; }
+    worker = new Worker(new URL('./thumbworker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (e: MessageEvent<{ id: number; blob?: Blob; bytes?: ArrayBuffer; error?: string }>) => { const w = workWaiting.get(e.data.id); if (!w) return; workWaiting.delete(e.data.id); if (e.data.error) w.fail(new Error(e.data.error)); else w.ok(e.data); };
+    worker.onerror = () => { for (const w of workWaiting.values()) w.fail(new Error('worker')); workWaiting.clear(); worker?.terminate(); worker = null; };
+  } catch { worker = null; }
+  return worker;
+}
+function inWorker(msg: Record<string, unknown>, transfer: ArrayBuffer[]): Promise<{ blob?: Blob; bytes?: ArrayBuffer }> | null {
+  const w = thumbWorker(); if (!w) return null;
+  const id = ++workSeq;
+  return new Promise((ok, fail) => { workWaiting.set(id, { ok, fail }); w.postMessage({ id, ...msg }, transfer); });
+}
 async function thumb(bytes: Uint8Array, type: string, height = THUMB_H): Promise<Blob | null> {
-  const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: /svg/.test(type) ? 'image/svg+xml' : type });
+  const mime = /svg/.test(type) ? 'image/svg+xml' : type;
+  // Off the main thread where possible (not an SVG: workers draw no SVG).
+  if (!/svg/.test(mime)) {
+    const copy = bytes.slice().buffer as ArrayBuffer;
+    const job = inWorker({ op: 'thumb', bytes: copy, type: mime, height, quality: 0.82 }, [copy]);
+    if (job) { try { const r = await job; if (r.blob) return r.blob; } catch { /* drawn here below */ } }
+  }
+  const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: mime });
   let src: CanvasImageSource; let w: number; let hgt: number; let free = () => {};
   try {
     // (A very big picture decoded straight to the size shown — the memory a phone has; the others whole, which
@@ -369,7 +400,7 @@ export async function thumbOf(url: string): Promise<string | undefined> {
   const had = await recall(key); if (had) return had.cover;
   const r = await request(url, { binary: true, quiet: true, retries: 1 });
   if (r.status >= 400) return undefined;
-  const blob = await thumb(bytesOf(r.body), r.headers['content-type'] ?? 'image/jpeg').catch(() => null);
+  const blob = await thumb(await bytesOfAsync(r), r.headers['content-type'] ?? 'image/jpeg').catch(() => null);
   if (!blob) return undefined;
   return store(key, { at: Date.now() }, blob).cover;
 }
