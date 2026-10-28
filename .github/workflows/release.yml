@@ -283,7 +283,8 @@ jobs:
             echo "## KurokawaReader v${{ needs.version.outputs.v }}"
             echo
             echo "## What's new"
-            if [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
+            # (Notes written for this version, when there are any — docs/notes/v<version>.md — else the commits.)
+            if [ -s "docs/notes/v${{ needs.version.outputs.v }}.md" ]; then cat "docs/notes/v${{ needs.version.outputs.v }}.md"; elif [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
             if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
             echo
             echo "## Files"
