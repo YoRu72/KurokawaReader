@@ -91,6 +91,8 @@ export interface VisualSettings {
   hideSystemBars: boolean;
   /* Library */
   libraryView: 'cards' | 'chips';
+  /** Volumes of one series shown as one card on the library page. */
+  groupSeries: boolean;
   autoUpdateCheck: boolean;
   updateChannel: 'stable' | 'beta';   // beta: pre-releases too
   updateEvery: 'launch' | 'daily' | 'weekly'; // how often the start-up check runs
@@ -241,6 +243,7 @@ export const DEFAULTS: VisualSettings = {
   readingMode: 'chapters',
   hideSystemBars: true,
   libraryView: 'cards',
+  groupSeries: true,
   autoUpdateCheck: true,
   updateChannel: 'stable',
   updateEvery: 'launch',

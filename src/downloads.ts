@@ -15,7 +15,7 @@ import type { Book } from './db';
 
 export type Progress = { pct: number; got: number; total: number; speed?: number };
 /** What to do with the file once it is here: into the library, remembered as coming from its source. */
-export type Then = { srcId: string; itemId: string; title: string; folderId?: string; tags?: string[] };
+export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: { name: string; index?: number }; tags?: string[] };
 export type DownloadTask = { url: string; name: string; mime?: string; size?: number; headers?: Record<string, string>; title: string; then: Then };
 export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; error?: string; bookId?: string; startedAt: number };
 
@@ -79,7 +79,7 @@ async function run(d: Download): Promise<void> {
       if ((d.state as string) === 'cancelled') return null;
       const added = await importFiles([file]);
       if (!added.length) throw new Error(t('convertFailed'));
-      await db.updateBook(added[0].id, (b) => { b.remote = { source: d.then.srcId, id: d.then.itemId }; if (d.then.folderId) b.folderId = d.then.folderId; if (d.then.tags?.length) b.tags = [...new Set([...(b.tags ?? []), ...d.then.tags])]; });
+      await db.updateBook(added[0].id, (b) => { b.remote = { source: d.then.srcId, id: d.then.itemId }; if (d.then.folderId) b.folderId = d.then.folderId; if (d.then.series) b.series = d.then.series; if (d.then.tags?.length) b.tags = [...new Set([...(b.tags ?? []), ...d.then.tags])]; });
       d.bookId = added[0].id; book = added[0];
       return { blob: file, name: file.name };
     }, () => true, { quiet: true });

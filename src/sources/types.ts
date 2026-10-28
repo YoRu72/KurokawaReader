@@ -29,8 +29,10 @@ export interface SourceBook {
   have?: number;
   /** New volumes of a series the reader follows, since the series' page was last opened. */
   fresh?: number;
-  /** The library's folder a fetched volume goes into (its series). */
+  /** The series a fetched volume belongs to (remembered on the book). */
   group?: string;
+  /** Its number in the series, when the name says. */
+  volume?: number;
   /** For a series' card: the ids of every edition of each of its volumes (one in the library is enough). */
   volumeIds?: string[][];
   /** The file whose cover a volume's row or a series' card shows: an EPUB edition when there is one (its own

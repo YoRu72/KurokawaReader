@@ -1,7 +1,7 @@
 // Electron shell: serves the built web app from an app:// origin (so IndexedDB,
 // fonts and absolute paths behave exactly as on the web) and forwards files the
 // OS asks us to open (double-click, "Open with", drag onto the icon).
-const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session } = require('electron');
 // (Windows shows the app's notifications under its own name only with this.)
 if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.reader');
 const path = require('node:path');
@@ -105,7 +105,7 @@ app.whenReady().then(() => {
     });
     buildMenu();
     // Let the page list fonts installed on this computer (Local Font Access API).
-    const { session } = require('electron');
+
     session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(['local-fonts', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen'].includes(permission)));
     session.defaultSession.setPermissionCheckHandler((_wc, permission) => ['local-fonts', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen'].includes(permission));
     createWindow();
@@ -304,7 +304,7 @@ const isClearFor = (st, origin) => !!st && /^https?:/.test(st.origin) && siteOf(
 const movedAway = (st, origin) => !!st && /^https?:/.test(st.origin) && st.origin !== origin && st.ready !== 'loading' && !st.check && !st.blocked;
 const originOf = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin : null; } catch { return null; } };
 async function forgetSite(url, all) {
-  const { session } = require('electron');
+
   let n = 0;
   try {
     for (const c of await session.defaultSession.cookies.get({ url })) {
@@ -454,16 +454,19 @@ ipcMain.handle('kr:folder-read', async (_e, p) => { try { return await require('
 function hasAria2() {
   try { return require('child_process').spawnSync('aria2c', ['--version'], { timeout: 4000, windowsHide: true }).status === 0; } catch { return false; }
 }
-async function downloadAria2(e, url, dir, name) {
+async function downloadAria2(e, url, dir, name, id = '') {
   const { spawn } = require('child_process');
+  // (The app's identity and the site's cookies go with aria2c too: a clearance passed in the browser lane holds.)
+  const extra = ['--user-agent=' + app.userAgentFallback];
+  try { const cookies = await session.defaultSession.cookies.get({ url }); if (cookies.length) extra.push('--header=Cookie: ' + cookies.map((c) => `${c.name}=${c.value}`).join('; ')); } catch { /* none */ }
   return new Promise((resolve, reject) => {
-    const p = spawn('aria2c', ['-x', '16', '-s', '16', '-k', '1M', '--file-allocation=none', '--allow-overwrite=true', '--auto-file-renaming=false', '--summary-interval=1', '--console-log-level=warn', '-d', dir, '-o', name, url], { windowsHide: true });
+    const p = spawn('aria2c', ['-x', '16', '-s', '16', '-k', '1M', '--file-allocation=none', '--allow-overwrite=true', '--auto-file-renaming=false', '--summary-interval=1', '--console-log-level=warn', ...extra, '-d', dir, '-o', name, url], { windowsHide: true });
     const parse = (buf) => {
       // [#2089b0 12MiB/104MiB(11%) CN:16 DL:5.2MiB ETA:17s]
       const m = /([\d.]+)([KMG]?i?B)\/([\d.]+)([KMG]?i?B)\((\d+)%\).*?DL:([\d.]+)([KMG]?i?B)/.exec(String(buf));
       if (!m) return;
       const mul = (u) => (u.startsWith('G') ? 1073741824 : u.startsWith('M') ? 1048576 : u.startsWith('K') ? 1024 : 1);
-      e.sender.send('kr:download-progress', { got: Number(m[1]) * mul(m[2]), total: Number(m[3]) * mul(m[4]), pct: Number(m[5]), speed: Number(m[6]) * mul(m[7]), via: 'aria2c' });
+      e.sender.send('kr:download-progress', { id, got: Number(m[1]) * mul(m[2]), total: Number(m[3]) * mul(m[4]), pct: Number(m[5]), speed: Number(m[6]) * mul(m[7]), via: 'aria2c' });
     };
     p.stdout.on('data', parse); p.stderr.on('data', parse);
     p.on('error', reject);
@@ -512,7 +515,7 @@ async function downloadSegmented(e, url, file, id = '') {
 ipcMain.handle('kr:download', async (e, url, name, id) => {
   const dir = path.join(app.getPath('userData'), 'downloads'); fs.mkdirSync(dir, { recursive: true });
   const safe = String(name).replace(/[\\/:*?"<>|]/g, '_');
-  if (hasAria2()) { try { return await downloadAria2(e, String(url), dir, safe); } catch (err) { console.warn('[kurokawa] aria2c failed, using the built-in downloader', err); } }
+  if (hasAria2()) { try { return await downloadAria2(e, String(url), dir, safe, id ? String(id) : ''); } catch (err) { console.warn('[kurokawa] aria2c failed, using the built-in downloader', err); } }
   return downloadSegmented(e, String(url), path.join(dir, safe), id ? String(id) : '');
 });
 ipcMain.handle('kr:delete-download', async (_e, p) => { const dir = path.join(app.getPath('userData'), 'downloads'); const f = path.resolve(String(p)); if (!f.startsWith(dir)) return false; try { await fs.promises.unlink(f); return true; } catch { return false; } });

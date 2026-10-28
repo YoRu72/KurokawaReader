@@ -69,7 +69,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('merged into one PDF of every volume\'s pages', (await page.$$('.pdf-page')).length === 6);
     await page.goto(base + '#/'); await page.waitForSelector('.book-card'); await page.waitForTimeout(400);
     const titles = await page.$$eval('.book-card', (cards) => cards.map((c) => c.textContent));
-    ok('the library holds the EPUB, the three volumes and the merged book', titles.length === 5 && titles.filter((x) => /History of Everything/.test(x)).length === 4);
+    // (The three volumes show as one series card — «3 volumes» — beside the merged book.)
+    ok('the library holds the EPUB, the three volumes as one series, and the merged book', titles.length === 3 && titles.filter((x) => /History of Everything/.test(x)).length === 2 && titles.some((x) => /History of Everything/.test(x) && /3 volumes/.test(x)));
     if (titles.length !== 5) console.log('  titles:', JSON.stringify(titles));
     // Shamela: categories as shelves.
     await page.goto(base + '#/sources/shamela'); await page.waitForSelector('.src-shelves .chip', { timeout: 15000 }); await page.waitForTimeout(300);
@@ -211,10 +212,12 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.goto(base + '#/'); await page.reload(); await page.waitForSelector('.book-card'); await page.waitForTimeout(400);
     const lib = await page.$$eval('.book-card .bt', (es) => es.map((e) => e.textContent));
     const chips = await page.$$eval('.folder-chips .chip', (es) => es.map((e) => e.textContent));
-    ok('the library holds the PDF (by its own title); the volumes are in a folder named after the series', lib.includes('Sample Report') && chips.some((c) => /Alpha Series/.test(c)));
-    if (!chips.some((c) => /Alpha Series/.test(c)) || !lib.includes('Sample Report')) console.log('  library:', JSON.stringify({ lib, chips }));
-    await page.click('.folder-chips .chip:has-text("Alpha Series")'); await page.waitForTimeout(500);
-    ok('… the folder holds the two volumes', (await page.$$('.book-card')).length === 2);
+    ok('the library holds the PDF (by its own title); the volumes as one series card, no folder made for them', lib.includes('Sample Report') && lib.includes('Alpha Series') && !chips.some((c) => /Alpha Series/.test(c)));
+    if (chips.some((c) => /Alpha Series/.test(c)) || !lib.includes('Sample Report')) console.log('  library:', JSON.stringify({ lib, chips }));
+    await page.click('.series-card:has-text("Alpha Series")'); await page.waitForTimeout(500);
+    ok('… the series card opens its two volumes', (await page.$$('.book-card')).length === 2 && !!(await page.$('.series-bar')));
+    await page.click('.series-bar .chip'); await page.waitForTimeout(300);
+    ok('… and back to the shelf', !!(await page.$('.series-card')) && !(await page.$('.series-bar')));
     // The folder's address given a second time is refused as already added.
     await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     await page.click('.topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]');
@@ -364,10 +367,13 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     const mine = await page.$$eval('.src-card.folder', (cs) => cs.map((c) => `${c.querySelector('.src-title')?.textContent}|${c.querySelector('.src-badge.have')?.textContent}`));
     ok('"In my library": the series with volumes fetched, each marked with how many of how many', mine.join() === "Alpha Saga|1/4,Didn't I Say to Make My Abilities Average|1/" + mine[1]?.split('/')[1] && /^Didn't I Say/.test(mine[1] ?? ''));
     if (!/^Alpha Saga\|1\/4$/.test(mine[0] ?? '')) console.log('  mine:', JSON.stringify(mine));
-    // Fetched from a series' page: into the library's folder of that series.
+    // Fetched from a series' page: remembered as volumes of that series (no folder made), and so a single
+    // volume stands on the shelf by its own title with its series on its book page.
     await page.goto(base + '#/'); await page.reload(); await page.waitForSelector('.library-view'); await page.waitForTimeout(400);
     const libChips = await page.$$eval('.folder-chips .chip', (es) => es.map((e) => e.textContent));
-    ok('volumes fetched from a series\' page are in the library\'s folder of that series', libChips.some((c) => /Didn't I Say to Make My Abilities Average/.test(c)) && libChips.some((c) => /Alpha Saga/.test(c)));
+    const seriesOfBooks = await page.evaluate(async () => { const req = indexedDB.open('kurokawa-reader'); const dbx = await new Promise((r) => { req.onsuccess = () => r(req.result); }); const tx = dbx.transaction('books'); const all = await new Promise((r) => { const q = tx.objectStore('books').getAll(); q.onsuccess = () => r(q.result); }); return all.map((b) => b.series?.name).filter(Boolean); });
+    ok('volumes fetched from a series\' page remember their series, and no folder is made for them', !libChips.some((c) => /Alpha Saga|Didn't I Say/.test(c)) && seriesOfBooks.some((n) => /Alpha Saga/.test(n)) && seriesOfBooks.some((n) => /Didn't I Say/.test(n)));
+    if (!seriesOfBooks.length) console.log('  series:', JSON.stringify(seriesOfBooks));
     // The next volume after the last one in the library, a tap away.
     await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent("Didn't%20I%20Say%20to%20Make%20My%20Abilities%20Average")); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(500);
     ok('a series with volumes in the library offers the next one', /Next: Volume 3/.test(await page.$eval('.series-actions', (e) => e.textContent)));

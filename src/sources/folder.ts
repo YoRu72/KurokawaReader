@@ -592,7 +592,7 @@ export function folderSource(repo: Repo): Source {
     const title = opts.full || g.num === undefined || !first.v.marked ? first.v.base : `${t('volumeN', { n: localDigits(String(g.num), 'prose') })}${first.v.sub ? ` — ${first.v.sub}` : ''}`;
     const c = coverItem(g);
     return {
-      id: `f:${first.rel}`, title, look: 'volume', badge: BOOK_EXT[first.v.ext]?.[0] ?? first.v.ext.toUpperCase(), author: opts.where, year: first.e.date,
+      id: `f:${first.rel}`, title, look: 'volume', badge: BOOK_EXT[first.v.ext]?.[0] ?? first.v.ext.toUpperCase(), author: opts.where, year: first.e.date, volume: g.num,
       file: fileOf(first.e, first.rel), coverFile: c ? fileOf(c.e, c.rel) : undefined,
       alts: g.items.length > 1 ? g.items.map((x) => ({ label: editionLabel(x.v, mixed), id: `f:${x.rel}`, file: fileOf(x.e, x.rel) })) : undefined,
       description: g.items.length === 1 && (first.v.editions.length || first.v.publisher) ? editionLabel(first.v, false) : undefined,

@@ -42,9 +42,15 @@ export function seriesOf(title: string): SeriesPart | null {
 }
 
 /** The other volumes of a book's series in the library, in order (the book itself included). */
+/** The series a book belongs to: what its source said, else what its title says. */
+export function partOf(book: Book): SeriesPart | null {
+  if (book.series?.name) return { key: keyOf(book.series.name), name: book.series.name, index: book.series.index ?? seriesOf(book.title)?.index ?? 0 };
+  return seriesOf(book.title);
+}
+
 export function volumesOf(book: Book, all: Book[]): { part: SeriesPart; books: { book: Book; index: number }[] } | null {
-  const part = seriesOf(book.title); if (!part) return null;
-  const books = all.map((b) => ({ book: b, part: b.id === book.id ? part : seriesOf(b.title) })).filter((x): x is { book: Book; part: SeriesPart } => !!x.part && x.part.key === part.key)
+  const part = partOf(book); if (!part) return null;
+  const books = all.map((b) => ({ book: b, part: b.id === book.id ? part : partOf(b) })).filter((x): x is { book: Book; part: SeriesPart } => !!x.part && x.part.key === part.key)
     .map((x) => ({ book: x.book, index: x.part.index })).sort((a, b) => a.index - b.index || a.book.title.localeCompare(b.book.title));
   if (books.length < 2) return null;
   return { part, books };

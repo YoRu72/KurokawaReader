@@ -1,6 +1,7 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } from '../ui/dom';
 import { onHoldOrContext } from '../ui/tags';
-import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, formatLabel } from '../i18n';
+import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
+import { partOf } from '../series';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
 import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT, prewarm } from '../formats';
@@ -21,6 +22,8 @@ export function libraryView(): HTMLElement {
   let folders: Folder[] = [];
   let tagDefs: TagDef[] = [];
   let activeFolder: string | null = localStorage.getItem('kr.folder') || null;
+  // A series opened on the library page: its volumes alone, in order.
+  let activeSeries: string | null = localStorage.getItem('kr.series') || null;
   let tagFilter: string | null = localStorage.getItem('kr.tag') || null;
   let selecting = false;
   const selected = new Set<string>();
@@ -236,9 +239,10 @@ export function libraryView(): HTMLElement {
       if (fmt.size && !fmt.has(groupOf(b.format))) return false;
       if (st.size && !st.has(statusOf(b))) return false;
       if (tagFilter && !(b.tags ?? []).includes(tagFilter)) return false;
-      const inFolder = activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
+      const inFolder = activeSeries ? true : activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
       return inFolder && (!query || `${b.title} ${b.author ?? ''} ${b.fileName} ${(b.tags ?? []).join(' ')}`.toLowerCase().includes(query));
     });
+    if (activeSeries) { const vols = list.filter((b) => partOf(b)?.key === activeSeries); return vols.sort((a, b) => (partOf(a)!.index - partOf(b)!.index) || natural.compare(a.title, b.title)); }
     const by: Record<Sort, (a: Book, b: Book) => number> = {
       recent: (a, b) => (b.lastOpenedAt ?? b.addedAt) - (a.lastOpenedAt ?? a.addedAt),
       added: (a, b) => b.addedAt - a.addedAt,
@@ -262,6 +266,37 @@ export function libraryView(): HTMLElement {
     el.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('text/kr-book')) { e.preventDefault(); el.classList.add('drop'); } });
     el.addEventListener('dragleave', () => el.classList.remove('drop'));
     el.addEventListener('drop', async (e) => { e.preventDefault(); el.classList.remove('drop'); const ids = (e.dataTransfer?.getData('text/kr-book') ?? '').split(',').filter(Boolean); await moveBooks(ids, f.id); });
+    return el;
+  }
+
+  /** A series on the library page: one card for its volumes (as Mihon shows a title once, whatever its
+   *  chapters), opening the series' own page in the library. */
+  function seriesCard(name: string, key: string, vols: Book[]): HTMLElement {
+    const covers = vols.slice(0, 4).map((b) => coverUrl(b));
+    const read = vols.filter((b) => isDone(b)).length;
+    const unread = vols.filter((b) => !isDone(b));
+    const next = unread.find((b) => (b.progress?.pct ?? 0) > 0) ?? unread[0];
+    const [c1, c2] = coverColors(name);
+    const el = h('button', { class: 'book-card series-card', type: 'button', title: name, dataset: { series: key } },
+      h('div', { class: 'cover folder series' }, h('div', { class: 'stack' }, ...covers.map((u, i) => u ? h('img', { src: u, alt: '' }) : h('div', { class: 'ph', style: { background: coverColors(vols[i].title)[0] } }))),
+        h('span', { class: 'badges' }, vols.some((b) => b.remote?.newChapters) ? h('span', { class: 'badge alert' }, '!') : null),
+        h('span', { class: 'badge count' }, localDigits(vols.length)),
+        selecting ? h('div', { class: 'check' }, icon('check')) : null),
+      h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, name), h('div', { class: 'ba' }, t('seriesCardVolumes', { n: countVolumes(vols.length), read: localDigits(read) }))));
+    (el.querySelector('.stack') as HTMLElement).style.setProperty('--c1', c1); (el.querySelector('.stack') as HTMLElement).style.setProperty('--c2', c2);
+    el.addEventListener('click', () => {
+      if (selecting) { const all = vols.every((b) => selected.has(b.id)); for (const b of vols) { if (all) selected.delete(b.id); else selected.add(b.id); } renderGrid(); return; }
+      activeSeries = key; localStorage.setItem('kr.series', key); renderGrid();
+    });
+    onHoldOrContext(el, () => {
+      const sh = openSheet(name, t('close'));
+      sh.body.style.fontFamily = 'var(--font-ui)';
+      sh.body.append(h('p', { class: 'src' }, t('seriesCardVolumes', { n: countVolumes(vols.length), read: localDigits(read) })));
+      sh.body.append(h('div', { class: 'dest-list' },
+        next ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(`/read/${next.id}`); } }, icon('play'), h('span', { class: 'name' }, `${t('continueReading')} · `, h('bdi', null, next.title))) : null,
+        h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); activeSeries = key; localStorage.setItem('kr.series', key); renderGrid(); } }, icon('books'), h('span', { class: 'name' }, t('seriesVolumes'))),
+        h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); setSelecting(true); for (const b of vols) selected.add(b.id); renderGrid(); } }, icon('check'), h('span', { class: 'name' }, t('select')))));
+    });
     return el;
   }
 
@@ -783,9 +818,32 @@ export function libraryView(): HTMLElement {
     if ((tagFilter || activeFolder) && !query && !selecting) { const last = list.filter((b) => b.progress && (b.progress.pct ?? 0) < 0.98 && !b.done).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0]; if (last && last.lastOpenedAt) grid.appendChild(continueCard(last)); }
     // A big library's cards come in batches as the grid is scrolled (a thousand cards at once would hold the
     // page for seconds); the first batch fills the screen and more.
+    // A series as one card (its volumes inside), where the shelf is the library's own page.
+    type Group = { series: string; key: string; vols: Book[]; group: true };
+    type Cell = Book | Group;
+    let cells: Cell[] = list;
+    if (getSettings().groupSeries && !activeSeries && !query && getSettings().libraryView === 'cards') {
+      const groups = new Map<string, Group>();
+      for (const b of list) { const p = partOf(b); if (!p) continue; const g = groups.get(p.key); if (g) g.vols.push(b); else groups.set(p.key, { series: p.name, key: p.key, vols: [b], group: true }); }
+      const placed = new Set<string>();
+      cells = [];
+      for (const b of list) {
+        const p = partOf(b); const g = p ? groups.get(p.key) : undefined;
+        if (!g || g.vols.length < 2) { cells.push(b); continue; }
+        if (!placed.has(g.key)) { placed.add(g.key); cells.push(g); }
+      }
+    }
+    if (activeSeries) {
+      const name = list.length ? partOf(list[0])?.name ?? '' : '';
+      if (!list.length) { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); return; }
+      grid.append(h('div', { class: 'series-bar', style: { gridColumn: '1 / -1' } },
+        h('button', { type: 'button', class: 'chip on', onclick: () => { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); } }, icon('back'), h('span', { dir: 'auto' }, name)),
+        h('span', { class: 'src' }, countVolumes(list.length))));
+    }
     const BATCH = 60;
     let at = 0;
-    const more = () => { const end = Math.min(list.length, at + BATCH); for (; at < end; at++) grid.appendChild(card(list[at])); if (at < list.length) grid.appendChild(sentinel); else sentinel.remove(); };
+    const cellEl = (c: Cell) => ('group' in c ? seriesCard(c.series, c.key, c.vols) : card(c));
+    const more = () => { const end = Math.min(cells.length, at + BATCH); for (; at < end; at++) grid.appendChild(cellEl(cells[at])); if (at < cells.length) grid.appendChild(sentinel); else sentinel.remove(); };
     const sentinel = h('div', { class: 'grid-more', 'aria-hidden': 'true' });
     gridMore?.disconnect();
     gridMore = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) more(); }, { rootMargin: '150% 0px' });
