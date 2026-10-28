@@ -82,6 +82,8 @@ export interface Book {
   addedAt: number;
   lastOpenedAt?: number;
   cover?: Blob;
+  /** The cover the file came with, kept while a picture of the reader's own is in its place (`null`: it had none). */
+  coverOrig?: Blob | null;
   pageCount?: number;
   progress?: Locator;
   progressAt?: number;

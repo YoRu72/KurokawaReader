@@ -133,28 +133,74 @@ export async function suitableAsset(rel: ReleaseInfo): Promise<Asset | undefined
   return rel.assets.find((a) => a.name.endsWith('web.zip'));
 }
 
+/** The update being fetched on Android: one at a time, whichever dialog asked for it (a dialog opened again
+ *  joins it), its progress only its own — never another download's — and never going back. */
+type UpdateRun = { name: string; done: Promise<string>; last: Progress | null; subs: Set<(p: Progress) => void>; cancel: () => void };
+let updateRun: UpdateRun | null = null;
+type AndroidDl = AndroidPlugin & {
+  downloadFile?(o: { url: string; name: string; id?: string; connections?: number }): Promise<{ path: string; size: number }>;
+  cancelDownload?(o: { id: string }): Promise<void>;
+  cachedFile?(o: { name: string; size?: number; prune?: boolean }): Promise<{ path?: string; size?: number }>;
+  addListener?(ev: string, fn: (d: Progress & { id?: string }) => void): Promise<{ remove(): void }>;
+};
+/** An update fetched before and not installed (the installer was dismissed): kept whole in the cache. */
+export async function cachedUpdate(asset: Asset): Promise<string | null> {
+  const p = androidPlugins(); if (!p) return null;
+  const r = await (p.kr as AndroidDl).cachedFile?.({ name: asset.name, size: asset.size, prune: true }).catch(() => null);
+  return r?.path ?? null;
+}
+export const updateRunning = (name: string): boolean => updateRun?.name === name;
+
+function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<string> {
+  if (!updateRun || updateRun.name !== asset.name) {
+    const id = `kr-update:${asset.name}`;
+    const subs = new Set<(p: Progress) => void>();
+    const run: UpdateRun = { name: asset.name, done: null as unknown as Promise<string>, last: null, subs, cancel: () => void kr.cancelDownload?.({ id }).catch(() => undefined) };
+    run.done = (async () => {
+      const sub = await kr.addListener?.('downloadProgress', (d) => {
+        if (d.id !== id) return;
+        const total = d.total > 0 ? d.total : asset.size;
+        // (Never backwards: a late event from a connection that finished first does not undo the bar.)
+        const got = Math.max(d.got, run.last?.got ?? 0);
+        const p: Progress = { got, total, speed: d.speed, pct: total ? Math.min(100, Math.floor((got / total) * 100)) : d.pct };
+        run.last = p; for (const fn of subs) fn(p);
+      });
+      try {
+        if (kr.downloadFile) return (await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 4 })).path;
+        throw new Error('native');
+      } finally { sub?.remove(); }
+    })();
+    updateRun = run;
+    void run.done.catch(() => undefined).finally(() => { if (updateRun === run) updateRun = null; });
+  }
+  const run = updateRun;
+  run.subs.add(onProgress); if (run.last) onProgress(run.last);
+  const onAbort = () => run.cancel();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  return run.done.catch((e) => { if (signal?.aborted || /cancelled/i.test(String((e as Error)?.message ?? e))) throw Object.assign(new Error('cancelled'), { name: 'AbortError' }); throw e; })
+    .finally(() => { run.subs.delete(onProgress); signal?.removeEventListener('abort', onAbort); });
+}
+
 /** Download `asset` and hand it to the platform installer (or save/share it when there is none). */
 async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<void> {
   const platform = nativePlatform();
   if (platform === 'android') {
     const p = androidPlugins(); if (!p) throw new Error('native');
     // Native download: GitHub's asset redirects carry no CORS headers, so the WebView cannot fetch them.
-    const kr = p.kr as AndroidPlugin & { downloadFile?(o: { url: string; name: string }): Promise<{ path: string; size: number }>; addListener?(ev: string, fn: (d: Progress) => void): Promise<{ remove(): void }> };
-    let sub: { remove(): void } | undefined;
-    try {
-      sub = await kr.addListener?.('downloadProgress', (d) => onProgress({ pct: d.pct, got: d.got, total: d.total || asset.size, speed: d.speed }));
-      let path: string;
-      if (kr.downloadFile) ({ path } = await kr.downloadFile({ url: asset.url, name: asset.name }));
-      else { const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal); ({ uri: path } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true })); }
-      if (/\.apk$/i.test(asset.name)) {
-        // Android 8+: the installer refuses silently unless this app may install unknown apps.
-        const perm = p.kr as AndroidPlugin & { canInstall?(): Promise<{ granted: boolean }>; requestInstallPermission?(): Promise<{ granted: boolean }> };
-        let ok = (await perm.canInstall?.().catch(() => ({ granted: true })))?.granted ?? true;
-        if (!ok) { toast(t('allowInstallHint'), 'info', 6000); ok = (await perm.requestInstallPermission?.().catch(() => ({ granted: false })))?.granted ?? false; }
-        if (!ok) throw new Error(t('installNotAllowed'));
-        await p.kr.installApk({ path });
-      } else toast(t('savedTo', { f: asset.name }));
-    } finally { sub?.remove(); }
+    const kr = p.kr as AndroidDl;
+    // An update fetched before and not installed (the installer dismissed) is kept: used again, not fetched anew.
+    let path = /\.apk$/i.test(asset.name) ? await cachedUpdate(asset) : null;
+    if (path) onProgress({ pct: 100, got: asset.size, total: asset.size, speed: 0 });
+    else if (kr.downloadFile) path = await fetchApk(kr, asset, onProgress, signal);
+    else { const blob = await downloadWithProgress(asset.url, onProgress, asset.size, signal); ({ uri: path } = await p.fs.writeFile({ path: `kr-update/${asset.name}`, data: await blobToBase64(blob), directory: 'CACHE', recursive: true })); }
+    if (/\.apk$/i.test(asset.name)) {
+      // Android 8+: the installer refuses silently unless this app may install unknown apps.
+      const perm = p.kr as AndroidPlugin & { canInstall?(): Promise<{ granted: boolean }>; requestInstallPermission?(): Promise<{ granted: boolean }> };
+      let ok = (await perm.canInstall?.().catch(() => ({ granted: true })))?.granted ?? true;
+      if (!ok) { toast(t('allowInstallHint'), 'info', 6000); ok = (await perm.requestInstallPermission?.().catch(() => ({ granted: false })))?.granted ?? false; }
+      if (!ok) throw new Error(t('installNotAllowed'));
+      await p.kr.installApk({ path });
+    } else toast(t('savedTo', { f: asset.name }));
     return;
   }
   if (platform === 'desktop' && /\.(exe|dmg|AppImage)$/i.test(asset.name)) {
@@ -222,7 +268,14 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
     fileSize.textContent = asset ? `\u2066${fmtMB(asset.size)}\u2069` : '';
   };
   describe();
-  void suitableAsset(rel).then((a) => { asset = a; describe(); install.disabled = !a && platform !== 'web'; if (platform === 'web') choose.hidden = true; });
+  void suitableAsset(rel).then(async (a) => {
+    asset = a; describe(); install.disabled = !a && platform !== 'web'; if (platform === 'web') choose.hidden = true;
+    if (!a || platform !== 'android') return;
+    // Fetched before and not installed: one tap installs it, nothing downloaded again. Still under way (the
+    // dialog was closed): the download is shown again, not started a second time.
+    if (await cachedUpdate(a)) { status.textContent = t('updateAlreadyDownloaded'); install.replaceChildren(icon('check'), t('installNow')); }
+    else if (updateRunning(a.name)) install.click();
+  });
 
   const setPct = (pct: number) => { wave.style.setProperty('--p', `${pct}%`); wave.setAttribute('aria-valuenow', String(pct)); };
   const onProgress = (p: Progress) => {

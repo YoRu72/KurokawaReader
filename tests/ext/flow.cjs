@@ -77,6 +77,13 @@ const SITE = 'http://localhost:5403';
     const detail = await page.evaluate(() => ({ title: document.querySelector('.src-head h2').textContent, author: document.querySelector('.src-author-line')?.textContent, chapters: document.querySelectorAll('.novel-chapters li').length, tags: document.querySelectorAll('.src-tags .chip').length, first: document.querySelector('.novel-chapters li')?.textContent }));
     ok('novel page: title, author, 6 chapters, tags', detail.title === 'Alpha Ascension' && detail.author === 'A. Writer' && detail.chapters === 6 && detail.tags === 2 && /Chapter 1/.test(detail.first));
     await page.screenshot({ path: path.join(__dirname, 'novel.png') });
+    // The cover tapped: on its own (Mihon's cover view); not in the library, so share and save only.
+    await page.click('.src-head .src-cover.big'); await page.waitForSelector('.cover-view img');
+    const cv = await page.$$eval('.cover-view .cv-bar .icon-btn', (els) => els.map((e) => e.dataset.icon).join(','));
+    await page.evaluate(() => { const c = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { window.krSaved = this.download; return c.call(this); }; });
+    await page.click('.cover-view .icon-btn[data-icon="download"]'); await page.waitForTimeout(800);
+    ok('cover view from the novel page: close, share, save; saving fetches the picture', cv === 'close,share,download' && /^Alpha Ascension\.png$/.test(await page.evaluate(() => window.krSaved || '')));
+    await page.click('.cover-view .lb-close'); await page.waitForTimeout(200);
     // Read from the site.
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
     const read = await page.evaluate(() => ({ chapters: document.querySelectorAll('.kr-webnovel .kr-novel-chapter').length, loaded: document.querySelectorAll('.kr-webnovel .kr-chap:not(.pending)').length, text: document.querySelector('.kr-webnovel .kr-chap:not(.pending)')?.textContent, ads: !!document.querySelector('.kr-webnovel .ads, .kr-webnovel script') }));
