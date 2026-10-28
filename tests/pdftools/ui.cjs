@@ -45,8 +45,14 @@ fs.mkdirSync(out, { recursive: true });
   await page.waitForSelector('.sheet:last-of-type .tool-row'); await page.waitForTimeout(500); await page.screenshot({ path: path.join(out, 'images.png') });
   await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('pictures.pdf');
   // Pages → pictures (pages 1-2 of the first PDF).
-  await openTools(); await tool(8); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
+  await openTools(); await tool(9); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
   await page.waitForSelector('.sheet:last-of-type .tool-range'); await page.fill('.sheet:last-of-type .tool-range', '1-2');
   await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('pages.zip');
+  // A password on the file (AES-256): the protected copy opens with it and refuses without.
+  await openTools(); await tool(8); await page.waitForSelector('.sheet:last-of-type .dest-row'); await page.click('.sheet:last-of-type .dest-row:first-child');
+  await page.waitForSelector('.sheet:last-of-type input[type=password]'); await page.fill('.sheet:last-of-type input[type=password]', 'pw1'); await page.screenshot({ path: path.join(out, 'protect.png') });
+  await page.click('.sheet:last-of-type .sheet-actions .btn.primary'); await waitResult(); await save('protected.pdf');
+  { const { execFileSync } = require('child_process'); const enc = execFileSync('qpdf', ['--password=pw1', '--show-encryption', path.join(out, 'protected.pdf')]).toString(); let refused = false; try { refused = /Incorrect password/.test(execFileSync('qpdf', ['--show-encryption', path.join(out, 'protected.pdf')], { stdio: 'pipe' }).toString()); } catch { refused = true; }
+    console.log(/R = 6/.test(enc) && /user password/.test(enc) && refused ? 'ok protected: AES-256, opens with the password, refused without' : 'FAIL protected: ' + JSON.stringify(enc.slice(0, 300)) + ' refused=' + refused); }
   await browser.close(); server.close();
 })().catch((e) => { console.error(e); process.exit(1); });

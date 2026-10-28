@@ -1667,3 +1667,6 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .alert-mark { position: absolute; top: 4px; inset-inline-end: 7px; min-width: 10px; height: 18px; display: grid; place-items: center; font: 800 15px/1 'Inter', system-ui, sans-serif; color: #ff3b30; text-shadow: 0 0 6px rgba(255,59,48,.55); pointer-events: none; animation: alert-pop .35s var(--ease-emph, ease-out); }
 .alert-mark[hidden] { display: none; }
 @keyframes alert-pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* On a middling window the search field gives way before a tool button drops to a second line. */
+@media (min-width: 700px) and (max-width: 1100px) { .library-tools input[type='search'] { min-width: 150px; } .library-tools select { max-width: 230px; } }

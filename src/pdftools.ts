@@ -138,6 +138,12 @@ export async function pickPagesHere(s: Source, pages: number[], rotate: Record<n
 export async function unlockPdfHere(s: Source): Promise<Uint8Array> {
   return (await loadPdf(s)).save();
 }
+/** The PDF under a password (AES-256): the user's opens it, the owner's with every right; `perms` what a
+ *  reader with the user password may do. */
+export async function protectPdfHere(s: Source, user: string, owner: string, perms: import('./pdfcrypt').Permissions): Promise<Uint8Array> {
+  const { protectPdf } = await import('./pdfcrypt');
+  return protectPdf(await loadPdf(s), user, owner, perms);
+}
 
 /** "1-3, 5, 8-" → 0-based page numbers (in that order), for a document of `count` pages. */
 /** Page indexes (0-based) written the short way: "1-3, 7, 10-12". */
@@ -188,8 +194,8 @@ export async function flattenInkHere(bytes: Uint8Array, strokes: { page: number;
 // The work above runs in a worker (pdftools.worker.ts) when the page has one: reading a book of a thousand
 // pages and writing it again takes a second or two on a phone, during which the sheet would otherwise freeze.
 // Without workers (or when this module itself runs in the worker) the work runs here.
-type Op = 'imagesToPdf' | 'pageCount' | 'mergePdfs' | 'pickPages' | 'unlockPdf' | 'flattenInk';
-const HERE: Record<Op, (...a: never[]) => Promise<unknown>> = { imagesToPdf: imagesToPdfHere, pageCount: pageCountHere, mergePdfs: mergePdfsHere, pickPages: pickPagesHere, unlockPdf: unlockPdfHere, flattenInk: flattenInkHere };
+type Op = 'imagesToPdf' | 'pageCount' | 'mergePdfs' | 'pickPages' | 'unlockPdf' | 'protectPdf' | 'flattenInk';
+const HERE: Record<Op, (...a: never[]) => Promise<unknown>> = { imagesToPdf: imagesToPdfHere, pageCount: pageCountHere, mergePdfs: mergePdfsHere, pickPages: pickPagesHere, unlockPdf: unlockPdfHere, protectPdf: protectPdfHere, flattenInk: flattenInkHere };
 let worker: Worker | null | undefined;
 let seq = 0;
 const waiting = new Map<number, { ok: (v: unknown) => void; fail: (e: Error) => void; progress?: (n: number) => void }>();
@@ -228,4 +234,5 @@ export const pageCount = (s: Source) => run<number>('pageCount', [s]);
 export const mergePdfs = (parts: (Source & { pages?: number[] })[], progress?: (done: number) => void) => run<Uint8Array>('mergePdfs', [parts], progress);
 export const pickPages = (s: Source, pages: number[], rotate: Record<number, number> = {}) => run<Uint8Array>('pickPages', [s, pages, rotate]);
 export const unlockPdf = (s: Source) => run<Uint8Array>('unlockPdf', [s]);
+export const protectPdf = (s: Source, user: string, owner: string, perms: import('./pdfcrypt').Permissions) => run<Uint8Array>('protectPdf', [s, user, owner, perms]);
 export const flattenInk = (bytes: Uint8Array, strokes: { page: number; color: string; w: number; pts: number[] }[]) => run<Uint8Array>('flattenInk', [bytes, strokes]);
