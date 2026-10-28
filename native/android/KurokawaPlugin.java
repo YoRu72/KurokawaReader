@@ -257,6 +257,9 @@ public class KurokawaPlugin extends Plugin {
     @PluginMethod
     public void openWebView(PluginCall call) { browser().check(call); }
 
+    /** An event for the page, from the browser lane (its downloads' progress). */
+    void notifyEvent(String name, JSObject data) { notifyListeners(name, data); }
+
     /** A request made by a page of the site itself, in the app's own browser (see KrBrowser.fetch). */
     @PluginMethod
     public void browserFetch(PluginCall call) { if (bodyDir == null) bodyDir = new File(getContext().getCacheDir(), "kr-http"); browser().fetch(call); }

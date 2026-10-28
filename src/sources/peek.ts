@@ -491,6 +491,7 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
       const got = ext === 'epub' ? await peekEpub(url, !!opts.noCover) : ext === 'pdf' ? (opts.noCover ? null : await peekPdf(url, size)) : null;
       if (!got) return null;
       const { cover, ...rest } = got;
+      logPeek(`ok ${ext} cover=${cover ? 'y' : 'n'} toc=${rest.toc?.length ?? 0} desc=${rest.description?.length ?? 0} title=${rest.title ? 'y' : 'n'} · ${url.split('/').pop()?.slice(0, 60)}`);
       return store(key, { ...rest, at: Date.now(), noCover: opts.noCover || undefined }, cover);
     } catch (e) {
       const err = e as SourceError;

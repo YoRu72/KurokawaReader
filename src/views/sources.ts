@@ -639,12 +639,18 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   const titleEl = h('div', { class: 'title' }, h('span', { dir: 'auto' }, src.name));
   const body = h('div', { class: 'library-body src-body' }, form, shelfRow, tagRow, status, grid, sentinel);
   const topActions = h('div', { class: 'topbar-actions' });
+  // Search from the top bar wherever the page is scrolled to (as Mihon's search icon): the search row comes
+  // back into view and takes the focus.
+  topActions.append(iconButton('search', t('search'), () => { body.scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => { input.focus(); input.select(); }, 250); }));
   if (hnd && (hnd.ln?.pluginSettings || hnd.my?.prefs.length)) topActions.append(iconButton('settings', t('extSettings'), () => extSettingsSheet(hnd)));
   // (The site itself, in the app's browser: a sign-in, a check passed there carries over — as Mihon's WebView.)
   if (/^https?:\/\//i.test(src.site ?? '')) topActions.append(iconButton('globe', t('openInAppBrowser'), () => void openSite(src.site)));
   // (What went wrong with covers and files lately, for a web folder: shown on a long press of the title.)
   if (src.id.startsWith('dir:')) { let hold = 0; const show = () => { const sh = openSheet(t('coverLog'), t('close')); const pre = h('pre', { class: 'cover-log', dir: 'ltr' }, peekLog.length ? peekLog.join('\n') : t('coverLogEmpty')); sh.body.append(h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'btn small tonal', onclick: () => void navigator.clipboard?.writeText(peekLog.join('\n')).then(() => toast(t('copied'))) }, icon('copy'), t('copySelected'))), pre); }; titleEl.addEventListener('pointerdown', () => { hold = window.setTimeout(show, 700); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) titleEl.addEventListener(ev, () => clearTimeout(hold)); }
-  topActions.append(iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); })));
+  const filterBtn = iconButton('filter', t('filters'), () => filterSheet(src, filters, (v) => { filters = v; saveFilters(src, v); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); }));
+  // (How many filters stand away from their defaults, on the icon.)
+  { const defs = src.filters(); const changed = defs.filter((d) => { const v = filters[d.id]; if (v === undefined) return false; const dv = d.value; return Array.isArray(dv) ? (v as unknown[]).length > 0 : v !== dv; }).length + tags.length; if (changed) { filterBtn.append(h('span', { class: 'count' }, localDigits(changed))); filterBtn.classList.add('has-count'); } }
+  topActions.append(filterBtn);
   const root = h('div', { class: 'view sources-view' },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back(src.id.startsWith('dir:') && !q && shelf ? path(src.id, { shelf: shelf.split('/').slice(0, -1).join('/') || undefined }) : q || shelf || tags.length ? path(src.id) : '/sources')), titleEl, topActions),
     body) as HTMLElement & { dispose?: () => void };

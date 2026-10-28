@@ -102,17 +102,26 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
   const safe = d.name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim() || 'book';
   if (plat === 'android') {
     const k = (window as unknown as { Capacitor: { Plugins: { Kurokawa: AndroidDl } } }).Capacitor.Plugins.Kurokawa;
+    // (Progress from either way of fetching — the plain downloader, or the browser lane after it — under the id.)
     const sub = await k.addListener?.('downloadProgress', (p) => { if (!p.id || p.id === d.id) onProgress(p); });
     cancels.set(d.id, () => void k.cancelDownload?.({ id: d.id }).catch(() => undefined));
     try {
-      const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 4 });
-      const file = await readContentUri(path, d.name, d.mime ?? '');
-      void k.deleteDownload?.({ path }).catch(() => undefined);
-      return file;
-    } catch (e) {
-      // (A site that turns the plain downloader away — a check only its browser lane passes: the sources' own
-      // request, which knows the way.)
-      if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e;
+      // (A site reached through the browser lane already — a check only a browser passes — is not asked the
+      // plain way first: its download goes through the lane, to a file, with its progress.)
+      const { viaBrowser } = await import('./sources/http');
+      if (!viaBrowser(new URL(d.url).host)) {
+        try {
+          const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 4 });
+          const file = await readContentUri(path, d.name, d.mime ?? '');
+          void k.deleteDownload?.({ path }).catch(() => undefined);
+          return file;
+        } catch (e) {
+          if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e;
+        }
+      }
+      const { fetchBytes: lane } = await import('./sources/http');
+      const bytes = await lane(d.url, onProgress, { headers: d.headers, downloadId: d.id });
+      return new File([bytes.buffer as ArrayBuffer], d.name, { type: d.mime ?? '' });
     } finally { sub?.remove(); }
   }
   const dk = window.kurokawaDesktop as unknown as DesktopDl | undefined;
