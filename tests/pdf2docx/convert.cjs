@@ -8,6 +8,8 @@ const [pdf, out] = [path.resolve(process.argv[2]), path.resolve(process.argv[3])
   await new Promise((r) => server.listen(5197, r));
   const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true }); const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('pageerror', e.message)); page.on('dialog', (d) => { console.log('dialog:', d.message()); void d.accept(process.env.PW || ''); }); page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console', m.text().includes('P2D') ? m.text() : m.text().slice(0, 300)); });
+  // TWO=1 / TWO=0: force (or forbid) the second pdf.js worker, whatever the machine's cores.
+  if (process.env.TWO !== undefined) await page.addInitScript((v) => { globalThis.krTwoWorkers = v === '1'; }, process.env.TWO);
   if (!process.env.NOLO) await page.addInitScript((l) => { globalThis.krDebugP2D = true; if (l[2]) globalThis.krNoLow = true; if (l[0]) globalThis.krDebugLine = l[0]; if (l[1]) globalThis.krDebugCtx = +l[1]; }, [process.env.LINE || "", process.env.CTX || "", process.env.NOLOW || ""]); await page.goto('http://localhost:5197/'); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [pdf]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(500);
   // (A long press selects the card; the selection's actions hold Convert — behind «More» on a narrow screen.)

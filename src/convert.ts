@@ -9,7 +9,7 @@
 import { joinLine, cleanPdfText } from './pdftext';
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import JSZip from 'jszip';
-import { packDocx, storeCompressed, type ZipLike } from './ziputil';
+import { packDocx, zipOut, type ZipLike } from './ziputil';
 import { imageSize } from './imagesize';
 import { db, type Book } from './db';
 import { flowHandlerFor } from './formats';
@@ -301,8 +301,7 @@ export async function buildEpub(d: ConvDoc, progress: Progress): Promise<Blob> {
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">${uid}</dc:identifier><dc:title>${esc(d.title)}</dc:title>${d.author ? `<dc:creator>${esc(d.author)}</dc:creator>` : ''}<dc:language>${esc(d.lang || (d.rtl ? 'ar' : 'en'))}</dc:language><meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${manifest.join('')}</manifest>
 <spine${d.rtl ? ' page-progression-direction="rtl"' : ''}>${spine.join('')}</spine></package>`);
-  storeCompressed(zip as unknown as ZipLike);
-  return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip', compression: 'DEFLATE' });
+  return zipOut(zip as unknown as ZipLike, 'application/epub+zip', 'mimetype');
 }
 
 export async function buildDocx(d: ConvDoc, progress: Progress): Promise<Blob> {
@@ -840,8 +839,7 @@ export async function buildOdt(d: ConvDoc, progress: Progress): Promise<Blob> {
   zip.file('styles.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-styles ${NS}><office:font-face-decls><style:font-face style:name="Liberation Mono" svg:font-family="'Liberation Mono'" style:font-family-generic="modern"/><style:font-face style:name="Traditional Arabic" svg:font-family="'Traditional Arabic'"/></office:font-face-decls>${styles}</office:document-styles>`);
   zip.file('meta.xml', `<?xml version="1.0" encoding="UTF-8"?><office:document-meta ${NS}><office:meta><dc:title>${xml(d.title)}</dc:title>${d.author ? `<meta:initial-creator>${xml(d.author)}</meta:initial-creator><dc:creator>${xml(d.author)}</dc:creator>` : ''}${d.lang ? `<dc:language>${xml(d.lang)}</dc:language>` : ''}<meta:generator>KurokawaReader</meta:generator></office:meta></office:document-meta>`);
   zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>${pics.join('')}</manifest:manifest>`);
-  storeCompressed(zip as unknown as ZipLike);
-  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.oasis.opendocument.text', compression: 'DEFLATE' });
+  return zipOut(zip as unknown as ZipLike, 'application/vnd.oasis.opendocument.text', 'mimetype');
 }
 
 export function buildRtf(d: ConvDoc, progress: Progress): Blob {
