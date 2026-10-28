@@ -23,6 +23,13 @@ const listeners = new Set<() => void>();
 export function onUpdatesChanged(fn: () => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
 const emit = () => { for (const fn of listeners) fn(); };
 
+/** The reader's choices for the checks (kept in localStorage: kr.updates.*). */
+export function updatePrefs(): { wifiOnly: boolean; onlyOngoing: boolean; autoFetch: boolean } {
+  const g = (k: string) => { try { return localStorage.getItem(`kr.updates.${k}`) === 'on'; } catch { return false; } };
+  return { wifiOnly: g('wifiOnly'), onlyOngoing: g('onlyOngoing'), autoFetch: g('autoFetch') };
+}
+export function setUpdatePref(k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', on: boolean): void { try { localStorage.setItem(`kr.updates.${k}`, on ? 'on' : 'off'); } catch { /* private mode */ } }
+
 export async function lastReport(): Promise<UpdateReport | null> { return (await db.getMeta<UpdateReport>(META)) ?? null; }
 export function isChecking(): boolean { return !!running; }
 
@@ -53,11 +60,31 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
   if (running) return running;
   running = (async () => {
     const report: UpdateReport = { at: Date.now(), chapters: [], extensions: [], volumes: [], failed: [] };
-    const novels = await trackedNovels();
+    // (The reader's restrictions, as Mihon and Shosetsu offer them: a check of its own accord waits for Wi-Fi
+    // when asked; finished novels can be left out; new chapters can be fetched as soon as they are found.)
+    const pref = updatePrefs();
+    const cellular = (() => { const c = (navigator as Navigator & { connection?: { type?: string; saveData?: boolean } }).connection; return !!(c?.type === 'cellular' || c?.saveData); })();
+    let novels = opts.force || !pref.wifiOnly || !cellular ? await trackedNovels() : [];
+    if (pref.onlyOngoing) {
+      const { readNovelFile } = await import('./ext/source');
+      const keep: Book[] = [];
+      for (const b of novels) { const f = await readNovelFile(b.id).catch(() => null); if (!f?.status || !/^(completed|finished|complete|ended|مكتمل|منته)/i.test(f.status.trim())) keep.push(b); }
+      novels = keep;
+    }
     let done = 0;
     await pool(novels, 2, async (b) => {
       opts.onProgress?.(done, novels.length, b.title);
-      try { const n = await checkNovel(b, opts.quiet !== false); if (n > 0) report.chapters.push({ bookId: b.id, title: b.title, n }); }
+      try {
+        const n = await checkNovel(b, opts.quiet !== false);
+        if (n > 0) {
+          report.chapters.push({ bookId: b.id, title: b.title, n });
+          if (pref.autoFetch && !(pref.wifiOnly && cellular)) {
+            const { readNovelFile, downloadNovel } = await import('./ext/source');
+            const f = await readNovelFile(b.id); const fresh = new Set((f?.chapters ?? []).slice(-n).map((c) => c.path));
+            await downloadNovel(b, () => undefined, undefined, fresh).catch(() => false);
+          }
+        }
+      }
       catch (e) { report.failed.push({ title: b.title, error: String((e as Error).message ?? e) }); }
       opts.onProgress?.(++done, novels.length, b.title);
     });

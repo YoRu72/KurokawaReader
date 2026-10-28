@@ -21,7 +21,7 @@ import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
+import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 
@@ -380,6 +380,8 @@ function updatesSheet(after: () => void): void {
     const autoOn = localStorage.getItem('kr.sources.autoCheck') !== 'off';
     body.append(h('label', { class: 'switch-row' }, h('span', null, t('srcAutoCheck')), h('input', { type: 'checkbox', checked: autoOn, onchange: (e: Event) => { localStorage.setItem('kr.sources.autoCheck', (e.target as HTMLInputElement).checked ? 'on' : 'off'); if ((e.target as HTMLInputElement).checked) void askNotifyPermission().catch(() => false); } })));
     body.append(h('label', { class: 'switch-row' }, h('span', null, t('extAutoUpdate')), h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: (e: Event) => localStorage.setItem('kr.ext.autoUpdate', (e.target as HTMLInputElement).checked ? 'on' : 'off') })));
+    { const pref = updatePrefs(); const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: pref[k], onchange: (e: Event) => setUpdatePref(k, (e.target as HTMLInputElement).checked) }));
+      body.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch'))); }
     if (novels.length) {
       body.append(h('h3', { class: 'section-title' }, t('newChapters')));
       const list = h('ul', { class: 'plain-list' });
