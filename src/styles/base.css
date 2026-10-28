@@ -1537,6 +1537,24 @@ html[dir='rtl'] .source-head > svg:last-child { transform: scaleX(-1); }
 .src-details > .vol-toc { margin: 12px 0; }
 .src-details > .vol-toc .vol-toc-list li { white-space: normal; }
 .folder-card .repo-head { display: flex; align-items: center; gap: 4px; padding: 0; }
+/* The hub's repositories as a tree: the repo a head that opens and closes, its extensions under it. */
+.repo-tree .repo-head { display: flex; align-items: center; gap: 4px; padding: 0; }
+.repo-tree .repo-head-btn { flex: 1; min-width: 0; }
+.repo-tree .repo-chevron { display: grid; place-items: center; transition: transform var(--dur-med) var(--ease-spring); }
+.repo-tree .repo-chevron svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+.repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron { transform: rotate(-90deg); }
+html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron { transform: rotate(90deg); }
+.repo-kids { margin: 4px 0 8px; padding-inline-start: 18px; border-inline-start: 2px solid var(--md-outline-variant); display: flex; flex-direction: column; gap: 8px; }
+.repo-kids .ext-grid { margin: 0; }
+.ext-add-btn { align-self: flex-start; }
+.repos-empty-box { padding: 4px 0 10px; }
+.repos-add-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.add-kinds { margin-bottom: 12px; }
+.ext-pick-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.ext-pick-row { display: flex; align-items: center; gap: 12px; padding: 6px 2px; }
+.ext-pick-row .ext-text { min-width: 0; display: flex; flex-direction: column; }
+.ext-pick-row .ext-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spinner.small { width: 14px; height: 14px; border-width: 2px; }
 .folder-card .repo-head .source-head { flex: 1; min-width: 0; }
 .src-formats { display: flex; flex-wrap: wrap; gap: 4px; }
 .src-fmt { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 6px; line-height: 1.5; letter-spacing: .02em; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }

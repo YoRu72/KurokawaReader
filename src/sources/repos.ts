@@ -51,6 +51,8 @@ export interface Repo {
   /** The manifest says the site answers only a browser (it sits behind Cloudflare): reached through the app's
    *  own browser from the start, without a refused request first. */
   browser?: boolean;
+  /** One extension added by its own link, not from an index: a repo of one, kept apart. */
+  single?: boolean;
 }
 
 const META = 'sources:repos';
@@ -369,4 +371,57 @@ export function langLabel(lang: string): string {
   const k = s.toLowerCase(); if (known[k]) return known[k];
   if (/中文|汉语|漢語/.test(s)) return 'ZH'; if (/한국어|조선말/.test(s)) return 'KO';
   return s.slice(0, 3).toUpperCase();
+}
+
+/* ---------- extensions added, one by one ---------- */
+/** The extensions of a repo on the device (their code fetched): the repo's children on the hub. */
+export function installedItems(repo: Repo): ExtItem[] { const m = installed(); return repo.items.filter((i) => pluginKey(repo.key, i.id) in m); }
+/** An extension added from its repo: its code fetched and kept. */
+export async function installExtension(repo: Repo, item: ExtItem): Promise<void> { await pluginCode(repo, item); }
+/** An extension removed: its code and what it kept let go (a repo of one goes with it). */
+export async function uninstallExtension(repo: Repo, item: ExtItem): Promise<void> {
+  await db.deleteMeta(codeKey(repo.key, item.id)); setInstalled(pluginKey(repo.key, item.id), null);
+  try { localStorage.removeItem(`kr.ext.store.${pluginKey(repo.key, item.id)}`); } catch { /* none */ }
+  if (repo.single) await removeRepo(repo.key);
+}
+
+/** What a plugin's own code says of itself (an LNReader plugin: `id = "…"`, `name = "…"`, `site = "…"`,
+ *  `version = "…"`, `lang`; a Mangayomi JS extension: a class extending MProvider), for one added by its link. */
+export function parsePluginCode(url: string, code: string): ExtItem | null {
+  const field = (k: string) => { const m = new RegExp(`(?:^|[\\s;{,])(?:this\\.)?${k}\\s*[=:]\\s*(["'\`])((?:\\\\.|(?!\\1).)*)\\1`).exec(code); return m ? m[2] : ''; };
+  const file = decodeURIComponent(url.replace(/[?#].*$/, '').split('/').pop() ?? '').replace(/\.(m?js)$/i, '');
+  if (/MProvider|mangayomi/i.test(code) && !/exports\.default|module\.exports/.test(code.slice(0, 2000))) {
+    return { id: file || hashKey(url), name: field('name') || file || 'Extension', lang: field('lang') || 'all', site: field('baseUrl') || field('site'), version: field('version') || '1', url, kind: 'mangayomi', runnable: true, itemType: 'novel', source: { name: field('name') || file, baseUrl: field('baseUrl'), lang: field('lang') || 'all', apiUrl: '' } };
+  }
+  const id = field('id'); const name = field('name');
+  if (!id && !name && !/exports\.default|module\.exports|new\s+\w+Plugin/.test(code)) return null;
+  return { id: id || file || hashKey(url), name: name || file || 'Extension', lang: field('lang') || 'all', site: field('site'), version: field('version') || '1', icon: field('icon') ? (() => { try { return new URL(field('icon'), url).href; } catch { return undefined; } })() : undefined, url, kind: 'lnreader', runnable: true, itemType: 'novel' };
+}
+/** An extension added by the link to its code (no repository): read, kept, and listed as a repo of its own. */
+export async function addExtensionByLink(given: string): Promise<{ repo: Repo; item: ExtItem; added: boolean }> {
+  const url = given.trim().replace(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\//i, 'https://raw.githubusercontent.com/$1/$2/');
+  if (!/^https?:\/\//i.test(url)) throw new SourceError('badRepoUrl', 'parse');
+  const repos = await listRepos();
+  const had = repos.find((r) => r.single && normalizeUrl(r.url) === normalizeUrl(url));
+  if (had) return { repo: had, item: had.items[0], added: false };
+  const r = await request(url, { headers: { accept: 'text/javascript, application/javascript, */*' }, retries: 1 });
+  if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
+  const item = parsePluginCode(url, r.body);
+  if (!item) throw new SourceError('notExtension', 'parse');
+  const repo: Repo = { key: hashKey(normalizeUrl(url)), url, given, name: item.name, kind: item.kind, addedAt: Date.now(), fetchedAt: Date.now(), items: [item], count: { novel: 1, other: 0 }, single: true };
+  await saveRepos([...repos, repo]);
+  const entry: CodeCache = { version: item.version, code: r.body, at: Date.now(), url };
+  await db.setMeta(codeKey(repo.key, item.id), entry);
+  setInstalled(pluginKey(repo.key, item.id), item.version);
+  return { repo, item, added: true };
+}
+/** Extensions on the device updated by themselves (the repo lists a newer version): fetched now; the ones
+ *  that moved are returned. Off when the reader said so (kr.ext.autoUpdate = off). */
+export async function autoUpdateExtensions(): Promise<{ repo: Repo; item: ExtItem; from: string }[]> {
+  if (localStorage.getItem('kr.ext.autoUpdate') === 'off') return [];
+  const done: { repo: Repo; item: ExtItem; from: string }[] = [];
+  for (const u of await extensionUpdates()) {
+    try { await pluginCode(u.repo, u.item, true); done.push(u); const { forgetHandle } = await import('./ext/source'); forgetHandle(`${'ext:'}${u.repo.key}:${encodeURIComponent(u.item.id)}`); } catch { /* next time */ }
+  }
+  return done;
 }

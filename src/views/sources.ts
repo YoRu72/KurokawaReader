@@ -16,13 +16,14 @@ import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
 import { passChallenge, forgetSite, openSite } from '../sources/http';
-import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, type Repo, type ExtItem } from '../sources/repos';
+import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
+import { onHoldOrContext } from '../ui/tags';
 
 export const SOURCES: Source[] = [archiveSource, shamelaSource];
 const sourceById = (id: string) => SOURCES.find((s) => s.id === id);
@@ -97,7 +98,27 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     bell.classList.toggle('busy', isChecking());
   };
   void drawBell();
-  body.append(h('p', { class: 'hint catalog-hint' }, t('sourcesHint')));
+  // The reader's own sources first — the hint and the ways to add one on top when there is none yet — the
+  // built-in catalogues after them.
+  const reposBox = h('div', { class: 'repos' }); body.append(reposBox);
+  const drawRepos = async () => {
+    const repos = await listRepos();
+    reposBox.replaceChildren();
+    if (!repos.length) {
+      reposBox.append(h('div', { class: 'repos-empty-box' }, h('p', { class: 'hint repos-empty' }, t('noReposYet')),
+        h('div', { class: 'repos-add-row' },
+          h('button', { type: 'button', class: 'btn tonal small', onclick: () => addRepoSheet(() => void drawRepos(), 'repo') }, icon('puzzle'), t('addRepoKind')),
+          h('button', { type: 'button', class: 'btn tonal small', onclick: () => addRepoSheet(() => void drawRepos(), 'ext') }, icon('plus'), t('addExtKind')),
+          h('button', { type: 'button', class: 'btn tonal small', onclick: () => addRepoSheet(() => void drawRepos(), 'folder') }, icon('folder'), t('addFolderKind')))));
+      return;
+    }
+    // (Folders of books apart from the repositories of extensions: two kinds of source, said so.)
+    const folders = repos.filter((r) => r.kind === 'folder'); const exts = repos.filter((r) => r.kind !== 'folder');
+    if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
+    if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
+  };
+  void drawRepos();
+  body.append(h('h3', { class: 'section-title' }, t('catalogsTitle')), h('p', { class: 'hint catalog-hint' }, t('sourcesHint')));
   for (const s of SOURCES) {
     const card = h('article', { class: 'source-card' });
     const head = h('button', { type: 'button', class: 'source-head', onclick: () => navigate(path(s.id)) },
@@ -109,18 +130,6 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     if (s.needsApp && isWeb()) card.append(h('p', { class: 'hint warn' }, t('sourceNeedsApp')));
     body.append(card);
   }
-  const reposBox = h('div', { class: 'repos' }); body.append(reposBox);
-  const drawRepos = async () => {
-    const repos = await listRepos();
-    // (No repository comes with the app: the reader adds the ones he wants with the + above.)
-    reposBox.replaceChildren();
-    if (!repos.length) { reposBox.append(h('p', { class: 'hint repos-empty' }, t('noReposYet'))); return; }
-    // (Folders of books apart from the repositories of extensions: two kinds of source, said so.)
-    const folders = repos.filter((r) => r.kind === 'folder'); const exts = repos.filter((r) => r.kind !== 'folder');
-    if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
-    if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
-  };
-  void drawRepos();
   return root;
 }
 
@@ -153,41 +162,77 @@ function shamelaStatus(): HTMLElement {
 }
 
 /* ---------- repositories ---------- */
-/** A repo as a section: its name and app, its extensions as small cards (the runnable ones open), with chips
- *  for the languages and a box to find one by name when there are many. */
+/** A repo as a parent: its name and app on a head that opens and closes it; under it, the extensions the
+ *  reader added from it as children (cards that open), and a button to add more from the repo's list. An
+ *  extension added by its own link is a repo of one, shown the same way. */
 function repoSection(r: Repo, redraw: () => void): HTMLElement {
-  const sec = h('section', { class: 'repo-section' });
-  const runnable = r.items.filter((i) => i.runnable);
-  const novels = r.items.filter((i) => i.itemType === 'novel');
+  const sec = h('section', { class: 'repo-section repo-tree' });
   const kind = KIND_APP[r.kind];
+  const runnable = r.items.filter((i) => i.runnable);
+  const mine = installedItems(r).filter((i) => i.runnable);
+  const openKey = `kr.repo.open.${r.key}`;
+  let open = localStorage.getItem(openKey) !== '0';
   const menu = iconButton('more', t('more'), () => repoMenu(r, redraw));
-  const stats = runnable.length ? t('repoStats', { n: localDigits(runnable.length) }) : novels.length ? t('repoStatsNotRunnable', { n: localDigits(novels.length), app: kind }) : t('repoStatsOther', { n: localDigits(r.items.length), app: kind });
-  sec.append(h('div', { class: 'repo-head' }, h('span', { class: 'source-icon' }, icon('puzzle')), h('span', { class: 'source-text' }, h('b', { dir: 'auto' }, r.name), h('small', null, `${kind} · ${stats}`)), menu));
+  const novels = r.items.filter((i) => i.itemType === 'novel').length;
+  const stats = r.single ? t('extSingle') : runnable.length ? t('repoTreeStats', { n: localDigits(mine.length), total: localDigits(runnable.length) }) : novels ? t('repoStatsNotRunnable', { n: localDigits(novels), app: kind }) : t('repoStatsOther', { n: localDigits(r.items.length), app: kind });
+  const head = h('button', { type: 'button', class: 'source-head repo-head-btn', 'aria-expanded': String(open), onclick: () => { open = !open; localStorage.setItem(openKey, open ? '1' : '0'); head.setAttribute('aria-expanded', String(open)); kids.hidden = !open; } },
+    h('span', { class: 'source-icon' }, icon(r.single ? 'puzzle' : 'folder')),
+    h('span', { class: 'source-text' }, h('b', { dir: 'auto' }, r.name), h('small', null, `${kind} · ${stats}`)),
+    h('span', { class: 'repo-chevron' }, icon('chevronDown')));
+  sec.append(h('div', { class: 'repo-head' }, head, menu));
   if (r.error) sec.append(h('p', { class: 'hint warn' }, r.error));
-  const items = r.items.filter((i) => i.itemType === 'novel' || i.runnable || !RUNNABLE.includes(r.kind));
-  if (!items.length) { sec.append(h('p', { class: 'hint' }, t('repoNoNovels', { app: kind }))); return sec; }
-  // Languages as chips when there are several; a search box when there are many extensions.
+  const kids = h('div', { class: 'repo-kids', hidden: !open });
+  if (!runnable.length) kids.append(h('p', { class: 'hint' }, novels ? t('extNotRunnable') : t('repoNoNovels', { app: kind })));
+  else {
+    const grid = h('div', { class: 'ext-grid' });
+    for (const i of mine) grid.append(extCard(r, i, redraw));
+    if (mine.length) kids.append(grid); else kids.append(h('p', { class: 'hint' }, t('repoNoneAdded')));
+    if (!r.single && runnable.length > mine.length) kids.append(h('button', { type: 'button', class: 'btn tonal small ext-add-btn', onclick: () => extensionPicker(r, redraw) }, icon('plus'), t('addExtensions', { n: localDigits(runnable.length - mine.length) })));
+  }
+  sec.append(kids);
+  return sec;
+}
+/** The repo's list, to add extensions from: a search box and language chips over its extensions, each with
+ *  an «Add» (its code fetched and kept) or a tick. */
+function extensionPicker(r: Repo, redraw: () => void): void {
+  const sh = openSheet(r.name, t('close'), { stack: true });
+  const items = r.items.filter((i) => i.runnable);
   const langs = new Map<string, number>(); for (const i of items) langs.set(langLabel(i.lang), (langs.get(langLabel(i.lang)) ?? 0) + 1);
-  let lang = ''; let needle = '';
-  const grid = h('div', { class: 'ext-grid' });
+  let lang = ''; let needle = ''; let changed = false;
+  const list = h('div', { class: 'ext-pick-list' });
+  const have = new Set(installedItems(r).map((i) => i.id));
   const draw = () => {
-    grid.replaceChildren();
+    list.replaceChildren();
     const shown = items.filter((i) => (!lang || langLabel(i.lang) === lang) && (!needle || i.name.toLowerCase().includes(needle)));
-    for (const i of shown.slice(0, 400)) grid.append(extCard(r, i));
-    if (shown.length > 400) grid.append(h('p', { class: 'hint' }, t('andMore', { n: localDigits(shown.length - 400) })));
-    if (!shown.length) grid.append(h('p', { class: 'hint' }, t('noResults')));
+    for (const i of shown.slice(0, 300)) {
+      const [c1, c2] = coverColors(i.name);
+      const btn = h('button', { type: 'button', class: 'btn small' + (have.has(i.id) ? ' tonal' : ' primary') }, icon(have.has(i.id) ? 'check' : 'plus'), have.has(i.id) ? t('addedMark') : t('add')) as HTMLButtonElement;
+      btn.addEventListener('click', async () => {
+        if (have.has(i.id)) return;
+        btn.disabled = true; btn.replaceChildren(h('span', { class: 'spinner small' }));
+        try { await installExtension(r, i); have.add(i.id); changed = true; btn.className = 'btn small tonal'; btn.replaceChildren(icon('check'), t('addedMark')); }
+        catch (e) { btn.className = 'btn small primary'; btn.replaceChildren(icon('plus'), t('add')); toast(describe(e), 'error'); }
+        finally { btn.disabled = false; }
+      });
+      list.append(h('div', { class: 'ext-pick-row' },
+        h('span', { class: 'ext-icon', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, i.icon ? h('img', { src: i.icon, alt: '', loading: 'lazy', onerror: (e: Event) => (e.target as HTMLElement).remove() }) : icon('puzzle')),
+        h('span', { class: 'ext-text grow' }, h('b', { dir: 'auto' }, i.name), h('small', null, `${langLabel(i.lang)} · ${i.version}${i.nsfw ? ' · 18+' : ''}`)),
+        btn));
+    }
+    if (shown.length > 300) list.append(h('p', { class: 'hint' }, t('andMore', { n: localDigits(shown.length - 300) })));
+    if (!shown.length) list.append(h('p', { class: 'hint' }, t('noResults')));
   };
   if (langs.size > 1) {
     const chips = h('div', { class: 'folder-chips ext-langs' });
     const all = h('button', { type: 'button', class: 'chip on', onclick: () => { lang = ''; chips.querySelectorAll('.chip').forEach((c) => c.classList.remove('on')); all.classList.add('on'); draw(); } }, h('span', null, t('allShelves')));
     chips.append(all);
     for (const [l, n] of [...langs.entries()].sort((a, b) => b[1] - a[1])) { const c = h('button', { type: 'button', class: 'chip', onclick: () => { lang = l; chips.querySelectorAll('.chip').forEach((x) => x.classList.remove('on')); c.classList.add('on'); draw(); } }, h('span', null, l), h('small', null, ` ${localDigits(n)}`)); chips.append(c); }
-    sec.append(chips);
+    sh.body.append(chips);
   }
-  if (items.length > 12) sec.append(h('input', { type: 'search', class: 'src-search ext-find', placeholder: t('findExtension'), dir: 'auto', oninput: (e: Event) => { needle = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }));
-  sec.append(grid);
+  if (items.length > 8) sh.body.append(h('input', { type: 'search', class: 'src-search ext-find', placeholder: t('findExtension'), dir: 'auto', oninput: (e: Event) => { needle = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }));
+  sh.body.append(list);
   draw();
-  return sec;
+  void import('../ui/pdftools').then((m) => m.onSheetClosed(sh.el, () => { if (changed) redraw(); }));
 }
 /** A web folder the reader added: a source card like the built-in ones, opening its root. */
 function folderSection(r: Repo, redraw: () => void): HTMLElement {
@@ -202,7 +247,7 @@ function folderSection(r: Repo, redraw: () => void): HTMLElement {
   if (r.error) card.append(h('p', { class: 'hint warn' }, r.error));
   return card;
 }
-function extCard(r: Repo, i: ExtItem): HTMLElement {
+function extCard(r: Repo, i: ExtItem, redraw?: () => void): HTMLElement {
   const [c1, c2] = coverColors(i.name);
   const ic = h('span', { class: 'ext-icon', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, i.icon ? h('img', { src: i.icon, alt: '', loading: 'lazy', onerror: (e: Event) => (e.target as HTMLElement).remove() }) : icon('puzzle'));
   const note = i.runnable ? '' : i.note === 'notNovel' ? t('extNotNovel') : i.note === 'dartExtension' ? t('extDart') : i.note === 'luaExtension' ? t('extLua') : i.note === 'apkExtension' ? t('extApk') : i.note === 'iosModule' ? t('extIos') : t('extNotRunnable');
@@ -210,6 +255,16 @@ function extCard(r: Repo, i: ExtItem): HTMLElement {
     ic, h('span', { class: 'ext-text' }, h('b', { dir: 'auto' }, i.name), h('small', null, `${langLabel(i.lang)} · ${i.version}${i.nsfw ? ' · 18+' : ''}`)),
     i.runnable ? h('span', { class: 'ext-dot', hidden: true }) : null);
   if (i.runnable) void cachedVersion(r, i).then((v) => { if (v && v !== i.version) { const d = card.querySelector('.ext-dot') as HTMLElement; d.hidden = false; d.title = t('extUpdateAvailable', { v: i.version }); } });
+  // Held: the extension's own menu — its site, an update when there is one, its removal.
+  if (redraw) onHoldOrContext(card, () => {
+    const sh = openSheet(i.name, t('close'));
+    sh.body.append(h('p', { class: 'hint', dir: 'ltr' }, i.site || i.url));
+    const rows = h('div', { class: 'dest-list' });
+    void cachedVersion(r, i).then((v) => { if (v && v !== i.version) rows.prepend(h('button', { type: 'button', class: 'dest-row', onclick: async () => { sh.close(); try { await pluginCode(r, i, true); forgetHandle(sourceIdOf(r, i)); toast(t('extUpdated', { name: i.name })); redraw(); } catch (e) { toast(describe(e), 'error'); } } }, icon('download'), h('span', { class: 'name' }, t('update'), ' ', h('small', null, `${v} → ${i.version}`)))); });
+    rows.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(path(sourceIdOf(r, i))); } }, icon('play'), h('span', { class: 'name' }, t('open'))));
+    rows.append(h('button', { type: 'button', class: 'dest-row danger', onclick: async () => { if (!confirm(t('removeExtConfirm', { name: i.name }))) return; sh.close(); await uninstallExtension(r, i); forgetHandle(sourceIdOf(r, i)); toast(t('extRemoved')); redraw(); } }, icon('trash'), h('span', { class: 'name' }, t('removeExt'))));
+    sh.body.append(rows);
+  });
   return card;
 }
 function repoMenu(r: Repo, redraw: () => void): void {
@@ -222,28 +277,44 @@ function repoMenu(r: Repo, redraw: () => void): void {
     h('button', { type: 'button', class: 'btn danger', onclick: async () => { if (!confirm(t('removeRepoConfirm', { name: r.name }))) return; await removeRepo(r.key); sh.close(); redraw(); toast(t('repoRemoved')); } }, icon('trash'), t('removeRepo')),
     h('button', { type: 'button', class: 'btn primary', onclick: async () => { const n = name.value.trim(); if (n && n !== r.name) await renameRepo(r.key, n); sh.close(); redraw(); } }, icon('check'), t('done')));
 }
-/** The "+" sheet: an address, read as an index of whichever app it comes from. */
-function addRepoSheet(after: () => void): void {
+/** The "+" sheet: an address — a repository's (read as an index of whichever app it comes from), one
+ *  extension's own code, or a folder of books. */
+function addRepoSheet(after: () => void, kind: 'repo' | 'ext' | 'folder' = 'repo'): void {
   const sh = openSheet(t('addRepo'), t('close'));
   const addr = h('input', { type: 'url', placeholder: 'https://github.com/…', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr' }) as HTMLInputElement;
   const status = h('p', { class: 'hint' }, t('addRepoHint'));
-  // (No repository is offered: the reader brings the address of the one he found.)
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('repoUrl')), addr), status, h('p', { class: 'hint' }, t('reposSupported')));
+  let which = kind;
+  const kinds = h('div', { class: 'segmented add-kinds' });
+  const drawKinds = () => {
+    kinds.replaceChildren(...(['repo', 'ext', 'folder'] as const).map((k) => h('button', { type: 'button', 'aria-pressed': String(k === which), onclick: () => { which = k; drawKinds(); } }, t(k === 'repo' ? 'addRepoKind' : k === 'ext' ? 'addExtKind' : 'addFolderKind'))));
+    status.textContent = t(which === 'ext' ? 'addExtHint' : which === 'folder' ? 'addFolderHint' : 'addRepoHint');
+    addr.placeholder = which === 'ext' ? 'https://raw.githubusercontent.com/…/plugin.js' : which === 'folder' ? 'https://example.com/books/' : 'https://github.com/…';
+  };
+  drawKinds();
+  sh.body.append(kinds, h('label', { class: 'field' }, h('span', null, t('repoUrl')), addr), status, h('p', { class: 'hint' }, t('reposSupported')));
   const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const given = addr.value.trim(); if (!given) { addr.focus(); return; }
     go.disabled = true; status.textContent = t('readingRepo');
     try {
+      if (which === 'ext') {
+        const { repo, item, added } = await addExtensionByLink(given);
+        if (!added) { status.textContent = t('repoAlreadyAdded', { name: `⁨${repo.name}⁩` }); go.disabled = false; return; }
+        sh.close(); after(); toast(t('extAdded', { name: `⁨${item.name}⁩` }), 'info', 4000);
+        return;
+      }
       const { repo, added } = await addRepo(given);
-      if (!added) { status.textContent = t('repoAlreadyAdded', { name: `\u2068${repo.name}\u2069` }); toast(t('repoAlreadyAdded', { name: `\u2068${repo.name}\u2069` })); go.disabled = false; return; }
+      if (!added) { status.textContent = t('repoAlreadyAdded', { name: `⁨${repo.name}⁩` }); toast(t('repoAlreadyAdded', { name: `⁨${repo.name}⁩` })); go.disabled = false; return; }
       sh.close(); after();
       const runnable = repo.items.filter((i) => i.runnable).length;
       // (The name kept whole inside a sentence of the other direction.)
-      const name = `\u2068${repo.name}\u2069`;
+      const name = `⁨${repo.name}⁩`;
       toast(repo.kind === 'folder' ? t('folderAdded', { name }) : runnable ? t('repoAdded', { name, n: localDigits(runnable) }) : t('repoAddedNotRunnable', { name, app: KIND_APP[repo.kind] }), 'info', 4000);
+      // (A repository just added: its list opens, to pick the extensions wanted from it.)
+      if (repo.kind !== 'folder' && runnable) extensionPicker(repo, after);
     } catch (e) {
       const err = e as SourceError;
       const at = err instanceof SourceError ? /^noIndexAt:(\d+):(.*):(https?:.*)$/.exec(err.message) : null;
-      status.textContent = at ? t('repoNoIndexAt', { status: at[1], title: at[2] ? t('repoNoIndexTitle', { title: at[2] }) : '' }) : err instanceof SourceError && err.kind === 'parse' ? (err.message === 'badRepoUrl' ? t('repoBadUrl') : err.message === 'noIndex' ? t('repoNoIndex') : describe(e)) : describe(e);
+      status.textContent = at ? t('repoNoIndexAt', { status: at[1], title: at[2] ? t('repoNoIndexTitle', { title: at[2] }) : '' }) : err instanceof SourceError && err.kind === 'parse' ? (err.message === 'badRepoUrl' ? t('repoBadUrl') : err.message === 'noIndex' ? t('repoNoIndex') : err.message === 'notExtension' ? t('notExtension') : describe(e)) : describe(e);
       // (A site whose check wants a person: passed from here, then the address is read again.)
       if (err instanceof SourceError && err.kind === 'cloudflare' && /^https?:\/\//i.test(given) && !sh.body.querySelector('.check-btn')) {
         status.after(h('button', { type: 'button', class: 'btn tonal check-btn', onclick: (ev: Event) => { (ev.currentTarget as HTMLElement).remove(); void passChallenge(given).then(() => go.click()); } }, icon('globe'), t('passCheck')));
@@ -278,6 +349,7 @@ function updatesSheet(after: () => void): void {
     body.append(h('div', { class: 'source-row' }, icon('bell'), h('span', { class: 'grow' }, h('b', null, t('srcWhatsNew')), line, track), btn));
     const autoOn = localStorage.getItem('kr.sources.autoCheck') !== 'off';
     body.append(h('label', { class: 'switch-row' }, h('span', null, t('srcAutoCheck')), h('input', { type: 'checkbox', checked: autoOn, onchange: (e: Event) => { localStorage.setItem('kr.sources.autoCheck', (e.target as HTMLInputElement).checked ? 'on' : 'off'); if ((e.target as HTMLInputElement).checked) void askNotifyPermission().catch(() => false); } })));
+    body.append(h('label', { class: 'switch-row' }, h('span', null, t('extAutoUpdate')), h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: (e: Event) => localStorage.setItem('kr.ext.autoUpdate', (e.target as HTMLInputElement).checked ? 'on' : 'off') })));
     if (novels.length) {
       body.append(h('h3', { class: 'section-title' }, t('newChapters')));
       const list = h('ul', { class: 'plain-list' });
@@ -289,6 +361,7 @@ function updatesSheet(after: () => void): void {
       const list = h('ul', { class: 'plain-list' });
       for (const u of rep.extensions) {
         const row = h('li', null);
+        if (u.done) { row.append(h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, u.name), h('small', null, `${u.repoName} · ${u.from} → ${u.to} · ${t('extUpdatedAuto')}`)), icon('check')); list.append(row); continue; }
         const upd = h('button', { type: 'button', class: 'btn small primary' }, icon('download'), t('update')) as HTMLButtonElement;
         upd.addEventListener('click', async () => {
           upd.disabled = true;

@@ -23,19 +23,37 @@ const SITE = 'http://localhost:5403';
     ok('hub shows no repo by default, only the +', !!(await page.$('.repos-empty')) && !(await page.$('.repo-section')) && !!(await page.$('.topbar-actions button[data-icon="plus"]')));
     // An LNReader repo, from its index.
     await addRepo(`${SITE}/repo/plugins.min.json`);
-    await page.waitForSelector('.repo-section', { timeout: 15000 });
-    ok('repo section appears with its extensions', (await page.$$('.repo-section .ext-card')).length === 2 && /LNReader/.test(await page.$eval('.repo-head', (e) => e.textContent)));
-    ok('language chips for the two languages', (await page.$$('.repo-section .ext-langs .chip')).length === 3);
+    // (A repository added opens its list, to pick extensions from it: both added here.)
+    await page.waitForSelector('.ext-pick-list', { timeout: 15000 }); await page.waitForTimeout(300);
+    ok('the repo\'s list opens, with language chips for the two languages', (await page.$$('.ext-pick-row')).length === 2 && (await page.$$('.sheet .ext-langs .chip')).length === 3);
+    for (const b of await page.$$('.ext-pick-row .btn.primary')) { await b.click(); await page.waitForTimeout(400); }
+    ok('… both extensions added from it', (await page.$$('.ext-pick-row .btn.tonal')).length === 2);
+    await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove())); await page.waitForTimeout(300);
+    await page.evaluate(() => location.reload()); await page.waitForSelector('.repo-section', { timeout: 15000 }); await page.waitForTimeout(300);
+    ok('repo section appears with the extensions added as its children', (await page.$$('.repo-section .ext-card')).length === 2 && /LNReader/.test(await page.$eval('.repo-head', (e) => e.textContent)) && /2 of 2/.test(await page.$eval('.repo-head', (e) => e.textContent)));
     // The same repo again: refused.
     await addRepo(`${SITE}/repo/plugins.min.json`); await page.waitForTimeout(300);
     ok('the same repo is refused', /already/.test(await page.$eval('.sheet', (e) => e.textContent)) && (await page.$$('.repo-section')).length === 1);
     await page.click('.sheet .sheet-close, .sheet button:has-text("Close")').catch(() => page.keyboard.press('Escape')); await page.waitForTimeout(300);
     await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
     // A Mangayomi repo, from its site address (the index found at the usual names) — and a Shosetsu one.
-    await addRepo(`${SITE}/myrepo`); await page.waitForTimeout(500);
-    ok('Mangayomi repo recognised: one runnable JS novel extension, the Dart one greyed', (await page.$$('.repo-section')).length === 2 && (await page.$$('.repo-section >> nth=1 >> .ext-card')).length === 2 && (await page.$$('.repo-section >> nth=1 >> .ext-card.off')).length === 1);
-    await addRepo(`${SITE}/shosetsu/index.json`); await page.waitForTimeout(500);
-    ok('Shosetsu repo recognised and not runnable', (await page.$$('.repo-section')).length === 3 && /Shosetsu/.test(await page.$eval('.repo-section >> nth=2 >> .repo-head', (e) => e.textContent)) && (await page.$$('.repo-section >> nth=2 >> .ext-card.off')).length === 1);
+    await addRepo(`${SITE}/myrepo`); await page.waitForSelector('.ext-pick-list', { timeout: 15000 }); await page.waitForTimeout(300);
+    ok('Mangayomi repo recognised: its one runnable JS novel extension offered (the Dart one not)', (await page.$$('.ext-pick-row')).length === 1);
+    for (const b of await page.$$('.ext-pick-row .btn.primary')) { await b.click(); await page.waitForTimeout(400); }
+    await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove())); await page.evaluate(() => location.reload()); await page.waitForSelector('.repo-section', { timeout: 15000 }); await page.waitForTimeout(300);
+    ok('… added as the second repo\'s child', (await page.$$('.repo-section')).length === 2 && (await page.$$('.repo-section >> nth=1 >> .ext-card')).length === 1);
+    await addRepo(`${SITE}/shosetsu/index.json`); await page.waitForTimeout(800);
+    ok('Shosetsu repo recognised and not runnable', (await page.$$('.repo-section')).length === 3 && /Shosetsu/.test(await page.$eval('.repo-section >> nth=2 >> .repo-head', (e) => e.textContent)) && (await page.$$('.repo-section >> nth=2 >> .ext-card')).length === 0 && /cannot run|not run|run here/i.test(await page.$eval('.repo-section >> nth=2', (e) => e.textContent)));
+    // One extension by the link to its code, no repository: a repo of its own, added at once.
+    await page.click('.sources-view .topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet .add-kinds'); await page.click('.sheet .add-kinds button:nth-child(2)');
+    await page.fill('.sheet input[type=url]', `${SITE}/repo/other.js`); await page.click('.sheet .btn.primary'); await page.waitForTimeout(1200);
+    ok('an extension added by its own link stands as a repo of one, its card a child', (await page.$$('.repo-section')).length === 4 && /Other Site/.test(await page.$eval('.repo-section >> nth=3 >> .repo-head', (e) => e.textContent)) && (await page.$$('.repo-section >> nth=3 >> .ext-card')).length === 1 && /added by its link/.test(await page.$eval('.repo-section >> nth=3 >> .repo-head', (e) => e.textContent)));
+    await page.click('.repo-section >> nth=3 >> .ext-card'); await page.waitForFunction(() => /Other Site/.test(document.querySelector('.topbar .title')?.textContent || ''), null, { timeout: 20000 }); await page.waitForTimeout(400);
+    ok('… and it runs (its page opens)', /Other Site/.test(await page.$eval('.topbar .title', (e) => e.textContent)));
+    await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.waitForTimeout(300);
+    await page.$eval('.repo-section >> nth=3 >> .ext-card', (el) => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))); await page.waitForSelector('.sheet .dest-row.danger');
+    page.once('dialog', (d) => d.accept()); await page.click('.sheet .dest-row.danger'); await page.waitForTimeout(600);
+    ok('… removed from its menu, the repo of one with it', (await page.$$('.repo-section')).length === 3);
     await page.screenshot({ path: path.join(__dirname, 'hub.png') });
     // The LNReader plugin: popular, latest, search, filters.
     await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(500);
@@ -122,7 +140,7 @@ const SITE = 'http://localhost:5403';
     // Removing a repo.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section');
     page.once('dialog', (d) => d.accept());
-    await page.click('.repo-section >> nth=2 >> .repo-head button'); await page.waitForSelector('.sheet'); await page.click('.sheet .btn.danger'); await page.waitForTimeout(600);
+    await page.click('.repo-section >> nth=2 >> .repo-head button[data-icon="more"]'); await page.waitForSelector('.sheet'); await page.click('.sheet .btn.danger'); await page.waitForTimeout(600);
     ok('repo removed', (await page.$$('.repo-section')).length === 2);
   } finally { console.log(`\n${fails ? fails + ' failed' : 'all passed'}; errors`, errors); await browser.close(); server.close(); mock.kill(); }
 })();

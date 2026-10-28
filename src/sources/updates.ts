@@ -4,14 +4,14 @@
 // book, and told once as a notification of the system's.
 import { db, type Book } from '../db';
 import { pool } from './http';
-import { listRepos, refreshRepo, extensionUpdates, type Repo, type ExtItem } from './repos';
+import { listRepos, refreshRepo, extensionUpdates, autoUpdateExtensions, type Repo, type ExtItem } from './repos';
 import { checkNovel } from './ext/source';
 import { t, countChapters, countNovels, countVolumes, countSeries } from '../i18n';
 
 export interface UpdateReport {
   at: number;
   chapters: { bookId: string; title: string; n: number }[];      // this check's new chapters
-  extensions: { repoKey: string; repoName: string; pluginId: string; name: string; from: string; to: string }[];
+  extensions: { repoKey: string; repoName: string; pluginId: string; name: string; from: string; to: string; done?: boolean }[];
   /** New volumes in the web folders, for the series the reader follows (has a volume of in the library). */
   volumes?: { repoKey: string; repoName: string; series: string; name: string; n: number }[];
   failed: { title: string; error: string }[];
@@ -75,6 +75,9 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
       if (!opts.force && repo.fetchedAt && Date.now() - repo.fetchedAt < 3600000) continue;
       try { await refreshRepo(repo.key); } catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e) }); }
     }
+    // (Extensions update by themselves unless the reader turned that off; the rest wait for a tap.)
+    const auto = await autoUpdateExtensions().catch(() => [] as { repo: Repo; item: ExtItem; from: string }[]);
+    for (const u of auto) report.extensions.push({ repoKey: u.repo.key, repoName: u.repo.name, pluginId: u.item.id, name: u.item.name, from: u.from, to: u.item.version, done: true });
     for (const u of await extensionUpdates().catch(() => [] as { repo: Repo; item: ExtItem; from: string }[])) report.extensions.push({ repoKey: u.repo.key, repoName: u.repo.name, pluginId: u.item.id, name: u.item.name, from: u.from, to: u.item.version });
     await db.setMeta(META, report);
     localStorage.setItem('kr.sources.checkedAt', String(report.at));
