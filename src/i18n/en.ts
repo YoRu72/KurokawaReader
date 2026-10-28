@@ -129,7 +129,6 @@ export const en = {
   copied: 'Copied',
   copiedTitle: 'Title copied',
   copyTextFailed: 'Could not copy here',
-  copiedSynopsis: 'Synopsis copied',
   searchSelected: 'Search',
   defineSelected: 'Define',
   translateSelected: 'Translate',

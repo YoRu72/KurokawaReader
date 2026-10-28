@@ -134,7 +134,6 @@ export const ar: Strings = {
   copied: 'نُسخ',
   copiedTitle: 'نُسخ العنوان',
   copyTextFailed: 'تعذّر النسخ هنا',
-  copiedSynopsis: 'نُسخ الملخّص',
   searchSelected: 'بحث',
   defineSelected: 'المعنى',
   translateSelected: 'ترجمة',

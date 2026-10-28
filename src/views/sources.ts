@@ -955,7 +955,7 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     if (hnd) await novelActions(actions, d, hnd, () => gone);
     else if (src.id === 'shamela') await shamelaActions(actions, d, id, () => gone);
     else fileActions(actions, src, d);
-    if (d.description) { const p = h('p', { class: 'src-desc', dir: 'auto' }, d.description); const long = d.description.length > 420; if (long) { p.classList.add('clamped'); p.addEventListener('click', () => p.classList.toggle('clamped')); } onHoldOrContext(p, () => { if (window.getSelection()?.toString().trim()) return; void navigator.clipboard.writeText(d.description!).then(() => toast(t('copiedSynopsis')), () => toast(t('copyTextFailed'), 'error')); }); body.append(p); }
+    if (d.description) { const p = h('p', { class: 'src-desc', dir: 'auto' }, d.description); const long = d.description.length > 420; if (long) { p.classList.add('clamped'); p.addEventListener('click', () => p.classList.toggle('clamped')); } body.append(p); }
     if (d.tags.length) body.append(h('div', { class: 'folder-chips src-tags' }, ...d.tags.slice(0, 30).map((tg) => h('button', { type: 'button', class: 'chip tag', onclick: () => navigate(path(src.id, hnd ? { q: tg.label } : { tags: [tg.id] })) }, icon('tag'), h('span', { dir: 'auto' }, tg.label)))));
     if (d.meta?.length && !hnd) body.append(h('dl', { class: 'src-meta' }, ...d.meta.flatMap((m) => [h('dt', null, m.label), h('dd', { dir: 'auto' }, m.value)])));
     if (d.chapters?.length) body.append(hnd ? novelChapters(d, hnd) : chaptersList(d, id, () => gone));
