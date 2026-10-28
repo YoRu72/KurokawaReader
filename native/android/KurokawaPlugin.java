@@ -282,20 +282,27 @@ public class KurokawaPlugin extends Plugin {
     /** Downloads a file (following redirects, no CORS) with progress events. Returns file:// path.
      *  Large files that the server can serve in ranges are fetched over several connections at once
      *  (the way aria2 splits a download), each writing its own segment of the file. */
+    /** The downloads under way, by id, so one can be cancelled. */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> downloads = new java.util.concurrent.ConcurrentHashMap<>();
+
     @PluginMethod
     public void downloadFile(PluginCall call) {
         final String urlStr = call.getString("url", "");
         final String name = call.getString("name", "download.bin");
+        final String id = call.getString("id", "");
         // "persist": keep the file (e.g. a downloaded deck the library links to) instead of the cache.
         final boolean persist = Boolean.TRUE.equals(call.getBoolean("persist", false));
         final int connections = Math.max(1, Math.min(16, call.getInt("connections", 8)));
+        final JSObject headers = call.getObject("headers", new JSObject());
+        final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        if (!id.isEmpty()) downloads.put(id, cancelled);
         new Thread(() -> {
             try {
                 // Resolve redirects once (GitHub → signed storage URL) with a 1-byte range probe.
                 java.net.URL url = new java.net.URL(urlStr);
                 java.net.HttpURLConnection probe = null; int code = 0;
                 for (int hop = 0; hop < 8; hop++) {
-                    probe = open(url); probe.setRequestProperty("Range", "bytes=0-0");
+                    probe = open(url, headers); probe.setRequestProperty("Range", "bytes=0-0");
                     code = probe.getResponseCode();
                     if (code >= 300 && code < 400) { String loc = probe.getHeaderField("Location"); probe.disconnect(); url = new java.net.URL(url, loc); continue; }
                     break;
@@ -304,6 +311,7 @@ public class KurokawaPlugin extends Plugin {
                 long total = -1;
                 String cr = probe.getHeaderField("Content-Range");
                 if (code == 206 && cr != null && cr.contains("/")) try { total = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) {}
+                if (total < 0) { try { total = Long.parseLong(probe.getHeaderField("Content-Length")); if (code == 206 && total == 1) total = -1; } catch (Exception ignored) {} }
                 boolean ranged = code == 206 && total > 0;
                 probe.disconnect();
                 File dir = persist ? new File(getContext().getFilesDir(), "downloads") : new File(getContext().getCacheDir(), "kr-update"); dir.mkdirs();
@@ -314,8 +322,8 @@ public class KurokawaPlugin extends Plugin {
                     long lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0;
                     public void run() {
                         long now = System.currentTimeMillis(); if (now - lastT < 300) return;
-                        long g = got.get(); speed = (g - lastGot) / ((now - lastT) / 1000.0); lastT = now; lastGot = g;
-                        JSObject ev = new JSObject(); ev.put("got", g); ev.put("total", fTotal); ev.put("speed", speed); ev.put("pct", fTotal > 0 ? (int) (g * 100 / fTotal) : 0);
+                        long g = got.get(); speed = speed * 0.5 + 0.5 * ((g - lastGot) / ((now - lastT) / 1000.0)); lastT = now; lastGot = g;
+                        JSObject ev = new JSObject(); ev.put("id", id); ev.put("got", g); ev.put("total", fTotal); ev.put("speed", speed); ev.put("pct", fTotal > 0 ? (int) (g * 100 / fTotal) : 0);
                         notifyListeners("downloadProgress", ev);
                     }
                 };
@@ -330,14 +338,14 @@ public class KurokawaPlugin extends Plugin {
                         final long from = i * seg, to = Math.min(total - 1, from + seg - 1);
                         workers[i] = new Thread(() -> {
                             long pos = from;
-                            for (int attempt = 0; attempt < 4 && pos <= to && fail[0] == null; attempt++) {
+                            for (int attempt = 0; attempt < 4 && pos <= to && fail[0] == null && !cancelled.get(); attempt++) {
                                 try {
-                                    java.net.HttpURLConnection c = open(fUrl);
+                                    java.net.HttpURLConnection c = open(fUrl, headers);
                                     c.setRequestProperty("Range", "bytes=" + pos + "-" + to);
                                     if (c.getResponseCode() != 206) throw new java.io.IOException("HTTP " + c.getResponseCode());
                                     try (InputStream in = c.getInputStream(); java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "rw")) {
                                         raf.seek(pos); byte[] buf = new byte[1 << 16]; int r;
-                                        while (pos <= to && (r = in.read(buf)) > 0) { raf.write(buf, 0, r); pos += r; got.addAndGet(r); synchronized (report) { report.run(); } }
+                                        while (pos <= to && !cancelled.get() && (r = in.read(buf)) > 0) { raf.write(buf, 0, r); pos += r; got.addAndGet(r); synchronized (report) { report.run(); } }
                                     }
                                 } catch (Exception e) { if (attempt == 3) fail[0] = e; }
                             }
@@ -345,27 +353,45 @@ public class KurokawaPlugin extends Plugin {
                         workers[i].start();
                     }
                     for (Thread w : workers) w.join();
-                    if (fail[0] != null) throw fail[0];
+                    if (fail[0] != null && !cancelled.get()) throw fail[0];
                 } else {
-                    java.net.HttpURLConnection conn = open(url);
+                    java.net.HttpURLConnection conn = open(url, headers);
                     if (conn.getResponseCode() >= 400) { call.reject("HTTP " + conn.getResponseCode()); return; }
                     try (InputStream in = conn.getInputStream(); FileOutputStream fo = new FileOutputStream(out)) {
                         byte[] buf = new byte[1 << 16]; int r;
-                        while ((r = in.read(buf)) > 0) { fo.write(buf, 0, r); got.addAndGet(r); report.run(); }
+                        while (!cancelled.get() && (r = in.read(buf)) > 0) { fo.write(buf, 0, r); got.addAndGet(r); report.run(); }
                     }
                 }
-                JSObject done = new JSObject(); done.put("got", got.get()); done.put("total", got.get()); done.put("speed", 0); done.put("pct", 100);
+                if (cancelled.get()) { out.delete(); call.reject("cancelled"); return; }
+                JSObject done = new JSObject(); done.put("id", id); done.put("got", got.get()); done.put("total", got.get()); done.put("speed", 0); done.put("pct", 100);
                 notifyListeners("downloadProgress", done);
                 JSObject ret = new JSObject(); ret.put("path", "file://" + out.getAbsolutePath()); ret.put("size", got.get());
                 call.resolve(ret);
             } catch (Exception e) { call.reject("Download failed: " + e.getMessage(), e); }
+            finally { if (!id.isEmpty()) downloads.remove(id); }
         }).start();
     }
 
-    private static java.net.HttpURLConnection open(java.net.URL url) throws java.io.IOException {
+    /** Stops a download by its id; its file is removed. */
+    @PluginMethod
+    public void cancelDownload(PluginCall call) {
+        java.util.concurrent.atomic.AtomicBoolean c = downloads.get(call.getString("id", ""));
+        if (c != null) c.set(true);
+        call.resolve();
+    }
+
+    /** A connection with the app's identity — the headers given, else the web view's User-Agent and the cookies
+     *  the site set it (a site's check once passed in the browser lane is passed here too). */
+    private java.net.HttpURLConnection open(java.net.URL url, JSObject headers) throws java.io.IOException {
         java.net.HttpURLConnection c = (java.net.HttpURLConnection) url.openConnection();
         c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", "KurokawaReader");
+        boolean hasUa = false, hasCookie = false;
+        if (headers != null) {
+            java.util.Iterator<String> it = headers.keys();
+            while (it.hasNext()) { String k = it.next(); String v = headers.optString(k, null); if (v == null) continue; if (k.equalsIgnoreCase("user-agent")) hasUa = true; if (k.equalsIgnoreCase("cookie")) hasCookie = true; c.setRequestProperty(k, v); }
+        }
+        if (!hasUa) { String ua = null; try { ua = android.webkit.WebSettings.getDefaultUserAgent(getContext()); } catch (Exception ignored) {} c.setRequestProperty("User-Agent", ua != null ? ua : "KurokawaReader"); }
+        if (!hasCookie) { try { String ck = android.webkit.CookieManager.getInstance().getCookie(url.toString()); if (ck != null && !ck.isEmpty()) c.setRequestProperty("Cookie", ck); } catch (Exception ignored) {} }
         c.setConnectTimeout(20000); c.setReadTimeout(60000);
         return c;
     }

@@ -7,7 +7,7 @@ import { t, formatBytes, localDigits } from './i18n';
 import { getSettings, updateSettings } from './settings';
 
 export type JobOut = { blob: Blob; name: string };
-type Job = { id: number; title: string; pct: number; state: 'running' | 'done' | 'failed'; out?: JobOut; error?: string; watched: () => boolean; seen?: boolean };
+type Job = { id: number; title: string; pct: number; text?: string; state: 'running' | 'done' | 'failed'; out?: JobOut; error?: string; watched: () => boolean; seen?: boolean; quiet?: boolean };
 
 const jobs: Job[] = [];
 let seq = 0;
@@ -40,14 +40,14 @@ function noteProgress(j: Job): void {
   const now = performance.now();
   if (now - lastNote < 800 && j.pct < 100) return;
   lastNote = now;
-  const text = t('jobProgress', { pct: localDigits(Math.round(j.pct)) });
+  const text = j.text || t('jobProgress', { pct: localDigits(Math.round(j.pct)) });
   void android()?.jobProgress?.({ title: j.title, text, pct: Math.round(j.pct) }).catch(() => undefined);
   desktop()?.setProgress?.(j.pct / 100);
   document.title = `${Math.round(j.pct)}% · ${t('appName')}`;
 }
 function noteDone(j: Job): void {
   const others = jobs.some((x) => x.state === 'running');
-  const text = j.state === 'done' ? t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) }) : `${t('convertFailed')} — ${j.error ?? ''}`;
+  const text = j.state === 'done' ? (j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error ?? ''}`;
   const a = android();
   // (Seen in the app as it ends: nothing to announce, the service only stops.)
   const quiet = j.watched() && document.visibilityState === 'visible';
@@ -64,8 +64,9 @@ function noteDone(j: Job): void {
  * Run `work` as a job. `watched` says whether its own sheet is still showing it (then the result is shown there;
  * otherwise a toast and the jobs sheet offer it). Resolves with what the work returns.
  */
-export async function runJob(title: string, work: (report: (pct: number) => void) => Promise<JobOut | null>, watched: () => boolean = () => false): Promise<JobOut | null> {
-  const j: Job = { id: ++seq, title, pct: 0, state: 'running', watched };
+export async function runJob(title: string, work: (report: (pct: number, text?: string) => void) => Promise<JobOut | null>, watched: () => boolean = () => false, opts: { quiet?: boolean } = {}): Promise<JobOut | null> {
+  // (`quiet`: a download into the library — nothing to save or share after; its line says how fast it goes.)
+  const j: Job = { id: ++seq, title, pct: 0, state: 'running', watched, quiet: opts.quiet };
   jobs.unshift(j);
   // (Finished files are held in memory to be saved or shared: only the last few are kept — a phone has little.)
   let kept = 0;
@@ -74,9 +75,9 @@ export async function runJob(title: string, work: (report: (pct: number) => void
   keepAwake(true);
   changed();
   try {
-    const out = await work((pct) => { j.pct = Math.max(0, Math.min(100, pct)); noteProgress(j); changed(); });
+    const out = await work((pct, text) => { j.pct = Math.max(0, Math.min(100, pct)); j.text = text; noteProgress(j); changed(); });
     if (!out) { jobs.splice(jobs.indexOf(j), 1); return null; }
-    j.state = 'done'; j.out = out; j.pct = 100; j.seen = j.watched();
+    j.state = 'done'; j.out = out; j.pct = 100; j.seen = j.watched() || !!j.quiet;
     return out;
   } catch (err) {
     j.state = 'failed'; j.error = String((err as Error)?.message ?? err);
@@ -115,7 +116,7 @@ function drawChip(): void {
   chip.classList.remove('ready');
   const pct = Math.round(running.reduce((a, j) => a + j.pct, 0) / running.length);
   const ring = h('span', { class: 'job-ring' }); ring.style.setProperty('--p', `${pct}%`);
-  chip.replaceChildren(ring, h('span', null, running.length > 1 ? t('jobsRunning', { n: localDigits(running.length) }) : running[0].title), h('b', null, `${localDigits(pct)}%`));
+  chip.replaceChildren(ring, h('span', { dir: 'auto' }, running.length > 1 ? t('jobsRunning', { n: localDigits(running.length) }) : running[0].title), h('b', null, running.length === 1 && running[0].text ? running[0].text : `${localDigits(pct)}%`));
 }
 
 /** The jobs of this session: those still running, and the results of those done. */
@@ -128,9 +129,9 @@ export function jobsSheet(): void {
   const draw = () => {
     if (!s.el.isConnected) { off(); return; }
     list.replaceChildren(...(jobs.length ? jobs.map((j) => h('div', { class: 'job-row' },
-      h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? `${localDigits(Math.round(j.pct))}%` : j.state === 'done' ? h('span', null, h('bdi', null, j.out!.name), ' · ', h('bdi', null, formatBytes(j.out!.blob.size))) : t('convertFailed'))),
+      h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? (j.text || `${localDigits(Math.round(j.pct))}%`) : j.state === 'done' ? h('span', null, h('bdi', null, j.out!.name), ' · ', h('bdi', null, formatBytes(j.out!.blob.size))) : t('convertFailed'))),
       j.state === 'running' ? h('div', { class: 'progress-bar' }, h('span', { style: { width: `${j.pct}%` } })) : null,
-      j.state === 'done' ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } },
+      j.state === 'done' && !j.quiet ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => void import('./ui/share').then((m) => m.shareFile(j.out!.blob, j.out!.name, j.out!.name)) }, icon('external'), t('shareFile')),
         h('button', { class: 'btn small', type: 'button', onclick: () => void import('./ui/share').then((m) => m.downloadBlob(j.out!.blob, j.out!.name)) }, icon('download'), t('saveFile')),
         h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const { importFiles } = await import('./library'); await importFiles([new File([j.out!.blob], j.out!.name, { type: j.out!.blob.type })]); toast(t('addedToLibrary')); } }, icon('import'), t('addToLibrary'))) : null,

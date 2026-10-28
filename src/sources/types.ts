@@ -95,6 +95,8 @@ export interface Source {
   details(id: string): Promise<SourceDetails>;
   /** Fetch a file into a File (the library imports it). */
   fetchFile?(book: SourceDetails, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number }) => void): Promise<File>;
+  /** A file that can be fetched by the platform's downloader (a plain address): its address and headers. */
+  downloadInfo?(file: SourceFile): { url: string; headers?: Record<string, string> } | null;
   /** True when the source cannot be reached from a plain web page (no CORS): the apps can. */
   needsApp?: boolean;
   /** A volume's cover, title and contents, read from the file without fetching it whole. */

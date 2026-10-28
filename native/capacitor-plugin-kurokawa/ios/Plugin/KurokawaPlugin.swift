@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 ///    the sites that answer only a browser
 ///  - printToPdf: a page of HTML printed to a PDF by the system (KrPrint.swift)
 ///  - pdfOpen / pdfRender / pdfClose: pages of a PDF drawn by CoreGraphics (KrPdf.swift)
+///  - downloadFile / cancelDownload / deleteDownload: files fetched by URLSession (KrDownload.swift)
 @objc(KurokawaPlugin)
 public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     private var pickCall: CAPPluginCall?
@@ -161,6 +162,17 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
     @objc func pdfOpen(_ call: CAPPluginCall) { pdfQueue.async { KrPdf.open(call) } }
     @objc func pdfRender(_ call: CAPPluginCall) { pdfQueue.async { KrPdf.render(call) } }
     @objc func pdfClose(_ call: CAPPluginCall) { pdfQueue.async { KrPdf.close(call) } }
+
+    // MARK: files fetched by the system (KrDownload.swift), with their progress as events
+
+    @objc func downloadFile(_ call: CAPPluginCall) { KrDownload.start(call) { [weak self] name, data in self?.notifyListeners(name, data: data) } }
+    @objc func cancelDownload(_ call: CAPPluginCall) { KrDownload.cancel(call) }
+    @objc func deleteDownload(_ call: CAPPluginCall) {
+        guard var p = call.getString("path") else { call.resolve(["ok": false]); return }
+        if p.hasPrefix("file://") { p = String(p.dropFirst(7)) }
+        let ok = (try? FileManager.default.removeItem(atPath: p)) != nil
+        call.resolve(["ok": ok])
+    }
 
     /// HTTP request from native code (no CORS): the sync back-ends and the sources. The shared cookie store goes
     /// with it (a check's clearance is copied there once passed); its answer's text in the charset it names.

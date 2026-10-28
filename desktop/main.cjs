@@ -470,15 +470,17 @@ async function downloadAria2(e, url, dir, name) {
     p.on('close', (code) => (code === 0 ? resolve(path.join(dir, name)) : reject(new Error('aria2c exited with ' + code))));
   });
 }
-async function downloadSegmented(e, url, file) {
+async function downloadSegmented(e, url, file, id = '') {
   let total = 0, ranged = false, final = url;
-  const probe = await net.fetch(url, { headers: { Range: 'bytes=0-0' } });
+  // (The app's session goes with it: a site's clearance passed in the browser lane holds here too.)
+  const fetchOpts = (headers) => ({ headers, useSessionCookies: true });
+  const probe = await net.fetch(url, fetchOpts({ Range: 'bytes=0-0' }));
   final = probe.url || url;
   const cr = probe.headers.get('content-range');
   if (probe.status === 206 && cr && cr.includes('/')) { total = Number(cr.split('/').pop()); ranged = total > 0; }
   try { await probe.arrayBuffer(); } catch { /* drain */ }
   let got = 0, lastT = Date.now(), lastGot = 0, speed = 0;
-  const report = () => { const now = Date.now(); if (now - lastT < 400) return; speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; e.sender.send('kr:download-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); };
+  const report = () => { const now = Date.now(); if (now - lastT < 400) return; speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; e.sender.send('kr:download-progress', { id, pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); };
   if (ranged && total > 4 * 1048576) {
     const n = Math.min(8, Math.max(1, Math.floor(total / 1048576)));
     const seg = Math.ceil(total / n);
@@ -488,7 +490,7 @@ async function downloadSegmented(e, url, file) {
         let pos = i * seg; const to = Math.min(total - 1, pos + seg - 1);
         for (let attempt = 0; attempt < 4 && pos <= to; attempt++) {
           try {
-            const res = await net.fetch(final, { headers: { Range: `bytes=${pos}-${to}` } });
+            const res = await net.fetch(final, fetchOpts({ Range: `bytes=${pos}-${to}` }));
             if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
             const reader = res.body.getReader();
             for (;;) { const { done, value } = await reader.read(); if (done) break; await fh.write(Buffer.from(value), 0, value.length, pos); pos += value.length; got += value.length; report(); }
@@ -497,7 +499,7 @@ async function downloadSegmented(e, url, file) {
       }));
     } finally { await fh.close(); }
   } else {
-    const res = await net.fetch(url);
+    const res = await net.fetch(url, fetchOpts({}));
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
     total = Number(res.headers.get('content-length') || 0);
     const out = fs.createWriteStream(file); let err = null; out.on('error', (x) => { err = x; });
@@ -507,11 +509,11 @@ async function downloadSegmented(e, url, file) {
   }
   return file;
 }
-ipcMain.handle('kr:download', async (e, url, name) => {
+ipcMain.handle('kr:download', async (e, url, name, id) => {
   const dir = path.join(app.getPath('userData'), 'downloads'); fs.mkdirSync(dir, { recursive: true });
   const safe = String(name).replace(/[\\/:*?"<>|]/g, '_');
   if (hasAria2()) { try { return await downloadAria2(e, String(url), dir, safe); } catch (err) { console.warn('[kurokawa] aria2c failed, using the built-in downloader', err); } }
-  return downloadSegmented(e, String(url), path.join(dir, safe));
+  return downloadSegmented(e, String(url), path.join(dir, safe), id ? String(id) : '');
 });
 ipcMain.handle('kr:delete-download', async (_e, p) => { const dir = path.join(app.getPath('userData'), 'downloads'); const f = path.resolve(String(p)); if (!f.startsWith(dir)) return false; try { await fs.promises.unlink(f); return true; } catch { return false; } });
 ipcMain.handle('kr:write-binary', async (_e, p, b64, append) => { const fsp = require('fs/promises'); const buf = Buffer.from(String(b64), 'base64'); if (append) await fsp.appendFile(String(p), buf); else await fsp.writeFile(String(p), buf); return true; });

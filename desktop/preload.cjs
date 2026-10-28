@@ -23,9 +23,11 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   pickFolder() { return ipcRenderer.invoke('kr:folder-pick'); },
   readTextFile(p) { return ipcRenderer.invoke('kr:folder-read', p); },
   writeTextFile(p, text) { return ipcRenderer.invoke('kr:folder-write', p, text); },
-  download(url, name) { return ipcRenderer.invoke('kr:download', url, name); },
+  download(url, name, id) { return ipcRenderer.invoke('kr:download', url, name, id); },
   deleteDownload(p) { return ipcRenderer.invoke('kr:delete-download', p); },
   onDownloadProgress(cb) { ipcRenderer.removeAllListeners('kr:download-progress'); ipcRenderer.on('kr:download-progress', (_e, p) => cb(p)); },
+  // (Several downloads at once: each caller keeps its own listener and reads its own id.)
+  addDownloadListener(cb) { const fn = (_e, p) => cb(p); ipcRenderer.on('kr:download-progress', fn); return () => ipcRenderer.removeListener('kr:download-progress', fn); },
   writeBinary(p, b64, append) { return ipcRenderer.invoke('kr:write-binary', p, b64, !!append); },
   onOpenUrl(cb) { ipcRenderer.on('kr:open-url', (_e, u) => cb(u)); },
   onCommand(cb) { ipcRenderer.on('kr:command', (_e, c) => cb(c)); },

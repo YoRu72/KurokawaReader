@@ -19,4 +19,7 @@ CAP_PLUGIN(KurokawaPlugin, "Kurokawa",
   CAP_PLUGIN_METHOD(pdfOpen, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(pdfRender, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(pdfClose, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(downloadFile, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(cancelDownload, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(deleteDownload, CAPPluginReturnPromise);
 )

@@ -100,6 +100,8 @@ initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);
 scheduleAutoCheck();
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
+// (Downloads the app was closed in the middle of: taken up again.)
+setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
 onSettingsChange((s) => applyChrome(s));

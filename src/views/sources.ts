@@ -330,7 +330,16 @@ async function libraryFolder(name: string): Promise<string> {
   return f.id;
 }
 /** One file of a folder into the library, remembered as coming from there (so its row says "Open" after). */
-async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number }) => void, folderId?: string): Promise<Book> {
+async function fetchVolume(src: Source, id: string, title: string, file: SourceFile, onProgress: (p: { pct: number; got: number; total: number; speed?: number }) => void, folderId?: string): Promise<Book> {
+  // A plain file: the platform's downloader — it goes on when this page is left or the phone is locked, with
+  // its speed shown, and the book lands in the library whatever is open then.
+  const info = src.downloadInfo?.(file);
+  if (info) {
+    const { startDownload, onDownloads, downloadOf } = await import('../downloads');
+    const off = onDownloads(() => { const d = downloadOf(src.id, id, info.url); if (d && d.state === 'running') onProgress({ pct: d.pct, got: d.got, total: d.total, speed: d.speed }); });
+    try { return await startDownload({ url: info.url, headers: info.headers, name: file.name ?? `${title}.${file.ext}`, mime: file.mime, size: file.size, title, then: { srcId: src.id, itemId: id, title, folderId } }); }
+    finally { off(); }
+  }
   const got = await src.fetchFile!({ id, title, tags: [], files: [file] }, file, onProgress);
   const added = await importFiles([got]);
   if (!added.length) throw new Error(t('convertFailed'));
@@ -375,13 +384,17 @@ function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe
   const download = () => {
     const a = cur;
     const dl = h('button', { type: 'button', class: 'btn tonal small' }, icon('download'), h('span', null, t('download'))) as HTMLButtonElement;
-    dl.addEventListener('click', async () => {
+    const show = (p: { pct: number; got: number; total: number; speed?: number }) => dl.replaceChildren(icon('download'), h('span', null, p.total ? `${localDigits(p.pct)}%${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : '…'));
+    const go = async () => {
       dl.disabled = true;
       try {
-        const book = await fetchVolume(src, a.id, b.title, a.file, (p) => { dl.replaceChildren(icon('download'), h('span', null, p.total ? `${p.pct}%` : p.got ? formatBytes(p.got) : '…')); }, b.group ? await libraryFolder(b.group) : undefined);
+        const book = await fetchVolume(src, a.id, b.title, a.file, show, b.group ? await libraryFolder(b.group) : undefined);
         lib.set(a.id, book.id); if (cur === a) draw(); rows.get(HEAD)?.(''); toast(t('addedToLibrary'));
-      } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); toast(describe(e), 'error'); }
-    });
+      } catch (e) { dl.disabled = false; dl.replaceChildren(icon('download'), h('span', null, t('download'))); if ((e as Error)?.message !== 'cancelled') toast(describe(e), 'error'); }
+    };
+    dl.addEventListener('click', go);
+    // (A download of this volume under way from before — the page was left and come back to: followed.)
+    void import('../downloads').then(({ downloadOf }) => { const d = downloadOf(src.id, a.id); if (d?.state === 'running') { show(d); void go(); } });
     return dl;
   };
   // (Whoever fetches one of its editions — the series' button — tells the row.)
@@ -834,16 +847,18 @@ function fileActions(box: HTMLElement, src: Source, d: SourceDetails): void {
   if (folder) void fromSource(src.id).then((m) => { const id = m.get(d.id); if (id) list.replaceChildren(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${id}`) }, icon('play'), h('span', { class: 'grow' }, `${t('inLibrary')} · ${t('open')}`))); });
   const fileButton = (f: SourceFile, label: string, name?: string): HTMLButtonElement => {
     const btn = h('button', { type: 'button', class: 'btn tonal src-file' }, icon('download'), h('span', { class: 'grow' }, label), f.size ? h('small', null, formatBytes(f.size)) : null) as HTMLButtonElement;
+    // (A download of this file under way from before — the page was left and come back to: followed.)
+    if (folder) void import('../downloads').then(({ downloadOf }) => { const dd = downloadOf(src.id, d.id, f.url); if (dd?.state === 'running') btn.click(); });
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
-        const progress = (p: { pct: number; got: number; total: number }) => { btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, p.total ? `${p.pct}% · ${formatBytes(p.got)} / ${formatBytes(p.total)}` : p.got ? formatBytes(p.got) : `${label}…`)); };
+        const progress = (p: { pct: number; got: number; total: number; speed?: number }) => { btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, p.total ? `${localDigits(p.pct)}% · ${formatBytes(p.got)} / ${formatBytes(p.total)}${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : `${label}…`)); };
         // (A web folder's file is remembered as coming from there, so its row and page say "Open" after.)
         const added = folder ? [await fetchVolume(src, d.id, d.title, f, progress)] : await importFiles([await fetchOne(f, progress, name)]);
         if (!added.length) throw new Error(t('convertFailed'));
         toast(t('addedToLibrary'));
         btn.replaceWith(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => navigate(`/read/${added[0].id}`) }, icon('play'), h('span', { class: 'grow' }, `${label} · ${t('open')}`)));
-      } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, label)); if (f.size) btn.append(h('small', null, formatBytes(f.size))); toast(describe(e), 'error'); }
+      } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), h('span', { class: 'grow' }, label)); if (f.size) btn.append(h('small', null, formatBytes(f.size))); if ((e as Error)?.message !== 'cancelled') toast(describe(e), 'error'); }
     });
     return btn;
   };

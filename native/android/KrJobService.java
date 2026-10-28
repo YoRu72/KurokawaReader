@@ -14,13 +14,13 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
 /**
- * Long work in the app (a conversion) keeps going when the app is left: this foreground service holds the app
+ * Long work in the app (a conversion, a download) keeps going when the app is left: this foreground service holds the app
  * alive and shows the work's progress in a notification; the last notification says it is done, and opens the
  * app when tapped.
  */
 public class KrJobService extends Service {
-    static final String CH_RUN = "kr_jobs";
-    static final String CH_DONE = "kr_jobs_done";
+    static final String CH_RUN = "kr_work";
+    static final String CH_DONE = "kr_work_done";
     static final int NOTE_RUN = 7301;
     private static int doneSeq = 7400;
 
@@ -44,12 +44,12 @@ public class KrJobService extends Service {
         if (nm == null) return;
         @SuppressWarnings("deprecation") boolean ar = "ar".equals(c.getResources().getConfiguration().locale.getLanguage());
         if (nm.getNotificationChannel(CH_RUN) == null) {
-            NotificationChannel ch = new NotificationChannel(CH_RUN, ar ? "التحويل الجاري" : "Conversions in progress", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel ch = new NotificationChannel(CH_RUN, ar ? "التحويلات والتنزيلات الجارية" : "Conversions and downloads in progress", NotificationManager.IMPORTANCE_LOW);
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
         }
         if (nm.getNotificationChannel(CH_DONE) == null) {
-            nm.createNotificationChannel(new NotificationChannel(CH_DONE, ar ? "التحويلات المنتهية" : "Finished conversions", NotificationManager.IMPORTANCE_DEFAULT));
+            nm.createNotificationChannel(new NotificationChannel(CH_DONE, ar ? "التحويلات والتنزيلات المنتهية" : "Finished conversions and downloads", NotificationManager.IMPORTANCE_DEFAULT));
         }
     }
 

@@ -837,6 +837,7 @@ export function folderSource(repo: Repo): Source {
       const peek = /^(epub|pdf)$/.test(file.ext) ? await peekFile(file.url, file.ext, file.size, { noCover: noCover(), headers }).catch(() => null) : null;
       return { id, title: peek?.title || v.base, author: peek?.author || (crumbs.length ? crumbs.map(shownName).join(' / ') : undefined), cover: peek?.cover, description: peek?.description, tags: [], files: [file], url: e.url, meta, formats: [file.label], toc: peek?.toc };
     },
+    downloadInfo: (file) => ({ url: file.url, headers }),
     async fetchFile(_book, file, onProgress): Promise<File> {
       const bytes = await fetchBytes(file.url, onProgress, { headers });
       return new File([bytes.buffer as ArrayBuffer], file.name ?? `${noExt(folderName(file.url))}.${file.ext}`, { type: file.mime ?? '' });
