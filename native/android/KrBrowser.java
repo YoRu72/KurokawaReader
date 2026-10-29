@@ -17,6 +17,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.getcapacitor.JSObject;
@@ -208,6 +209,7 @@ final class KrBrowser {
         final String message = call.getString("message", "");
         final String doneLabel = call.getString("done", "✓");
         final String reloadLabel = call.getString("reload", "↻");
+        final boolean browse = !hidden && Boolean.TRUE.equals(call.getBoolean("browse", false));
         ui.post(() -> {
             final Activity act = plugin.getActivity();
             if (act == null) { call.reject("No activity"); return; }
@@ -239,7 +241,11 @@ final class KrBrowser {
                     ui.postDelayed(finish, 1500);
                 } catch (Exception e) { finish.run(); }
             };
-            web.setWebViewClient(new WebViewClient());
+            // (A browser of the reader's own — opened from Settings — has an address bar, back and forward.)
+            final EditText[] address = { null };
+            web.setWebViewClient(new KrDohWeb() {
+                @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (address[0] != null && !address[0].hasFocus()) address[0].setText(u); }
+            });
             final long start = SystemClock.uptimeMillis();
             final Runnable[] poll = new Runnable[1];
             // (Asked every 600 ms whether or not the last question was answered — a page replaced mid-question, as a
@@ -270,12 +276,34 @@ final class KrBrowser {
                     bar.setGravity(Gravity.CENTER_VERTICAL);
                     bar.setBackgroundColor(0xFF1E1F22);
                     bar.setPadding(dp(act, 14), dp(act, 10), dp(act, 8), dp(act, 10));
+                    if (browse) {
+                        // Back, forward, the address (an address, or words searched for), as in a browser.
+                        final Button backB = new Button(act); backB.setText("‹"); backB.setOnClickListener(v -> { if (web.canGoBack()) web.goBack(); });
+                        final Button fwdB = new Button(act); fwdB.setText("›"); fwdB.setOnClickListener(v -> { if (web.canGoForward()) web.goForward(); });
+                        bar.addView(backB, new LinearLayout.LayoutParams(dp(act, 44), ViewGroup.LayoutParams.WRAP_CONTENT));
+                        bar.addView(fwdB, new LinearLayout.LayoutParams(dp(act, 44), ViewGroup.LayoutParams.WRAP_CONTENT));
+                        final EditText addr = new EditText(act);
+                        addr.setSingleLine(true); addr.setText(url); addr.setTextColor(0xFFECECEC); addr.setHintTextColor(0xFF9A9A9A);
+                        addr.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14); addr.setSelectAllOnFocus(true);
+                        addr.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+                        addr.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+                        addr.setOnEditorActionListener((v, actionId, ev) -> {
+                            String q = addr.getText().toString().trim(); if (q.isEmpty()) return true;
+                            String go = q.matches("(?i)^[a-z][a-z0-9+.-]*://.*") ? q : (!q.contains(" ") && q.contains(".")) ? "https://" + q : "https://duckduckgo.com/?q=" + android.net.Uri.encode(q);
+                            web.loadUrl(go); addr.clearFocus();
+                            try { ((android.view.inputmethod.InputMethodManager) act.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(addr.getWindowToken(), 0); } catch (Exception ignored) {}
+                            return true;
+                        });
+                        address[0] = addr;
+                        bar.addView(addr, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    } else {
                     final TextView text = new TextView(act);
                     text.setText(message.isEmpty() ? url : message);
                     text.setTextColor(0xFFECECEC);
                     text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
                     text.setTypeface(Typeface.DEFAULT_BOLD);
                     bar.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    }
                     final Button again = new Button(act);
                     again.setText(reloadLabel);
                     again.setOnClickListener(v -> { try { web.reload(); } catch (Exception ignored) {} });
@@ -288,6 +316,8 @@ final class KrBrowser {
                     box.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
                     d.setContentView(box);
                     d.setOnDismissListener(x -> closeAfterLook.run());
+                    // (Back goes back a page first, as in a browser; from the first page it closes the window.)
+                    if (browse) d.setOnKeyListener((dlg, keyCode, ev) -> { if (keyCode == android.view.KeyEvent.KEYCODE_BACK && ev.getAction() == android.view.KeyEvent.ACTION_UP && web.canGoBack()) { web.goBack(); return true; } return keyCode == android.view.KeyEvent.KEYCODE_BACK && web.canGoBack(); });
                     dialog[0] = d;
                     d.show();
                 }
@@ -448,7 +478,7 @@ final class KrBrowser {
             // (Pictures load as in any browser: a check may look for them.)
             final WebView web = makeView(act, true);
             web.addJavascriptInterface(new Bridge(), "KrLane");
-            web.setWebViewClient(new WebViewClient() {
+            web.setWebViewClient(new KrDohWeb() {
                 // (The page itself not loading — no network, no such site. Called for the main frame only, on every
                 // Android version: the newer callback hands the main frame's errors to this one.)
                 @SuppressWarnings("deprecation")

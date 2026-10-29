@@ -256,7 +256,7 @@ html[dir='rtl'] .fab { padding: 0 20px 0 24px; }
 /* Fields */
 .field { display: flex; flex-direction: column; gap: 8px; }
 .field label, .field .label { font-size: 13px; color: var(--md-on-surface-dim); font-weight: 500; text-transform: none; letter-spacing: 0; }
-input[type='text'], input[type='search'], input[type='number'], select, textarea {
+input[type='text'], input[type='search'], input[type='number'], input[type='url'], input[type='email'], input[type='password'], select, textarea {
   background: var(--md-surface-container-high); border: 0; border-radius: var(--sh-full);
   height: 48px; padding: 0 20px; color: var(--md-on-surface); outline: none; min-width: 0;
   transition: box-shadow var(--dur-short), background var(--dur-short);
@@ -1783,3 +1783,7 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .plain-list li.upd-row > .btn { padding: 6px 14px; }
 .plain-list li.upd-row > button.upd-open { width: auto; flex: 1 1 auto; min-width: 0; align-items: center; }
 .upd-row .catalog-name { flex: 1 1 auto; }
+/* Settings → the app's browser: the resolver's choice beside its test */
+.doh-row { display: flex; gap: 8px; align-items: center; }
+.doh-row .pick-btn { flex: 1; min-width: 0; }
+.doh-row > .btn { flex: none; }

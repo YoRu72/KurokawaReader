@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   copyImage(b64) { return ipcRenderer.invoke('kr:copy-image', b64); },
   printToPdf(html, opts) { return ipcRenderer.invoke('kr:print-pdf', html, opts); },
   http(o) { return ipcRenderer.invoke('kr:http', o); },
+  setDoh(provider, test) { return ipcRenderer.invoke('kr:set-doh', provider, test); },
   openWebView(o) { return ipcRenderer.invoke('kr:open-webview', typeof o === 'string' ? { url: o } : o); },
   browserFetch(o) { return ipcRenderer.invoke('kr:browser-fetch', o); },
   browserReset(url) { return ipcRenderer.invoke('kr:browser-reset', url); },

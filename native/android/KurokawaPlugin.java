@@ -187,20 +187,32 @@ public class KurokawaPlugin extends Plugin {
         final boolean binary = call.getBoolean("binary", false);
         new Thread(() -> {
             try {
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(urlStr).openConnection();
-                conn.setRequestMethod(method);
-                conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
-                boolean hasUa = false, hasCookie = false;
-                java.util.Iterator<String> it = headers.keys();
-                // (Compression is the connection's own business: a caller naming an encoding would get raw gzip back.)
-                while (it.hasNext()) { String k = it.next(); if (k.equalsIgnoreCase("accept-encoding")) continue; conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; if (k.equalsIgnoreCase("cookie")) hasCookie = true; }
-                // The app's own identity and cookies go with the request (a Cloudflare clearance passed in the
-                // app's web view is bound to both), and what the site sets comes back into the same jar.
-                if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
-                if (!hasCookie) { try { String ck = android.webkit.CookieManager.getInstance().getCookie(urlStr); if (ck != null && !ck.isEmpty()) conn.setRequestProperty("Cookie", ck); } catch (Exception ignored) {} }
-                if (body != null) { conn.setDoOutput(true); try (OutputStream os = conn.getOutputStream()) { os.write(call.getBoolean("bodyBase64", false) ? Base64.decode(body, Base64.DEFAULT) : body.getBytes("UTF-8")); } }
-                int code = conn.getResponseCode();
-                try { java.util.List<String> set = conn.getHeaderFields().get("Set-Cookie"); if (set != null) { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(urlStr, c); cm.flush(); } } catch (Exception ignored) {}
+                // (With DNS over HTTPS the redirects are followed here, each by its own name; else by the connection.)
+                java.net.URL at = new java.net.URL(urlStr); String verb = method; String sent = body;
+                java.net.HttpURLConnection conn; int code;
+                for (int hop = 0; ; hop++) {
+                    conn = KrDoh.open(at);
+                    if (!KrDoh.on()) conn.setInstanceFollowRedirects(true);
+                    conn.setRequestMethod(verb);
+                    conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                    boolean hasUa = false, hasCookie = false;
+                    java.util.Iterator<String> it = headers.keys();
+                    // (Compression is the connection's own business: a caller naming an encoding would get raw gzip back.)
+                    while (it.hasNext()) { String k = it.next(); if (k.equalsIgnoreCase("accept-encoding")) continue; conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; if (k.equalsIgnoreCase("cookie")) hasCookie = true; }
+                    // The app's own identity and cookies go with the request (a Cloudflare clearance passed in the
+                    // app's web view is bound to both), and what the site sets comes back into the same jar.
+                    if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
+                    if (!hasCookie || hop > 0) { try { String ck = android.webkit.CookieManager.getInstance().getCookie(at.toString()); if (ck != null && !ck.isEmpty()) conn.setRequestProperty("Cookie", ck); } catch (Exception ignored) {} }
+                    if (sent != null) { conn.setDoOutput(true); try (OutputStream os = conn.getOutputStream()) { os.write(call.getBoolean("bodyBase64", false) ? Base64.decode(sent, Base64.DEFAULT) : sent.getBytes("UTF-8")); } }
+                    code = conn.getResponseCode();
+                    final String here = at.toString();
+                    try { java.util.List<String> set = conn.getHeaderFields().get("Set-Cookie"); if (set != null) { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(here, c); cm.flush(); } } catch (Exception ignored) {}
+                    String loc = code >= 300 && code < 400 ? conn.getHeaderField("Location") : null;
+                    if (loc == null || !KrDoh.on() || hop >= 9) break;
+                    conn.disconnect();
+                    at = new java.net.URL(at, loc);
+                    if (code == 303 || ((code == 301 || code == 302) && "POST".equalsIgnoreCase(verb))) { verb = "GET"; sent = null; }
+                }
                 InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 if (in != null) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) bos.write(buf, 0, n); }
@@ -211,7 +223,7 @@ public class KurokawaPlugin extends Plugin {
                 JSObject hs = new JSObject();
                 for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
                 ret.put("headers", hs);
-                ret.put("url", conn.getURL().toString());
+                ret.put("url", KrDoh.on() ? at.toString() : conn.getURL().toString());
                 call.resolve(ret);
             } catch (Exception e) { call.reject("Request failed: " + e.getMessage(), e); }
         }).start();
@@ -280,6 +292,31 @@ public class KurokawaPlugin extends Plugin {
         if (html == null || html.isEmpty()) { call.reject("no html"); return; }
         double w = call.getDouble("width", 595.28), h = call.getDouble("height", 841.89), m = call.getDouble("margin", 45.35);
         getActivity().runOnUiThread(() -> KrPrint.run(getActivity(), html, w, h, m, call));
+    }
+
+    /* ---------- DNS over HTTPS (see KrDoh): the reader's resolver, kept across starts ---------- */
+    @Override
+    public void load() {
+        super.load();
+        try { KrDoh.provider = getContext().getSharedPreferences("kr", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {}
+    }
+
+    /** {provider: "off" | "cloudflare" | "google" | "quad9" | "adguard" | "https://…/dns-query"}; {test: host}
+     *  answers with the addresses found for it (or the error). */
+    @PluginMethod
+    public void setDoh(PluginCall call) {
+        String p = call.getString("provider", null);
+        if (p != null) {
+            KrDoh.provider = p; KrDoh.forget();
+            getContext().getSharedPreferences("kr", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply();
+        }
+        final String test = call.getString("test", null);
+        JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
+        if (test == null) { call.resolve(r); return; }
+        new Thread(() -> {
+            try { java.net.InetAddress[] ips = KrDoh.resolve(test); org.json.JSONArray a = new org.json.JSONArray(); for (java.net.InetAddress ip : ips) a.put(ip.getHostAddress()); r.put("ips", a); call.resolve(r); }
+            catch (Exception e) { call.reject("DoH failed: " + e.getMessage(), e); }
+        }).start();
     }
 
     /** Downloads a file (following redirects, no CORS) with progress events. Returns file:// path.
@@ -363,8 +400,10 @@ public class KurokawaPlugin extends Plugin {
     /** A connection with the app's identity — the headers given, else the web view's User-Agent and the cookies
      *  the site set it (a site's check once passed in the browser lane is passed here too). */
     private java.net.HttpURLConnection open(java.net.URL url, JSObject headers) throws java.io.IOException {
-        java.net.HttpURLConnection c = (java.net.HttpURLConnection) url.openConnection();
-        c.setInstanceFollowRedirects(true);
+        // (With DNS over HTTPS the site is asked at the address its resolver gives; its redirects are followed by the
+        // caller, by their names.)
+        java.net.HttpURLConnection c = KrDoh.open(url);
+        if (!KrDoh.on()) c.setInstanceFollowRedirects(true);
         boolean hasUa = false, hasCookie = false;
         if (headers != null) {
             java.util.Iterator<String> it = headers.keys();

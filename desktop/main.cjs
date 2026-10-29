@@ -1,7 +1,7 @@
 // Electron shell: serves the built web app from an app:// origin (so IndexedDB,
 // fonts and absolute paths behave exactly as on the web) and forwards files the
 // OS asks us to open (double-click, "Open with", drag onto the icon).
-const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session } = require('electron');
 // (Windows shows the app's notifications under its own name only with this.)
 if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.reader');
 const path = require('node:path');
@@ -94,7 +94,28 @@ else {
   app.on('open-url', (e, u) => { e.preventDefault(); handleUrl(u); });
   app.on('open-file', (e, p) => { e.preventDefault(); queueFile(p); });
   process.on('uncaughtException', (err) => { console.error('[kurokawa] uncaught', err); });
+// DNS over HTTPS (Settings → the app's browser): Chromium's own secure DNS, for the app's pages, its browser and
+// its downloads alike; the choice kept in the app's data folder and applied at every start.
+const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query' };
+const dohFile = () => path.join(app.getPath('userData'), 'doh.json');
+function applyDoh(provider) {
+  try {
+    const server = DOH[provider] || (/^https:\/\//.test(String(provider || '')) ? String(provider) : null);
+    app.configureHostResolver(server ? { secureDnsMode: 'secure', secureDnsServers: [server] } : { secureDnsMode: 'automatic' });
+  } catch (err) { console.warn('[kurokawa] DoH not applied', err && err.message); }
+}
+ipcMain.handle('kr:set-doh', async (_e, provider, test) => {
+  if (provider !== undefined && provider !== null) { try { fs.writeFileSync(dohFile(), JSON.stringify({ provider: String(provider) })); } catch { /* kept for this run */ } applyDoh(String(provider)); }
+  let now = 'off'; try { now = JSON.parse(fs.readFileSync(dohFile(), 'utf8')).provider || 'off'; } catch { /* none chosen */ }
+  if (!test) return { provider: now };
+  // (Tried by reaching the site itself: with the resolver in force, a name it cannot give fails here.)
+  const started = Date.now(); const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 12000);
+  try { await session.defaultSession.clearHostResolverCache(); const r = await net.fetch('https://' + String(test) + '/', { method: 'HEAD', signal: ac.signal, bypassCustomProtocolHandlers: true }); return { provider: now, ok: true, status: r.status, ms: Date.now() - started }; }
+  catch (err) { return { provider: now, ok: false, error: String(err && err.message || err) }; }
+  finally { clearTimeout(timer); }
+});
 app.whenReady().then(() => {
+  try { applyDoh(JSON.parse(fs.readFileSync(dohFile(), 'utf8')).provider); } catch { /* none chosen */ }
     protocol.handle('app', (req) => {
       const url = new URL(req.url);
       let p = decodeURIComponent(url.pathname);
@@ -314,8 +335,79 @@ async function forgetSite(url, all) {
   } catch { /* nothing to clear */ }
   return n;
 }
+// The app's browser as a browser (Settings → Open the browser): the page below a bar of its own — back,
+// forward, the address (an address, or words searched for), reload. The bar is a page of the app's making that
+// speaks to the window by the addresses it asks for (kr-bar:…), refused and acted on here: no preload needed.
+const BAR_H = 48;
+function barHtml(o) {
+  const rtl = !!o.rtl;
+  const esc = (x) => String(x ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `<!doctype html><html dir="${rtl ? 'rtl' : 'ltr'}"><meta charset="utf-8"><style>
+:root{color-scheme:light dark;--bg:#f3f1f6;--fg:#1c1b1f;--field:#fff;--line:#c9c5d0}
+@media (prefers-color-scheme:dark){:root{--bg:#1d1b20;--fg:#e6e1e5;--field:#2b2930;--line:#49454f}}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px system-ui,'Segoe UI',sans-serif;user-select:none;overflow:hidden}
+form{display:flex;align-items:center;gap:4px;height:${BAR_H}px;padding:0 8px;box-sizing:border-box}
+button{all:unset;width:36px;height:36px;border-radius:18px;display:grid;place-items:center;cursor:pointer;font-size:18px;flex:none}
+button:hover{background:color-mix(in srgb,var(--fg) 9%,transparent)}button:disabled{opacity:.35;cursor:default;background:none}
+input{flex:1;min-width:0;height:34px;border-radius:17px;border:1px solid var(--line);background:var(--field);color:inherit;padding:0 14px;font:inherit;outline:none;direction:ltr;text-align:left}
+input:focus{border-color:#6750a4;box-shadow:0 0 0 1px #6750a4}
+</style><form id="f"><button type="button" id="b" title="${esc(o.back)}">${rtl ? '→' : '←'}</button><button type="button" id="n" title="${esc(o.forward)}">${rtl ? '←' : '→'}</button><button type="button" id="r" title="${esc(o.reload)}">↻</button><input id="a" spellcheck="false" autocomplete="off" placeholder="${esc(o.placeholder)}"></form>
+<script>
+const go=(w,v)=>{location.href='kr-bar:'+w+(v!==undefined?'?'+encodeURIComponent(v):'')};
+b.onclick=()=>go('back');n.onclick=()=>go('forward');r.onclick=()=>go('reload');
+f.onsubmit=(e)=>{e.preventDefault();go('open',a.value);a.blur()};
+a.onfocus=()=>setTimeout(()=>a.select(),0);
+window.krBar=(u,cb,cf)=>{if(document.activeElement!==a)a.value=u;b.disabled=!cb;n.disabled=!cf};
+</script></html>`;
+}
+const toAddress = (v) => {
+  v = String(v || '').trim(); if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^[^\s/]+\.[^\s/]{2,}(\/.*)?$/.test(v) || /^localhost(:\d+)?(\/|$)/.test(v)) return 'https://' + v;
+  return 'https://duckduckgo.com/?q=' + encodeURIComponent(v);
+};
+function openBrowse(o) {
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({ width: 1100, height: 860, parent: win || undefined, title: String(o.message || o.url), autoHideMenuBar: true, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, javascript: true } });
+    w.setMenuBarVisibility(false);
+    const page = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    w.contentView.addChildView(page);
+    const fit = () => { const [cw, ch] = w.getContentSize(); page.setBounds({ x: 0, y: BAR_H, width: cw, height: Math.max(0, ch - BAR_H) }); };
+    fit(); w.on('resize', fit);
+    const pc = page.webContents;
+    const show = () => {
+      if (w.isDestroyed()) return;
+      const h = pc.navigationHistory;
+      void w.webContents.executeJavaScript(`window.krBar&&krBar(${JSON.stringify(pc.getURL())},${h.canGoBack()},${h.canGoForward()})`).catch(() => {});
+      w.setTitle(pc.getTitle() || pc.getURL());
+    };
+    pc.on('did-navigate', show); pc.on('did-navigate-in-page', show); pc.on('page-title-updated', show); pc.on('did-stop-loading', show);
+    // (A page's new windows open in this one, as a phone's browser does.)
+    pc.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) void pc.loadURL(url).catch(() => {}); return { action: 'deny' }; });
+    w.webContents.on('will-navigate', (ev, u) => {
+      ev.preventDefault();
+      const m = /^kr-bar:([a-z]+)(?:\?(.*))?$/.exec(u); if (!m) return;
+      const h = pc.navigationHistory;
+      if (m[1] === 'back' && h.canGoBack()) h.goBack();
+      else if (m[1] === 'forward' && h.canGoForward()) h.goForward();
+      else if (m[1] === 'reload') pc.reload();
+      else if (m[1] === 'open') { const to = toAddress(decodeURIComponent(m[2] || '')); if (to) void pc.loadURL(to).catch(() => {}); pc.focus(); }
+    });
+    // (Alt+← / Alt+→ and the mouse's own back and forward buttons, as in any browser.)
+    pc.on('before-input-event', (ev, i) => {
+      if (i.type !== 'keyDown' || !i.alt) return;
+      if (i.key === 'ArrowLeft' && pc.navigationHistory.canGoBack()) { ev.preventDefault(); pc.navigationHistory.goBack(); }
+      if (i.key === 'ArrowRight' && pc.navigationHistory.canGoForward()) { ev.preventDefault(); pc.navigationHistory.goForward(); }
+    });
+    w.on('app-command', (_ev, cmd) => { if (cmd === 'browser-backward' && pc.navigationHistory.canGoBack()) pc.navigationHistory.goBack(); if (cmd === 'browser-forward' && pc.navigationHistory.canGoForward()) pc.navigationHistory.goForward(); });
+    w.on('closed', () => { try { pc.close(); } catch { /* gone with the window */ } resolve({ passed: true, blocked: false, title: '' }); });
+    void w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(barHtml(o))).then(show).catch(() => {});
+    void pc.loadURL(String(o.url)).catch(() => {});
+  });
+}
 ipcMain.handle('kr:open-webview', async (_e, arg) => {
   const o = typeof arg === 'string' ? { url: arg } : (arg || {});
+  if (o.browse && !o.hidden && originOf(String(o.url || ''))) return openBrowse(o);
   const url = String(o.url || ''); const origin = originOf(url); const hidden = !!o.hidden; const stay = !!o.stay && !hidden; const timeout = Number(o.timeout) || (hidden ? 15000 : 300000);
   if (!origin) return { passed: false, blocked: false, title: '' };
   if (o.fresh) await forgetSite(url, false);

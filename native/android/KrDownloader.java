@@ -31,14 +31,17 @@ final class KrDownloader {
 
     /** A connection to `url` with its redirects followed here — also from http to https, which
      *  HttpURLConnection does not follow itself. */
-    private static HttpURLConnection follow(URL url, Opener opener, String range) throws IOException {
+    private static HttpURLConnection follow(URL url, Opener opener, String range) throws IOException { return follow(url, opener, range, null); }
+    /** `at[0]`: the address the redirects ended at, by its own name (a connection asked by address — DNS over
+     *  HTTPS, see KrDoh — would say the address). */
+    private static HttpURLConnection follow(URL url, Opener opener, String range, URL[] at) throws IOException {
         for (int hop = 0; hop < 10; hop++) {
             HttpURLConnection c = opener.open(url);
             if (range != null) c.setRequestProperty("Range", range);
             c.setRequestProperty("Accept-Encoding", "identity");
             int code = c.getResponseCode();
             String loc = code >= 300 && code < 400 ? c.getHeaderField("Location") : null;
-            if (loc == null) return c;
+            if (loc == null) { if (at != null) at[0] = c.getURL() != null && c.getURL().getHost().equals(url.getHost()) ? c.getURL() : url; return c; }
             c.disconnect();
             url = new URL(url, loc);
         }
@@ -53,9 +56,10 @@ final class KrDownloader {
     static Result fetch(URL url, File out, int maxConnections, Opener opener, AtomicBoolean cancelled, AtomicLong got, Result res, Runnable tick) throws Exception {
         // A one-byte range asked first: the file's size, whether it can be cut, and where the redirects end
         // (GitHub → a signed storage address: asked there directly afterwards, a round trip less per chunk).
-        HttpURLConnection probe = follow(url, opener, "bytes=0-0");
+        URL[] at = { url };
+        HttpURLConnection probe = follow(url, opener, "bytes=0-0", at);
         int code = probe.getResponseCode();
-        res.finalUrl = probe.getURL() != null ? probe.getURL() : url;
+        res.finalUrl = at[0];
         String cr = probe.getHeaderField("Content-Range");
         if (code == 206 && cr != null && cr.contains("/")) try { res.total = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) {}
         res.ranged = code == 206 && res.total > 0;

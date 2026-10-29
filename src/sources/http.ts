@@ -57,7 +57,7 @@ function titleOf(r: HttpResult, binary: boolean): string {
 
 /* ---------- the app's own browser ---------- */
 type BrowserInit = { url: string; method?: string; headers?: Record<string, string>; body?: string | null; bodyBase64?: boolean; binary?: boolean; timeout?: number; page?: string; openTimeout?: number; downloadId?: string };
-type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean };
+type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean; /** a browser of its own: address bar, back and forward */ browse?: boolean; back?: string; forward?: string; placeholder?: string; rtl?: boolean };
 type CheckResult = { passed?: boolean; blocked?: boolean; title?: string };
 interface Browser {
   check?(o: CheckInit): Promise<CheckResult>;
@@ -173,6 +173,38 @@ export async function openSite(url: string): Promise<void> {
     return;
   }
   window.open(url, '_blank', 'noopener');
+}
+
+/** The app's browser opened on its own (Settings), as a browser: an address bar, back and forward. */
+export async function openBrowser(start = 'https://duckduckgo.com/'): Promise<void> {
+  const b = browser();
+  if (!b?.check) { window.open(start, '_blank', 'noopener'); return; }
+  await b.check({ url: start, timeout: 86400000, stay: true, browse: true, message: t('appBrowser'), done: t('checkClose'), reload: t('checkReload'), back: t('back'), forward: t('forward'), placeholder: t('addressOrSearch'), rtl: document.documentElement.dir === 'rtl' }).catch(() => undefined);
+}
+
+/* ---------- DNS over HTTPS (as 1DM+): sites asked of a resolver over HTTPS instead of the network's DNS ---------- */
+export const DOH_PROVIDERS = ['off', 'cloudflare', 'google', 'quad9', 'adguard'] as const;
+const DOH_KEY = 'kr.doh';
+type DohBridge = { setDoh?(o: { provider?: string; test?: string }): Promise<{ provider?: string; ips?: string[] }> };
+type DohDesktop = { setDoh?(provider?: string | null, test?: string): Promise<{ provider?: string; ok?: boolean; ms?: number; error?: string }> };
+const dohNative = (): DohBridge | null => { const cap = (window as unknown as { Capacitor?: { isNativePlatform?(): boolean; Plugins?: { Kurokawa?: DohBridge } } }).Capacitor; const k = cap?.isNativePlatform?.() ? cap.Plugins?.Kurokawa : undefined; return k?.setDoh ? k : null; };
+const dohDesktop = (): DohDesktop | null => { const d = (window as unknown as { kurokawaDesktop?: DohDesktop }).kurokawaDesktop; return d?.setDoh ? d : null; };
+/** Whether this platform can resolve by DoH (the apps; not a browser tab). */
+export const hasDoh = (): boolean => !!(dohNative() || dohDesktop());
+export function dohProvider(): string { try { return localStorage.getItem(DOH_KEY) || 'off'; } catch { return 'off'; } }
+/** Chooses the resolver ('off', a provider's name, or an https:// address of one). */
+export async function setDoh(provider: string): Promise<void> {
+  try { localStorage.setItem(DOH_KEY, provider); } catch { /* the app keeps its own copy */ }
+  const n = dohNative(); if (n) { await n.setDoh!({ provider }); return; }
+  const d = dohDesktop(); if (d) await d.setDoh!(provider);
+}
+/** Tries the resolver on `host`: resolves to what was found (its addresses, or the time the site took), or throws. */
+export async function testDoh(host = 'example.com'): Promise<{ ips?: string[]; ms?: number }> {
+  const n = dohNative();
+  if (n) { const started = Date.now(); const r = await n.setDoh!({ test: host }); return { ips: (r.ips ?? []).slice(0, 2), ms: Date.now() - started }; }
+  const d = dohDesktop();
+  if (d) { const r = await d.setDoh!(null, host); if (!r.ok) throw new Error(r.error || 'failed'); return { ms: r.ms ?? 0 }; }
+  throw new Error('unsupported');
 }
 
 /* ---------- requests: a few at a time per site, asked again when the site says so ---------- */
