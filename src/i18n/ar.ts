@@ -196,8 +196,8 @@ export const ar: Strings = {
   // معرض الصور
   galleryTitle: 'الصور',
   novelPictures: 'الصور التي في فصوله',
-  galleryChaptersLeft: 'هذه صور الفصول التي على الجهاز؛ وبقي {n} من الفصول لم يُنزَّل بعدُ.',
-  galleryFetchRest: 'ابحث عن الصور في كل الفصول',
+  galleryChaptersLeft: 'هذه صور الفصول التي على الجهاز؛ وبقي {n} من الفصول لم تُنزَّل بعدُ.',
+  galleryFetchRest: 'ابحث عن الصور في الفصول كلها',
   galleryEmpty: 'لا صور في الكتب المفتوحة',
   galleryCount: 'الصور: {n}',
   jumpToImage: 'موضعها في النص',

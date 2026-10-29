@@ -277,6 +277,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
       alAsked++;
       const { variables } = JSON.parse(req.postData() || '{}'); const data = {};
+      // (A series' synopsis, asked by its AniList id.)
+      if (variables && typeof variables.id === 'number') return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { Media: { description: `The story of series ${variables.id}.<br><br>It goes on &amp; on.` } } }) });
       for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, countryOfOrigin: /^B/.test(q) ? 'KR' : 'JP', tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90, category: 'Theme-Fantasy' }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true, category: 'Theme-Drama' }] }] };
       return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data }) });
     });
@@ -400,6 +402,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.series-head .tags-more'); await page.waitForTimeout(200);
     const groups = await page.$$eval('.series-head .tag-group h4', (es) => es.map((e) => e.textContent));
     ok('… every tag on a tap, in its kind; the spoilers behind their own button', groups.join() === 'Themes' && !!(await page.$('.series-head .spoilers[hidden]')));
+    await page.waitForFunction(() => /The story of series/.test(document.querySelector('.series-about')?.textContent || ''), null, { timeout: 10000 }).catch(() => undefined);
+    ok('the series\' synopsis from AniList, its breaks and marks as text', await page.$eval('.series-about', (e) => /^The story of series \d+\.\n\nIt goes on & on\.$/.test(e.textContent || '') && !e.hidden).catch(() => false));
     await page.click('.series-head .tag-group .genre:has-text("School")'); await page.waitForTimeout(1200);
     const bySchool = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
     ok('… a tag tapped: the shelf filtered by it — the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));
