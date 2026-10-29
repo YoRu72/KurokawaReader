@@ -5,21 +5,23 @@
 // month; a series AniList does not know is remembered as such and not asked again for a week.
 import { localHttp } from '../localai';
 import { db } from '../db';
-import { searchName, buildQuery, pick, type Raw } from './altagsmatch';
-export { searchName };
+import { searchName, buildQuery, pick, type Raw, type Tag } from './altagsmatch';
+export { searchName, type Tag };
 
-export interface SeriesTags { id: number; genres: string[]; tags: string[]; score?: number }
-type Kept = { v: 1; at: Record<string, number>; tags: Record<string, SeriesTags | null> };
+export interface SeriesTags { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string }
+type Kept = { v: 2; at: Record<string, number>; tags: Record<string, SeriesTags | null> };
 
 const API = 'https://graphql.anilist.co';
-const KEY = (repoKey: string) => `al:tags:${repoKey}`;
+// (v2: every tag with its rank and category, and the country the series comes from; the first kept only the
+// best few, and is asked again.)
+const KEY = (repoKey: string) => `al:tags2:${repoKey}`;
 const MONTH = 30 * 86400000, WEEK = 7 * 86400000;
 const mem = new Map<string, Kept>();
 const running = new Set<string>();
 
 export async function loadTags(repoKey: string): Promise<Kept> {
   const had = mem.get(repoKey); if (had) return had;
-  const k = (await db.getMeta<Kept>(KEY(repoKey)).catch(() => undefined)) ?? { v: 1, at: {}, tags: {} };
+  const k = (await db.getMeta<Kept>(KEY(repoKey)).catch(() => undefined)) ?? { v: 2, at: {}, tags: {} };
   mem.set(repoKey, k);
   return k;
 }
@@ -64,6 +66,16 @@ export async function fillTags(repoKey: string, series: { rel: string; name: str
     }
   } finally { running.delete(repoKey); }
 }
+
+/** Every tag a folder's series have (those that give a story away left out), by name. */
+export function tagsOfAll(k: Kept): string[] {
+  const n = new Set<string>();
+  for (const v of Object.values(k.tags)) for (const tg of v?.tags ?? []) if (!tg.s) n.add(tg.n);
+  return [...n].sort((a, b) => a.localeCompare(b));
+}
+/** The countries a folder's series come from, as the shelf's Type filter offers them. */
+export const ORIGINS = ['JP', 'KR', 'CN', 'OTHER'] as const;
+export const originOf = (t: SeriesTags | null | undefined): (typeof ORIGINS)[number] | undefined => (!t?.country ? undefined : t.country === 'JP' || t.country === 'KR' ? t.country : t.country === 'CN' || t.country === 'TW' || t.country === 'HK' ? 'CN' : 'OTHER');
 
 /** The genres a folder's series have, the most common first. */
 export function genresOf(k: Kept): string[] {

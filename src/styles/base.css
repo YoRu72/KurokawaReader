@@ -1805,3 +1805,32 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .genre-chips { margin-top: 6px; }
 .src-chip.genre { border: 1px solid var(--md-outline-variant); background: transparent; color: var(--md-on-surface-variant); cursor: pointer; font: inherit; font-size: 12px; }
 .src-chip.genre:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+/* The filter sheet (Mihon's): Reset and Filter on top, folding sections, boxes to tick (✓ asked for, ✕ left out). */
+.filter-sheet .fs-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0 10px; background: var(--sheet-bg, var(--md-surface-container-low)); border-bottom: 1px solid var(--md-outline-variant); margin-bottom: 4px; }
+.filter-sheet .fs-list { display: flex; flex-direction: column; }
+.fs-sec { border-bottom: 1px solid var(--md-outline-variant); }
+.fs-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 4px; cursor: pointer; font-weight: 600; }
+.fs-head:focus-visible { box-shadow: inset 0 0 0 2px var(--md-primary); border-radius: 8px; }
+.fs-head .fs-title { flex: 1; min-width: 0; }
+.fs-head .fs-sum { color: var(--md-primary); font-weight: 500; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-head > svg { width: 20px; height: 20px; flex: none; transition: transform var(--dur-short); }
+.fs-sec.open > .fs-head > svg { transform: rotate(180deg); }
+.fs-opt { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 14px; min-height: 44px; padding: 4px 8px; border-radius: 10px; cursor: pointer; }
+.fs-opt:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+.fs-opt.on { color: var(--md-primary); font-weight: 600; }
+.fs-arrow { width: 22px; display: grid; place-items: center; }
+.fs-arrow svg, .fs-box svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.fs-box { width: 22px; height: 22px; flex: none; border-radius: 5px; border: 2px solid var(--md-outline); display: grid; place-items: center; box-sizing: border-box; }
+.fs-box.on { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
+.fs-box.off { background: var(--md-error, #b3261e); border-color: var(--md-error, #b3261e); color: #fff; }
+.fs-multi { padding-bottom: 8px; }
+.fs-find { width: 100%; margin: 2px 0 8px; box-sizing: border-box; }
+.fs-letter > summary { padding: 10px 8px; font-weight: 600; cursor: pointer; color: var(--md-on-surface-variant); }
+.fs-letter[open] > summary { color: var(--md-primary); }
+.fs-sort { padding-bottom: 8px; }
+.filter-sheet .field, .filter-sheet .switch-row { padding: 10px 4px; border-bottom: 1px solid var(--md-outline-variant); }
+.tags-block { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.tag-groups { display: flex; flex-direction: column; gap: 8px; }
+.tag-group h4 { margin: 4px 0; font-size: 12px; font-weight: 600; color: var(--md-on-surface-variant); text-transform: none; }
+.src-chip.genre small { margin-inline-start: 6px; opacity: .7; font-size: 11px; }
+.tags-more { padding-inline: 4px; }

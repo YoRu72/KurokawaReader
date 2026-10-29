@@ -12,7 +12,7 @@ import { t, formatBytes, countVolumes, countSeries, daysAgo, localDigits } from 
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFile, type SourcePage, type FilterValues, type SourceFilter, type SourceTag } from './types';
 import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf, peekKeyOf, imageKeyOf, assumeRanges, type Peek } from './peek';
 import { db } from '../db';
-import { loadTags, tagsNow, fillTags, genresOf } from './altags';
+import { loadTags, tagsNow, fillTags, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS } from './altags';
 import type { Repo } from './repos';
 
 export interface DirEntry { name: string; url: string; dir: boolean; size?: number; date?: string; ext?: string; time?: number }
@@ -604,15 +604,34 @@ export function folderSource(repo: Repo): Source {
   };
   /** The index's files of a series as listing entries (for a cover, a count, a search). */
   const entryOf = (f: SeriesInfo['files'][number]): DirEntry => ({ name: f.name, url: `${root}${f.rel}`, dir: false, size: f.size, time: f.time, date: f.time ? stamp(f.time) : undefined, ext: f.v.ext });
+  // (A sort's value may end in ":rev" — the same order turned round, as the filter sheet's arrow asks.)
   const sortSeries = (list: SeriesInfo[], f: FilterValues) => {
-    const by = String(f.sort ?? 'name');
-    return list.sort((a, b) => by === 'newest' ? (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name) : by === 'biggest' ? b.volumes - a.volumes || natural(a.name, b.name) : natural(a.name, b.name));
+    const [by, rev] = String(f.sort ?? 'name').split(':');
+    const score = (s: SeriesInfo) => tagsNow(repo.key)?.tags[s.rel]?.score ?? -1;
+    list.sort((a, b) => by === 'newest' ? (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name) : by === 'biggest' ? b.volumes - a.volumes || natural(a.name, b.name) : by === 'score' ? score(b) - score(a) || natural(a.name, b.name) : natural(a.name, b.name));
+    return rev === 'rev' ? list.reverse() : list;
   };
-  const seriesCard = (s: SeriesInfo, f: FilterValues, news?: Record<string, SeriesNews>): SourceBook => folderCard(s.name, s.rel, { author: s.publishers.slice(0, 2).join(' · ') || undefined, badge: s.volumes ? countVolumes(s.volumes) : undefined, year: s.time && String(f.sort) === 'newest' ? stamp(s.time)?.slice(0, 10) : undefined, fresh: news?.[s.rel]?.n });
+  const seriesCard = (s: SeriesInfo, f: FilterValues, news?: Record<string, SeriesNews>): SourceBook => folderCard(s.name, s.rel, { author: s.publishers.slice(0, 2).join(' · ') || undefined, badge: s.volumes ? countVolumes(s.volumes) : undefined, year: s.time && String(f.sort).startsWith('newest') ? stamp(s.time)?.slice(0, 10) : undefined, fresh: news?.[s.rel]?.n });
   // Genres and tags from AniList, for a folder of novels that has none of its own (its manifest asks for them).
   const tagsOn = repo.tags === 'anilist' || /light(%20|\s)novels/i.test(root);
   const tagsOf = (rel: string) => tagsNow(repo.key)?.tags[rel] ?? null;
-  const byGenre = (f: FilterValues) => { const gs = Array.isArray(f.genre) ? f.genre : []; return (s: SeriesInfo) => !gs.length || gs.every((g) => tagsOf(s.rel)?.genres.includes(g)); };
+  /** The Type, Genres and Tags filters: the countries asked for; genres and tags each included or (marked "!")
+   *  left out, the included ones all needed or any one enough, as the Match filter says. */
+  const byGenre = (f: FilterValues) => {
+    const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
+    const types = arr(f.type); const any = f.match === 'or';
+    const inc: [boolean, string][] = [], exc: [boolean, string][] = [];
+    for (const g of arr(f.genre)) (g.startsWith('!') ? exc : inc).push([true, g.replace(/^!/, '')]);
+    for (const g of arr(f.tag)) (g.startsWith('!') ? exc : inc).push([false, g.replace(/^!/, '')]);
+    if (!types.length && !inc.length && !exc.length) return () => true;
+    return (s: SeriesInfo) => {
+      const k = tagsOf(s.rel);
+      if (types.length && !types.includes(originOfTags(k) ?? '')) return false;
+      const has = ([genre, x]: [boolean, string]) => (genre ? !!k?.genres.includes(x) : !!k?.tags.some((tg) => tg.n === x));
+      if (exc.some(has)) return false;
+      return !inc.length || (any ? inc.some(has) : inc.every(has));
+    };
+  };
   let tagsAsked = false;
   const askTags = (idx: FolderIndex) => {
     if (!tagsOn || tagsAsked) return; tagsAsked = true;
@@ -629,12 +648,12 @@ export function folderSource(repo: Repo): Source {
     // (Its cover is the first volume's — the same file as its card's on the shelf, read once for both.)
     const c = firstCover(groups);
     const tg = rel && !rel.includes('/') ? tagsOf(rel) : null;
-    return { genres: tg ? [...tg.genres, ...tg.tags.slice(0, 4)] : undefined, id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', coverFile: c ? fileOf(c.e, c.rel) : undefined, author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
+    return { genres: tg?.genres, tagList: tg?.tags.map((x) => ({ name: x.n, rank: x.r, category: x.c, spoiler: !!x.s })), id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', coverFile: c ? fileOf(c.e, c.rel) : undefined, author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
   };
   // A search's matches are gathered once and paged from memory.
   const searches = new Map<string, { items: SourceBook[]; partial: boolean }>();
   const search = async (q: string, rel: string, f: FilterValues): Promise<{ items: SourceBook[]; partial: boolean }> => {
-    const key = `${rel}\u0000${q}\u0000${JSON.stringify([f.kinds, f.publisher, f.genre, f.edition, f.scans, f.format])}`;
+    const key = `${rel}\u0000${q}\u0000${JSON.stringify([f.kinds, f.publisher, f.genre, f.tag, f.type, f.match, f.sort, f.edition, f.scans, f.format])}`;
     const had = searches.get(key); if (had) return had;
     const words = norm(q).split(' ').filter(Boolean);
     const keep = wanted(f);
@@ -645,7 +664,7 @@ export function folderSource(repo: Repo): Source {
       const all = seriesOf(idx); const pub = byPublisher(f);
       const inside = (s: SeriesInfo) => !rel || s.rel === rel.split('/')[0];
       const gen = byGenre(f);
-      const hay = (s: SeriesInfo) => { const tg = tagsOf(s.rel); return norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.join(' ')}` : ''}`); };
+      const hay = (s: SeriesInfo) => { const tg = tagsOf(s.rel); return norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); };
       const series = [...all.values()].filter((s) => inside(s) && pub(s) && gen(s) && words.every((w) => hay(s).includes(w)));
       const items: SourceBook[] = sortSeries(series, f).map((s) => seriesCard(s, f));
       const vols: Vol[] = [];
@@ -724,13 +743,22 @@ export function folderSource(repo: Repo): Source {
     filters(): SourceFilter[] {
       const idx = indexes.get(repo.key);
       const pubs = idx ? (() => { const n = new Map<string, number>(); for (const s of seriesOf(idx).values()) for (const p of s.publishers.slice(0, 1)) n.set(p, (n.get(p) ?? 0) + 1); return [...n.entries()].filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([p]) => ({ value: p, label: p })); })() : [];
-      const list: SourceFilter[] = [
-        { id: 'sort', label: t('sortBy'), kind: 'sort', options: [{ value: 'name', label: t('sortName') }, { value: 'newest', label: t('sortUpdated') }, { value: 'biggest', label: t('sortMostVolumes') }], value: 'name' },
-      ];
-      if (pubs.length) list.push({ id: 'publisher', label: t('publishersFilter'), kind: 'multi', options: pubs, value: [] });
       const kept = tagsOn ? tagsNow(repo.key) : null;
       const genres = kept ? genresOf(kept) : [];
-      if (genres.length) list.push({ id: 'genre', label: t('genresFilter'), kind: 'multi', options: genres.map((g) => ({ value: g, label: g })), value: [] });
+      const list: SourceFilter[] = [
+        { id: 'sort', label: t('sortBy'), kind: 'sort', reversible: true, options: [{ value: 'name', label: t('sortName') }, { value: 'newest', label: t('sortUpdated') }, { value: 'biggest', label: t('sortMostVolumes') }, ...(genres.length ? [{ value: 'score', label: t('sortScore') }] : [])], value: 'name' },
+      ];
+      if (genres.length) {
+        // (As the manga sources' sheets have them: where a series comes from, its genres and its tags — each
+        // asked for or left out — and whether all of them are needed or one is enough.)
+        list.push(
+          { id: 'type', label: t('originType'), kind: 'multi', options: ORIGINS.map((o) => ({ value: o, label: t(`origin${o}` as 'originJP') })), value: [] },
+          { id: 'match', label: t('matchMode'), kind: 'select', options: [{ value: 'and', label: t('filterMatchAll') }, { value: 'or', label: t('filterMatchAny') }], value: 'and' },
+          { id: 'genre', label: t('genresFilter'), kind: 'multi', tri: true, options: genres.map((g) => ({ value: g, label: g })), value: [] },
+          { id: 'tag', label: t('tagsFilter'), kind: 'multi', tri: true, alpha: true, options: tagsOfAll(kept!).map((g) => ({ value: g, label: g })), value: [] },
+        );
+      }
+      if (pubs.length) list.push({ id: 'publisher', label: t('publishersFilter'), kind: 'multi', options: pubs, value: [] });
       list.push(
         { id: 'format', label: t('preferredFormat'), kind: 'select', options: [{ value: 'epub', label: 'EPUB' }, { value: 'pdf', label: 'PDF' }], value: 'epub' },
         { id: 'edition', label: t('preferredEdition'), kind: 'select', options: [{ value: 'premium', label: t('editionPremiumFirst') }, { value: 'store', label: t('editionStoreFirst') }], value: 'premium' },
@@ -802,7 +830,7 @@ export function folderSource(repo: Repo): Source {
           const all = await listFolder(root, false, h5ai);
           let dirs = all.filter((e) => e.dir && !HIDDEN_FOLDERS.test(e.name));
           if (special === '::mine') { const mine = await inLibrary(srcId); dirs = dirs.filter((d) => mine.has(segOf(d))); }
-          if (special === '::recent' || f.sort === 'newest') dirs = dirs.sort((a, b) => (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name));
+          if (special === '::recent' || String(f.sort).startsWith('newest')) dirs = dirs.sort((a, b) => (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name));
           list = dirs.map((e) => folderCard(e.name, childRel('', e), { year: special === '::recent' ? e.date?.slice(0, 10) : undefined }));
           if (!special) topBooks = all.filter((e) => isBook(e) && wanted(f)(e)).map((e) => ({ e, v: parseName(e.name), rel: childRel('', e) }));
         }

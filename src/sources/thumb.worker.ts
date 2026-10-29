@@ -23,7 +23,9 @@ self.onmessage = async (e: MessageEvent<{ id: number; op: 'thumb'; bytes: ArrayB
     const ctx = c.getContext('2d')!;
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(bmp, 0, 0, w, h); bmp.close();
-    const out = await c.convertToBlob({ type: 'image/jpeg', quality: m.quality });
+    // (WebP where the browser writes it — a third smaller for the same look — else a JPEG.)
+    let out = await c.convertToBlob({ type: 'image/webp', quality: m.quality }).catch(() => null);
+    if (!out || out.type !== 'image/webp') out = await c.convertToBlob({ type: 'image/jpeg', quality: m.quality });
     (self as unknown as Worker).postMessage({ id: m.id, blob: out });
   } catch (err) { (self as unknown as Worker).postMessage({ id: m.id, error: String((err as Error)?.message ?? err) }); }
 };

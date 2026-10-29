@@ -274,7 +274,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
       alAsked++;
       const { variables } = JSON.parse(req.postData() || '{}'); const data = {};
-      for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90 }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true }] }] };
+      for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, countryOfOrigin: /^B/.test(q) ? 'KR' : 'JP', tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90, category: 'Theme-Fantasy' }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true, category: 'Theme-Drama' }] }] };
       return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data }) });
     });
     await page.keyboard.press('Escape'); await page.goto(base + '#/sources'); await page.reload(); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
@@ -391,16 +391,32 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('one volume by its own button; the series\' button counts the rest', /Download all 3 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
     // Genres and tags from AniList: on the series' page (no spoiler tags), a filter of the shelf, and in search.
     await page.waitForFunction(() => true); await page.reload(); await page.waitForSelector('.series-head', { timeout: 20000 }); await page.waitForTimeout(400);
-    const genreChips = await page.$$eval('.series-head .genre-chips .genre', (es) => es.map((e) => e.textContent));
+    const genreChips = await page.$$eval('.series-head .tags-block .genre-chips .genre, .series-head .tags-block .top-tags .genre', (es) => es.map((e) => e.textContent));
     ok('a series\' genres and tags from AniList on its page (spoilers left out)', alAsked > 0 && genreChips.join() === 'Romance,School');
     if (genreChips.join() !== 'Romance,School') console.log('  chips:', JSON.stringify(genreChips), alAsked);
-    await page.click('.series-head .genre-chips .genre:has-text("School")'); await page.waitForTimeout(1200);
+    await page.click('.series-head .tags-more'); await page.waitForTimeout(200);
+    const groups = await page.$$eval('.series-head .tag-group h4', (es) => es.map((e) => e.textContent));
+    ok('… every tag on a tap, in its kind; the spoilers behind their own button', groups.join() === 'Themes' && !!(await page.$('.series-head .spoilers[hidden]')));
+    await page.click('.series-head .tag-group .genre:has-text("School")'); await page.waitForTimeout(1200);
     const bySchool = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
     ok('… a tag searched for: the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));
     await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['Action']; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
     await page.goto(base + otlHash.replace(/\?.*$/, '')); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
     const action = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
     ok('the shelf filtered by genre', action.length >= 1 && action.every((x) => /^B/.test(x)) && action.includes('Black Summoner'));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['!Action']; v.type = ['JP']; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?v=2'); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
+    const notAction = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('… a genre left out, a type (JP) asked for', notAction.length > 3 && !notAction.some((x) => /^B/.test(x)));
+    // The filter sheet: Reset and Filter on top, sections that fold, a genre ticked twice to leave it out.
+    await page.click('.topbar-actions button[data-icon="filter"]'); await page.waitForSelector('.filter-sheet .fs-bar');
+    await page.click('.filter-sheet .fs-head:has-text("Genres")'); await page.waitForTimeout(150);
+    const rom = '.filter-sheet .fs-sec.open .fs-opt:has-text("Romance")';
+    await page.click(rom); await page.click(rom); await page.waitForTimeout(100);
+    ok('the filter sheet: folding sections, a genre ticked twice is left out (✕)', await page.getAttribute(rom, 'aria-checked') === 'mixed' && /left out/.test(await page.$eval('.filter-sheet .fs-sec.open .fs-sum', (e) => e.textContent)));
+    await page.click('.filter-sheet .fs-head:has-text("Sort")'); await page.click('.filter-sheet .fs-sort .fs-opt:has-text("Name")'); await page.waitForTimeout(100);
+    ok('… a sort tapped again turns round (its arrow up)', !!(await page.$('.filter-sheet .fs-sort .fs-opt.on [data-icon], .filter-sheet .fs-sort .fs-opt.on svg')) && /↑/.test(await page.$eval('.filter-sheet .fs-sec.open .fs-sum, .filter-sheet .fs-sec:has(.fs-sort) .fs-sum', (e) => e.textContent)));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
     await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); delete v.genre; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
     await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Alpha%20Saga')); await page.waitForSelector('.series-head', { timeout: 20000 });
     // Back from a volume — its page, or the reader — is the series where it was left, not the main page.

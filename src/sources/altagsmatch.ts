@@ -2,8 +2,11 @@
 // the request for several names at once, and the entry chosen among AniList's answers — its genres and best
 // tags. Kept apart so it can be checked against AniList itself (scripts/check-anilist.mjs).
 
-export type Raw = { id: number; title: { romaji?: string; english?: string; native?: string }; synonyms?: string[]; genres?: string[]; tags?: { name: string; rank: number; isMediaSpoiler?: boolean; isGeneralSpoiler?: boolean }[]; averageScore?: number };
-export interface Picked { id: number; genres: string[]; tags: string[]; score?: number }
+export type Raw = { id: number; title: { romaji?: string; english?: string; native?: string }; synonyms?: string[]; genres?: string[]; tags?: { name: string; rank: number; category?: string; isMediaSpoiler?: boolean; isGeneralSpoiler?: boolean }[]; averageScore?: number; countryOfOrigin?: string };
+/** A tag as kept: its name, how well it fits (AniList's rank, 0–100), its category ("Theme-Fantasy"), whether it
+ *  gives the story away. */
+export interface Tag { n: string; r: number; c?: string; s?: 1 }
+export interface Picked { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string }
 
 /** A folder's name as a title to search for: brackets, "(Light Novel)", a publisher's tag and the like taken off. */
 export function searchName(name: string): string {
@@ -40,7 +43,7 @@ export function match(asked: string, titles: string[], also = ''): number {
 export function buildQuery(names: string[]): { query: string; variables: Record<string, string> } {
   // (Each name twice: as a light novel, and — for a series AniList files only as its manga or manhwa (Solo
   // Leveling) — as anything printed; the second is used only when the first finds nothing.)
-  const FIELDS = 'id title { romaji english native } synonyms genres averageScore tags { name rank isMediaSpoiler isGeneralSpoiler }';
+  const FIELDS = 'id title { romaji english native } synonyms genres averageScore countryOfOrigin tags { name rank category isMediaSpoiler isGeneralSpoiler }';
   const parts = names.map((_, i) => `s${i}: Page(perPage: 6) { media(search: $q${i}, type: MANGA, format: NOVEL, sort: SEARCH_MATCH) { ${FIELDS} } } t${i}: Page(perPage: 3) { media(search: $q${i}, type: MANGA, sort: SEARCH_MATCH) { ${FIELDS} } }`);
   const variables: Record<string, string> = {}; names.forEach((n, i) => { variables[`q${i}`] = n; });
   return { query: `query (${names.map((_, i) => `$q${i}: String`).join(', ')}) { ${parts.join(' ')} }`, variables };
@@ -75,8 +78,9 @@ export function pick(asked: string, list: Raw[] | null | undefined, whole = '', 
   };
   const best = choose(list) ?? choose(other);
   if (!best) return null;
+  // (Every tag, the best fitting first; those that give the story away marked, to be shown only when asked.)
   return {
-    id: best.id, genres: best.genres ?? [], score: best.averageScore,
-    tags: (best.tags ?? []).filter((x) => !x.isMediaSpoiler && !x.isGeneralSpoiler && x.rank >= 55).sort((a, b) => b.rank - a.rank).slice(0, 10).map((x) => x.name),
+    id: best.id, genres: best.genres ?? [], score: best.averageScore, country: best.countryOfOrigin ?? undefined,
+    tags: (best.tags ?? []).sort((a, b) => b.rank - a.rank).map((x): Tag => ({ n: x.name, r: x.rank, ...(x.category ? { c: x.category } : {}), ...(x.isMediaSpoiler || x.isGeneralSpoiler ? { s: 1 as const } : {}) })),
   };
 }

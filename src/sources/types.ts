@@ -40,8 +40,9 @@ export interface SourceBook {
   /** The file whose cover a volume's row or a series' card shows: an EPUB edition when there is one (its own
    *  cover picture, where a PDF's is its first page drawn). */
   coverFile?: SourceFile;
-  /** A series' genres and tags (from AniList, for a folder that has none), shown as chips on its page. */
+  /** A series' genres and tags (from AniList, for a folder that has none), shown on its page. */
   genres?: string[];
+  tagList?: { name: string; rank: number; category?: string; spoiler?: boolean }[];
 }
 
 /** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
@@ -50,8 +51,11 @@ export interface SourcePeek { title?: string; author?: string; cover?: string; t
 /** A filter as a Mihon filter sheet shows it: a choice, a set of choices, a sort order, or text. */
 export type SourceFilter =
   | { id: string; label: string; kind: 'select'; options: { value: string; label: string }[]; value: string }
-  | { id: string; label: string; kind: 'multi'; options: { value: string; label: string }[]; value: string[] }
-  | { id: string; label: string; kind: 'sort'; options: { value: string; label: string }[]; value: string }
+  /** `tri`: each option asked for or (its value marked "!") left out; `alpha`: many options, in sections by their
+   *  first letter. */
+  | { id: string; label: string; kind: 'multi'; options: { value: string; label: string }[]; value: string[]; tri?: boolean; alpha?: boolean }
+  /** `reversible`: the chosen order can be turned round (its value then ends in ":rev"). */
+  | { id: string; label: string; kind: 'sort'; options: { value: string; label: string }[]; value: string; reversible?: boolean }
   | { id: string; label: string; kind: 'text'; value: string; placeholder?: string }
   | { id: string; label: string; kind: 'toggle'; value: boolean };
 

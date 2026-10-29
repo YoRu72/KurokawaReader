@@ -363,9 +363,10 @@ function pickCover(list: [string, number][]): string | undefined {
 /* ---------- a picture made small ---------- */
 // (Sharp on a phone's screen at the largest a cover is drawn — 140 points wide, at three pixels a point — and
 // a JPEG: written four times faster than a WebP, for a tenth more bytes.)
-const THUMB_H = 540;
+const THUMB_H = 480;
 function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
-  return new Promise((ok) => canvas.toBlob((b) => ok(b), 'image/jpeg', 0.82));
+  // (WebP where the browser writes it — a third smaller than a JPEG of the same look — else a JPEG.)
+  return new Promise((ok) => canvas.toBlob((b) => (b && b.type === 'image/webp' ? ok(b) : canvas.toBlob((j) => ok(j), 'image/jpeg', 0.8)), 'image/webp', 0.78));
 }
 /** The worker that makes covers small (and inflates zip entries) off the main thread, when the platform has
  *  pictures in workers (OffscreenCanvas); the shelf keeps scrolling smoothly while covers are decoded. */
@@ -403,7 +404,7 @@ async function thumb(bytes: Uint8Array, type: string, height = THUMB_H): Promise
   // Off the main thread where possible (not an SVG: workers draw no SVG).
   if (!/svg/.test(mime)) {
     const copy = bytes.slice().buffer as ArrayBuffer;
-    const job = inWorker({ op: 'thumb', bytes: copy, type: mime, height, quality: 0.82 }, [copy]);
+    const job = inWorker({ op: 'thumb', bytes: copy, type: mime, height, quality: 0.78 }, [copy]);
     if (job) { try { const r = await job; if (r.blob) return r.blob; } catch { /* drawn here below */ } }
   }
   const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: mime });
@@ -465,17 +466,30 @@ function store(key: string, p: Omit<Peek, 'cover'>, cover?: Blob | null): Peek {
   return shown;
 }
 const running = new Map<string, Promise<Peek | null>>();
-const INDEX = 'peek:index'; const LIMIT = 4000;
-let index: [string, number][] | null = null; let saving = 0;
+// What is kept on the device is bounded by its size, not only its count: the covers looked at least recently go
+// first once they take more than the budget (a picture looked at again counts as new).
+const INDEX = 'peek:index'; const LIMIT = 6000; const BUDGET = 40 * 1024 * 1024;
+type IndexEntry = [string, number, number?];
+let index: IndexEntry[] | null = null; let saving = 0;
+const saveIndex = () => { clearTimeout(saving); saving = window.setTimeout(() => void db.setMeta(INDEX, index), 1500); };
 async function keep(key: string, s: Stored): Promise<void> {
   try {
     try { await db.setMeta(key, s); }
     catch { if (!s.coverBlob) throw new Error('kept'); await db.setMeta(key, { ...s, coverBlob: undefined, cover: await dataUrl(s.coverBlob) }); }
-    index ??= (await db.getMeta<[string, number][]>(INDEX)) ?? [];
-    index = index.filter(([k]) => k !== key); index.push([key, s.at]);
-    if (index.length > LIMIT) { const drop = index.splice(0, index.length - LIMIT); for (const [k] of drop) void db.deleteMeta(k); }
-    clearTimeout(saving); saving = window.setTimeout(() => void db.setMeta(INDEX, index), 1500);
+    index ??= (await db.getMeta<IndexEntry[]>(INDEX)) ?? [];
+    index = index.filter(([k]) => k !== key); index.push([key, Date.now(), (s.coverBlob?.size ?? 0) + 400]);
+    let total = 0; for (const e of index) total += e[2] ?? 30000;
+    let drop = 0;
+    while ((index.length - drop > LIMIT || total > BUDGET) && drop < index.length - 1) { total -= index[drop][2] ?? 30000; drop++; }
+    if (drop) { const gone = index.splice(0, drop); for (const [k] of gone) { void db.deleteMeta(k); mem.delete(k); } }
+    saveIndex();
   } catch { /* the cover is kept for this session only */ }
+}
+/** A kept entry looked at again: moved to the end of the line (the last to be let go). */
+function touch(key: string): void {
+  if (!index) return;
+  const i = index.findIndex(([k]) => k === key); if (i < 0 || i > index.length - 50) return;
+  const [e] = index.splice(i, 1); e[1] = Date.now(); index.push(e); saveIndex();
 }
 const dataUrl = (b: Blob) => new Promise<string>((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => fail(r.error); r.readAsDataURL(b); });
 
@@ -483,7 +497,7 @@ const dataUrl = (b: Blob) => new Promise<string>((ok, fail) => { const r = new F
  *  that points at a file's gives that file's picture. */
 export async function recall(key: string, maxAge = Infinity): Promise<Peek | undefined> {
   let p = memGet(key);
-  if (!p) { const s = await db.getMeta<Stored>(key).catch(() => undefined); if (s) { p = live(key, s); memSet(key, p); } }
+  if (!p) { const s = await db.getMeta<Stored>(key).catch(() => undefined); if (s) { p = live(key, s); memSet(key, p); touch(key); } }
   if (!p || Date.now() - p.at > maxAge) return undefined;
   if (p.ref && !p.cover) { const f = await recall(p.ref); if (f?.cover) return { ...p, cover: f.cover, description: p.description ?? f.description }; }
   return p;

@@ -681,6 +681,36 @@ const indexRuns = new Map<string, IndexRun>();
 const autoTried = new Set<string>();
 /** Series being fetched whole: one run per series however often its page is opened meanwhile. */
 const seriesRuns = new Map<string, { text: string; on?: (text: string) => void; done?: () => void }>();
+/** A series' genres, then its tags in their kinds (themes, cast, setting…), the best fitting first with how well
+ *  they fit; the first few shown, all on a tap; the tags that give the story away only when asked. */
+function tagsBlock(src: Source, b: SourceBook): HTMLElement {
+  const go = (q: string) => navigate(path(src.id, { q }));
+  const chip = (name: string, extra = '') => h('button', { type: 'button', class: 'src-chip genre', onclick: () => go(name) }, name, extra ? h('small', null, extra) : '');
+  const box = h('div', { class: 'tags-block' });
+  if (b.genres?.length) box.append(h('div', { class: 'src-chips genre-chips' }, ...b.genres.map((g) => chip(g))));
+  const tags = (b.tagList ?? []).filter((x) => !x.spoiler);
+  const spoilers = (b.tagList ?? []).filter((x) => x.spoiler);
+  if (!tags.length && !spoilers.length) return box;
+  const kindOf = (c?: string) => { const k = (c ?? '').split('-')[0]; return ['Theme', 'Cast', 'Setting', 'Demographic', 'Technical', 'Sexual Content'].includes(k) ? k : 'Other'; };
+  const ORDER = ['Theme', 'Cast', 'Setting', 'Demographic', 'Technical', 'Sexual Content', 'Other'];
+  const pct = (r: number) => `${localDigits(r)}%`;
+  const all = h('div', { class: 'tag-groups', hidden: true });
+  const byKind = new Map<string, typeof tags>();
+  for (const x of tags) { const k = kindOf(x.category); (byKind.get(k) ?? byKind.set(k, []).get(k)!).push(x); }
+  for (const k of ORDER) { const xs = byKind.get(k); if (!xs?.length) continue; all.append(h('div', { class: 'tag-group' }, h('h4', null, t(`tagCat${k}` as 'tagCatTheme')), h('div', { class: 'src-chips' }, ...xs.map((x) => chip(x.name, pct(x.rank)))))); }
+  if (spoilers.length) {
+    const sp = h('div', { class: 'src-chips spoilers', hidden: true }, ...spoilers.map((x) => chip(x.name, pct(x.rank))));
+    const btn = h('button', { type: 'button', class: 'btn text small', onclick: () => { sp.hidden = !sp.hidden; } }, icon('eye'), t('showSpoilers', { n: localDigits(spoilers.length) }));
+    all.append(h('div', { class: 'tag-group' }, btn, sp));
+  }
+  // (At first, the best fitting few; all of them, in their kinds, a tap away.)
+  const top = h('div', { class: 'src-chips top-tags' }, ...tags.slice(0, 6).map((x) => chip(x.name)));
+  const more = h('button', { type: 'button', class: 'btn text small tags-more' }, t('tagsAll', { n: localDigits(tags.length + spoilers.length) }));
+  more.addEventListener('click', () => { const open = all.hidden; all.hidden = !open; top.hidden = open; more.textContent = open ? t('tagsFewer') : t('tagsAll', { n: localDigits(tags.length + spoilers.length) }); });
+  box.append(top, all, more);
+  return box;
+}
+
 function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
   const files = b.files ?? [];
   const runKey = `${src.id}|${b.id}`;
@@ -751,8 +781,8 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
-      // (Its genres and tags: a tap searches the shelf for the others like it.)
-      b.genres?.length ? h('div', { class: 'src-chips genre-chips' }, ...b.genres.map((g) => h('button', { type: 'button', class: 'src-chip genre', onclick: () => navigate(path(src.id, { q: g })) }, g))) : null,
+      // (Its genres and every tag, arranged: a tap searches the shelf for the others like it.)
+      b.genres?.length || b.tagList?.length ? tagsBlock(src, b) : null,
       h('div', { class: 'series-actions' }, next, btn, seriesRefButton(src.id, location.hash.replace(/^#/, ''), b.title, () => b.author || byline.textContent || undefined, () => cover.querySelector('img')), trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
@@ -1063,23 +1093,100 @@ function signInNote(): HTMLElement {
     h('a', { class: 'btn small', href: 'https://shamela.link/register', target: '_blank', rel: 'noopener' }, icon('external'), t('shamelaLinkRegister')));
 }
 
-/** The Mihon-like filter sheet: every filter the source offers, applied on «Done». */
+/** The filter sheet, as Mihon's and the manga sources' are: Reset and Filter on top; each filter a section
+ *  that folds (its choices counted on its title); a sort's chosen order turned round by a second tap (its
+ *  arrow); a set of choices as boxes to tick — some to tick twice, to leave a choice out (✕) — and a long one
+ *  (tags) searchable, in sections by first letter. Applied on «Filter». */
 function filterSheet(src: Source, current: FilterValues, apply: (v: FilterValues) => void): void {
   const sh = openSheet(t('filters'), t('close'));
-  const vals: FilterValues = { ...current };
+  sh.el.classList.add('filter-sheet');
+  let vals: FilterValues = { ...current };
   const defs = src.filters();
-  if (!defs.length) sh.body.append(h('p', { class: 'hint' }, t('noFilters')));
+  const list = h('div', { class: 'fs-list' });
+  const draw = () => list.replaceChildren(...defs.map(row));
+  const bar = h('div', { class: 'fs-bar' },
+    h('button', { type: 'button', class: 'btn text', onclick: () => { vals = {}; for (const f of defs) vals[f.id] = f.value; draw(); } }, t('resetFilters')),
+    h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); apply(vals); } }, icon('check'), t('filterApply')));
+  if (!defs.length) { sh.body.append(h('p', { class: 'hint' }, t('noFilters'))); return; }
+  sh.body.append(bar, list);
+  /** A section that folds: its title (with what is chosen in it, briefly), its body. */
+  const fold = (label: string, summary: () => string, body: () => HTMLElement, open: boolean): HTMLElement => {
+    const sum = h('small', { class: 'fs-sum', dir: 'auto' }, summary());
+    const head = h('button', { type: 'button', class: 'fs-head', 'aria-expanded': String(open) }, h('span', { class: 'fs-title', dir: 'auto' }, label), sum, icon('chevronDown'));
+    const sec = h('section', { class: 'fs-sec' + (open ? ' open' : '') }, head);
+    let made: HTMLElement | null = null;
+    const show = (on: boolean) => { sec.classList.toggle('open', on); head.setAttribute('aria-expanded', String(on)); if (on && !made) { made = body(); sec.append(made); } if (made) made.hidden = !on; };
+    head.addEventListener('click', () => show(!sec.classList.contains('open')));
+    if (open) show(true);
+    (sec as HTMLElement & { refresh?: () => void }).refresh = () => { sum.textContent = summary(); };
+    return sec;
+  };
   const row = (f: SourceFilter): HTMLElement => {
     if (f.kind === 'toggle') return h('label', { class: 'switch-row' }, h('span', { dir: 'auto' }, f.label), h('input', { type: 'checkbox', checked: vals[f.id] !== false && vals[f.id] !== undefined ? !!vals[f.id] : f.value, onchange: (e: Event) => { vals[f.id] = (e.target as HTMLInputElement).checked; } }));
     if (f.kind === 'text') return h('label', { class: 'field' }, h('span', { dir: 'auto' }, f.label), h('input', { type: 'text', value: String(vals[f.id] ?? ''), placeholder: f.placeholder ?? '', dir: 'auto', oninput: (e: Event) => { vals[f.id] = (e.target as HTMLInputElement).value; } }));
-    if (f.kind === 'multi') return h('div', { class: 'field' }, h('span', { dir: 'auto' }, f.label), h('div', { class: 'folder-chips' }, ...f.options.map((o) => { const on = () => ((vals[f.id] as string[]) ?? []).includes(o.value); const b = h('button', { type: 'button', class: 'chip' + (on() ? ' on' : ''), onclick: () => { const cur = (vals[f.id] as string[]) ?? []; vals[f.id] = on() ? cur.filter((x) => x !== o.value) : [...cur, o.value]; b.classList.toggle('on', on()); } }, h('span', { dir: 'auto' }, o.label)); return b; })));
+    if (f.kind === 'sort') {
+      const cur = () => String(vals[f.id] ?? f.value);
+      let sec: HTMLElement & { refresh?: () => void };
+      const body = () => {
+        const box = h('div', { class: 'fs-sort' });
+        const paint = () => box.replaceChildren(...f.options.map((o) => {
+          const [v, rev] = cur().split(':'); const on = v === o.value;
+          return h('button', { type: 'button', class: 'fs-opt' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => { vals[f.id] = on && f.reversible ? (rev ? o.value : `${o.value}:rev`) : o.value; paint(); sec.refresh?.(); } },
+            h('span', { class: 'fs-arrow' }, on ? icon(rev ? 'arrowUp' : 'arrowDown') : null), h('span', { dir: 'auto' }, o.label));
+        }));
+        paint(); return box;
+      };
+      sec = fold(f.label, () => { const [v, rev] = cur().split(':'); const o = f.options.find((x) => x.value === v); return o ? `${o.label}${rev ? ' ↑' : ''}` : ''; }, body, false);
+      return sec;
+    }
+    if (f.kind === 'multi') {
+      const get = () => ((vals[f.id] as string[]) ?? []);
+      const stateOf = (v: string) => (get().includes(v) ? 1 : get().includes(`!${v}`) ? 2 : 0);
+      const summary = () => { const inc = get().filter((x) => !x.startsWith('!')).length, exc = get().length - inc; return [inc ? (f.tri ? t('filterIncluded', { n: localDigits(inc) }) : localDigits(inc)) : '', exc ? t('filterExcluded', { n: localDigits(exc) }) : ''].filter(Boolean).join(' · '); };
+      let sec: HTMLElement & { refresh?: () => void };
+      const optRow = (o: { value: string; label: string }) => {
+        const boxEl = h('span', { class: 'fs-box' });
+        const paint = () => { const st = stateOf(o.value); boxEl.className = `fs-box${st === 1 ? ' on' : st === 2 ? ' off' : ''}`; boxEl.replaceChildren(st === 1 ? icon('check') : st === 2 ? icon('close') : ''); b.setAttribute('aria-checked', st === 1 ? 'true' : st === 2 ? 'mixed' : 'false'); };
+        const b = h('button', { type: 'button', role: 'checkbox', class: 'fs-opt', onclick: () => {
+          const st = stateOf(o.value); const rest = get().filter((x) => x !== o.value && x !== `!${o.value}`);
+          vals[f.id] = st === 0 ? [...rest, o.value] : st === 1 && f.tri ? [...rest, `!${o.value}`] : rest;
+          paint(); sec.refresh?.();
+        } }, boxEl, h('span', { dir: 'auto' }, o.label));
+        b.dataset.q = o.label.toLowerCase();
+        paint(); return b;
+      };
+      const body = () => {
+        const wrap = h('div', { class: 'fs-multi' });
+        const rows = f.options.map(optRow);
+        let groups: HTMLElement[] = [];
+        if (f.alpha && f.options.length > 30) {
+          // (In sections by first letter: 0–9, A, B, …)
+          const by = new Map<string, HTMLElement[]>();
+          f.options.forEach((o, i) => { const c = o.label.trim()[0]?.toUpperCase() ?? '#'; const k = /[0-9]/.test(c) ? '0–9' : /[A-Z]/.test(c) ? c : '#'; (by.get(k) ?? by.set(k, []).get(k)!).push(rows[i]); });
+          groups = [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, rs]) => {
+            const g = h('details', { class: 'fs-letter' }, h('summary', null, k), ...rs);
+            return g;
+          });
+        }
+        if (f.options.length > 12) {
+          const find = h('input', { type: 'search', class: 'fs-find', placeholder: t('filterSearchOptions'), dir: 'auto' }) as HTMLInputElement;
+          find.addEventListener('input', () => {
+            const q = find.value.trim().toLowerCase();
+            for (const r of rows) r.hidden = !!q && !r.dataset.q!.includes(q);
+            for (const g of groups) { const any = [...g.querySelectorAll<HTMLElement>('.fs-opt')].some((r) => !r.hidden); g.hidden = !any; (g as HTMLDetailsElement).open = !!q && any; }
+          });
+          wrap.append(find);
+        }
+        wrap.append(...(groups.length ? groups : rows));
+        return wrap;
+      };
+      sec = fold(f.label, summary, body, false);
+      return sec;
+    }
     const opts = f.options.map((o): [string, string] => [o.value, o.label]);
     return h('div', { class: 'field' }, h('span', { dir: 'auto' }, f.label), pickButton(f.label, opts, String(vals[f.id] ?? f.value), (v) => { vals[f.id] = v; }, t('close')));
   };
-  sh.body.append(...defs.map(row));
-  sh.actions.append(
-    h('button', { type: 'button', class: 'btn', onclick: () => { for (const f of defs) vals[f.id] = f.value; sh.close(); apply(vals); } }, t('resetFilters')),
-    h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); apply(vals); } }, icon('check'), t('done')));
+  draw();
 }
 
 /** An extension's own settings (a site address to change, a switch…), kept in its storage. */
