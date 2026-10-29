@@ -5,6 +5,7 @@ import type { FlowHandler, FlowRender, TocItem } from './types';
 import type { WebNovel } from '../sources/ext/source';
 import { db } from '../db';
 import { t } from '../i18n';
+import { badChapter } from '../sources/chapterhealth';
 
 const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
 
@@ -19,7 +20,10 @@ export const webnovelHandler: FlowHandler = {
     const info = JSON.parse(await file.text()) as WebNovel;
     const rtl = /^(ar|fa|ur|he)/i.test(info.lang ?? '') || /[؀-ۿ]/.test(info.title);
     const root = el('div', 'kr-content kr-webnovel'); root.dir = rtl ? 'rtl' : 'ltr'; if (info.lang) root.lang = info.lang;
-    const content: Record<string, { html: string; at: number }> = info.content ?? {};
+    const content: Record<string, { html: string; at: number }> = { ...(info.content ?? {}) };
+    // (A chapter kept as a site's check page or as nothing — by an older version — is let go and fetched again.)
+    const dropped = new Set<string>();
+    for (const [p, v] of Object.entries(content)) if (badChapter(v.html)) { delete content[p]; dropped.add(p); }
     const bodies = new Map<string, HTMLElement>();
     const tocItems: TocItem[] = [];
     // The card first — the title, the author, the summary, the tags — at the head of the first chapter's
@@ -60,7 +64,7 @@ export const webnovelHandler: FlowHandler = {
         if (++dirty >= 3 || Object.keys(content).length === info.chapters.length) { dirty = 0; void save(); }
       } catch (e) {
         const err = body.querySelector('.kr-page-wait');
-        if (err) { const kind = (e as { kind?: string }).kind; err.textContent = kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'blocked' ? t('sourceBlockedShort') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }
+        if (err) { const kind = (e as { kind?: string }).kind; err.textContent = (e as Error).message === 'emptyChapter' ? t('chapterEmpty') : kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'blocked' ? t('sourceBlockedShort') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }
       } finally { running--; void pump(); }
     };
     const save = async () => {
@@ -68,7 +72,7 @@ export const webnovelHandler: FlowHandler = {
       try {
         const { saveNovelFile } = await import('../sources/ext/source');
         const book = await db.getBook(ctx.bookId); if (!book) return;
-        await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }));
+        await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all }; });
       } catch { /* kept for this reading */ }
     };
     if (online) {

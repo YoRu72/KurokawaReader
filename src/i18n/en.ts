@@ -1477,6 +1477,7 @@ export const en = {
   settingsExtUpdates: '{n} extension updates',
   chapterNeedsCheck: 'The site asks for a browser check — open the novel from its page in Sources.',
   chapterOffline: 'No connection — the chapter could not be fetched.',
+  chapterEmpty: 'The site gave this chapter with no text. It will be asked for again next time.',
   chapterFailed: 'The chapter could not be fetched: {error}',
   pageNeedsCheck: 'The site asks for a browser check — open it from the book’s page in Sources.',
   pageOffline: 'No connection — the page could not be fetched.',

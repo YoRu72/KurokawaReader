@@ -2,6 +2,7 @@
 // as the filter sheet, a novel's page with its chapters — and the novel as a book of the library: a JSON
 // file holding the card and the chapter list, filled chapter by chapter as it is read (sources/ext/… and
 // formats/webnovel.ts), or fetched whole for offline.
+import { badChapter } from '../chapterhealth';
 import { db, uid, type Book } from '../../db';
 import { listRepos, pluginCode, pluginKey, langLabel, type Repo, type ExtItem } from '../repos';
 import { loadPlugin, callPlugin, isLoaded, withQuiet } from './sandbox';
@@ -235,7 +236,12 @@ export async function fetchChapter(h: Handle, novel: WebNovel, chapter: WebChapt
   else html = await callPlugin<string>(h.key, 'getHtmlContent', novel.title, chapter.path);
   if (typeof html !== 'string') html = String(html ?? '');
   if (html.length >= 2 && html.startsWith('"') && html.endsWith('"')) { try { html = JSON.parse(html); } catch { /* as is */ } }
-  return cleanChapter(html, h.item.site);
+  const out = cleanChapter(html, h.item.site);
+  // (A check page or nothing in place of the chapter is not kept: see chapterhealth.)
+  const bad = badChapter(out);
+  if (bad === 'check') throw new SourceError('cloudflare', 'cloudflare');
+  if (bad === 'empty') throw new SourceError('emptyChapter', 'parse');
+  return out;
 }
 
 /** The chapter's HTML with nothing but text, its marks, images and links: scripts, styles, forms, frames gone;
@@ -320,6 +326,9 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   const content = { ...(info.content ?? {}) };
   // (Some chapters only, when asked — the ones picked in the list, as Mihon fetches picked chapters.)
   const scope = only ? info.chapters.filter((c) => only.has(c.path)) : info.chapters;
+  // (A chapter kept as a check page or as nothing is fetched again.)
+  const dropped = new Set<string>();
+  for (const c of scope) if (content[c.path] && badChapter(content[c.path].html)) { delete content[c.path]; dropped.add(c.path); }
   const wanted = scope.filter((c) => !content[c.path]);
   let done = scope.length - wanted.length; onProgress(done, scope.length);
   let failed = 0; let since = 0;
@@ -333,7 +342,7 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   }, live);
   const complete = wanted.every((c) => content[c.path]) && (!live || live());
   const whole = complete && info.chapters.every((c) => content[c.path]);
-  await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content }, fetchedAt: whole ? Date.now() : cur.fetchedAt }));
+  await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all, fetchedAt: whole ? Date.now() : cur.fetchedAt }; });
   if (failed && !complete) throw new SourceError('incomplete', 'http');
   return complete;
 }
