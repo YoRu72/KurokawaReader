@@ -339,15 +339,30 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   for (const c of scope) if (content[c.path] && badChapter(content[c.path].html)) { delete content[c.path]; dropped.add(c.path); }
   const wanted = scope.filter((c) => !content[c.path]);
   let done = scope.length - wanted.length; onProgress(done, scope.length);
-  let failed = 0; let since = 0;
+  let failed = 0; let since = 0; let savedAt = Date.now();
   const pace = paceOf(h.key);
+  // (What was fetched is written to the novel's file now and then — the whole file each time, so less often as
+  // it grows: after a quarter more of what it holds, or a minute. Written out of the way of the fetching, one
+  // write at a time.)
+  let saving: Promise<unknown> = Promise.resolve();
+  const saveSoon = () => { saving = saving.then(() => saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }))).catch(() => undefined); };
   await pool(wanted, pace.at, async (c) => {
-    try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; }
-    catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'blocked' || (e as SourceError).kind === 'offline') throw e; }
+    for (let attempt = 0; ; attempt++) {
+      try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; break; }
+      catch (e) {
+        const kind = (e as SourceError).kind;
+        if (kind === 'cloudflare' || kind === 'blocked' || kind === 'offline') throw e;
+        // (Too many at once for the site: a pause, then once more — as the site asks.)
+        if ((kind === 'rate' || (e as SourceError).status === 503) && attempt < 2 && (!live || live())) { await new Promise((r) => setTimeout(r, 4000 * (attempt + 1))); continue; }
+        failed++; break;
+      }
+    }
     onProgress(++done, scope.length);
-    if (++since >= 10) { since = 0; await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } })); }
+    const have = Object.keys(content).length;
+    if (++since >= Math.max(10, Math.ceil(have / 4)) || Date.now() - savedAt > 60000) { since = 0; savedAt = Date.now(); saveSoon(); }
     if (pace.pause && (!live || live())) await new Promise((r) => setTimeout(r, pace.pause));
   }, live);
+  await saving;
   const complete = wanted.every((c) => content[c.path]) && (!live || live());
   const whole = complete && info.chapters.every((c) => content[c.path]);
   await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all, fetchedAt: whole ? Date.now() : cur.fetchedAt }; });
