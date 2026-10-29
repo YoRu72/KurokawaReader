@@ -115,6 +115,7 @@ function lazy(make: () => Promise<HTMLElement & { dispose?: () => void }>, srcId
 /* ---------- one search, every source (LNReader's and Mihon's global search) ---------- */
 const ALL = '~all';
 function globalSearchView(q0: string): HTMLElement & { dispose?: () => void } {
+  newCoverScreen();
   const body = h('div', { class: 'library-body global-search' });
   const input = h('input', { type: 'search', class: 'src-search', value: q0, placeholder: t('searchAllSources'), dir: 'auto', enterkeyhint: 'search' }) as HTMLInputElement;
   const form = h('form', { class: 'gs-form', onsubmit: (e: Event) => { e.preventDefault(); const q = input.value.trim(); if (q) navigate(path(ALL, { q }), true); } }, input);
@@ -754,6 +755,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
 
 /* ---------- browsing a source ---------- */
 function browseView(src: Source, q: string, shelf: string | undefined, tags: string[], hnd?: Handle): HTMLElement & { dispose?: () => void } {
+  newCoverScreen();
   let filters = filterValues(src);
   const key = `${src.id}|${q}|${shelf ?? ''}|${tags.join(',')}|${JSON.stringify(filters)}`;
   const grid = h('div', { class: 'src-grid' });
@@ -788,7 +790,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // What a folder's items need: the library's books from this source, the rows to tell when one arrives,
   // and covers and contents read as their cards come near (a few at a time, the ones scrolled past dropped).
   const lib = new Map<string, string>(); const rows = new Map<string, (bookId: string) => void>();
-  const lazy = new WeakMap<Element, () => Promise<void>>(); const waiting = new WeakMap<Element, () => void>();
+  const lazy = new WeakMap<Element, () => Promise<void>>(); const waiting = new WeakMap<Element, (() => void) & { now?(): void }>();
   // (Those on the screen go first; those only near it wait their turn.)
   const lazyIo = new IntersectionObserver((es) => {
     for (const e of es) {
@@ -799,7 +801,9 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       } else { waiting.get(e.target)?.(); waiting.delete(e.target); }
     }
   }, { rootMargin: '600px 0px' });
-  const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); };
+  // (A card queued while near that has come onto the screen goes to the front of the queue.)
+  const nowIo = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) waiting.get(e.target)?.now?.(); }, { rootMargin: '0px' });
+  const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); nowIo.observe(el); };
   // (The page scrolls in its body: that is the place kept for the way back.)
   // (A folder shown from the index that the site says has changed since: drawn again, in place.)
   let stale = false;
@@ -814,7 +818,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     if (loading) stale = true; else redraw();
   };
   window.addEventListener('kr:shelf-changed', changed);
-  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
+  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); nowIo.disconnect(); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
   // (A web folder's own address, for "Open this folder on the site".)
   const here = src.id.startsWith('dir:') && /^https?:\/\//i.test(src.site ?? '') ? `${src.site.replace(/\/?$/, '/')}${shelf && !shelf.startsWith('::') ? `${shelf.replace(/^\/+|\/+$/g, '')}/` : ''}` : undefined;
 
@@ -1005,10 +1009,11 @@ function viaFetcher(url: string, hnd: Handle): Promise<string> {
   fetched.set(url, p);
   return p;
 }
-let firstCovers = 0; let firstCoversAt = 0;
+/** The covers of a view's first screen are asked first (eager, high priority); the ones after — the next pages
+ *  as the shelf is scrolled — lazily, so pictures far below never hold up the ones being looked at. */
+let firstCovers = 0;
+export const newCoverScreen = (): void => { firstCovers = 0; };
 function coverImg(url: string, hnd?: Handle): HTMLElement {
-  // (The first screen's covers asked first; the rest when the browser gets to them.)
-  const now = performance.now(); if (now - firstCoversAt > 1500) { firstCovers = 0; firstCoversAt = now; }
   const early = firstCovers++ < 12;
   const img = h('img', { class: 'cv-img', alt: '', loading: early ? 'eager' : 'lazy', decoding: 'async', fetchpriority: early ? 'high' : 'auto', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
   img.addEventListener('load', () => img.classList.add('loaded'), { once: true });

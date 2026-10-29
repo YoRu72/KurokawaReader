@@ -369,22 +369,34 @@ function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
 }
 /** The worker that makes covers small (and inflates zip entries) off the main thread, when the platform has
  *  pictures in workers (OffscreenCanvas); the shelf keeps scrolling smoothly while covers are decoded. */
-let worker: Worker | null | undefined;
-let workSeq = 0; const workWaiting = new Map<number, { ok: (v: { blob?: Blob; bytes?: ArrayBuffer }) => void; fail: (e: Error) => void }>();
-function thumbWorker(): Worker | null {
-  if (worker !== undefined) return worker;
-  try {
-    if (typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') { worker = null; return null; }
-    worker = new Worker(new URL('./thumbworker.js', import.meta.url), { type: 'module' });
-    worker.onmessage = (e: MessageEvent<{ id: number; blob?: Blob; bytes?: ArrayBuffer; error?: string }>) => { const w = workWaiting.get(e.data.id); if (!w) return; workWaiting.delete(e.data.id); if (e.data.error) w.fail(new Error(e.data.error)); else w.ok(e.data); };
-    worker.onerror = () => { for (const w of workWaiting.values()) w.fail(new Error('worker')); workWaiting.clear(); worker?.terminate(); worker = null; };
-  } catch { worker = null; }
-  return worker;
+// (Two or three of them on a phone with the cores for it: a shelf asks for six covers at once, and one worker
+// decoding them one after another is what made the covers come slower and slower as a shelf was scrolled.)
+let workers: { w: Worker; busy: number }[] | null | undefined;
+let workSeq = 0; const workWaiting = new Map<number, { ok: (v: { blob?: Blob; bytes?: ArrayBuffer }) => void; fail: (e: Error) => void; at: { busy: number } }>();
+function thumbWorker(): { w: Worker; busy: number } | null {
+  if (workers === undefined) {
+    workers = null;
+    try {
+      if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined') {
+        const n = Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency ?? 2) / 2)));
+        workers = [];
+        for (let i = 0; i < n; i++) {
+          const w = new Worker(new URL('./thumbworker.js', import.meta.url), { type: 'module' });
+          const slot = { w, busy: 0 };
+          w.onmessage = (e: MessageEvent<{ id: number; blob?: Blob; bytes?: ArrayBuffer; error?: string }>) => { const x = workWaiting.get(e.data.id); if (!x) return; workWaiting.delete(e.data.id); x.at.busy--; if (e.data.error) x.fail(new Error(e.data.error)); else x.ok(e.data); };
+          w.onerror = () => { for (const [id, x] of workWaiting) if (x.at === slot) { workWaiting.delete(id); x.fail(new Error('worker')); } w.terminate(); if (workers) workers = workers.filter((s) => s !== slot); if (!workers?.length) workers = null; };
+          workers.push(slot);
+        }
+      }
+    } catch { workers = null; }
+  }
+  if (!workers?.length) return null;
+  return workers.reduce((a, b) => (b.busy < a.busy ? b : a));
 }
 function inWorker(msg: Record<string, unknown>, transfer: ArrayBuffer[]): Promise<{ blob?: Blob; bytes?: ArrayBuffer }> | null {
-  const w = thumbWorker(); if (!w) return null;
-  const id = ++workSeq;
-  return new Promise((ok, fail) => { workWaiting.set(id, { ok, fail }); w.postMessage({ id, ...msg }, transfer); });
+  const slot = thumbWorker(); if (!slot) return null;
+  const id = ++workSeq; slot.busy++;
+  return new Promise((ok, fail) => { workWaiting.set(id, { ok, fail, at: slot }); slot.w.postMessage({ id, ...msg }, transfer); });
 }
 async function thumb(bytes: Uint8Array, type: string, height = THUMB_H): Promise<Blob | null> {
   const mime = /svg/.test(type) ? 'image/svg+xml' : type;
@@ -453,7 +465,7 @@ function store(key: string, p: Omit<Peek, 'cover'>, cover?: Blob | null): Peek {
   return shown;
 }
 const running = new Map<string, Promise<Peek | null>>();
-const INDEX = 'peek:index'; const LIMIT = 1800;
+const INDEX = 'peek:index'; const LIMIT = 4000;
 let index: [string, number][] | null = null; let saving = 0;
 async function keep(key: string, s: Stored): Promise<void> {
   try {
@@ -531,17 +543,26 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
 type Job = { run: () => Promise<void>; started: boolean };
 const queue: Job[] = []; let active = 0;
 const AT_ONCE = 6;
-/** Run `fn` when a turn comes (five at a time; one on the screen now before those only near it); the returned
- *  function takes it back out of the queue if it has not started (an element scrolled away). */
-export function schedule(fn: () => Promise<void>, now = false): () => void {
+/** How long a job keeps its turn: one still waiting after that (a slow server, a check on the way) goes on, but
+ *  out of the count, so the covers behind it do not all wait for it. */
+const HOLD = 12000;
+/** Run `fn` when a turn comes (six at a time; one on the screen now before those only near it); the returned
+ *  function takes it back out of the queue if it has not started (an element scrolled away), and its `now()`
+ *  moves it to the front (an element come onto the screen while it waited). */
+export function schedule(fn: () => Promise<void>, now = false): (() => void) & { now(): void } {
   const job: Job = { run: fn, started: false };
   if (now) queue.unshift(job); else queue.push(job);
   pump();
-  return () => { if (!job.started) { const i = queue.indexOf(job); if (i >= 0) queue.splice(i, 1); } };
+  const cancel = (() => { if (!job.started) { const i = queue.indexOf(job); if (i >= 0) queue.splice(i, 1); } }) as (() => void) & { now(): void };
+  cancel.now = () => { if (job.started) return; const i = queue.indexOf(job); if (i > 0) { queue.splice(i, 1); queue.unshift(job); } };
+  return cancel;
 }
 function pump(): void {
   while (active < AT_ONCE && queue.length) {
     const job = queue.shift()!; job.started = true; active++;
-    void job.run().catch(() => undefined).finally(() => { active--; pump(); });
+    let released = false;
+    const release = () => { if (released) return; released = true; active--; pump(); };
+    const timer = setTimeout(release, HOLD);
+    void job.run().catch(() => undefined).finally(() => { clearTimeout(timer); release(); });
   }
 }
