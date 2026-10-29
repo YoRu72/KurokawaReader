@@ -45,7 +45,7 @@ export const webnovelHandler: FlowHandler = {
       tocItems.push({ label: c.name || `${i + 1}`, anchor: i === 0 ? h2.id : sec.id, depth: 0 });
     });
     // Chapters still on the site are fetched as they come near, two at a time, nearest first.
-    let gone = false; const wanted = new Set<number>(); let running = 0; let io: IntersectionObserver | null = null; let dirty = 0;
+    let gone = false; const wanted = new Set<number>(); let running = 0; let io: IntersectionObserver | null = null; let dirty = 0; let savedAt = Date.now();
     const online = !!ctx.bookId && Object.keys(content).length < info.chapters.length;
     // A chapter asked for brings the two after it (hidden or not: a reader going chapter by chapter finds the
     // next one already here).
@@ -61,7 +61,9 @@ export const webnovelHandler: FlowHandler = {
         if (gone) return;
         content[c.path] = { html, at: Date.now() }; fill(body, content[c.path]);
         root.dispatchEvent(new CustomEvent('kr-content-changed', { bubbles: true }));
-        if (++dirty >= 3 || Object.keys(content).length === info.chapters.length) { dirty = 0; void save(); }
+        // (The whole file is written each time: less often as it grows — a tenth more of what it holds, or a minute.)
+        const have = Object.keys(content).length;
+        if (++dirty >= Math.max(3, Math.ceil(have / 10)) || have === info.chapters.length || Date.now() - savedAt > 60000) { dirty = 0; savedAt = Date.now(); void save(); }
       } catch (e) {
         const err = body.querySelector('.kr-page-wait');
         if (err) { const kind = (e as { kind?: string }).kind; err.textContent = (e as Error).message === 'emptyChapter' ? t('chapterEmpty') : kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'blocked' ? t('sourceBlockedShort') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }

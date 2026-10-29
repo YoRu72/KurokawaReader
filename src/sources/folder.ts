@@ -676,7 +676,9 @@ export function folderSource(repo: Repo): Source {
       const all = seriesOf(idx); const pub = byPublisher(f);
       const inside = (s: SeriesInfo) => !rel || s.rel === rel.split('/')[0];
       const gen = byGenre(f);
-      const hay = (s: SeriesInfo) => { const tg = tagsOf(s.rel); return norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); };
+      // (Each series' words made once for the search, not once for every word asked.)
+      const hays = new Map<string, string>();
+      const hay = (s: SeriesInfo) => { let v = hays.get(s.rel); if (v === undefined) { const tg = tagsOf(s.rel); v = norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); hays.set(s.rel, v); } return v; };
       const series = [...all.values()].filter((s) => inside(s) && pub(s) && gen(s) && words.every((w) => hay(s).includes(w)));
       const items: SourceBook[] = sortSeries(series, f).map((s) => seriesCard(s, f));
       const vols: Vol[] = [];

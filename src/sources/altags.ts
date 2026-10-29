@@ -75,7 +75,7 @@ async function run(repoKey: string, l: Line): Promise<void> {
   l.running = true;
   try {
     const k = await loadTags(repoKey);
-    const BATCH = 8;
+    const BATCH = 8; let unsaved = 0;
     while (l.order.length) {
       const batch = l.order.slice(0, BATCH).filter((rel) => due(k, rel));
       if (!batch.length) { l.order.splice(0, BATCH); continue; }
@@ -92,11 +92,13 @@ async function run(repoKey: string, l: Line): Promise<void> {
         l.waiting.delete(rel);
       });
       const done = new Set(batch); l.order = l.order.filter((r) => !done.has(r));
-      await db.setMeta(KEY(repoKey), k).catch(() => undefined);
+      // (Written to the device every few answers and at the end — the whole folder's tags each time.)
+      if (++unsaved >= 5 || !l.order.length) { unsaved = 0; await db.setMeta(KEY(repoKey), k).catch(() => undefined); }
       if (learnt.length) for (const fn of l.changed) { try { fn(learnt); } catch { /* a page gone */ } }
       if (l.order.length) await new Promise((r) => setTimeout(r, (globalThis as { krTagsPace?: number }).krTagsPace ?? 2100));
     }
   } finally {
+    void db.setMeta(KEY(repoKey), await loadTags(repoKey)).catch(() => undefined);
     l.running = false;
     // (Those still waiting when the line stopped — offline — answered with nothing for now.)
     if (!l.order.length) for (const [rel, oks] of l.waiting) { for (const ok of oks) ok(null); l.waiting.delete(rel); }
