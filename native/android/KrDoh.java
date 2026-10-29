@@ -48,7 +48,7 @@ final class KrDoh {
 
     private static final class Entry { final InetAddress[] ips; final long until; Entry(InetAddress[] ips, long until) { this.ips = ips; this.until = until; } }
     private static final Map<String, Entry> cache = new ConcurrentHashMap<>();
-    static void forget() { cache.clear(); }
+    static void forget() { cache.clear(); neededAt.clear(); }
 
     /** The addresses of `host`, asked of the resolver (kept for their time to live, at least a minute). */
     static InetAddress[] resolve(String host) throws IOException {
@@ -75,6 +75,47 @@ final class KrDoh {
             } catch (IOException ex) { last = ex; }
         }
         throw last != null ? last : new java.net.UnknownHostException(host);
+    }
+
+    /** For the web views: whether `host` needs the resolver at all — the network's DNS gives it no address, or
+     *  one that is no site's (0.0.0.0, the device itself, a home network's), or addresses none of which the
+     *  resolver gives (a provider's page put in the site's place). A site the network's DNS gives as it is is left
+     *  to the web view's own requests: a site's check (Cloudflare) wants the browser's own connection, and the
+     *  clearance it gives holds for that connection only. Kept ten minutes a name. */
+    private static final Map<String, long[]> neededAt = new ConcurrentHashMap<>();
+    static boolean needed(String host) {
+        if (!on() || isLiteral(host)) return false;
+        String key = provider + "|" + host.toLowerCase();
+        long[] had = neededAt.get(key);
+        if (had != null && had[0] > System.currentTimeMillis()) return had[1] == 1;
+        boolean need;
+        InetAddress[] sys;
+        try { sys = InetAddress.getAllByName(host); } catch (IOException e) { sys = new InetAddress[0]; }
+        boolean usable = false;
+        for (InetAddress a : sys) if (!(a.isAnyLocalAddress() || a.isLoopbackAddress() || a.isSiteLocalAddress() || a.isLinkLocalAddress())) usable = true;
+        if (!usable) need = true;
+        else {
+            try {
+                InetAddress[] doh = resolve(host);
+                java.util.Set<String> mine = new java.util.HashSet<>();
+                for (InetAddress a : doh) mine.add(a.getHostAddress());
+                boolean shared = false;
+                for (InetAddress a : sys) if (mine.contains(a.getHostAddress())) shared = true;
+                // (Addresses that differ but lie in the same network — a CDN answering each resolver its own — are
+                // the site's all the same.)
+                if (!shared) for (InetAddress a : sys) for (InetAddress b : doh) if (sameNet(a, b)) shared = true;
+                need = !shared;
+            } catch (IOException e) { need = false; }
+        }
+        neededAt.put(key, new long[] { System.currentTimeMillis() + 600_000L, need ? 1 : 0 });
+        return need;
+    }
+    private static boolean sameNet(InetAddress a, InetAddress b) {
+        byte[] x = a.getAddress(), y = b.getAddress();
+        if (x.length != y.length) return false;
+        int n = x.length == 4 ? 2 : 4;   // (a /16 of IPv4, a /32 of IPv6)
+        for (int i = 0; i < n; i++) if (x[i] != y[i]) return false;
+        return true;
     }
 
     private static boolean isLiteral(String host) { return host.matches("\\d+\\.\\d+\\.\\d+\\.\\d+") || host.contains(":"); }

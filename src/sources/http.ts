@@ -140,7 +140,10 @@ export async function solveChallenge(url: string, quiet = false, waited = false)
         if (hid?.blocked) { refused.set(host, hid.title ?? ''); return false; }
       }
       if (quiet || (declined.get(host) ?? 0) > Date.now()) return false;
-      // (A clearance gone stale is dropped first, so the site gives a check of its own to pass.)
+      // (A clearance gone stale is dropped first, so the site gives a check of its own to pass — and the app's own
+      // window on the site closed, so its check does not run beside the reader's, the two undoing each other,
+      // nor keep the pages' shared renderer busy while the reader's page is drawn.)
+      await resetBrowser(url);
       const vis = await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => null);
       if (vis?.blocked && !vis.passed) refused.set(host, vis.title ?? '');
       if (!vis?.passed) { declined.set(host, Date.now() + 90_000); return false; }
@@ -158,7 +161,7 @@ export async function solveChallenge(url: string, quiet = false, waited = false)
 export async function passChallenge(url: string): Promise<void> {
   declined.delete(hostOf(url)); refused.delete(hostOf(url));
   const b = browser();
-  if (b?.check) { await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => undefined); await resetBrowser(url); return; }
+  if (b?.check) { await resetBrowser(url); await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => undefined); await resetBrowser(url); return; }
   window.open(url, '_blank', 'noopener');
 }
 
@@ -167,6 +170,7 @@ export async function passChallenge(url: string): Promise<void> {
 export async function openSite(url: string): Promise<void> {
   const b = browser();
   if (b?.check) {
+    await resetBrowser(url);
     await b.check({ url, timeout: 1800000, stay: true, message: t('siteInApp', { site: hostOf(url) }), done: t('checkClose'), reload: t('checkReload') }).catch(() => undefined);
     declined.delete(hostOf(url)); refused.delete(hostOf(url));
     await resetBrowser(url);

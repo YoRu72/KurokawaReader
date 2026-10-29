@@ -28,7 +28,11 @@ public class Run {
         HttpURLConnection h = KrDoh.open(new URL("https://kr.test:" + a[1] + "/hop"));
         boolean red = h.getResponseCode() == 302 && "/end".equals(h.getHeaderField("Location"));
         System.out.println((red ? "ok   " : "FAIL ") + "redirects left to the caller (followed by their names): " + h.getResponseCode()); if (!red) fails++;
+        boolean nd = KrDoh.needed("kr.test");
+        System.out.println((nd ? "ok   " : "FAIL ") + "a name the network's DNS does not know goes by the resolver in the web views"); if (!nd) fails++;
         KrDoh.provider = "off";
+        boolean off = !KrDoh.needed("kr.test");
+        System.out.println((off ? "ok   " : "FAIL ") + "…and nothing does with the resolver off"); if (!off) fails++;
         System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);
     }

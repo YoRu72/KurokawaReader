@@ -15,9 +15,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The app's web views with DNS over HTTPS (see KrDoh): while the reader has a resolver chosen, the pages' own
- * requests (GET: pages, pictures, scripts, styles) are made by the app, the site asked at the address the
- * resolver gave, and handed to the page — a site its network hides by name opens all the same. A request the
+ * The app's web views with DNS over HTTPS (see KrDoh): while the reader has a resolver chosen, the requests
+ * (GET: pages, pictures, scripts, styles) to a site the network's DNS hides are made by the app, the site asked
+ * at the address the resolver gave, and handed to the page — the site opens all the same. A request the
  * app cannot make for the page (a form sent, an error on the way) goes the web view's own way.
  */
 class KrDohWeb extends WebViewClient {
@@ -26,6 +26,9 @@ class KrDohWeb extends WebViewClient {
         if (!KrDoh.on()) return null;
         String scheme = req.getUrl() != null ? req.getUrl().getScheme() : null;
         if (!"GET".equalsIgnoreCase(req.getMethod()) || scheme == null || !(scheme.equals("http") || scheme.equals("https"))) return null;
+        // (Only a site the network's DNS hides: the others go the web view's own way — see KrDoh.needed.)
+        String host = req.getUrl().getHost();
+        if (host == null || !KrDoh.needed(host)) return null;
         try { return fetch(req); } catch (Exception e) { return null; }
     }
 
