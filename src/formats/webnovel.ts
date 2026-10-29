@@ -80,13 +80,15 @@ export const webnovelHandler: FlowHandler = {
       // (The first chapters straight away, before anything is scrolled.)
       const first = info.chapters.findIndex((c) => !content[c.path]); if (first >= 0 && first < 3) { want(first); void pump(); void pump(); }
     }
-    // A picture the site refuses to a bare request is fetched with the extension's headers.
+    // A picture the site refuses to a bare request is fetched with the extension's headers (its address let go
+    // with the book).
+    const made: string[] = [];
     root.addEventListener('error', (e) => {
       const img = e.target as HTMLImageElement; if (!(img instanceof HTMLImageElement) || img.dataset.retried) return;
       img.dataset.retried = '1';
-      void import('../sources/http').then(({ fetchBytes }) => fetchBytes(img.src, undefined, { headers: info.imageHeaders ?? { referer: info.url ?? '' } })).then((bytes) => { img.src = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer])); }).catch(() => { img.alt = img.alt || '✕'; });
+      void import('../sources/http').then(({ fetchBytes }) => fetchBytes(img.src, undefined, { headers: info.imageHeaders ?? { referer: info.url ?? '' } })).then((bytes) => { const u = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer])); made.push(u); img.src = u; }).catch(() => { img.alt = img.alt || '✕'; });
     }, true);
-    return { element: root, toc: tocItems, images: [], rtl, dispose: () => { gone = true; io?.disconnect(); if (online && dirty) void save(); } };
+    return { element: root, toc: tocItems, images: [], rtl, dispose: () => { gone = true; io?.disconnect(); if (online && dirty) void save(); for (const u of made) URL.revokeObjectURL(u); } };
   },
 };
 

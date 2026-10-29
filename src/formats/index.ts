@@ -1,6 +1,8 @@
 import type { Format } from '../db';
 import type { Handler, FlowHandler, BookMeta } from './types';
 import { titleFromFileName } from './types';
+import { detectFormat } from './detect';
+export { detectFormat, SUPPORTED_ACCEPT } from './detect';
 import { epubHandler } from './epub';
 import { docxHandler } from './docx';
 import { xlsxHandler, csvHandler } from './sheet';
@@ -25,36 +27,6 @@ export function prewarm(book: { id: string; format: Format }, getFile: () => Pro
     if (book.format === 'pdf') { void import('./pdf').then((m) => m.loadPdfjs()).catch(() => {}); return; }
     if (book.format === 'epub') void getFile().then((f) => { if (f) prewarmEpub(f, book.id); }).catch(() => {});
   });
-}
-
-const EXT: Record<string, Format> = {
-  epub: 'epub', pdf: 'pdf', docx: 'docx', docm: 'docx', dotx: 'docx', xlsx: 'xlsx', xlsm: 'xlsx', csv: 'csv', tsv: 'csv', pptx: 'pptx', ppsx: 'pptx',
-  txt: 'txt', text: 'txt', log: 'txt', md: 'md', markdown: 'md', html: 'html', htm: 'html', xhtml: 'html', fb2: 'fb2', odt: 'odt', cbz: 'cbz',
-  jpg: 'image', jpeg: 'image', png: 'image', gif: 'image', webp: 'image', avif: 'image', svg: 'image', bmp: 'image',
-  mobi: 'mobi', azw: 'mobi', azw3: 'mobi', kf8: 'mobi', prc: 'mobi',
-  apkg: 'anki', colpkg: 'anki',
-  mp3: 'audio', m4a: 'audio', m4b: 'audio', aac: 'audio', ogg: 'audio', oga: 'audio', opus: 'audio', flac: 'audio', wav: 'audio',
-};
-
-export function detectFormat(fileName: string, mime?: string): Format {
-  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
-  if (EXT[ext]) return EXT[ext];
-  if (mime) {
-    if (mime.includes('epub')) return 'epub';
-    if (mime === 'application/pdf') return 'pdf';
-    if (mime.includes('wordprocessingml')) return 'docx';
-    if (mime.includes('spreadsheetml')) return 'xlsx';
-    if (mime.includes('presentationml')) return 'pptx';
-    if (mime.startsWith('image/')) return 'image';
-    if (mime.startsWith('audio/')) return 'audio';
-    if (mime.includes('mobipocket') || mime.includes('kindle') || mime.includes('x-mobi8')) return 'mobi';
-    if (mime.includes('anki')) return 'anki';
-    if (mime === 'text/markdown') return 'md';
-    if (mime === 'text/html') return 'html';
-    if (mime === 'text/csv') return 'csv';
-    if (mime.startsWith('text/')) return 'txt';
-  }
-  return 'unknown';
 }
 
 /** Sniff the first bytes when the extension is missing or lying. */
@@ -122,4 +94,3 @@ export async function readMeta(file: Blob, fileName: string, format: Format): Pr
   }
 }
 
-export const SUPPORTED_ACCEPT = '.epub,.pdf,.docx,.docm,.xlsx,.xlsm,.csv,.tsv,.pptx,.ppsx,.txt,.md,.markdown,.html,.htm,.xhtml,.fb2,.odt,.cbz,.jpg,.jpeg,.png,.gif,.webp,.avif,.svg,.bmp,application/epub+zip,application/pdf,text/*,image/*,.mobi,.azw,.azw3,.kf8,.prc,.apkg,.colpkg,.mp3,.m4a,.m4b,.aac,.ogg,.oga,.opus,.flac,.wav,audio/*';

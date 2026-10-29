@@ -39,6 +39,23 @@ function filterValues(src: Source): FilterValues {
 }
 function saveFilters(src: Source, v: FilterValues): void { localStorage.setItem(`kr.src.${src.id}.filters`, JSON.stringify(v)); }
 
+/** How many of the library's books from a folder source lie under a shelf (any depth): counted once for all the
+ *  shelves when the library's list changes, not by a pass over it for every card. */
+const shelfCounts = new WeakMap<Map<string, string>, { size: number; counts: Map<string, number> }>();
+function inShelf(lib: Map<string, string>, shelf: string): number {
+  let c = shelfCounts.get(lib);
+  if (!c || c.size !== lib.size) {
+    const counts = new Map<string, number>();
+    for (const k of lib.keys()) {
+      if (!k.startsWith('f:')) continue;
+      const parts = k.slice(2).split('/');
+      for (let i = 1; i < parts.length; i++) { const pre = parts.slice(0, i).join('/'); counts.set(pre, (counts.get(pre) ?? 0) + 1); }
+    }
+    c = { size: lib.size, counts }; shelfCounts.set(lib, c);
+  }
+  return c.counts.get(shelf) ?? 0;
+}
+
 /* ---------- results kept for the way back ---------- */
 interface Cached { items: SourceBook[]; page: number; hasMore: boolean; tags: SourceTag[]; title?: string; scroll: number }
 const cache = new Map<string, Cached>();
@@ -902,7 +919,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
     if (b.look === 'folder' && b.openShelf !== undefined && src.folderCover) {
       // (The series' volumes in the library: counted on its card.)
-      const mine = [...lib.keys()].filter((k) => k.startsWith(`f:${b.openShelf}/`)).length;
+      const mine = inShelf(lib, b.openShelf);
       // (New volumes as they are now: a series seen since the shelf was drawn has none any more.)
       const fresh = src.freshNow?.(b.openShelf) ?? b.fresh ?? 0;
       const freshMark = () => (fresh ? h('span', { class: 'fresh-mark', title: t('notifyTitleVolumes') }, `+${localDigits(fresh)}`) : null);
@@ -934,6 +951,8 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
         ...(r.empty.url ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => void openSite(r.empty!.url!) }, icon('globe'), t('openFolderOnSite'))] : [])));
       else status.textContent = t('noResults');
       cache.set(key, { items: [...items], page, hasMore, tags: allTags, title: r.title, scroll: 0 });
+      // (The last twenty pages kept for the way back, the oldest let go.)
+      while (cache.size > 20) cache.delete(cache.keys().next().value as string);
       // (A short page leaves the end of the shelf in view: the next one is asked for without a scroll.)
       if (hasMore) requestAnimationFrame(() => { if (!gone && sentinel.getBoundingClientRect().top < window.innerHeight + 600) void more(); });
     } catch (e) {
@@ -1007,6 +1026,8 @@ function viaFetcher(url: string, hnd: Handle): Promise<string> {
   })();
   p.catch(() => fetched.delete(url));
   fetched.set(url, p);
+  // (The last two hundred kept as addresses; the older ones' pictures let go — the device's copy brings one back.)
+  while (fetched.size > 200) { const [old, op] = fetched.entries().next().value as [string, Promise<string>]; fetched.delete(old); void op.then((u) => setTimeout(() => URL.revokeObjectURL(u), 30000)).catch(() => undefined); }
   return p;
 }
 /** The covers of a view's first screen are asked first (eager, high priority); the ones after — the next pages

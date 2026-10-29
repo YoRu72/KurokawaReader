@@ -5,7 +5,7 @@ import { t, formatDate, localDigits, countItems } from '../i18n';
 import { db, type Book } from '../db';
 import { listBooks, coverUrl } from '../library';
 import { navigate, back } from '../router';
-import { setJump } from './reader';
+import { setJump } from '../jump';
 import { markDeleted } from '../sync';
 
 export function notesView(): HTMLElement {

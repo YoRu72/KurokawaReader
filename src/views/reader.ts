@@ -1,6 +1,8 @@
 // The reading surface. Flow documents (EPUB, DOCX, TXT, …) are rendered one
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
+import { takeJump, setJump, type Jump } from '../jump';
+export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
 import { nextQueued, getQueue } from '../ui/queue';
 import { overscrollNext } from '../ui/overscroll';
@@ -330,8 +332,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   { let read = 0, last = Date.now(); const tick = window.setInterval(() => { const n = getSettings().eyeRestMinutes; const now = Date.now(); if (!document.hidden) read += now - last; last = now; if (n && read >= n * 60000) { read = 0; toast(t('eyeRestNow'), 'info', 8000); } }, 15000); onDispose(() => window.clearInterval(tick)); }
   // Mobile systems may kill the app without warning: flush position and statistics when the page hides.
   const flushAll = () => { hooks.save(); trackers.forEach((tr) => void tr.save()); };
-  window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
-  onDispose(() => window.removeEventListener('pagehide', flushAll));
+  // (Taken away with the reader: a closed book's would otherwise stay in memory and still save its place.)
+  const onHide = () => { if (document.visibilityState === 'hidden') flushAll(); };
+  window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', onHide);
+  onDispose(() => { window.removeEventListener('pagehide', flushAll); document.removeEventListener('visibilitychange', onHide); });
   if (books.length > 1) toast(t('openedTogether', { n: books.length }));
   performance.measure('kr:post', { start: tPost });
   const tR2 = performance.now();
@@ -1399,10 +1403,6 @@ export async function toggleFavorite(book: Book): Promise<boolean> {
   return !has;
 }
 
-/** A one-shot jump target set by the Bookmarks & notes view before opening a book. */
-export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin' | 'toc' | 'anchor'; id: string }
-export function setJump(j: Jump): void { sessionStorage.setItem('kr.jump', JSON.stringify(j)); }
-function takeJump(): Jump | null { const raw = sessionStorage.getItem('kr.jump'); if (!raw) return null; sessionStorage.removeItem('kr.jump'); try { return JSON.parse(raw) as Jump; } catch { return null; } }
 
 function snapName(title: string): string {
   const d = new Date(); const p = (n: number) => String(n).padStart(2, '0');
@@ -1546,8 +1546,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
   const flushPdf = () => { void tracker.save(); const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); };
-  window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPdf(); });
-  onDispose(() => window.removeEventListener('pagehide', flushPdf));
+  const onHidePdf = () => { if (document.visibilityState === 'hidden') flushPdf(); };
+  window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', onHidePdf);
+  onDispose(() => { window.removeEventListener('pagehide', flushPdf); document.removeEventListener('visibilitychange', onHidePdf); });
 
   /** Export several pages as PNGs (zipped when more than one), chosen by range or list. */
   function savePagesSheet(): void {

@@ -9,7 +9,7 @@ import { coverUrl, forgetCover, shrinkCover } from '../library';
 import { navigate, back } from '../router';
 import { getSettings } from '../settings';
 import { liveStatsOf } from '../stats';
-import { setJump } from './reader';
+import { setJump } from '../jump';
 import { anilistOn, linked } from '../anilist';
 
 /** Did the book come from a source other than archive.org or Shamela (an extension, a web folder)? */

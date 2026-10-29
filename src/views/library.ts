@@ -6,7 +6,7 @@ import { partOf } from '../series';
 import { searchFormOf } from '../formats/types';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
 import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
-import { SUPPORTED_ACCEPT, prewarm } from '../formats';
+import { SUPPORTED_ACCEPT } from '../formats/detect';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
@@ -55,7 +55,9 @@ export function libraryView(): HTMLElement {
     return null;
   }
 
-  const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { query = search.value.trim().toLowerCase(); queryWords = query ? searchFormOf(query).split(/\s+/).filter(Boolean) : []; renderGrid(); } }) as HTMLInputElement;
+  const search = h('input', { type: 'search', placeholder: t('searchLibrary'), 'aria-label': t('searchLibrary'), oninput: () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { query = search.value.trim().toLowerCase(); queryWords = query ? searchFormOf(query).split(/\s+/).filter(Boolean) : []; renderGrid(); }, 110); } }) as HTMLInputElement;
+  // (The grid redrawn once typing pauses, not at every key: with a thousand books each redraw is tens of ms.)
+  let searchTimer = 0;
   const SORTS: [Sort, string, string][] = [['title', t('sortTitleNum'), 'type'], ['recent', t('sortRecent'), 'clock'], ['added', t('sortAdded'), 'import'], ['author', t('sortAuthor'), 'info'], ['progress', t('sortProgress'), 'play'], ['length', t('sortLength'), 'file'], ['updated', t('sortUpdated'), 'bell'], ['size', t('sortSize'), 'books'], ['rating', t('sortRating'), 'heart']];
   // Books added since the library was last looked at carry a small «new» mark until opened.
   const lastVisit = Number(localStorage.getItem('kr.libraryVisit') ?? 0);
@@ -118,7 +120,7 @@ export function libraryView(): HTMLElement {
   );
   const fab = h('button', { class: 'fab', type: 'button', onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks')));
   const applyImportPlace = () => { const place = getSettings().importButton; importTopBtn.hidden = place !== 'top'; fab.hidden = selecting || place !== 'fab'; };
-  onSettingsChange(() => { applyImportPlace(); renderChips(); });
+  const offSettings = onSettingsChange(() => { applyImportPlace(); renderChips(); });
 
   /** Pick files, or scan a folder on the device. */
   /** Android: pick through the plugin so files can be linked with a lasting grant; elsewhere the plain file input. */
@@ -844,7 +846,7 @@ export function libraryView(): HTMLElement {
     const last = [...books].filter((b) => b.lastOpenedAt && !isDone(b)).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
     resume.hidden = !last || selecting || !!query || !!activeFolder || !!tagFilter;
     if (resume.hidden || !last) return;
-    if (prewarmed !== last.id) { prewarmed = last.id; prewarm(last, () => db.getFile(last.id)); }
+    if (prewarmed !== last.id) { prewarmed = last.id; void import('../formats').then((m) => m.prewarm(last, () => db.getFile(last.id))); }
     const pct = Math.round((last.progress?.pct ?? 0) * 100);
     const cover = h('div', { class: 'cover' });
     const url = coverUrl(last);
@@ -1026,5 +1028,12 @@ export function libraryView(): HTMLElement {
     const back = takeReturn();
     if (back && root.isConnected) void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder, back));
   });
+  // (Left: its listeners on the document and the window go with it — each visit otherwise added a set, and
+  // kept the old view and its books alive.)
+  (root as HTMLElement & { dispose?: () => void }).dispose = () => {
+    offSettings(); offBack(); clearTimeout(searchTimer);
+    document.removeEventListener('kr:command', onCommand); window.removeEventListener('kr:library', onAsk);
+    for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.removeEventListener(ev, endDrag);
+  };
   return root;
 }

@@ -5,7 +5,7 @@
 //  - Elsewhere: the ordinary multi-file picker takes over.
 import { h, icon, openSheet, toast, clear } from './dom';
 import { t, formatBytes, localDigits, countBooks } from '../i18n';
-import { detectFormat } from '../formats';
+import { detectFormat } from '../formats/detect';
 import type { Format, Folder } from '../db';
 
 export interface ScanEntry { name: string; path: string; size: number; format: Format; read: () => Promise<File>; source?: FileSource }

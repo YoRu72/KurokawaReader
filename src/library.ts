@@ -4,7 +4,6 @@ import { forgetBookSettings } from './settings';
 
 /** A File that knows where it came from, so it can be linked instead of copied. */
 export type SourcedFile = File & { krSource?: FileSource };
-import { readMeta, sniffFormat } from './formats';
 
 export async function importFiles(files: FileList | File[], onEach?: (book: Book | null, file: File, error?: unknown) => void): Promise<Book[]> {
   const out: Book[] = [];
@@ -16,6 +15,7 @@ export async function importFiles(files: FileList | File[], onEach?: (book: Book
 
   async function importOne(file: File): Promise<void> {
     try {
+      const { readMeta, sniffFormat } = await import('./formats');
       const format = await sniffFormat(file, file.name);
       const meta = await readMeta(file, file.name, format);
       const book: Book = {

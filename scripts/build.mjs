@@ -14,9 +14,10 @@ const args = new Set(process.argv.slice(2));
 const watch = args.has('--watch');
 const serve = args.has('--serve');
 
-async function copyDir(src, dest) {
+async function copyDir(src, dest, skip = null) {
   await fs.mkdir(dest, { recursive: true });
   for (const entry of await fs.readdir(src, { withFileTypes: true })) {
+    if (skip?.test(entry.name)) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dest, entry.name);
     if (entry.isDirectory()) await copyDir(s, d);
@@ -44,7 +45,9 @@ async function copyStatic() {
   // pdf.js side resources: CMaps (CID fonts), standard fonts, image decoders (JPX/JBIG2 as WASM), ICC profiles.
   const pdfRoot = path.dirname(require.resolve('pdfjs-dist/package.json'));
   for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
-    try { await copyDir(path.join(pdfRoot, dir), path.join(dist, 'assets', 'pdfjs', dir)); } catch { /* optional */ }
+    // (Not the script engine — pdf.js runs no PDF's scripts here — nor the decoders' fallbacks for an engine
+    // without WebAssembly, which none of the app's has: a megabyte less in every build.)
+    try { await copyDir(path.join(pdfRoot, dir), path.join(dist, 'assets', 'pdfjs', dir), /^(quickjs-eval\.|.*_nowasm_fallback\.js$)/); } catch { /* optional */ }
   }
 }
 
