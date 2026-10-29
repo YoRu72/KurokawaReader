@@ -21,7 +21,7 @@ import { PdfViewer, type CropBox, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
-import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
+import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
 import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView } from '../router';
@@ -1012,7 +1012,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   function textNodesUnder(el: Element): Text[] {
     // (Style and script elements are stepped over whole, rather than every text node asking for its ancestors.)
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : (n as Element).localName === 'style' || (n as Element).localName === 'script' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP });
+    // (Readings — furigana, pinyin — stepped over too: a search is for the text.)
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : /^(style|script|rt|rp)$/.test((n as Element).localName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP });
     const nodes: Text[] = []; let node: Node | null;
     while ((node = walker.nextNode())) nodes.push(node as Text);
     return nodes;
@@ -1251,7 +1252,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         if (i > scopeEnd) { stopSpeaking(); toast(t('chapterReadDone')); return; }
         const block = startBlock.doc.allBlocks[startBlock.index + i];
         if (!block) { stopSpeaking(); return; }
-        text = (block.textContent ?? '').replace(/\s+/g, ' ').trim();
+        text = plainText(block).replace(/\s+/g, ' ').trim();
         if (!/[\p{L}\p{N}]/u.test(text)) { i++; next(); return; }
         revealElement(block);
         const sr = scroll.getBoundingClientRect();

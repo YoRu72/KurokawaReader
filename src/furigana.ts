@@ -40,10 +40,29 @@ export function isJapanese(text: string, lang?: string): boolean {
   return /[぀-ヿ]/.test(text);
 }
 
-/** Wrap kanji runs of a token in <ruby>, splitting off okurigana shared with the reading. */
+/** Wrap the kanji of a token in <ruby>, each run of kanji with its own reading: the kana between and around
+ *  them (okurigana: 取り扱い → 取[と]り扱[あつか]い) stay outside, matched against the reading; a token the
+ *  reading cannot be split along is given one reading over its kanji part, as before. */
 function rubyFor(surface: string, readingKata: string): Node {
   const reading = kataToHira(readingKata);
   if (!KANJI.test(surface) || !reading || reading === kataToHira(surface)) return document.createTextNode(surface);
+  // The token in runs: kanji, and the rest (kana, signs).
+  const runs = surface.match(new RegExp(`${KANJI.source}+|[^${KANJI.source.slice(1, -1)}]+`, 'g')) ?? [surface];
+  if (runs.length > 1) {
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${runs.map((r) => (KANJI.test(r) ? '(.+?)' : `(${esc(kataToHira(r))})`)).join('')}$`);
+    const m = re.exec(reading);
+    if (m) {
+      const frag = document.createDocumentFragment();
+      runs.forEach((r, i) => {
+        if (!KANJI.test(r)) { frag.appendChild(document.createTextNode(r)); return; }
+        const ruby = document.createElement('ruby'); ruby.appendChild(document.createTextNode(r));
+        const rt = document.createElement('rt'); rt.textContent = m[i + 1]; ruby.appendChild(rt);
+        frag.appendChild(ruby);
+      });
+      return frag;
+    }
+  }
   // common trailing kana (okurigana) and leading kana stay outside the ruby
   let head = 0; while (head < surface.length && !KANJI.test(surface[head]) && reading[head] === kataToHira(surface[head])) head++;
   let tail = 0; while (tail < surface.length - head && !KANJI.test(surface[surface.length - 1 - tail]) && reading[reading.length - 1 - tail] === kataToHira(surface[surface.length - 1 - tail])) tail++;
