@@ -404,6 +404,29 @@ function nameTable(family: string, sub: string): Uint8Array {
   return new Uint8Array([...head, ...data]);
 }
 
+/**
+ * A font as it is, its names all made `family` (Windows', and the Mac's that some systems read first): a font
+ * whose Mac and Windows names differ ("Adwaa Elsalaf" and "louts shamy") is otherwise found under the one the
+ * document does not ask for, and its text falls back to another font. Null when it cannot be read.
+ */
+export function renamedFont(bytes: Uint8Array, family: string, sub = 'Regular'): Uint8Array | null {
+  const sf = readSfnt(bytes); if (!sf || sf.cff) return null;
+  const win = nameTable(family, sub);
+  // (The same records again for the Mac, in its own encoding — Roman, one byte a letter, when the name is ASCII.)
+  if (/^[\x20-\x7e]+$/.test(family)) {
+    const d = dvOf(win); const n = d.getUint16(2); const strOff = d.getUint16(4);
+    const recs: { id: number; s: string }[] = [];
+    for (let i = 0; i < n; i++) { const r = 6 + i * 12; const id = d.getUint16(r + 6), len = d.getUint16(r + 8), off = d.getUint16(r + 10); let str = ''; for (let k = 0; k < len; k += 2) str += String.fromCharCode(d.getUint16(strOff + off + k)); recs.push({ id, s: str }); }
+    const all = [...recs.map((x) => ({ ...x, pid: 1, eid: 0, lang: 0, b: [...x.s].map((c) => c.charCodeAt(0) & 255) })), ...recs.map((x) => ({ ...x, pid: 3, eid: 1, lang: 0x409, b: [...x.s].flatMap((c) => [c.charCodeAt(0) >> 8, c.charCodeAt(0) & 255]) }))];
+    const head: number[] = []; const data: number[] = []; const u16 = (v: number) => head.push((v >> 8) & 255, v & 255);
+    u16(0); u16(all.length); u16(6 + all.length * 12);
+    for (const x of all) { u16(x.pid); u16(x.eid); u16(x.lang); u16(x.id); u16(x.b.length); u16(data.length); pushAll(data, x.b); }
+    sf.tables.set('name', new Uint8Array([...head, ...data]));
+  } else sf.tables.set('name', win);
+  sf.tables.delete('DSIG'); // (a signature over the old tables no longer holds)
+  return writeSfnt(sf.tables);
+}
+
 /** Writes a TrueType font: glyph 0 is .notdef; `extra` are ready tables (cmap, GSUB, GPOS, GDEF, OS/2…). */
 export function writeTrueType(meta: FontMeta, glyphs: Outline[], extra: Map<string, Uint8Array>, os2: (box: [number, number, number, number], avg: number) => Uint8Array): Uint8Array {
   const enc = glyphs.map((g) => encodeGlyph(g.contours));
