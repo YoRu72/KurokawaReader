@@ -29,6 +29,15 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.click('.topbar .history-btn'); await p.waitForSelector('.history-sheet');
   await p.keyboard.press('Alt+ArrowLeft'); await p.waitForTimeout(500);
   ok('a sheet on top is closed first', !(await p.$('.history-sheet')) && await inSeries());
+  // The cover viewer (a fixed full-screen overlay) is closed by back, the book's page left as it was.
+  {
+    const id = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result[0].id); }; }));
+    await p.evaluate((i) => { location.hash = `#/book/${i}`; }, id); await p.waitForSelector('.cover-tap'); await p.waitForTimeout(300);
+    await p.click('.cover-tap'); await p.waitForSelector('.cover-view', { timeout: 5000 }).catch(() => undefined);
+    const opened = !!(await p.$('.cover-view'));
+    await p.keyboard.press('Alt+ArrowLeft'); await p.waitForTimeout(500);
+    ok('back closes the cover viewer, staying on the book\'s page', opened && !(await p.$('.cover-view')) && (await p.evaluate(() => location.hash)).startsWith('#/book/'));
+  }
   console.log(fails ? `${fails} FAILED` : 'all passed', 'errors', errors);
   await b.close(); server.close(); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
