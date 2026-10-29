@@ -1,4 +1,5 @@
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } from '../ui/dom';
+import { onBack } from '../ui/backstack';
 import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
@@ -230,6 +231,15 @@ export function libraryView(): HTMLElement {
   const FINE_POINTER = matchMedia('(hover: hover) and (pointer: fine)').matches;
   const endDrag = () => root.classList.remove('dragging-book');
   for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.addEventListener(ev, endDrag, { passive: true });
+
+  // Back (Android's gesture, a mouse's back button, Alt+←): the books selected let go, then a series opened in
+  // the library closed — not the app put away from inside a series.
+  const offBack = onBack(() => {
+    if (!root.isConnected) { offBack(); return false; }
+    if (selecting) { setSelecting(false); renderSelBar(); return true; }
+    if (activeSeries) { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); return true; }
+    return false;
+  });
 
   function setSelecting(v: boolean) {
     selecting = v;

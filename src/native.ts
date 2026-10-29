@@ -2,6 +2,7 @@
 // iOS share sheet, Electron file associations) are imported into the library
 // and opened straight away. Everything here is optional at runtime — the plain
 // web build simply has none of these globals.
+import { goBack, wirePcBack } from './ui/backstack';
 import { importFiles } from './library';
 import { navigate } from './router';
 import { toast } from './ui/dom';
@@ -173,24 +174,11 @@ export function initNativeBridges(): void {
   if (cap?.isNativePlatform?.() && cap.Plugins?.App) {
     void cap.Plugins.App.addListener('appUrlOpen', (d) => void handleUrl(d.url));
     void cap.Plugins.App.getLaunchUrl().then((d) => { if (d?.url) void handleUrl(d.url); }).catch(() => undefined);
-    // Android back: close whatever is open first (the camera, a sheet, side panel, lightbox), then go back a view, then minimise.
-    void cap.Plugins.App.addListener('backButton', () => {
-      const cam = document.querySelector('.cam-view .cam-close') as HTMLButtonElement | null;
-      if (cam) { cam.click(); return; }
-      const sheets = document.querySelectorAll('.sheet .sheet-head button');
-      if (sheets.length) { (sheets[sheets.length - 1] as HTMLButtonElement).click(); return; }
-      const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
-      if (panelClose) { panelClose.click(); return; }
-      // Full-screen overlays (gallery, pages grid, lightbox) carry a dialog role and a back/close button in their top bar.
-      const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && (d as HTMLElement).offsetParent !== null);
-      const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
-      if (overlayBtn) { overlayBtn.click(); return; }
-      const viewBack = document.querySelector<HTMLButtonElement>('.view .topbar button[data-icon="back"]');
-      if (viewBack) { viewBack.click(); return; }
-      if (location.hash && location.hash !== '#/' && location.hash !== '#') { navigate('/'); return; }
-      void cap.Plugins?.App?.minimizeApp?.();
-    });
+    // Android back: what is open on top first, then a place inside the view, then the view (see backstack);
+    // at the library's top the app is put away.
+    void cap.Plugins.App.addListener('backButton', () => { if (!goBack()) void cap.Plugins?.App?.minimizeApp?.(); });
   }
+  wirePcBack();
   if (window.kurokawaDesktop) {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
     (window.kurokawaDesktop as DesktopBridge & { onOpenUrl?(cb: (u: string) => void): void }).onOpenUrl?.((u) => void handleUrl(u));
@@ -198,6 +186,7 @@ export function initNativeBridges(): void {
     (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string | { open: string }) => void): void }).onCommand?.((c) => {
       if (typeof c === 'object') { if (c?.open) navigate(c.open); return; }
       if (c === 'library') navigate('/');
+      else if (c === 'back') goBack();
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
       else document.dispatchEvent(new CustomEvent('kr:command', { detail: c }));
