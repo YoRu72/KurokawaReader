@@ -129,6 +129,7 @@ export interface VisualSettings {
   bookPage: 'chaptered' | 'always' | 'never'; // open a book's own page (chapters, tracking) before the reader
   anilistEnabled: boolean; // AniList tracking shown in the app
   anilistClientId: string; // the reader's own AniList API client
+  incognito: boolean;         // reading leaves no trace: no history, reading stats or AniList progress (Mihon's incognito mode)
   anilistAutoProgress: boolean; // chapters read in the app sent to AniList as progress // how dates are written: the civil calendar, the Hijri (Umm al-Qura), or both
   keepAwake: boolean;         // screen wake lock while reading
   edgeBrightness: boolean;    // left-edge swipe adjusts dimming
@@ -285,6 +286,7 @@ export const DEFAULTS: VisualSettings = {
   bookPage: 'chaptered',
   anilistEnabled: false,
   anilistClientId: '',
+  incognito: false,
   anilistAutoProgress: false,
   keepAwake: true,
   edgeBrightness: false,

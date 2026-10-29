@@ -82,7 +82,7 @@ export async function pushStars(book: Book, stars: number): Promise<void> {
 
 /** Chapters read in the app sent on as progress (when turned on), never moving it backwards. */
 export async function pushProgress(book: Book, chaptersRead: number): Promise<void> {
-  const u = al.user(); if (!book.track || !u || !al.anilistOn() || !getSettings().anilistAutoProgress) return;
+  const u = al.user(); if (!book.track || !u || !al.anilistOn() || !getSettings().anilistAutoProgress || getSettings().incognito) return;
   if (chaptersRead <= book.track.entry.progress) return;
   const max = book.track.media.chapters ?? Infinity; const progress = Math.min(max, chaptersRead);
   const entry: al.AlEntry = { ...book.track.entry, progress };

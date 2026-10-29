@@ -6,6 +6,7 @@ import { t, localDigits, getLang } from '../i18n';
 import { db, type Book } from '../db';
 import { coverUrl } from '../library';
 import { navigate } from '../router';
+import { getSettings, updateSettings } from '../settings';
 
 const dayKey = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
 
@@ -22,7 +23,10 @@ export async function historySheet(): Promise<void> {
   sh.el.classList.add('history-sheet'); sh.body.style.fontFamily = 'var(--font-ui)';
   const find = h('input', { type: 'search', class: 'src-search', placeholder: t('search'), dir: 'auto' }) as HTMLInputElement;
   const list = h('div', { class: 'history-list' });
-  sh.body.append(find, list);
+  // (Incognito: what is read from now on is not put here, nor in the reading stats, nor sent to AniList.)
+  const inc = h('input', { type: 'checkbox', checked: getSettings().incognito }) as HTMLInputElement;
+  inc.addEventListener('change', () => { updateSettings({ incognito: inc.checked }); toast(t(inc.checked ? 'incognitoOn' : 'incognitoOff')); });
+  sh.body.append(h('label', { class: 'incognito-row' }, icon('eye'), h('span', { class: 'incognito-text' }, h('b', null, t('incognito')), h('small', { class: 'src' }, t('incognitoHint'))), inc), find, list);
   let books: Book[] = [];
   const draw = () => {
     const q = find.value.trim().toLowerCase();

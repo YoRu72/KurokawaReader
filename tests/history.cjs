@@ -26,6 +26,14 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.click('.topbar .history-btn'); await p.waitForSelector('.history-sheet');
   await p.click('.history-sheet button:has-text("Clear the history")'); await p.waitForTimeout(500);
   ok('the whole history cleared', !!(await p.$('.history-empty')));
+  // Incognito: switched on at the head of the history; a book read then is not put in it, nor counted.
+  await p.click('.incognito-row input'); await p.waitForTimeout(300);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  const marked = await p.$eval('.topbar .history-btn', (e) => e.classList.contains('incognito'));
+  const statsBefore = await p.evaluate((i) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').get(i); q.onsuccess = () => res(q.result.stats?.ms ?? 0); }; }), ids[1]);
+  await p.evaluate((i) => { location.hash = `#/read/${i}`; }, ids[1]); await p.waitForTimeout(4000); await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.waitForTimeout(600);
+  const after = await p.evaluate((i) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').get(i); q.onsuccess = () => res({ opened: q.result.lastOpenedAt ?? null, ms: q.result.stats?.ms ?? 0 }); }; }), ids[1]);
+  ok('incognito: marked on the history button; a book read is not put in the history, nor its time counted', marked && after.opened === null && after.ms === statsBefore);
   console.log(fails ? `${fails} FAILED` : 'all passed', 'errors', errors);
   await b.close(); server.close(); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
