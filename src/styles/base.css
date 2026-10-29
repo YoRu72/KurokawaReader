@@ -1876,3 +1876,9 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .migrate-cover { width: 96px; height: 136px; border-radius: 10px; overflow: hidden; display: block; }
 .migrate-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .migrate-name { font-size: .82em; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Discover: rows of light novels from AniList on the Browse page. */
+.discover { margin-top: 8px; }
+.discover-rows { display: flex; flex-direction: column; gap: 14px; }
+.discover-row h4 { margin: 0 0 6px; font-size: .95em; }
+.migrate-cover { position: relative; }
+.discover-score { position: absolute; inset-inline-start: 4px; inset-block-end: 4px; padding: 1px 6px; border-radius: 8px; background: rgba(0,0,0,.65); color: #fff; font-size: .72em; }

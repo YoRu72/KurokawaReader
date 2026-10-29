@@ -219,6 +219,8 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     const folders = repos.filter((r) => r.kind === 'folder'); const exts = repos.filter((r) => r.kind !== 'folder');
     if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
     if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
+    // (Light novels trending on AniList, a tap from a search of the reader's sources — once there are some.)
+    if (exts.length || folders.length) reposBox.append(discoverBox());
   };
   void drawRepos();
   body.append(h('h3', { class: 'section-title' }, t('catalogsTitle')), h('p', { class: 'hint catalog-hint' }, t('sourcesHint')));
@@ -234,6 +236,24 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     body.append(card);
   }
   return root;
+}
+
+/** Discover: rows of light novels from AniList (trending, popular, best rated); a tap searches every source. */
+function discoverBox(): HTMLElement {
+  const box = h('section', { class: 'discover' }, h('h3', { class: 'section-title' }, t('discover')));
+  const rows = h('div', { class: 'discover-rows' }, h('div', { class: 'spinner small' }));
+  box.append(rows);
+  void import('../sources/discover').then((m) => m.discover()).then((got) => {
+    rows.replaceChildren(...(['trending', 'popular', 'top'] as const).filter((k) => got[k]?.length).map((k) => h('div', { class: 'discover-row' },
+      h('h4', null, t(k === 'trending' ? 'discoverTrending' : k === 'popular' ? 'discoverPopular' : 'discoverTop')),
+      h('div', { class: 'migrate-hits' }, ...got[k].map((x) => {
+        const [c1, c2] = coverColors(x.title);
+        return h('button', { type: 'button', class: 'migrate-hit', title: x.alt ?? x.title, onclick: () => navigate(path(ALL, { q: x.title })) },
+          h('span', { class: 'migrate-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, x.cover ? h('img', { src: x.cover, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null, x.score ? h('small', { class: 'discover-score' }, `${localDigits(x.score)}%`) : null),
+          h('span', { class: 'migrate-name', dir: 'auto' }, x.title));
+      })))));
+  }).catch(() => { rows.replaceChildren(h('p', { class: 'hint' }, t('discoverOffline'))); });
+  return box;
 }
 
 /** Shamela's two helpers: the sign-in to وصلة الشاملة, and the catalogue of titles kept on the device. */

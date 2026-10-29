@@ -55,6 +55,15 @@ const SITE = 'http://localhost:5403';
     page.once('dialog', (d) => d.accept()); await page.click('.sheet .dest-row.danger'); await page.waitForTimeout(600);
     ok('… removed from its menu, the repo of one with it', (await page.$$('.repo-section')).length === 3);
     await page.screenshot({ path: path.join(__dirname, 'hub.png') });
+    // Discover: AniList's trending light novels on the hub; a tap searches every source.
+    {
+      await page.route('https://graphql.anilist.co/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { trending: { media: [{ id: 1, title: { english: 'Beta Blossom', romaji: 'Beta' }, coverImage: { large: '' }, averageScore: 81 }] }, popular: { media: [{ id: 2, title: { romaji: 'Alpha Ascension' } }] }, top: { media: [] } } }) }));
+      await page.evaluate(() => localStorage.removeItem('kr.discover')); await page.reload(); await page.waitForSelector('.discover .migrate-hit', { timeout: 15000 });
+      const rows = await page.$$eval('.discover .discover-row h4', (es) => es.map((e) => e.textContent));
+      await page.click('.discover .migrate-hit:has-text("Beta Blossom")'); await page.waitForFunction(() => /~all\?q=Beta/.test(location.hash), null, { timeout: 10000 });
+      ok('Discover: trending and popular light novels from AniList; a tap searches every source', rows.length === 2 && /Trending/.test(rows[0]));
+      await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section');
+    }
     // The LNReader plugin: popular, latest, search, filters.
     await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(500);
     const popular = await page.$$eval('.src-grid .src-title', (els) => els.map((e) => e.textContent));
