@@ -1,7 +1,7 @@
 // node tests/startup.cjs: how long the app takes to show the library on a slow phone (CPU 4× slower, a 3G-ish
 // network), with an empty library and with 40 books — and what is fetched before first paint.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path');
-const DIST = path.join(__dirname, '..', 'dist'); const FIX = path.join(__dirname, 'fixtures');
+const DIST = process.env.DIST || path.join(__dirname, '..', 'dist'); const FIX = path.join(__dirname, 'fixtures');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 (async () => {

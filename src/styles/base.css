@@ -256,7 +256,7 @@ html[dir='rtl'] .fab { padding: 0 20px 0 24px; }
 /* Fields */
 .field { display: flex; flex-direction: column; gap: 8px; }
 .field label, .field .label { font-size: 13px; color: var(--md-on-surface-dim); font-weight: 500; text-transform: none; letter-spacing: 0; }
-input[type='text'], input[type='search'], input[type='number'], select, textarea {
+input[type='text'], input[type='search'], input[type='number'], input[type='url'], input[type='email'], input[type='password'], select, textarea {
   background: var(--md-surface-container-high); border: 0; border-radius: var(--sh-full);
   height: 48px; padding: 0 20px; color: var(--md-on-surface); outline: none; min-width: 0;
   transition: box-shadow var(--dur-short), background var(--dur-short);
@@ -736,7 +736,16 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 
 /* Bookmarks & notes view */
 .notes-book { margin-bottom: 22px; padding: 12px; border-radius: 20px; background: var(--md-surface-container-low); }
-.notes-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; cursor: pointer; }
+.notes-head-row { display: flex; align-items: center; gap: 4px; }
+.notes-head { all: unset; box-sizing: border-box; flex: 1; min-width: 0; display: flex; gap: 12px; align-items: center; cursor: pointer; padding: 4px; border-radius: 14px; user-select: none; -webkit-user-select: none; }
+.notes-head:focus-visible { box-shadow: 0 0 0 2px var(--md-primary); }
+.notes-head .grow { flex: 1; min-width: 0; }
+.notes-head > svg { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: var(--md-on-surface-variant); transition: transform var(--dur-short); }
+.notes-book.folded .notes-head > svg { transform: rotate(-90deg); }
+[dir='rtl'] .notes-book.folded .notes-head > svg { transform: rotate(90deg); }
+.notes-book > .plain-list { margin-top: 8px; }
+.notes-book.folded > .plain-list { display: none; }
+.notes-book { margin-bottom: 12px !important; }
 .notes-head .cover { width: 40px; height: 56px; border-radius: 6px; overflow: hidden; background: var(--md-surface-container-highest); flex: 0 0 auto; }
 .notes-head .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .notes-head .bt { font-weight: 600; }
@@ -1741,3 +1750,87 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .history-text b { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-text small { color: var(--text-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-empty { padding: 16px 4px; }
+
+/* The app's own words (hints, descriptions of sources, the Browse hub) are not text to select: a long press
+   there selected half a sentence (the reader's books, synopses and inputs stay selectable). */
+.sources-hub, .hint, .catalog-hint, .source-desc, .settings-view .row > span, .empty p { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.sources-hub input, .sources-hub textarea, .sources-hub pre { -webkit-user-select: text; user-select: text; }
+
+/* Switches, the same everywhere (a Material 3 switch drawn on the checkbox): in sheets' switch rows and in
+   Settings' rows — a long label wrapping no longer shrinks the box beside it. */
+.switch-row input[type=checkbox], .settings-view .row > input[type=checkbox], .settings-view label.row input[type=checkbox] {
+  -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 52px; height: 32px; margin: 0; border-radius: 16px; cursor: pointer;
+  background: var(--md-surface-container-highest); border: 2px solid var(--md-outline); transition: background var(--dur-short, .15s) ease, border-color var(--dur-short, .15s) ease;
+}
+.switch-row input[type=checkbox]::before, .settings-view .row > input[type=checkbox]::before, .settings-view label.row input[type=checkbox]::before {
+  content: ''; position: absolute; top: 50%; inset-inline-start: 6px; width: 16px; height: 16px; border-radius: 50%; background: var(--md-outline); transform: translateY(-50%); transition: all var(--dur-short, .15s) ease;
+}
+.switch-row input[type=checkbox]:checked, .settings-view .row > input[type=checkbox]:checked, .settings-view label.row input[type=checkbox]:checked { background: var(--md-primary); border-color: var(--md-primary); }
+.switch-row input[type=checkbox]:checked::before, .settings-view .row > input[type=checkbox]:checked::before, .settings-view label.row input[type=checkbox]:checked::before { inset-inline-start: 24px; width: 24px; height: 24px; background: var(--md-on-primary); }
+.switch-row input[type=checkbox]:focus-visible, .settings-view .row > input[type=checkbox]:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.switch-row input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+
+/* The What's new sheet: the state, then what is new (each row opened or marked seen), the failures with their
+   reason, the settings folded. */
+.updates-sheet .upd-state small { display: block; color: var(--text-dim); }
+.updates-sheet .upd-state .upd-next { font-size: 12px; opacity: .85; }
+.upd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.upd-head .section-title { margin: 0; }
+.upd-row { display: flex; align-items: center; gap: 6px; }
+.upd-row .upd-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+.upd-cover { width: 36px; height: 52px; flex: none; border-radius: 6px; object-fit: cover; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--text-dim); }
+.upd-cover svg { width: 18px; height: 18px; }
+.upd-row .catalog-name { min-width: 0; }
+.upd-row .catalog-name b, .upd-row .catalog-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upd-row small.warn, .section-title.warn { color: var(--md-error, #f2b8b5); }
+.upd-settings { margin-top: 16px; border-top: 1px solid var(--md-outline-variant); padding-top: 6px; }
+.upd-settings > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; font-weight: 600; font-family: var(--font-ui); }
+.upd-settings > summary::-webkit-details-marker { display: none; }
+.upd-settings > summary svg { width: 18px; height: 18px; }
+.updates-sheet .sheet-body { font-family: var(--font-ui); }
+.plain-list li.upd-row > button.icon-btn, .plain-list li.upd-row > .btn { width: auto; flex: none; padding: 8px; align-items: center; }
+.plain-list li.upd-row > .btn { padding: 6px 14px; }
+.plain-list li.upd-row > button.upd-open { width: auto; flex: 1 1 auto; min-width: 0; align-items: center; }
+.upd-row .catalog-name { flex: 1 1 auto; }
+/* Settings → the app's browser: the resolver's choice beside its test */
+.doh-row { display: flex; gap: 8px; align-items: center; }
+.doh-row .pick-btn { flex: 1; min-width: 0; }
+.doh-row > .btn { flex: none; }
+/* A source's cover fades in when it has come (the card's own colours under it until then). */
+.src-cover img.cv-img { opacity: 0; transition: opacity .2s ease-out; }
+.src-cover img.cv-img.loaded { opacity: 1; }
+.src-card.in-library .src-cover img.cv-img.loaded { opacity: .72; }
+@media (prefers-reduced-motion: reduce) { .src-cover img.cv-img { transition: none; } }
+/* A series' genres and tags (from AniList): small outlined chips, a tap searches for the others like it. */
+.genre-chips { margin-top: 6px; }
+.src-chip.genre { border: 1px solid var(--md-outline-variant); background: transparent; color: var(--md-on-surface-variant); cursor: pointer; font: inherit; font-size: 12px; }
+.src-chip.genre:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+/* The filter sheet (Mihon's): Reset and Filter on top, folding sections, boxes to tick (✓ asked for, ✕ left out). */
+.filter-sheet .fs-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0 10px; background: var(--sheet-bg, var(--md-surface-container-low)); border-bottom: 1px solid var(--md-outline-variant); margin-bottom: 4px; }
+.filter-sheet .fs-list { display: flex; flex-direction: column; }
+.fs-sec { border-bottom: 1px solid var(--md-outline-variant); }
+.fs-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 4px; cursor: pointer; font-weight: 600; }
+.fs-head:focus-visible { box-shadow: inset 0 0 0 2px var(--md-primary); border-radius: 8px; }
+.fs-head .fs-title { flex: 1; min-width: 0; }
+.fs-head .fs-sum { color: var(--md-primary); font-weight: 500; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-head > svg { width: 20px; height: 20px; flex: none; transition: transform var(--dur-short); }
+.fs-sec.open > .fs-head > svg { transform: rotate(180deg); }
+.fs-opt { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 14px; min-height: 44px; padding: 4px 8px; border-radius: 10px; cursor: pointer; }
+.fs-opt:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+.fs-opt.on { color: var(--md-primary); font-weight: 600; }
+.fs-arrow { width: 22px; display: grid; place-items: center; }
+.fs-arrow svg, .fs-box svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.fs-box { width: 22px; height: 22px; flex: none; border-radius: 5px; border: 2px solid var(--md-outline); display: grid; place-items: center; box-sizing: border-box; }
+.fs-box.on { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
+.fs-box.off { background: var(--md-error, #b3261e); border-color: var(--md-error, #b3261e); color: #fff; }
+.fs-multi { padding-bottom: 8px; }
+.fs-find { width: 100%; margin: 2px 0 8px; box-sizing: border-box; }
+.fs-letter > summary { padding: 10px 8px; font-weight: 600; cursor: pointer; color: var(--md-on-surface-variant); }
+.fs-letter[open] > summary { color: var(--md-primary); }
+.fs-sort { padding-bottom: 8px; }
+.filter-sheet .field, .filter-sheet .switch-row { padding: 10px 4px; border-bottom: 1px solid var(--md-outline-variant); }
+.tags-block { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.tag-groups { display: flex; flex-direction: column; gap: 8px; }
+.tag-group h4 { margin: 4px 0; font-size: 12px; font-weight: 600; color: var(--md-on-surface-variant); text-transform: none; }
+.src-chip.genre small { margin-inline-start: 6px; opacity: .7; font-size: 11px; }
+.tags-more { padding-inline: 4px; }

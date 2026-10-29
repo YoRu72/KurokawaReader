@@ -1,11 +1,17 @@
 import { en, type Strings } from './en';
-import { ar } from './ar';
-import { ja } from './ja';
-import { zh } from './zh';
-import { ko } from './ko';
 
 export type Lang = 'en' | 'ar' | 'ja' | 'zh' | 'ko';
-const tables: Record<Lang, Partial<Strings>> = { en, ar, ja, zh, ko };
+// (English is always here, the fallback for any string; the language in use is fetched before the first view is
+// drawn, and another when chosen — not all five read at every start: a third of the startup's code.)
+const tables: Partial<Record<Lang, Partial<Strings>>> = { en };
+const loaders: Record<Exclude<Lang, 'en'>, () => Promise<Partial<Strings>>> = {
+  ar: () => import('./ar').then((m) => m.ar), ja: () => import('./ja').then((m) => m.ja), zh: () => import('./zh').then((m) => m.zh), ko: () => import('./ko').then((m) => m.ko),
+};
+/** The strings of `lang` fetched (at once when already here). */
+export async function loadLang(lang: Lang): Promise<void> {
+  if (tables[lang]) return;
+  try { tables[lang] = await loaders[lang as Exclude<Lang, 'en'>](); } catch { /* English meanwhile */ }
+}
 /** Interface languages, each named in its own language (the picker lists these). */
 export const LANGS: [Lang, string][] = [['en', 'English'], ['ar', 'العربية'], ['ja', '日本語'], ['zh', '简体中文'], ['ko', '한국어']];
 const isLang = (v: string | null): v is Lang => !!v && LANGS.some(([c]) => c === v);
@@ -31,8 +37,7 @@ export function getLang(): Lang {
 export function setLang(lang: Lang): void {
   current = lang;
   localStorage.setItem('kr.lang', lang);
-  applyDocumentLang();
-  listeners.forEach((fn) => fn(lang));
+  void loadLang(lang).then(() => { if (current !== lang) return; applyDocumentLang(); listeners.forEach((fn) => fn(lang)); });
 }
 
 export type LangPref = 'system' | Lang;
@@ -41,7 +46,7 @@ export function getLangPref(): LangPref {
   return isLang(saved) ? saved : 'system';
 }
 export function setLangPref(pref: LangPref): void {
-  if (pref === 'system') { localStorage.removeItem('kr.lang'); current = systemLang(); applyDocumentLang(); listeners.forEach((fn) => fn(current)); }
+  if (pref === 'system') { localStorage.removeItem('kr.lang'); const l = current = systemLang(); void loadLang(l).then(() => { if (current !== l) return; applyDocumentLang(); listeners.forEach((fn) => fn(l)); }); }
   else setLang(pref);
 }
 
@@ -75,7 +80,7 @@ export function applyDocumentLang(): void {
 
 /** Translate a key, substituting `{name}` placeholders. */
 export function t(key: keyof Strings, vars?: Record<string, string | number>): string {
-  let s = tables[current][key] ?? en[key] ?? key;
+  let s = tables[current]?.[key] ?? en[key] ?? key;
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, formatNumber(v));
   return s;
 }
@@ -193,6 +198,7 @@ export function countChapters(n: number): string {
 export function formatLabel(format: string): string {
   if (format === 'shamela') return 'الشاملة';
   if (format === 'webnovel') return t('webnovelBadge');
+  if (format === 'series') return t('seriesBadge');
   return format.toUpperCase();
 }
 
@@ -233,6 +239,12 @@ export function countMinutes(n: number): string {
   return arCount(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: 'دقائق', many: 'دقيقةً', hundred: 'دقيقةٍ' });
 }
 
+/** "6 hours" — in Arabic: ساعة واحدة · ساعتان · ٣–١٠ ساعات · ١١–٩٩ ساعةً · ١٠٠ ساعةٍ. */
+export function countHours(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'hour' : 'hours'}`;
+  return arCount(n, { one: 'ساعة واحدة', two: 'ساعتان', few: 'ساعات', many: 'ساعةً', hundred: 'ساعةٍ' });
+}
+
 /** "8 connections" — in Arabic: اتصال واحد · اتصالان · ٣–١٠ اتصالات · ١١–٩٩ اتصالًا · ١٠٠ اتصالٍ. */
 export function countConnections(n: number): string {
   if (current !== 'ar') return `${n} ${n === 1 ? 'connection' : 'connections'}`;
@@ -243,6 +255,12 @@ export function countConnections(n: number): string {
 export function countSeconds(n: number): string {
   if (current !== 'ar') return cjkCount(n, 'second') ?? `${n} ${n === 1 ? 'second' : 'seconds'}`;
   return arCount(n, { one: 'ثانية واحدة', two: 'ثانيتان', few: 'ثوانٍ', many: 'ثانيةً', hundred: 'ثانيةٍ' });
+}
+
+/** "3 items" — in Arabic: عنصر واحد · عنصران · ٣–١٠ عناصر · ١١–٩٩ عنصرًا · ١٠٠ عنصرٍ. */
+export function countItems(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'item' : 'items'}`;
+  return arCount(n, { one: 'عنصر واحد', two: 'عنصران', few: 'عناصر', many: 'عنصرًا', hundred: 'عنصرٍ' });
 }
 
 /** "12 cards" — in Arabic: بطاقة واحدة · بطاقتان · ٣–١٠ بطاقات · ١١–٩٩ بطاقةً · ١٠٠ بطاقةٍ. */

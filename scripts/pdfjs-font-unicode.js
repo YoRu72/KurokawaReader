@@ -116,13 +116,71 @@ function krFontUnicode(bytes) {
   return map;
 }
 
+
+/* A legacy Arabic layout many Gulf books' fonts share (AL-Mohanad, AL-Mateen and the other "AL-…" fonts of their
+ * maker): 256 glyphs under a symbol cmap (F0xx/F2xx), each letter's forms side by side — ب at 49–4C, ت at 4D–50 —
+ * ligatures at 80–9F, harakat at E3–FE. Writers (Word's PDF export, iLovePDF…) compress its /ToUnicode into
+ * ranges that count up a letter per code, so all but the first form of each run reads as the next letters
+ * ("الشكس" for "الشكر"). The layout, read off the glyphs themselves: glyph id → text (the same in each of
+ * these fonts; their symbol cmap's codes drift from the glyph ids past A5, the glyph ids do not). */
+const KR_AL_LAYOUT = {16:"لمح",17:"لمج",22:"تر",23:"ير",24:"سم",26:"له",29:"بي",30:"تي",31:"ني",65:"ا",66:"ا",67:"أ",68:"أ",71:"إ",72:"إ",73:"ب",74:"ب",75:"ب",76:"ب",77:"ت",78:"ت",79:"ت",80:"ت",81:"ث",82:"ث",83:"ث",84:"ث",85:"ج",86:"ج",87:"ج",88:"ج",89:"ح",90:"ح",96:"ح",97:"خ",98:"خ",99:"خ",101:"د",102:"د",103:"ذ",104:"ذ",105:"ر",106:"ر",107:"ز",108:"ز",109:"س",110:"س",111:"س",112:"س",113:"ش",114:"ش",115:"ش",116:"ش",117:"ص",118:"ص",119:"ص",120:"ص",121:"ض",122:"ض",123:"ض",124:"ض",127:"ط",129:"بح",131:"تج",132:"تح",133:"تخ",134:"لج",135:"لح",136:"لخ",137:"مج",138:"مح",141:"نح",143:"يج",148:"ين",149:"لى",150:"بم",154:"جم",155:"حم",156:"خم",157:"لم",158:"مم",159:"في",161:"ط",162:"ظ",163:"ظ",166:"ع",167:"ع",168:"ع",169:"ع",170:"غ",171:"غ",172:"غ",173:"غ",174:"ف",175:"ف",176:"ف",177:"ف",178:"ق",179:"ق",180:"ق",181:"ق",182:"ك",183:"ك",184:"ك",185:"ك",186:"ل",187:"ل",188:"ل",189:"ل",190:"م",191:"م",192:"م",193:"م",194:"ن",195:"ن",196:"ن",197:"ن",198:"ه",199:"ه",200:"ه",201:"ه",202:"و",203:"و",204:"ي",205:"ي",206:"ي",207:"ي",208:"ة",209:"ة",210:"ى",211:"ى",212:"ء",213:"ئ",214:"ئ",219:"لا",220:"لا",221:"لأ",223:"لآ",225:"لإ",226:"لإ",227:"َ",228:"ُ",229:"ْ",230:"ً",232:"ّ",233:"ِ",234:"ٍ",235:"َّ",236:"ُّ",238:"ٌّ",239:"ِّ",240:"ط",241:"َ",242:"ُ",243:"ْ",244:"ً",245:"ٌ",247:"ِ",248:"ٍ",249:"َّ",250:"ُّ",251:"ًّ",254:"ٍّ"};
+/** Whether a font is of that layout — a symbol cmap (no Unicode one), and the PDF's own map agreeing with the
+ *  layout on most of its glyphs (the run starts and the single entries) — and if so its map put right. */
+function krLegacyLayout(font, raw, properties) {
+  try {
+    const tu = font.toUnicode;
+    if (!tu || !Array.isArray(tu._map) || !properties.composite) return false;
+    const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    let cm = -1;
+    for (let i = 0, n = dv.getUint16(4); i < n; i++) { const r = 12 + i * 16; if (raw[r] === 0x63 && raw[r + 1] === 0x6d && raw[r + 2] === 0x61 && raw[r + 3] === 0x70) cm = dv.getUint32(r + 8); }
+    if (cm < 0) return false;
+    // (The symbol subtable: the glyphs it reaches.)
+    const lowOf = new Map();
+    for (let i = 0, nn = dv.getUint16(cm + 2); i < nn; i++) {
+      const p = dv.getUint16(cm + 4 + i * 8), e = dv.getUint16(cm + 6 + i * 8), s = cm + dv.getUint32(cm + 8 + i * 8);
+      if (p !== 3 || e !== 0 || dv.getUint16(s) !== 4) continue;
+      const seg = dv.getUint16(s + 6) / 2, ends = s + 14, starts = ends + seg * 2 + 2, deltas = starts + seg * 2, ros = deltas + seg * 2;
+      for (let k = 0; k < seg; k++) {
+        const end = dv.getUint16(ends + k * 2), start = dv.getUint16(starts + k * 2), delta = dv.getInt16(deltas + k * 2), ro = dv.getUint16(ros + k * 2);
+        if (start === 0xffff) continue;
+        for (let c = start; c <= end; c++) {
+          let g; if (ro === 0) g = (c + delta) & 0xffff; else { const gp = ros + k * 2 + ro + (c - start) * 2; if (gp + 2 > raw.length) continue; g = dv.getUint16(gp); if (g) g = (g + delta) & 0xffff; }
+          if (g && (c & 0xff00) >= 0xf000 && !lowOf.has(g)) lowOf.set(g, g);
+        }
+      }
+    }
+    if (lowOf.size < 12) return false;
+    const gidOf = (code) => { const m = properties.cidToGidMap; return m && m.length ? m[code] ?? code : code; };
+    const base = (s) => (s || "").normalize("NFKC").replace(/[\u064b-\u065f\u0670\s]/g, "");
+    let compared = 0, agree = 0, wrong = 0;
+    for (const code in tu._map) {
+      const g = gidOf(+code); const low = lowOf.get(g);
+      if (low === undefined) continue;
+      const want = KR_AL_LAYOUT[low]; if (want === undefined || !/[\u0621-\u064a]/.test(want)) continue;
+      compared++;
+      if (base(want) === base(tu._map[code])) agree++; else wrong++;
+    }
+    // (Not this layout: few letters in common, or nothing to put right.)
+    if (compared < 12 || agree / compared < 0.5 || !wrong) return false;
+    for (const code in tu._map) {
+      const low = lowOf.get(gidOf(+code)); if (low === undefined) continue;
+      const want = KR_AL_LAYOUT[low]; if (want !== undefined) tu._map[code] = want;
+    }
+    // (Brackets as drawn: turned back in right-to-left text, as for any map rebuilt from the font.)
+    for (const code in tu._map) { const low = lowOf.get(gidOf(+code)); if (low === 0x28) tu._map[code] = "("; else if (low === 0x29) tu._map[code] = ")"; }
+    font.krToUnicodeRepaired = true;
+    if (globalThis.KR_FONT_DEBUG) console.log("KRF layout", properties.loadedName, properties.name, "compared", compared, "agree", agree, "fixed", wrong);
+    return true;
+  } catch { return false; }
+}
+
 function krRepairToUnicode(font, raw, properties) {
   try {
     let tu = font.toUnicode;
     if (!raw || raw.length < 12 || !properties.composite || !tu) return;
     const gidOf = (code) => { const m = properties.cidToGidMap; return m && m.length ? m[code] ?? code : code; };
     const derived = krFontUnicode(raw);
-    if (derived.size < 4) return;
+    if (derived.size < 4) { krLegacyLayout(font, raw, properties); return; }
     const plainOf = (d) => d.replace(/[\ufb50-\ufdff\ufe70-\ufefc]+/g, (m) => m.normalize("NFKC"));
     // No /ToUnicode at all (an identity map stands in): the text is whatever the font says its glyphs are.
     if (!Array.isArray(tu._map)) {

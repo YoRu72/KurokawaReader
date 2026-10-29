@@ -1,5 +1,7 @@
 // Floating toolbar that appears over selected text: Copy · Search · Define ·
 // Translate · Highlight · Speak.
+import { isReading, withoutReadings, plainText } from './rubytext';
+export { withoutReadings, plainText };
 import { joinLine, cleanPdfText, attachMarks, findColumns, isRtlText as rtlByCount, type LinePiece } from '../pdftext';
 import { h, icon, toast, openSheet } from './dom';
 import { joinColumn } from '../pdfvertical';
@@ -36,7 +38,7 @@ export function selectionText(sel: Selection): string {
   const range = sel.getRangeAt(0);
   const anc = range.commonAncestorContainer;
   const layer = (anc.nodeType === 1 ? (anc as Element) : anc.parentElement)?.closest('.textLayer, .pdf-page, .pdf-inner, .pdf-scroll');
-  if (!layer) return sel.toString();
+  if (!layer) return withoutReadings(range) ?? sel.toString();
   const spans = Array.from(layer.querySelectorAll<HTMLElement>('.textLayer > span')).filter((el) => el.firstChild && range.intersectsNode(el));
   // Columns of vertical writing are laid in reading order already: taken as they come, a paragraph's columns
   // run on and paragraphs end lines.
@@ -194,13 +196,16 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   const onTouchStart = () => { touching = true; window.clearTimeout(timer); };
   const onTouchEnd = () => { touching = false; schedule(); };
   const onScroll = () => { if (bar) show(); };
+  // (Copied with the system's own Copy — the keyboard, the phone's menu — the text without its readings.)
+  const onCopy = (e: ClipboardEvent) => { const sel = document.getSelection(); if (!sel?.rangeCount || !scope.contains(sel.anchorNode)) return; const clean = withoutReadings(sel.getRangeAt(0)); if (clean === null || !e.clipboardData) return; e.clipboardData.setData('text/plain', clean); e.preventDefault(); };
+  document.addEventListener('copy', onCopy);
   document.addEventListener('selectionchange', onChange);
   document.addEventListener('touchstart', onTouchStart, { passive: true });
   document.addEventListener('touchend', onTouchEnd, { passive: true });
   document.addEventListener('touchcancel', onTouchEnd, { passive: true });
   scope.addEventListener('scroll', onScroll, { passive: true, capture: true });
   return () => {
-    document.removeEventListener('selectionchange', onChange);
+    document.removeEventListener('selectionchange', onChange); document.removeEventListener('copy', onCopy);
     document.removeEventListener('touchstart', onTouchStart);
     document.removeEventListener('touchend', onTouchEnd); document.removeEventListener('touchcancel', onTouchEnd);
     scope.removeEventListener('scroll', onScroll, true); hide();
@@ -230,7 +235,7 @@ export function wrapRange(range: Range, cls: string, color: string, id: string):
   const marks: HTMLElement[] = [];
   const root = range.commonAncestorContainer;
   const walker = document.createTreeWalker(root.nodeType === 3 ? root.parentNode! : root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (range.intersectsNode(n) && n.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    acceptNode: (n) => (range.intersectsNode(n) && n.textContent?.trim() && !isReading(n) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   });
   const nodes: Text[] = [];
   let n: Node | null;
@@ -257,7 +262,7 @@ export function wrapRange(range: Range, cls: string, color: string, id: string):
 export function findTextRange(root: Element, text: string): Range | null {
   const needle = text.replace(/\s+/g, ' ').trim();
   if (!needle) return null;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (isReading(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
   const nodes: Text[] = [];
   const starts: number[] = [];
   let full = '';

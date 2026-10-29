@@ -44,6 +44,8 @@ export function seriesOf(title: string): SeriesPart | null {
 /** The other volumes of a book's series in the library, in order (the book itself included). */
 /** The series a book belongs to: what its source said, else what its title says. */
 export function partOf(book: Book): SeriesPart | null {
+  // (A series kept without its volumes is the series itself, not one of its volumes.)
+  if (book.format === 'series') return null;
   if (book.series?.name) return { key: keyOf(book.series.name), name: book.series.name, index: book.series.index ?? seriesOf(book.title)?.index ?? 0 };
   return seriesOf(book.title);
 }

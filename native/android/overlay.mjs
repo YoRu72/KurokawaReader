@@ -160,6 +160,8 @@ await fs.copyFile(path.join(root, 'native/android/KrJobService.java'), path.join
 await fs.copyFile(path.join(root, 'native/android/KrBrowser.java'), path.join(pkgDir, 'KrBrowser.java'));
 await fs.copyFile(path.join(root, 'native/android/KrPrint.java'), path.join(pkgDir, 'KrPrint.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join(pkgDir, 'KrDownloader.java'));
+await fs.copyFile(path.join(root, 'native/android/KrDoh.java'), path.join(pkgDir, 'KrDoh.java'));
+await fs.copyFile(path.join(root, 'native/android/KrDohWeb.java'), path.join(pkgDir, 'KrDohWeb.java'));
 // (The print job's callbacks can only be made from the android.print package: that one class lives there.)
 const printDir = path.join(app, 'src/main/java/android/print');
 await fs.mkdir(printDir, { recursive: true });

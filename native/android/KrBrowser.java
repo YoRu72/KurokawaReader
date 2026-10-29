@@ -17,6 +17,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.getcapacitor.JSObject;
@@ -147,6 +148,8 @@ final class KrBrowser {
         // (Fully transparent: whatever shows through the app's own view — a moment of transition, a page drawn
         // without a background — never lets the site's page be seen. Still visible to its own scripts.)
         web.setAlpha(0f);
+        // (Out of sight: its drawing yields to the pages the reader sees.)
+        if (android.os.Build.VERSION.SDK_INT >= 26) web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_WAIVED, true);
         content.addView(web, 0, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -208,9 +211,27 @@ final class KrBrowser {
         final String message = call.getString("message", "");
         final String doneLabel = call.getString("done", "✓");
         final String reloadLabel = call.getString("reload", "↻");
+        final boolean browse = !hidden && Boolean.TRUE.equals(call.getBoolean("browse", false));
+        // (`until`: the window closes by itself once the page's address matches it — a sign-in that ends at an
+        // address holding a token — and the address is given back.)
+        final String until = call.getString("until", null);
+        final java.util.regex.Pattern untilRe = until == null || until.isEmpty() ? null : java.util.regex.Pattern.compile(until);
+        final String[] reached = { null };
         ui.post(() -> {
             final Activity act = plugin.getActivity();
             if (act == null) { call.reject("No activity"); return; }
+            // (The reader's own window on the site: the app's window out of sight on it closed first — its check
+            // running beside the reader's, the two undoing each other's clearance, and keeping the pages' shared
+            // renderer busy while the reader's page is drawn, is what leaves the reader a blank page — and none
+            // opened while the reader's is up: the site's requests wait for the reader instead.)
+            final String site = siteOf(origin);
+            if (!hidden) {
+                showing.put(site, showing.containsKey(site) ? showing.get(site) + 1 : 1);
+                for (Lane l : new ArrayList<>(lanes.values())) {
+                    if (!siteOf(l.origin).equals(site)) continue;
+                    if (l.opening) settle(l, "challenge", l.title); else retire(l, "reset");
+                }
+            }
             if (fresh) clearCookies(url, false);
             final WebView web;
             try { web = makeView(act, true); } catch (Exception e) { call.reject("WebView failed: " + e.getMessage()); return; }
@@ -222,6 +243,7 @@ final class KrBrowser {
             final Runnable finish = () -> {
                 if (done[0]) return;
                 done[0] = true;
+                if (!hidden) { Integer n = showing.get(site); if (n == null || n <= 1) showing.remove(site); else showing.put(site, n - 1); }
                 try { CookieManager.getInstance().flush(); } catch (Exception ignored) {}
                 try { if (dialog[0] != null && dialog[0].isShowing()) dialog[0].dismiss(); } catch (Exception ignored) {}
                 dispose(web);
@@ -229,6 +251,7 @@ final class KrBrowser {
                 r.put("passed", passed[0]);
                 r.put("blocked", blocked[0]);
                 r.put("title", last[0]);
+                if (reached[0] != null) r.put("url", reached[0]);
                 call.resolve(r);
             };
             // (Read once more before closing: a check passed a moment before the reader closed the window counts.)
@@ -239,7 +262,11 @@ final class KrBrowser {
                     ui.postDelayed(finish, 1500);
                 } catch (Exception e) { finish.run(); }
             };
-            web.setWebViewClient(new WebViewClient());
+            // (A browser of the reader's own — opened from Settings — has an address bar, back and forward.)
+            final EditText[] address = { null };
+            web.setWebViewClient(new KrDohWeb() {
+                @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (address[0] != null && !address[0].hasFocus()) address[0].setText(u); }
+            });
             final long start = SystemClock.uptimeMillis();
             final Runnable[] poll = new Runnable[1];
             // (Asked every 600 ms whether or not the last question was answered — a page replaced mid-question, as a
@@ -249,6 +276,15 @@ final class KrBrowser {
                 if (done[0]) return;
                 if (!stay && SystemClock.uptimeMillis() - start > timeout) { finish.run(); return; }
                 ui.postDelayed(poll[0], 600);
+                if (untilRe != null) {
+                    try {
+                        web.evaluateJavascript("location.href", (v) -> {
+                            if (done[0] || v == null) return;
+                            String href = v.replaceAll("^\"|\"$", "");
+                            if (untilRe.matcher(href).find()) { reached[0] = href; passed[0] = true; finish.run(); }
+                        });
+                    } catch (Exception ignored) {}
+                }
                 try {
                     web.evaluateJavascript(STATE_JS, (v) -> {
                         if (done[0]) return;
@@ -270,12 +306,34 @@ final class KrBrowser {
                     bar.setGravity(Gravity.CENTER_VERTICAL);
                     bar.setBackgroundColor(0xFF1E1F22);
                     bar.setPadding(dp(act, 14), dp(act, 10), dp(act, 8), dp(act, 10));
+                    if (browse) {
+                        // Back, forward, the address (an address, or words searched for), as in a browser.
+                        final Button backB = new Button(act); backB.setText("‹"); backB.setOnClickListener(v -> { if (web.canGoBack()) web.goBack(); });
+                        final Button fwdB = new Button(act); fwdB.setText("›"); fwdB.setOnClickListener(v -> { if (web.canGoForward()) web.goForward(); });
+                        bar.addView(backB, new LinearLayout.LayoutParams(dp(act, 44), ViewGroup.LayoutParams.WRAP_CONTENT));
+                        bar.addView(fwdB, new LinearLayout.LayoutParams(dp(act, 44), ViewGroup.LayoutParams.WRAP_CONTENT));
+                        final EditText addr = new EditText(act);
+                        addr.setSingleLine(true); addr.setText(url); addr.setTextColor(0xFFECECEC); addr.setHintTextColor(0xFF9A9A9A);
+                        addr.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14); addr.setSelectAllOnFocus(true);
+                        addr.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+                        addr.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+                        addr.setOnEditorActionListener((v, actionId, ev) -> {
+                            String q = addr.getText().toString().trim(); if (q.isEmpty()) return true;
+                            String go = q.matches("(?i)^[a-z][a-z0-9+.-]*://.*") ? q : (!q.contains(" ") && q.contains(".")) ? "https://" + q : "https://duckduckgo.com/?q=" + android.net.Uri.encode(q);
+                            web.loadUrl(go); addr.clearFocus();
+                            try { ((android.view.inputmethod.InputMethodManager) act.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(addr.getWindowToken(), 0); } catch (Exception ignored) {}
+                            return true;
+                        });
+                        address[0] = addr;
+                        bar.addView(addr, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    } else {
                     final TextView text = new TextView(act);
                     text.setText(message.isEmpty() ? url : message);
                     text.setTextColor(0xFFECECEC);
                     text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
                     text.setTypeface(Typeface.DEFAULT_BOLD);
                     bar.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    }
                     final Button again = new Button(act);
                     again.setText(reloadLabel);
                     again.setOnClickListener(v -> { try { web.reload(); } catch (Exception ignored) {} });
@@ -285,9 +343,26 @@ final class KrBrowser {
                     close.setOnClickListener(v -> closeAfterLook.run());
                     bar.addView(close, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                     box.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                    // (How far the page has come, under the bar: a page still on its way is not taken for a blank one.)
+                    final android.widget.ProgressBar progress = new android.widget.ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal);
+                    progress.setMax(100); progress.setIndeterminate(false); progress.setProgress(5);
+                    box.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 4)));
+                    web.setWebChromeClient(new android.webkit.WebChromeClient() {
+                        @Override public void onProgressChanged(WebView v, int p) { progress.setProgress(Math.max(5, p)); progress.setVisibility(p >= 100 ? View.INVISIBLE : View.VISIBLE); }
+                        // (A page that opens a window of its own — a check's or a sign-in's — opens it here, in place.)
+                        @Override public boolean onCreateWindow(WebView v, boolean dialog, boolean user, android.os.Message msg) {
+                            WebView.HitTestResult hit = v.getHitTestResult();
+                            String to = hit != null ? hit.getExtra() : null;
+                            if (to != null && to.startsWith("http")) v.loadUrl(to);
+                            return false;
+                        }
+                    });
+                    if (android.os.Build.VERSION.SDK_INT >= 26) web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
                     box.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
                     d.setContentView(box);
                     d.setOnDismissListener(x -> closeAfterLook.run());
+                    // (Back goes back a page first, as in a browser; from the first page it closes the window.)
+                    if (browse) d.setOnKeyListener((dlg, keyCode, ev) -> { if (keyCode == android.view.KeyEvent.KEYCODE_BACK && ev.getAction() == android.view.KeyEvent.ACTION_UP && web.canGoBack()) { web.goBack(); return true; } return keyCode == android.view.KeyEvent.KEYCODE_BACK && web.canGoBack(); });
                     dialog[0] = d;
                     d.show();
                 }
@@ -298,6 +373,9 @@ final class KrBrowser {
     }
 
     /* ---------- fetch: requests made by a page of the site ---------- */
+
+    /** The sites whose check the reader has open in a window (how many windows each). */
+    private final java.util.Map<String, Integer> showing = new java.util.HashMap<>();
 
     private static final class Lane {
         final String origin; WebView web; boolean ready, opening; long used; String title = "";
@@ -435,6 +513,8 @@ final class KrBrowser {
     /** The site's view, ready (its page loaded, no check on it), else the reason: "challenge" (a check that did not
      *  pass by itself in time), "blocked" (a refusal), "error:…" (the page did not load). */
     private void open(final String origin, final String page, final int timeout, final Waiter w) {
+        // (The reader is passing the site's check in a window of their own: nothing opened beside it.)
+        if (showing.containsKey(siteOf(origin))) { w.failed("challenge", ""); return; }
         Lane had = lanes.get(origin);
         if (had != null && had.ready && had.web != null) { had.used = SystemClock.uptimeMillis(); w.ready(had); return; }
         if (had != null && had.opening) { had.waiting.add(w); return; }
@@ -448,7 +528,7 @@ final class KrBrowser {
             // (Pictures load as in any browser: a check may look for them.)
             final WebView web = makeView(act, true);
             web.addJavascriptInterface(new Bridge(), "KrLane");
-            web.setWebViewClient(new WebViewClient() {
+            web.setWebViewClient(new KrDohWeb() {
                 // (The page itself not loading — no network, no such site. Called for the main frame only, on every
                 // Android version: the newer callback hands the main frame's errors to this one.)
                 @SuppressWarnings("deprecation")

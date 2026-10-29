@@ -9,7 +9,7 @@ import { coverUrl, forgetCover, shrinkCover } from '../library';
 import { navigate, back } from '../router';
 import { getSettings } from '../settings';
 import { liveStatsOf } from '../stats';
-import { setJump } from './reader';
+import { setJump } from '../jump';
 import { anilistOn, linked } from '../anilist';
 
 /** Did the book come from a source other than archive.org or Shamela (an extension, a web folder)? */
@@ -62,6 +62,7 @@ export function bookView(id: string): HTMLElement {
   void (async () => {
     const book = await db.getBook(id);
     if (!book) { navigate('/', true); return; }
+    if (book.format === 'series' && book.remote?.link) { navigate(book.remote.link, true); return; }
     top.querySelector('.title')!.textContent = book.title;
     render(book);
   })();

@@ -1,0 +1,19 @@
+name: AniList check
+
+# The OTL genres and tags (src/sources/altagsmatch.ts) tried against AniList itself: which series are found, as
+# what, and with which genres — results as annotations on the run.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['work-*']
+    paths: ['src/sources/altagsmatch.ts', 'scripts/check-anilist.mjs', '.github/workflows/anilist-check.yml']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/check-anilist.mjs

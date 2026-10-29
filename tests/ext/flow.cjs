@@ -87,7 +87,7 @@ const SITE = 'http://localhost:5403';
     await page.waitForTimeout(200);
     await page.click('.topbar-actions button[aria-label="Filters"]'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
     ok('filter sheet shows the plugin filters', /Sort by/.test(await page.$eval('.sheet', (e) => e.textContent)) && /Genres/.test(await page.$eval('.sheet', (e) => e.textContent)));
-    await page.click('.sheet .chip:has-text("Romance")'); await page.click('.sheet .btn.primary'); await page.waitForTimeout(1500);
+    await page.click('.sheet .fs-head:has-text("Genres")'); await page.click('.sheet .fs-sec.open .fs-opt:has-text("Romance")'); await page.click('.sheet .fs-bar .btn.primary'); await page.waitForTimeout(1500);
     await page.evaluate(() => { location.hash = location.hash.replace(/\?.*$/, '').replace(/&v=.*$/, ''); }); await page.waitForTimeout(1200);
     ok('genre filter applied to the shelf', (await page.$$('.src-grid .src-card')).length === 1 && /Beta/.test(await page.$eval('.src-grid .src-title', (e) => e.textContent)));
     await page.screenshot({ path: path.join(__dirname, 'browse.png') });

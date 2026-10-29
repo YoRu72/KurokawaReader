@@ -1,6 +1,6 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels, countHours } from '../i18n';
 import { navigate, back } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -161,8 +161,11 @@ export function settingsView(): HTMLElement {
   // Checks for new chapters at the sources (the same choices as the bell in Browse offers).
   {
     const card = h('section', { class: 'card' }, h('h3', null, t('updatesSection')), h('p', null, t('updatesSectionBody')));
-    void import('../sources/updates').then(({ updatePrefs, setUpdatePref }) => {
+    void import('../sources/updates').then(({ updatePrefs, setUpdatePref, checkEvery, setCheckEvery }) => {
       const pref = updatePrefs();
+      // How often the checks run by themselves (as in the bell's sheet).
+      card.append(h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
+        pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(checkEvery()), (v) => setCheckEvery(Number(v)), t('close'))));
       const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
       card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')),
         h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));
@@ -177,15 +180,38 @@ export function settingsView(): HTMLElement {
   // The app's own browser: any site opened in it (to sign in, pass a check, or just look), its sign-ins forgotten.
   {
     const card = h('section', { class: 'card' }, h('h3', null, t('inAppBrowser')), h('p', null, t('inAppBrowserBody')));
-    void import('../sources/http').then(({ hasBrowser, openSite, forgetSite }) => {
+    void import('../sources/http').then(({ hasBrowser, openBrowser, forgetSite, hasDoh, dohProvider, setDoh, testDoh, DOH_PROVIDERS }) => {
       if (!hasBrowser()) { card.append(h('p', { class: 'hint' }, t('inAppBrowserNone'))); return; }
-      const addr = h('input', { type: 'url', placeholder: 'https://', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr', style: { flex: '1', minWidth: '0' } }) as HTMLInputElement;
-      const go = () => { let u = addr.value.trim(); if (!u) return; if (!/^https?:\/\//i.test(u)) u = `https://${u}`; void openSite(u); };
-      addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
       card.append(
-        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, addr, h('button', { class: 'btn small primary', type: 'button', onclick: go }, icon('globe'), t('open'))),
-        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
-          h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const n = await forgetSite(addr.value.trim() || 'https://example.com/', true); toast(t('sitesForgotten', { n: localDigits(n) })); } }, icon('trash'), t('forgetAllSites'))));
+        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+          h('button', { class: 'btn primary', type: 'button', onclick: () => void openBrowser() }, icon('globe'), t('openBrowser')),
+          h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const n = await forgetSite('https://example.com/', true); toast(t('sitesForgotten', { n: localDigits(n) })); } }, icon('trash'), t('forgetAllSites'))));
+      if (!hasDoh()) return;
+      // DNS over HTTPS, as 1DM+ offers it: the sites' names asked of a resolver over HTTPS, not of the network.
+      const status = h('span', { class: 'hint', dir: 'auto' });
+      const custom = h('input', { type: 'url', placeholder: 'https://…/dns-query', inputmode: 'url', autocapitalize: 'off', spellcheck: 'false', dir: 'ltr', style: { flex: '1', minWidth: '0' } }) as HTMLInputElement;
+      const now = dohProvider();
+      const isCustom = /^https:/.test(now);
+      if (isCustom) custom.value = now;
+      const customRow = h('div', { style: { display: isCustom ? 'flex' : 'none', gap: '8px', alignItems: 'center', marginTop: '8px' } }, custom,
+        h('button', { class: 'btn small tonal', type: 'button', onclick: async () => { const u = custom.value.trim(); if (!/^https:\/\/[^\s]+$/.test(u)) { toast(t('dohBadAddress'), 'error'); return; } await setDoh(u); toast(t('dohSet')); } }, t('saveFile')));
+      const names: Record<string, string> = { off: t('dohOff'), cloudflare: 'Cloudflare', google: 'Google', quad9: 'Quad9', adguard: 'AdGuard', custom: t('dohCustom') };
+      const options = [...DOH_PROVIDERS, 'custom'].map((id): [string, string] => [id, names[id]]);
+      const test = h('button', { class: 'btn small tonal', type: 'button', onclick: async () => {
+        test.disabled = true; status.textContent = t('dohTesting');
+        try { const r = await testDoh('example.com'); status.replaceChildren(t('dohWorks', { ms: localDigits(r.ms ?? 0) }), ...(r.ips?.length ? [' · ', h('bdi', { dir: 'ltr' }, r.ips.join(', '))] : [])); }
+        catch (e) { status.textContent = t('dohFailed', { why: String((e as Error)?.message ?? e).slice(0, 120) }); }
+        finally { test.disabled = false; }
+      } }, icon('check'), t('dohTest')) as HTMLButtonElement;
+      card.append(h('div', { class: 'field', style: { marginTop: '14px' } },
+        h('label', null, t('doh')),
+        h('div', { class: 'doh-row' },
+          pickButton(t('doh'), options, isCustom ? 'custom' : now, (v) => {
+            customRow.style.display = v === 'custom' ? 'flex' : 'none';
+            if (v === 'custom') { custom.focus(); return; }
+            void setDoh(v).then(() => { status.textContent = ''; toast(v === 'off' ? t('dohTurnedOff') : t('dohSet')); });
+          }, t('close')), test),
+        customRow, h('span', { class: 'hint' }, t('dohHint')), status));
     });
     body.append(card);
   }
@@ -210,7 +236,17 @@ export function settingsView(): HTMLElement {
         const tk = h('textarea', { rows: 3, placeholder: t('anilistTokenPlaceholder'), dir: 'ltr', style: { width: '100%', fontFamily: 'monospace', fontSize: '12px' } }) as HTMLTextAreaElement;
         parts.push(h('p', { class: 'hint' }, t('anilistHowTo'), ' ', h('a', { href: 'https://anilist.co/settings/developer', target: '_blank', rel: 'noopener' }, 'anilist.co/settings/developer')),
           h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistClientId')), id),
-          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn tonal small', onclick: () => { updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; } window.open(al.authUrl(), '_blank', 'noopener'); } }, icon('external'), t('anilistSignIn'))),
+          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn tonal small', onclick: async () => {
+            updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; }
+            // (In the app's own browser the token is taken from the page AniList ends on: nothing to copy or paste.)
+            const { captureAddress, hasBrowser } = await import('../sources/http');
+            if (!hasBrowser()) { window.open(al.authUrl(), '_blank', 'noopener'); return; }
+            const at = await captureAddress(al.authUrl(), 'access_token=', t('anilistSignInWindow'));
+            const token = at ? /access_token=([^&]+)/.exec(at)?.[1] : null;
+            if (!token) return;
+            try { const user = await al.link(decodeURIComponent(token)); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); }
+            catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); }
+          } }, icon('external'), t('anilistSignIn'))),
           tk,
           h('div', null, h('button', { class: 'btn primary small', onclick: async () => { try { const user = await al.link(tk.value); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } } }, icon('check'), t('anilistLink'))));
       }

@@ -1,6 +1,8 @@
 // The reading surface. Flow documents (EPUB, DOCX, TXT, …) are rendered one
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
+import { takeJump, setJump, type Jump } from '../jump';
+export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
 import { nextQueued, getQueue } from '../ui/queue';
 import { overscrollNext } from '../ui/overscroll';
@@ -19,7 +21,7 @@ import { PdfViewer, type CropBox, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
-import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS } from '../ui/selection';
+import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
 import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView } from '../router';
@@ -65,6 +67,8 @@ export function readerView(ids: string[]): HTMLElement {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
     if (disposed) return;
     if (!books.length) { navigate('/', true); return; }
+    // (A series kept in the library without its volumes opens on its source, where its volumes are.)
+    if (books[0].format === 'series' && books[0].remote?.link) { navigate(books[0].remote.link, true); return; }
     setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
     if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); return; }
     if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); return; }
@@ -328,8 +332,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   { let read = 0, last = Date.now(); const tick = window.setInterval(() => { const n = getSettings().eyeRestMinutes; const now = Date.now(); if (!document.hidden) read += now - last; last = now; if (n && read >= n * 60000) { read = 0; toast(t('eyeRestNow'), 'info', 8000); } }, 15000); onDispose(() => window.clearInterval(tick)); }
   // Mobile systems may kill the app without warning: flush position and statistics when the page hides.
   const flushAll = () => { hooks.save(); trackers.forEach((tr) => void tr.save()); };
-  window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
-  onDispose(() => window.removeEventListener('pagehide', flushAll));
+  // (Taken away with the reader: a closed book's would otherwise stay in memory and still save its place.)
+  const onHide = () => { if (document.visibilityState === 'hidden') flushAll(); };
+  window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', onHide);
+  onDispose(() => { window.removeEventListener('pagehide', flushAll); document.removeEventListener('visibilitychange', onHide); });
   if (books.length > 1) toast(t('openedTogether', { n: books.length }));
   performance.measure('kr:post', { start: tPost });
   const tR2 = performance.now();
@@ -1006,7 +1012,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   function textNodesUnder(el: Element): Text[] {
     // (Style and script elements are stepped over whole, rather than every text node asking for its ancestors.)
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : (n as Element).localName === 'style' || (n as Element).localName === 'script' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP });
+    // (Readings — furigana, pinyin — stepped over too: a search is for the text.)
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : /^(style|script|rt|rp)$/.test((n as Element).localName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP });
     const nodes: Text[] = []; let node: Node | null;
     while ((node = walker.nextNode())) nodes.push(node as Text);
     return nodes;
@@ -1245,7 +1252,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         if (i > scopeEnd) { stopSpeaking(); toast(t('chapterReadDone')); return; }
         const block = startBlock.doc.allBlocks[startBlock.index + i];
         if (!block) { stopSpeaking(); return; }
-        text = (block.textContent ?? '').replace(/\s+/g, ' ').trim();
+        text = plainText(block).replace(/\s+/g, ' ').trim();
         if (!/[\p{L}\p{N}]/u.test(text)) { i++; next(); return; }
         revealElement(block);
         const sr = scroll.getBoundingClientRect();
@@ -1397,10 +1404,6 @@ export async function toggleFavorite(book: Book): Promise<boolean> {
   return !has;
 }
 
-/** A one-shot jump target set by the Bookmarks & notes view before opening a book. */
-export interface Jump { bookId: string; kind: 'bm' | 'hl' | 'pin' | 'toc' | 'anchor'; id: string }
-export function setJump(j: Jump): void { sessionStorage.setItem('kr.jump', JSON.stringify(j)); }
-function takeJump(): Jump | null { const raw = sessionStorage.getItem('kr.jump'); if (!raw) return null; sessionStorage.removeItem('kr.jump'); try { return JSON.parse(raw) as Jump; } catch { return null; } }
 
 function snapName(title: string): string {
   const d = new Date(); const p = (n: number) => String(n).padStart(2, '0');
@@ -1544,8 +1547,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
   const flushPdf = () => { void tracker.save(); const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); };
-  window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPdf(); });
-  onDispose(() => window.removeEventListener('pagehide', flushPdf));
+  const onHidePdf = () => { if (document.visibilityState === 'hidden') flushPdf(); };
+  window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', onHidePdf);
+  onDispose(() => { window.removeEventListener('pagehide', flushPdf); document.removeEventListener('visibilitychange', onHidePdf); });
 
   /** Export several pages as PNGs (zipped when more than one), chosen by range or list. */
   function savePagesSheet(): void {

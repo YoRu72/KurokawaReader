@@ -2,14 +2,10 @@ import { normalizeForSearch } from './formats/types';
 import './styles/fonts.css';
 import './styles/base.css';
 import './styles/reader.css';
-import { applyDocumentLang, onLangChange } from './i18n';
+import { applyDocumentLang, onLangChange, loadLang, getLang } from './i18n';
 import { onRoute, parseRoute, navigate, lastMove, type Route } from './router';
 import { h } from './ui/dom';
 import { libraryView } from './views/library';
-import { readerView } from './views/reader';
-import { bookView } from './views/book';
-import { settingsView } from './views/settings';
-import { notesView } from './views/notes';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
@@ -26,7 +22,8 @@ function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): 
   const shell = h('div', { class: 'view' }, h('div', { class: 'center' }, h('div', { class: 'spinner' }))) as HTMLElement & { dispose?: () => void };
   let inner: (HTMLElement & { dispose?: () => void }) | null = null; let gone = false;
   shell.dispose = () => { gone = true; inner?.dispose?.(); };
-  void make().then((el) => { if (gone) { el.dispose?.(); return; } inner = el; shell.replaceChildren(el); }).catch((e) => { console.error(e); shell.replaceChildren(h('div', { class: 'center' }, String(e))); });
+  // (`ready`: the view inside it has come — what is restored of it on the way back waits for that.)
+  (shell as HTMLElement & { ready?: Promise<void> }).ready = make().then((el) => { if (gone) { el.dispose?.(); return; } inner = el; shell.replaceChildren(el); }).catch((e) => { console.error(e); shell.replaceChildren(h('div', { class: 'center' }, String(e))); });
   return shell;
 }
 
@@ -75,10 +72,11 @@ function mount(route: Route): void {
   current?.remove();
   document.querySelectorAll('.sheet, .sheet-scrim, .sel-toolbar, .lightbox').forEach((e) => e.remove());
   switch (route.name) {
-    case 'read': current = readerView(route.ids); break;
-    case 'book': current = bookView(route.id); break;
-    case 'settings': current = settingsView(); break;
-    case 'notes': current = notesView(); break;
+    // (Each view's code fetched when first wanted: the library alone at start.)
+    case 'read': current = lazyView(() => import('./views/reader').then((m) => m.readerView(route.ids))); break;
+    case 'book': current = lazyView(() => import('./views/book').then((m) => m.bookView(route.id))); break;
+    case 'settings': current = lazyView(() => import('./views/settings').then((m) => m.settingsView())); break;
+    case 'notes': current = lazyView(() => import('./views/notes').then((m) => m.notesView())); break;
     case 'catalog': current = lazyView(() => import('./views/catalog').then((m) => m.catalogView(route.url, route.q))); break;
     case 'sources': current = lazyView(() => import('./views/sources').then((m) => m.sourcesView(route.src, route.book, route.q, route.shelf, route.tags))); break;
     default: current = libraryView();
@@ -87,9 +85,11 @@ function mount(route: Route): void {
   window.scrollTo(0, 0);
   currentPath = location.hash.replace(/^#/, '') || '/';
   const kept = lastMove() === 'pop' && route.name !== 'read' ? states.get(currentPath) : undefined;
-  if (kept) restore(current, kept);
+  if (kept) { const view = current; const ready = (view as HTMLElement & { ready?: Promise<void> }).ready; if (ready) void ready.then(() => { if (view.isConnected) restore(view, kept); }); else restore(view, kept); }
 }
 
+// (The interface's language fetched before anything is drawn in it.)
+await loadLang(getLang());
 registerNativePlugins();
 applyDocumentLang();
 applyChrome();

@@ -347,7 +347,10 @@ function blank(ctx: CanvasRenderingContext2D, w: number, h: number): boolean {
  *  to save data), so a shelf of covers does not eat the plan — Mihon's thumbnails are a few tens of kilobytes. */
 export function coverCap(): number {
   const c = (navigator as Navigator & { connection?: { type?: string; saveData?: boolean; effectiveType?: string } }).connection;
-  if (c?.saveData || c?.type === 'cellular' || /^(slow-)?2g$/.test(c?.effectiveType ?? '')) return 700 * 1024;
+  // (A store's cover is often over a megabyte: below 1.5 MB it is read even on mobile data — else its series
+  // shows none at all, which is worse than the data.)
+  if (c?.saveData || /^(slow-)?2g$/.test(c?.effectiveType ?? '')) return 700 * 1024;
+  if (c?.type === 'cellular') return 1536 * 1024;
   return 4 * 1024 * 1024;
 }
 /** Of the pictures called the cover, the one to read: the smallest that is a real picture (over 24 KB), else
@@ -363,35 +366,48 @@ function pickCover(list: [string, number][]): string | undefined {
 /* ---------- a picture made small ---------- */
 // (Sharp on a phone's screen at the largest a cover is drawn — 140 points wide, at three pixels a point — and
 // a JPEG: written four times faster than a WebP, for a tenth more bytes.)
-const THUMB_H = 540;
+const THUMB_H = 480;
 function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
-  return new Promise((ok) => canvas.toBlob((b) => ok(b), 'image/jpeg', 0.82));
+  // (WebP where the browser writes it — a third smaller than a JPEG of the same look — else a JPEG.)
+  return new Promise((ok) => canvas.toBlob((b) => (b && b.type === 'image/webp' ? ok(b) : canvas.toBlob((j) => ok(j), 'image/jpeg', 0.8)), 'image/webp', 0.78));
 }
 /** The worker that makes covers small (and inflates zip entries) off the main thread, when the platform has
  *  pictures in workers (OffscreenCanvas); the shelf keeps scrolling smoothly while covers are decoded. */
-let worker: Worker | null | undefined;
-let workSeq = 0; const workWaiting = new Map<number, { ok: (v: { blob?: Blob; bytes?: ArrayBuffer }) => void; fail: (e: Error) => void }>();
-function thumbWorker(): Worker | null {
-  if (worker !== undefined) return worker;
-  try {
-    if (typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') { worker = null; return null; }
-    worker = new Worker(new URL('./thumbworker.js', import.meta.url), { type: 'module' });
-    worker.onmessage = (e: MessageEvent<{ id: number; blob?: Blob; bytes?: ArrayBuffer; error?: string }>) => { const w = workWaiting.get(e.data.id); if (!w) return; workWaiting.delete(e.data.id); if (e.data.error) w.fail(new Error(e.data.error)); else w.ok(e.data); };
-    worker.onerror = () => { for (const w of workWaiting.values()) w.fail(new Error('worker')); workWaiting.clear(); worker?.terminate(); worker = null; };
-  } catch { worker = null; }
-  return worker;
+// (Two or three of them on a phone with the cores for it: a shelf asks for six covers at once, and one worker
+// decoding them one after another is what made the covers come slower and slower as a shelf was scrolled.)
+let workers: { w: Worker; busy: number }[] | null | undefined;
+let workSeq = 0; const workWaiting = new Map<number, { ok: (v: { blob?: Blob; bytes?: ArrayBuffer }) => void; fail: (e: Error) => void; at: { busy: number } }>();
+function thumbWorker(): { w: Worker; busy: number } | null {
+  if (workers === undefined) {
+    workers = null;
+    try {
+      if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined') {
+        const n = Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency ?? 2) / 2)));
+        workers = [];
+        for (let i = 0; i < n; i++) {
+          const w = new Worker(new URL('./thumbworker.js', import.meta.url), { type: 'module' });
+          const slot = { w, busy: 0 };
+          w.onmessage = (e: MessageEvent<{ id: number; blob?: Blob; bytes?: ArrayBuffer; error?: string }>) => { const x = workWaiting.get(e.data.id); if (!x) return; workWaiting.delete(e.data.id); x.at.busy--; if (e.data.error) x.fail(new Error(e.data.error)); else x.ok(e.data); };
+          w.onerror = () => { for (const [id, x] of workWaiting) if (x.at === slot) { workWaiting.delete(id); x.fail(new Error('worker')); } w.terminate(); if (workers) workers = workers.filter((s) => s !== slot); if (!workers?.length) workers = null; };
+          workers.push(slot);
+        }
+      }
+    } catch { workers = null; }
+  }
+  if (!workers?.length) return null;
+  return workers.reduce((a, b) => (b.busy < a.busy ? b : a));
 }
 function inWorker(msg: Record<string, unknown>, transfer: ArrayBuffer[]): Promise<{ blob?: Blob; bytes?: ArrayBuffer }> | null {
-  const w = thumbWorker(); if (!w) return null;
-  const id = ++workSeq;
-  return new Promise((ok, fail) => { workWaiting.set(id, { ok, fail }); w.postMessage({ id, ...msg }, transfer); });
+  const slot = thumbWorker(); if (!slot) return null;
+  const id = ++workSeq; slot.busy++;
+  return new Promise((ok, fail) => { workWaiting.set(id, { ok, fail, at: slot }); slot.w.postMessage({ id, ...msg }, transfer); });
 }
 async function thumb(bytes: Uint8Array, type: string, height = THUMB_H): Promise<Blob | null> {
   const mime = /svg/.test(type) ? 'image/svg+xml' : type;
   // Off the main thread where possible (not an SVG: workers draw no SVG).
   if (!/svg/.test(mime)) {
     const copy = bytes.slice().buffer as ArrayBuffer;
-    const job = inWorker({ op: 'thumb', bytes: copy, type: mime, height, quality: 0.82 }, [copy]);
+    const job = inWorker({ op: 'thumb', bytes: copy, type: mime, height, quality: 0.78 }, [copy]);
     if (job) { try { const r = await job; if (r.blob) return r.blob; } catch { /* drawn here below */ } }
   }
   const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: mime });
@@ -453,17 +469,30 @@ function store(key: string, p: Omit<Peek, 'cover'>, cover?: Blob | null): Peek {
   return shown;
 }
 const running = new Map<string, Promise<Peek | null>>();
-const INDEX = 'peek:index'; const LIMIT = 1800;
-let index: [string, number][] | null = null; let saving = 0;
+// What is kept on the device is bounded by its size, not only its count: the covers looked at least recently go
+// first once they take more than the budget (a picture looked at again counts as new).
+const INDEX = 'peek:index'; const LIMIT = 6000; const BUDGET = 40 * 1024 * 1024;
+type IndexEntry = [string, number, number?];
+let index: IndexEntry[] | null = null; let saving = 0;
+const saveIndex = () => { clearTimeout(saving); saving = window.setTimeout(() => void db.setMeta(INDEX, index), 1500); };
 async function keep(key: string, s: Stored): Promise<void> {
   try {
     try { await db.setMeta(key, s); }
     catch { if (!s.coverBlob) throw new Error('kept'); await db.setMeta(key, { ...s, coverBlob: undefined, cover: await dataUrl(s.coverBlob) }); }
-    index ??= (await db.getMeta<[string, number][]>(INDEX)) ?? [];
-    index = index.filter(([k]) => k !== key); index.push([key, s.at]);
-    if (index.length > LIMIT) { const drop = index.splice(0, index.length - LIMIT); for (const [k] of drop) void db.deleteMeta(k); }
-    clearTimeout(saving); saving = window.setTimeout(() => void db.setMeta(INDEX, index), 1500);
+    index ??= (await db.getMeta<IndexEntry[]>(INDEX)) ?? [];
+    index = index.filter(([k]) => k !== key); index.push([key, Date.now(), (s.coverBlob?.size ?? 0) + 400]);
+    let total = 0; for (const e of index) total += e[2] ?? 30000;
+    let drop = 0;
+    while ((index.length - drop > LIMIT || total > BUDGET) && drop < index.length - 1) { total -= index[drop][2] ?? 30000; drop++; }
+    if (drop) { const gone = index.splice(0, drop); for (const [k] of gone) { void db.deleteMeta(k); mem.delete(k); } }
+    saveIndex();
   } catch { /* the cover is kept for this session only */ }
+}
+/** A kept entry looked at again: moved to the end of the line (the last to be let go). */
+function touch(key: string): void {
+  if (!index) return;
+  const i = index.findIndex(([k]) => k === key); if (i < 0 || i > index.length - 50) return;
+  const [e] = index.splice(i, 1); e[1] = Date.now(); index.push(e); saveIndex();
 }
 const dataUrl = (b: Blob) => new Promise<string>((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => fail(r.error); r.readAsDataURL(b); });
 
@@ -471,7 +500,7 @@ const dataUrl = (b: Blob) => new Promise<string>((ok, fail) => { const r = new F
  *  that points at a file's gives that file's picture. */
 export async function recall(key: string, maxAge = Infinity): Promise<Peek | undefined> {
   let p = memGet(key);
-  if (!p) { const s = await db.getMeta<Stored>(key).catch(() => undefined); if (s) { p = live(key, s); memSet(key, p); } }
+  if (!p) { const s = await db.getMeta<Stored>(key).catch(() => undefined); if (s) { p = live(key, s); memSet(key, p); touch(key); } }
   if (!p || Date.now() - p.at > maxAge) return undefined;
   if (p.ref && !p.cover) { const f = await recall(p.ref); if (f?.cover) return { ...p, cover: f.cover, description: p.description ?? f.description }; }
   return p;
@@ -530,18 +559,27 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
 /* ---------- a queue for what is on the screen ---------- */
 type Job = { run: () => Promise<void>; started: boolean };
 const queue: Job[] = []; let active = 0;
-const AT_ONCE = 5;
-/** Run `fn` when a turn comes (five at a time; one on the screen now before those only near it); the returned
- *  function takes it back out of the queue if it has not started (an element scrolled away). */
-export function schedule(fn: () => Promise<void>, now = false): () => void {
+const AT_ONCE = 6;
+/** How long a job keeps its turn: one still waiting after that (a slow server, a check on the way) goes on, but
+ *  out of the count, so the covers behind it do not all wait for it. */
+const HOLD = 12000;
+/** Run `fn` when a turn comes (six at a time; one on the screen now before those only near it); the returned
+ *  function takes it back out of the queue if it has not started (an element scrolled away), and its `now()`
+ *  moves it to the front (an element come onto the screen while it waited). */
+export function schedule(fn: () => Promise<void>, now = false): (() => void) & { now(): void } {
   const job: Job = { run: fn, started: false };
   if (now) queue.unshift(job); else queue.push(job);
   pump();
-  return () => { if (!job.started) { const i = queue.indexOf(job); if (i >= 0) queue.splice(i, 1); } };
+  const cancel = (() => { if (!job.started) { const i = queue.indexOf(job); if (i >= 0) queue.splice(i, 1); } }) as (() => void) & { now(): void };
+  cancel.now = () => { if (job.started) return; const i = queue.indexOf(job); if (i > 0) { queue.splice(i, 1); queue.unshift(job); } };
+  return cancel;
 }
 function pump(): void {
   while (active < AT_ONCE && queue.length) {
     const job = queue.shift()!; job.started = true; active++;
-    void job.run().catch(() => undefined).finally(() => { active--; pump(); });
+    let released = false;
+    const release = () => { if (released) return; released = true; active--; pump(); };
+    const timer = setTimeout(release, HOLD);
+    void job.run().catch(() => undefined).finally(() => { clearTimeout(timer); release(); });
   }
 }

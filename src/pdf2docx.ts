@@ -34,7 +34,7 @@ type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number;
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
 type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece };
-type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[] };
+type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[]; /** its first line's baseline (PDF units, from the page's foot) */ base0?: number };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
 /** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
  *  left to right — each spanning `span` columns, `cont` when it carries on the cell above (no rule between). */
@@ -50,7 +50,7 @@ type Region = { cols: Block[][]; edges: [number, number][] };
 type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] };
 /** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
-export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
+export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -891,7 +891,7 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       if (align === 'center' || ls.length === 1) { indStart = 0; indEnd = 0; firstLine = Math.max(0, startGap(first)); }
       align = 'start';
     }
-    blocks.push({ kind: 'p', runs, align, kashida, rtl, indStart, indEnd, firstLine, before, pitch, size, tabs });
+    blocks.push({ kind: 'p', runs, align, kashida, rtl, indStart, indEnd, firstLine, before, pitch, size, tabs, base0: first.base });
     prevBase = ls[ls.length - 1].base; prevPitch = pitch;
     cur = null;
   };
@@ -1729,7 +1729,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   page.cleanup();
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
-  return { vert, w: W, h: H, pics, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
+  const notesAt = notesLines.length && notesRaw[0] ? H - notesLines[0].base - BASE * notesRaw[0].pitch : undefined;
+  return { vert, w: W, h: H, pics, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
 }
 
 /* ------------------------------------------------------------------ */
@@ -2115,6 +2116,27 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
         return { type: i === 0 ? 'nextPage' : 'continuous', page, columns, ...(i === 0 ? { header, footer } : {}), children: kids };
       });
     }
+    // Text far below the rest (a short page, its notes or a closing line at the foot): a frame at its own place
+    // on the page — the gap above it no longer a fixed space in the flow, which a line the reader's font wraps
+    // one word sooner would push, notes and all, onto a page of their own.
+    const all = [...pg.body, ...flowNotes];
+    let foot = -1;
+    for (let i = all.length - 1; i > 0; i--) {
+      const b = all[i];
+      if (b.kind !== 'p') break;
+      if (b.before > 4 * b.pitch && b.base0 !== undefined && b.base0 < pg.h * 0.45) { foot = i; break; }
+    }
+    if (foot > 0) {
+      const b0 = all[foot] as Para;
+      const at = pg.h - b0.base0! - BASE * b0.pitch;
+      const frame: import('./docxwrite').Frame = { x: Math.round(pg.m.left * PT), y: Math.round(at * PT), w: Math.round((pg.w - pg.m.left - pg.m.right) * PT), h: Math.round(b0.pitch * PT), rule: 'atLeast', anchorLock: true };
+      const nBody = pg.body.length;
+      const above = all.slice(0, foot);
+      const aboveXml = blocksFor(above.slice(0, Math.min(foot, nBody)), map, body) + blocksFor(above.slice(nBody), null, body);
+      const footXml = all.slice(foot).map((b, i) => paraFor(i === 0 ? { ...(b as Para), before: 0 } : (b as Para), foot + i < nBody ? map : null, body, { frame })).join('');
+      // (A hairline between the text and the frame: LibreOffice otherwise takes the frame's paragraphs into the text.)
+      return [{ type: 'nextPage', page, header, footer, children: [(aboveXml || emptyPara) + hairline(0) + footXml] }];
+    }
     const children = blocksFor(pg.body, map, body) + blocksFor(flowNotes, null, body);
     return [{ type: 'nextPage', page, header, footer, children: [children || emptyPara] }];
   });
@@ -2204,7 +2226,7 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
       const guid = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
       const key = `{${guid.slice(0, 8)}-${guid.slice(8, 12)}-${guid.slice(12, 16)}-${guid.slice(16, 20)}-${guid.slice(20)}}`;
       const kb = (guid.match(/../g) ?? []).map((h) => parseInt(h, 16)).reverse();
-      const ob = data.slice(); for (let i = 0; i < 32 && i < ob.length; i++) ob[i] ^= kb[i % 16];
+      const ob = (await import('./docxwrite')).editableEmbedding(data.slice()); for (let i = 0; i < 32 && i < ob.length; i++) ob[i] ^= kb[i % 16];
       const id = `rIdK${n++}`;
       zip.file(`word/fonts/kr-${id}.odttf`, ob);
       rels = rels.replace('</Relationships>', `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/kr-${id}.odttf"/></Relationships>`);

@@ -4,7 +4,7 @@
 
 export type Format =
   | 'epub' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'txt' | 'md' | 'html'
-  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'webnovel' | 'unknown';
+  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'webnovel' | 'series' | 'unknown';
 
 export interface Locator {
   /** Which opened document (book id). */
@@ -120,7 +120,9 @@ export interface Book {
   /** A book from an online source (a Shamela book read from the site, a novel from an extension): where it
    *  came from, and whether its text still lives there (`online`) or has been fetched into its file; for a
    *  novel, how many chapters arrived since it was last opened and when the site was last asked. */
-  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number };
+  /** `link`: for a series kept in the library without its volumes (format 'series'), the page of the source
+   *  it opens — its volumes fetched from there, when wanted. */
+  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number; link?: string };
   /** The series the book is a volume of, as its source said (a title's own numbering is read otherwise). */
   series?: { name: string; index?: number; source?: string; shelf?: string };
   pdfHighlights?: PdfHighlight[];
@@ -196,15 +198,26 @@ async function readLinked(src: FileSource, name: string, mime?: string): Promise
   return blob;
 }
 
+// Every book's record, kept after the first read: the library, the sources, the history ask for all of them
+// often (a thousand books with their notes take a few hundred milliseconds to read). Each write goes through
+// here and keeps it current; another tab of the web app writing tells this one to read again.
+let booksCache: Map<string, Book> | null = null;
+const dbChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('kr-db') : null;
+if (dbChannel) dbChannel.onmessage = () => { booksCache = null; };
+const told = () => { try { dbChannel?.postMessage('books'); } catch { /* one tab only */ } };
+
 export const db = {
+  /** Every book (each a copy of its record's fields: changing one does not change what is kept until saved). */
   async allBooks(): Promise<Book[]> {
-    return tx<Book[]>('books', 'readonly', (s) => s.getAll());
+    if (!booksCache) { const all = await tx<Book[]>('books', 'readonly', (s) => s.getAll()); booksCache = new Map(all.map((b) => [b.id, b])); }
+    return [...booksCache.values()].map((b) => ({ ...b }));
   },
   async getBook(id: string): Promise<Book | undefined> {
     return tx<Book | undefined>('books', 'readonly', (s) => s.get(id));
   },
   async putBook(book: Book): Promise<void> {
     await tx('books', 'readwrite', (s) => s.put(book));
+    booksCache?.set(book.id, { ...book }); told();
   },
   async updateBook(id: string, patch: (b: Book) => void): Promise<Book | undefined> {
     const b = await this.getBook(id);
@@ -215,6 +228,7 @@ export const db = {
   },
   async deleteBook(id: string): Promise<void> {
     await tx('books', 'readwrite', (s) => s.delete(id));
+    booksCache?.delete(id); told();
     await tx('files', 'readwrite', (s) => s.delete(id));
     await tx('texts', 'readwrite', (s) => s.delete(id)).catch(() => undefined);
   },
@@ -250,6 +264,7 @@ export const db = {
   },
   async clearAll(): Promise<void> {
     await tx('books', 'readwrite', (s) => s.clear());
+    booksCache = null; told();
     await tx('files', 'readwrite', (s) => s.clear());
     await tx('texts', 'readwrite', (s) => s.clear()).catch(() => undefined);
   },

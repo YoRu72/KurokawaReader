@@ -223,6 +223,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     // The series' button: every volume not yet in the library, into a folder of the library named after it.
     await page.goto(base + `#/sources/${dirId}?shelf=Alpha%2520Series`); await page.waitForSelector('.series-head .series-all', { timeout: 15000 }); await page.waitForTimeout(300);
     ok('the series offers all its volumes', /Download all 2 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
+    // Kept in the library without its volumes: a card that opens the series here.
+    const followHash = await page.evaluate(() => location.hash);
+    await page.click('.series-head .series-follow'); await page.waitForTimeout(800);
+    const followed = await page.$eval('.series-head .series-follow', (e) => e.classList.contains('on'));
+    await page.goto(base + '#/'); await page.waitForSelector('.library-view'); await page.waitForTimeout(800);
+    const followCard = await page.$('.book-card:has-text("Alpha Series")');
+    if (followCard) { await followCard.click(); await page.waitForTimeout(1500); }
+    const opened = await page.evaluate(() => location.hash);
+    ok('a series kept in the library without its volumes; its card opens the series on its source', followed && !!followCard && decodeURIComponent(opened) === decodeURIComponent(followHash));
+    if (!(followed && followCard && decodeURIComponent(opened) === decodeURIComponent(followHash))) console.log('  follow:', followed, !!followCard, opened, followHash);
+    await page.waitForSelector('.series-head .series-follow', { timeout: 15000 }); await page.click('.series-head .series-follow'); await page.waitForTimeout(600);
+    ok('… and taken out again from the same button', /Add to library/.test(await page.$eval('.series-head .series-follow', (e) => e.textContent)));
     await page.click('.series-head .series-all'); await page.waitForFunction(() => /All in the library/.test(document.querySelector('.series-head .series-all')?.textContent || ''), null, { timeout: 60000 });
     ok('… fetched: every row opens its book now', (await page.$$('.vol-row .vol-actions .btn.primary')).length === 2);
     await page.goto(base + '#/'); await page.reload(); await page.waitForSelector('.book-card'); await page.waitForTimeout(400);
@@ -252,6 +264,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
       const req = route.request(); const u = new URL(req.url());
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' } });
       return route.fulfill({ response: await route.fetch({ url: 'http://localhost:5401' + u.pathname + u.search }) });
+    });
+    // AniList, for the series' genres and tags (the manifest asks): each name found as itself; a series whose name
+    // starts with "B" an action one, the others a romance; "Zeta" unknown.
+    let alAsked = 0;
+    await page.addInitScript(() => { globalThis.krTagsPace = 30; });
+    await ctx.route('https://graphql.anilist.co/**', async (route) => {
+      const req = route.request();
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
+      alAsked++;
+      const { variables } = JSON.parse(req.postData() || '{}'); const data = {};
+      for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, countryOfOrigin: /^B/.test(q) ? 'KR' : 'JP', tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90, category: 'Theme-Fantasy' }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true, category: 'Theme-Drama' }] }] };
+      return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data }) });
     });
     await page.keyboard.press('Escape'); await page.goto(base + '#/sources'); await page.reload(); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     ok('nothing hints at the word', !/OTL|elscione/i.test(await page.evaluate(() => document.body.textContent)));
@@ -294,6 +318,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Delta%20Omnibus')); await page.waitForSelector('.series-block', { timeout: 20000 });
     const headAtOnce = await page.evaluate(() => !!document.querySelector('.series-head .series-cover img'));
     ok('its page: the series\' cover on top at once, the very one its card showed', headAtOnce);
+    // (Covers are read as their rows come near the screen: the rows brought into view.)
+    await page.evaluate(() => document.querySelectorAll('.vol-row')[1]?.scrollIntoView({ block: 'center' }));
     await page.waitForFunction(() => document.querySelectorAll('.vol-row .vol-cover img').length === 2, null, { timeout: 30000 });
     const dRows = await page.$$eval('.vol-row', (rs) => rs.map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-kind')?.textContent}|${[...r.querySelectorAll('.vol-editions .chip')].map((c) => c.textContent + (c.classList.contains('on') ? '*' : '')).join('/')}`));
     ok('volume 1 shown as its EPUB first, the premium PDF beside it', dRows[0] === 'Volume 1|EPUB|Kobo · EPUB*/Premium · PDF' && dRows[1] === 'Volume 2|EPUB|');
@@ -363,6 +389,36 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('… with a button for all of them', /Download all 4 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)) && /4 volumes/.test(await page.$eval('.series-head .src-chips', (e) => e.textContent)));
     await page.click('.vol-row >> nth=1 >> .vol-actions button'); await page.waitForSelector('.vol-row >> nth=1 >> .vol-actions .btn.primary', { timeout: 60000 });
     ok('one volume by its own button; the series\' button counts the rest', /Download all 3 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
+    // Genres and tags from AniList: on the series' page (no spoiler tags), a filter of the shelf, and in search.
+    await page.waitForFunction(() => true); await page.reload(); await page.waitForSelector('.series-head', { timeout: 20000 }); await page.waitForTimeout(400);
+    const genreChips = await page.$$eval('.series-head .tags-block .genre-chips .genre, .series-head .tags-block .top-tags .genre', (es) => es.map((e) => e.textContent));
+    ok('a series\' genres and tags from AniList on its page (spoilers left out)', alAsked > 0 && genreChips.join() === 'Romance,School');
+    if (genreChips.join() !== 'Romance,School') console.log('  chips:', JSON.stringify(genreChips), alAsked);
+    await page.click('.series-head .tags-more'); await page.waitForTimeout(200);
+    const groups = await page.$$eval('.series-head .tag-group h4', (es) => es.map((e) => e.textContent));
+    ok('… every tag on a tap, in its kind; the spoilers behind their own button', groups.join() === 'Themes' && !!(await page.$('.series-head .spoilers[hidden]')));
+    await page.click('.series-head .tag-group .genre:has-text("School")'); await page.waitForTimeout(1200);
+    const bySchool = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('… a tag searched for: the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['Action']; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.goto(base + otlHash.replace(/\?.*$/, '')); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
+    const action = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('the shelf filtered by genre', action.length >= 1 && action.every((x) => /^B/.test(x)) && action.includes('Black Summoner'));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['!Action']; v.type = ['JP']; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?v=2'); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
+    const notAction = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('… a genre left out, a type (JP) asked for', notAction.length > 3 && !notAction.some((x) => /^B/.test(x)));
+    // The filter sheet: Reset and Filter on top, sections that fold, a genre ticked twice to leave it out.
+    await page.click('.topbar-actions button[data-icon="filter"]'); await page.waitForSelector('.filter-sheet .fs-bar');
+    await page.click('.filter-sheet .fs-head:has-text("Genres")'); await page.waitForTimeout(150);
+    const rom = '.filter-sheet .fs-sec.open .fs-opt:has-text("Romance")';
+    await page.click(rom); await page.click(rom); await page.waitForTimeout(100);
+    ok('the filter sheet: folding sections, a genre ticked twice is left out (✕)', await page.getAttribute(rom, 'aria-checked') === 'mixed' && /left out/.test(await page.$eval('.filter-sheet .fs-sec.open .fs-sum', (e) => e.textContent)));
+    await page.click('.filter-sheet .fs-head:has-text("Sort")'); await page.click('.filter-sheet .fs-sort .fs-opt:has-text("Name")'); await page.waitForTimeout(100);
+    ok('… a sort tapped again turns round (its arrow up)', !!(await page.$('.filter-sheet .fs-sort .fs-opt.on [data-icon], .filter-sheet .fs-sort .fs-opt.on svg')) && /↑/.test(await page.$eval('.filter-sheet .fs-sec.open .fs-sum, .filter-sheet .fs-sec:has(.fs-sort) .fs-sum', (e) => e.textContent)));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); delete v.genre; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Alpha%20Saga')); await page.waitForSelector('.series-head', { timeout: 20000 });
     // Back from a volume — its page, or the reader — is the series where it was left, not the main page.
     const seriesHash = await page.evaluate(() => location.hash);
     const placeOf = () => page.evaluate(() => { const body = document.querySelector('.sources-view .src-body'); const r = document.querySelectorAll('.vol-row')[2]?.getBoundingClientRect(); return { hash: location.hash, top: body?.scrollTop ?? -1, rowTop: r ? Math.round(r.top) : -1, rows: document.querySelectorAll('.vol-row').length }; });

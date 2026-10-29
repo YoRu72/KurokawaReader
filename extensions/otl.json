@@ -2,10 +2,11 @@
   "kurokawa": "folder",
   "id": "otl",
   "name": "Officially Translated Light Novels",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "url": "https://server.elscione.com/Officially%20Translated%20Light%20Novels/",
   "server": "h5ai",
   "browser": true,
+  "tags": "anilist",
   "lang": "en",
   "description": "Officially translated light novels in English, as EPUBs — the series of the publishers (Yen Press, J-Novel Club, Seven Seas…), each volume in its editions."
 }

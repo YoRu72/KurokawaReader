@@ -6,22 +6,22 @@
 // or fetched whole for offline. A bell tells what came: new chapters for the novels of the library, newer
 // versions of the extensions.
 import { h, icon, iconButton, toast, openSheet, coverColors, pickButton } from '../ui/dom';
-import { t, localDigits, getLang, countChapters, countSeconds, countBooks, countVolumes, formatBytes } from '../i18n';
+import { t, localDigits, getLang, countChapters, countSeconds, countHours, countBooks, countVolumes, formatBytes } from '../i18n';
 import { navigate, back } from '../router';
 import { db, uid, FAV_TAG, chapterRead, type Book, type Folder, type TagDef } from '../db';
-import { importFiles } from '../library';
+import { importFiles, coverUrl } from '../library';
 import { setJump } from './reader';
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceChapter, type SourceFile } from '../sources/types';
 import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
-import { passChallenge, forgetSite, openSite } from '../sources/http';
+import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, type UpdateReport } from '../sources/updates';
+import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 
@@ -38,6 +38,23 @@ function filterValues(src: Source): FilterValues {
   try { return { ...base, ...(JSON.parse(localStorage.getItem(`kr.src.${src.id}.filters`) ?? '{}') as FilterValues) }; } catch { return base; }
 }
 function saveFilters(src: Source, v: FilterValues): void { localStorage.setItem(`kr.src.${src.id}.filters`, JSON.stringify(v)); }
+
+/** How many of the library's books from a folder source lie under a shelf (any depth): counted once for all the
+ *  shelves when the library's list changes, not by a pass over it for every card. */
+const shelfCounts = new WeakMap<Map<string, string>, { size: number; counts: Map<string, number> }>();
+function inShelf(lib: Map<string, string>, shelf: string): number {
+  let c = shelfCounts.get(lib);
+  if (!c || c.size !== lib.size) {
+    const counts = new Map<string, number>();
+    for (const k of lib.keys()) {
+      if (!k.startsWith('f:')) continue;
+      const parts = k.slice(2).split('/');
+      for (let i = 1; i < parts.length; i++) { const pre = parts.slice(0, i).join('/'); counts.set(pre, (counts.get(pre) ?? 0) + 1); }
+    }
+    c = { size: lib.size, counts }; shelfCounts.set(lib, c);
+  }
+  return c.counts.get(shelf) ?? 0;
+}
 
 /* ---------- results kept for the way back ---------- */
 interface Cached { items: SourceBook[]; page: number; hasMore: boolean; tags: SourceTag[]; title?: string; scroll: number }
@@ -115,6 +132,7 @@ function lazy(make: () => Promise<HTMLElement & { dispose?: () => void }>, srcId
 /* ---------- one search, every source (LNReader's and Mihon's global search) ---------- */
 const ALL = '~all';
 function globalSearchView(q0: string): HTMLElement & { dispose?: () => void } {
+  newCoverScreen();
   const body = h('div', { class: 'library-body global-search' });
   const input = h('input', { type: 'search', class: 'src-search', value: q0, placeholder: t('searchAllSources'), dir: 'auto', enterkeyhint: 'search' }) as HTMLInputElement;
   const form = h('form', { class: 'gs-form', onsubmit: (e: Event) => { e.preventDefault(); const q = input.value.trim(); if (q) navigate(path(ALL, { q }), true); } }, input);
@@ -414,14 +432,26 @@ function addRepoSheet(after: () => void, kind: 'repo' | 'ext' | 'folder' = 'repo
 /* ---------- the bell ---------- */
 function updatesSheet(after: () => void): void {
   const sh = openSheet(t('srcWhatsNew'), t('close'));
+  sh.el.classList.add('updates-sheet');
   const body = sh.body;
+  // (A time as people say it: "3 hours ago".)
+  const ago = (ms: number) => {
+    const rtf = new Intl.RelativeTimeFormat(getLang() === 'ar' ? 'ar' : getLang(), { numeric: 'auto' }); const d = (ms - Date.now()) / 1000;
+    for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (Math.abs(d) >= n) return rtf.format(Math.round(d / n), u);
+    return rtf.format(0, 'minute');
+  };
   const draw = async () => {
     body.replaceChildren();
     const rep = await lastReport();
-    const novels = (await db.allBooks()).filter((b) => b.format === 'webnovel' && (b.remote?.newChapters ?? 0) > 0);
+    const novels = (await db.allBooks()).filter((b) => b.format === 'webnovel' && (b.remote?.newChapters ?? 0) > 0).sort((a, b) => (b.remote?.checkedAt ?? 0) - (a.remote?.checkedAt ?? 0));
+    const vols = await folderNews().catch(() => []);
+    const exts = (rep?.extensions ?? []).filter((u) => !u.done);
     const when = Number(localStorage.getItem('kr.sources.checkedAt') ?? 0);
-    const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
-    const line = h('small', null, when ? t('srcLastChecked', { when: new Date(when).toLocaleString(getLang() === 'ar' ? 'ar' : undefined) }) : t('neverChecked'));
+    // The state of the checks, and the way to check now.
+    const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: !isChecking() }, bar);
+    const line = h('small', null, when ? t('srcCheckedAgo', { when: ago(when) }) : t('neverChecked'));
+    const every = checkEvery();
+    const next = h('small', { class: 'upd-next' }, every ? t('srcNextCheck', { when: when ? ago(when + every * 3600000) : t('soon') }) : t('srcChecksOff'));
     const btn = h('button', { type: 'button', class: 'btn tonal', disabled: isChecking() }, icon('refresh'), t('checkNow')) as HTMLButtonElement;
     btn.addEventListener('click', async () => {
       btn.disabled = true; track.hidden = false;
@@ -430,45 +460,72 @@ function updatesSheet(after: () => void): void {
       catch (e) { toast(describe(e), 'error'); }
       finally { track.hidden = true; void draw(); after(); }
     });
-    body.append(h('div', { class: 'source-row' }, icon('bell'), h('span', { class: 'grow' }, h('b', null, t('srcWhatsNew')), line, track), btn));
-    const autoOn = localStorage.getItem('kr.sources.autoCheck') !== 'off';
-    body.append(h('label', { class: 'switch-row' }, h('span', null, t('srcAutoCheck')), h('input', { type: 'checkbox', checked: autoOn, onchange: (e: Event) => { localStorage.setItem('kr.sources.autoCheck', (e.target as HTMLInputElement).checked ? 'on' : 'off'); if ((e.target as HTMLInputElement).checked) void askNotifyPermission().catch(() => false); } })));
-    body.append(h('label', { class: 'switch-row' }, h('span', null, t('extAutoUpdate')), h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: (e: Event) => localStorage.setItem('kr.ext.autoUpdate', (e.target as HTMLInputElement).checked ? 'on' : 'off') })));
-    { const pref = updatePrefs(); const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: pref[k], onchange: (e: Event) => setUpdatePref(k, (e.target as HTMLInputElement).checked) }));
-      body.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch'))); }
+    body.append(h('div', { class: 'source-row upd-state' }, icon('bell'), h('span', { class: 'grow' }, line, next, track), btn));
+    const dismiss = (fn: () => Promise<void>) => iconButton('check', t('markSeen'), async () => { await fn(); void draw(); after(); });
+    // New chapters, a row per novel: a tap reads them, the tick marks them seen.
     if (novels.length) {
-      body.append(h('h3', { class: 'section-title' }, t('newChapters')));
-      const list = h('ul', { class: 'plain-list' });
-      for (const b of novels) list.append(h('li', null, h('button', { type: 'button', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } }, icon('books'), h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!))), h('span', { class: 'badge new' }, localDigits(b.remote!.newChapters!)))));
+      body.append(h('div', { class: 'upd-head' }, h('h3', { class: 'section-title' }, t('newChapters')),
+        h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const b of novels) await dismissChapters(b.id); void draw(); after(); } }, t('markAllSeen'))));
+      const list = h('ul', { class: 'plain-list upd-list' });
+      for (const b of novels) {
+        const url = coverUrl(b);
+        list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } },
+          url ? h('img', { class: 'upd-cover', src: url, alt: '' }) : h('span', { class: 'upd-cover gen' }, icon('books')),
+          h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), b.remote?.checkedAt ? ` · ${ago(b.remote.checkedAt)}` : '')),
+          h('span', { class: 'badge new' }, `+${localDigits(String(b.remote!.newChapters))}`)), dismiss(() => dismissChapters(b.id))));
+      }
       body.append(list);
     }
-    if (rep?.extensions.length) {
-      body.append(h('h3', { class: 'section-title' }, t('extensionUpdates')));
-      const list = h('ul', { class: 'plain-list' });
-      for (const u of rep.extensions) {
-        const row = h('li', null);
-        if (u.done) { row.append(h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, u.name), h('small', null, `${u.repoName} · ${u.from} → ${u.to} · ${t('extUpdatedAuto')}`)), icon('check')); list.append(row); continue; }
+    // New volumes of the series followed in the web folders: a row per series, opening its page.
+    if (vols.length) {
+      body.append(h('div', { class: 'upd-head' }, h('h3', { class: 'section-title' }, t('notifyTitleVolumes')),
+        h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const v of vols) await dismissVolumes(v.repoKey, v.series); void draw(); after(); } }, t('markAllSeen'))));
+      const list = h('ul', { class: 'plain-list upd-list' });
+      for (const v of vols) list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, h('span', { class: 'upd-cover gen' }, icon('books')),
+        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${v.at ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, `+${localDigits(String(v.n))}`)), dismiss(() => dismissVolumes(v.repoKey, v.series))));
+      body.append(list);
+    }
+    // Extensions with a newer version: each updated with a tap, or all at once.
+    if (exts.length) {
+      const list = h('ul', { class: 'plain-list upd-list' });
+      const updateOne = async (u: (typeof exts)[number]) => { const repo = (await listRepos()).find((r) => r.key === u.repoKey); const item = repo?.items.find((i) => i.id === u.pluginId); if (!repo || !item) throw new Error(t('extGone')); await pluginCode(repo, item, true); forgetHandle(sourceIdOf(repo, item)); u.done = true; };
+      const all = h('button', { type: 'button', class: 'btn small text' }, t('updateAll')) as HTMLButtonElement;
+      all.addEventListener('click', async () => { all.disabled = true; let n = 0; for (const u of exts) { try { await updateOne(u); n++; } catch { /* told in its row */ } } toast(t('extUpdatedN', { n: localDigits(n) })); void draw(); after(); });
+      body.append(h('div', { class: 'upd-head' }, h('h3', { class: 'section-title' }, t('extensionUpdates')), exts.length > 1 ? all : null));
+      for (const u of exts) {
+        const row = h('li', { class: 'upd-row' });
         const upd = h('button', { type: 'button', class: 'btn small primary' }, icon('download'), t('update')) as HTMLButtonElement;
-        upd.addEventListener('click', async () => {
-          upd.disabled = true;
-          try { const repo = (await listRepos()).find((r) => r.key === u.repoKey); const item = repo?.items.find((i) => i.id === u.pluginId); if (!repo || !item) throw new Error(t('extGone')); await pluginCode(repo, item, true); forgetHandle(sourceIdOf(repo, item)); row.remove(); toast(t('extUpdated', { name: u.name })); after(); }
-          catch (e) { upd.disabled = false; toast(describe(e), 'error'); }
-        });
+        upd.addEventListener('click', async () => { upd.disabled = true; try { await updateOne(u); row.remove(); toast(t('extUpdated', { name: u.name })); after(); } catch (e) { upd.disabled = false; toast(describe(e), 'error'); } });
         row.append(h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, u.name), h('small', null, `${u.repoName} · ${u.from} → ${u.to}`)), upd);
         list.append(row);
       }
       body.append(list);
     }
-    // New volumes of the series followed in the web folders: a row per series, opening its page.
-    const vols = await folderNews().catch(() => []);
-    if (vols.length) {
-      body.append(h('h3', { class: 'section-title' }, t('notifyTitleVolumes')));
-      const list = h('ul', { class: 'plain-list' });
-      for (const v of vols) list.append(h('li', null, h('button', { type: 'button', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, icon('books'), h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}`)), h('span', { class: 'badge new' }, `+${localDigits(v.n)}`))));
+    const autoDone = (rep?.extensions ?? []).filter((u) => u.done);
+    if (autoDone.length) body.append(h('p', { class: 'hint' }, icon('check'), ' ', t('extUpdatedAutoN', { n: localDigits(autoDone.length), names: autoDone.slice(0, 3).map((u) => u.name).join('، ') })));
+    // What could not be checked: each with its reason, asked again on its own.
+    if (rep?.failed.length) {
+      body.append(h('h3', { class: 'section-title warn' }, t('checkFailedTitle')));
+      const list = h('ul', { class: 'plain-list upd-list' });
+      rep.failed.forEach((f, i) => {
+        const again = h('button', { type: 'button', class: 'btn small tonal' }, icon('refresh'), t('retry')) as HTMLButtonElement;
+        again.addEventListener('click', async () => { again.disabled = true; try { const n = await retryFailed(i); toast(n ? t('checkFound') : t('checkNothing')); } catch (e) { toast(describe(e), 'error'); } void draw(); after(); });
+        list.append(h('li', { class: 'upd-row' }, h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, f.title), h('small', { class: 'warn', dir: 'auto' }, describe(new Error(f.error)))), again));
+      });
       body.append(list);
     }
-    if (rep?.failed.length) body.append(h('p', { class: 'hint warn' }, t('checkFailedSome', { n: localDigits(rep.failed.length), titles: rep.failed.slice(0, 3).map((f) => f.title).join('، ') })));
-    if (!novels.length && !rep?.extensions.length && !vols.length) body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('nothingNew'))));
+    if (!novels.length && !exts.length && !vols.length && !rep?.failed.length) body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('nothingNew'))));
+    // How the checks go: folded under «Settings», the same switches as everywhere.
+    const opts = h('details', { class: 'upd-settings' }, h('summary', null, icon('settings'), t('settings')));
+    opts.append(h('div', { class: 'field' }, h('span', null, t('checkEvery')), pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(every), (v) => { setCheckEvery(Number(v)); if (Number(v)) void askNotifyPermission().catch(() => false); void draw(); }, t('close'))));
+    const sw = (label: string, on: boolean, set: (v: boolean) => void) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }));
+    const pref = updatePrefs();
+    opts.append(
+      sw(t('extAutoUpdate'), localStorage.getItem('kr.ext.autoUpdate') !== 'off', (v) => localStorage.setItem('kr.ext.autoUpdate', v ? 'on' : 'off')),
+      sw(t('updWifiOnly'), pref.wifiOnly, (v) => setUpdatePref('wifiOnly', v)),
+      sw(t('updOnlyOngoing'), pref.onlyOngoing, (v) => setUpdatePref('onlyOngoing', v)),
+      sw(t('updAutoFetch'), pref.autoFetch, (v) => setUpdatePref('autoFetch', v)));
+    body.append(opts);
   };
   void draw();
 }
@@ -624,6 +681,36 @@ const indexRuns = new Map<string, IndexRun>();
 const autoTried = new Set<string>();
 /** Series being fetched whole: one run per series however often its page is opened meanwhile. */
 const seriesRuns = new Map<string, { text: string; on?: (text: string) => void; done?: () => void }>();
+/** A series' genres, then its tags in their kinds (themes, cast, setting…), the best fitting first with how well
+ *  they fit; the first few shown, all on a tap; the tags that give the story away only when asked. */
+function tagsBlock(src: Source, b: SourceBook): HTMLElement {
+  const go = (q: string) => navigate(path(src.id, { q }));
+  const chip = (name: string, extra = '') => h('button', { type: 'button', class: 'src-chip genre', onclick: () => go(name) }, name, extra ? h('small', null, extra) : '');
+  const box = h('div', { class: 'tags-block' });
+  if (b.genres?.length) box.append(h('div', { class: 'src-chips genre-chips' }, ...b.genres.map((g) => chip(g))));
+  const tags = (b.tagList ?? []).filter((x) => !x.spoiler);
+  const spoilers = (b.tagList ?? []).filter((x) => x.spoiler);
+  if (!tags.length && !spoilers.length) return box;
+  const kindOf = (c?: string) => { const k = (c ?? '').split('-')[0]; return ['Theme', 'Cast', 'Setting', 'Demographic', 'Technical', 'Sexual Content'].includes(k) ? k : 'Other'; };
+  const ORDER = ['Theme', 'Cast', 'Setting', 'Demographic', 'Technical', 'Sexual Content', 'Other'];
+  const pct = (r: number) => `${localDigits(r)}%`;
+  const all = h('div', { class: 'tag-groups', hidden: true });
+  const byKind = new Map<string, typeof tags>();
+  for (const x of tags) { const k = kindOf(x.category); (byKind.get(k) ?? byKind.set(k, []).get(k)!).push(x); }
+  for (const k of ORDER) { const xs = byKind.get(k); if (!xs?.length) continue; all.append(h('div', { class: 'tag-group' }, h('h4', null, t(`tagCat${k}` as 'tagCatTheme')), h('div', { class: 'src-chips' }, ...xs.map((x) => chip(x.name, pct(x.rank)))))); }
+  if (spoilers.length) {
+    const sp = h('div', { class: 'src-chips spoilers', hidden: true }, ...spoilers.map((x) => chip(x.name, pct(x.rank))));
+    const btn = h('button', { type: 'button', class: 'btn text small', onclick: () => { sp.hidden = !sp.hidden; } }, icon('eye'), t('showSpoilers', { n: localDigits(spoilers.length) }));
+    all.append(h('div', { class: 'tag-group' }, btn, sp));
+  }
+  // (At first, the best fitting few; all of them, in their kinds, a tap away.)
+  const top = h('div', { class: 'src-chips top-tags' }, ...tags.slice(0, 6).map((x) => chip(x.name)));
+  const more = h('button', { type: 'button', class: 'btn text small tags-more' }, t('tagsAll', { n: localDigits(tags.length + spoilers.length) }));
+  more.addEventListener('click', () => { const open = all.hidden; all.hidden = !open; top.hidden = open; more.textContent = open ? t('tagsFewer') : t('tagsAll', { n: localDigits(tags.length + spoilers.length) }); });
+  box.append(top, all, more);
+  return box;
+}
+
 function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
   const files = b.files ?? [];
   const runKey = `${src.id}|${b.id}`;
@@ -694,25 +781,31 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
-      h('div', { class: 'series-actions' }, next, btn, trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
+      // (Its genres and every tag, arranged: a tap searches the shelf for the others like it.)
+      b.genres?.length || b.tagList?.length ? tagsBlock(src, b) : null,
+      h('div', { class: 'series-actions' }, next, btn, seriesRefButton(src.id, location.hash.replace(/^#/, ''), b.title, () => b.author || byline.textContent || undefined, () => cover.querySelector('img')), trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
   // (The first volume's cover, and its publisher's blurb as the series' — folded to a few lines, a tap opens it.)
   const fill = (p: { cover?: string; description?: string; author?: string } | null | undefined) => {
+    // (No cover in its first volume: AniList's, when the source has it.)
+    const pic = p?.cover ?? b.cover;
+    if (pic && !cover.querySelector('img')) { cover.classList.add('cover-tap'); cover.replaceChildren(h('img', { src: pic, alt: '', referrerpolicy: 'no-referrer' })); }
     if (!p) return;
-    if (p.cover) { cover.classList.add('cover-tap'); cover.replaceChildren(h('img', { src: p.cover, alt: '' })); }
     if (p.author && !byline.textContent) { byline.textContent = p.author; byline.hidden = false; }
     if (p.description && !about.textContent) { about.textContent = p.description; about.hidden = false; }
   };
   const now = v1b ? src.peekNow?.(v1b) : undefined;
   if (now) fill(now);
   else if (v1b && src.peek) observe(head, async () => fill(await src.peek!(v1b).catch(() => null)));
+  else fill(null);
   return h('div', { class: 'series-block' }, head, about);
 }
 
 /* ---------- browsing a source ---------- */
 function browseView(src: Source, q: string, shelf: string | undefined, tags: string[], hnd?: Handle): HTMLElement & { dispose?: () => void } {
+  newCoverScreen();
   let filters = filterValues(src);
   const key = `${src.id}|${q}|${shelf ?? ''}|${tags.join(',')}|${JSON.stringify(filters)}`;
   const grid = h('div', { class: 'src-grid' });
@@ -747,7 +840,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // What a folder's items need: the library's books from this source, the rows to tell when one arrives,
   // and covers and contents read as their cards come near (a few at a time, the ones scrolled past dropped).
   const lib = new Map<string, string>(); const rows = new Map<string, (bookId: string) => void>();
-  const lazy = new WeakMap<Element, () => Promise<void>>(); const waiting = new WeakMap<Element, () => void>();
+  const lazy = new WeakMap<Element, () => Promise<void>>(); const waiting = new WeakMap<Element, (() => void) & { now?(): void }>();
   // (Those on the screen go first; those only near it wait their turn.)
   const lazyIo = new IntersectionObserver((es) => {
     for (const e of es) {
@@ -758,7 +851,13 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       } else { waiting.get(e.target)?.(); waiting.delete(e.target); }
     }
   }, { rootMargin: '600px 0px' });
-  const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); };
+  // (A card queued while near that has come onto the screen goes to the front of the queue.)
+  const nowIo = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) waiting.get(e.target)?.now?.(); }, { rootMargin: '0px' });
+  const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); nowIo.observe(el); };
+  const coverless = new Set<() => void>();
+  const retryCovers = () => { const fns = [...coverless]; coverless.clear(); for (const fn of fns) fn(); };
+  window.addEventListener('kr:covers-retry', retryCovers);
+  const retryTimer = window.setInterval(() => { if (coverless.size) retryCovers(); }, 75000);
   // (The page scrolls in its body: that is the place kept for the way back.)
   // (A folder shown from the index that the site says has changed since: drawn again, in place.)
   let stale = false;
@@ -773,7 +872,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     if (loading) stale = true; else redraw();
   };
   window.addEventListener('kr:shelf-changed', changed);
-  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
+  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); nowIo.disconnect(); window.removeEventListener('kr:covers-retry', retryCovers); clearInterval(retryTimer); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
   // (A web folder's own address, for "Open this folder on the site".)
   const here = src.id.startsWith('dir:') && /^https?:\/\//i.test(src.site ?? '') ? `${src.site.replace(/\/?$/, '/')}${shelf && !shelf.startsWith('::') ? `${shelf.replace(/^\/+|\/+$/g, '')}/` : ''}` : undefined;
 
@@ -857,19 +956,25 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
     if (b.look === 'folder' && b.openShelf !== undefined && src.folderCover) {
       // (The series' volumes in the library: counted on its card.)
-      const mine = [...lib.keys()].filter((k) => k.startsWith(`f:${b.openShelf}/`)).length;
+      const mine = inShelf(lib, b.openShelf);
       // (New volumes as they are now: a series seen since the shelf was drawn has none any more.)
       const fresh = src.freshNow?.(b.openShelf) ?? b.fresh ?? 0;
       const freshMark = () => (fresh ? h('span', { class: 'fresh-mark', title: t('notifyTitleVolumes') }, `+${localDigits(fresh)}`) : null);
       if (fresh) cover.append(freshMark()!);
+      let badged = false;
       const fill = (p: { cover?: string; count?: number } | null) => {
-        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), h('span', { class: 'folder-mark' }, icon('folder')), ...(fresh ? [freshMark()!] : [])); }
-        if (p?.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
-        if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p?.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
+        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '', referrerpolicy: 'no-referrer', onerror: () => { cover.classList.remove('has-img'); retryLater(); } }), h('span', { class: 'folder-mark' }, icon('folder')), ...(fresh ? [freshMark()!] : [])); }
+        if (badged || !p) return; badged = true;
+        if (p.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
+        if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
       };
+      // (A card left without a cover — the site checking, a file that would not read, its tags not yet known —
+      // is tried again when something changes, not left blank for good.)
+      const run = async () => { cover.classList.add('loading'); try { const p = await src.folderCover!(b.openShelf!).catch(() => null); fill(p); if (!p?.cover) retryLater(); } finally { cover.classList.remove('loading'); } };
+      const retryLater = () => { coverless.add(() => { if (el.isConnected && !cover.classList.contains('has-img')) observe(el, run); }); };
       const now = src.folderCoverNow?.(b.openShelf);
-      if (now) fill(now);
-      else observe(el, async () => { cover.classList.add('loading'); try { fill(await src.folderCover!(b.openShelf!).catch(() => null)); } finally { cover.classList.remove('loading'); } });
+      if (now?.cover) fill(now);
+      else { if (now) fill(now); observe(el, run); }
     }
     return el;
   };
@@ -889,6 +994,8 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
         ...(r.empty.url ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => void openSite(r.empty!.url!) }, icon('globe'), t('openFolderOnSite'))] : [])));
       else status.textContent = t('noResults');
       cache.set(key, { items: [...items], page, hasMore, tags: allTags, title: r.title, scroll: 0 });
+      // (The last twenty pages kept for the way back, the oldest let go.)
+      while (cache.size > 20) cache.delete(cache.keys().next().value as string);
       // (A short page leaves the end of the shelf in view: the next one is asked for without a scroll.)
       if (hasMore) requestAnimationFrame(() => { if (!gone && sentinel.getBoundingClientRect().top < window.innerHeight + 600) void more(); });
     } catch (e) {
@@ -938,13 +1045,58 @@ function openCover(img: HTMLImageElement, src: Source, title: string, hnd?: Hand
     });
   }
 }
+/* A source's covers: straight from the site as any page shows them (the web view's own cache keeps them); a
+   site that refuses them so (a referer wanted, a check) through the app's fetcher — remembered by host, so its
+   next covers go that way at once, without a refused request first — and those kept on the device. */
+const FETCH_HOSTS = 'kr.coverFetchHosts';
+const fetchHosts: Set<string> = (() => { try { return new Set(JSON.parse(localStorage.getItem(FETCH_HOSTS) ?? '[]') as string[]); } catch { return new Set<string>(); } })();
+const hostOfUrl = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
+const COVER_CACHE = 'kr-covers-v1';
+const fetched = new Map<string, Promise<string>>();
+/** A cover through the app's fetcher: from the device when kept, else fetched and kept (a month, by the
+ *  browser's own store); an address for it, made once a session. */
+function viaFetcher(url: string, hnd: Handle): Promise<string> {
+  let p = fetched.get(url);
+  if (p) return p;
+  p = (async () => {
+    let cache: Cache | null = null;
+    try { cache = await caches.open(COVER_CACHE); const hit = await cache.match(url); if (hit && Date.now() - Number(hit.headers.get('x-kr-at') ?? 0) < 30 * 86400000) return URL.createObjectURL(await hit.blob()); } catch { cache = null; }
+    const { fetchBytes } = await import('../sources/http');
+    const bytes = await fetchBytes(url, undefined, { headers: hnd.ln?.imageRequestInit?.headers ?? hnd.my?.headers ?? { referer: hnd.item.site } });
+    const blob = new Blob([bytes.buffer as ArrayBuffer]);
+    if (cache) void cache.put(url, new Response(blob, { headers: { 'x-kr-at': String(Date.now()) } })).catch(() => undefined);
+    return URL.createObjectURL(blob);
+  })();
+  p.catch(() => fetched.delete(url));
+  fetched.set(url, p);
+  // (The last two hundred kept as addresses; the older ones' pictures let go — the device's copy brings one back.)
+  while (fetched.size > 200) { const [old, op] = fetched.entries().next().value as [string, Promise<string>]; fetched.delete(old); void op.then((u) => setTimeout(() => URL.revokeObjectURL(u), 30000)).catch(() => undefined); }
+  return p;
+}
+/** The covers of a view's first screen are asked first (eager, high priority); the ones after — the next pages
+ *  as the shelf is scrolled — lazily, so pictures far below never hold up the ones being looked at. */
+let firstCovers = 0;
+export const newCoverScreen = (): void => { firstCovers = 0; };
 function coverImg(url: string, hnd?: Handle): HTMLElement {
-  const img = h('img', { src: url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
+  const early = firstCovers++ < 12;
+  const img = h('img', { class: 'cv-img', alt: '', loading: early ? 'eager' : 'lazy', decoding: 'async', fetchpriority: early ? 'high' : 'auto', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
+  img.addEventListener('load', () => img.classList.add('loaded'), { once: true });
+  const host = hostOfUrl(url);
+  const byFetcher = (learn: boolean) => {
+    if (!hnd) { img.remove(); return; }
+    void viaFetcher(url, hnd).then((u) => {
+      img.src = u;
+      // (Learnt only when the fetcher got what the page could not: a picture simply gone teaches nothing.)
+      if (learn && host && !fetchHosts.has(host)) { fetchHosts.add(host); try { localStorage.setItem(FETCH_HOSTS, JSON.stringify([...fetchHosts].slice(-200))); } catch { /* this session */ } }
+    }).catch(() => img.remove());
+  };
+  if (hnd && host && fetchHosts.has(host)) { byFetcher(false); return img; }
   img.addEventListener('error', () => {
     if (img.dataset.retried || !hnd) { img.remove(); return; }
     img.dataset.retried = '1';
-    void import('../sources/http').then(({ fetchBytes }) => fetchBytes(url, undefined, { headers: hnd.ln?.imageRequestInit?.headers ?? hnd.my?.headers ?? { referer: hnd.item.site } })).then((bytes) => { img.src = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer])); }).catch(() => img.remove());
+    byFetcher(true);
   });
+  img.src = url;
   return img;
 }
 
@@ -954,23 +1106,100 @@ function signInNote(): HTMLElement {
     h('a', { class: 'btn small', href: 'https://shamela.link/register', target: '_blank', rel: 'noopener' }, icon('external'), t('shamelaLinkRegister')));
 }
 
-/** The Mihon-like filter sheet: every filter the source offers, applied on «Done». */
+/** The filter sheet, as Mihon's and the manga sources' are: Reset and Filter on top; each filter a section
+ *  that folds (its choices counted on its title); a sort's chosen order turned round by a second tap (its
+ *  arrow); a set of choices as boxes to tick — some to tick twice, to leave a choice out (✕) — and a long one
+ *  (tags) searchable, in sections by first letter. Applied on «Filter». */
 function filterSheet(src: Source, current: FilterValues, apply: (v: FilterValues) => void): void {
   const sh = openSheet(t('filters'), t('close'));
-  const vals: FilterValues = { ...current };
+  sh.el.classList.add('filter-sheet');
+  let vals: FilterValues = { ...current };
   const defs = src.filters();
-  if (!defs.length) sh.body.append(h('p', { class: 'hint' }, t('noFilters')));
+  const list = h('div', { class: 'fs-list' });
+  const draw = () => list.replaceChildren(...defs.map(row));
+  const bar = h('div', { class: 'fs-bar' },
+    h('button', { type: 'button', class: 'btn text', onclick: () => { vals = {}; for (const f of defs) vals[f.id] = f.value; draw(); } }, t('resetFilters')),
+    h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); apply(vals); } }, icon('check'), t('filterApply')));
+  if (!defs.length) { sh.body.append(h('p', { class: 'hint' }, t('noFilters'))); return; }
+  sh.body.append(bar, list);
+  /** A section that folds: its title (with what is chosen in it, briefly), its body. */
+  const fold = (label: string, summary: () => string, body: () => HTMLElement, open: boolean): HTMLElement => {
+    const sum = h('small', { class: 'fs-sum', dir: 'auto' }, summary());
+    const head = h('button', { type: 'button', class: 'fs-head', 'aria-expanded': String(open) }, h('span', { class: 'fs-title', dir: 'auto' }, label), sum, icon('chevronDown'));
+    const sec = h('section', { class: 'fs-sec' + (open ? ' open' : '') }, head);
+    let made: HTMLElement | null = null;
+    const show = (on: boolean) => { sec.classList.toggle('open', on); head.setAttribute('aria-expanded', String(on)); if (on && !made) { made = body(); sec.append(made); } if (made) made.hidden = !on; };
+    head.addEventListener('click', () => show(!sec.classList.contains('open')));
+    if (open) show(true);
+    (sec as HTMLElement & { refresh?: () => void }).refresh = () => { sum.textContent = summary(); };
+    return sec;
+  };
   const row = (f: SourceFilter): HTMLElement => {
     if (f.kind === 'toggle') return h('label', { class: 'switch-row' }, h('span', { dir: 'auto' }, f.label), h('input', { type: 'checkbox', checked: vals[f.id] !== false && vals[f.id] !== undefined ? !!vals[f.id] : f.value, onchange: (e: Event) => { vals[f.id] = (e.target as HTMLInputElement).checked; } }));
     if (f.kind === 'text') return h('label', { class: 'field' }, h('span', { dir: 'auto' }, f.label), h('input', { type: 'text', value: String(vals[f.id] ?? ''), placeholder: f.placeholder ?? '', dir: 'auto', oninput: (e: Event) => { vals[f.id] = (e.target as HTMLInputElement).value; } }));
-    if (f.kind === 'multi') return h('div', { class: 'field' }, h('span', { dir: 'auto' }, f.label), h('div', { class: 'folder-chips' }, ...f.options.map((o) => { const on = () => ((vals[f.id] as string[]) ?? []).includes(o.value); const b = h('button', { type: 'button', class: 'chip' + (on() ? ' on' : ''), onclick: () => { const cur = (vals[f.id] as string[]) ?? []; vals[f.id] = on() ? cur.filter((x) => x !== o.value) : [...cur, o.value]; b.classList.toggle('on', on()); } }, h('span', { dir: 'auto' }, o.label)); return b; })));
+    if (f.kind === 'sort') {
+      const cur = () => String(vals[f.id] ?? f.value);
+      let sec: HTMLElement & { refresh?: () => void };
+      const body = () => {
+        const box = h('div', { class: 'fs-sort' });
+        const paint = () => box.replaceChildren(...f.options.map((o) => {
+          const [v, rev] = cur().split(':'); const on = v === o.value;
+          return h('button', { type: 'button', class: 'fs-opt' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => { vals[f.id] = on && f.reversible ? (rev ? o.value : `${o.value}:rev`) : o.value; paint(); sec.refresh?.(); } },
+            h('span', { class: 'fs-arrow' }, on ? icon(rev ? 'arrowUp' : 'arrowDown') : null), h('span', { dir: 'auto' }, o.label));
+        }));
+        paint(); return box;
+      };
+      sec = fold(f.label, () => { const [v, rev] = cur().split(':'); const o = f.options.find((x) => x.value === v); return o ? `${o.label}${rev ? ' ↑' : ''}` : ''; }, body, false);
+      return sec;
+    }
+    if (f.kind === 'multi') {
+      const get = () => ((vals[f.id] as string[]) ?? []);
+      const stateOf = (v: string) => (get().includes(v) ? 1 : get().includes(`!${v}`) ? 2 : 0);
+      const summary = () => { const inc = get().filter((x) => !x.startsWith('!')).length, exc = get().length - inc; return [inc ? (f.tri ? t('filterIncluded', { n: localDigits(inc) }) : localDigits(inc)) : '', exc ? t('filterExcluded', { n: localDigits(exc) }) : ''].filter(Boolean).join(' · '); };
+      let sec: HTMLElement & { refresh?: () => void };
+      const optRow = (o: { value: string; label: string }) => {
+        const boxEl = h('span', { class: 'fs-box' });
+        const paint = () => { const st = stateOf(o.value); boxEl.className = `fs-box${st === 1 ? ' on' : st === 2 ? ' off' : ''}`; boxEl.replaceChildren(st === 1 ? icon('check') : st === 2 ? icon('close') : ''); b.setAttribute('aria-checked', st === 1 ? 'true' : st === 2 ? 'mixed' : 'false'); };
+        const b = h('button', { type: 'button', role: 'checkbox', class: 'fs-opt', onclick: () => {
+          const st = stateOf(o.value); const rest = get().filter((x) => x !== o.value && x !== `!${o.value}`);
+          vals[f.id] = st === 0 ? [...rest, o.value] : st === 1 && f.tri ? [...rest, `!${o.value}`] : rest;
+          paint(); sec.refresh?.();
+        } }, boxEl, h('span', { dir: 'auto' }, o.label));
+        b.dataset.q = o.label.toLowerCase();
+        paint(); return b;
+      };
+      const body = () => {
+        const wrap = h('div', { class: 'fs-multi' });
+        const rows = f.options.map(optRow);
+        let groups: HTMLElement[] = [];
+        if (f.alpha && f.options.length > 30) {
+          // (In sections by first letter: 0–9, A, B, …)
+          const by = new Map<string, HTMLElement[]>();
+          f.options.forEach((o, i) => { const c = o.label.trim()[0]?.toUpperCase() ?? '#'; const k = /[0-9]/.test(c) ? '0–9' : /[A-Z]/.test(c) ? c : '#'; (by.get(k) ?? by.set(k, []).get(k)!).push(rows[i]); });
+          groups = [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, rs]) => {
+            const g = h('details', { class: 'fs-letter' }, h('summary', null, k), ...rs);
+            return g;
+          });
+        }
+        if (f.options.length > 12) {
+          const find = h('input', { type: 'search', class: 'fs-find', placeholder: t('filterSearchOptions'), dir: 'auto' }) as HTMLInputElement;
+          find.addEventListener('input', () => {
+            const q = find.value.trim().toLowerCase();
+            for (const r of rows) r.hidden = !!q && !r.dataset.q!.includes(q);
+            for (const g of groups) { const any = [...g.querySelectorAll<HTMLElement>('.fs-opt')].some((r) => !r.hidden); g.hidden = !any; (g as HTMLDetailsElement).open = !!q && any; }
+          });
+          wrap.append(find);
+        }
+        wrap.append(...(groups.length ? groups : rows));
+        return wrap;
+      };
+      sec = fold(f.label, summary, body, false);
+      return sec;
+    }
     const opts = f.options.map((o): [string, string] => [o.value, o.label]);
     return h('div', { class: 'field' }, h('span', { dir: 'auto' }, f.label), pickButton(f.label, opts, String(vals[f.id] ?? f.value), (v) => { vals[f.id] = v; }, t('close')));
   };
-  sh.body.append(...defs.map(row));
-  sh.actions.append(
-    h('button', { type: 'button', class: 'btn', onclick: () => { for (const f of defs) vals[f.id] = f.value; sh.close(); apply(vals); } }, t('resetFilters')),
-    h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); apply(vals); } }, icon('check'), t('done')));
+  draw();
 }
 
 /** An extension's own settings (a site address to change, a switch…), kept in its storage. */
@@ -1066,6 +1295,37 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
 
 /** Held on a card (as Mihon adds a title from Browse with a long press): the book or series added to the
  *  library from here — a file fetched, a web novel followed — with the tags asked, or the file to the device. */
+/** A series kept in the library without its volumes (as Mihon keeps a title before any chapter is fetched): an
+ *  entry that opens the series on its source, where its volumes are read about and fetched when wanted. */
+async function seriesRef(srcId: string, link: string): Promise<Book | undefined> {
+  return (await db.allBooks()).find((x) => x.format === 'series' && x.remote?.source === srcId && x.remote?.link === link);
+}
+async function addSeriesRef(srcId: string, link: string, title: string, author: string | undefined, img: HTMLImageElement | null | undefined, hnd?: Handle): Promise<Book> {
+  const had = await seriesRef(srcId, link); if (had) return had;
+  let cover: Blob | undefined;
+  if (img) { try { const { coverBytes } = await import('../ui/coverview'); const { shrinkCover } = await import('../library'); const headers = hnd ? (hnd.ln?.imageRequestInit?.headers as Record<string, string> | undefined) ?? hnd.my?.headers ?? { referer: hnd.item.site } : undefined; cover = await shrinkCover(await coverBytes(img.currentSrc || img.src, headers)); } catch { /* no cover */ } }
+  const file = new File(['{}'], `${title}.series.json`, { type: 'application/json' });
+  const book: Book = { id: uid(), title, author, format: 'series', fileName: file.name, mime: file.type, size: 0, addedAt: Date.now(), bookmarks: [], highlights: [], cover, remote: { source: srcId, id: link, link, online: true } };
+  await db.putFile(book.id, file); await db.putBook(book);
+  return book;
+}
+/** The button that keeps a series in the library (or no longer), its volumes left on the source. */
+function seriesRefButton(srcId: string, link: string, title: string, author: () => string | undefined, img: () => HTMLImageElement | null | undefined, hnd?: Handle): HTMLButtonElement {
+  const btn = h('button', { type: 'button', class: 'btn tonal series-follow' }) as HTMLButtonElement;
+  let have: Book | undefined;
+  const draw = () => { btn.replaceChildren(icon(have ? 'heartFill' : 'heart'), h('span', null, have ? t('inLibrary') : t('addSeriesToLibrary'))); btn.classList.toggle('on', !!have); };
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      if (have) { const { removeBooks } = await import('../library'); await removeBooks([have.id]); have = undefined; toast(t('removedFromLibrary')); }
+      else { have = await addSeriesRef(srcId, link, title, author(), img(), hnd); toast(t('seriesAddedOnline')); }
+    } catch (e) { toast(describe(e), 'error'); }
+    finally { btn.disabled = false; draw(); }
+  });
+  draw(); void seriesRef(srcId, link).then((b) => { have = b; draw(); });
+  return btn;
+}
+
 async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>, coverEl?: HTMLElement): Promise<void> {
   const sh = openSheet(b.title, t('close'));
   sh.body.style.fontFamily = 'var(--font-ui)';
@@ -1089,7 +1349,12 @@ async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hn
     row('download', t('deviceOnly'), () => go(true));
   }
   if (b.look === 'series' || (b.look === 'folder' && b.openShelf !== undefined)) {
-    row('download', t('seriesInSource'), () => navigate(b.look === 'series' ? bookPath(src.id, b.id) : path(src.id, { shelf: b.openShelf })));
+    const link = b.look === 'series' ? bookPath(src.id, b.id) : path(src.id, { shelf: b.openShelf });
+    // (Kept in the library without its volumes: the entry opens the series here, its volumes fetched when wanted.)
+    const ref = await seriesRef(src.id, link);
+    if (ref) row('heartFill', `${t('inLibrary')} · ${t('open')}`, () => navigate(link));
+    else row('plus', t('addSeriesToLibrary'), async () => { await addSeriesRef(src.id, link, b.title, b.author, shown, hnd ?? undefined); toast(t('seriesAddedOnline')); });
+    row('download', t('seriesInSource'), () => navigate(link));
   }
   if (hnd && !b.file && b.look !== 'folder' && b.look !== 'series') {
     // A web novel: followed in the library (its chapters read online, fetched later from its page).
@@ -1579,6 +1844,9 @@ function errorActions(e: unknown, site: () => Promise<string>, retry: () => void
   else if (onSite) out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void openSite(onSite) }, icon('globe'), t('openFolderOnSite')), h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
   else if (kind === 'auth') out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void link.connect().catch((x) => toast(describe(x), 'error')) }, icon('user'), t('signIn')));
   else out.push(h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
+  // (When the check's own window will not do — it stays blank, or keeps asking — the site in the app's full
+  // browser: the reader passes it there, as in any browser, and its cookies are the app's.)
+  if (kind === 'cloudflare' || kind === 'blocked') out.push(h('button', { type: 'button', class: 'btn tonal', onclick: () => void site().then(async (u) => { if (!u) return; await openBrowser(u); await resetBrowser(u); window.dispatchEvent(new CustomEvent('kr:covers-retry')); retry(); }) }, icon('globe'), t('solveInBrowser')));
   if (kind === 'cloudflare' || kind === 'blocked') out.push(h('button', { type: 'button', class: 'btn text', onclick: () => void site().then((u) => (u ? forgetSite(u) : 0)).then(() => { toast(t('siteCookiesCleared'), 'info', 2500); retry(); }) }, t('clearSiteCookies')));
   return out;
 }
