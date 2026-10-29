@@ -1459,6 +1459,7 @@ export const ar: Strings = {
   sourceBlockedShort: 'يرفض الموقع التطبيق.',
   siteSaid: ' (وفي صفحته: «{title}»)',
   checkPrompt: 'أكّد أنك إنسان على {site}: أتمّ التحقق في الصفحة أدناه، وستُغلق هذه النافذة من تلقاء نفسها متى تمّ.',
+  checkInBrowser: 'المتصفح',
   checkClose: 'إغلاق',
   checkReload: 'إعادة التحميل',
   openInAppBrowser: 'افتح الموقع في متصفح التطبيق',

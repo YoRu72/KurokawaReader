@@ -215,6 +215,10 @@ final class KrBrowser {
         // (`until`: the window closes by itself once the page's address matches it — a sign-in that ends at an
         // address holding a token — and the address is given back.)
         final String until = call.getString("until", null);
+        // (`browserLabel`: a button that leaves the check for the app's full browser on the site — when the check's
+        // own window will not do; the answer then says so: {browser: true}.)
+        final String browserLabel = call.getString("browserLabel", null);
+        final boolean[] toBrowser = { false };
         final java.util.regex.Pattern untilRe = until == null || until.isEmpty() ? null : java.util.regex.Pattern.compile(until);
         final String[] reached = { null };
         ui.post(() -> {
@@ -252,6 +256,7 @@ final class KrBrowser {
                 r.put("blocked", blocked[0]);
                 r.put("title", last[0]);
                 if (reached[0] != null) r.put("url", reached[0]);
+                if (toBrowser[0]) r.put("browser", true);
                 call.resolve(r);
             };
             // (Read once more before closing: a check passed a moment before the reader closed the window counts.)
@@ -333,6 +338,12 @@ final class KrBrowser {
                     text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
                     text.setTypeface(Typeface.DEFAULT_BOLD);
                     bar.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    }
+                    if (browserLabel != null && !browse) {
+                        final Button full = new Button(act);
+                        full.setText(browserLabel);
+                        full.setOnClickListener(v -> { toBrowser[0] = true; closeAfterLook.run(); });
+                        bar.addView(full, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                     }
                     final Button again = new Button(act);
                     again.setText(reloadLabel);

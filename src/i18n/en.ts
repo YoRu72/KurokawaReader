@@ -1454,6 +1454,7 @@ export const en = {
   sourceBlockedShort: 'The site refuses the app.',
   siteSaid: ' (its page says “{title}”)',
   checkPrompt: 'Confirm you’re human on {site}: complete the check on the page below. This window closes by itself once it’s done.',
+  checkInBrowser: 'Browser',
   checkClose: 'Close',
   checkReload: 'Reload',
   openInAppBrowser: 'Open the site in the app’s browser',
