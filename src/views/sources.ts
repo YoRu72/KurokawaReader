@@ -19,7 +19,7 @@ import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
-import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
+import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
@@ -1473,6 +1473,10 @@ function fileActions(box: HTMLElement, src: Source, d: SourceDetails): void {
 async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gone: () => boolean): Promise<void> {
   const novel = d.raw as WebNovel;
   let book = (await findInLibrary(novel.src, novel.path)) ?? null;
+  // (The same series already in the library — from another source, or as a book of its own: said, and asked
+  // before adding a second.)
+  const twin = book ? undefined : await sameNovelElsewhere(novel).catch(() => undefined);
+  const twinFrom = twin ? (twin.remote?.source ? (await findItem(twin.remote.source).catch(() => null))?.item.name ?? '' : '') : '';
   const draw = async () => {
     if (gone()) return;
     box.replaceChildren();
@@ -1486,7 +1490,8 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
     // (Where the reading stands, as Mihon's «Resume»: the chapter named.)
     const at = book?.progress ? file?.chapters[book.progress.toc ?? -1]?.name : undefined;
     row.append(h('button', { type: 'button', class: 'btn primary src-file', onclick: () => void open().catch((e) => toast(describe(e), 'error')) }, icon('play'), h('span', { class: 'grow', dir: 'auto' }, at ? `${t('resume')} · ${at}` : book ? t('open') : t('readOnline'))));
-    if (!book) row.append(h('button', { type: 'button', class: 'btn tonal src-file', onclick: async () => { try { book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd)); toast(t('addedToLibrary')); void draw(); } catch (e) { toast(describe(e), 'error'); } } }, icon('plus'), h('span', { class: 'grow' }, t('addToLibrary'))));
+    if (!book && twin) box.append(h('div', { class: 'dup-note' }, icon('books'), h('span', { class: 'grow', dir: 'auto' }, twinFrom ? t('dupInLibraryFrom', { source: twinFrom }) : t('dupInLibrary')), h('button', { type: 'button', class: 'btn text small', onclick: () => navigate(`/read/${twin.id}`) }, t('openIt'))));
+    if (!book) row.append(h('button', { type: 'button', class: 'btn tonal src-file', onclick: async () => { if (twin && !confirm(twinFrom ? t('dupAddConfirmFrom', { source: twinFrom }) : t('dupAddConfirm'))) return; try { book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd)); toast(t('addedToLibrary')); void draw(); } catch (e) { toast(describe(e), 'error'); } } }, icon('plus'), h('span', { class: 'grow' }, t('addToLibrary'))));
     const have = file?.content ? Object.keys(file.content).length : 0;
     const total = file?.chapters.length ?? novel.chapters.length;
     const offline = book && !book.remote?.online;

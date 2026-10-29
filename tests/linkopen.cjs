@@ -36,6 +36,10 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
   ok('Shamela book at its page', r.sh.route === '/sources/shamela/book/1234%2356' && r.sh1.route === '/sources/shamela/book/1234', [r.sh, r.sh1]);
   ok('Internet Archive item', r.ar.route === '/sources/archive/book/some_item', r.ar);
   ok('a look-alike host is not the site', r.other.browser, r.other);
+  // The same series by its title (the duplicate warning).
+  await p.addScriptTag({ content: esbuild.buildSync({ entryPoints: ['src/sources/ext/source.ts'], bundle: true, format: 'iife', globalName: 'X', write: false, platform: 'browser', logLevel: 'error' }).outputFiles[0].text });
+  const k = await p.evaluate(() => [X.titleKey('Lord of the Mysteries (Web Novel)'), X.titleKey('lord of the mysteries'), X.titleKey('Re:Zero − Starting Life'), X.titleKey('RE: ZERO starting life'), X.titleKey('الرواية'), X.titleKey('الرِّواية')]);
+  ok('titles the same but for case, marks and a "(Web Novel)" tag', k[0] === k[1] && k[2] === k[3] && k[4] === k[5], k);
   console.log(fails ? `${fails} FAILED` : 'all passed');
   await b.close(); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

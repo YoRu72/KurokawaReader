@@ -279,6 +279,14 @@ export const MIME = 'application/x-kurokawa-webnovel+json';
 export async function findInLibrary(src: string, path: string): Promise<Book | undefined> {
   return (await db.allBooks()).find((b) => b.format === 'webnovel' && b.remote?.source === src && b.remote?.id === path);
 }
+/** A title as compared for sameness: case, marks, punctuation and a "(Web Novel)"-like tag left out. */
+export const titleKey = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f\u064b-\u0652]/g, '').toLowerCase().replace(/[(\[]\s*(?:web ?novel|wn|light ?novel|ln|novel|raw|completed?|ongoing)\s*[)\]]/g, '').replace(/[^\p{L}\p{N}]+/gu, '');
+/** The same series already in the library from another source (or as a file of its own), by its title
+ *  (Mihon's duplicate warning). */
+export async function sameNovelElsewhere(novel: WebNovel): Promise<Book | undefined> {
+  const k = titleKey(novel.title); if (k.length < 3) return undefined;
+  return (await db.allBooks()).find((b) => titleKey(b.title) === k && !(b.remote?.source === novel.src && b.remote?.id === novel.path));
+}
 export async function addNovelToLibrary(novel: WebNovel, coverBlob?: Blob): Promise<Book> {
   const existing = await findInLibrary(novel.src, novel.path);
   if (existing) return existing;
