@@ -135,7 +135,8 @@ function globalSearchView(q0: string): HTMLElement & { dispose?: () => void } {
   newCoverScreen();
   const body = h('div', { class: 'library-body global-search' });
   const input = h('input', { type: 'search', class: 'src-search', value: q0, placeholder: t('searchAllSources'), dir: 'auto', enterkeyhint: 'search' }) as HTMLInputElement;
-  const form = h('form', { class: 'gs-form', onsubmit: (e: Event) => { e.preventDefault(); const q = input.value.trim(); if (q) navigate(path(ALL, { q }), true); } }, input);
+  // (A link pasted in opens the page it names: see sources/linkopen.)
+  const form = h('form', { class: 'gs-form', onsubmit: (e: Event) => { e.preventDefault(); const q = input.value.trim(); if (!q) return; if (/^https?:\/\/\S+$/i.test(q)) { void import('../sources/linkopen').then((m) => m.openShared(q)); return; } navigate(path(ALL, { q }), true); } }, input);
   const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/sources')), h('div', { class: 'title' }, t('searchAllSources'))), form, body) as HTMLElement & { dispose?: () => void };
   let gone = false; root.dispose = () => { gone = true; };
   if (!q0.trim()) { body.append(h('p', { class: 'hint gs-hint' }, t('searchAllHint'))); setTimeout(() => input.focus(), 50); return root; }

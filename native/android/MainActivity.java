@@ -56,7 +56,19 @@ public class MainActivity extends BridgeActivity {
             java.util.ArrayList<Uri> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
             if (list != null && !list.isEmpty()) uri = list.get(0);
         }
-        if (uri == null) return;
+        if (uri == null) {
+            // (A link or a few words shared from a browser or another app — no file: the app opens the page it
+            // names, or searches its sources for the words; see native.ts.)
+            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            if (text == null || text.toString().trim().isEmpty()) return;
+            String s = text.toString().trim();
+            if (s.length() > 2000) s = s.substring(0, 2000);
+            CharSequence subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT);
+            String q = "kurokawareader://open?shared=" + Uri.encode(s) + (subject != null ? "&subject=" + Uri.encode(subject.toString().trim()) : "");
+            intent.setAction(Intent.ACTION_VIEW);
+            intent.setData(Uri.parse(q));
+            return;
+        }
         intent.setAction(Intent.ACTION_VIEW);
         intent.setData(uri);
     }
