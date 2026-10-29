@@ -1868,3 +1868,11 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .src-chip.picked svg { width: 14px; height: 14px; }
 .src-chip.picked.excluded { text-decoration: line-through; opacity: .85; }
 .tags-waiting { margin: 0 0 8px; }
+/* Moving a novel to another source: each source's matches in a row of covers. */
+.migrate-list { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.migrate-src h4 { margin: 0 0 6px; font-size: .95em; }
+.migrate-hits { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.migrate-hit { flex: none; width: 96px; display: flex; flex-direction: column; gap: 4px; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.migrate-cover { width: 96px; height: 136px; border-radius: 10px; overflow: hidden; display: block; }
+.migrate-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.migrate-name { font-size: .82em; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

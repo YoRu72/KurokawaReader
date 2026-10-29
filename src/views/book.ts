@@ -124,7 +124,9 @@ export function bookView(id: string): HTMLElement {
       // entries; a book of one's own files gets it once an AniList account is linked.)
       anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
       tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
-      tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }));
+      tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }),
+      // (A novel from an extension: moved to another source — its site gone or blocked — with its reading kept.)
+      ...(book.format === 'webnovel' && book.remote?.source.startsWith('ext:') ? [tile('convert', t('migrate'), false, () => void import('../ui/migratesheet').then((m) => m.migrateSheet(book, () => void db.getBook(book.id).then((b) => { if (b) render(b); }))))] : []));
 
     const facts = h('div', { class: 'book-facts' });
     if (book.track) {

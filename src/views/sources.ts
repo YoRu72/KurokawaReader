@@ -1587,7 +1587,9 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
     if (book) {
       const checkBtn = h('button', { type: 'button', class: 'btn small' }, icon('refresh'), t('checkChapters')) as HTMLButtonElement;
       checkBtn.addEventListener('click', async () => { checkBtn.disabled = true; try { const n = await checkNovel(book!, false); toast(n ? t('newChaptersFound', { n: countChapters(n) }) : t('noNewChapters')); } catch (e) { toast(describe(e), 'error'); } checkBtn.disabled = false; });
-      box.append(h('p', { class: 'hint novel-in-library' }, t('novelInLibrary'), ' ', checkBtn));
+      // (The novel moved to another source — its site gone, or another translating it better: its reading kept.)
+      const moveBtn = h('button', { type: 'button', class: 'btn small', onclick: () => void import('../ui/migratesheet').then((m) => m.migrateSheet(book!, (src2, path2) => navigate(`/sources/${src2}/book/${encodeURIComponent(path2)}`, true))) }, icon('convert'), t('migrate'));
+      box.append(h('p', { class: 'hint novel-in-library' }, t('novelInLibrary'), ' ', checkBtn, ' ', moveBtn));
     }
   };
   // (A chapter marked or bookmarked below adds the novel to the library: the buttons here say so.)
