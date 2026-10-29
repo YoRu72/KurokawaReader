@@ -264,7 +264,17 @@ export function settingsView(): HTMLElement {
   body.append(h('section', { class: 'card' }, h('h3', null, t('sync')), h('p', null, t('syncBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'), t('sync')))));
 
-  // Backup & restore
+  // Backup & restore: automatic backups every few days, the last few kept on the device (Mihon's).
+  function autoBackupRow(): HTMLElement {
+    const row = h('div', { class: 'field auto-backup' });
+    void import('../backup').then((b) => {
+      const every = pickButton(t('autoBackup'), [0, 1, 3, 7].map((n): [string, string] => [String(n), n ? (n === 1 ? t('everyDay') : t('everyDays', { n: localDigits(n) })) : t('autoBackupOff')]), String(b.autoBackupEvery()), (v) => b.setAutoBackupEvery(Number(v)), t('close'));
+      const keep = pickButton(t('autoBackupKeep'), [3, 5, 10].map((n): [string, string] => [String(n), localDigits(n)]), String(b.autoBackupKeep()), (v) => b.setAutoBackupKeep(Number(v)), t('close'));
+      row.append(h('span', { class: 'label' }, t('autoBackup')), every, h('span', { class: 'label' }, t('autoBackupKeep')), keep, h('span', { class: 'hint' }, t('autoBackupHint')),
+        h('button', { type: 'button', class: 'btn small text', onclick: async () => { await b.makeAutoBackup(); toast(t('autoBackupMade')); } }, icon('download'), t('autoBackupNow')));
+    });
+    return row;
+  }
   const restoreInput = h('input', { type: 'file', accept: '.json,.zip,application/json,application/zip', hidden: true }) as HTMLInputElement;
   const bkStatus = h('p', { class: 'src' });
   restoreInput.addEventListener('change', async () => {
@@ -277,8 +287,8 @@ export function settingsView(): HTMLElement {
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn tonal small', onclick: async () => { const { backupNotes } = await import('../backup'); await backupNotes(); } }, icon('download'), t('backupNotes')),
       h('button', { class: 'btn small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { backupFull } = await import('../backup'); await backupFull((d, n) => { bkStatus.textContent = `${d}/${n}`; }); bkStatus.textContent = ''; } finally { b.disabled = false; } } }, icon('books'), t('backupFull')),
-      h('button', { class: 'btn small outlined', onclick: () => restoreInput.click() }, icon('import'), t('restore')), restoreInput),
-    bkStatus));
+      h('button', { class: 'btn small outlined', onclick: () => void import('../ui/restoresheet').then((m) => m.restoreSheet()) }, icon('import'), t('restore')), restoreInput),
+    bkStatus, autoBackupRow()));
 
   // Keyboard shortcuts: every PC and browser (touch-screen laptops included); phones and tablets skip it.
   if (nativePlatform() !== 'android' && nativePlatform() !== 'ios') {
