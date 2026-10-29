@@ -162,6 +162,7 @@ await fs.copyFile(path.join(root, 'native/android/KrPrint.java'), path.join(pkgD
 await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join(pkgDir, 'KrDownloader.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDoh.java'), path.join(pkgDir, 'KrDoh.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDohWeb.java'), path.join(pkgDir, 'KrDohWeb.java'));
+await fs.copyFile(path.join(root, 'native/android/KrBroken.java'), path.join(pkgDir, 'KrBroken.java'));
 // (The print job's callbacks can only be made from the android.print package: that one class lives there.)
 const printDir = path.join(app, 'src/main/java/android/print');
 await fs.mkdir(printDir, { recursive: true });
