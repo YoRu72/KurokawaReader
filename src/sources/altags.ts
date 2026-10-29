@@ -54,7 +54,7 @@ export async function fillTags(repoKey: string, series: { rel: string; name: str
       if (got.wait) { await new Promise((r) => setTimeout(r, got.wait)); continue; }
       let learnt = false;
       batch.forEach((s, j) => {
-        const found = pick(searchName(s.name), got.results[j]);
+        const found = pick(searchName(s.name), got.results[j], s.name);
         k.at[s.rel] = Date.now(); k.tags[s.rel] = found; if (found) learnt = true;
       });
       await db.setMeta(KEY(repoKey), k).catch(() => undefined);

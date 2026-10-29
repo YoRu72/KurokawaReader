@@ -17,7 +17,9 @@ const NAMES = [
   'I\'m in Love with the Villainess', 'The Saga of Tanya the Evil', 'Ascendance of a Bookworm (Light Novel)', 'Kino\'s Journey', 'Toradora!', 'My Next Life as a Villainess - All Routes Lead to Doom!',
   'Arifureta - From Commonplace to World\'s Strongest', 'Seirei Gensouki - Spirit Chronicles', 'How a Realist Hero Rebuilt the Kingdom', 'The Faraway Paladin', 'Rascal Does Not Dream of Bunny Girl Senpai',
 ];
+// (GitHub keeps ten annotations a step: one per batch.)
 const notice = (msg) => { console.log(msg); if (process.env.GITHUB_ACTIONS) console.log(`::notice title=AniList::${msg.replace(/\n/g, ' ')}`); };
+const lines = [];
 let found = 0;
 for (let i = 0; i < NAMES.length; i += 8) {
   const batch = NAMES.slice(i, i + 8);
@@ -27,11 +29,12 @@ for (let i = 0; i < NAMES.length; i += 8) {
   if (!r.ok || json.errors) { notice(`HTTP ${r.status} ${JSON.stringify(json.errors ?? '').slice(0, 300)}`); process.exitCode = 1; break; }
   batch.forEach((name, j) => {
     const list = json.data?.[`s${j}`]?.media ?? [];
-    const p = pick(searchName(name), list);
+    const p = pick(searchName(name), list, name);
     const m = p ? list.find((x) => x.id === p.id) : null;
     if (p) found++;
-    notice(p ? `${name} → ${m.title.english || m.title.romaji} [${p.genres.join(', ')}] tags: ${p.tags.slice(0, 6).join(', ')}` : `${name} → (none; AniList offered: ${list.map((x) => x.title.english || x.title.romaji).join(' / ') || 'nothing'})`);
+    lines.push(p ? `${name} → ${m.title.english || m.title.romaji} [${p.genres.join(', ')}] tags: ${p.tags.slice(0, 6).join(', ')}` : `${name} → (none; AniList offered: ${list.map((x) => x.title.english || x.title.romaji).join(' / ') || 'nothing'})`);
   });
+  notice(lines.splice(0).join(' ‖ '));
   await new Promise((res) => setTimeout(res, 2500));
 }
 notice(`found ${found} of ${NAMES.length}`);
