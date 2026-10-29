@@ -636,7 +636,8 @@ export function folderSource(repo: Repo): Source {
   const askTags = (idx: FolderIndex) => {
     if (!tagsOn || tagsAsked) return; tagsAsked = true;
     const list = [...seriesOf(idx).values()].filter((s) => s.files.length).map((s) => ({ rel: s.rel, name: s.name }));
-    void fillTags(repo.key, list, () => searches.clear()).catch(() => undefined);
+    let told = 0;
+    void fillTags(repo.key, list, () => { searches.clear(); if (Date.now() - told > 5000) { told = Date.now(); window.dispatchEvent(new CustomEvent('kr:covers-retry')); } }).catch(() => undefined);
   };
   const byPublisher = (f: FilterValues) => { const ps = Array.isArray(f.publisher) ? f.publisher : []; return (s: SeriesInfo) => !ps.length || s.publishers.some((p) => ps.includes(p)); };
   /** A series' card: its name, its place, how many volumes and how big, its publishers and formats, the
@@ -648,7 +649,7 @@ export function folderSource(repo: Repo): Source {
     // (Its cover is the first volume's — the same file as its card's on the shelf, read once for both.)
     const c = firstCover(groups);
     const tg = rel && !rel.includes('/') ? tagsOf(rel) : null;
-    return { genres: tg?.genres, tagList: tg?.tags.map((x) => ({ name: x.n, rank: x.r, category: x.c, spoiler: !!x.s })), id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', coverFile: c ? fileOf(c.e, c.rel) : undefined, author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
+    return { cover: tg?.cover, genres: tg?.genres, tagList: tg?.tags.map((x) => ({ name: x.n, rank: x.r, category: x.c, spoiler: !!x.s })), id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', coverFile: c ? fileOf(c.e, c.rel) : undefined, author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
   };
   // A search's matches are gathered once and paged from memory.
   const searches = new Map<string, { items: SourceBook[]; partial: boolean }>();
@@ -905,11 +906,15 @@ export function folderSource(repo: Repo): Source {
       // read once for both; for a folder without books, its own picture (cover.jpg…) or its first folder's first
       // volume. What is kept is which file (or picture) — its cover is kept with it, once — for a week.
       const key = `peek:dir:${keyOf(urlOf(root, rel))}`;
+      if (tagsOn) await loadTags(repo.key).catch(() => undefined);
       const had = await recall(key, 7 * 86400000); if (had && (had.cover || noCover())) return had;
       // (A folder that could not be read for a cover — a page of its own — is not asked again this session.)
       if ((coverless.get(rel) ?? 0) > Date.now()) return { at: Date.now() };
-      try { return await coverOf(rel, key); }
-      catch (e) { if (!fatal(e)) coverless.set(rel, Date.now() + 60000); throw e; }
+      // (A series whose volumes give no cover — none inside, one too big for the connection, a check on the
+      // way — shows AniList's cover of it, once its tags are known.)
+      const fallback = (p: Peek): Peek => { const al = tagsOn && !rel.includes('/') ? tagsOf(rel)?.cover : undefined; return al && !p.cover && !noCover() ? { ...p, cover: al } : p; };
+      try { return fallback(await coverOf(rel, key)); }
+      catch (e) { if (!fatal(e)) coverless.set(rel, Date.now() + 60000); const al = tagsOn && !rel.includes('/') ? tagsOf(rel)?.cover : undefined; if (al && !noCover()) return { cover: al, at: Date.now() }; throw e; }
     },
   };
   /** A folder's cover looked for (see folderCover). */

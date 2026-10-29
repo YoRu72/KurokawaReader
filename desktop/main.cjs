@@ -434,6 +434,13 @@ ipcMain.handle('kr:open-webview', async (_e, arg) => {
     // after a second and a half.)
     w.on('close', (ev) => { if (done) return; ev.preventDefault(); setTimeout(finish, 1500); void pageState(w).then((st) => { if (isClearFor(st, origin)) passed = true; finish(); }); });
     w.on('closed', finish);
+    // (`until`: closed by itself once its address matches — a sign-in ending at an address with a token — the
+    // address given back.)
+    if (o.until) {
+      let re = null; try { re = new RegExp(String(o.until)); } catch { re = null; }
+      const seen = (_e, u) => { if (re && !done && re.test(String(u))) { passed = true; done = true; clearTimeout(limit); resolve({ passed, blocked: false, title, url: String(u) }); if (!w.isDestroyed()) w.destroy(); } };
+      w.webContents.on('did-navigate', seen); w.webContents.on('did-navigate-in-page', seen); w.webContents.on('will-redirect', seen);
+    }
     w.loadURL(url).catch(() => {});
     setTimeout(tick, 800);
   });

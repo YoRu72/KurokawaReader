@@ -236,7 +236,17 @@ export function settingsView(): HTMLElement {
         const tk = h('textarea', { rows: 3, placeholder: t('anilistTokenPlaceholder'), dir: 'ltr', style: { width: '100%', fontFamily: 'monospace', fontSize: '12px' } }) as HTMLTextAreaElement;
         parts.push(h('p', { class: 'hint' }, t('anilistHowTo'), ' ', h('a', { href: 'https://anilist.co/settings/developer', target: '_blank', rel: 'noopener' }, 'anilist.co/settings/developer')),
           h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistClientId')), id),
-          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn tonal small', onclick: () => { updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; } window.open(al.authUrl(), '_blank', 'noopener'); } }, icon('external'), t('anilistSignIn'))),
+          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn tonal small', onclick: async () => {
+            updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; }
+            // (In the app's own browser the token is taken from the page AniList ends on: nothing to copy or paste.)
+            const { captureAddress, hasBrowser } = await import('../sources/http');
+            if (!hasBrowser()) { window.open(al.authUrl(), '_blank', 'noopener'); return; }
+            const at = await captureAddress(al.authUrl(), 'access_token=', t('anilistSignInWindow'));
+            const token = at ? /access_token=([^&]+)/.exec(at)?.[1] : null;
+            if (!token) return;
+            try { const user = await al.link(decodeURIComponent(token)); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); }
+            catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); }
+          } }, icon('external'), t('anilistSignIn'))),
           tk,
           h('div', null, h('button', { class: 'btn primary small', onclick: async () => { try { const user = await al.link(tk.value); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } } }, icon('check'), t('anilistLink'))));
       }

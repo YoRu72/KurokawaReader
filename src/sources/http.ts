@@ -57,8 +57,8 @@ function titleOf(r: HttpResult, binary: boolean): string {
 
 /* ---------- the app's own browser ---------- */
 type BrowserInit = { url: string; method?: string; headers?: Record<string, string>; body?: string | null; bodyBase64?: boolean; binary?: boolean; timeout?: number; page?: string; openTimeout?: number; downloadId?: string };
-type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean; /** a browser of its own: address bar, back and forward */ browse?: boolean; back?: string; forward?: string; placeholder?: string; rtl?: boolean };
-type CheckResult = { passed?: boolean; blocked?: boolean; title?: string };
+type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean; /** a browser of its own: address bar, back and forward */ browse?: boolean; back?: string; forward?: string; placeholder?: string; rtl?: boolean; /** closes by itself once the page's address matches this (a regular expression), giving it back */ until?: string };
+type CheckResult = { passed?: boolean; blocked?: boolean; title?: string; url?: string };
 interface Browser {
   check?(o: CheckInit): Promise<CheckResult>;
   fetch?(o: BrowserInit): Promise<HttpResult & { via?: string }>;
@@ -135,8 +135,10 @@ export async function solveChallenge(url: string, quiet = false, waited = false)
     const b = browser(); if (!b?.check) return false;
     try {
       if (!waited) {
-        const hid = await b.check({ url, hidden: true, timeout: 15000 }).catch(() => null);
-        if (hid?.passed) { await resetBrowser(url); return true; }
+        // (Out of sight first, for as long as a slow check takes — a phone on a weak network passes Cloudflare's in
+        // twenty seconds or so.)
+        const hid = await b.check({ url, hidden: true, timeout: 25000 }).catch(() => null);
+        if (hid?.passed) { await resetBrowser(url); window.dispatchEvent(new CustomEvent('kr:covers-retry')); return true; }
         if (hid?.blocked) { refused.set(host, hid.title ?? ''); return false; }
       }
       if (quiet || (declined.get(host) ?? 0) > Date.now()) return false;
@@ -148,6 +150,8 @@ export async function solveChallenge(url: string, quiet = false, waited = false)
       if (vis?.blocked && !vis.passed) refused.set(host, vis.title ?? '');
       if (!vis?.passed) { declined.set(host, Date.now() + 90_000); return false; }
       await resetBrowser(url);
+      // (What waited for the check — covers left blank — is tried again.)
+      window.dispatchEvent(new CustomEvent('kr:covers-retry'));
       return true;
     } finally { passing.delete(host); }
   })();
@@ -184,6 +188,16 @@ export async function openBrowser(start = 'https://duckduckgo.com/'): Promise<vo
   const b = browser();
   if (!b?.check) { window.open(start, '_blank', 'noopener'); return; }
   await b.check({ url: start, timeout: 86400000, stay: true, browse: true, message: t('appBrowser'), done: t('checkClose'), reload: t('checkReload'), back: t('back'), forward: t('forward'), placeholder: t('addressOrSearch'), rtl: document.documentElement.dir === 'rtl' }).catch(() => undefined);
+}
+
+/** A page opened in the app's browser until its address matches `until` (a sign-in's end, holding a token):
+ *  the address reached, or null when the reader closed it first (or there is no app browser: then the page is
+ *  opened in a tab, and null). */
+export async function captureAddress(url: string, until: string, message: string): Promise<string | null> {
+  const b = browser();
+  if (!b?.check) { window.open(url, '_blank', 'noopener'); return null; }
+  const r = await b.check({ url, timeout: 600000, stay: true, until, message, done: t('checkClose'), reload: t('checkReload') }).catch(() => null);
+  return r?.url ?? null;
 }
 
 /* ---------- DNS over HTTPS (as 1DM+): sites asked of a resolver over HTTPS instead of the network's DNS ---------- */

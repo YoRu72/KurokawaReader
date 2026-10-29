@@ -8,7 +8,7 @@ import { db } from '../db';
 import { searchName, buildQuery, pick, type Raw, type Tag } from './altagsmatch';
 export { searchName, type Tag };
 
-export interface SeriesTags { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string }
+export interface SeriesTags { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string; /** AniList's cover: the series' own when its volumes give none */ cover?: string }
 type Kept = { v: 2; at: Record<string, number>; tags: Record<string, SeriesTags | null> };
 
 const API = 'https://graphql.anilist.co';

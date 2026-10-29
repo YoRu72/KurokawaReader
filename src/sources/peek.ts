@@ -347,7 +347,10 @@ function blank(ctx: CanvasRenderingContext2D, w: number, h: number): boolean {
  *  to save data), so a shelf of covers does not eat the plan — Mihon's thumbnails are a few tens of kilobytes. */
 export function coverCap(): number {
   const c = (navigator as Navigator & { connection?: { type?: string; saveData?: boolean; effectiveType?: string } }).connection;
-  if (c?.saveData || c?.type === 'cellular' || /^(slow-)?2g$/.test(c?.effectiveType ?? '')) return 700 * 1024;
+  // (A store's cover is often over a megabyte: below 1.5 MB it is read even on mobile data — else its series
+  // shows none at all, which is worse than the data.)
+  if (c?.saveData || /^(slow-)?2g$/.test(c?.effectiveType ?? '')) return 700 * 1024;
+  if (c?.type === 'cellular') return 1536 * 1024;
   return 4 * 1024 * 1024;
 }
 /** Of the pictures called the cover, the one to read: the smallest that is a real picture (over 24 KB), else

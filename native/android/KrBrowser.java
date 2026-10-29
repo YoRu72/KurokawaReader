@@ -212,6 +212,11 @@ final class KrBrowser {
         final String doneLabel = call.getString("done", "✓");
         final String reloadLabel = call.getString("reload", "↻");
         final boolean browse = !hidden && Boolean.TRUE.equals(call.getBoolean("browse", false));
+        // (`until`: the window closes by itself once the page's address matches it — a sign-in that ends at an
+        // address holding a token — and the address is given back.)
+        final String until = call.getString("until", null);
+        final java.util.regex.Pattern untilRe = until == null || until.isEmpty() ? null : java.util.regex.Pattern.compile(until);
+        final String[] reached = { null };
         ui.post(() -> {
             final Activity act = plugin.getActivity();
             if (act == null) { call.reject("No activity"); return; }
@@ -246,6 +251,7 @@ final class KrBrowser {
                 r.put("passed", passed[0]);
                 r.put("blocked", blocked[0]);
                 r.put("title", last[0]);
+                if (reached[0] != null) r.put("url", reached[0]);
                 call.resolve(r);
             };
             // (Read once more before closing: a check passed a moment before the reader closed the window counts.)
@@ -270,6 +276,15 @@ final class KrBrowser {
                 if (done[0]) return;
                 if (!stay && SystemClock.uptimeMillis() - start > timeout) { finish.run(); return; }
                 ui.postDelayed(poll[0], 600);
+                if (untilRe != null) {
+                    try {
+                        web.evaluateJavascript("location.href", (v) -> {
+                            if (done[0] || v == null) return;
+                            String href = v.replaceAll("^\"|\"$", "");
+                            if (untilRe.matcher(href).find()) { reached[0] = href; passed[0] = true; finish.run(); }
+                        });
+                    } catch (Exception ignored) {}
+                }
                 try {
                     web.evaluateJavascript(STATE_JS, (v) -> {
                         if (done[0]) return;

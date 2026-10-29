@@ -15,7 +15,7 @@ import { SourceError, type Source, type SourceBook, type SourceDetails, type Sou
 import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
-import { passChallenge, forgetSite, openSite } from '../sources/http';
+import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
@@ -789,14 +789,17 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
   // (The first volume's cover, and its publisher's blurb as the series' — folded to a few lines, a tap opens it.)
   const fill = (p: { cover?: string; description?: string; author?: string } | null | undefined) => {
+    // (No cover in its first volume: AniList's, when the source has it.)
+    const pic = p?.cover ?? b.cover;
+    if (pic && !cover.querySelector('img')) { cover.classList.add('cover-tap'); cover.replaceChildren(h('img', { src: pic, alt: '', referrerpolicy: 'no-referrer' })); }
     if (!p) return;
-    if (p.cover) { cover.classList.add('cover-tap'); cover.replaceChildren(h('img', { src: p.cover, alt: '' })); }
     if (p.author && !byline.textContent) { byline.textContent = p.author; byline.hidden = false; }
     if (p.description && !about.textContent) { about.textContent = p.description; about.hidden = false; }
   };
   const now = v1b ? src.peekNow?.(v1b) : undefined;
   if (now) fill(now);
   else if (v1b && src.peek) observe(head, async () => fill(await src.peek!(v1b).catch(() => null)));
+  else fill(null);
   return h('div', { class: 'series-block' }, head, about);
 }
 
@@ -851,6 +854,10 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // (A card queued while near that has come onto the screen goes to the front of the queue.)
   const nowIo = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) waiting.get(e.target)?.now?.(); }, { rootMargin: '0px' });
   const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); nowIo.observe(el); };
+  const coverless = new Set<() => void>();
+  const retryCovers = () => { const fns = [...coverless]; coverless.clear(); for (const fn of fns) fn(); };
+  window.addEventListener('kr:covers-retry', retryCovers);
+  const retryTimer = window.setInterval(() => { if (coverless.size) retryCovers(); }, 75000);
   // (The page scrolls in its body: that is the place kept for the way back.)
   // (A folder shown from the index that the site says has changed since: drawn again, in place.)
   let stale = false;
@@ -865,7 +872,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     if (loading) stale = true; else redraw();
   };
   window.addEventListener('kr:shelf-changed', changed);
-  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); nowIo.disconnect(); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
+  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); nowIo.disconnect(); window.removeEventListener('kr:covers-retry', retryCovers); clearInterval(retryTimer); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
   // (A web folder's own address, for "Open this folder on the site".)
   const here = src.id.startsWith('dir:') && /^https?:\/\//i.test(src.site ?? '') ? `${src.site.replace(/\/?$/, '/')}${shelf && !shelf.startsWith('::') ? `${shelf.replace(/^\/+|\/+$/g, '')}/` : ''}` : undefined;
 
@@ -954,14 +961,20 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       const fresh = src.freshNow?.(b.openShelf) ?? b.fresh ?? 0;
       const freshMark = () => (fresh ? h('span', { class: 'fresh-mark', title: t('notifyTitleVolumes') }, `+${localDigits(fresh)}`) : null);
       if (fresh) cover.append(freshMark()!);
+      let badged = false;
       const fill = (p: { cover?: string; count?: number } | null) => {
-        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '' }), h('span', { class: 'folder-mark' }, icon('folder')), ...(fresh ? [freshMark()!] : [])); }
-        if (p?.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
-        if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p?.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
+        if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '', referrerpolicy: 'no-referrer', onerror: () => { cover.classList.remove('has-img'); retryLater(); } }), h('span', { class: 'folder-mark' }, icon('folder')), ...(fresh ? [freshMark()!] : [])); }
+        if (badged || !p) return; badged = true;
+        if (p.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
+        if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
       };
+      // (A card left without a cover — the site checking, a file that would not read, its tags not yet known —
+      // is tried again when something changes, not left blank for good.)
+      const run = async () => { cover.classList.add('loading'); try { const p = await src.folderCover!(b.openShelf!).catch(() => null); fill(p); if (!p?.cover) retryLater(); } finally { cover.classList.remove('loading'); } };
+      const retryLater = () => { coverless.add(() => { if (el.isConnected && !cover.classList.contains('has-img')) observe(el, run); }); };
       const now = src.folderCoverNow?.(b.openShelf);
-      if (now) fill(now);
-      else observe(el, async () => { cover.classList.add('loading'); try { fill(await src.folderCover!(b.openShelf!).catch(() => null)); } finally { cover.classList.remove('loading'); } });
+      if (now?.cover) fill(now);
+      else { if (now) fill(now); observe(el, run); }
     }
     return el;
   };
@@ -1831,6 +1844,9 @@ function errorActions(e: unknown, site: () => Promise<string>, retry: () => void
   else if (onSite) out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void openSite(onSite) }, icon('globe'), t('openFolderOnSite')), h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
   else if (kind === 'auth') out.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void link.connect().catch((x) => toast(describe(x), 'error')) }, icon('user'), t('signIn')));
   else out.push(h('button', { type: 'button', class: 'btn tonal', onclick: retry }, t('tryAgain')));
+  // (When the check's own window will not do — it stays blank, or keeps asking — the site in the app's full
+  // browser: the reader passes it there, as in any browser, and its cookies are the app's.)
+  if (kind === 'cloudflare' || kind === 'blocked') out.push(h('button', { type: 'button', class: 'btn tonal', onclick: () => void site().then(async (u) => { if (!u) return; await openBrowser(u); await resetBrowser(u); window.dispatchEvent(new CustomEvent('kr:covers-retry')); retry(); }) }, icon('globe'), t('solveInBrowser')));
   if (kind === 'cloudflare' || kind === 'blocked') out.push(h('button', { type: 'button', class: 'btn text', onclick: () => void site().then((u) => (u ? forgetSite(u) : 0)).then(() => { toast(t('siteCookiesCleared'), 'info', 2500); retry(); }) }, t('clearSiteCookies')));
   return out;
 }
