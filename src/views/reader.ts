@@ -837,6 +837,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     speak: (text) => speak([text]),
     textImage: (text) => void textImage(text),
     // (A rule made from the words: applied at once to the books open — see textrules.)
+    glossary: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/glossarysheet').then((m) => m.termSheet({ from: text, book: { id: b.id, title: b.title } })); },
     textRule: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/textrulesheet').then((m) => m.ruleSheet({ find: text, book: { id: b.id, title: b.title }, made: (r) => { for (const d of docs) if (d.render && (!r.book || r.book === d.book.id)) applyTextRules(d.render.element, d.book.id, [r]); } })); },
   }));
 
