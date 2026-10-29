@@ -14,10 +14,19 @@ export interface UpdateReport {
   extensions: { repoKey: string; repoName: string; pluginId: string; name: string; from: string; to: string; done?: boolean }[];
   /** New volumes in the web folders, for the series the reader follows (has a volume of in the library). */
   volumes?: { repoKey: string; repoName: string; series: string; name: string; n: number }[];
-  failed: { title: string; error: string }[];
+  /** What could not be asked, and why: the book or source, to ask it again on its own. */
+  failed: { title: string; error: string; bookId?: string; repoKey?: string }[];
 }
 const META = 'sources:updates';
 const EVERY = 6 * 3600000;
+/** How often the checks run by themselves, in hours (0: never) — the reader's choice, 6 by default. */
+export function checkEvery(): number {
+  try {
+    if (localStorage.getItem('kr.sources.autoCheck') === 'off') return 0;
+    const v = Number(localStorage.getItem('kr.updates.every') ?? 6); return [0, 1, 3, 6, 12, 24].includes(v) ? v : 6;
+  } catch { return 6; }
+}
+export function setCheckEvery(h: number): void { try { localStorage.setItem('kr.updates.every', String(h)); localStorage.setItem('kr.sources.autoCheck', h ? 'on' : 'off'); } catch { /* private mode */ } }
 let running: Promise<UpdateReport> | null = null;
 const listeners = new Set<() => void>();
 export function onUpdatesChanged(fn: () => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
@@ -85,7 +94,7 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
           }
         }
       }
-      catch (e) { report.failed.push({ title: b.title, error: String((e as Error).message ?? e) }); }
+      catch (e) { report.failed.push({ title: b.title, error: String((e as Error).message ?? e), bookId: b.id }); }
       opts.onProgress?.(++done, novels.length, b.title);
     });
     // The repos: their indexes again (an hour old at least), then the versions against what is on the device.
@@ -95,12 +104,12 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
     for (const repo of await listRepos()) {
       if (repo.kind !== 'folder' || repo.flavor !== 'h5ai') continue;
       try { for (const v of await refreshIndex(repo, opts.force ? 0 : EVERY)) report.volumes!.push({ repoKey: repo.key, repoName: repo.name, ...v }); }
-      catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e) }); }
+      catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e), repoKey: repo.key }); }
     }
     for (const repo of await listRepos()) {
       if (repo.kind === 'folder') continue;
       if (!opts.force && repo.fetchedAt && Date.now() - repo.fetchedAt < 3600000) continue;
-      try { await refreshRepo(repo.key); } catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e) }); }
+      try { await refreshRepo(repo.key); } catch (e) { report.failed.push({ title: repo.name, error: String((e as Error).message ?? e), repoKey: repo.key }); }
     }
     // (Extensions update by themselves unless the reader turned that off; the rest wait for a tap.)
     const auto = await autoUpdateExtensions().catch(() => [] as { repo: Repo; item: ExtItem; from: string }[]);
@@ -157,14 +166,38 @@ export async function askNotifyPermission(): Promise<boolean> {
 /** Checks on their own: a while after the app starts, and when it comes back to the front, when the last
  *  check is old enough — only when there is something to check and the device is online. */
 export function scheduleUpdateChecks(): void {
-  const due = () => Date.now() - Number(localStorage.getItem('kr.sources.checkedAt') ?? 0) > EVERY;
+  const due = () => { const h = checkEvery(); return h > 0 && Date.now() - Number(localStorage.getItem('kr.sources.checkedAt') ?? 0) > h * 3600000; };
   const maybe = async () => {
-    if (!due() || navigator.onLine === false || localStorage.getItem('kr.sources.autoCheck') === 'off') return;
+    if (!due() || navigator.onLine === false) return;
     const repos = await listRepos().catch(() => []); if (!repos.length) return;
     const novels = await trackedNovels().catch(() => []);
     if (!novels.length && !repos.some((r) => r.items.some((i) => i.runnable) || (r.kind === 'folder' && r.flavor === 'h5ai'))) return;
     void checkAll({ quiet: true }).catch(() => undefined);
   };
   setTimeout(() => void maybe(), 25000);
+  // (And while the app stays open: looked at every half hour, checked when the time has come.)
+  setInterval(() => { if (document.visibilityState === 'visible') void maybe(); }, 30 * 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(() => void maybe(), 3000); });
 }
+
+/** One thing that could not be checked, asked again: a novel's site, or a source's index. Resolves to what was
+ *  learnt (new chapters, volumes); the report keeps it, or the failure again with its new reason. */
+export async function retryFailed(i: number): Promise<number> {
+  const rep = await lastReport(); const f = rep?.failed[i]; if (!rep || !f) return 0;
+  let found = 0;
+  try {
+    if (f.bookId) { const b = await db.getBook(f.bookId); if (b) { found = await checkNovel(b, false); if (found) rep.chapters.push({ bookId: b.id, title: b.title, n: found }); } }
+    else if (f.repoKey) {
+      const repo = (await listRepos()).find((r) => r.key === f.repoKey);
+      if (repo?.kind === 'folder') { const { refreshIndex } = await import('./folder'); const vs = await refreshIndex(repo, 0); for (const v of vs) (rep.volumes ??= []).push({ repoKey: repo.key, repoName: repo.name, ...v }); found = vs.length; }
+      else if (repo) await refreshRepo(repo.key);
+    }
+    rep.failed.splice(i, 1);
+  } catch (e) { f.error = String((e as Error).message ?? e); await db.setMeta(META, rep); emit(); throw e; }
+  await db.setMeta(META, rep); emit();
+  return found;
+}
+/** A novel's new chapters marked seen (as opening it does). */
+export async function dismissChapters(bookId: string): Promise<void> { await db.updateBook(bookId, (b) => { if (b.remote) b.remote.newChapters = 0; }); emit(); }
+/** A series' new volumes marked seen (as opening its page does). */
+export async function dismissVolumes(repoKey: string, series: string): Promise<void> { const { seenSeries } = await import('./folder'); await seenSeries(repoKey, series); emit(); }

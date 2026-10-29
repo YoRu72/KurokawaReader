@@ -520,6 +520,8 @@ const NEWS_KEY = (repo: Repo) => `dir:news:${repo.key}`;
 const newsMem = new Map<string, Record<string, SeriesNews>>();
 export async function newsOf(repo: Repo): Promise<Record<string, SeriesNews>> { const news = (await db.getMeta<Record<string, SeriesNews>>(NEWS_KEY(repo)).catch(() => undefined)) ?? {}; newsMem.set(repo.key, news); return news; }
 async function seen(repo: Repo, series: string): Promise<void> { const news = await newsOf(repo); if (!news[series]) return; delete news[series]; newsMem.set(repo.key, news); await db.setMeta(NEWS_KEY(repo), news).catch(() => undefined); }
+/** A series' new volumes marked seen, from outside (the What's new sheet). */
+export async function seenSeries(repoKey: string, series: string): Promise<void> { const repo = (await (await import('./repos')).listRepos()).find((r) => r.key === repoKey); if (repo) await seen(repo, series); }
 /** Forget what a folder source kept (its index, its news) when it is removed. */
 export async function forgetFolder(repoKey: string): Promise<void> { indexes.delete(repoKey); await db.deleteMeta(`dir:index:${repoKey}`).catch(() => undefined); await db.deleteMeta(`dir:news:${repoKey}`).catch(() => undefined); }
 /** The index made again in the background (an h5ai server, one request) when older than `age`: the new

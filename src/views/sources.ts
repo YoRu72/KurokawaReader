@@ -6,10 +6,10 @@
 // or fetched whole for offline. A bell tells what came: new chapters for the novels of the library, newer
 // versions of the extensions.
 import { h, icon, iconButton, toast, openSheet, coverColors, pickButton } from '../ui/dom';
-import { t, localDigits, getLang, countChapters, countSeconds, countBooks, countVolumes, formatBytes } from '../i18n';
+import { t, localDigits, getLang, countChapters, countSeconds, countHours, countBooks, countVolumes, formatBytes } from '../i18n';
 import { navigate, back } from '../router';
 import { db, uid, FAV_TAG, chapterRead, type Book, type Folder, type TagDef } from '../db';
-import { importFiles } from '../library';
+import { importFiles, coverUrl } from '../library';
 import { setJump } from './reader';
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceChapter, type SourceFile } from '../sources/types';
 import { archiveSource } from '../sources/archive';
@@ -21,7 +21,7 @@ import { folderSource } from '../sources/folder';
 import { schedule, peekLog } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, type UpdateReport } from '../sources/updates';
+import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 
@@ -414,14 +414,26 @@ function addRepoSheet(after: () => void, kind: 'repo' | 'ext' | 'folder' = 'repo
 /* ---------- the bell ---------- */
 function updatesSheet(after: () => void): void {
   const sh = openSheet(t('srcWhatsNew'), t('close'));
+  sh.el.classList.add('updates-sheet');
   const body = sh.body;
+  // (A time as people say it: "3 hours ago".)
+  const ago = (ms: number) => {
+    const rtf = new Intl.RelativeTimeFormat(getLang() === 'ar' ? 'ar' : getLang(), { numeric: 'auto' }); const d = (ms - Date.now()) / 1000;
+    for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (Math.abs(d) >= n) return rtf.format(Math.round(d / n), u);
+    return rtf.format(0, 'minute');
+  };
   const draw = async () => {
     body.replaceChildren();
     const rep = await lastReport();
-    const novels = (await db.allBooks()).filter((b) => b.format === 'webnovel' && (b.remote?.newChapters ?? 0) > 0);
+    const novels = (await db.allBooks()).filter((b) => b.format === 'webnovel' && (b.remote?.newChapters ?? 0) > 0).sort((a, b) => (b.remote?.checkedAt ?? 0) - (a.remote?.checkedAt ?? 0));
+    const vols = await folderNews().catch(() => []);
+    const exts = (rep?.extensions ?? []).filter((u) => !u.done);
     const when = Number(localStorage.getItem('kr.sources.checkedAt') ?? 0);
-    const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
-    const line = h('small', null, when ? t('srcLastChecked', { when: new Date(when).toLocaleString(getLang() === 'ar' ? 'ar' : undefined) }) : t('neverChecked'));
+    // The state of the checks, and the way to check now.
+    const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: !isChecking() }, bar);
+    const line = h('small', null, when ? t('srcCheckedAgo', { when: ago(when) }) : t('neverChecked'));
+    const every = checkEvery();
+    const next = h('small', { class: 'upd-next' }, every ? t('srcNextCheck', { when: when ? ago(when + every * 3600000) : t('soon') }) : t('srcChecksOff'));
     const btn = h('button', { type: 'button', class: 'btn tonal', disabled: isChecking() }, icon('refresh'), t('checkNow')) as HTMLButtonElement;
     btn.addEventListener('click', async () => {
       btn.disabled = true; track.hidden = false;
@@ -430,45 +442,72 @@ function updatesSheet(after: () => void): void {
       catch (e) { toast(describe(e), 'error'); }
       finally { track.hidden = true; void draw(); after(); }
     });
-    body.append(h('div', { class: 'source-row' }, icon('bell'), h('span', { class: 'grow' }, h('b', null, t('srcWhatsNew')), line, track), btn));
-    const autoOn = localStorage.getItem('kr.sources.autoCheck') !== 'off';
-    body.append(h('label', { class: 'switch-row' }, h('span', null, t('srcAutoCheck')), h('input', { type: 'checkbox', checked: autoOn, onchange: (e: Event) => { localStorage.setItem('kr.sources.autoCheck', (e.target as HTMLInputElement).checked ? 'on' : 'off'); if ((e.target as HTMLInputElement).checked) void askNotifyPermission().catch(() => false); } })));
-    body.append(h('label', { class: 'switch-row' }, h('span', null, t('extAutoUpdate')), h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: (e: Event) => localStorage.setItem('kr.ext.autoUpdate', (e.target as HTMLInputElement).checked ? 'on' : 'off') })));
-    { const pref = updatePrefs(); const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: pref[k], onchange: (e: Event) => setUpdatePref(k, (e.target as HTMLInputElement).checked) }));
-      body.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch'))); }
+    body.append(h('div', { class: 'source-row upd-state' }, icon('bell'), h('span', { class: 'grow' }, line, next, track), btn));
+    const dismiss = (fn: () => Promise<void>) => iconButton('check', t('markSeen'), async () => { await fn(); void draw(); after(); });
+    // New chapters, a row per novel: a tap reads them, the tick marks them seen.
     if (novels.length) {
-      body.append(h('h3', { class: 'section-title' }, t('newChapters')));
-      const list = h('ul', { class: 'plain-list' });
-      for (const b of novels) list.append(h('li', null, h('button', { type: 'button', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } }, icon('books'), h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!))), h('span', { class: 'badge new' }, localDigits(b.remote!.newChapters!)))));
+      body.append(h('div', { class: 'upd-head' }, h('h3', { class: 'section-title' }, t('newChapters')),
+        h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const b of novels) await dismissChapters(b.id); void draw(); after(); } }, t('markAllSeen'))));
+      const list = h('ul', { class: 'plain-list upd-list' });
+      for (const b of novels) {
+        const url = coverUrl(b);
+        list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } },
+          url ? h('img', { class: 'upd-cover', src: url, alt: '' }) : h('span', { class: 'upd-cover gen' }, icon('books')),
+          h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), b.remote?.checkedAt ? ` · ${ago(b.remote.checkedAt)}` : '')),
+          h('span', { class: 'badge new' }, localDigits(String(b.remote!.newChapters)))), dismiss(() => dismissChapters(b.id))));
+      }
       body.append(list);
     }
-    if (rep?.extensions.length) {
-      body.append(h('h3', { class: 'section-title' }, t('extensionUpdates')));
-      const list = h('ul', { class: 'plain-list' });
-      for (const u of rep.extensions) {
-        const row = h('li', null);
-        if (u.done) { row.append(h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, u.name), h('small', null, `${u.repoName} · ${u.from} → ${u.to} · ${t('extUpdatedAuto')}`)), icon('check')); list.append(row); continue; }
+    // New volumes of the series followed in the web folders: a row per series, opening its page.
+    if (vols.length) {
+      body.append(h('div', { class: 'upd-head' }, h('h3', { class: 'section-title' }, t('notifyTitleVolumes')),
+        h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const v of vols) await dismissVolumes(v.repoKey, v.series); void draw(); after(); } }, t('markAllSeen'))));
+      const list = h('ul', { class: 'plain-list upd-list' });
+      for (const v of vols) list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, h('span', { class: 'upd-cover gen' }, icon('books')),
+        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${v.at ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, localDigits(String(v.n)))), dismiss(() => dismissVolumes(v.repoKey, v.series))));
+      body.append(list);
+    }
+    // Extensions with a newer version: each updated with a tap, or all at once.
+    if (exts.length) {
+      const list = h('ul', { class: 'plain-list upd-list' });
+      const updateOne = async (u: (typeof exts)[number]) => { const repo = (await listRepos()).find((r) => r.key === u.repoKey); const item = repo?.items.find((i) => i.id === u.pluginId); if (!repo || !item) throw new Error(t('extGone')); await pluginCode(repo, item, true); forgetHandle(sourceIdOf(repo, item)); u.done = true; };
+      const all = h('button', { type: 'button', class: 'btn small text' }, t('updateAll')) as HTMLButtonElement;
+      all.addEventListener('click', async () => { all.disabled = true; let n = 0; for (const u of exts) { try { await updateOne(u); n++; } catch { /* told in its row */ } } toast(t('extUpdatedN', { n: localDigits(n) })); void draw(); after(); });
+      body.append(h('div', { class: 'upd-head' }, h('h3', { class: 'section-title' }, t('extensionUpdates')), exts.length > 1 ? all : null));
+      for (const u of exts) {
+        const row = h('li', { class: 'upd-row' });
         const upd = h('button', { type: 'button', class: 'btn small primary' }, icon('download'), t('update')) as HTMLButtonElement;
-        upd.addEventListener('click', async () => {
-          upd.disabled = true;
-          try { const repo = (await listRepos()).find((r) => r.key === u.repoKey); const item = repo?.items.find((i) => i.id === u.pluginId); if (!repo || !item) throw new Error(t('extGone')); await pluginCode(repo, item, true); forgetHandle(sourceIdOf(repo, item)); row.remove(); toast(t('extUpdated', { name: u.name })); after(); }
-          catch (e) { upd.disabled = false; toast(describe(e), 'error'); }
-        });
+        upd.addEventListener('click', async () => { upd.disabled = true; try { await updateOne(u); row.remove(); toast(t('extUpdated', { name: u.name })); after(); } catch (e) { upd.disabled = false; toast(describe(e), 'error'); } });
         row.append(h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, u.name), h('small', null, `${u.repoName} · ${u.from} → ${u.to}`)), upd);
         list.append(row);
       }
       body.append(list);
     }
-    // New volumes of the series followed in the web folders: a row per series, opening its page.
-    const vols = await folderNews().catch(() => []);
-    if (vols.length) {
-      body.append(h('h3', { class: 'section-title' }, t('notifyTitleVolumes')));
-      const list = h('ul', { class: 'plain-list' });
-      for (const v of vols) list.append(h('li', null, h('button', { type: 'button', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, icon('books'), h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}`)), h('span', { class: 'badge new' }, `+${localDigits(v.n)}`))));
+    const autoDone = (rep?.extensions ?? []).filter((u) => u.done);
+    if (autoDone.length) body.append(h('p', { class: 'hint' }, icon('check'), ' ', t('extUpdatedAutoN', { n: localDigits(autoDone.length), names: autoDone.slice(0, 3).map((u) => u.name).join('، ') })));
+    // What could not be checked: each with its reason, asked again on its own.
+    if (rep?.failed.length) {
+      body.append(h('h3', { class: 'section-title warn' }, t('checkFailedTitle')));
+      const list = h('ul', { class: 'plain-list upd-list' });
+      rep.failed.forEach((f, i) => {
+        const again = h('button', { type: 'button', class: 'btn small tonal' }, icon('refresh'), t('retry')) as HTMLButtonElement;
+        again.addEventListener('click', async () => { again.disabled = true; try { const n = await retryFailed(i); toast(n ? t('checkFound') : t('checkNothing')); } catch (e) { toast(describe(e), 'error'); } void draw(); after(); });
+        list.append(h('li', { class: 'upd-row' }, h('span', { class: 'catalog-name grow' }, h('b', { dir: 'auto' }, f.title), h('small', { class: 'warn', dir: 'auto' }, describe(new Error(f.error)))), again));
+      });
       body.append(list);
     }
-    if (rep?.failed.length) body.append(h('p', { class: 'hint warn' }, t('checkFailedSome', { n: localDigits(rep.failed.length), titles: rep.failed.slice(0, 3).map((f) => f.title).join('، ') })));
-    if (!novels.length && !rep?.extensions.length && !vols.length) body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('nothingNew'))));
+    if (!novels.length && !exts.length && !vols.length && !rep?.failed.length) body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('nothingNew'))));
+    // How the checks go: folded under «Settings», the same switches as everywhere.
+    const opts = h('details', { class: 'upd-settings' }, h('summary', null, icon('settings'), t('settings')));
+    opts.append(h('div', { class: 'field' }, h('span', null, t('checkEvery')), pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(every), (v) => { setCheckEvery(Number(v)); if (Number(v)) void askNotifyPermission().catch(() => false); void draw(); }, t('close'))));
+    const sw = (label: string, on: boolean, set: (v: boolean) => void) => h('label', { class: 'switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }));
+    const pref = updatePrefs();
+    opts.append(
+      sw(t('extAutoUpdate'), localStorage.getItem('kr.ext.autoUpdate') !== 'off', (v) => localStorage.setItem('kr.ext.autoUpdate', v ? 'on' : 'off')),
+      sw(t('updWifiOnly'), pref.wifiOnly, (v) => setUpdatePref('wifiOnly', v)),
+      sw(t('updOnlyOngoing'), pref.onlyOngoing, (v) => setUpdatePref('onlyOngoing', v)),
+      sw(t('updAutoFetch'), pref.autoFetch, (v) => setUpdatePref('autoFetch', v)));
+    body.append(opts);
   };
   void draw();
 }

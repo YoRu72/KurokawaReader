@@ -1,6 +1,6 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels, countHours } from '../i18n';
 import { navigate, back } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -161,8 +161,11 @@ export function settingsView(): HTMLElement {
   // Checks for new chapters at the sources (the same choices as the bell in Browse offers).
   {
     const card = h('section', { class: 'card' }, h('h3', null, t('updatesSection')), h('p', null, t('updatesSectionBody')));
-    void import('../sources/updates').then(({ updatePrefs, setUpdatePref }) => {
+    void import('../sources/updates').then(({ updatePrefs, setUpdatePref, checkEvery, setCheckEvery }) => {
       const pref = updatePrefs();
+      // How often the checks run by themselves (as in the bell's sheet).
+      card.append(h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
+        pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(checkEvery()), (v) => setCheckEvery(Number(v)), t('close'))));
       const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
       card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')),
         h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));

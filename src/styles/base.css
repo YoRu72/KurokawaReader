@@ -1741,3 +1741,45 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .history-text b { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-text small { color: var(--text-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-empty { padding: 16px 4px; }
+
+/* The app's own words (hints, descriptions of sources, the Browse hub) are not text to select: a long press
+   there selected half a sentence (the reader's books, synopses and inputs stay selectable). */
+.sources-hub, .hint, .catalog-hint, .source-desc, .settings-view .row > span, .empty p { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.sources-hub input, .sources-hub textarea, .sources-hub pre { -webkit-user-select: text; user-select: text; }
+
+/* Switches, the same everywhere (a Material 3 switch drawn on the checkbox): in sheets' switch rows and in
+   Settings' rows — a long label wrapping no longer shrinks the box beside it. */
+.switch-row input[type=checkbox], .settings-view .row > input[type=checkbox], .settings-view label.row input[type=checkbox] {
+  -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 52px; height: 32px; margin: 0; border-radius: 16px; cursor: pointer;
+  background: var(--md-surface-container-highest); border: 2px solid var(--md-outline); transition: background var(--dur-short, .15s) ease, border-color var(--dur-short, .15s) ease;
+}
+.switch-row input[type=checkbox]::before, .settings-view .row > input[type=checkbox]::before, .settings-view label.row input[type=checkbox]::before {
+  content: ''; position: absolute; top: 50%; inset-inline-start: 6px; width: 16px; height: 16px; border-radius: 50%; background: var(--md-outline); transform: translateY(-50%); transition: all var(--dur-short, .15s) ease;
+}
+.switch-row input[type=checkbox]:checked, .settings-view .row > input[type=checkbox]:checked, .settings-view label.row input[type=checkbox]:checked { background: var(--md-primary); border-color: var(--md-primary); }
+.switch-row input[type=checkbox]:checked::before, .settings-view .row > input[type=checkbox]:checked::before, .settings-view label.row input[type=checkbox]:checked::before { inset-inline-start: 24px; width: 24px; height: 24px; background: var(--md-on-primary); }
+.switch-row input[type=checkbox]:focus-visible, .settings-view .row > input[type=checkbox]:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.switch-row input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+
+/* The What's new sheet: the state, then what is new (each row opened or marked seen), the failures with their
+   reason, the settings folded. */
+.updates-sheet .upd-state small { display: block; color: var(--text-dim); }
+.updates-sheet .upd-state .upd-next { font-size: 12px; opacity: .85; }
+.upd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.upd-head .section-title { margin: 0; }
+.upd-row { display: flex; align-items: center; gap: 6px; }
+.upd-row .upd-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+.upd-cover { width: 36px; height: 52px; flex: none; border-radius: 6px; object-fit: cover; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--text-dim); }
+.upd-cover svg { width: 18px; height: 18px; }
+.upd-row .catalog-name { min-width: 0; }
+.upd-row .catalog-name b, .upd-row .catalog-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upd-row small.warn, .section-title.warn { color: var(--md-error, #f2b8b5); }
+.upd-settings { margin-top: 16px; border-top: 1px solid var(--md-outline-variant); padding-top: 6px; }
+.upd-settings > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; font-weight: 600; font-family: var(--font-ui); }
+.upd-settings > summary::-webkit-details-marker { display: none; }
+.upd-settings > summary svg { width: 18px; height: 18px; }
+.updates-sheet .sheet-body { font-family: var(--font-ui); }
+.plain-list li.upd-row > button.icon-btn, .plain-list li.upd-row > .btn { width: auto; flex: none; padding: 8px; align-items: center; }
+.plain-list li.upd-row > .btn { padding: 6px 14px; }
+.plain-list li.upd-row > button.upd-open { width: auto; flex: 1 1 auto; min-width: 0; align-items: center; }
+.upd-row .catalog-name { flex: 1 1 auto; }
