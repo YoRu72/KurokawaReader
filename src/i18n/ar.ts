@@ -474,6 +474,7 @@ export const ar: Strings = {
   anilistAutoProgress: 'إرسال الفصول المقروءة تقدّمًا',
   searchAnilist: 'ابحث في AniList',
   trackLinked: 'رُبط بـ AniList',
+  trackQueued: 'حُفظ هنا، ويُرسَل إلى AniList متى أمكن الوصول إليه.',
   trackSaved: 'حُفظ في AniList',
   trackRefreshed: 'حُدِّث من AniList',
   trackChange: 'تغيير المدخل',

@@ -33,11 +33,16 @@ export function authUrl(): string {
 async function gql<T>(query: string, variables: Record<string, unknown> = {}, auth = true): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const tk = token(); if (auth && tk) headers.Authorization = `Bearer ${tk}`;
-  const r = await localHttp(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }), timeoutMs: 20000 });
+  // (`later` on an error marks one worth trying again: no network, AniList busy or down — not a refusal.)
+  const later = (m: string) => Object.assign(new Error(m), { later: true });
+  let r: Awaited<ReturnType<typeof localHttp>>;
+  try { r = await localHttp(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }), timeoutMs: 20000 }); }
+  catch (e) { throw later(String((e as Error)?.message ?? e)); }
+  const busy = r.status === 429 || r.status >= 500 || r.status === 0;
   let json: { data?: T; errors?: { message: string; status?: number }[] } = {};
-  try { json = JSON.parse(r.body); } catch { throw new Error(`AniList: HTTP ${r.status}`); }
-  if (json.errors?.length) { const e = json.errors[0]; if (e.status === 400 && /invalid token|unauthorized/i.test(e.message) || r.status === 401) unlink(); throw new Error(e.message); }
-  if (r.status >= 400) throw new Error(`AniList: HTTP ${r.status}`);
+  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`); }
+  if (json.errors?.length) { const e = json.errors[0]; if (e.status === 400 && /invalid token|unauthorized/i.test(e.message) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message) : new Error(e.message); }
+  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`);
   return json.data as T;
 }
 

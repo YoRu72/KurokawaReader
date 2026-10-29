@@ -469,6 +469,7 @@ export const en = {
   anilistAutoProgress: 'Send chapters read as progress',
   searchAnilist: 'Search AniList',
   trackLinked: 'Linked to AniList',
+  trackQueued: 'Saved here — AniList will get it when it can be reached.',
   trackSaved: 'Saved to AniList',
   trackRefreshed: 'Refreshed from AniList',
   trackChange: 'Change entry',

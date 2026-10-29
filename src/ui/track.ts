@@ -20,12 +20,63 @@ async function persist(book: Book, track: al.Track | undefined, rating?: number)
   void import('../sync').then((m) => m.scheduleSync()).catch(() => undefined);
 }
 
+/* ---------- changes made offline: kept, and sent when AniList can be reached (Mihon's delayed tracking) ---------- */
+const PENDING = 'kr.al.pending';
+type Pending = Record<string, { media: number; entry: al.AlEntry; tries: number }>;
+const pendingNow = (): Pending => { try { return JSON.parse(localStorage.getItem(PENDING) ?? '{}') as Pending; } catch { return {}; } };
+const keepPending = (p: Pending) => { try { if (Object.keys(p).length) localStorage.setItem(PENDING, JSON.stringify(p)); else localStorage.removeItem(PENDING); } catch { /* full */ } };
+const isLater = (e: unknown) => !!(e as { later?: boolean })?.later;
+
+/** An entry written to AniList — or, when AniList cannot be reached now, kept on the book as it should be and
+ *  queued: the reader sees the change at once, and AniList gets it later. */
+async function send(book: Book, entry: al.AlEntry, rating?: number): Promise<boolean> {
+  const tr = book.track!;
+  try { const e = await al.save(tr.media.id, entry); await persist(book, { ...tr, entry: e }, rating); dropPending(book.id); return true; }
+  catch (err) {
+    if (!isLater(err)) throw err;
+    const p = pendingNow(); p[book.id] = { media: tr.media.id, entry, tries: 0 }; keepPending(p);
+    await persist(book, { ...tr, entry }, rating);
+    watchPending();
+    return false;
+  }
+}
+function dropPending(id: string): void { const p = pendingNow(); if (p[id]) { delete p[id]; keepPending(p); } }
+
+let flushing = false;
+/** What was queued sent now, oldest change kept per book (called when the network or the app comes back). */
+export async function flushTracking(): Promise<void> {
+  if (flushing || !al.user() || !al.anilistOn()) return;
+  const p = pendingNow(); if (!Object.keys(p).length) return;
+  flushing = true;
+  try {
+    for (const [id, q] of Object.entries(p)) {
+      try {
+        const e = await al.save(q.media, q.entry);
+        const book = await db.getBook(id);
+        if (book?.track && book.track.media.id === q.media) await persist(book, { ...book.track, entry: e });
+        delete p[id];
+      } catch (err) {
+        // (Refused, or tried too often: let go. Not reached: kept for the next time.)
+        if (!isLater(err) || ++q.tries >= 8) delete p[id];
+        else break;
+      }
+    }
+  } finally { keepPending(p); flushing = false; }
+}
+let watching = false;
+/** Send the queue when the network comes back or the app is looked at again. */
+export function watchPending(): void {
+  if (watching) return; watching = true;
+  window.addEventListener('online', () => void flushTracking());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void flushTracking(); });
+}
+
 /** The app's stars sent to AniList, when the book is tracked (called by the review sheet). */
 export async function pushStars(book: Book, stars: number): Promise<void> {
   const u = al.user(); if (!book.track || !u || !al.anilistOn()) return;
   const score = scoreOf(stars, u.scoreFormat);
   if (score === book.track.entry.score) return;
-  try { const e = await al.save(book.track.media.id, { ...book.track.entry, score }); await persist(book, { ...book.track, entry: e }); }
+  try { if (!await send(book, { ...book.track.entry, score })) toast(t('trackQueued')); }
   catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); }
 }
 
@@ -37,7 +88,7 @@ export async function pushProgress(book: Book, chaptersRead: number): Promise<vo
   const entry: al.AlEntry = { ...book.track.entry, progress };
   if (entry.status === 'PLANNING') { entry.status = 'CURRENT'; entry.startedAt = entry.startedAt?.year ? entry.startedAt : al.today(); }
   if (max !== Infinity && progress >= max) { entry.status = 'COMPLETED'; entry.completedAt = entry.completedAt?.year ? entry.completedAt : al.today(); }
-  try { const e = await al.save(book.track.media.id, entry); await persist(book, { ...book.track, entry: e }); } catch { /* next time */ }
+  try { await send(book, entry); } catch { /* refused: next time */ }
 }
 
 export function trackSheet(book: Book, onChange: () => void): void {
@@ -103,7 +154,7 @@ export function trackSheet(book: Book, onChange: () => void): void {
       const next: al.AlEntry = { ...e, status: status.value as al.AlStatus, progress: Number(progress.value) || 0, score: Number(score.value) || 0, startedAt: al.toAlDate(started.value), completedAt: al.toAlDate(finished.value) };
       if (next.status === 'COMPLETED' && !next.completedAt) next.completedAt = al.today();
       saveBtn.disabled = true;
-      try { const saved = await al.save(m.id, next); await persist(book, { ...tr, entry: saved }, starsOf(saved.score, u.scoreFormat)); onChange(); toast(t('trackSaved')); sh.close(); }
+      try { const sent = await send(book, next, starsOf(next.score, u.scoreFormat)); onChange(); toast(t(sent ? 'trackSaved' : 'trackQueued')); sh.close(); }
       catch (err) { toast(`AniList: ${(err as Error).message}`, 'error'); saveBtn.disabled = false; }
     } }, icon('check'), t('done')) as HTMLButtonElement;
     sh.actions.replaceChildren(

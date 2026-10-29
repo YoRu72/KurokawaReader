@@ -102,6 +102,8 @@ scheduleAutoCheck();
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 // (Downloads the app was closed in the middle of: taken up again.)
 setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);
+// AniList changes made while it could not be reached, sent now (and when the network comes back).
+setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import('./ui/track').then((m) => { m.watchPending(); void m.flushTracking(); }).catch(() => undefined); } catch { /* private mode */ } }, 5000);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
 onSettingsChange((s) => applyChrome(s));
