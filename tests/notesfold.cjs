@@ -11,7 +11,7 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.goto('http://localhost:5462/'); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await p.reload(); await p.waitForSelector('.library-view');
   await p.setInputFiles('input[type=file]', [path.resolve(process.argv[2])]); await p.waitForSelector('.book-card', { timeout: 60000 }); await p.waitForTimeout(800);
   await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); const q = st.getAll(); q.onsuccess = () => { const bk = q.result[0]; bk.bookmarks = [{ id: 'b1', label: 'Chapter one', cfi: '', createdAt: Date.now() }, { id: 'b2', label: 'Chapter two', cfi: '', createdAt: Date.now() }]; st.put(bk); tx.oncomplete = res; }; }; }));
-  await p.evaluate(() => { location.hash = '#/notes'; }); await p.waitForSelector('.notes-book');
+  await p.reload(); await p.waitForSelector('.library-view'); await p.evaluate(() => { location.hash = '#/notes'; }); await p.waitForSelector('.notes-book');
   const vis = () => p.evaluate(() => [...document.querySelectorAll('.notes-book .plain-list li')].filter((x) => x.offsetParent).length);
   ok('the entries start folded', (await vis()) === 0 && !!(await p.$('.notes-book.folded')));
   await p.click('.notes-head'); await p.waitForTimeout(200);
