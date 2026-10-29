@@ -1008,6 +1008,50 @@ public class KurokawaPlugin extends Plugin {
         });
     }
 
+    /* ---------- app lock (Mihon's): the device's fingerprint, face or screen lock; contents kept out of screenshots ---------- */
+
+    /** {on} → the app's contents kept out of screenshots, screen recordings and the recent-apps preview. */
+    @PluginMethod
+    public void secureScreen(PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", true));
+        getActivity().runOnUiThread(() -> {
+            if (on) getActivity().getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            else getActivity().getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            call.resolve();
+        });
+    }
+
+    /** {} → {can}: whether the device has a lock to ask for (a fingerprint, a face, a PIN, a pattern, a password). */
+    @PluginMethod
+    public void canUnlock(PluginCall call) {
+        JSObject r = new JSObject();
+        boolean can = false;
+        try { android.app.KeyguardManager km = (android.app.KeyguardManager) getContext().getSystemService(Context.KEYGUARD_SERVICE); can = km != null && km.isDeviceSecure() && Build.VERSION.SDK_INT >= 28; } catch (Exception ignored) {}
+        r.put("can", can); call.resolve(r);
+    }
+
+    /** {title, subtitle?, cancel?} → {ok}: the device's own lock asked for (biometrics, else its PIN/pattern/password). */
+    @PluginMethod
+    public void unlock(PluginCall call) {
+        if (Build.VERSION.SDK_INT < 28) { JSObject r = new JSObject(); r.put("ok", true); call.resolve(r); return; }
+        final String title = call.getString("title", "KurokawaReader");
+        final String sub = call.getString("subtitle", null);
+        final String cancel = call.getString("cancel", "Cancel");
+        getActivity().runOnUiThread(() -> {
+            try {
+                android.hardware.biometrics.BiometricPrompt.Builder b = new android.hardware.biometrics.BiometricPrompt.Builder(getActivity()).setTitle(title);
+                if (sub != null) b.setSubtitle(sub);
+                if (Build.VERSION.SDK_INT >= 30) b.setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK | android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL);
+                else if (Build.VERSION.SDK_INT >= 29) b.setDeviceCredentialAllowed(true);
+                else b.setNegativeButton(cancel, getContext().getMainExecutor(), (d, w) -> { JSObject r = new JSObject(); r.put("ok", false); call.resolve(r); });
+                b.build().authenticate(new android.os.CancellationSignal(), getContext().getMainExecutor(), new android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                    @Override public void onAuthenticationSucceeded(android.hardware.biometrics.BiometricPrompt.AuthenticationResult result) { JSObject r = new JSObject(); r.put("ok", true); call.resolve(r); }
+                    @Override public void onAuthenticationError(int code, CharSequence msg) { JSObject r = new JSObject(); r.put("ok", false); r.put("error", String.valueOf(msg)); call.resolve(r); }
+                });
+            } catch (Exception e) { JSObject r = new JSObject(); r.put("ok", false); r.put("error", e.getMessage()); call.resolve(r); }
+        });
+    }
+
     /** The PDFs open for drawing: the reader's (id 0, the default) and the tools' (ids given at open). */
     private static final class Opened { PdfRenderer renderer; ParcelFileDescriptor pfd; }
     private final java.util.Map<Integer, Opened> opened = new java.util.HashMap<>();

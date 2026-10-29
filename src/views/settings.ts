@@ -264,6 +264,21 @@ export function settingsView(): HTMLElement {
   body.append(h('section', { class: 'card' }, h('h3', null, t('sync')), h('p', null, t('syncBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'), t('sync')))));
 
+  // Privacy: incognito, and (Android) the app lock and keeping the contents out of screenshots.
+  {
+    const card = h('section', { class: 'card' }, h('h3', null, t('privacy')));
+    const sw = (label: string, on: boolean, set: (v: boolean, el: HTMLInputElement) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on }) as HTMLInputElement; c.addEventListener('change', () => set(c.checked, c)); return h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }, title: hint }, h('span', null, label, hint ? h('small', { class: 'src', style: { display: 'block' } }, hint) : null), c); };
+    card.append(sw(t('incognito'), getSettings().incognito, (v) => updateSettings({ incognito: v }), t('incognitoHint')));
+    void import('../applock').then(async (L) => {
+      if (!L.lockAvailable() || !(await L.canLock())) return;
+      card.append(
+        sw(t('appLock'), L.lockOn(), (v, el) => void L.setLock(v).then((ok) => { if (!ok) el.checked = !v; }), t('appLockHint')),
+        h('div', { class: 'field' }, h('span', { class: 'label' }, t('appLockAfter')), pickButton(t('appLockAfter'), [0, 1, 5, 15, 30].map((n): [string, string] => [String(n), n ? t('appLockMinutes', { n: localDigits(n) }) : t('appLockAlways')]), String(L.lockAfter()), (v) => L.setLockAfter(Number(v)), t('close'))),
+        sw(t('secureScreen'), L.secureOn(), (v) => void L.setSecure(v), t('secureScreenHint')));
+    });
+    body.append(card);
+  }
+
   // Backup & restore: automatic backups every few days, the last few kept on the device (Mihon's).
   function autoBackupRow(): HTMLElement {
     const row = h('div', { class: 'field auto-backup' });

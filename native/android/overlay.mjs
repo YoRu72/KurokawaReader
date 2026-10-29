@@ -90,6 +90,9 @@ if (!manifest.includes('KrJobService')) {
   manifest = manifest.replace('</application>', `    <service android:name=".KrJobService" android:exported="false" android:foregroundServiceType="dataSync" />
     </application>`);
 }
+// The app lock: the device's biometrics (fingerprint, face) or its screen lock.
+if (!manifest.includes('USE_BIOMETRIC')) manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <application`);
 // Read aloud with the screen off: a foreground service of the "media playback" kind, with a media notification.
 if (!manifest.includes('KrTtsService')) {
   manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />

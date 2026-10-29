@@ -102,6 +102,8 @@ scheduleAutoCheck();
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 // (Downloads the app was closed in the middle of: taken up again.)
 setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);
+// (The app lock, Android: asked for at once when on.)
+void import('./applock').then((m) => m.initAppLock()).catch(() => undefined);
 // (The automatic backup, when due — well after the start, out of its way.)
 setTimeout(() => void import('./backup').then((m) => m.autoBackupIfDue()).catch(() => undefined), 30000);
 // AniList changes made while it could not be reached, sent now (and when the network comes back).

@@ -1882,3 +1882,6 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .discover-row h4 { margin: 0 0 6px; font-size: .95em; }
 .migrate-cover { position: relative; }
 .discover-score { position: absolute; inset-inline-start: 4px; inset-block-end: 4px; padding: 1px 6px; border-radius: 8px; background: rgba(0,0,0,.65); color: #fff; font-size: .72em; }
+/* The app lock's cover, until the device's lock is passed. */
+.app-lock { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: var(--md-surface, #111); color: var(--md-on-surface, #eee); }
+.app-lock-title { font-size: 1.1em; margin: 0; }
