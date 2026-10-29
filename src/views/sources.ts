@@ -733,6 +733,8 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
+      // (Its genres and tags: a tap searches the shelf for the others like it.)
+      b.genres?.length ? h('div', { class: 'src-chips genre-chips' }, ...b.genres.map((g) => h('button', { type: 'button', class: 'src-chip genre', onclick: () => navigate(path(src.id, { q: g })) }, g))) : null,
       h('div', { class: 'series-actions' }, next, btn, seriesRefButton(src.id, location.hash.replace(/^#/, ''), b.title, () => b.author || byline.textContent || undefined, () => cover.querySelector('img')), trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');

@@ -265,6 +265,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' } });
       return route.fulfill({ response: await route.fetch({ url: 'http://localhost:5401' + u.pathname + u.search }) });
     });
+    // AniList, for the series' genres and tags (the manifest asks): each name found as itself; a series whose name
+    // starts with "B" an action one, the others a romance; "Zeta" unknown.
+    let alAsked = 0;
+    await page.addInitScript(() => { globalThis.krTagsPace = 30; });
+    await ctx.route('https://graphql.anilist.co/**', async (route) => {
+      const req = route.request();
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
+      alAsked++;
+      const { variables } = JSON.parse(req.postData() || '{}'); const data = {};
+      for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90 }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true }] }] };
+      return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data }) });
+    });
     await page.keyboard.press('Escape'); await page.goto(base + '#/sources'); await page.reload(); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
     ok('nothing hints at the word', !/OTL|elscione/i.test(await page.evaluate(() => document.body.textContent)));
     await page.click('.topbar-actions button[data-icon="plus"]'); await page.waitForSelector('.sheet input[type=url]');
@@ -377,6 +389,20 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('… with a button for all of them', /Download all 4 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)) && /4 volumes/.test(await page.$eval('.series-head .src-chips', (e) => e.textContent)));
     await page.click('.vol-row >> nth=1 >> .vol-actions button'); await page.waitForSelector('.vol-row >> nth=1 >> .vol-actions .btn.primary', { timeout: 60000 });
     ok('one volume by its own button; the series\' button counts the rest', /Download all 3 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
+    // Genres and tags from AniList: on the series' page (no spoiler tags), a filter of the shelf, and in search.
+    await page.waitForFunction(() => true); await page.reload(); await page.waitForSelector('.series-head', { timeout: 20000 }); await page.waitForTimeout(400);
+    const genreChips = await page.$$eval('.series-head .genre-chips .genre', (es) => es.map((e) => e.textContent));
+    ok('a series\' genres and tags from AniList on its page (spoilers left out)', alAsked > 0 && genreChips.join() === 'Romance,School');
+    if (genreChips.join() !== 'Romance,School') console.log('  chips:', JSON.stringify(genreChips), alAsked);
+    await page.click('.series-head .genre-chips .genre:has-text("School")'); await page.waitForTimeout(1200);
+    const bySchool = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('… a tag searched for: the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['Action']; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.goto(base + otlHash.replace(/\?.*$/, '')); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
+    const action = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('the shelf filtered by genre', action.length >= 1 && action.every((x) => /^B/.test(x)) && action.includes('Black Summoner'));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); delete v.genre; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Alpha%20Saga')); await page.waitForSelector('.series-head', { timeout: 20000 });
     // Back from a volume — its page, or the reader — is the series where it was left, not the main page.
     const seriesHash = await page.evaluate(() => location.hash);
     const placeOf = () => page.evaluate(() => { const body = document.querySelector('.sources-view .src-body'); const r = document.querySelectorAll('.vol-row')[2]?.getBoundingClientRect(); return { hash: location.hash, top: body?.scrollTop ?? -1, rowTop: r ? Math.round(r.top) : -1, rows: document.querySelectorAll('.vol-row').length }; });

@@ -14,6 +14,31 @@ const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const R_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 
 /** Text made safe for XML: the five characters escaped, and the control characters XML cannot hold dropped. */
+
+/**
+ * A font's embedding permission (OS/2 fsType) made one an editable document's reader honours, when the font
+ * allows embedding at all: old font makers (Fontographer…) wrote reserved bits there — "1" — which LibreOffice
+ * reads as "not editable" and so leaves the font out, drawing the fallback's letters (a calligraphic heading
+ * whose "K" draws «تصدير» shown as a plain K). Such a value becomes "editable embedding" (with its subsetting and
+ * bitmap bits kept); one that is installable (0), editable, or restricted / print-only is left as it is.
+ */
+export function editableEmbedding(bytes: Uint8Array): Uint8Array {
+  try {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0, n = dv.getUint16(4); i < n; i++) {
+      const r = 12 + i * 16;
+      if (bytes[r] !== 0x4f || bytes[r + 1] !== 0x53 || bytes[r + 2] !== 0x2f || bytes[r + 3] !== 0x32) continue; // 'OS/2'
+      const at = dv.getUint32(r + 8) + 8;
+      if (at + 2 > bytes.length) return bytes;
+      const t = dv.getUint16(at);
+      if (t === 0 || (t & 0x0008) || (t & 0x0006)) return bytes;
+      dv.setUint16(at, (t & 0x0300) | 0x0008);
+      return bytes;
+    }
+  } catch { /* not a font this reads: as it is */ }
+  return bytes;
+}
+
 export function esc(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]!)).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '');
@@ -232,7 +257,7 @@ export class DocxWriter {
       const guid = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
       const key = `{${guid.slice(0, 8)}-${guid.slice(8, 12)}-${guid.slice(12, 16)}-${guid.slice(16, 20)}-${guid.slice(20)}}`;
       const kb = (guid.match(/../g) ?? []).map((h) => parseInt(h, 16)).reverse();
-      const ob = f.data.slice(); for (let k = 0; k < 32 && k < ob.length; k++) ob[k] ^= kb[k % 16];
+      const ob = editableEmbedding(f.data.slice()); for (let k = 0; k < 32 && k < ob.length; k++) ob[k] ^= kb[k % 16];
       const id = `rId${i + 1}`;
       zip.file(`word/fonts/font${i + 1}.odttf`, ob);
       fontRels.push(`<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font${i + 1}.odttf"/>`);

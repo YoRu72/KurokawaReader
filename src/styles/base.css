@@ -1801,3 +1801,7 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .src-cover img.cv-img.loaded { opacity: 1; }
 .src-card.in-library .src-cover img.cv-img.loaded { opacity: .72; }
 @media (prefers-reduced-motion: reduce) { .src-cover img.cv-img { transition: none; } }
+/* A series' genres and tags (from AniList): small outlined chips, a tap searches for the others like it. */
+.genre-chips { margin-top: 6px; }
+.src-chip.genre { border: 1px solid var(--md-outline-variant); background: transparent; color: var(--md-on-surface-variant); cursor: pointer; font: inherit; font-size: 12px; }
+.src-chip.genre:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }

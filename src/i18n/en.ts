@@ -1381,6 +1381,7 @@ export const en = {
   volumeN: 'Volume {n}',
   sortUpdated: 'Recently updated',
   sortMostVolumes: 'Most volumes',
+  genresFilter: 'Genres (from AniList)',
   publishersFilter: 'Publisher',
   preferredEdition: 'Preferred edition',
   editionPremiumFirst: 'Premium first (J-Novel Club)',

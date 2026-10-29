@@ -1386,6 +1386,7 @@ export const ar: Strings = {
   volumeN: 'المجلد {n}',
   sortUpdated: 'المحدَّث مؤخرًا',
   sortMostVolumes: 'الأكثر مجلدات',
+  genresFilter: 'الأنواع (من AniList)',
   publishersFilter: 'الناشر',
   preferredEdition: 'النسخة المفضّلة',
   editionPremiumFirst: 'المميّزة أولًا (J-Novel Club)',

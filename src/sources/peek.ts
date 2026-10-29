@@ -530,7 +530,7 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
 /* ---------- a queue for what is on the screen ---------- */
 type Job = { run: () => Promise<void>; started: boolean };
 const queue: Job[] = []; let active = 0;
-const AT_ONCE = 5;
+const AT_ONCE = 6;
 /** Run `fn` when a turn comes (five at a time; one on the screen now before those only near it); the returned
  *  function takes it back out of the queue if it has not started (an element scrolled away). */
 export function schedule(fn: () => Promise<void>, now = false): () => void {

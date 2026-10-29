@@ -40,6 +40,8 @@ export interface SourceBook {
   /** The file whose cover a volume's row or a series' card shows: an EPUB edition when there is one (its own
    *  cover picture, where a PDF's is its first page drawn). */
   coverFile?: SourceFile;
+  /** A series' genres and tags (from AniList, for a folder that has none), shown as chips on its page. */
+  genres?: string[];
 }
 
 /** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
