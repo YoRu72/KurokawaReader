@@ -1,0 +1,40 @@
+name: Android compile check
+
+# The Android code compiled on a work branch before it reaches a release (the release builds only from main):
+# a mistake in the native files is found here, not in a release that then has no APK. What failed is left as a
+# comment on the commit.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['work-*']
+    paths: ['native/android/**', 'capacitor.config.*', 'package.json', '.github/workflows/android-check.yml']
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - run: npm install
+      - run: npm run build
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Create Android project
+        shell: bash
+        run: |
+          set -o pipefail
+          { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/prepare.log
+      - name: Compile
+        shell: bash
+        run: |
+          set -o pipefail
+          cd android && chmod +x gradlew && ./gradlew compileDebugJavaWithJavac --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -E "error:|warning: \[|BUILD" | head -n 200
+      - name: Report failure
+        if: failure()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Android compile check failed"; echo '```'; grep -E -B2 -A6 "error:" $RUNNER_TEMP/build.log | head -c 50000 || tail -n 120 $RUNNER_TEMP/prepare.log $RUNNER_TEMP/build.log | tail -c 50000; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
