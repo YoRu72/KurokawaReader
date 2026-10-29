@@ -1,6 +1,6 @@
 // Library operations: importing files, listing, deleting, progress.
 import { db, uid, type Book, type FileSource } from './db';
-import { forgetBookSettings } from './settings';
+import { forgetBookSettings, getSettings } from './settings';
 
 /** A File that knows where it came from, so it can be linked instead of copied. */
 export type SourcedFile = File & { krSource?: FileSource };
@@ -65,7 +65,9 @@ export async function removeBooks(ids: string[]): Promise<void> {
 
 export async function touchBook(id: string): Promise<void> {
   // (Opening a novel is seeing its new chapters: the mark on it goes.)
-  await db.updateBook(id, (b) => { b.lastOpenedAt = Date.now(); if (b.remote?.newChapters) b.remote.newChapters = 0; });
+  // (Incognito: the book is not put in the history.)
+  const quiet = getSettings().incognito;
+  await db.updateBook(id, (b) => { if (!quiet) b.lastOpenedAt = Date.now(); if (b.remote?.newChapters) b.remote.newChapters = 0; });
 }
 
 let coverUrls = new Map<string, string>();

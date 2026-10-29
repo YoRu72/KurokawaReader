@@ -215,6 +215,10 @@ final class KrBrowser {
         // (`until`: the window closes by itself once the page's address matches it — a sign-in that ends at an
         // address holding a token — and the address is given back.)
         final String until = call.getString("until", null);
+        // (`browserLabel`: a button that leaves the check for the app's full browser on the site — when the check's
+        // own window will not do; the answer then says so: {browser: true}.)
+        final String browserLabel = call.getString("browserLabel", null);
+        final boolean[] toBrowser = { false };
         final java.util.regex.Pattern untilRe = until == null || until.isEmpty() ? null : java.util.regex.Pattern.compile(until);
         final String[] reached = { null };
         ui.post(() -> {
@@ -252,6 +256,7 @@ final class KrBrowser {
                 r.put("blocked", blocked[0]);
                 r.put("title", last[0]);
                 if (reached[0] != null) r.put("url", reached[0]);
+                if (toBrowser[0]) r.put("browser", true);
                 call.resolve(r);
             };
             // (Read once more before closing: a check passed a moment before the reader closed the window counts.)
@@ -334,6 +339,12 @@ final class KrBrowser {
                     text.setTypeface(Typeface.DEFAULT_BOLD);
                     bar.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
                     }
+                    if (browserLabel != null && !browse) {
+                        final Button full = new Button(act);
+                        full.setText(browserLabel);
+                        full.setOnClickListener(v -> { toBrowser[0] = true; closeAfterLook.run(); });
+                        bar.addView(full, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                    }
                     final Button again = new Button(act);
                     again.setText(reloadLabel);
                     again.setOnClickListener(v -> { try { web.reload(); } catch (Exception ignored) {} });
@@ -378,7 +389,7 @@ final class KrBrowser {
     private final java.util.Map<String, Integer> showing = new java.util.HashMap<>();
 
     private static final class Lane {
-        final String origin; WebView web; boolean ready, opening; long used; String title = "";
+        final String origin; WebView web; boolean ready, opening; long used; String title = ""; int downloads;
         final List<Waiter> waiting = new ArrayList<>();
         Lane(String origin) { this.origin = origin; }
     }
@@ -416,6 +427,7 @@ final class KrBrowser {
         @JavascriptInterface public void done(String id, int status, String headers, String url) {
             Pending p = pending.remove(id);
             if (p == null) return;
+            downloadOver(p);
             try {
                 byte[] bytes;
                 synchronized (p) { if (p.out != null) { try { p.out.close(); } catch (Exception ignored) {} } bytes = p.bytes.toByteArray(); }
@@ -436,6 +448,7 @@ final class KrBrowser {
         }
         @JavascriptInterface public void fail(String id, String message) {
             Pending p = pending.remove(id);
+            downloadOver(p);
             if (p != null) { synchronized (p) { if (p.out != null) { try { p.out.close(); } catch (Exception ignored) {} if (p.file != null) p.file.delete(); } } p.call.reject("Browser request failed: " + message); }
         }
     }
@@ -588,9 +601,18 @@ final class KrBrowser {
         }
         pending.put(id, pend);
         l.used = SystemClock.uptimeMillis();
+        // (A download through a view out of sight: its page's work given the priority of a page seen while it
+        // runs — a waived renderer is the system's to slow down, and the file came at a crawl.)
+        if (dlId != null) { l.downloads++; if (android.os.Build.VERSION.SDK_INT >= 26) { try { l.web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); } catch (Exception ignored) {} } }
         try { l.web.evaluateJavascript("(function(id,o){" + FETCH_JS + "})(" + JSONObject.quote(id) + "," + o.toString() + ")", null); }
         catch (Exception e) { Pending gone = pending.remove(id); if (gone != null) { dropFile(gone); call.reject("Browser request failed: " + e.getMessage()); } return; }
-        ui.postDelayed(() -> { Pending gone = pending.remove(id); if (gone != null) { dropFile(gone); gone.call.reject("Browser request timed out"); } }, timeout + 15000L);
+        ui.postDelayed(() -> { Pending gone = pending.remove(id); if (gone != null) { downloadOver(gone); dropFile(gone); gone.call.reject("Browser request timed out"); } }, timeout + 15000L);
+    }
+    /** A download through a lane over: its view back to yielding when it was the last. */
+    private void downloadOver(final Pending p) {
+        if (p == null || p.dlId == null || p.lane == null) return;
+        final Lane l = p.lane;
+        ui.post(() -> { if (--l.downloads <= 0) { l.downloads = 0; if (android.os.Build.VERSION.SDK_INT >= 26 && l.web != null) { try { l.web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_WAIVED, true); } catch (Exception ignored) {} } } });
     }
     /** A download's file given up: its stream closed, the part written deleted. */
     private static void dropFile(Pending q) {

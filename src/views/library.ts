@@ -90,6 +90,7 @@ export function libraryView(): HTMLElement {
   const downloadsBtn = iconButton('download', t('downloads'), () => void import('../ui/downloadsheet').then((m) => m.downloadsSheet())); downloadsBtn.classList.add('tool-btn', 'downloads-btn');
   { const count = h('span', { class: 'count', hidden: true }); downloadsBtn.append(count);
     void import('../downloads').then(({ downloadsNow, onDownloads }) => { const refresh = () => { const n = downloadsNow().filter((d) => d.state === 'running').length; count.hidden = !n; count.textContent = localDigits(n); downloadsBtn.classList.toggle('busy', n > 0); }; refresh(); const off = onDownloads(() => { if (!downloadsBtn.isConnected) { off(); return; } refresh(); }); }); }
+  let markIncognito = (): void => undefined;
   const browseBtn = iconButton('globe', t('sources'), () => navigate('/sources')); browseBtn.classList.add('tool-btn', 'browse-btn');
   // (A red mark on the Browse button while something new waits at the sources — new chapters or volumes.)
   { const mark = h('span', { class: 'alert-mark', hidden: true, 'aria-hidden': 'true' }, '!'); browseBtn.append(mark);
@@ -114,13 +115,16 @@ export function libraryView(): HTMLElement {
     syncTopBtn,
     iconButton('chart', t('readingStats'), () => void import('../ui/stats').then((m) => m.showStats())),
     // What was read and when, latest first (Mihon's History).
-    (() => { const b = iconButton('clock', t('history'), () => void import('../ui/history').then((m) => m.historySheet())); b.classList.add('history-btn'); return b; })(),
+    (() => { const b = iconButton('clock', t('history'), () => void import('../ui/history').then((m) => m.historySheet())); b.classList.add('history-btn');
+      // (Incognito on: a mark on the history button says what is read is not kept.)
+      const mark = () => { const on = getSettings().incognito; b.classList.toggle('incognito', on); b.title = on ? `${t('history')} · ${t('incognito')}` : t('history'); };
+      mark(); markIncognito = mark; return b; })(),
     iconButton('bookmark', t('allNotes'), () => navigate('/notes')),
     iconButton('settings', t('settings'), () => navigate('/settings')),
   );
   const fab = h('button', { class: 'fab', type: 'button', onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks')));
   const applyImportPlace = () => { const place = getSettings().importButton; importTopBtn.hidden = place !== 'top'; fab.hidden = selecting || place !== 'fab'; };
-  const offSettings = onSettingsChange(() => { applyImportPlace(); renderChips(); });
+  const offSettings = onSettingsChange(() => { applyImportPlace(); renderChips(); markIncognito(); });
 
   /** Pick files, or scan a folder on the device. */
   /** Android: pick through the plugin so files can be linked with a lasting grant; elsewhere the plain file input. */
@@ -176,6 +180,8 @@ export function libraryView(): HTMLElement {
       if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
       let u: URL; try { u = new URL(url); } catch { status.textContent = t('badLink'); return; }
       const name = decodeURIComponent(u.pathname.split('/').pop() || '') || u.host;
+      // (A novel's page, a Shamela book, an Archive item — not a file: opened in its source.)
+      if (!/\.[a-z0-9]{2,5}$/i.test(u.pathname)) { const { targetOf } = await import('../sources/linkopen'); const to = await targetOf(url); if ('route' in to) { sh.close(); navigate(to.route); return; } }
       go.disabled = true; status.textContent = t('downloadStartedBg');
       const { startDownload } = await import('../downloads');
       sh.close();

@@ -6,10 +6,10 @@
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
-import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics } from './fontbuild';
+import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics, renamedFont } from './fontbuild';
 import { loadPdfjs, offscreen } from './pdfjsload';
 import { type ZipLike } from './ziputil';
-import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets } from './pdftext';
+import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets, numberRunsForward, ltrRunsForward } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
 
@@ -110,17 +110,20 @@ function fontFamilyName(bytes: Uint8Array): string | null {
     if (nt < 0) return null;
     const count = dv.getUint16(nt + 2), strings = nt + dv.getUint16(nt + 4);
     const found: Record<number, string> = {};
+    // (A symbol font names itself in its symbol records only (Windows, encoding 0): those are what Word and
+    // LibreOffice register it under — taken when it has no other.)
+    const sym: Record<number, string> = {};
     for (let i = 0; i < count; i++) {
       const r = nt + 6 + i * 12;
       const pid = dv.getUint16(r), eid = dv.getUint16(r + 2), lang = dv.getUint16(r + 4), id = dv.getUint16(r + 6), len = dv.getUint16(r + 8), off = dv.getUint16(r + 10);
       if (id !== 1 && id !== 16) continue;
       let str = '';
-      if (pid === 3 || pid === 0) { for (let k = 0; k < len; k += 2) str += String.fromCharCode(dv.getUint16(strings + off + k)); if (pid === 3 && eid === 0) continue; }
+      if (pid === 3 || pid === 0) { for (let k = 0; k < len; k += 2) str += String.fromCharCode(dv.getUint16(strings + off + k)); if (pid === 3 && eid === 0) { if (str.trim() && (sym[id] === undefined || lang === 0x409)) sym[id] = str.trim(); continue; } }
       else if (pid === 1) { for (let k = 0; k < len; k++) str += String.fromCharCode(bytes[strings + off + k]); }
       // Prefer the English (US) name.
       if (str && (found[id] === undefined || (pid === 3 && lang === 0x409))) found[id] = str.trim();
     }
-    const name = found[1] || found[16]; // Word selects by the legacy family name
+    const name = found[1] || found[16] || sym[1] || sym[16]; // Word selects by the legacy family name
     return name && !/^[A-Z]{6}\+/.test(name) ? name.replace(/^[A-Z]{6}\+/, '') : name?.replace(/^[A-Z]{6}\+/, '') || null;
   } catch { return null; }
 }
@@ -709,10 +712,25 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   if ((globalThis as { krDebugLine?: string }).krDebugLine === 'mk') sorted.forEach((p) => { if (p.codes) console.warn('P2D mk', JSON.stringify([p.text, p.l, p.r, p.codes])); });
   // (Brackets drawn on their own: opening or closing by where their words are — see fixLoneBrackets.)
   fixLoneBrackets(sorted, rtlLine).forEach((t, i) => { if (t !== sorted[i].text) sorted[i] = { ...sorted[i], text: t }; });
+  // (A number drawn in pieces on a right-to-left line — "١٩٧/٦" — keeps the order it shows: see numberRunsForward.)
+  if (rtlLine) { const fwd = numberRunsForward(sorted); if (fwd.length !== sorted.length) sorted.splice(0, sorted.length, ...fwd); }
+  // (Latin words on a right-to-left line read left to right among themselves: "John Smith", not "Smith John".
+  // The gaps below are measured between the boxes whichever way the pieces go.)
+  // (A run's first piece is set apart from the word before by the run's own right edge, not its own.)
+  const runRight = new Map<Piece, number>();
+  if (rtlLine && sorted.some((p) => /[A-Za-z]/.test(p.text))) {
+    const { seq, inRun } = ltrRunsForward(sorted, (p) => p.text); sorted.splice(0, sorted.length, ...seq);
+    for (let i = 0; i < sorted.length; i++) {
+      if (!inRun.has(sorted[i]) || (i > 0 && inRun.has(sorted[i - 1]))) continue;
+      let j = i; let r = sorted[i].r; while (j + 1 < sorted.length && inRun.has(sorted[j + 1])) { j++; r = Math.max(r, sorted[j].r); }
+      runRight.set(sorted[i], r);
+    }
+  }
+  const gapOf = (a: Piece, b: Piece) => (runRight.has(b) && a.l >= runRight.get(b)! - 0.5 ? a.l - runRight.get(b)! : Math.max(a.l - b.r, b.l - a.r));
   let prev: Piece | null = null; let pendingSpace = false; let pendingW = 0;
   // Word gaps of a stretched line are all wide: a tab is much wider than the line's usual gap.
   const gaps: number[] = [];
-  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim() || a.conn || b.conn || a.art || b.art) continue; const g = rtlLine ? a.l - b.r : b.l - a.r; if (g > 0.5) gaps.push(g); }
+  for (let i = 1; i < sorted.length; i++) { const a = sorted[i - 1], b = sorted[i]; if (!b.text.trim() || !a.text.trim() || a.conn || b.conn || a.art || b.art) continue; const g = gapOf(a, b); if (g > 0.5) gaps.push(g); }
   const wideGap = gaps.length >= 3 ? median(gaps) * 2.5 : 0;
   // Letter spacing the page applies (Word's "condensed" or "expanded", drawn as Tc): each glyph set nearer to
   // (or further from) the next than its advance. Measured on the line's glyphs; Word gets the same spacing.
@@ -734,7 +752,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     if (p.conn) { const pv = prev as Piece | null; if (pv) prev = { ...pv, l: Math.min(pv.l, p.l), r: Math.max(pv.r, p.r) }; continue; }
     if (!p.text.trim()) { pendingSpace = true; pendingW += p.r - p.l; continue; }
     let space = pendingSpace;
-    const gap = prev ? (rtlLine ? prev.l - p.r : p.l - prev.r) : 0;
+    const gap = prev ? gapOf(prev, p) : 0;
     if (prev && gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18)) space = true;
     // A stretch drawn as overlapping tatweel pieces: as many tatweels as the overlap hides are not drawn width.
     let trim = 0;
@@ -980,7 +998,10 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
         ink += b - a;
         const span = Math.max(...iv.map((x) => x[1])) - iv[0][0];
         const spaces = runs.reduce((n, r) => n + (r.text.trim().match(/\s+/g)?.length ?? 0), 0);
-        const need = ink + spaces * line.size * 0.3;
+        // (What Word will lay out is the glyphs' own advances, not the ink: a kashida drawn as tatweels set over
+        // one another takes all their advances in Word, and the half-line broke in two.)
+        const adv = ps.reduce((t, p) => t + (p.codes ?? []).reduce((a, u) => a + (u[5] > 0 && !/^\s+$/.test(u[1]) ? u[5] * u[4] : 0), 0), 0);
+        const need = Math.max(ink, adv) + spaces * line.size * 0.3;
         if (need <= span * 0.99) return runs;
         const k = Math.max(0.8, (span * 0.99) / need);
         return runs.map((r) => ({ ...r, cs: Math.round((r.cs ?? 100) * k) }));
@@ -1419,7 +1440,10 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const p = pieces[i]; const f = fonts.get(p.font);
     if (p.text === '\u2009' || !f) continue;
     const pua = /[\uE000-\uF8FF]/.test(p.text);
-    const latinArt = pageRtl && f.noUnicode && /^[\x20-\x7E]+$/.test(p.text) && !/^[\s\d().,:;\-–]+$/.test(p.text);
+    // (A sign font's glyph under a Latin code — "$" drawn as «رحمه الله» — shows itself by its width too: a
+    // whole phrase is far wider than any one Latin character.)
+    const wideSign = pageRtl && /^[\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E]$/.test(p.text.trim()) && (p.codes?.length ?? 0) === 1 && p.codes![0][5] > 1.2;
+    const latinArt = pageRtl && (f.noUnicode || wideSign) && /^[\x20-\x7E]+$/.test(p.text) && !/^[\s\d().,:;\-–]+$/.test(p.text);
     // Codes the font itself has no character for (no ToUnicode, not in its own Unicode table): what is drawn
     // is not what the codes say (page numbers set in an ornamental font read "31" for "٤٠").
     let foreign = false;
@@ -2172,8 +2196,10 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const arabic = [...(usedChars.get(`${family}|Regular`) ?? []), ...(usedChars.get(`${family}|Bold`) ?? [])].some((c) => c >= 0x600 && c <= 0x6ff);
     const first = (m.get('Regular') ?? m.values().next().value)!;
     const firstFace = [...m.entries()].find(([, v]) => v === first)![0];
-    embedded.push({ name: family, data: first, arabic });
-    for (const [face, data] of m) if (data !== first) extraFaces.push({ family, face, data });
+    // (Every face named after the family the runs ask for, in all its records: see renamedFont.)
+    const sub = (f: Face) => (f === 'BoldItalic' ? 'Bold Italic' : f);
+    embedded.push({ name: family, data: renamedFont(first, family, sub(firstFace)) ?? first, arabic });
+    for (const [face, data] of m) if (data !== first) extraFaces.push({ family, face, data: renamedFont(data, family, sub(face)) ?? data });
     if (firstFace !== 'Regular') extraFaces.push({ family, face: firstFace, data: new Uint8Array(0) }); // marks: move embedRegular to this face
     const os2 = readOs2(first); if (os2) sigs.set(family, os2);
   }

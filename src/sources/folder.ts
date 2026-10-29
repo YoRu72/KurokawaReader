@@ -12,7 +12,7 @@ import { t, formatBytes, countVolumes, countSeries, daysAgo, localDigits } from 
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFile, type SourcePage, type FilterValues, type SourceFilter, type SourceTag } from './types';
 import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf, peekKeyOf, imageKeyOf, assumeRanges, type Peek } from './peek';
 import { db } from '../db';
-import { loadTags, tagsNow, fillTags, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS } from './altags';
+import { loadTags, tagsNow, wantTags, tagsFor as tagsOfSeries, tagsPending, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS } from './altags';
 import type { Repo } from './repos';
 
 export interface DirEntry { name: string; url: string; dir: boolean; size?: number; date?: string; ext?: string; time?: number }
@@ -632,13 +632,24 @@ export function folderSource(repo: Repo): Source {
       return !inc.length || (any ? inc.some(has) : inc.every(has));
     };
   };
-  let tagsAsked = false;
-  const askTags = (idx: FolderIndex) => {
-    if (!tagsOn || tagsAsked) return; tagsAsked = true;
-    const list = [...seriesOf(idx).values()].filter((s) => s.files.length).map((s) => ({ rel: s.rel, name: s.name }));
-    let told = 0;
-    void fillTags(repo.key, list, () => { searches.clear(); if (Date.now() - told > 5000) { told = Date.now(); window.dispatchEvent(new CustomEvent('kr:covers-retry')); } }).catch(() => undefined);
+  // (What AniList taught: the searches made again, the page told — a series' page shows its tags, a shelf
+  // filtered by tag grows — and covers missing from their files tried with AniList's.)
+  let told = 0;
+  const onTags = (rels: string[]) => {
+    searches.clear();
+    window.dispatchEvent(new CustomEvent('kr:tags-changed', { detail: { source: srcId, rels } }));
+    if (Date.now() - told > 5000) { told = Date.now(); window.dispatchEvent(new CustomEvent('kr:covers-retry')); }
   };
+  /** Every series of the folder put in AniList's line (behind those on the screen): from its index, else from
+   *  its top folder's listing. */
+  let tagsAsked = false;
+  const askTags = (list: { rel: string; name: string }[]) => {
+    if (!tagsOn || tagsAsked || !list.length) return; tagsAsked = true;
+    void wantTags(repo.key, list, false, onTags).catch(() => undefined);
+  };
+  const askIndexTags = (idx: FolderIndex) => askTags([...seriesOf(idx).values()].filter((s) => s.files.length).map((s) => ({ rel: s.rel, name: s.name })));
+  /** A series on the screen: first in the line. */
+  const askNow = (rel: string) => { if (tagsOn && rel && !rel.includes('/')) void wantTags(repo.key, [{ rel, name: dec(rel) }], true, onTags).catch(() => undefined); };
   const byPublisher = (f: FilterValues) => { const ps = Array.isArray(f.publisher) ? f.publisher : []; return (s: SeriesInfo) => !ps.length || s.publishers.some((p) => ps.includes(p)); };
   /** A series' card: its name, its place, how many volumes and how big, its publishers and formats, the
    *  files "Download all" fetches (the chosen edition of each volume). */
@@ -665,7 +676,9 @@ export function folderSource(repo: Repo): Source {
       const all = seriesOf(idx); const pub = byPublisher(f);
       const inside = (s: SeriesInfo) => !rel || s.rel === rel.split('/')[0];
       const gen = byGenre(f);
-      const hay = (s: SeriesInfo) => { const tg = tagsOf(s.rel); return norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); };
+      // (Each series' words made once for the search, not once for every word asked.)
+      const hays = new Map<string, string>();
+      const hay = (s: SeriesInfo) => { let v = hays.get(s.rel); if (v === undefined) { const tg = tagsOf(s.rel); v = norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); hays.set(s.rel, v); } return v; };
       const series = [...all.values()].filter((s) => inside(s) && pub(s) && gen(s) && words.every((w) => hay(s).includes(w)));
       const items: SourceBook[] = sortSeries(series, f).map((s) => seriesCard(s, f));
       const vols: Vol[] = [];
@@ -817,7 +830,7 @@ export function folderSource(repo: Repo): Source {
         let list: SourceBook[]; let topBooks: Vol[] = [];
         if (idx) {
           const dirSet = new Set(idx.dirs);
-          if (tagsOn) { await loadTags(repo.key); askTags(idx); }
+          if (tagsOn) { await loadTags(repo.key); askIndexTags(idx); }
           let series = [...seriesOf(idx).values()].filter((s) => s.files.length || dirSet.has(s.rel)).filter(byPublisher(f)).filter(byGenre(f));
           if (special === '::mine') { const mine = await inLibrary(srcId); series = series.filter((s) => mine.has(s.rel)); }
           const news = await newsOf(repo);
@@ -830,6 +843,8 @@ export function folderSource(repo: Repo): Source {
         } else {
           const all = await listFolder(root, false, h5ai);
           let dirs = all.filter((e) => e.dir && !HIDDEN_FOLDERS.test(e.name));
+          // (No index: the series are the top folder's folders — their tags asked for all the same.)
+          if (tagsOn) { await loadTags(repo.key).catch(() => undefined); askTags(dirs.map((e) => ({ rel: childRel('', e), name: e.name }))); }
           if (special === '::mine') { const mine = await inLibrary(srcId); dirs = dirs.filter((d) => mine.has(segOf(d))); }
           if (special === '::recent' || String(f.sort).startsWith('newest')) dirs = dirs.sort((a, b) => (b.time ?? 0) - (a.time ?? 0) || natural(a.name, b.name));
           list = dirs.map((e) => folderCard(e.name, childRel('', e), { year: special === '::recent' ? e.date?.slice(0, 10) : undefined }));
@@ -848,7 +863,7 @@ export function folderSource(repo: Repo): Source {
       // A series (or any folder with books in it): its card, its volumes in reading order, then its side folders —
       // from the index at once when it knows the folder (the site asked out of sight whether anything changed).
       void seen(repo, rel.split('/')[0]);
-      if (tagsOn) await loadTags(repo.key).catch(() => undefined);
+      if (tagsOn) { await loadTags(repo.key).catch(() => undefined); askNow(rel.split('/')[0]); }
       const { entries: all, fromIndex } = await entriesOf(rel);
       if (fromIndex && idx) checkLater(rel, idx);
       // (Folders never shown: a reader asked for the yaoi one to stay out of sight for good.)
@@ -901,12 +916,20 @@ export function folderSource(repo: Repo): Source {
     peekNow: (b) => (b.file ? peekKnown(b.file.url, b.file.size, noCover()) : undefined),
     freshNow: (rel) => { const news = newsMem.get(repo.key); return news ? news[rel]?.n ?? 0 : undefined; },
     folderCoverNow: (rel) => known(`peek:dir:${keyOf(urlOf(root, rel))}`),
+    async tagsFor(b) {
+      const rel = b.id.startsWith('a:') ? b.id.slice(2) : '';
+      if (!tagsOn || !rel || rel.includes('/')) return null;
+      const tg = await tagsOfSeries(repo.key, rel, dec(rel)).catch(() => null);
+      return tg ? { genres: tg.genres, tagList: tg.tags.map((x) => ({ name: x.n, rank: x.r, category: x.c, spoiler: !!x.s })) } : null;
+    },
+    tagsWaiting: () => (tagsOn ? tagsPending(repo.key) : 0),
     async folderCover(rel) {
       // Its first volume's cover — volume 1's EPUB (else its PDF), the very file its series' page shows on top,
       // read once for both; for a folder without books, its own picture (cover.jpg…) or its first folder's first
       // volume. What is kept is which file (or picture) — its cover is kept with it, once — for a week.
       const key = `peek:dir:${keyOf(urlOf(root, rel))}`;
-      if (tagsOn) await loadTags(repo.key).catch(() => undefined);
+      // (A series' card come onto the screen: its tags asked for before the rest of the folder's.)
+      if (tagsOn) { await loadTags(repo.key).catch(() => undefined); askNow(rel); }
       const had = await recall(key, 7 * 86400000); if (had && (had.cover || noCover())) return had;
       // (A folder that could not be read for a cover — a page of its own — is not asked again this session.)
       if ((coverless.get(rel) ?? 0) > Date.now()) return { at: Date.now() };

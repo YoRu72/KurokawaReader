@@ -63,8 +63,47 @@ export async function backupFull(onProgress?: (done: number, total: number) => v
   await shareFile(blob, `KurokawaReader-full-backup-${stamp()}.zip`, t('backup'));
 }
 
+/* ---------- automatic backups (Mihon's): the notes backup made every few days, the last few kept ---------- */
+const AUTO = 'autobackup:'; const AUTO_INDEX = 'autobackup:index';
+export interface AutoBackup { key: string; at: number; size: number; books: number }
+export function autoBackupEvery(): number { try { return Number(localStorage.getItem('kr.autoBackup.days') ?? '1') || 0; } catch { return 1; } }
+export function setAutoBackupEvery(days: number): void { try { localStorage.setItem('kr.autoBackup.days', String(days)); } catch { /* private mode */ } }
+export function autoBackupKeep(): number { try { return Math.min(20, Math.max(1, Number(localStorage.getItem('kr.autoBackup.keep') ?? '5') || 5)); } catch { return 5; } }
+export function setAutoBackupKeep(n: number): void { try { localStorage.setItem('kr.autoBackup.keep', String(n)); } catch { /* private mode */ } }
+export async function autoBackups(): Promise<AutoBackup[]> { return ((await db.getMeta<AutoBackup[]>(AUTO_INDEX)) ?? []).sort((a, b) => b.at - a.at); }
+/** One made now, the oldest beyond the number kept let go. */
+export async function makeAutoBackup(): Promise<AutoBackup> {
+  const m = await manifest(false);
+  const text = JSON.stringify(m);
+  const e: AutoBackup = { key: `${AUTO}${m.createdAt}`, at: m.createdAt, size: text.length, books: m.books.length };
+  await db.setMeta(e.key, text);
+  const list = [e, ...(await autoBackups())];
+  const keep = list.slice(0, autoBackupKeep()); const drop = list.slice(autoBackupKeep());
+  for (const x of drop) await db.deleteMeta(x.key).catch(() => undefined);
+  await db.setMeta(AUTO_INDEX, keep);
+  return e;
+}
+/** Made when the last is older than the reader's interval (called a while after the app starts). */
+export async function autoBackupIfDue(): Promise<void> {
+  const days = autoBackupEvery(); if (!days) return;
+  const last = (await autoBackups())[0];
+  if (last && Date.now() - last.at < days * 86400000 - 3600000) return;
+  if (!(await db.allBooks()).length) return;
+  await makeAutoBackup();
+}
+/** An automatic backup as a file (to restore from, or to keep elsewhere). */
+export async function autoBackupFile(e: AutoBackup): Promise<File | null> {
+  const text = await db.getMeta<string>(e.key); if (!text) return null;
+  const d = new Date(e.at); const p = (n: number) => String(n).padStart(2, '0');
+  return new File([text], `KurokawaReader-auto-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`, { type: 'application/json' });
+}
+
+/** What a restore brings back (Mihon's restore options): every part unless told otherwise. */
+export interface RestoreParts { settings?: boolean; reading?: boolean; books?: boolean; fonts?: boolean }
+
 /** Restores a backup file (JSON or ZIP). Returns how many books/notes were applied. */
-export async function restoreBackup(file: File, onProgress?: (msg: string) => void): Promise<number> {
+export async function restoreBackup(file: File, onProgress?: (msg: string) => void, parts: RestoreParts = {}): Promise<number> {
+  const want = { settings: parts.settings !== false, reading: parts.reading !== false, books: parts.books !== false, fonts: parts.fonts !== false };
   let m: Manifest; let zip: JSZip | null = null;
   if (/\.zip$/i.test(file.name) || file.type.includes('zip')) {
     zip = await JSZip.loadAsync(file);
@@ -75,8 +114,10 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   if (m.app !== 'KurokawaReader' || !Array.isArray(m.books)) throw new Error('not a KurokawaReader backup');
 
   // settings
-  const cur = getSettings(); updateSettings({ ...m.settings, aiKey: m.settings.aiKey || cur.aiKey, syncDropboxRefresh: cur.syncDropboxRefresh, syncWebdavPass: cur.syncWebdavPass });
-  for (const [k, v] of Object.entries(m.local ?? {})) localStorage.setItem(k, v);
+  if (want.settings) {
+    const cur = getSettings(); updateSettings({ ...m.settings, aiKey: m.settings.aiKey || cur.aiKey, syncDropboxRefresh: cur.syncDropboxRefresh, syncWebdavPass: cur.syncWebdavPass });
+    for (const [k, v] of Object.entries(m.local ?? {})) localStorage.setItem(k, v);
+  }
 
   // folders: merge by name
   const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
@@ -89,7 +130,7 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   const folderId = (name?: string) => (name ? folders.find((f) => f.name === name)?.id : undefined);
 
   // fonts (full backups carry the files)
-  if (zip && m.fonts?.length) {
+  if (zip && want.fonts && m.fonts?.length) {
     const have = await listFonts();
     const merged = [...have];
     for (const f of m.fonts) {
@@ -107,7 +148,7 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   for (const rec of m.books) {
     onProgress?.(rec.title);
     let book = byKey.get(rec.key);
-    if (!book && zip) {
+    if (!book && zip && want.books) {
       const entry = zip.file(`books/${rec.id}/${rec.fileName}`);
       if (entry) {
         const blob = await entry.async('blob');
@@ -116,6 +157,7 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
       }
     }
     if (!book) continue;
+    if (!want.reading) { applied++; continue; }
     await db.updateBook(book.id, (b) => {
       const ids = new Set(b.bookmarks.map((x) => x.id));
       b.bookmarks.push(...(rec.bookmarks ?? []).filter((x) => !ids.has(x.id)));

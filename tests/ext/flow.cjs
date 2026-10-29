@@ -55,6 +55,15 @@ const SITE = 'http://localhost:5403';
     page.once('dialog', (d) => d.accept()); await page.click('.sheet .dest-row.danger'); await page.waitForTimeout(600);
     ok('… removed from its menu, the repo of one with it', (await page.$$('.repo-section')).length === 3);
     await page.screenshot({ path: path.join(__dirname, 'hub.png') });
+    // Discover: AniList's trending light novels on the hub; a tap searches every source.
+    {
+      await page.route('https://graphql.anilist.co/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { trending: { media: [{ id: 1, title: { english: 'Beta Blossom', romaji: 'Beta' }, coverImage: { large: '' }, averageScore: 81 }] }, popular: { media: [{ id: 2, title: { romaji: 'Alpha Ascension' } }] }, top: { media: [] } } }) }));
+      await page.evaluate(() => localStorage.removeItem('kr.discover')); await page.reload(); await page.waitForSelector('.discover .migrate-hit', { timeout: 15000 });
+      const rows = await page.$$eval('.discover .discover-row h4', (es) => es.map((e) => e.textContent));
+      await page.click('.discover .migrate-hit:has-text("Beta Blossom")'); await page.waitForFunction(() => /~all\?q=Beta/.test(location.hash), null, { timeout: 10000 });
+      ok('Discover: trending and popular light novels from AniList; a tap searches every source', rows.length === 2 && /Trending/.test(rows[0]));
+      await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section');
+    }
     // The LNReader plugin: popular, latest, search, filters.
     await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(500);
     const popular = await page.$$eval('.src-grid .src-title', (els) => els.map((e) => e.textContent));
@@ -144,6 +153,19 @@ const SITE = 'http://localhost:5403';
     ok('the new chapter is in the book', (await page.$$('.kr-webnovel .kr-novel-chapter')).length === 7);
     await page.goto(base + '#/'); await page.waitForSelector('.library-view'); await page.waitForTimeout(600);
     ok('mark gone once opened', !(await page.$('.badge.alert')));
+    // Moved to another source (the Mangayomi extension of the same site): its place and offline chapters go with it.
+    {
+      const idb = (fn) => page.evaluate(`new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const st = r.result.transaction('books', 'readwrite').objectStore('books'); const q = st.getAll(); q.onsuccess = () => { const b = q.result.find((x) => x.title === 'Alpha Ascension'); (${fn})(b, st); res(b && { id: b.id, src: b.remote && b.remote.source, rid: b.remote && b.remote.id, toc: b.progress && b.progress.toc, ch: b.progress && b.progress.chapter, n: b.chapters, online: b.remote && b.remote.online }); }; }; })`);
+      const before = await idb(`(b, st) => { b.progress = { bookId: b.id, toc: 4, chapter: 3, block: 12, pct: 0.5 }; st.put(b); }`);
+      await page.reload(); await page.waitForSelector('.library-view'); await page.waitForTimeout(400);
+      await page.goto(base + '#/book/' + before.id); await page.waitForSelector('.book-tiles');
+      await page.click('.book-tiles .book-tile:has-text("Migrate")'); await page.waitForSelector('.migrate-sheet .migrate-hit', { timeout: 30000 });
+      const srcs = await page.$$eval('.migrate-sheet .migrate-src h4', (es) => es.map((e) => e.textContent));
+      page.once('dialog', (d) => void d.accept()); await page.click('.migrate-sheet .migrate-src:has-text("Mangayomi") .migrate-hit:has-text("Alpha")');
+      await page.waitForFunction(() => !document.querySelector('.migrate-sheet'), null, { timeout: 30000 }); await page.waitForTimeout(800);
+      const after = await idb('() => {}');
+      ok('a library novel moved to another source: the Mangayomi one, its place carried over (chapter 4), still the same book', srcs.some((x) => /Mangayomi/.test(x)) && after.id === before.id && after.src !== before.src && /^ext:/.test(after.src) && after.toc === 4 && after.ch === 3, { before, after, srcs });
+    }
     // The Mangayomi extension.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=1 >> .ext-card:not(.off)'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(400);
     ok('Mangayomi extension browses popular', (await page.$$('.src-grid .src-card')).length >= 3);

@@ -135,6 +135,9 @@ export function settingsView(): HTMLElement {
   const opts = h('div');
   renderOptions(opts);
   body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts));
+  // Text rules (a watermark taken out, a name respelt): the list, to change or remove them.
+  body.append(h('section', { class: 'card' }, h('h3', null, t('textRules')), h('p', null, t('textRulesAbout')),
+    h('div', { class: 'actions-row' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/textrulesheet').then((m) => m.rulesListSheet()) }, icon('pen'), t('textRules')))));
 
   // Books from the web: the sources (archive.org, Shamela) and the OPDS catalogues.
   const srcNews = h('p', { class: 'hint', hidden: true });
@@ -166,8 +169,8 @@ export function settingsView(): HTMLElement {
       // How often the checks run by themselves (as in the bell's sheet).
       card.append(h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
         pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(checkEvery()), (v) => setCheckEvery(Number(v)), t('close'))));
-      const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
-      card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')),
+      const sw = (k: import('../sources/updates').UpdatePref, label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
+      card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')), sw('smart', t('updSmart')), sw('skipUnread', t('updSkipUnread')), sw('skipNotStarted', t('updSkipNotStarted')),
         h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));
     });
     body.append(card);
@@ -261,7 +264,32 @@ export function settingsView(): HTMLElement {
   body.append(h('section', { class: 'card' }, h('h3', null, t('sync')), h('p', null, t('syncBody')),
     h('div', null, h('button', { class: 'btn tonal small', onclick: () => void import('../ui/syncsheet').then((m) => m.syncSheet()) }, icon('cloud'), t('sync')))));
 
-  // Backup & restore
+  // Privacy: incognito, and (Android) the app lock and keeping the contents out of screenshots.
+  {
+    const card = h('section', { class: 'card' }, h('h3', null, t('privacy')));
+    const sw = (label: string, on: boolean, set: (v: boolean, el: HTMLInputElement) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on }) as HTMLInputElement; c.addEventListener('change', () => set(c.checked, c)); return h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }, title: hint }, h('span', null, label, hint ? h('small', { class: 'src', style: { display: 'block' } }, hint) : null), c); };
+    card.append(sw(t('incognito'), getSettings().incognito, (v) => updateSettings({ incognito: v }), t('incognitoHint')));
+    void import('../applock').then(async (L) => {
+      if (!L.lockAvailable() || !(await L.canLock())) return;
+      card.append(
+        sw(t('appLock'), L.lockOn(), (v, el) => void L.setLock(v).then((ok) => { if (!ok) el.checked = !v; }), t('appLockHint')),
+        h('div', { class: 'field' }, h('span', { class: 'label' }, t('appLockAfter')), pickButton(t('appLockAfter'), [0, 1, 5, 15, 30].map((n): [string, string] => [String(n), n ? t('appLockMinutes', { n: localDigits(n) }) : t('appLockAlways')]), String(L.lockAfter()), (v) => L.setLockAfter(Number(v)), t('close'))),
+        sw(t('secureScreen'), L.secureOn(), (v) => void L.setSecure(v), t('secureScreenHint')));
+    });
+    body.append(card);
+  }
+
+  // Backup & restore: automatic backups every few days, the last few kept on the device (Mihon's).
+  function autoBackupRow(): HTMLElement {
+    const row = h('div', { class: 'field auto-backup' });
+    void import('../backup').then((b) => {
+      const every = pickButton(t('autoBackup'), [0, 1, 3, 7].map((n): [string, string] => [String(n), n ? (n === 1 ? t('everyDay') : t('everyDays', { n: localDigits(n) })) : t('autoBackupOff')]), String(b.autoBackupEvery()), (v) => b.setAutoBackupEvery(Number(v)), t('close'));
+      const keep = pickButton(t('autoBackupKeep'), [3, 5, 10].map((n): [string, string] => [String(n), localDigits(n)]), String(b.autoBackupKeep()), (v) => b.setAutoBackupKeep(Number(v)), t('close'));
+      row.append(h('span', { class: 'label' }, t('autoBackup')), every, h('span', { class: 'label' }, t('autoBackupKeep')), keep, h('span', { class: 'hint' }, t('autoBackupHint')),
+        h('button', { type: 'button', class: 'btn small text', onclick: async () => { await b.makeAutoBackup(); toast(t('autoBackupMade')); } }, icon('download'), t('autoBackupNow')));
+    });
+    return row;
+  }
   const restoreInput = h('input', { type: 'file', accept: '.json,.zip,application/json,application/zip', hidden: true }) as HTMLInputElement;
   const bkStatus = h('p', { class: 'src' });
   restoreInput.addEventListener('change', async () => {
@@ -274,8 +302,8 @@ export function settingsView(): HTMLElement {
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn tonal small', onclick: async () => { const { backupNotes } = await import('../backup'); await backupNotes(); } }, icon('download'), t('backupNotes')),
       h('button', { class: 'btn small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { backupFull } = await import('../backup'); await backupFull((d, n) => { bkStatus.textContent = `${d}/${n}`; }); bkStatus.textContent = ''; } finally { b.disabled = false; } } }, icon('books'), t('backupFull')),
-      h('button', { class: 'btn small outlined', onclick: () => restoreInput.click() }, icon('import'), t('restore')), restoreInput),
-    bkStatus));
+      h('button', { class: 'btn small outlined', onclick: () => void import('../ui/restoresheet').then((m) => m.restoreSheet()) }, icon('import'), t('restore')), restoreInput),
+    bkStatus, autoBackupRow()));
 
   // Keyboard shortcuts: every PC and browser (touch-screen laptops included); phones and tablets skip it.
   if (nativePlatform() !== 'android' && nativePlatform() !== 'ios') {

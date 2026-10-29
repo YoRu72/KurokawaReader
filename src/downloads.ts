@@ -122,6 +122,8 @@ async function runNow(d: Download): Promise<void> {
 type AndroidDl = { downloadFile(o: { id: string; url: string; name: string; headers?: Record<string, string>; persist: boolean; connections: number }): Promise<{ path: string; size: number }>; cancelDownload?(o: { id: string }): Promise<void>; deleteDownload?(o: { path: string }): Promise<unknown>; addListener?(ev: string, fn: (p: Progress & { id?: string }) => void): Promise<{ remove(): void }> };
 type DesktopDl = { download?(u: string, n: string, id?: string): Promise<string>; addDownloadListener?(cb: (p: Progress & { id?: string }) => void): () => void; onDownloadProgress?(cb: (p: Progress) => void): void; readFile(p: string): Promise<ArrayBuffer>; deleteDownload?(p: string): Promise<boolean> };
 
+/** Sites whose files the downloader was turned away from though a check had been passed: the lane only. */
+const laneOnly = new Set<string>();
 async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promise<File> {
   const plat = nativePlatform();
   const safe = d.name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim() || 'book';
@@ -131,10 +133,12 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
     const sub = await k.addListener?.('downloadProgress', (p) => { if (!p.id || p.id === d.id) onProgress(p); });
     cancels.set(d.id, () => void k.cancelDownload?.({ id: d.id }).catch(() => undefined));
     try {
-      // (A site reached through the browser lane already — a check only a browser passes — is not asked the
-      // plain way first: its download goes through the lane, to a file, with its progress.)
-      const { viaBrowser } = await import('./sources/http');
-      if (!viaBrowser(new URL(d.url).host)) {
+      // (The downloader first, over several connections — as Mihon does, with the cookies a check passed in
+      // the app's browser left and the browser's own identity, so a site behind Cloudflare lets it through
+      // too. Only a site that turns it away even so — it looks at the connection itself — goes through the
+      // browser lane, one connection, the slow way; and is not asked the fast way again this session.)
+      const host = new URL(d.url).host;
+      if (!laneOnly.has(host)) {
         try {
           const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 8 });
           const file = await readContentUri(path, d.name, d.mime ?? '');
@@ -142,6 +146,8 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
           return file;
         } catch (e) {
           if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e;
+          const { viaBrowser } = await import('./sources/http');
+          if (viaBrowser(host)) laneOnly.add(host);
         }
       }
       const { fetchBytes: lane } = await import('./sources/http');

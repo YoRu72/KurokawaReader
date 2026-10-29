@@ -346,6 +346,35 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   }
   const nominal = new Map<number, number>();
   for (const [c, uses] of plain) nominal.set(c, top(uses));
+  // A bracket's glyph goes by the shape it draws, not by the name the PDF gave it: a font set for Arabic may
+  // name a bracket by its shape or by the character it stands for (and two pages of one book can differ).
+  // The cmap's "(" must draw "(" — the shaper mirrors it on a right-to-left line — or every bracket of the
+  // book comes out back to front.
+  {
+    const shape = (gid: number): boolean | null => {
+      try {
+        const src = sources[Math.floor(gid / 65536)]; if (!src) return null;
+        const pts = src.outline(gid % 65536).contours.flat(); if (pts.length < 4) return null;
+        const ys = pts.map((q) => q.y); const y0 = Math.min(...ys), y1 = Math.max(...ys), hh = y1 - y0; if (hh <= 0) return null;
+        const mid = pts.filter((q) => Math.abs(q.y - (y0 + y1) / 2) < hh * 0.15), ends = pts.filter((q) => q.y > y1 - hh * 0.15 || q.y < y0 + hh * 0.15);
+        if (!mid.length || !ends.length) return null;
+        const xs = (a: typeof pts) => a.map((q) => q.x);
+        // (An opening shape — ( [ { « — has its middle left of its ends: positive; a closing one negative.)
+        const score = (Math.min(...xs(ends)) - Math.min(...xs(mid))) + (Math.max(...xs(ends)) - Math.max(...xs(mid)));
+        const w = Math.max(...xs(pts)) - Math.min(...xs(pts));
+        return Math.abs(score) < w * 0.08 ? null : score > 0;
+      } catch { return null; }
+    };
+    for (const [o, c] of [[0x28, 0x29], [0x5b, 0x5d], [0x7b, 0x7d], [0xab, 0xbb]]) {
+      const go = nominal.get(o), gc = nominal.get(c);
+      const wrongO = go !== undefined && shape(go) === false, wrongC = gc !== undefined && shape(gc) === true;
+      if (wrongO && wrongC) { nominal.set(o, gc!); nominal.set(c, go!); }
+      else if (wrongO && gc === undefined) { nominal.set(c, go!); nominal.delete(o); }
+      else if (wrongC && go === undefined) { nominal.set(o, gc!); nominal.delete(c); }
+      else if (wrongO) nominal.delete(o);
+      else if (wrongC) nominal.delete(c);
+    }
+  }
   if (spaceGid) nominal.set(0x20, spaceGid);
   else if (meta.space) nominal.set(0x20, ADDED - 1); // a space as wide as the PDF's (its glyph is not in the font pdf.js kept)
   for (const [c, uses] of markGlyph) nominal.set(c, top(uses));

@@ -57,8 +57,8 @@ function titleOf(r: HttpResult, binary: boolean): string {
 
 /* ---------- the app's own browser ---------- */
 type BrowserInit = { url: string; method?: string; headers?: Record<string, string>; body?: string | null; bodyBase64?: boolean; binary?: boolean; timeout?: number; page?: string; openTimeout?: number; downloadId?: string };
-type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean; /** a browser of its own: address bar, back and forward */ browse?: boolean; back?: string; forward?: string; placeholder?: string; rtl?: boolean; /** closes by itself once the page's address matches this (a regular expression), giving it back */ until?: string };
-type CheckResult = { passed?: boolean; blocked?: boolean; title?: string; url?: string };
+type CheckInit = { url: string; hidden?: boolean; timeout?: number; fresh?: boolean; message?: string; done?: string; reload?: string; /** stays open until the reader closes it */ stay?: boolean; /** a browser of its own: address bar, back and forward */ browse?: boolean; back?: string; forward?: string; placeholder?: string; rtl?: boolean; /** closes by itself once the page's address matches this (a regular expression), giving it back */ until?: string; /** a button leaving the check for the full browser */ browserLabel?: string };
+type CheckResult = { passed?: boolean; blocked?: boolean; title?: string; url?: string; /** the reader chose the full browser instead */ browser?: boolean };
 interface Browser {
   check?(o: CheckInit): Promise<CheckResult>;
   fetch?(o: BrowserInit): Promise<HttpResult & { via?: string }>;
@@ -122,7 +122,7 @@ const passing = new Map<string, Promise<boolean>>();
 const declined = new Map<string, number>();   // a site whose check the reader closed without passing: not shown again for a while
 const refused = new Map<string, string>();    // a site that refuses even a browser: its page's title
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
-const checkWords = (url: string): Pick<CheckInit, 'message' | 'done' | 'reload'> => ({ message: t('checkPrompt', { site: hostOf(url) }), done: t('checkClose'), reload: t('checkReload') });
+const checkWords = (url: string): Pick<CheckInit, 'message' | 'done' | 'reload' | 'browserLabel'> => ({ message: t('checkPrompt', { site: hostOf(url) }), done: t('checkClose'), reload: t('checkReload'), browserLabel: t('checkInBrowser') });
 
 /** Pass the site's check: out of sight first (unless the browser has just waited for it already), then —
  *  unless `quiet` — in a window that asks the reader to. Resolves true when the site showed a page of its own;
@@ -146,7 +146,10 @@ export async function solveChallenge(url: string, quiet = false, waited = false)
       // window on the site closed, so its check does not run beside the reader's, the two undoing each other,
       // nor keep the pages' shared renderer busy while the reader's page is drawn.)
       await resetBrowser(url);
-      const vis = await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => null);
+      let vis = await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => null);
+      // (The reader chose the full browser: the check passed there, as in any browser — or not, and the next
+      // request says so.)
+      if (vis?.browser) { await openBrowser(url); vis = { passed: true }; }
       if (vis?.blocked && !vis.passed) refused.set(host, vis.title ?? '');
       if (!vis?.passed) { declined.set(host, Date.now() + 90_000); return false; }
       await resetBrowser(url);
@@ -165,7 +168,7 @@ export async function solveChallenge(url: string, quiet = false, waited = false)
 export async function passChallenge(url: string): Promise<void> {
   declined.delete(hostOf(url)); refused.delete(hostOf(url));
   const b = browser();
-  if (b?.check) { await resetBrowser(url); await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => undefined); await resetBrowser(url); return; }
+  if (b?.check) { await resetBrowser(url); const r = await b.check({ url, timeout: 300000, fresh: true, ...checkWords(url) }).catch(() => undefined); if (r?.browser) await openBrowser(url); await resetBrowser(url); window.dispatchEvent(new CustomEvent('kr:covers-retry')); return; }
   window.open(url, '_blank', 'noopener');
 }
 

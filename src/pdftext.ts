@@ -44,7 +44,9 @@ export function dropBuriedSpaces<T extends { l: number; r: number; text: string 
 /** Inside one piece, a bracket type written one way only ("[النور: ٤٥[" — a PDF that names both by one
  *  glyph) is made to pair up: opening, closing, opening… */
 export function balanceBrackets(text: string): string {
-  if (!BRACKET_CHAR.test(text)) return text;
+  // (A piece that is a bracket alone was settled by where it stands — fixLoneBrackets: "(" before "١" is an
+  // opening one, not a word ending with one.)
+  if (!BRACKET_CHAR.test(text) || !/[\p{L}\p{N}]/u.test(text)) return text;
   let out = text;
   // A bracket named by its shape in a font set for right-to-left text comes out mirrored: a word that begins
   // with a closing bracket (")فقه") or ends with an opening one ("اللغة(") is turned the right way round.
@@ -155,6 +157,29 @@ export function ltrRunsForward<T>(seq: T[], text: (x: T) => string): { seq: T[];
     i = b + 1;
   }
   return { seq: out, inRun };
+}
+
+/**
+ * On a right-to-left line read right to left, a number drawn in pieces — "١٩٧" "/" "٦", a date, a page range —
+ * is still one number, which every reader lays out left to right: its pieces taken in the order they stand
+ * from the left ("١٩٧/٦" as the page shows it, not "٦/١٩٧", which a reader would draw the other way round).
+ * The pieces touch (or nearly): numbers apart from each other on the line stay where they are. The run is
+ * made one piece.
+ */
+export function numberRunsForward<T extends { text: string; l: number; r: number; h: number }>(seq: T[]): T[] {
+  const NUM = /^[0-9\u0660-\u0669\u06F0-\u06F9]+(?:[.,/:\-\u2013\u066B\u066C][0-9\u0660-\u0669\u06F0-\u06F9]+)*$/;
+  const SEP = /^[.,/:\-\u2013\u066B\u066C]$/;
+  const out = [...seq];
+  for (let i = 0; i < out.length; i++) {
+    if (!NUM.test(out[i].text.trim())) continue;
+    let j = i;
+    // (Number, separator, number…: each next piece just to the left of the one before.)
+    while (j + 2 < out.length && SEP.test(out[j + 1].text.trim()) && NUM.test(out[j + 2].text.trim())
+      && out[j].l - out[j + 1].r < out[j].h * 0.25 && out[j + 1].l - out[j + 2].r < out[j].h * 0.25) j += 2;
+    // (Made one piece, read as it stands from the left: its place on the line the number's whole width.)
+    if (j > i) { const run = out.slice(i, j + 1); const merged = { ...run[0], text: [...run].reverse().map((p) => p.text.trim()).join(''), l: Math.min(...run.map((p) => p.l)), r: Math.max(...run.map((p) => p.r)) }; out.splice(i, run.length, merged); }
+  }
+  return out;
 }
 
 const LTR_LETTER = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;

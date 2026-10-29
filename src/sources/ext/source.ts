@@ -2,6 +2,7 @@
 // as the filter sheet, a novel's page with its chapters — and the novel as a book of the library: a JSON
 // file holding the card and the chapter list, filled chapter by chapter as it is read (sources/ext/… and
 // formats/webnovel.ts), or fetched whole for offline.
+import { badChapter } from '../chapterhealth';
 import { db, uid, type Book } from '../../db';
 import { listRepos, pluginCode, pluginKey, langLabel, type Repo, type ExtItem } from '../repos';
 import { loadPlugin, callPlugin, isLoaded, withQuiet } from './sandbox';
@@ -235,7 +236,12 @@ export async function fetchChapter(h: Handle, novel: WebNovel, chapter: WebChapt
   else html = await callPlugin<string>(h.key, 'getHtmlContent', novel.title, chapter.path);
   if (typeof html !== 'string') html = String(html ?? '');
   if (html.length >= 2 && html.startsWith('"') && html.endsWith('"')) { try { html = JSON.parse(html); } catch { /* as is */ } }
-  return cleanChapter(html, h.item.site);
+  const out = cleanChapter(html, h.item.site);
+  // (A check page or nothing in place of the chapter is not kept: see chapterhealth.)
+  const bad = badChapter(out);
+  if (bad === 'check') throw new SourceError('cloudflare', 'cloudflare');
+  if (bad === 'empty') throw new SourceError('emptyChapter', 'parse');
+  return out;
 }
 
 /** The chapter's HTML with nothing but text, its marks, images and links: scripts, styles, forms, frames gone;
@@ -272,6 +278,14 @@ export function cleanChapter(html: string, site: string): string {
 export const MIME = 'application/x-kurokawa-webnovel+json';
 export async function findInLibrary(src: string, path: string): Promise<Book | undefined> {
   return (await db.allBooks()).find((b) => b.format === 'webnovel' && b.remote?.source === src && b.remote?.id === path);
+}
+/** A title as compared for sameness: case, marks, punctuation and a "(Web Novel)"-like tag left out. */
+export const titleKey = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f\u064b-\u0652]/g, '').toLowerCase().replace(/[(\[]\s*(?:web ?novel|wn|light ?novel|ln|novel|raw|completed?|ongoing)\s*[)\]]/g, '').replace(/[^\p{L}\p{N}]+/gu, '');
+/** The same series already in the library from another source (or as a file of its own), by its title
+ *  (Mihon's duplicate warning). */
+export async function sameNovelElsewhere(novel: WebNovel): Promise<Book | undefined> {
+  const k = titleKey(novel.title); if (k.length < 3) return undefined;
+  return (await db.allBooks()).find((b) => titleKey(b.title) === k && !(b.remote?.source === novel.src && b.remote?.id === novel.path));
 }
 export async function addNovelToLibrary(novel: WebNovel, coverBlob?: Blob): Promise<Book> {
   const existing = await findInLibrary(novel.src, novel.path);
@@ -320,20 +334,38 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   const content = { ...(info.content ?? {}) };
   // (Some chapters only, when asked — the ones picked in the list, as Mihon fetches picked chapters.)
   const scope = only ? info.chapters.filter((c) => only.has(c.path)) : info.chapters;
+  // (A chapter kept as a check page or as nothing is fetched again.)
+  const dropped = new Set<string>();
+  for (const c of scope) if (content[c.path] && badChapter(content[c.path].html)) { delete content[c.path]; dropped.add(c.path); }
   const wanted = scope.filter((c) => !content[c.path]);
   let done = scope.length - wanted.length; onProgress(done, scope.length);
-  let failed = 0; let since = 0;
+  let failed = 0; let since = 0; let savedAt = Date.now();
   const pace = paceOf(h.key);
+  // (What was fetched is written to the novel's file now and then — the whole file each time, so less often as
+  // it grows: after a quarter more of what it holds, or a minute. Written out of the way of the fetching, one
+  // write at a time.)
+  let saving: Promise<unknown> = Promise.resolve();
+  const saveSoon = () => { saving = saving.then(() => saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }))).catch(() => undefined); };
   await pool(wanted, pace.at, async (c) => {
-    try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; }
-    catch (e) { failed++; if ((e as SourceError).kind === 'cloudflare' || (e as SourceError).kind === 'blocked' || (e as SourceError).kind === 'offline') throw e; }
+    for (let attempt = 0; ; attempt++) {
+      try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; break; }
+      catch (e) {
+        const kind = (e as SourceError).kind;
+        if (kind === 'cloudflare' || kind === 'blocked' || kind === 'offline') throw e;
+        // (Too many at once for the site: a pause, then once more — as the site asks.)
+        if ((kind === 'rate' || (e as SourceError).status === 503) && attempt < 2 && (!live || live())) { await new Promise((r) => setTimeout(r, 4000 * (attempt + 1))); continue; }
+        failed++; break;
+      }
+    }
     onProgress(++done, scope.length);
-    if (++since >= 10) { since = 0; await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } })); }
+    const have = Object.keys(content).length;
+    if (++since >= Math.max(10, Math.ceil(have / 4)) || Date.now() - savedAt > 60000) { since = 0; savedAt = Date.now(); saveSoon(); }
     if (pace.pause && (!live || live())) await new Promise((r) => setTimeout(r, pace.pause));
   }, live);
+  await saving;
   const complete = wanted.every((c) => content[c.path]) && (!live || live());
   const whole = complete && info.chapters.every((c) => content[c.path]);
-  await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content }, fetchedAt: whole ? Date.now() : cur.fetchedAt }));
+  await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all, fetchedAt: whole ? Date.now() : cur.fetchedAt }; });
   if (failed && !complete) throw new SourceError('incomplete', 'http');
   return complete;
 }
@@ -370,6 +402,17 @@ export async function novelToEpub(book: Book, onProgress: (step: 'chapters' | 'p
 }
 
 /** Ask the site for the novel's chapters again; new ones go into the file (and are counted on the book). */
+/** How often a novel's chapters come out — the middle gap between its latest dated ones — and when the latest
+ *  came (Mihon's fetch interval); unknown when the site gives no dates. */
+export function cadenceOf(chapters: WebChapter[]): { every?: number; lastAt?: number } {
+  const at = chapters.map((c) => (c.released ? Date.parse(c.released) : NaN)).filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b).slice(-12);
+  if (at.length < 3) return {};
+  const gaps = at.slice(1).map((x, i) => x - at[i]).filter((g) => g > 3600000).sort((a, b) => a - b);
+  if (!gaps.length) return { lastAt: at[at.length - 1] };
+  const mid = gaps[Math.floor(gaps.length / 2)];
+  return { every: Math.min(28, Math.max(1, mid / 86400000)) * 86400000, lastAt: at[at.length - 1] };
+}
+const FINISHED = /^(completed|finished|complete|ended|مكتمل|منته)/i;
 export async function checkNovel(book: Book, quiet = true): Promise<number> {
   const info = await readNovelFile(book.id); if (!info) return 0;
   const h = await extHandle(info.src);
@@ -380,5 +423,8 @@ export async function checkNovel(book: Book, quiet = true): Promise<number> {
     await saveNovelFile(book, (cur) => ({ ...cur, chapters: [...cur.chapters, ...added.filter((c) => !cur.chapters.some((k) => k.path === c.path))], status: fresh.status ?? cur.status, summary: cur.summary ?? fresh.summary }));
     await db.updateBook(book.id, (b) => { if (b.remote) { b.remote.newChapters = (b.remote.newChapters ?? 0) + added.length; b.remote.checkedAt = Date.now(); b.remote.online = true; } });
   } else await db.updateBook(book.id, (b) => { if (b.remote) b.remote.checkedAt = Date.now(); });
+  // (What the smart checks go by, kept on the book: no need to open its file to decide whether to ask.)
+  const cad = cadenceOf(fresh.chapters);
+  await db.updateBook(book.id, (b) => { if (!b.remote) return; b.remote.every = cad.every; b.remote.lastAt = cad.lastAt; b.remote.finished = !!fresh.status && FINISHED.test(fresh.status.trim()); });
   return added.length;
 }

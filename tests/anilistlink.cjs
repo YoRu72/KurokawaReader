@@ -29,6 +29,22 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   const opened = await p.evaluate(() => window.__opened[0]);
   ok('the sign-in opens in the app\'s browser, watched for the token', !!opened && /oauth\/authorize\?client_id=12345/.test(opened.url) && opened.until === 'access_token=');
   ok('… and the account is linked by itself, with the token from the page', auth === 'Bearer TOKEN123' && /Linked as Reader|Reader/.test(await p.evaluate(() => document.body.textContent)));
+  // A change made while AniList could not be reached: kept, and sent once it can be.
+  let down = true; const saves = [];
+  await ctx.unroute('https://graphql.anilist.co/**');
+  await ctx.route('https://graphql.anilist.co/**', async (route) => {
+    const body = route.request().postData() || '';
+    if (!/SaveMediaListEntry/.test(body)) return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { Viewer: { id: 7, name: 'Reader', avatar: { medium: '' }, mediaListOptions: { scoreFormat: 'POINT_10' } } } }) });
+    saves.push(JSON.parse(body).variables);
+    if (down) return route.fulfill({ status: 503, headers: { 'access-control-allow-origin': '*' }, body: 'busy' });
+    return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { SaveMediaListEntry: { id: 1, status: 'CURRENT', progress: 12, score: 0 } } }) });
+  });
+  await p.evaluate(() => localStorage.setItem('kr.al.pending', JSON.stringify({ b1: { media: 99, entry: { status: 'CURRENT', progress: 12, score: 0 }, tries: 0 } })));
+  await p.reload(); await p.waitForTimeout(6500);
+  ok('queued progress tried at start; kept while AniList is down', saves.length >= 1 && saves[0].progress === 12 && !!(await p.evaluate(() => localStorage.getItem('kr.al.pending'))));
+  down = false;
+  await p.evaluate(() => window.dispatchEvent(new Event('online'))); await p.waitForTimeout(1500);
+  ok('… and sent when the network comes back', saves.length >= 2 && !(await p.evaluate(() => localStorage.getItem('kr.al.pending'))));
   console.log(fails ? `${fails} FAILED` : 'all passed', 'errors', errors);
   await b.close(); server.close(); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

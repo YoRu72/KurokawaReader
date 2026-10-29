@@ -2,6 +2,7 @@
 // pages, sessions, per-day history. Drives "Book information" and the library
 // statistics sheet (hours, speed, history, time left, daily goal).
 import { db, type Book, type ReadingStats } from './db';
+import { getSettings } from './settings';
 
 const TICK_MS = 5000;
 const SAVE_MS = 30000;
@@ -79,6 +80,8 @@ export class ReadingTracker {
   }
 
   start(): void {
+    // (Incognito: no time or words counted.)
+    if (getSettings().incognito) return;
     this.ensureSession();
     liveStats.set(this.book.id, this.stats);
     this.lastTick = performance.now();

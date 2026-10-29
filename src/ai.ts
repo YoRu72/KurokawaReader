@@ -1,6 +1,7 @@
 // AI providers for chapter translation and read-aloud: Gemini, OpenAI and
 // OpenAI-compatible endpoints (OpenRouter, local servers), Anthropic.
 // Keys live in the visual settings (localStorage) and are excluded from backups.
+import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp } from './glossary';
 import { getSettings } from './settings';
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
@@ -63,7 +64,7 @@ export function langName(code: string): string {
 /** A stable key for caching: text + everything that changes the output. */
 export function translationKey(text: string): string {
   const s = getSettings();
-  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${text}`);
+  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${s.aiTask === 'furigana' ? '' : glossaryStamp()}|${text}`);
 }
 export function hash(str: string): string {
   let h1 = 0x811c9dc5, h2 = 0x01000193;
@@ -132,18 +133,22 @@ function parseArray(raw: string, n: number): string[] {
 }
 
 /** Translate several paragraphs in one request. */
-export async function translateBatch(texts: string[]): Promise<string[]> {
+export async function translateBatch(texts: string[], bookId?: string): Promise<string[]> {
   if (!texts.length) return [];
-  // A small model on the device does better with one paragraph at a time and plain text back.
   const s = getSettings();
+  // (The reader's glossary: the terms these paragraphs hold, given with them, and put right after.)
+  const gl = s.aiTask === 'furigana' ? [] : termsIn(texts, bookId);
+  const prompt = [effectivePrompt(), glossaryPrompt(gl)].filter(Boolean).join('\n\n');
+  const fix = (out: string[]) => (gl.length ? out.map((x) => applyGlossary(x, gl)) : out);
+  // A small model on the device does better with one paragraph at a time and plain text back.
   if (s.aiProvider === 'local' && s.localEngine === 'device') {
     const out: string[] = [];
-    for (const t of texts) out.push(t.trim() ? (await chat(effectivePrompt(), t, false)).replace(/^["“«]|["”»]$/g, '').trim() : t);
-    return out;
+    for (const t of texts) out.push(t.trim() ? (await chat(prompt, t, false)).replace(/^["“«]|["”»]$/g, '').trim() : t);
+    return fix(out);
   }
-  const system = `${effectivePrompt()}\n\n${FORMAT}`;
+  const system = `${prompt}\n\n${FORMAT}`;
   const raw = await chat(system, JSON.stringify(texts));
-  return parseArray(raw, texts.length);
+  return fix(parseArray(raw, texts.length));
 }
 
 export async function translateOne(text: string): Promise<string> { return (await translateBatch([text]))[0]; }

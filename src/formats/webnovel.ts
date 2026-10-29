@@ -5,6 +5,7 @@ import type { FlowHandler, FlowRender, TocItem } from './types';
 import type { WebNovel } from '../sources/ext/source';
 import { db } from '../db';
 import { t } from '../i18n';
+import { badChapter } from '../sources/chapterhealth';
 
 const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
 
@@ -19,7 +20,10 @@ export const webnovelHandler: FlowHandler = {
     const info = JSON.parse(await file.text()) as WebNovel;
     const rtl = /^(ar|fa|ur|he)/i.test(info.lang ?? '') || /[؀-ۿ]/.test(info.title);
     const root = el('div', 'kr-content kr-webnovel'); root.dir = rtl ? 'rtl' : 'ltr'; if (info.lang) root.lang = info.lang;
-    const content: Record<string, { html: string; at: number }> = info.content ?? {};
+    const content: Record<string, { html: string; at: number }> = { ...(info.content ?? {}) };
+    // (A chapter kept as a site's check page or as nothing — by an older version — is let go and fetched again.)
+    const dropped = new Set<string>();
+    for (const [p, v] of Object.entries(content)) if (badChapter(v.html)) { delete content[p]; dropped.add(p); }
     const bodies = new Map<string, HTMLElement>();
     const tocItems: TocItem[] = [];
     // The card first — the title, the author, the summary, the tags — at the head of the first chapter's
@@ -41,7 +45,7 @@ export const webnovelHandler: FlowHandler = {
       tocItems.push({ label: c.name || `${i + 1}`, anchor: i === 0 ? h2.id : sec.id, depth: 0 });
     });
     // Chapters still on the site are fetched as they come near, two at a time, nearest first.
-    let gone = false; const wanted = new Set<number>(); let running = 0; let io: IntersectionObserver | null = null; let dirty = 0;
+    let gone = false; const wanted = new Set<number>(); let running = 0; let io: IntersectionObserver | null = null; let dirty = 0; let savedAt = Date.now();
     const online = !!ctx.bookId && Object.keys(content).length < info.chapters.length;
     // A chapter asked for brings the two after it (hidden or not: a reader going chapter by chapter finds the
     // next one already here).
@@ -57,10 +61,12 @@ export const webnovelHandler: FlowHandler = {
         if (gone) return;
         content[c.path] = { html, at: Date.now() }; fill(body, content[c.path]);
         root.dispatchEvent(new CustomEvent('kr-content-changed', { bubbles: true }));
-        if (++dirty >= 3 || Object.keys(content).length === info.chapters.length) { dirty = 0; void save(); }
+        // (The whole file is written each time: less often as it grows — a tenth more of what it holds, or a minute.)
+        const have = Object.keys(content).length;
+        if (++dirty >= Math.max(3, Math.ceil(have / 10)) || have === info.chapters.length || Date.now() - savedAt > 60000) { dirty = 0; savedAt = Date.now(); void save(); }
       } catch (e) {
         const err = body.querySelector('.kr-page-wait');
-        if (err) { const kind = (e as { kind?: string }).kind; err.textContent = kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'blocked' ? t('sourceBlockedShort') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }
+        if (err) { const kind = (e as { kind?: string }).kind; err.textContent = (e as Error).message === 'emptyChapter' ? t('chapterEmpty') : kind === 'cloudflare' ? t('chapterNeedsCheck') : kind === 'blocked' ? t('sourceBlockedShort') : kind === 'offline' ? t('chapterOffline') : t('chapterFailed', { error: (e as Error).message }); err.classList.add('failed'); }
       } finally { running--; void pump(); }
     };
     const save = async () => {
@@ -68,7 +74,7 @@ export const webnovelHandler: FlowHandler = {
       try {
         const { saveNovelFile } = await import('../sources/ext/source');
         const book = await db.getBook(ctx.bookId); if (!book) return;
-        await saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }));
+        await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all }; });
       } catch { /* kept for this reading */ }
     };
     if (online) {

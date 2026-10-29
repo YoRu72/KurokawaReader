@@ -57,7 +57,9 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
   const prefillCb = h('input', { type: 'checkbox', onchange: () => { updateSettings({ aiPromptPrefill: prefillCb.checked }); if (prefillCb.checked) prefill(); else if (!getSettings().aiPrompt) { prompt.value = ''; promptDir(); } } }) as HTMLInputElement;
   prefillCb.checked = s.aiPromptPrefill;
   const prefillRow = h('label', { class: 'row' }, h('span', { class: 'label' }, t('aiPromptPrefill')), h('span', { class: 'switch' }, prefillCb, h('i')));
-  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow), t('aiPromptHint'));
+  // (The glossary: names and terms always rendered the same.)
+  const glossaryBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./glossarysheet').then((m) => m.glossarySheet()) }, icon('define'), t('glossary'));
+  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, glossaryBtn), t('aiPromptHint'));
   langField.hidden = s.aiTask !== 'translate'; promptField.hidden = s.aiTask !== 'translate';
 
   // Read-aloud engine and AI voice live here too (same key / provider).

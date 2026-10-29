@@ -10,6 +10,7 @@ import { scheduleSync } from '../sync';
 import { keepAwake } from '../native';
 import { readAudioMeta, type AudioChapter } from '../formats/audio';
 import { ReadingTracker } from '../stats';
+import { getSettings } from '../settings';
 
 interface Track { book: Book; url: string; chapters: AudioChapter[]; duration: number }
 
@@ -105,7 +106,7 @@ export async function mountAudio(root: HTMLElement, books: Book[], onDispose: (f
     const pct = total ? Math.min(1, (before + audio.currentTime) / total) : 0;
     tracker.advance(0, pct);
     void db.setMeta(`audio:${books[0].id}`, { track: ti, time: audio.currentTime, rate: audio.playbackRate });
-    void db.updateBook(track().book.id, (b) => { b.progress = { bookId: b.id, pct: (audio.duration ? audio.currentTime / audio.duration : 0) }; b.progressAt = now; b.lastOpenedAt = now; });
+    void db.updateBook(track().book.id, (b) => { b.progress = { bookId: b.id, pct: (audio.duration ? audio.currentTime / audio.duration : 0) }; b.progressAt = now; if (!getSettings().incognito) b.lastOpenedAt = now; });
     if (books.length > 1) void db.updateBook(books[0].id, (b) => { b.progress = { bookId: b.id, pct }; });
     scheduleSync();
   };

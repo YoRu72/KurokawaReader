@@ -197,6 +197,9 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.vol-row .vol-cover'); await page.waitForSelector('.src-head .src-cover.big img', { timeout: 15000 }).catch(() => {});
     await page.click('.src-head .src-cover.big'); await page.waitForSelector('.cover-view img', { timeout: 5000 }).catch(() => {});
     const volView = !!(await page.$('.cover-view img'));
+    // (The shelf's small copy at once, then the cover at its own size, read from the file.)
+    const fullH = await page.waitForFunction(() => { const i = document.querySelector('.cover-view img'); return i && i.complete && i.naturalHeight > 1000 ? i.naturalHeight : 0; }, null, { timeout: 15000 }).then((x) => x.jsonValue()).catch(() => 0);
+    ok('a volume\'s cover opens at full size (1350 px, not the shelf\'s 480)', fullH === 1350);
     if (volView) await page.click('.cover-view .lb-close');
     ok('covers open on their own: the series\' and a volume\'s (read from its file)', seriesView && volView);
     await page.goBack(); await page.waitForSelector('.series-head', { timeout: 15000 }); await page.waitForTimeout(400);
@@ -399,8 +402,9 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('… every tag on a tap, in its kind; the spoilers behind their own button', groups.join() === 'Themes' && !!(await page.$('.series-head .spoilers[hidden]')));
     await page.click('.series-head .tag-group .genre:has-text("School")'); await page.waitForTimeout(1200);
     const bySchool = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
-    ok('… a tag searched for: the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));
-    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['Action']; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    ok('… a tag tapped: the shelf filtered by it — the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));
+    ok('… the tag shown over the shelf, a tap from being taken off', /School/.test(await page.$eval('.picked-tags', (e) => e.textContent).catch(() => '')));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.genre = ['Action']; v.tag = []; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
     await page.goto(base + otlHash.replace(/\?.*$/, '')); await page.waitForSelector('.src-card.folder', { timeout: 20000 }); await page.waitForTimeout(600);
     const action = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
     ok('the shelf filtered by genre', action.length >= 1 && action.every((x) => /^B/.test(x)) && action.includes('Black Summoner'));
@@ -417,7 +421,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.filter-sheet .fs-head:has-text("Sort")'); await page.click('.filter-sheet .fs-sort .fs-opt:has-text("Name")'); await page.waitForTimeout(100);
     ok('… a sort tapped again turns round (its arrow up)', !!(await page.$('.filter-sheet .fs-sort .fs-opt.on [data-icon], .filter-sheet .fs-sort .fs-opt.on svg')) && /↑/.test(await page.$eval('.filter-sheet .fs-sec.open .fs-sum, .filter-sheet .fs-sec:has(.fs-sort) .fs-sum', (e) => e.textContent)));
     await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); delete v.genre; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
+    await page.evaluate((id) => { const k = `kr.src.${id}.filters`; const v = JSON.parse(localStorage.getItem(k) || '{}'); delete v.genre; delete v.tag; delete v.type; localStorage.setItem(k, JSON.stringify(v)); }, decodeURIComponent(otlHash.replace(/^#\/sources\//, '').replace(/[?].*$/, '')));
     await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Alpha%20Saga')); await page.waitForSelector('.series-head', { timeout: 20000 });
     // Back from a volume — its page, or the reader — is the series where it was left, not the main page.
     const seriesHash = await page.evaluate(() => location.hash);

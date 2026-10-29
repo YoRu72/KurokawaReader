@@ -98,7 +98,7 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
       while (batches.length && gen === generation && on) {
         const batch = batches.shift()!;
         try {
-          const out = await translateBatch(batch.map((x) => x.text));
+          const out = await translateBatch(batch.map((x) => x.text), batch[0]?.bookId);
           if (gen !== generation || !on) return;
           for (let i = 0; i < batch.length; i++) {
             const tr = out[i]?.trim(); if (!tr) continue;
@@ -139,7 +139,7 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
       while (batches.length && gen === aheadGen) {
         const batch = batches.shift()!;
         try {
-          const out = await translateBatch(batch.map((x) => x.text));
+          const out = await translateBatch(batch.map((x) => x.text), batch[0]?.bookId);
           if (gen !== aheadGen) return;
           for (let i = 0; i < batch.length; i++) { const tr = out[i]?.trim(); if (!tr) continue; const c = await cache(batch[i].bookId); c[batch[i].key] = tr; scheduleSave(batch[i].bookId); }
           finished += batch.length;

@@ -118,7 +118,14 @@ function repaint(): void {
 
 let opening: string | null = null;
 async function handleUrl(url: string): Promise<void> {
-  if (/^kurokawareader:\/\/open\b/i.test(url)) { const to = new URL(url).searchParams.get('to'); if (to && to.startsWith('/')) navigate(to); return; }
+  if (/^kurokawareader:\/\/open\b/i.test(url)) {
+    const sp = new URL(url).searchParams; const to = sp.get('to');
+    if (to && to.startsWith('/')) { navigate(to); return; }
+    // (A link or words shared from another app: see sources/linkopen.)
+    const shared = sp.get('shared');
+    if (shared) { if (opening === url) return; opening = url; setTimeout(() => { if (opening === url) opening = null; }, 4000); repaint(); void import('./sources/linkopen').then((m) => m.openShared(shared)).catch(() => undefined); }
+    return;
+  }
   if (/^kurokawareader:/i.test(url)) { void import('./sync').then((m) => m.handleOAuthRedirect(url)).catch((e) => toast(String((e as Error).message ?? e), 'error')); return; }
   if (!/^(content|file):/i.test(url)) return;
   if (opening === url) return; // getLaunchUrl and appUrlOpen can both report the same file

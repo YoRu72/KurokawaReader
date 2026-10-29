@@ -122,7 +122,9 @@ export interface Book {
    *  novel, how many chapters arrived since it was last opened and when the site was last asked. */
   /** `link`: for a series kept in the library without its volumes (format 'series'), the page of the source
    *  it opens — its volumes fetched from there, when wanted. */
-  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number; link?: string };
+  /** `every`/`lastAt`: how often the novel's chapters come out (the middle gap between its latest ones) and when
+   *  its latest came — the smart update checks ask it again only near its next; `finished`: the site says so. */
+  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number; link?: string; every?: number; lastAt?: number; finished?: boolean };
   /** The series the book is a volume of, as its source said (a title's own numbering is read otherwise). */
   series?: { name: string; index?: number; source?: string; shelf?: string };
   pdfHighlights?: PdfHighlight[];
