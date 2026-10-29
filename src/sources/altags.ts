@@ -127,3 +127,37 @@ export function genresOf(k: Kept): string[] {
   for (const v of Object.values(k.tags)) for (const g of v?.genres ?? []) n.set(g, (n.get(g) ?? 0) + 1);
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
 }
+
+/* ---------- a series' synopsis ---------- */
+// (Asked only when a series' page is opened — one small request by its AniList id — and kept on the device:
+// the last few hundred read, so a page opened again shows it at once and offline.)
+const DESC_KEY = 'al:desc';
+let descs: Record<string, { t: string; at: number }> | null = null;
+const descAsked = new Map<number, Promise<string | null>>();
+/** AniList's synopsis of a series (plain text, its line breaks kept), or null. */
+export function synopsisOf(id: number): Promise<string | null> {
+  const had = descAsked.get(id); if (had) return had;
+  const p = (async () => {
+    descs ??= (await db.getMeta<Record<string, { t: string; at: number }>>(DESC_KEY).catch(() => undefined)) ?? {};
+    const k = descs[id];
+    if (k && Date.now() - k.at < MONTH) return k.t || null;
+    const r = await localHttp(API, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ query: 'query($id:Int){Media(id:$id){description(asHtml:false)}}', variables: { id } }), timeoutMs: 20000 });
+    if (r.status >= 400) return k?.t || null;
+    const raw = (JSON.parse(r.body) as { data?: { Media?: { description?: string | null } } }).data?.Media?.description ?? '';
+    const text = plainSynopsis(raw);
+    descs[id] = { t: text, at: Date.now() };
+    const ids = Object.keys(descs); if (ids.length > 400) for (const old of ids.sort((a, b) => descs![a].at - descs![b].at).slice(0, ids.length - 400)) delete descs[old];
+    void db.setMeta(DESC_KEY, descs).catch(() => undefined);
+    return text || null;
+  })().catch(() => null);
+  descAsked.set(id, p);
+  void p.then((v) => { if (v === null) descAsked.delete(id); });
+  return p;
+}
+/** AniList's description as text: its breaks as new lines, its tags and markdown marks taken off. */
+export function plainSynopsis(raw: string): string {
+  const el = typeof document !== 'undefined' ? document.createElement('textarea') : null;
+  let s = raw.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>\s*/gi, '\n\n').replace(/<[^>]+>/g, '').replace(/~!([\s\S]*?)!~/g, '').replace(/__(.+?)__/g, '$1').replace(/\*\*(.+?)\*\*/g, '$1');
+  if (el) { el.innerHTML = s; s = el.value; }
+  return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}

@@ -60,7 +60,7 @@ export const webnovelHandler: FlowHandler = {
         const html = await fetchChapter(h, info, c);
         if (gone) return;
         content[c.path] = { html, at: Date.now() }; fill(body, content[c.path]);
-        root.dispatchEvent(new CustomEvent('kr-content-changed', { bubbles: true }));
+        root.dispatchEvent(new CustomEvent('kr-content-changed', { bubbles: true, detail: { el: body } }));
         // (The whole file is written each time: less often as it grows — a tenth more of what it holds, or a minute.)
         const have = Object.keys(content).length;
         if (++dirty >= Math.max(3, Math.ceil(have / 10)) || have === info.chapters.length || Date.now() - savedAt > 60000) { dirty = 0; savedAt = Date.now(); void save(); }
@@ -94,7 +94,9 @@ export const webnovelHandler: FlowHandler = {
       img.dataset.retried = '1';
       void import('../sources/http').then(({ fetchBytes }) => fetchBytes(img.src, undefined, { headers: info.imageHeaders ?? { referer: info.url ?? '' } })).then((bytes) => { const u = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer])); made.push(u); img.src = u; }).catch(() => { img.alt = img.alt || '✕'; });
     }, true);
-    return { element: root, toc: tocItems, images: [], rtl, dispose: () => { gone = true; io?.disconnect(); if (online && dirty) void save(); for (const u of made) URL.revokeObjectURL(u); } };
+    // (Every picture of the chapters here, for the book's gallery — more as chapters come.)
+    const images = () => [...root.querySelectorAll<HTMLImageElement>('.kr-chap img')].filter((img) => img.id && img.getAttribute('src')).map((img) => ({ src: img.getAttribute('src')!, alt: img.alt || undefined, anchor: img.id, bookId: ctx.bookId, bookTitle: ctx.bookTitle }));
+    return { element: root, toc: tocItems, get images() { return images(); }, rtl, dispose: () => { gone = true; io?.disconnect(); if (online && dirty) void save(); for (const u of made) URL.revokeObjectURL(u); } };
   },
 };
 
@@ -103,4 +105,8 @@ function fill(body: HTMLElement, data: { html: string } | undefined): void {
   if (!data) { const wait = el('p', 'kr-para kr-page-wait'); wait.textContent = '…'; body.append(wait); body.classList.add('pending'); return; }
   body.classList.remove('pending');
   body.innerHTML = data.html;
+  // (A chapter given as HTML flows as HTML — its line breaks and indents in the source are not blank lines on
+  // the page; one given as plain text keeps its lines.)
+  body.classList.toggle('kr-plain', !body.querySelector('p, div, br, h1, h2, h3, h4, h5, h6, li, blockquote, table, pre'));
+  body.querySelectorAll('img').forEach((img, k) => { if (!img.id) img.id = `${body.id}-img${k}`; });
 }

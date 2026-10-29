@@ -79,7 +79,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('shamela categories as shelves', (await page.$$('.src-shelves .chip')).length >= 3);
     // "All": the whole library, category after category.
     await page.waitForSelector('.src-grid .src-card', { timeout: 15000 }); await page.waitForTimeout(300);
-    ok('the All shelf shows the books of every category', (await page.$$('.src-grid .src-card')).length >= 4 && (await page.$eval('.src-shelves .chip', (e) => e.classList.contains('on'))));
+    ok('the All shelf shows the books of every category, each once', await page.$$eval('.src-grid .src-card', (e) => e.length >= 2 && new Set(e.map((x) => x.querySelector('.src-title')?.textContent)).size === e.length) && (await page.$eval('.src-shelves .chip', (e) => e.classList.contains('on'))));
     await page.click('.src-shelves .chip >> nth=1'); await page.waitForFunction(() => document.querySelectorAll('.src-grid .src-card').length === 2 && document.querySelectorAll('.src-shelves .chip')[1].classList.contains('on'), null, { timeout: 15000 });
     ok('a category lists its books', (await page.$$('.src-grid .src-card')).length === 2);
     await page.screenshot({ path: path.join(__dirname, 'shamela.png') });
@@ -154,7 +154,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
     ok('shelf → book → reader → back: the book', (await page.evaluate(() => location.hash)) === bookHash && !!(await page.$('.src-files .btn.primary')));
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
-    ok('… → back: the shelf, as it was', (await page.evaluate(() => location.hash)) === '#/sources/shamela' && (await page.$$('.src-grid .src-card')).length >= 4);
+    ok('… → back: the shelf, as it was', (await page.evaluate(() => location.hash)) === '#/sources/shamela' && (await page.$$('.src-grid .src-card')).length >= 2);
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
     ok('… → back: the hub', (await page.evaluate(() => location.hash)) === '#/sources' && !!(await page.$('.sources-hub')));
     // The same for a book of the library (the EPUB fetched above opens on its page): library → page → reader → back → page → back → library.

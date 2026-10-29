@@ -2,10 +2,11 @@
 // as the filter sheet, a novel's page with its chapters — and the novel as a book of the library: a JSON
 // file holding the card and the chapter list, filled chapter by chapter as it is read (sources/ext/… and
 // formats/webnovel.ts), or fetched whole for offline.
+import { setBusy, clearBusy } from '../../busy';
 import { badChapter } from '../chapterhealth';
 import { db, uid, type Book } from '../../db';
 import { listRepos, pluginCode, pluginKey, langLabel, type Repo, type ExtItem } from '../repos';
-import { loadPlugin, callPlugin, isLoaded, withQuiet } from './sandbox';
+import { loadPlugin, callPlugin, isLoaded, withQuiet, badStatusSince } from './sandbox';
 import { pool, fetchBytes } from '../http';
 import { SourceError, type Source, type SourceFilter, type FilterValues, type SourcePage, type SourceBook, type SourceDetails, type SourceChapter } from '../types';
 
@@ -156,6 +157,7 @@ function makeSource(srcId: string, h: Handle): Source {
     shelves: async () => [{ id: 'popular', label: '★' }, { id: 'latest', label: '⟳' }],
     async browse(q, f, page, shelf): Promise<SourcePage> {
       const text = q.trim();
+      const started = Date.now();
       let list: NovelItem[] = []; let hasMore = true;
       if (h.ln) {
         if (text) list = await callPlugin<NovelItem[]>(h.key, 'searchNovels', text, page);
@@ -171,6 +173,9 @@ function makeSource(srcId: string, h: Handle): Source {
         hasMore = !!r?.hasNextPage && list.length > 0;
       }
       const items: SourceBook[] = list.filter((n) => n && n.path).map((n) => ({ id: n.path, title: n.name, cover: n.cover || undefined, lang: undefined }));
+      // (An empty page made of an error answer — the site busy, too many requests — is an error, not the end of
+      // the list: the shelf asks for it again instead of stopping there.)
+      if (!items.length) { const bad = badStatusSince(started); if (bad) throw new SourceError(`HTTP ${bad}`, bad === 429 ? 'rate' : 'http', bad); }
       return { items, hasMore };
     },
     async details(id): Promise<SourceDetails> {
@@ -235,7 +240,12 @@ export async function fetchChapter(h: Handle, novel: WebNovel, chapter: WebChapt
   if (h.ln) html = await callPlugin<string>(h.key, 'parseChapter', chapter.path);
   else html = await callPlugin<string>(h.key, 'getHtmlContent', novel.title, chapter.path);
   if (typeof html !== 'string') html = String(html ?? '');
-  if (html.length >= 2 && html.startsWith('"') && html.endsWith('"')) { try { html = JSON.parse(html); } catch { /* as is */ } }
+  // (Mangayomi's extensions hand the chapter quoted, its quotes and breaks escaped — taken off as Mangayomi does
+  // when the text is not strict JSON.)
+  if (html.length >= 2 && html.startsWith('"') && html.endsWith('"')) {
+    try { html = JSON.parse(html) as string; }
+    catch { html = html.slice(1, -1).replace(/\\n/g, '\n').replace(/\\t/g, ' ').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\//g, '/'); }
+  }
   const out = cleanChapter(html, h.item.site);
   // (A check page or nothing in place of the chapter is not kept: see chapterhealth.)
   const bad = badChapter(out);
@@ -248,7 +258,21 @@ export async function fetchChapter(h: Handle, novel: WebNovel, chapter: WebChapt
  *  no attributes besides the few the reader uses; relative addresses made absolute. */
 export function cleanChapter(html: string, site: string): string {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
-  doc.querySelectorAll('script, style, iframe, object, embed, form, input, button, select, textarea, noscript, link, meta, svg, video, audio, [data-aa], ins, .adsbygoogle').forEach((e) => e.remove());
+  // (What only holds the chapter is opened, not thrown away with it: a site that has its whole page in a form
+  // (ASP.NET's), a chapter in a <template> or a <noscript> (lazy pictures), a picture drawn in an <svg>.)
+  const unwrap = (e: Element) => { const parent = e.parentNode; if (!parent) return; const kids = e instanceof HTMLTemplateElement ? [...e.content.childNodes] : [...e.childNodes]; for (const k of kids) parent.insertBefore(k, e); e.remove(); };
+  doc.querySelectorAll('template').forEach(unwrap);
+  doc.querySelectorAll('noscript').forEach((e) => {
+    // (The picture a lazy <img> beside it shows already: not twice.)
+    if (e.previousElementSibling?.tagName === 'IMG' && e.querySelector('img')) { e.remove(); return; }
+    if (e.children.length) { unwrap(e); return; }
+    const inner = new DOMParser().parseFromString(`<body>${e.textContent ?? ''}</body>`, 'text/html').body;
+    if (inner.querySelector('img') || (inner.textContent ?? '').trim().length > 40) e.replaceWith(...inner.childNodes); else e.remove();
+  });
+  doc.querySelectorAll('svg').forEach((e) => { const pic = e.querySelector('image'); const u = pic?.getAttribute('href') || pic?.getAttribute('xlink:href'); if (u) { const img = doc.createElement('img'); img.setAttribute('src', u); e.replaceWith(img); } else e.remove(); });
+  doc.querySelectorAll('form, center, font').forEach(unwrap);
+  doc.querySelectorAll('ins').forEach((e) => { if (e.classList.contains('adsbygoogle') || e.hasAttribute('data-ad-client') || e.hasAttribute('data-ad-slot')) e.remove(); else unwrap(e); });
+  doc.querySelectorAll('script, style, iframe, object, embed, input, button, select, textarea, link, meta, video, audio, [data-aa], .adsbygoogle').forEach((e) => e.remove());
   const abs = (u: string) => { try { return new URL(u, site || undefined).href; } catch { return u; } };
   doc.body.querySelectorAll('*').forEach((el) => {
     const tag = el.tagName.toLowerCase();
@@ -338,6 +362,10 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   const dropped = new Set<string>();
   for (const c of scope) if (content[c.path] && badChapter(content[c.path].html)) { delete content[c.path]; dropped.add(c.path); }
   const wanted = scope.filter((c) => !content[c.path]);
+  // (The novel's card in the library dimmed under the progress till its chapters are here.)
+  const busyKey = `nv:${book.id}`;
+  const report = onProgress; onProgress = (d, tot) => { setBusy({ key: busyKey, bookId: book.id, title: book.title, pct: tot ? Math.round((d / tot) * 100) : -1 }); report(d, tot); };
+  try {
   let done = scope.length - wanted.length; onProgress(done, scope.length);
   let failed = 0; let since = 0; let savedAt = Date.now();
   const pace = paceOf(h.key);
@@ -368,6 +396,7 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all, fetchedAt: whole ? Date.now() : cur.fetchedAt }; });
   if (failed && !complete) throw new SourceError('incomplete', 'http');
   return complete;
+  } finally { clearBusy(busyKey); }
 }
 
 /** The novel as an EPUB file of its own: every chapter (the ones not fetched yet fetched first), the

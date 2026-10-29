@@ -587,8 +587,10 @@ html[dir='rtl'] .card h3 { text-transform: none; letter-spacing: 0; font-size: 1
 .gallery-grid img { width: 100%; display: block; }
 .gallery-grid .cap { position: absolute; left: 0; right: 0; bottom: 0; font-size: 11.5px; padding: 8px 10px; background: linear-gradient(transparent, rgba(0,0,0,.75)); color: #fff; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lightbox { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.94); display: flex; flex-direction: column; animation: fade var(--dur-med) ease; }
-.lightbox .lb-img { flex: 1; min-height: 0; display: grid; place-items: center; overflow: auto; padding: 8px; }
+.lightbox .lb-img { flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; touch-action: none; padding: 8px; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--sh-sm); }
+.lightbox .lb-img img { will-change: transform; -webkit-user-drag: none; user-select: none; }
+.lightbox .lb-img.zoomed { cursor: grab; }
 .lightbox .lb-bar { display: flex; gap: 4px; align-items: center; padding: 8px 10px; margin: 0 12px calc(12px + var(--safe-bottom)); background: var(--md-surface-container-high); border-radius: var(--sh-full); }
 .lightbox .lb-bar .cap { flex: 1; font-size: 13px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-inline: 8px; }
 /* A cover on its own (Mihon's cover view): black around it, the bar over the top, pinch and pan. */
@@ -1517,6 +1519,9 @@ html[dir='rtl'] .source-head > svg:last-child { transform: scaleX(-1); }
 .src-shelves::-webkit-scrollbar, .src-tags::-webkit-scrollbar { display: none; }
 .src-tags .chip.tag svg { width: 14px; height: 14px; }
 .src-status { color: var(--md-on-surface-dim); padding: 8px 2px; }
+.src-tail { display: flex; justify-content: center; padding: 14px 2px; color: var(--md-on-surface-dim); }
+.src-tail:empty { padding: 0; }
+.src-tail .empty { width: 100%; }
 .src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px 10px; }
 @media (min-width: 700px) { .src-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px 14px; } }
 .src-card { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; border-radius: 10px; }
@@ -1885,3 +1890,26 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 /* The app lock's cover, until the device's lock is passed. */
 .app-lock { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: var(--md-surface, #111); color: var(--md-on-surface, #eee); }
 .app-lock-title { font-size: 1.1em; margin: 0; }
+
+/* The app's own words — titles, counts, labels, buttons, cards, menus — are not text to pick: a long press on
+   them used to start a selection (the library's "10 files · …"). What is read is: a book, a blurb, a note, a
+   definition, a field being typed in. */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .selectable, .kr-content, .textLayer, .src-desc, .series-about, .src-snippet, .book-desc, .review-text, .quote-text, .vocab-def, .cover-log, .sync-uri { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+.kr-content .kr-page-mark, .kr-content .kr-note-badge { -webkit-user-select: none; user-select: none; }
+
+/* On its way into the library: dimmed under the progress, clear once it is here. */
+.book-card .cover { position: relative; }
+.book-card .cover > :is(img, .gen) { transition: filter .45s var(--ease-emph, ease), opacity .45s; }
+.book-card.busy .cover > :is(img, .gen) { filter: grayscale(.55) brightness(.62); }
+.busy-veil { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; padding: 10px; background: linear-gradient(to top, rgb(0 0 0 / .55), rgb(0 0 0 / .15) 60%); border-radius: inherit; pointer-events: none; animation: busy-in .3s ease; }
+.busy-pct { color: #fff; font: 600 15px/1 var(--font-ui); text-shadow: 0 1px 3px rgb(0 0 0 / .6); font-variant-numeric: tabular-nums; }
+.busy-bar { width: 100%; height: 4px; border-radius: 4px; background: rgb(255 255 255 / .28); overflow: hidden; }
+.busy-bar i { display: block; height: 100%; border-radius: inherit; background: var(--md-primary); transition: width .3s ease; }
+.busy-bar.busy-any i { width: 35% !important; animation: busy-slide 1.2s ease-in-out infinite; }
+.busy-card { cursor: default; }
+@keyframes busy-in { from { opacity: 0; } }
+@keyframes busy-slide { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
+@media (prefers-reduced-motion: reduce) { .busy-bar.busy-any i { animation: none; width: 100% !important; opacity: .5; } }
+.search-missing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; font-size: 13px; }
+.gallery-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 2px 14px; font-size: 13px; }

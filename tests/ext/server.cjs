@@ -97,6 +97,9 @@ class DefaultExtension extends MProvider {
   getSourcePreferences() { return [{ key: "base_url", editTextPreference: { title: "Site address", summary: "", value: this.source.baseUrl, dialogTitle: "Edit", dialogMessage: "" } }]; }
 }`;
 
+// (Knobs for the paging tests: a page of the popular list failing a few times, a site that gives page 1 again
+// for every page, chapters that come slowly.)
+const knobs = { failPage: 0, failTimes: 0, repeat: false, slowMs: 0, formWrap: false };
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, base()); const p = u.pathname;
   res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', '*'); res.setHeader('Access-Control-Expose-Headers', '*');
@@ -118,7 +121,9 @@ const server = http.createServer((req, res) => {
   if (p === '/icon.png' || p.startsWith('/cover/')) return png();
   if (p === '/x.gif') return png();
   if (p === '/popular' || p === '/latest' || p === '/search') {
-    const pageNo = Number(u.searchParams.get('page') || 1);
+    let pageNo = Number(u.searchParams.get('page') || 1);
+    if (p === '/popular' && knobs.failPage === pageNo && knobs.failTimes > 0) { knobs.failTimes--; return html('busy', 503); }
+    if (knobs.repeat) pageNo = 1;
     let items = novels.slice();
     if (p === '/latest') items = items.slice().reverse();
     if (p === '/popular') items.sort((a, b) => (u.searchParams.get('sort') === 'name' ? a.title.localeCompare(b.title) : b.views - a.views));
@@ -134,10 +139,14 @@ const server = http.createServer((req, res) => {
     return html(page(n.title, `<h2 class="name">${n.title}</h2><img class="big" src="/cover/${n.slug}.png"><table><tr><td>Author</td><td>${n.author}</td></tr></table><div class="genres">${n.genres.map((g) => `<a href="/genre/${g}">${g}</a>`).join(' ')}</div><p class="status">Status: ${n.status}</p><div class="summary">${n.summary.replace(/\n/g, '<br>')}</div><ul class="chapters">${chapters}</ul>`));
   } }
   { const m = /^\/novel\/([a-z-]+)\/chapter-(\d+)$/.exec(p); if (m) {
+    if (knobs.slowMs) { setTimeout(() => { const k = knobs.slowMs; knobs.slowMs = 0; server.emit('request', req, res); knobs.slowMs = k; }, knobs.slowMs); return; }
     const n = novels.find((x) => x.slug === m[1]); if (!n) return html('nope', 404);
     const k = Number(m[2]);
-    return html(page(`${n.title} ${k}`, `<h3>Chapter ${k}: Part ${k}</h3><div class="content"><p>Chapter ${k} of ${n.title} begins here with words.</p><script>track()</script><p class="ads">BUY</p><p>It goes on, paragraph two of chapter ${k}.</p><img src="/cover/${n.slug}.png" alt="pic"><p>And ends.</p></div>`));
+    // (formWrap: the chapter inside a form, as ASP.NET sites have their whole page, and its last part in a <template>.)
+    const inner = `<p>Chapter ${k} of ${n.title} begins here with words.</p><script>track()</script><p class="ads">BUY</p><p>It goes on, paragraph two of chapter ${k}.</p><img src="/cover/${n.slug}.png" alt="pic"><p>And ends.</p>`;
+    return html(page(`${n.title} ${k}`, `<h3>Chapter ${k}: Part ${k}</h3><div class="content">${knobs.formWrap ? `<form id="aspnetForm"><input type="hidden" name="v" value="1">${inner.replace('<p>And ends.</p>', '<template><p>And ends.</p></template>')}</form>` : inner}</div>`));
   } }
+  if (p === '/admin/knobs') { for (const k of Object.keys(knobs)) if (u.searchParams.has(k)) knobs[k] = typeof knobs[k] === 'boolean' ? u.searchParams.get(k) === '1' : Number(u.searchParams.get(k)); return json(knobs); }
   if (p === '/admin/add-chapter') { const n = novels.find((x) => x.slug === u.searchParams.get('slug')); if (n) n.chapters++; return json({ ok: !!n, chapters: n && n.chapters }); }
   res.statusCode = 404; res.end('nope');
 });

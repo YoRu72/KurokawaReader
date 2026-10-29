@@ -1,3 +1,4 @@
+import { busyNow, onBusy } from '../busy';
 import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } from '../ui/dom';
 import { onBack } from '../ui/backstack';
 import { onHoldOrContext } from '../ui/tags';
@@ -404,7 +405,7 @@ export function libraryView(): HTMLElement {
     );
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c1', c1);
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c2', c2);
-    const el = h('button', { class: 'book-card', role: 'listitem', type: 'button', 'aria-selected': String(selecting && selected.has(book.id)), title: `${book.title}${book.author ? ' — ' + book.author : ''}` },
+    const el = h('button', { class: 'book-card', role: 'listitem', type: 'button', dataset: { book: book.id }, 'aria-selected': String(selecting && selected.has(book.id)), title: `${book.title}${book.author ? ' — ' + book.author : ''}` },
       cover,
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size))), book.rating ? h('div', { class: 'stars-badge', 'aria-label': `${book.rating}/5` }, '★'.repeat(book.rating) + '☆'.repeat(5 - book.rating)) : null),
     );
@@ -976,8 +977,60 @@ export function libraryView(): HTMLElement {
     gridMore = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) more(); }, { rootMargin: '150% 0px' });
     more();
     if (at < list.length) gridMore.observe(sentinel);
+    paintBusy();
   }
   let gridMore: IntersectionObserver | null = null;
+
+  // What is on its way into the library (busy.ts): a file being downloaded as a dimmed card of its own at the
+  // head of the shelf, a book being filled (a novel's chapters) dimmed under its progress — clear once done.
+  const veil = (pct: number) => h('div', { class: 'busy-veil' }, h('span', { class: 'busy-pct' }, pct >= 0 ? (getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : ''), h('div', { class: 'busy-bar' + (pct < 0 ? ' busy-any' : '') }, h('i', { style: { width: `${Math.max(0, pct)}%` } })));
+  const setVeil = (cover: Element, pct: number) => {
+    const v = cover.querySelector(':scope > .busy-veil');
+    if (!v) { cover.append(veil(pct)); return; }
+    v.querySelector('.busy-pct')!.textContent = pct >= 0 ? (getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : '';
+    v.querySelector('.busy-bar')!.classList.toggle('busy-any', pct < 0);
+    (v.querySelector('.busy-bar i') as HTMLElement).style.width = `${Math.max(0, pct)}%`;
+  };
+  function paintBusy(): void {
+    const all = busyNow();
+    const forBook = new Map(all.filter((b) => b.bookId).map((b) => [b.bookId!, b]));
+    grid.querySelectorAll<HTMLElement>('.book-card[data-book]').forEach((el) => {
+      const b = forBook.get(el.dataset.book!); const cover = el.querySelector('.cover'); if (!cover) return;
+      el.classList.toggle('busy', !!b);
+      if (b) setVeil(cover, b.pct); else cover.querySelector(':scope > .busy-veil')?.remove();
+    });
+    // (Files on their way, not books yet: on the library's own shelf, not inside a folder, a tag or a search.)
+    const onShelf = !activeFolder && !activeSeries && !tagFilter && !query && books.length > 0;
+    const coming = onShelf ? all.filter((b) => !b.bookId) : [];
+    const have = new Map<string, HTMLElement>(); grid.querySelectorAll<HTMLElement>('.busy-card').forEach((el) => have.set(el.dataset.busy!, el));
+    for (const [k, el] of have) if (!coming.some((b) => b.key === k)) el.remove();
+    let after: Element | null = grid.querySelector('.continue-card');
+    for (const b of coming) {
+      let el = have.get(b.key);
+      if (!el) {
+        const [c1, c2] = coverColors(b.title);
+        const gen = h('div', { class: 'gen' }, h('div', { class: 't', dir: 'auto' }, b.title));
+        gen.style.setProperty('--c1', c1); gen.style.setProperty('--c2', c2);
+        el = h('div', { class: 'book-card busy busy-card', role: 'listitem', dataset: { busy: b.key }, title: b.title }, h('div', { class: 'cover' }, gen), h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, b.title), h('div', { class: 'ba' }, t('downloadingNow'))));
+        if (after) after.after(el); else grid.prepend(el);
+      }
+      setVeil(el.querySelector('.cover')!, b.pct);
+      after = el;
+    }
+  }
+  const offBusy = onBusy(() => { if (!root.isConnected) { offBusy(); return; } paintBusy(); });
+  // (A book added or removed elsewhere — a download done, a novel added from its source, another tab — drawn at
+  // once, without leaving and coming back.)
+  let booksTimer = 0;
+  const booksChanged = () => {
+    if (!root.isConnected) { window.removeEventListener('kr:books', booksChanged); return; }
+    clearTimeout(booksTimer);
+    booksTimer = window.setTimeout(async () => {
+      const now = await db.allBooks(); const had = new Set(books.map((b) => b.id));
+      if (now.length !== had.size || now.some((b) => !had.has(b.id))) void refresh();
+    }, 300);
+  };
+  window.addEventListener('kr:books', booksChanged);
 
   async function addSamples() {
     toast(t('addingSamples'), 'info', 60000);
@@ -1037,7 +1090,7 @@ export function libraryView(): HTMLElement {
   // (Left: its listeners on the document and the window go with it — each visit otherwise added a set, and
   // kept the old view and its books alive.)
   (root as HTMLElement & { dispose?: () => void }).dispose = () => {
-    offSettings(); offBack(); clearTimeout(searchTimer);
+    offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
     document.removeEventListener('kr:command', onCommand); window.removeEventListener('kr:library', onAsk);
     for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.removeEventListener(ev, endDrag);
   };

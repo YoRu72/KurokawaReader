@@ -206,6 +206,7 @@ html[dir='rtl'] .kr-slide .kr-slide-n { text-transform: none; letter-spacing: 0;
 @keyframes kr-shimmer { to { background-position: -200% 0; } }
 /* Pictures in books fade in instead of popping */
 .kr-content img.kr-img-pending { opacity: 0; min-height: 80px; background: color-mix(in srgb, var(--r-fg) 6%, transparent); border-radius: 6px; }
+.kr-content img.kr-img-failed { display: none; }
 .kr-content img { transition: opacity .25s ease; }
 .pdf-page canvas, .pdf-page img.native-page { display: block; width: 100%; height: 100%; }
 .pdf-view[data-invert='true'] .pdf-page img.native-page { filter: invert(.9) hue-rotate(180deg) brightness(1.05); }
@@ -472,6 +473,7 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .kr-content.kr-webnovel .kr-novel-author { text-align: center; color: var(--r-dim); }
 .kr-content.kr-webnovel .kr-novel-genres { text-align: center; color: var(--r-dim); font-size: .85em; }
 .kr-content.kr-webnovel .kr-chap.pending { min-height: 3em; color: var(--r-dim); }
+.kr-content.kr-webnovel .kr-chap:not(.kr-plain):not(.pending) { white-space: normal; }
 .kr-content.kr-webnovel .kr-page-wait { color: var(--r-dim); text-align: center; }
 .kr-content.kr-webnovel .kr-page-wait.failed { color: var(--r-link); }
 .kr-content.kr-webnovel .kr-img { max-width: 100%; height: auto; display: block; margin: .8em auto; }

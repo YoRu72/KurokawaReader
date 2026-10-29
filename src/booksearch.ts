@@ -13,7 +13,7 @@ export type Hit = { unit: number; label: string; nth: number; before: string; ma
 export type BookResult = { book: Book; hits: Hit[]; total: number; error?: 'protected' | 'unreadable' };
 
 /** Formats whose text can be searched. */
-export const SEARCHABLE: Book['format'][] = ['pdf', 'epub', 'docx', 'odt', 'fb2', 'txt', 'md', 'html', 'mobi', 'xlsx', 'csv', 'pptx'];
+export const SEARCHABLE: Book['format'][] = ['pdf', 'epub', 'docx', 'odt', 'fb2', 'txt', 'md', 'html', 'mobi', 'xlsx', 'csv', 'pptx', 'webnovel'];
 export const searchable = (b: Book) => SEARCHABLE.includes(b.format);
 
 // (The books read most lately stay in memory, up to a budget of letters; the rest are read again from the
@@ -44,7 +44,8 @@ export async function unitsOf(book: Book, onPage?: (n: number, total: number) =>
       const r = await pdfUnits(file, onPage);
       if (r === 'protected') return r;
       units = r;
-    } else units = await flowUnits(book, file);
+    } else if (book.format === 'webnovel') units = await novelUnits(file);
+    else units = await flowUnits(book, file);
   } catch (err) { console.warn('search: cannot read', book.title, err); return 'unreadable'; }
   remember(book.id, units);
   void db.putText(book.id, { key, units });
@@ -76,6 +77,21 @@ async function pdfUnits(file: Blob, onPage?: (n: number, total: number) => void)
     }
     return out;
   } finally { o.destroy(); }
+}
+
+/** A novel from an extension: its chapters kept on the device, each a unit (one not fetched yet is empty — the
+ *  book's place of each chapter kept, so a hit opens the right one). Read from the file, not rendered: a
+ *  rendering would fetch the chapters still on the site. */
+async function novelUnits(file: Blob): Promise<Unit[]> {
+  const info = JSON.parse(await file.text()) as { chapters: { name?: string; path: string }[]; content?: Record<string, { html: string }> };
+  const parser = new DOMParser();
+  return info.chapters.map((c, i) => {
+    const label = (c.name || String(i + 1)).trim();
+    const html = info.content?.[c.path]?.html; if (!html) return { label, text: '' };
+    const doc = parser.parseFromString(html.replace(/<(p|div|br|h[1-6]|li|blockquote|tr)\b/gi, '\n<$1'), 'text/html');
+    doc.querySelectorAll('style, script').forEach((x) => x.remove());
+    return { label, text: (doc.body.textContent ?? '').replace(/[ \t\u00a0]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim() };
+  });
 }
 
 async function flowUnits(book: Book, file: Blob): Promise<Unit[]> {

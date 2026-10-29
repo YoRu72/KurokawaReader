@@ -67,7 +67,10 @@ final class KrBrowser {
      *  or a refusal no waiting will pass ("Sorry, you have been blocked", Cloudflare's errors 1006–1020). */
     static final String STATE_JS = "(function(){try{"
         + "var t=document.title||'',b=document.body?(document.body.innerText||'').slice(0,700):'';"
-        + "var bl=/used Cloudflare to restrict access|Sorry, you have been blocked|You are unable to access|has banned you|banned your IP|Error 10(06|07|08|09|10|12|20)\\b/i.test(t+' '+b);"
+        // (A refusal only on the shield's own page — Cloudflare's or DDoS-Guard's, said by its title or its parts —
+        // not on a site's page that says "you are unable to access" a locked chapter.)
+        + "var sh=/cloudflare|ddos-guard|access denied/i.test(t)||!!document.querySelector('#cf-error-details,.cf-error-details,#cf-wrapper,.cf-error-overview,.ray-id,#ddg-l10n-title');"
+        + "var bl=sh&&/used Cloudflare to restrict access|Sorry, you have been blocked|You are unable to access|has banned you|banned your IP|Error 10(06|07|08|09|10|12|20)\\b/i.test(t+' '+b);"
         + "var ch=!bl&&(/Just a moment|Attention Required|Verifying you are human|Verify you are human|Checking your browser|Checking if the site connection is secure|Please wait|DDoS-Guard|One moment|لحظة|Один момент/i.test(t)"
         + "||!!document.querySelector('#challenge-form,#challenge-running,#challenge-stage,#cf-challenge-running,.cf-browser-verification,#cf-please-wait,#turnstile-wrapper,[name=\"cf-turnstile-response\"],#ddg-captcha,.ddg-captcha,#sucuri_cloudproxy_js'));"
         + "return [document.readyState,location.origin,ch?1:0,bl?1:0,t.slice(0,140)].join('\\u0001');"
