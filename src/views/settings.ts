@@ -135,6 +135,9 @@ export function settingsView(): HTMLElement {
   const opts = h('div');
   renderOptions(opts);
   body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts));
+  // Text rules (a watermark taken out, a name respelt): the list, to change or remove them.
+  body.append(h('section', { class: 'card' }, h('h3', null, t('textRules')), h('p', null, t('textRulesAbout')),
+    h('div', { class: 'actions-row' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/textrulesheet').then((m) => m.rulesListSheet()) }, icon('pen'), t('textRules')))));
 
   // Books from the web: the sources (archive.org, Shamela) and the OPDS catalogues.
   const srcNews = h('p', { class: 'hint', hidden: true });

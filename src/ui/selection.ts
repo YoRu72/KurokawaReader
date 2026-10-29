@@ -16,6 +16,8 @@ export interface SelectionActions {
   note(range: Range, text: string): void;
   speak(text: string): void;
   textImage(text: string): void;
+  /** A text rule made from the words picked: taken out everywhere, or others put in their place. */
+  textRule?(text: string): void;
   /** Language of the book the selection is in (helps choose furigana vs pinyin). */
   lang?(): string | undefined;
 }
@@ -225,6 +227,7 @@ function moreSheet(text: string, actions: SelectionActions, onClose?: () => void
     hasSystemText() ? item('translate', t('systemTranslate'), () => void translateWithSystem(text)) : null,
     item('external', t('shareText'), () => void shareText(text)),
     item('speak', t('speakSelected'), () => actions.speak(text)),
+    actions.textRule ? item('pen', t('textRuleFromSelection'), () => actions.textRule!(text)) : null,
     item('search', t('searchWeb'), () => window.open(`https://duckduckgo.com/?q=${q}`, '_blank', 'noopener')),
     item('define', t('wikipedia'), () => window.open(`https://${ar ? 'ar' : 'en'}.wikipedia.org/w/index.php?search=${q}`, '_blank', 'noopener')),
   ));

@@ -36,6 +36,7 @@ import { kittenReady, kittenSpeak, kittenCanRead } from '../kittentts';
 import { takeJump as takeSearchJump, storedPages, storePages } from '../booksearch';
 import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
+import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
@@ -216,6 +217,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       performance.measure('kr:render', { start: t1 });
       const t2 = performance.now();
       doc.wrapper.append(doc.render.element);
+      // (The reader's text rules — a watermark taken out, a name respelt — on the text, and on chapters that
+      // come later.)
+      { const el = doc.render.element; const id = doc.book.id; if (textRules().length) applyTextRules(el, id); el.addEventListener('kr-content-changed', () => { if (textRules().length) applyTextRules(el, id); }); }
       if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(doc.render.element);
       doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
       const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img'));
@@ -832,6 +836,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     lang: () => currentLocator()?.doc.book.language ?? docs[0]?.book.language,
     speak: (text) => speak([text]),
     textImage: (text) => void textImage(text),
+    // (A rule made from the words: applied at once to the books open — see textrules.)
+    textRule: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/textrulesheet').then((m) => m.ruleSheet({ find: text, book: { id: b.id, title: b.title }, made: (r) => { for (const d of docs) if (d.render && (!r.book || r.book === d.book.id)) applyTextRules(d.render.element, d.book.id, [r]); } })); },
   }));
 
   async function textImage(text: string): Promise<void> {
