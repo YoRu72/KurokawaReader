@@ -205,8 +205,8 @@ async function readLinked(src: FileSource, name: string, mime?: string): Promise
 // here and keeps it current; another tab of the web app writing tells this one to read again.
 let booksCache: Map<string, Book> | null = null;
 const dbChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('kr-db') : null;
-if (dbChannel) dbChannel.onmessage = () => { booksCache = null; };
-const told = () => { try { dbChannel?.postMessage('books'); } catch { /* one tab only */ } };
+if (dbChannel) dbChannel.onmessage = () => { booksCache = null; try { window.dispatchEvent(new Event('kr:books')); } catch { /* no window */ } };
+const told = () => { try { dbChannel?.postMessage('books'); } catch { /* one tab only */ } try { window.dispatchEvent(new Event('kr:books')); } catch { /* no window (a worker) */ } };
 
 export const db = {
   /** Every book (each a copy of its record's fields: changing one does not change what is kept until saved). */

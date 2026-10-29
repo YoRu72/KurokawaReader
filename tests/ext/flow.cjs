@@ -71,6 +71,26 @@ const SITE = 'http://localhost:5403';
     await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(500);
     const popular = await page.$$eval('.src-grid .src-title', (els) => els.map((e) => e.textContent));
     ok('popular list, more pages loaded as scrolled', popular.length >= 3 && popular[0] === 'Alpha Ascension');
+    // Paging as LNReader has it: a later page that fails is asked again (here once, then it answers); one that
+    // keeps failing says so at the bottom, with a button, and the shelf goes on after it; a site that gives
+    // page 1 for every page shows each novel once and stops.
+    {
+      const titles = () => page.$$eval('.src-grid .src-title', (els) => els.map((e) => e.textContent));
+      const knob = (q) => page.evaluate((u) => fetch(u).then((r) => r.json()), `${SITE}/admin/knobs?${q}`);
+      await knob('failPage=2&failTimes=1'); await page.reload(); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });
+      await page.waitForFunction(() => document.querySelectorAll('.src-grid .src-card').length >= 4, null, { timeout: 15000 }).catch(() => undefined);
+      ok('a later page that failed once is asked again, the shelf whole', (await titles()).length === 4);
+      await knob('failPage=2&failTimes=9'); await page.reload(); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });
+      await page.waitForSelector('.src-tail .empty', { timeout: 15000 }).catch(() => undefined);
+      ok('… one that keeps failing says so at the bottom, not at the top', !!(await page.$('.src-tail .empty')) && !(await page.$('.src-status .empty')) && (await titles()).length === 2);
+      await knob('failTimes=0'); await page.click('.src-tail .empty button:has-text("Try again"), .src-tail .empty button >> nth=0');
+      await page.waitForFunction(() => document.querySelectorAll('.src-grid .src-card').length >= 4, null, { timeout: 15000 }).catch(() => undefined);
+      ok('… and its button goes on with the shelf', (await titles()).length === 4 && !(await page.$('.src-tail .empty')));
+      await knob('repeat=1'); await page.reload(); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(2500);
+      const rep = await titles();
+      ok('a site giving page 1 for every page: each novel once, and the shelf ends', rep.length === 2 && new Set(rep).size === 2);
+      await knob('repeat=0&failPage=0'); await page.reload(); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(800);
+    }
     ok('shelf chips popular/latest', (await page.$$('.src-shelves .chip')).length === 2);
     await page.click('.src-shelves .chip:has-text("Latest")'); await page.waitForTimeout(1200);
     ok('latest shelf reversed', (await page.$eval('.src-grid .src-title', (e) => e.textContent)) === 'Locked Legend');
@@ -129,7 +149,16 @@ const SITE = 'http://localhost:5403';
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(400);
     await page.click('.src-grid .src-card:has-text("Alpha")'); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(300);
     ok('novel page knows the book is in the library', /In your library/.test(await page.$eval('.src-actions', (e) => e.textContent)));
-    await page.click('.src-files .btn.tonal'); await page.waitForTimeout(4000);
+    // (Fetched slowly here: the library, opened meanwhile, shows the novel dimmed under its progress, then clear.)
+    await page.evaluate((u) => fetch(u), `${SITE}/admin/knobs?slowMs=700`);
+    const novelAt = await page.evaluate(() => location.hash);
+    await page.click('.src-files .btn.tonal'); await page.waitForTimeout(400);
+    await page.evaluate(() => { location.hash = '#/'; }); await page.waitForSelector('.library-view'); await page.waitForTimeout(500);
+    const busyShown = !!(await page.$('.book-card.busy .busy-veil .busy-bar'));
+    await page.evaluate((u) => fetch(u), `${SITE}/admin/knobs?slowMs=0`);
+    await page.waitForFunction(() => !document.querySelector('.book-card.busy'), null, { timeout: 20000 }).catch(() => undefined);
+    ok('the library shows the novel dimmed under its progress while its chapters come, clear after', busyShown && !(await page.$('.book-card.busy')));
+    await page.evaluate((h) => { location.hash = h; }, novelAt); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(1500);
     ok('whole novel fetched for offline', /reads offline/.test(await page.$eval('.src-actions', (e) => e.textContent)));
     // The novel saved as an EPUB file: the card, every chapter, the package naming it.
     const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('.src-files button:has-text("Save as EPUB")')]);
@@ -138,6 +167,25 @@ const SITE = 'http://localhost:5403';
     const opf = await z.file('OEBPS/content.opf').async('string'); const xhtml = Object.keys(z.files).filter((n) => /^OEBPS\/ch\d+\.xhtml$/.test(n));
     ok('saved as an EPUB: the card and every chapter, the title and author in the package', dl.suggestedFilename() === 'Alpha Ascension.epub' && (await z.file('mimetype').async('string')) === 'application/epub+zip' && /<dc:title>Alpha Ascension<\/dc:title>/.test(opf) && /A\. Writer/.test(opf) && xhtml.length === 7 && /Chapter 1 of Alpha/.test(await z.file('OEBPS/ch2.xhtml').async('string')) && /<nav/.test(await z.file('OEBPS/nav.xhtml').async('string')));
     if (xhtml.length !== 7) console.log('  epub:', dl.suggestedFilename(), JSON.stringify(Object.keys(z.files)));
+    // A chapter tapped on the novel's page opens that chapter — found in the book by its address.
+    await page.click('.novel-chapters li button:has-text("Chapter 4")'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(1500);
+    const shownCh = await page.evaluate(() => [...document.querySelectorAll('.kr-novel-chapter')].filter((x) => !x.hidden && x.getBoundingClientRect().height > 0).map((x) => x.querySelector('.kr-chapter-title')?.textContent ?? ''));
+    if (!(shownCh.length >= 1 && /Chapter 4/.test(shownCh[0]))) console.log('  shown:', JSON.stringify(shownCh), await page.evaluate(() => location.hash), await page.evaluate(() => [...document.querySelectorAll('.novel-chapters li')].length));
+    ok('a chapter tapped on the novel\'s page opens that chapter', shownCh.length >= 1 && /Chapter 4/.test(shownCh[0]));
+    // Every picture of the novel's chapters, from its page.
+    await page.goBack(); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(500);
+    await page.click('.src-files button:has-text("Pictures in its chapters")'); await page.waitForSelector('.gallery-grid img', { timeout: 20000 }).catch(() => undefined);
+    ok('"Pictures in its chapters": each chapter\'s picture in the gallery', (await page.$$('.gallery-grid button')) .length >= 6);
+    await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(400);
+    // A chapter the site has inside a form (and a <template>): read whole, not cut where the form begins.
+    await page.evaluate((u) => fetch(u), `${SITE}/admin/knobs?formWrap=1`);
+    await page.click('.src-grid .src-card:has-text("Gamma")'); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(300);
+    await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForFunction(() => /paragraph two/.test(document.querySelector('.kr-chap:not(.pending)')?.textContent ?? ''), null, { timeout: 20000 }).catch(() => undefined);
+    const gtext = await page.evaluate(() => document.querySelector('.kr-chap:not(.pending)')?.textContent ?? '');
+    ok('a chapter inside a form on the site is read whole', /begins here/.test(gtext) && /paragraph two/.test(gtext) && /And ends/.test(gtext));
+    await page.evaluate((u) => fetch(u), `${SITE}/admin/knobs?formWrap=0`);
+    await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(400);
+    await page.click('.src-grid .src-card:has-text("Alpha")'); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(300);
     // A chapter arrives on the site; the check finds it.
     await page.evaluate((site) => fetch(site + '/admin/add-chapter?slug=alpha').then((r) => r.json()), SITE);
     await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);

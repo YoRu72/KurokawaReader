@@ -12,7 +12,7 @@ import { t, formatBytes, countVolumes, countSeries, daysAgo, localDigits } from 
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFile, type SourcePage, type FilterValues, type SourceFilter, type SourceTag } from './types';
 import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf, peekKeyOf, imageKeyOf, assumeRanges, type Peek } from './peek';
 import { db } from '../db';
-import { loadTags, tagsNow, wantTags, tagsFor as tagsOfSeries, tagsPending, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS } from './altags';
+import { loadTags, tagsNow, wantTags, tagsFor as tagsOfSeries, tagsPending, synopsisOf, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS } from './altags';
 import type { Repo } from './repos';
 
 export interface DirEntry { name: string; url: string; dir: boolean; size?: number; date?: string; ext?: string; time?: number }
@@ -923,6 +923,12 @@ export function folderSource(repo: Repo): Source {
       return tg ? { genres: tg.genres, tagList: tg.tags.map((x) => ({ name: x.n, rank: x.r, category: x.c, spoiler: !!x.s })) } : null;
     },
     tagsWaiting: () => (tagsOn ? tagsPending(repo.key) : 0),
+    async synopsisFor(b) {
+      const rel = b.id.startsWith('a:') ? b.id.slice(2) : '';
+      if (!tagsOn || !rel || rel.includes('/')) return null;
+      const tg = await tagsOfSeries(repo.key, rel, dec(rel)).catch(() => null);
+      return tg?.id ? synopsisOf(tg.id) : null;
+    },
     async folderCover(rel) {
       // Its first volume's cover — volume 1's EPUB (else its PDF), the very file its series' page shows on top,
       // read once for both; for a folder without books, its own picture (cover.jpg…) or its first folder's first

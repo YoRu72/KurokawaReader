@@ -19,7 +19,7 @@ import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog, coverSource, fullCover } from '../sources/peek';
-import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
+import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, saveNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, type UpdateReport } from '../sources/updates';
 import { parseName } from '../sources/folder';
@@ -796,19 +796,35 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
     const todo = missing(); if (!todo.length || seriesRuns.has(runKey)) return;
     const run: { text: string; on?: (text: string) => void; done?: () => void } = { text: '' };
     seriesRuns.set(runKey, run); attach(run);
-    let done = 0;
+    // (Every volume asked for at once — the downloads take three at a time, the rest wait their turn — and one
+    // that fails does not stop the others: it is said at the end which did not come.)
+    let done = 0; const failed: string[] = []; let lastErr: unknown;
+    const pct = new Map<string, number>();
+    const say = () => {
+      const got = [...pct.values()].reduce((a, x) => a + x, 0) / Math.max(1, todo.length);
+      run.text = `${t('fetchingVolume', { n: localDigits(Math.min(todo.length, done + failed.length + 1)), total: localDigits(todo.length) })} · ${localDigits(Math.round(got))}%${failed.length ? ` · ${t('volumesFailedN', { n: countVolumes(failed.length) })}` : ''}`;
+      run.on?.(run.text);
+    };
     try {
       const place = b.id !== 'a:' ? await askPlacement(`${src.id}|${b.title}`, b.title) : {};
-      for (const [i, f] of todo.entries()) {
+      say();
+      await Promise.all(todo.map(async (f) => {
         const id = `f:${f.id}`;
-        if (lib.has(id) || has(files.indexOf(f))) continue;   // (fetched meanwhile, by its own button or another edition)
-        const say = (extra: string) => { run.text = `${t('fetchingVolume', { n: localDigits(i + 1), total: localDigits(todo.length) })}${extra ? ` · ${extra}` : ''}`; run.on?.(run.text); };
-        say('');
-        const book = await fetchVolume(src, id, (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, ''), f, (p) => say(p.total ? `${localDigits(p.pct)}%${p.speed ? ` · ${t('perSecond', { n: formatBytes(p.speed) })}` : ''}` : p.got ? formatBytes(p.got) : ''), b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags, place.deviceOnly);
-        lib.set(id, book.id); rows.get(id)?.(book.id); done++;
-      }
-      toast(t('volumesAdded', { n: countVolumes(done), folder: `\u2068${b.title}\u2069` }), 'info', 4000);
+        if (lib.has(id) || has(files.indexOf(f))) { pct.set(id, 100); done++; return; }   // (fetched meanwhile, by its own button or another edition)
+        const name = (f.name ?? f.id).replace(/\.[a-z0-9]{1,5}$/i, '');
+        try {
+          const book = await fetchVolume(src, id, name, f, (p) => { pct.set(id, p.total ? p.pct : 0); say(); }, b.id !== 'a:' ? { name: b.title, index: parseName(f.name ?? f.id).num, source: src.id, shelf: b.id.slice(2) } : undefined, place.tags, place.deviceOnly);
+          lib.set(id, book.id); rows.get(id)?.(book.id); done++;
+        } catch (e) {
+          // (Saved to the device, as asked: done, though not in the library.)
+          if ((e as Error)?.message === 'deviceOnly') done++;
+          else { failed.push(name); lastErr = e; }
+        }
+        pct.set(id, 100); say();
+      }));
       seriesRuns.delete(runKey); run.done?.();
+      if (done) toast(place.deviceOnly ? t('savedToDevice', { name: countVolumes(done) }) : t('volumesAdded', { n: countVolumes(done), folder: `\u2068${b.title}\u2069` }), 'info', 4000);
+      if (failed.length) { status.hidden = false; status.textContent = `${t('volumesFailed', { n: countVolumes(failed.length) })}: ${failed.join(getLang() === 'ar' ? '، ' : ', ')} — ${describe(lastErr)}`; toast(t('volumesFailed', { n: countVolumes(failed.length) }), 'error', 6000); }
     } catch (e) { seriesRuns.delete(runKey); toast(describe(e), 'error'); run.done?.(); status.hidden = false; status.textContent = describe(e); }
   });
   const byline = h('p', { class: 'src-author-line', dir: 'auto', hidden: true });
@@ -833,8 +849,11 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
     if (pic && !cover.querySelector('img')) { cover.classList.add('cover-tap'); cover.replaceChildren(h('img', { src: pic, alt: '', referrerpolicy: 'no-referrer' })); }
     if (!p) return;
     if (p.author && !byline.textContent) { byline.textContent = p.author; byline.hidden = false; }
-    if (p.description && !about.textContent) { about.textContent = p.description; about.hidden = false; }
+    if (p.description && !about.textContent && !about.dataset.from) { about.textContent = p.description; about.hidden = false; }
   };
+  // (The series' synopsis from AniList, when the folder is one it knows — the series' own, not one volume's
+  // blurb: put in the blurb's place.)
+  if (src.synopsisFor) void src.synopsisFor(b).then((text) => { if (!text) return; about.textContent = text; about.hidden = false; about.dataset.from = 'anilist'; }).catch(() => undefined);
   const now = v1b ? src.peekNow?.(v1b) : undefined;
   if (now) fill(now);
   else if (v1b && src.peek) observe(head, async () => fill(await src.peek!(v1b).catch(() => null)));
@@ -889,7 +908,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
         if (!waiting.has(e.target)) waiting.set(e.target, schedule(async () => { if (gone || !lazy.has(e.target)) return; lazy.delete(e.target); lazyIo.unobserve(e.target); await fn(); }, onScreen));
       } else { waiting.get(e.target)?.(); waiting.delete(e.target); }
     }
-  }, { rootMargin: '600px 0px' });
+  }, { root: body, rootMargin: '900px 0px' });
   // (A card queued while near that has come onto the screen goes to the front of the queue.)
   const nowIo = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) waiting.get(e.target)?.now?.(); }, { rootMargin: '0px' });
   const observe: Observe = (el, fn) => { lazy.set(el, fn); lazyIo.observe(el); nowIo.observe(el); };
@@ -901,7 +920,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   // (A folder shown from the index that the site says has changed since: drawn again, in place.)
   let stale = false;
   const redraw = () => {
-    stale = false; cache.delete(key); items = []; page = 0; hasMore = true; const top = body.scrollTop;
+    stale = false; cache.delete(key); items = []; page = 0; hasMore = true; seen.clear(); dupPages = 0; failed = 0; held = false; const top = body.scrollTop;
     grid.replaceChildren(); void more().then(() => { body.scrollTop = top; });
   };
   const changed = (ev: Event) => {
@@ -1044,17 +1063,30 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     }
     return el;
   };
+  // (The end of the shelf: a spinner while the next page comes, and what went wrong with it — down here, where
+  // the reader is, not at the top out of sight.)
+  const tail = h('div', { class: 'src-tail' });
+  body.insertBefore(tail, sentinel);
+  const seen = new Set<string>(); let dupPages = 0; let failed = 0; let held = false;
+  // (A screen and a half ahead, as LNReader asks for its next page: the shelf goes on without a wait.)
+  const nearEnd = () => sentinel.getBoundingClientRect().top < window.innerHeight * 2.5;
   const more = async () => {
-    if (gone || loading || !hasMore) return;
+    if (gone || loading || !hasMore || held) return;
     loading = true; status.textContent = page === 0 ? t('loading') : '';
+    if (page > 0) tail.replaceChildren(h('div', { class: 'spinner small' }));
     try {
       const f: FilterValues = { ...filters, tags };
       const r = await src.browse(q, f, page + 1, shelf ?? (hnd ? 'popular' : undefined));
       if (gone) return;
-      page++; hasMore = r.hasMore; items.push(...r.items);
+      page++; hasMore = r.hasMore; failed = 0; tail.replaceChildren();
+      // (A site that gives the same novels again for the next page — it ignores the page asked for, or wraps
+      // round — shows each once; two pages of nothing new are its end.)
+      const fresh = r.items.filter((b) => { const k = b.id; if (seen.has(k)) return false; seen.add(k); return true; });
+      if (r.items.length && !fresh.length) { if (++dupPages >= 2) hasMore = false; } else dupPages = 0;
+      items.push(...fresh);
       if (r.tags?.length && page === 1) { allTags = r.tags; drawTags(); }
       if (r.title && page === 1 && (q || !shelf || !src.shelves || src.id.startsWith('dir:'))) titleEl.replaceChildren(h('span', { dir: 'auto' }, r.title), h('small', null, src.name));
-      for (const b of r.items) grid.append(card(b));
+      for (const b of fresh) grid.append(card(b));
       if (items.length) status.textContent = '';
       else if (r.empty) status.replaceChildren(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('folder')), h('p', { dir: 'auto' }, r.empty.text),
         ...(r.empty.url ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => void openSite(r.empty!.url!) }, icon('globe'), t('openFolderOnSite'))] : [])));
@@ -1063,20 +1095,28 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       // (The last twenty pages kept for the way back, the oldest let go.)
       while (cache.size > 20) cache.delete(cache.keys().next().value as string);
       // (A short page leaves the end of the shelf in view: the next one is asked for without a scroll.)
-      if (hasMore) requestAnimationFrame(() => { if (!gone && sentinel.getBoundingClientRect().top < window.innerHeight + 600) void more(); });
+      if (hasMore) requestAnimationFrame(() => { if (!gone && nearEnd()) void more(); });
     } catch (e) {
       if (gone) return;
-      showError(status, e, () => { hasMore = true; void more(); }, src, here);
-      hasMore = false;
+      if (page === 0) { showError(status, e, () => { hasMore = true; held = false; void more(); }, src, here); hasMore = false; return; }
+      // (A later page that failed does not end the shelf, as LNReader has it: asked again once a moment
+      // later, then the error shown at the bottom with a button to try again.)
+      tail.replaceChildren();
+      if (++failed === 1) { held = true; setTimeout(() => { held = false; if (!gone && nearEnd()) void more(); }, 2500); return; }
+      held = true;
+      showError(tail, e, () => { held = false; failed = 0; tail.replaceChildren(); void more(); }, src, here);
     } finally { loading = false; if (stale && !gone) redraw(); }
   };
-  const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) void more(); }, { rootMargin: '600px' });
+  const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) void more(); }, { root: body, rootMargin: '0px 0px 1200px 0px' });
+  // (Scrolling near the end asks for the next page before the end is in sight.)
+  let scrollRaf = 0;
+  body.addEventListener('scroll', () => { if (scrollRaf) return; scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; if (!gone && hasMore && !loading && !held && nearEnd()) void more(); }); }, { passive: true });
   const had = cache.get(key);
   // (A folder's rows know which of its files are in the library before they are drawn.)
   // (What is in the library already, from any source: said on its card, as Mihon marks «In library».)
   const ready = fromSource(src.id).then((m) => { for (const [k, v] of m) lib.set(k, v); }).catch(() => undefined);
   void ready.then(() => { if (!gone) io.observe(sentinel); });
-  if (had) void ready.then(() => { if (gone) return; items = [...had.items]; page = had.page; hasMore = had.hasMore; allTags = had.tags; drawTags(); for (const b of items) grid.append(card(b)); if (had.title && (q || !shelf || !src.shelves || src.id.startsWith('dir:'))) titleEl.replaceChildren(h('span', { dir: 'auto' }, had.title), h('small', null, src.name)); requestAnimationFrame(() => { body.scrollTop = had.scroll; }); });
+  if (had) void ready.then(() => { if (gone) return; items = [...had.items]; for (const b of items) seen.add(b.id); page = had.page; hasMore = had.hasMore; allTags = had.tags; drawTags(); for (const b of items) grid.append(card(b)); if (had.title && (q || !shelf || !src.shelves || src.id.startsWith('dir:'))) titleEl.replaceChildren(h('span', { dir: 'auto' }, had.title), h('small', null, src.name)); requestAnimationFrame(() => { body.scrollTop = had.scroll; }); });
   else void ready.then(() => void more());
   if (src.needsApp && isWeb()) status.replaceChildren(h('p', { class: 'hint warn' }, t('sourceNeedsApp')));
   if (src.id === 'shamela' && q && String(filters.mode) !== 'titles' && !link.isConnected() && (String(filters.mode) === 'chapters' || String(filters.engine) === 'link' || /^(root|wild)$/.test(String(filters.match)))) status.replaceChildren(signInNote());
@@ -1607,6 +1647,11 @@ async function novelActions(box: HTMLElement, d: SourceDetails, hnd: Handle, gon
       finally { epub.disabled = false; say(t('saveAsEpub')); }
     });
     row.append(epub);
+    // (Every picture of the novel's chapters, in the reader's gallery — those not fetched yet found there.)
+    row.append(h('button', { type: 'button', class: 'btn tonal src-file', onclick: async () => {
+      try { if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd)); try { sessionStorage.setItem('kr.openGallery', book.id); } catch { /* private mode */ } navigate(`/read/${book.id}`); }
+      catch (e) { toast(describe(e), 'error'); }
+    } }, icon('images'), h('span', { class: 'grow' }, t('novelPictures'))));
     { const tb = trackButton(hnd.source.id, async () => book?.id, () => void draw()); if (tb) row.append(tb); }
     box.append(row);
     if (book) {
@@ -1668,7 +1713,19 @@ function novelChapters(d: SourceDetails, hnd: Handle): HTMLElement {
   const openAt = async (i: number) => {
     let book = await findInLibrary(novel.src, novel.path);
     if (!book) book = await addNovelToLibrary(novel, await coverBlob(d.cover, hnd));
-    setJump({ bookId: book.id, kind: 'anchor', id: `${book.id}-c${i}` });
+    // (The chapter found in the library's copy by its address — its list may be older than the site's, or in
+    // another order: the site's place of a chapter is not the book's. One the copy does not have yet is
+    // added to it first, the chapters it holds kept.)
+    const path = novel.chapters[i].path;
+    let file = await readNovelFile(book.id);
+    let k = file ? file.chapters.findIndex((c) => c.path === path) : -1;
+    if (k < 0 && file) {
+      const known = new Set(file.chapters.map((c) => c.path));
+      const merged = novel.chapters.some((c) => known.has(c.path)) || !file.chapters.length ? novel.chapters : [...file.chapters, ...novel.chapters.filter((c) => !known.has(c.path))];
+      file = await saveNovelFile(book, (cur) => ({ ...cur, chapters: merged }));
+      k = file.chapters.findIndex((c) => c.path === path);
+    }
+    setJump({ bookId: book.id, kind: 'anchor', id: `${book.id}-c${Math.max(0, k)}` });
     navigate(`/read/${book.id}`);
   };
   const selecting = () => picked.size > 0;

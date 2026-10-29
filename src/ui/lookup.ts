@@ -24,7 +24,7 @@ export function showDefinition(text: string, context = ''): void {
   if (!navigator.onLine) { s.body.append(h('p', { class: 'src' }, t('offlineService'))); return; }
   s.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('lookingUp')));
   (arabic ? defineArabic(word) : defineLatin(word))
-    .then((html) => { s.body.innerHTML = ''; if (html) { const d = h('div', { class: arabic ? 'ar' : '' }); d.innerHTML = html; s.body.append(d); void saveWord(word, context, (d.querySelector('li')?.textContent ?? '').trim().slice(0, 240) || undefined); } else s.body.append(h('p', { class: 'src' }, t('noDefinition'))); })
+    .then((html) => { s.body.innerHTML = ''; if (html) { const d = h('div', { class: arabic ? 'ar selectable' : 'selectable' }); d.innerHTML = html; s.body.append(d); void saveWord(word, context, (d.querySelector('li')?.textContent ?? '').trim().slice(0, 240) || undefined); } else s.body.append(h('p', { class: 'src' }, t('noDefinition'))); })
     .catch(() => { s.body.innerHTML = ''; s.body.append(h('p', { class: 'src' }, t('serviceFailed'))); });
 }
 
@@ -85,7 +85,7 @@ export function showTranslation(text: string): void {
   if (sourceIsArabic && target === 'ar') target = 'en';
   const s = openSheet(t('translate'), t('close'));
   const sel = pickButton(t('translateTo'), TARGETS.map((code): [string, string] => [code, NAMES[code]]), target, (v) => { target = v; localStorage.setItem('kr.translateTo', target); void run(); }, t('close'));
-  const out = h('div');
+  const out = h('div', { class: 'selectable' });
   s.body.append(h('div', { class: 'src', dir: 'auto' }, text.length > 300 ? text.slice(0, 300) + '…' : text), out);
   s.actions.append(h('label', { class: 'field', style: { flexDirection: 'row', alignItems: 'center', gap: '8px' } }, h('span', { class: 'label' }, t('translateTo')), sel));
   const link = h('a', { class: 'btn small', href: '#', target: '_blank', rel: 'noopener' }, icon('external'), t('openInTranslator')) as HTMLAnchorElement;

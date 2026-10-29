@@ -197,6 +197,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['flow', t('modeFlow')], ['continuous', t('modeContinuous')]];
   grid.append(section([t('readingMode'), 'readingMode'], segmented(modes, s.readingMode, (v) => { updateSettings({ readingMode: v }); rerender(); bump(); })));
   grid.append(toggle([t('hideSystemBars'), 'hideSystemBars'], s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
+  grid.append(toggle([t('pictureZoom'), 'pictureZoom'], s.pictureZoom, (v) => updateSettings({ pictureZoom: v })));
   grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => { updateSettings({ tapToTurn: v }); rerender(); }));
   if (s.tapToTurn) {
     // The nine zones: each a button naming its action; tapping one picks another.

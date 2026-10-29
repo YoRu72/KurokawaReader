@@ -75,6 +75,9 @@ async function serveHttp(id: number, url: string, init: Record<string, unknown>)
     if (!/^https?:\/\//i.test(url)) throw new SourceError('Only http(s) URLs can be fetched', 'http');
     const r = await request(url, { method: String(init.method ?? 'GET'), headers: (init.headers as Record<string, string>) ?? {}, body: (init.body as string | null) ?? undefined, bodyBase64: !!init.bodyBase64, binary: true, quiet: !!init.quiet || quietDepth > 0 });
     const bin = atob(r.body); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    // (An answer that is an error — a busy site's 503, a 429 — noted: a plugin that makes an empty list of it is
+    // told apart from a list that has ended.)
+    if (r.status >= 400 && r.status !== 404) lastBadStatus = { at: Date.now(), status: r.status };
     const value = { status: r.status, statusText: '', headers: r.headers, url: (r as { url?: string }).url ?? url, body: bytes.buffer };
     win.postMessage({ t: 'res', id, ok: true, value }, '*', [bytes.buffer]);
   } catch (e) {
@@ -99,6 +102,10 @@ export function isLoaded(key: string): boolean { return loaded.has(key); }
 export async function unloadPlugin(key: string): Promise<void> { if (!frame?.contentWindow) return; frame.contentWindow.postMessage({ t: 'unload', key }, '*'); loaded.delete(key); }
 
 /** Call a method of a loaded plugin; errors the plugin raised come back as Errors, the web's as SourceErrors. */
+let lastBadStatus: { at: number; status: number } | null = null;
+/** The last error status a plugin's request was answered with since `since` (ms), if any. */
+export const badStatusSince = (since: number): number | undefined => (lastBadStatus && lastBadStatus.at >= since ? lastBadStatus.status : undefined);
+
 export async function callPlugin<T>(key: string, method: string, ...args: unknown[]): Promise<T> {
   const win = await boot();
   const started = Date.now();

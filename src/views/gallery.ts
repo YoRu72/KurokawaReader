@@ -1,4 +1,5 @@
 // Image gallery: every picture from the open books, with a lightbox.
+import { zoomable, type Zoomable } from '../ui/zoom';
 import { h, icon, iconButton, clear } from '../ui/dom';
 import { t } from '../i18n';
 import type { ImageRef } from '../formats/types';
@@ -6,9 +7,20 @@ import { shareFile, fetchAsBlob, saveImage, copyImage } from '../ui/share';
 import { toast } from '../ui/dom';
 
 /** `startAt` opens straight into the lightbox; with `lightboxOnly` the grid never shows and closing the picture closes everything. */
-export function openGallery(images: ImageRef[], onJump: (anchor: string) => void, opts: { startAt?: number; lightboxOnly?: boolean } = {}): () => void {
+export function openGallery(images: ImageRef[], onJump: (anchor: string) => void, opts: { startAt?: number; lightboxOnly?: boolean; /** a line over the pictures, with a button (a novel's chapters still to fetch) */ note?: { text: string; action?: { label: string; run(say: (text: string) => void): Promise<void> } } } = {}): () => void {
   const grid = h('div', { class: 'gallery-grid' });
   const body = h('div', { class: 'gallery-body' }, grid);
+  if (opts.note) {
+    const say = h('span', { class: 'src' }, opts.note.text);
+    const box = h('div', { class: 'gallery-note' }, say);
+    if (opts.note.action) {
+      const a = opts.note.action;
+      const btn = h('button', { type: 'button', class: 'btn tonal small' }, icon('download'), a.label) as HTMLButtonElement;
+      btn.addEventListener('click', async () => { btn.disabled = true; try { await a.run((text) => { say.textContent = text; }); } catch (e) { toast(String((e as Error)?.message ?? e), 'error'); btn.disabled = false; } });
+      box.append(btn);
+    }
+    body.prepend(box);
+  }
   const close = () => { root.remove(); window.removeEventListener('keydown', onKey); };
   const root = h('div', { class: 'view', style: { position: 'fixed', inset: '0', zIndex: '45', background: 'var(--bg)' }, role: 'dialog', 'aria-label': t('galleryTitle') },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), close), h('div', { class: 'title' }, t('galleryTitle'), h('small', null, t('galleryCount', { n: images.length })))),
@@ -26,16 +38,22 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
 
   let lb: HTMLElement | null = null;
   let current = 0;
-  const closeLb = () => { lb?.remove(); lb = null; if (opts.lightboxOnly) close(); };
+  let zoom: Zoomable | null = null;
+  const closeLb = () => { zoom?.dispose(); zoom = null; lb?.remove(); lb = null; if (opts.lightboxOnly) close(); };
   const blobOf = async (src: string) => { const blob = await fetchAsBlob(src); const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg'); return { blob, ext }; };
   function lightbox(i: number) {
     current = i;
     const img = images[i];
+    const go = (d: 1 | -1) => { current = (current + d + images.length) % images.length; render(); };
     const render = () => {
       const im = images[current];
+      zoom?.dispose(); zoom = null;
       clear(lb!);
+      // (Pinch, double tap, the wheel: a closer look; a tap closes it, a swipe goes to the next picture.)
+      const stage = h('div', { class: 'lb-img' }, lazyImg(im, {}));
+      zoom = zoomable(stage, () => stage.querySelector('img'), { tap: closeLb, swipe: images.length > 1 ? go : undefined });
       lb!.append(
-        h('div', { class: 'lb-img', onclick: closeLb }, lazyImg(im, {})),
+        stage,
         h('div', { class: 'lb-bar' },
           iconButton('chevronLeft', t('previousPage'), () => { current = (current - 1 + images.length) % images.length; render(); }),
           h('span', { class: 'cap', dir: 'auto' }, `${current + 1} / ${images.length} · ${im.alt || t('imageFrom', { title: im.bookTitle })}`),

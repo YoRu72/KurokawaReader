@@ -102,6 +102,8 @@ export interface VisualSettings {
   /** Long work (conversions) shows its progress in notifications. */
   jobNotify: boolean;
   tapToTurn: boolean;
+  /** A picture in a book opens on its own, to pinch and zoom, when tapped. */
+  pictureZoom: boolean;
   /** What a tap does in each of nine zones of the page (rows top to bottom, left to right), when tapping turns pages. */
   tapZones: TapAction[];
   turnAnimation: 'none' | 'slide' | 'fade';   // when a tap or key moves a screen
@@ -260,6 +262,7 @@ export const DEFAULTS: VisualSettings = {
   updateAutoDownload: false,
   jobNotify: true,
   tapToTurn: true,
+  pictureZoom: true,
   showStatusLine: false,
   tapZones: DEFAULT_TAP_ZONES,
   turnAnimation: 'none',

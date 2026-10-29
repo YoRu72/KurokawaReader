@@ -5,6 +5,8 @@
 // through the sources' request layer elsewhere. What is under way is kept (localStorage) so that a download the
 // app was killed in the middle of is taken up again when it opens; when a file arrives it goes into the library
 // whatever view is open, and the view that asked is told through onDownloads.
+import { fileFault } from './filecheck';
+import { setBusy, clearBusy } from './busy';
 import { db } from './db';
 import { importFiles } from './library';
 import { t, formatBytes, localDigits, countConnections } from './i18n';
@@ -15,7 +17,7 @@ import type { Book } from './db';
 
 export type Progress = { pct: number; got: number; total: number; speed?: number; connections?: number };
 /** What to do with the file once it is here: into the library, remembered as coming from its source. */
-export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: Book['series']; tags?: string[]; /** Saved to the device (Download), not into the library. */ deviceOnly?: boolean };
+export type Then = { srcId: string; itemId: string; title: string; folderId?: string; series?: Book['series']; tags?: string[]; /** Saved to the device (Download), not into the library. */ deviceOnly?: boolean; /** A book of the library whose file this takes the place of (one that came broken). */ replace?: string };
 export type DownloadTask = { url: string; name: string; mime?: string; size?: number; headers?: Record<string, string>; title: string; then: Then };
 export type Download = DownloadTask & { id: string; got: number; total: number; speed: number; pct: number; state: 'running' | 'done' | 'failed' | 'cancelled'; /** Waiting for its turn (three run at a time). */ queued?: boolean; error?: string; bookId?: string; startedAt: number };
 
@@ -90,11 +92,15 @@ async function run(d: Download): Promise<void> {
   try { await runNow(d); } finally { giveTurn(); }
 }
 async function runNow(d: Download): Promise<void> {
+  // (In the library meanwhile: a dimmed card with the progress, or the dimmed book whose file this replaces.)
+  const shown = !d.then.deviceOnly;
+  const mark = () => { if (shown) setBusy({ key: `dl:${d.id}`, title: d.title, pct: d.total ? d.pct : -1, bookId: d.then.replace }); };
   const progress = (p: Progress) => {
     if (d.state !== 'running') return;
     d.got = p.got; if (p.total) d.total = p.total; d.speed = p.speed ?? d.speed; d.pct = d.total ? Math.min(100, Math.round((d.got / d.total) * 100)) : p.pct;
-    changed();
+    mark(); changed();
   };
+  mark();
   try {
     // (As a job: the service's notification on Android with the speed in it, the chip in the app, full speed
     // while the app is behind others.)
@@ -103,6 +109,15 @@ async function runNow(d: Download): Promise<void> {
       const file = await fetchBytes(d, (p) => { progress(p); report(d.pct, describeProgress(d)); });
       if ((d.state as string) === 'cancelled') return null;
       if (d.then.deviceOnly) { const { downloadBlob } = await import('./ui/share'); downloadBlob(file, file.name); throw new Error('deviceOnly'); }
+      if (d.then.replace) {
+        const had = await db.getBook(d.then.replace);
+        if (had) {
+          await db.putFile(had.id, file);
+          await db.updateBook(had.id, (b) => { b.size = file.size; });
+          d.bookId = had.id; book = (await db.getBook(had.id)) ?? had;
+          return { blob: file, name: file.name };
+        }
+      }
       const added = await importFiles([file]);
       if (!added.length) throw new Error(t('convertFailed'));
       await db.updateBook(added[0].id, (b) => { b.remote = { source: d.then.srcId, id: d.then.itemId }; if (d.then.folderId) b.folderId = d.then.folderId; if (d.then.series) b.series = d.then.series; if (d.then.tags?.length) b.tags = [...new Set([...(b.tags ?? []), ...d.then.tags])]; });
@@ -114,7 +129,7 @@ async function runNow(d: Download): Promise<void> {
   } catch (e) {
     if ((e as Error)?.message === 'deviceOnly') { d.state = 'done'; d.pct = 100; toast(t('savedToDevice', { name: d.title }), 'info', 4000); waiting.get(d.id)?.fail(e as Error); }
     else { if (d.state === 'running') { d.state = 'failed'; d.error = String((e as Error)?.message ?? e); } waiting.get(d.id)?.fail(e as Error); }
-  } finally { waiting.delete(d.id); cancels.delete(d.id); persist(); changed(); }
+  } finally { clearBusy(`dl:${d.id}`); waiting.delete(d.id); cancels.delete(d.id); persist(); changed(); }
 }
 
 /* ---------- the bytes ---------- */
@@ -143,7 +158,13 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
           const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 8 });
           const file = await readContentUri(path, d.name, d.mime ?? '');
           void k.deleteDownload?.({ path }).catch(() => undefined);
-          return file;
+          // (Looked at before it is kept: a page in the file's place, or a file cut short, is fetched again the
+          // browser's way — which passes a site's check — instead of going into the library broken.)
+          const bad = await fileFault(file, d.name, d.size);
+          if (!bad) return file;
+          if (d.state !== 'running') throw new Error('cancelled');
+          const { viaBrowser } = await import('./sources/http');
+          if (bad === 'page' && viaBrowser(host)) laneOnly.add(host);
         } catch (e) {
           if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e;
           const { viaBrowser } = await import('./sources/http');
@@ -152,7 +173,7 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
       }
       const { fetchBytes: lane } = await import('./sources/http');
       const bytes = await lane(d.url, onProgress, { headers: d.headers, downloadId: d.id });
-      return new File([bytes.buffer as ArrayBuffer], d.name, { type: d.mime ?? '' });
+      return checked(new File([bytes.buffer as ArrayBuffer], d.name, { type: d.mime ?? '' }), d);
     } finally { sub?.remove(); }
   }
   const dk = window.kurokawaDesktop as unknown as DesktopDl | undefined;
@@ -162,8 +183,9 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
       const path = await dk.download(d.url, `${d.id}-${safe}`, d.id);
       const file = new File([await dk.readFile(path)], d.name, { type: d.mime ?? '' });
       void dk.deleteDownload?.(path).catch(() => false);
-      return file;
-    } finally { off?.(); }
+      if (!(await fileFault(file, d.name, d.size))) return file;
+    } catch (e) { if (d.state !== 'running' || (e as Error)?.message === 'cancelled') throw e; }
+    finally { off?.(); }
   }
   if (plat === 'ios') {
     const k = (window as unknown as { Capacitor: { Plugins: { Kurokawa: AndroidDl } } }).Capacitor.Plugins.Kurokawa;
@@ -174,7 +196,7 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
         const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 1 });
         const file = await readContentUri(path, d.name, d.mime ?? '');
         void k.deleteDownload?.({ path }).catch(() => undefined);
-        return file;
+        if (!(await fileFault(file, d.name, d.size))) return file;
       } catch (e) { if (d.state !== 'running' || !/HTTP (403|503|429|401)|Download failed/.test(String((e as Error)?.message ?? e))) throw e; }
       finally { sub?.remove(); }
     }
@@ -182,7 +204,14 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
   // Elsewhere (the web, or a site the downloader cannot pass): the sources' own request, in one piece.
   const { fetchBytes: plain } = await import('./sources/http');
   const bytes = await plain(d.url, onProgress, { headers: d.headers });
-  return new File([bytes.buffer as ArrayBuffer], d.name, { type: d.mime ?? '' });
+  return checked(new File([bytes.buffer as ArrayBuffer], d.name, { type: d.mime ?? '' }), d);
+}
+
+/** The file as it came, or the reason it cannot be kept. */
+async function checked(file: File, d: Download): Promise<File> {
+  const bad = await fileFault(file, d.name, d.size);
+  if (bad) throw new Error(t(bad === 'page' ? 'downloadGotPage' : 'downloadCut'));
+  return file;
 }
 
 /* ---------- taken up again ---------- */

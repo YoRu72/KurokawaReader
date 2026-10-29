@@ -120,6 +120,8 @@ export interface Source {
   tagsFor?(b: SourceBook): Promise<Pick<SourceBook, 'genres' | 'tagList'> | null>;
   /** How many series are still waiting for their tags (a shelf filtered by tag may still grow). */
   tagsWaiting?(): number;
+  /** A series' synopsis from elsewhere (AniList, for a web folder of light novels), when its site gives none. */
+  synopsisFor?(b: SourceBook): Promise<string | null>;
   /** How many new volumes a series has now (a page come back to shows what was seen meanwhile). */
   freshNow?(shelf: string): number | undefined;
 }

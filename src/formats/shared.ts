@@ -35,8 +35,15 @@ export function zipFile(zip: JSZip, path: string): JSZip.JSZipObject | null {
   return null;
 }
 
+/** The element the reader scrolls in: pictures are read from the book two screens before they come into it
+ *  (watched against the window instead, the margin is cut off by the scrolling element and a picture was read
+ *  only once on the screen — an empty space, then the picture). Set by the reader before a book renders. */
+let lazyRoot: Element | null = null;
+export function setLazyRoot(el: Element | null): void { lazyRoot = el; }
+
 export class UrlPool {
   private urls = new Map<string, string>();
+  private root = lazyRoot;
   async fromZip(zip: JSZip, path: string): Promise<string | null> {
     if (this.urls.has(path)) return this.urls.get(path)!;
     const f = zipFile(zip, path);
@@ -65,7 +72,7 @@ export class UrlPool {
   private pending = new Map<Element, { zip: JSZip; path: string; attr: string }>();
   private io: IntersectionObserver | null = null;
   private observer(): IntersectionObserver {
-    this.io ??= new IntersectionObserver((entries) => { for (const e of entries) if (e.isIntersecting) void this.resolveEl(e.target); }, { rootMargin: '200% 0px' });
+    this.io ??= new IntersectionObserver((entries) => { for (const e of entries) if (e.isIntersecting) void this.resolveEl(e.target); }, { root: this.root, rootMargin: '200% 0px' });
     return this.io;
   }
   private async resolveEl(el: Element): Promise<void> {

@@ -79,7 +79,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('shamela categories as shelves', (await page.$$('.src-shelves .chip')).length >= 3);
     // "All": the whole library, category after category.
     await page.waitForSelector('.src-grid .src-card', { timeout: 15000 }); await page.waitForTimeout(300);
-    ok('the All shelf shows the books of every category', (await page.$$('.src-grid .src-card')).length >= 4 && (await page.$eval('.src-shelves .chip', (e) => e.classList.contains('on'))));
+    ok('the All shelf shows the books of every category, each once', await page.$$eval('.src-grid .src-card', (e) => e.length >= 2 && new Set(e.map((x) => x.querySelector('.src-title')?.textContent)).size === e.length) && (await page.$eval('.src-shelves .chip', (e) => e.classList.contains('on'))));
     await page.click('.src-shelves .chip >> nth=1'); await page.waitForFunction(() => document.querySelectorAll('.src-grid .src-card').length === 2 && document.querySelectorAll('.src-shelves .chip')[1].classList.contains('on'), null, { timeout: 15000 });
     ok('a category lists its books', (await page.$$('.src-grid .src-card')).length === 2);
     await page.screenshot({ path: path.join(__dirname, 'shamela.png') });
@@ -154,7 +154,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
     ok('shelf → book → reader → back: the book', (await page.evaluate(() => location.hash)) === bookHash && !!(await page.$('.src-files .btn.primary')));
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
-    ok('… → back: the shelf, as it was', (await page.evaluate(() => location.hash)) === '#/sources/shamela' && (await page.$$('.src-grid .src-card')).length >= 4);
+    ok('… → back: the shelf, as it was', (await page.evaluate(() => location.hash)) === '#/sources/shamela' && (await page.$$('.src-grid .src-card')).length >= 2);
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
     ok('… → back: the hub', (await page.evaluate(() => location.hash)) === '#/sources' && !!(await page.$('.sources-hub')));
     // The same for a book of the library (the EPUB fetched above opens on its page): library → page → reader → back → page → back → library.
@@ -277,6 +277,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
       alAsked++;
       const { variables } = JSON.parse(req.postData() || '{}'); const data = {};
+      // (A series' synopsis, asked by its AniList id.)
+      if (variables && typeof variables.id === 'number') return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { Media: { description: `The story of series ${variables.id}.<br><br>It goes on &amp; on.` } } }) });
       for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, countryOfOrigin: /^B/.test(q) ? 'KR' : 'JP', tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90, category: 'Theme-Fantasy' }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true, category: 'Theme-Drama' }] }] };
       return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data }) });
     });
@@ -400,6 +402,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.series-head .tags-more'); await page.waitForTimeout(200);
     const groups = await page.$$eval('.series-head .tag-group h4', (es) => es.map((e) => e.textContent));
     ok('… every tag on a tap, in its kind; the spoilers behind their own button', groups.join() === 'Themes' && !!(await page.$('.series-head .spoilers[hidden]')));
+    await page.waitForFunction(() => /The story of series/.test(document.querySelector('.series-about')?.textContent || ''), null, { timeout: 10000 }).catch(() => undefined);
+    ok('the series\' synopsis from AniList, its breaks and marks as text', await page.$eval('.series-about', (e) => /^The story of series \d+\.\n\nIt goes on & on\.$/.test(e.textContent || '') && !e.hidden).catch(() => false));
     await page.click('.series-head .tag-group .genre:has-text("School")'); await page.waitForTimeout(1200);
     const bySchool = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
     ok('… a tag tapped: the shelf filtered by it — the series tagged so, not the others', bySchool.length > 5 && !bySchool.some((x) => /^B/.test(x)));

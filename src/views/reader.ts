@@ -16,7 +16,7 @@ import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, ty
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch, searchFormOf } from '../formats/types';
-import { BLOCK_SELECTOR } from '../formats/shared';
+import { BLOCK_SELECTOR, setLazyRoot } from '../formats/shared';
 import { PdfViewer, type CropBox, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
@@ -102,6 +102,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   queueMicrotask(syncComfort);
   const flow = h('div', { class: 'reader-flow' });
   const scroll = h('div', { class: 'reader-scroll', tabindex: '0' }, flow);
+  // (Pictures read ahead within this scroll, not the window — see setLazyRoot.)
+  setLazyRoot(scroll); onDispose(() => setLazyRoot(null));
   const footerBar = h('i');
   const footerWhere = h('span', { class: 'where' });
   const footerPct = h('span', { class: 'pct' });
@@ -175,8 +177,16 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => translator.dispose());
   const settings = getSettings();
   let allImages: ImageRef[] = [];
+  // (Caches the position helpers use — declared before the first book renders: a place saved or restored while
+  // the book is still opening uses them.)
+  const blockIdx = new WeakMap<OpenDoc, WeakMap<Element, number>>();
+  const anchorsOf = new Map<OpenDoc, Element[]>();
   let saveTimer: number | undefined;
   let userScrolled = false;
+  // (The place asked for when the book was opened — a chapter tapped on a novel's page, a bookmark, a note: the
+  // later passes of restore — fonts and pictures settling — go back to it, not to the place read last. Declared
+  // here, before the first restore, which runs while the rest of this function waits on the book.)
+  let asked: (() => void) | null = null;
 
   for (let i = 0; i < books.length; i++) {
     const book = books[i];
@@ -222,6 +232,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       { const el = doc.render.element; const id = doc.book.id; if (textRules().length) applyTextRules(el, id); el.addEventListener('kr-content-changed', () => { if (textRules().length) applyTextRules(el, id); }); }
       if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(doc.render.element);
       doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+      // (Chapters that come after the book opened — a novel's, fetched as read — are blocks of it too: read aloud,
+      // counted, found, their place kept; laid out as the rest.)
+      { const d = doc; const el = doc.render.element; el.addEventListener('kr-content-changed', (ev) => {
+        if (d.render?.element !== el) return;
+        if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(((ev as CustomEvent<{ el?: Element }>).detail?.el) ?? el);
+        d.allBlocks = [...el.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+        d.blocks = chapterMode() && d.chapters.length > 1 ? d.allBlocks.filter((b) => d.chapters[d.chapter]?.contains(b)) : d.allBlocks;
+        allImages = docs.flatMap((x) => x.render?.images ?? []);
+      }); }
       const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img'));
       doc.chapters = sections.length > 1 ? sections : [doc.render.element];
       doc.chapter = 0;
@@ -240,7 +259,30 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       performance.measure('kr:dom', { start: t2 });
     } catch (err) {
       console.error(err);
-      doc.wrapper.append(h('p', { class: 'kr-content' }, t('openError', { error: String((err as Error)?.message ?? err) })));
+      const msg = String((err as Error)?.message ?? err);
+      // (A file that came broken — its zip with no end, cut short — fetched again from where it came, into
+      // this same book: its place and notes kept.)
+      const broken = /central directory|corrupted zip|end of data|invalid (zip|signature)|is this a zip/i.test(msg);
+      const { canRefetch } = await import('../sources/refetch');
+      if (broken) {
+        const box = h('div', { class: 'kr-content broken-file' }, h('p', null, t('fileBroken')));
+        if (canRefetch(doc.book)) {
+          const btn = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('downloadAgain')) as HTMLButtonElement;
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+              const { refetchBook } = await import('../sources/refetch');
+              await refetchBook(doc.book, (pct) => { btn.replaceChildren(icon('download'), `${t('downloadAgain')} · ${localDigits(pct)}%`); });
+              toast(t('downloadedAgain', { title: doc.book.title }), 'info', 4000);
+              const fresh = await db.getBook(doc.book.id); if (fresh) doc.book = fresh;
+              box.remove(); await renderDoc(doc);
+              if (doc === docs[0]) restore();
+            } catch (e) { btn.disabled = false; btn.replaceChildren(icon('download'), t('downloadAgain')); toast(String((e as Error)?.message ?? e), 'error', 5000); }
+          });
+          box.append(btn);
+        }
+        doc.wrapper.append(box);
+      } else doc.wrapper.append(h('p', { class: 'kr-content' }, t('openError', { error: msg })));
     }
   }
 
@@ -288,7 +330,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     onDispose(() => furi?.());
   }
   // Fade pictures in as they decode rather than letting them pop.
-  flow.querySelectorAll('img').forEach((img) => { if (img.complete && img.naturalWidth) return; img.decoding = 'async'; img.classList.add('kr-img-pending'); const done = () => img.classList.remove('kr-img-pending'); img.addEventListener('load', done, { once: true }); img.addEventListener('error', done, { once: true }); });
+  flow.querySelectorAll('img').forEach((img) => { if (img.complete && img.naturalWidth) return; img.decoding = 'async'; img.classList.add('kr-img-pending'); const done = () => img.classList.remove('kr-img-pending'); img.addEventListener('load', done, { once: true }); img.addEventListener('error', () => { if (img.getAttribute('src')) { img.classList.remove('kr-img-pending'); img.classList.add('kr-img-failed'); } }); });
   books.forEach((b) => void touchBook(b.id));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
@@ -547,21 +589,24 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function restore(): void {
     const first = docs[0];
     if (!first) return;
+    if (asked) { asked(); return; }
     const jump = takeJump();
     if (jump) {
       const doc = docs.find((d) => d.book.id === jump.bookId) ?? first;
-      if (jump.kind === 'bm') { const bm = doc.book.bookmarks.find((x) => x.id === jump.id); if (bm) { scrollToLocator(bm.locator); return; } }
-      if (jump.kind === 'toc') { const i = Number(jump.id); const item = doc.render?.toc?.[i]; if (item) { setTimeout(() => scrollToAnchor(item.anchor, false), 30); return; } }
-      if (jump.kind === 'anchor') { setTimeout(() => scrollToAnchor(jump.id, false), 30); return; }
-      if (jump.kind === 'hl') { setTimeout(() => { const m = doc.wrapper.querySelector(`mark[data-hl="${jump.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${jump.id}`; scrollToAnchor(m.id); } }, 50); return; }
+      if (jump.kind === 'bm') { const bm = doc.book.bookmarks.find((x) => x.id === jump.id); if (bm) { asked = () => scrollToLocator(bm.locator); asked(); return; } }
+      if (jump.kind === 'toc') { const i = Number(jump.id); const item = doc.render?.toc?.[i]; if (item) { asked = () => scrollToAnchor(item.anchor, false); setTimeout(asked, 30); return; } }
+      // (A place that is not in the book — a chapter it does not have — leaves the reading where it was.)
+      if (jump.kind === 'anchor' && document.getElementById(jump.id)) { asked = () => scrollToAnchor(jump.id, false); setTimeout(asked, 30); return; }
+      if (jump.kind === 'hl') { asked = () => { const m = doc.wrapper.querySelector(`mark[data-hl="${jump.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${jump.id}`; scrollToAnchor(m.id, false); } }; setTimeout(asked, 50); return; }
     }
     const p = first.book.progress;
     if (p && p.bookId === first.book.id) scrollToLocator(p);
+    // (Opened for its pictures — a novel's, from its page in the sources.)
+    try { if (sessionStorage.getItem('kr.openGallery') === first.book.id) { sessionStorage.removeItem('kr.openGallery'); setTimeout(() => showGallery(), 400); } } catch { /* private mode */ }
   }
 
   /** Which contents entry a block falls under (the last one that starts at or before it). A binary search
    *  over the contents, so a book with thousands of entries costs a dozen comparisons a scroll, not thousands. */
-  const anchorsOf = new Map<OpenDoc, Element[]>();
   function tocAnchor(doc: OpenDoc, i: number): Element | null {
     let arr = anchorsOf.get(doc); if (!arr) { arr = []; anchorsOf.set(doc, arr); }
     // (A missing one is looked for again: its chapter may not be on the page yet.)
@@ -587,7 +632,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     return (i >= 0 ? doc.render?.toc?.[i]?.label : '') || doc.book.title;
   }
   /** A block's place in the whole book (looked up, not searched for: a hit list has hundreds). */
-  const blockIdx = new WeakMap<OpenDoc, WeakMap<Element, number>>();
   function blockIndexOf(doc: OpenDoc, block: Element): number {
     let m = blockIdx.get(doc);
     if (!m || m.get(doc.allBlocks[doc.allBlocks.length - 1]) === undefined) { m = new WeakMap(); doc.allBlocks.forEach((b, i) => m!.set(b, i)); blockIdx.set(doc, m); }
@@ -780,7 +824,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const a = (e.target as HTMLElement).closest('a[data-kr-anchor]') as HTMLElement | null;
     if (a) { e.preventDefault(); back.remember(); scrollToAnchor(a.dataset.krAnchor!); return; }
     const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
-    if (img && allImages.length) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { showGallery(idx); return; } }
+    if (img && allImages.length && getSettings().pictureZoom) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { showGallery(idx); return; } }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
     // Tap zones on touch screens (nine of them, each given its action in the options; by default the lower
@@ -1162,6 +1206,29 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         const hits = await searchFlow(q, show, () => id === runId);
         if (id !== runId) return;
         count.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
+        noteMissing();
+      };
+      // (A novel from an extension searches the chapters on the device: those still on the site are said, and
+      // fetched on a tap — then the search runs again over the whole book.)
+      const missingNote = h('div', { class: 'search-missing', hidden: true });
+      body.insertBefore(missingNote, list);
+      const noteMissing = () => {
+        const nv = docs.find((d) => d.book.format === 'webnovel' && d.render?.element.querySelector('.kr-chap.pending'));
+        if (!nv) { missingNote.hidden = true; return; }
+        const left = nv.render!.element.querySelectorAll('.kr-chap.pending').length;
+        const go = h('button', { type: 'button', class: 'btn tonal small' }, icon('download'), t('searchFetchRest')) as HTMLButtonElement;
+        go.addEventListener('click', async () => {
+          go.disabled = true;
+          try {
+            const { downloadNovel } = await import('../sources/ext/source');
+            await downloadNovel(nv.book, (d, tot) => { go.replaceChildren(icon('download'), `${localDigits(d)} / ${localDigits(tot)}`); }, () => reader.isConnected);
+          } catch (e) { toast(String((e as Error)?.message ?? e), 'error'); }
+          const fresh = await db.getBook(nv.book.id); if (fresh) nv.book = fresh;
+          root.dispatchEvent(new Event('kr-rerender'));
+          setTimeout(() => void run(), 600);
+        });
+        missingNote.replaceChildren(h('span', { class: 'src' }, t('searchChaptersLeft', { n: localDigits(left) })), go);
+        missingNote.hidden = false;
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 200); });
       if (initial) void run();
@@ -1193,7 +1260,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /* ---------- gallery ---------- */
   function showGallery(startAt?: number): void {
     // Tapping a picture in the text opens just that picture; the grid is for the toolbar button.
-    const close = openGallery(allImages, (anchor) => scrollToAnchor(anchor), { startAt, lightboxOnly: startAt !== undefined });
+    // (A novel from an extension: the pictures of the chapters on the device — the rest found by fetching them.)
+    const nv = startAt === undefined ? docs.find((d) => d.book.format === 'webnovel' && d.render?.element.querySelector('.kr-chap.pending')) : undefined;
+    const left = nv ? nv.render!.element.querySelectorAll('.kr-chap.pending').length : 0;
+    const note = nv ? { text: t('galleryChaptersLeft', { n: localDigits(left) }), action: { label: t('galleryFetchRest'), run: async (say: (text: string) => void) => {
+      const { downloadNovel } = await import('../sources/ext/source');
+      await downloadNovel(nv.book, (d, tot) => say(t('fetchingChapters', { n: localDigits(d), total: localDigits(tot) })), () => reader.isConnected);
+      const fresh = await db.getBook(nv.book.id); if (fresh) nv.book = fresh;
+      close();
+      root.dispatchEvent(new Event('kr-rerender'));
+      setTimeout(() => showGallery(), 900);
+    } } } : undefined;
+    const close = openGallery(allImages, (anchor) => scrollToAnchor(anchor), { startAt, lightboxOnly: startAt !== undefined, note });
     onDispose(close);
   }
 

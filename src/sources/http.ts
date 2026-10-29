@@ -256,6 +256,9 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
     const b = browser();
     let inBrowser = !!b?.fetch && viaBrowser(host);
     let browserBroke = false; let browserTried = false;
+    // (Asked the plain way once before the site is said to refuse the app: LNReader asks so, and many sites that
+    // turn the app's browser away answer it.)
+    let plainTried = !inBrowser;
     const retries = init.retries ?? 2;
     for (;;) {
       try {
@@ -277,7 +280,7 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
       if (browserTried && inBrowser && !viaBrowser(host) && !looksLikeChallenge(r, !!init.binary)) useBrowserFor(host);
       const lanesSays = (r.headers['x-kr-lane'] ?? '').toLowerCase();
       // A site that refuses even a browser: nothing to pass — said as such, with what its page says.
-      if (lanesSays === 'blocked') throw new SourceError('blocked', 'blocked', r.status, titleOf(r, !!init.binary));
+      if (lanesSays === 'blocked') { if (inBrowser && !plainTried) { plainTried = true; inBrowser = false; browserBroke = true; continue; } throw new SourceError('blocked', 'blocked', r.status, titleOf(r, !!init.binary)); }
       if (inBrowser ? looksLikeChallenge(r, !!init.binary) : refusesApps(r, !!init.binary)) {
         // Turned away: the site is reached through the app's browser from now on.
         if (!inBrowser && !browserBroke && b?.fetch) { useBrowserFor(host); inBrowser = true; continue; }
@@ -286,8 +289,9 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
           passed = true;
           if (await solveChallenge(url, init.quiet, lanesSays === 'challenge')) continue;
           const no = refused.get(host);
-          if (no !== undefined) throw new SourceError('blocked', 'blocked', r.status, no);
+          if (no !== undefined) { if (!plainTried) { plainTried = true; inBrowser = false; browserBroke = true; continue; } throw new SourceError('blocked', 'blocked', r.status, no); }
         }
+        { const no = refused.get(host); if (no !== undefined && plainTried) throw new SourceError('blocked', 'blocked', r.status, no); }
         throw new SourceError('cloudflare', 'cloudflare', r.status, titleOf(r, !!init.binary));
       }
       if ((r.status === 429 || (r.status === 503 && r.headers['retry-after'])) && tries < retries) { tries++; await sleep(retryAfter(r, tries)); continue; }
