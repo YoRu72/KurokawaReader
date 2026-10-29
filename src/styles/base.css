@@ -1858,3 +1858,13 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .rule-row > input { width: 18px; height: 18px; flex: none; accent-color: var(--md-primary); }
 .rule-body { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; background: none; border: 0; padding: 4px 0; color: inherit; font: inherit; text-align: start; cursor: pointer; }
 .rule-find-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+/* A series' tags on their way from AniList. */
+.tags-wait { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.tags-wait-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--md-primary); animation: tags-pulse 1s ease-in-out infinite alternate; }
+@keyframes tags-pulse { from { opacity: .25; } to { opacity: 1; } }
+/* The genres and tags a shelf is filtered by, over it: a tap takes one off. */
+.picked-tags { margin: 4px 0 8px; }
+.src-chip.picked { display: inline-flex; align-items: center; gap: 4px; background: var(--md-secondary-container); }
+.src-chip.picked svg { width: 14px; height: 14px; }
+.src-chip.picked.excluded { text-decoration: line-through; opacity: .85; }
+.tags-waiting { margin: 0 0 8px; }

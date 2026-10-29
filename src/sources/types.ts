@@ -116,6 +116,10 @@ export interface Source {
   /** The same two when already known in this session, at once. */
   peekNow?(b: SourceBook): SourcePeek | undefined;
   folderCoverNow?(shelf: string): SourcePeek | undefined;
+  /** A series' genres and tags when its page does not have them yet (asked of AniList first in line). */
+  tagsFor?(b: SourceBook): Promise<Pick<SourceBook, 'genres' | 'tagList'> | null>;
+  /** How many series are still waiting for their tags (a shelf filtered by tag may still grow). */
+  tagsWaiting?(): number;
   /** How many new volumes a series has now (a page come back to shows what was seen meanwhile). */
   freshNow?(shelf: string): number | undefined;
 }

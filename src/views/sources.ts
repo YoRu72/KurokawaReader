@@ -684,11 +684,24 @@ const autoTried = new Set<string>();
 const seriesRuns = new Map<string, { text: string; on?: (text: string) => void; done?: () => void }>();
 /** A series' genres, then its tags in their kinds (themes, cast, setting…), the best fitting first with how well
  *  they fit; the first few shown, all on a tap; the tags that give the story away only when asked. */
+/** A series' tags not known yet: asked for (first in AniList's line), and put in place when they come. */
+function tagsLater(src: Source, b: SourceBook): HTMLElement | null {
+  if (!src.tagsFor) return null;
+  const slot = h('div', { class: 'tags-block tags-wait' }, h('span', { class: 'tags-wait-dot' }), h('small', { class: 'src' }, t('tagsLoading')));
+  void src.tagsFor(b).then((tg) => { if (tg && (tg.genres?.length || tg.tagList?.length)) slot.replaceWith(tagsBlock(src, { ...b, ...tg })); else slot.remove(); }).catch(() => slot.remove());
+  return slot;
+}
 function tagsBlock(src: Source, b: SourceBook): HTMLElement {
-  const go = (q: string) => navigate(path(src.id, { q }));
-  const chip = (name: string, extra = '') => h('button', { type: 'button', class: 'src-chip genre', onclick: () => go(name) }, name, extra ? h('small', null, extra) : '');
+  // (A tap shows the shelf of the series with that genre or tag — by the filter, every one of them, not a
+  // search for the word in names; a source without such filters searches for it.)
+  const go = (name: string, kind: 'genre' | 'tag') => {
+    if (!src.filters().some((f) => f.id === kind)) { navigate(path(src.id, { q: name })); return; }
+    saveFilters(src, { ...filterValues(src), genre: kind === 'genre' ? [name] : [], tag: kind === 'tag' ? [name] : [], type: [], match: 'and' });
+    navigate(`${path(src.id)}?v=${Date.now().toString(36)}`);
+  };
+  const chip = (name: string, extra = '', kind: 'genre' | 'tag' = 'tag') => h('button', { type: 'button', class: 'src-chip genre', onclick: () => go(name, kind) }, name, extra ? h('small', null, extra) : '');
   const box = h('div', { class: 'tags-block' });
-  if (b.genres?.length) box.append(h('div', { class: 'src-chips genre-chips' }, ...b.genres.map((g) => chip(g))));
+  if (b.genres?.length) box.append(h('div', { class: 'src-chips genre-chips' }, ...b.genres.map((g) => chip(g, '', 'genre'))));
   const tags = (b.tagList ?? []).filter((x) => !x.spoiler);
   const spoilers = (b.tagList ?? []).filter((x) => x.spoiler);
   if (!tags.length && !spoilers.length) return box;
@@ -783,7 +796,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
       // (Its genres and every tag, arranged: a tap searches the shelf for the others like it.)
-      b.genres?.length || b.tagList?.length ? tagsBlock(src, b) : null,
+      b.genres?.length || b.tagList?.length ? tagsBlock(src, b) : tagsLater(src, b),
       h('div', { class: 'series-actions' }, next, btn, seriesRefButton(src.id, location.hash.replace(/^#/, ''), b.title, () => b.author || byline.textContent || undefined, () => cover.querySelector('img')), trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
@@ -873,7 +886,34 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     if (loading) stale = true; else redraw();
   };
   window.addEventListener('kr:shelf-changed', changed);
-  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); nowIo.disconnect(); window.removeEventListener('kr:covers-retry', retryCovers); clearInterval(retryTimer); window.removeEventListener('kr:shelf-changed', changed); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
+  // (A shelf that depends on tags — filtered by genre, tag or country, sorted by score, or searched — grows as
+  // AniList answers for more of its series: drawn again, at most every few seconds.)
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
+  const byTags = () => !!q || arr(filters.genre).length > 0 || arr(filters.tag).length > 0 || arr(filters.type).length > 0 || String(filters.sort).startsWith('score');
+  let tagTimer = 0; let tagAt = 0;
+  const tagsChanged = (ev: Event) => {
+    const d = (ev as CustomEvent<{ source: string }>).detail;
+    if (gone || d.source !== src.id || !byTags() || (shelf && !shelf.startsWith('::'))) return;
+    clearTimeout(tagTimer);
+    tagTimer = window.setTimeout(() => { tagAt = Date.now(); if (loading) stale = true; else redraw(); showWaiting(); }, Math.max(0, 4000 - (Date.now() - tagAt)));
+  };
+  window.addEventListener('kr:tags-changed', tagsChanged);
+  // (The genres and tags picked, as chips over the shelf: each a tap away from being taken off.)
+  const pickRow = h('div', { class: 'src-chips picked-tags', hidden: true });
+  body.insertBefore(pickRow, status);
+  const drawPicked = () => {
+    const picked = [...arr(filters.genre).map((g) => ['genre', g] as const), ...arr(filters.tag).map((g) => ['tag', g] as const)];
+    pickRow.hidden = !picked.length;
+    pickRow.replaceChildren(...picked.map(([k, v]) => h('button', { type: 'button', class: 'src-chip picked' + (v.startsWith('!') ? ' excluded' : ''), title: t('filterRemove'), onclick: () => {
+      const next = { ...filters, [k]: arr(filters[k]).filter((x) => x !== v) }; filters = next; saveFilters(src, next);
+      navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true);
+    } }, v.startsWith('!') ? `${t('filterNot')} ${v.slice(1)}` : v, icon('close'))));
+  };
+  const waitNote = h('p', { class: 'hint tags-waiting', hidden: true });
+  body.insertBefore(waitNote, status);
+  const showWaiting = () => { const n = src.tagsWaiting?.() ?? 0; waitNote.hidden = !(n > 0 && byTags() && !q); if (!waitNote.hidden) waitNote.textContent = t('tagsStillComing', { n: localDigits(n) }); };
+  if (src.tagsWaiting) { drawPicked(); showWaiting(); }
+  root.dispose = () => { gone = true; io.disconnect(); lazyIo.disconnect(); nowIo.disconnect(); window.removeEventListener('kr:covers-retry', retryCovers); clearInterval(retryTimer); window.removeEventListener('kr:shelf-changed', changed); window.removeEventListener('kr:tags-changed', tagsChanged); clearTimeout(tagTimer); const c = cache.get(key); if (c) c.scroll = body.scrollTop; };
   // (A web folder's own address, for "Open this folder on the site".)
   const here = src.id.startsWith('dir:') && /^https?:\/\//i.test(src.site ?? '') ? `${src.site.replace(/\/?$/, '/')}${shelf && !shelf.startsWith('::') ? `${shelf.replace(/^\/+|\/+$/g, '')}/` : ''}` : undefined;
 
