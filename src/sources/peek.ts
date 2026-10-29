@@ -10,7 +10,8 @@ import { request, bytesOf, bytesOfAsync } from './http';
 import { db } from '../db';
 import { SourceError } from './types';
 
-export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean; /** a folder's: the file whose cover it shows */ ref?: string; /** a file that could not be read (for a minute) */ failed?: boolean }
+export interface Peek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; at: number; count?: number; description?: string; publisher?: string; noCover?: boolean; /** a folder's: the file whose cover it shows */ ref?: string; /** a file that could not be read (for a minute) */ failed?: boolean; /** the file (or picture) its cover was made from: the cover at full size is read from it when looked at */ src?: CoverSrc }
+export interface CoverSrc { url: string; ext: string; size?: number }
 /** A peek as kept on the device: its cover a picture of its own (a data URL in what older versions kept). */
 type Stored = Omit<Peek, 'cover'> & { cover?: string; coverBlob?: Blob };
 
@@ -295,7 +296,7 @@ async function peekEpub(url: string, noCover = false): Promise<Read> {
 }
 
 /* ---------- a PDF ---------- */
-async function peekPdf(url: string, size?: number): Promise<Read> {
+async function peekPdf(url: string, size?: number, height = THUMB_H, coverOnly = false): Promise<Read> {
   const head = await range(url, 0, 65535);
   const { loadPdfjs, offscreen } = await import('../formats/pdf');
   const pdfjs = await loadPdfjs();
@@ -319,13 +320,14 @@ async function peekPdf(url: string, size?: number): Promise<Read> {
     for (let n = 1; n <= Math.min(2, doc.numPages) && !cover; n++) {
       const page = await doc.getPage(n);
       const vp = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: Math.min(2, THUMB_H / vp.height) });
+      const viewport = page.getViewport({ scale: Math.min(height > THUMB_H ? 4 : 2, height / vp.height) });
       const canvas = offscreen(document.createElement('canvas')); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
       const ctx = canvas.getContext('2d')!;
       await page.render({ canvas, canvasContext: ctx, viewport }).promise;
       if (n < Math.min(2, doc.numPages) && blank(ctx, canvas.width, canvas.height)) continue;
-      cover = (await toBlob(canvas)) ?? undefined;
+      cover = (await toBlob(canvas, height > THUMB_H ? 0.92 : 0.78)) ?? undefined;
     }
+    if (coverOnly) return { cover, toc: [] };
     const toc: { label: string; depth: number }[] = [];
     const outline = await doc.getOutline().catch(() => null);
     const walk = (list: { title: string; items?: unknown[] }[] | null, depth: number) => { for (const o of list ?? []) { if (toc.length >= 400) return; const label = (o.title ?? '').replace(/\s+/g, ' ').trim(); if (label) toc.push({ label, depth }); walk((o.items ?? []) as { title: string; items?: unknown[] }[], depth + 1); } };
@@ -367,9 +369,9 @@ function pickCover(list: [string, number][]): string | undefined {
 // (Sharp on a phone's screen at the largest a cover is drawn — 140 points wide, at three pixels a point — and
 // a JPEG: written four times faster than a WebP, for a tenth more bytes.)
 const THUMB_H = 480;
-function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+function toBlob(canvas: HTMLCanvasElement, q = 0.78): Promise<Blob | null> {
   // (WebP where the browser writes it — a third smaller than a JPEG of the same look — else a JPEG.)
-  return new Promise((ok) => canvas.toBlob((b) => (b && b.type === 'image/webp' ? ok(b) : canvas.toBlob((j) => ok(j), 'image/jpeg', 0.8)), 'image/webp', 0.78));
+  return new Promise((ok) => canvas.toBlob((b) => (b && b.type === 'image/webp' ? ok(b) : canvas.toBlob((j) => ok(j), 'image/jpeg', Math.min(0.95, q + 0.02))), 'image/webp', q));
 }
 /** The worker that makes covers small (and inflates zip entries) off the main thread, when the platform has
  *  pictures in workers (OffscreenCanvas); the shelf keeps scrolling smoothly while covers are decoded. */
@@ -440,7 +442,7 @@ export async function thumbOf(url: string): Promise<string | undefined> {
   if (r.status >= 400) return undefined;
   const blob = await thumb(await bytesOfAsync(r), r.headers['content-type'] ?? 'image/jpeg').catch(() => null);
   if (!blob) return undefined;
-  return store(key, { at: Date.now() }, blob).cover;
+  return store(key, { at: Date.now(), src: { url, ext: 'img' } }, blob).cover;
 }
 
 /* ---------- kept: in memory for the session, on the device ---------- */
@@ -502,7 +504,7 @@ export async function recall(key: string, maxAge = Infinity): Promise<Peek | und
   let p = memGet(key);
   if (!p) { const s = await db.getMeta<Stored>(key).catch(() => undefined); if (s) { p = live(key, s); memSet(key, p); touch(key); } }
   if (!p || Date.now() - p.at > maxAge) return undefined;
-  if (p.ref && !p.cover) { const f = await recall(p.ref); if (f?.cover) return { ...p, cover: f.cover, description: p.description ?? f.description }; }
+  if (p.ref && !p.cover) { const f = await recall(p.ref); if (f?.cover) return { ...p, cover: f.cover, description: p.description ?? f.description, src: p.src ?? f.src }; }
   return p;
 }
 /** Keep `p` under `key`; a folder's that shows a file's cover (or a picture's) keeps only which (`ref`). A
@@ -515,7 +517,7 @@ export function remember(key: string, p: Peek): void {
 /** What is already known in this session, at once (a page drawn again shows it without waiting). */
 export const known = (key: string): Peek | undefined => {
   const p = memGet(key); if (!p) return undefined;
-  if (p.ref && !p.cover) { const f = memGet(p.ref); return f?.cover ? { ...p, cover: f.cover, description: p.description ?? f.description } : undefined; }
+  if (p.ref && !p.cover) { const f = memGet(p.ref); return f?.cover ? { ...p, cover: f.cover, description: p.description ?? f.description, src: p.src ?? f.src } : undefined; }
   return p;
 };
 const fileKey = (url: string, size?: number) => `peek:${h32(`${url}|${size ?? ''}`)}`;
@@ -543,7 +545,7 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
       if (!got) return null;
       const { cover, ...rest } = got;
       logPeek(`ok ${ext} cover=${cover ? 'y' : 'n'} toc=${rest.toc?.length ?? 0} desc=${rest.description?.length ?? 0} title=${rest.title ? 'y' : 'n'} · ${url.split('/').pop()?.slice(0, 60)}`);
-      return store(key, { ...rest, at: Date.now(), noCover: opts.noCover || undefined }, cover);
+      return store(key, { ...rest, at: Date.now(), noCover: opts.noCover || undefined, src: { url, ext, size } }, cover);
     } catch (e) {
       const err = e as SourceError;
       logPeek(`fail ${err.kind ?? ''} ${err.status ?? ''} ${err.message?.slice(0, 80)} · ${url.split('/').pop()?.slice(0, 60)}`);
@@ -555,6 +557,50 @@ export function peekFile(url: string, ext: string, size?: number, opts: { noCove
   running.set(key, p); void p.finally(() => running.delete(key));
   return p;
 }
+
+/* ---------- a cover at full size (Mihon's cover view: the shelf shows the small one) ---------- */
+/** The file (or picture) a cover shown in this session was made from, by the cover's address. */
+export function coverSource(coverUrl: string): CoverSrc | undefined {
+  for (const p of mem.values()) if (p.cover === coverUrl && p.src) return p.src;
+  return undefined;
+}
+/** A cover at the size it has in its file: an EPUB's cover picture as it is (however big — it is asked for by
+ *  the reader), a PDF's first page drawn sharp, a picture as the server has it. */
+export async function fullCover(src: CoverSrc, headers?: Record<string, string>): Promise<Blob | null> {
+  if (headers) extra.set(hostOf(src.url), headers);
+  if (src.ext === 'img') {
+    const r = await request(src.url, { binary: true, quiet: true, retries: 1, headers: extra.get(hostOf(src.url)) });
+    if (r.status >= 400) return null;
+    const b = await bytesOfAsync(r); return new Blob([b.slice().buffer as ArrayBuffer], { type: r.headers['content-type'] ?? sniff(b) });
+  }
+  if (src.ext === 'pdf') return (await peekPdf(src.url, src.size, 1800, true)).cover ?? null;
+  if (src.ext !== 'epub') return null;
+  const z = new RemoteZip(src.url);
+  await z.open();
+  const names = [...z.entries.keys()];
+  const first = await z.read(['META-INF/container.xml']);
+  const container = first.get('META-INF/container.xml');
+  let opfPath = container ? byTag(xml(container), 'rootfile')[0]?.getAttribute('full-path') ?? '' : '';
+  if (!opfPath || !z.entries.has(opfPath)) opfPath = names.find((n) => /\.opf$/i.test(n)) ?? '';
+  let coverPath = ''; let type = '';
+  if (opfPath) {
+    const opfBytes = (await z.read([opfPath])).get(opfPath);
+    if (opfBytes) {
+      const opf = xml(opfBytes); const dir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+      const items = byTag(opf, 'item').map((i) => ({ id: i.getAttribute('id') ?? '', href: i.getAttribute('href') ?? '', type: i.getAttribute('media-type') ?? '', props: i.getAttribute('properties') ?? '' }));
+      const isImg = (t: string) => /^image\//i.test(t);
+      const coverId = byTag(opf, 'meta').find((m) => m.getAttribute('name') === 'cover')?.getAttribute('content');
+      const c = items.find((i) => /(^|\s)cover-image(\s|$)/.test(i.props)) ?? items.find((i) => i.id === coverId && isImg(i.type)) ?? items.find((i) => isImg(i.type) && /cover/i.test(`${i.id} ${i.href}`));
+      if (c) { coverPath = resolve(dir, c.href); type = c.type; }
+    }
+  }
+  // (None named: the biggest picture called the cover — the full one, not its thumbnail.)
+  if (!coverPath || !z.entries.has(coverPath)) coverPath = names.filter((n) => /\.(jpe?g|png|webp|gif)$/i.test(n) && /cover/i.test(n.split('/').pop() ?? '')).sort((a, b) => (z.entries.get(b)?.csize ?? 0) - (z.entries.get(a)?.csize ?? 0))[0] ?? '';
+  if (!coverPath) return null;
+  const bytes = (await z.read([coverPath])).get(coverPath);
+  return bytes ? new Blob([bytes.slice().buffer as ArrayBuffer], { type: type || sniff(bytes) }) : null;
+}
+const sniff = (b: Uint8Array) => (b[0] === 0x89 && b[1] === 0x50 ? 'image/png' : b[0] === 0x52 && b[8] === 0x57 ? 'image/webp' : b[0] === 0x47 ? 'image/gif' : 'image/jpeg');
 
 /* ---------- a queue for what is on the screen ---------- */
 type Job = { run: () => Promise<void>; started: boolean };

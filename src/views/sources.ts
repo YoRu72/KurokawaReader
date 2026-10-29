@@ -18,7 +18,7 @@ import * as link from '../sources/shamelalink';
 import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '../sources/http';
 import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
-import { schedule, peekLog } from '../sources/peek';
+import { schedule, peekLog, coverSource, fullCover } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
 import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, type UpdateReport } from '../sources/updates';
@@ -717,7 +717,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
   const runKey = `${src.id}|${b.id}`;
   const [c1, c2] = coverColors(b.title);
   const cover = h('div', { class: 'series-cover', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, icon('books'));
-  coverTap(cover, src, b.title);
+  coverTap(cover, src, b.title, undefined, [], () => files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf'));
   const status = h('small', { class: 'series-status', hidden: true });
   // (A volume is in the library when any of its editions is.)
   const has = (i: number) => (b.volumeIds?.[i] ?? [`f:${files[i].id}`]).some((id) => lib.has(id));
@@ -1023,14 +1023,23 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
 /** A cover that opens on its own when tapped (Mihon's cover view): whatever picture it holds then — given by the
  *  source, or read from the file later. For a title in the library (`ids`: the source's ids for it), a picture
  *  of one's own can take its place. */
-function coverTap(el: HTMLElement, src: Source, title: string, hnd?: Handle, ids: string[] = []): void {
+function coverTap(el: HTMLElement, src: Source, title: string, hnd?: Handle, ids: string[] = [], file?: () => SourceFile | undefined): void {
   el.addEventListener('click', (e) => {
     const img = el.querySelector('img'); if (!img) return;
     e.preventDefault(); e.stopPropagation();
-    openCover(img, src, title, hnd, ids);
+    openCover(img, src, title, hnd, ids, file?.());
   });
 }
-function openCover(img: HTMLImageElement, src: Source, title: string, hnd?: Handle, ids: string[] = []): void {
+/** Where a cover at full size comes from, for the one shown small: the file it was read from (an EPUB's own
+ *  picture, a PDF's first page), AniList's biggest, or — a site's — the same address. */
+function fullOf(url: string, file?: SourceFile): (() => Promise<Blob | null>) | undefined {
+  const origin = coverSource(url) ?? (file && /^(epub|pdf)$/.test(file.ext) ? { url: file.url, ext: file.ext, size: file.size } : undefined);
+  if (origin) return () => fullCover(origin);
+  // (AniList's covers: "large" on a shelf, "extraLarge" — its /cover/large/ address — to look at.)
+  if (/anilistcdn\/media\/.*\/cover\/medium\//.test(url)) { const big = url.replace('/cover/medium/', '/cover/large/'); return () => import('../ui/coverview').then((m) => m.coverBytes(big)); }
+  return undefined;
+}
+function openCover(img: HTMLImageElement, src: Source, title: string, hnd?: Handle, ids: string[] = [], file?: SourceFile): void {
   {
     void Promise.all([import('../ui/coverview'), fromSource(src.id)]).then(async ([m, mine]) => {
       const libId = ids.map((x) => mine.get(x)).find(Boolean);
@@ -1042,7 +1051,7 @@ function openCover(img: HTMLImageElement, src: Source, title: string, hnd?: Hand
         restore: async () => { const { forgetCover, coverUrl } = await import('../library'); const b = await db.updateBook(book.id, (x) => { x.cover = x.coverOrig ?? undefined; delete x.coverOrig; }); forgetCover(book.id); delete book.coverOrig; return b ? coverUrl(b) : null; },
       } : undefined;
       const url = img.currentSrc || img.src;
-      m.showCover({ url, title, bytes: () => m.coverBytes(url, headers), edit });
+      m.showCover({ url, title, bytes: () => m.coverBytes(url, headers), full: fullOf(url, file), edit });
     });
   }
 }
@@ -1266,7 +1275,7 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
     const bigCover = h('div', { class: 'src-cover big' + (d.cover ? ' cover-tap' : ''), style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, d.cover ? coverImg(d.cover, hnd) : h('span', { class: 'src-cover-title', dir: 'auto' }, d.title));
     // The cover tapped: on its own, full screen, to share or save (Mihon's cover view) — and, for a title in the
     // library, a picture of one's own in its place.
-    coverTap(bigCover, src, d.title, hnd, [d.id, id]);
+    coverTap(bigCover, src, d.title, hnd, [d.id, id], () => d.files.find((x) => x.ext === 'epub') ?? d.files.find((x) => x.ext === 'pdf'));
     // (A file's own cover, read from it, when the source gives none: a volume of a web folder.)
     if (!d.cover && src.peek && d.files.length) {
       const f = d.files.find((x) => x.ext === 'epub') ?? d.files.find((x) => x.ext === 'pdf') ?? d.files[0];
@@ -1337,7 +1346,7 @@ async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hn
   if (inLib) row('play', `${t('inLibrary')} · ${t('open')}`, () => navigate(`/read/${inLib}`));
   // (The card's cover, on its own: Mihon's cover view, from the shelf.)
   const shown = coverEl?.querySelector('img');
-  if (shown) row('images', t('viewCover'), () => openCover(shown, src, b.title, hnd ?? undefined, [b.id]));
+  if (shown) row('images', t('viewCover'), () => openCover(shown, src, b.title, hnd ?? undefined, [b.id], b.file));
   if (b.file && !inLib) {
     const file = b.file; const title = b.title;
     const go = async (deviceOnly: boolean) => {

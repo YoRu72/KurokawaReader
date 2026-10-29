@@ -197,6 +197,9 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.click('.vol-row .vol-cover'); await page.waitForSelector('.src-head .src-cover.big img', { timeout: 15000 }).catch(() => {});
     await page.click('.src-head .src-cover.big'); await page.waitForSelector('.cover-view img', { timeout: 5000 }).catch(() => {});
     const volView = !!(await page.$('.cover-view img'));
+    // (The shelf's small copy at once, then the cover at its own size, read from the file.)
+    const fullH = await page.waitForFunction(() => { const i = document.querySelector('.cover-view img'); return i && i.complete && i.naturalHeight > 1000 ? i.naturalHeight : 0; }, null, { timeout: 15000 }).then((x) => x.jsonValue()).catch(() => 0);
+    ok('a volume\'s cover opens at full size (1350 px, not the shelf\'s 480)', fullH === 1350);
     if (volView) await page.click('.cover-view .lb-close');
     ok('covers open on their own: the series\' and a volume\'s (read from its file)', seriesView && volView);
     await page.goBack(); await page.waitForSelector('.series-head', { timeout: 15000 }); await page.waitForTimeout(400);

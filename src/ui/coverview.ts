@@ -19,6 +19,9 @@ export interface CoverViewOpts {
   title: string;
   /** The picture's bytes, for sharing and saving (fetched only when asked). */
   bytes(): Promise<Blob>;
+  /** The picture at full size, when what is shown is a small copy of it (a shelf's cover): shown in its place
+   *  once it comes, and what is shared and saved. */
+  full?(): Promise<Blob | null>;
   edit?: CoverEdit;
 }
 
@@ -69,7 +72,8 @@ export function showCover(o: CoverViewOpts): () => void {
   // (After a picture of one's own is put in: that picture is what is shared and saved.)
   let edited: string | null = null;
   const bytes = () => (blob ??= (edited ? fetch(edited).then((r) => r.blob()) : o.bytes()).catch((e) => { blob = null; throw e; }));
-  const close = () => { root.remove(); document.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', onResize); clearTimeout(tapTimer); };
+  let fullUrl = '';
+  const close = () => { if (fullUrl) setTimeout(() => URL.revokeObjectURL(fullUrl), 1000); root.remove(); document.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', onResize); clearTimeout(tapTimer); };
   const closeBtn = iconButton('close', t('close'), close); closeBtn.classList.add('lb-close');
   const busy = async (b: HTMLButtonElement, fn: () => Promise<void>) => { if (b.disabled) return; b.disabled = true; try { await fn(); } catch (e) { if ((e as Error)?.name !== 'AbortError') toast(t('saveFailed'), 'error'); } finally { b.disabled = false; } };
   const shareBtn = iconButton('share', t('shareImage'), () => void busy(shareBtn, async () => { const b = await bytes(); const { shareFile } = await import('./share'); await shareFile(b, fileName(o.title, b.type), o.title); }));
@@ -77,6 +81,22 @@ export function showCover(o: CoverViewOpts): () => void {
   const editBtn = o.edit ? iconButton('pen', t('editCover'), () => editCoverSheet(o.edit!, (url) => { if (url) { img.src = url; edited = url; blob = null; reset(); } else close(); })) : null;
   const bar = h('div', { class: 'cv-bar' }, closeBtn, h('span', { class: 'spacer' }), shareBtn, saveBtn, editBtn);
   const root = h('div', { class: 'cover-view', role: 'dialog', 'aria-label': t('coverTitle') }, stage, bar);
+  // (The small copy at once; the picture at full size in its place as soon as it is here — decoded first, so
+  // the swap does not flash.)
+  if (o.full) {
+    root.classList.add('cv-loading');
+    const fullJob = o.full().catch(() => null);
+    void fullJob.then(async (b) => {
+      root.classList.remove('cv-loading');
+      if (!b || !root.isConnected || edited) return;
+      const u = URL.createObjectURL(b);
+      const probe = new Image(); probe.src = u;
+      try { await probe.decode(); } catch { URL.revokeObjectURL(u); return; }
+      if (!root.isConnected || edited) { URL.revokeObjectURL(u); return; }
+      fullUrl = u; img.src = u; blob = Promise.resolve(b);
+    });
+    blob = fullJob.then((b) => b ?? o.bytes());
+  }
 
   // Looking closer: two fingers to pinch, one to move about once zoomed, a double tap (or double click) to go
   // in at that spot and back out, the wheel on a PC; a single tap shows or hides the bar.

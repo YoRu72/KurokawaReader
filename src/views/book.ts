@@ -94,7 +94,10 @@ export function bookView(id: string): HTMLElement {
     const coverEl = url ? h('img', { class: 'book-hero-cover cover-tap', src: url, alt: '', title: t('coverTitle') }) : h('button', { type: 'button', class: 'book-hero-cover gen cover-tap', title: t('editCover'), style: { background: `linear-gradient(135deg, ${c1}, ${c2})` } }, h('span', { dir: 'auto' }, book.title));
     coverEl.addEventListener('click', () => void import('../ui/coverview').then((m) => {
       const edit = coverEdit(book);
-      if (url) m.showCover({ url, title: book.title, bytes: async () => (await db.getBook(book.id))?.cover ?? book.cover!, edit });
+      // (The library keeps a cover made small; the one in the book's file, at its own size, is what is looked at —
+      // unless a picture of one's own is in its place.)
+      const full = book.coverOrig === undefined && /^(epub|cbz|mobi|fb2|docx|odt)$/.test(book.format) ? async () => { const f = await db.getFile(book.id); if (!f) return null; const { readMeta } = await import('../formats'); const meta = await readMeta(f, book.fileName, book.format); return meta.cover && meta.cover.size > (book.cover?.size ?? 0) ? meta.cover : null; } : undefined;
+      if (url) m.showCover({ url, title: book.title, bytes: async () => (await db.getBook(book.id))?.cover ?? book.cover!, full, edit });
       else m.editCoverSheet(edit, () => {});
     }));
     const bg = h('div', { class: 'book-hero-bg', style: url ? {} : { background: `linear-gradient(135deg, ${c1}, ${c2})` } });
