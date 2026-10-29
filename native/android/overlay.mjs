@@ -90,6 +90,13 @@ if (!manifest.includes('KrJobService')) {
   manifest = manifest.replace('</application>', `    <service android:name=".KrJobService" android:exported="false" android:foregroundServiceType="dataSync" />
     </application>`);
 }
+// Read aloud with the screen off: a foreground service of the "media playback" kind, with a media notification.
+if (!manifest.includes('KrTtsService')) {
+  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <application`);
+  manifest = manifest.replace('</application>', `    <service android:name=".KrTtsService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
+    </application>`);
+}
 if (!manifest.includes('android.intent.action.TTS_SERVICE')) {
   if (manifest.includes('<queries>')) manifest = manifest.replace('<queries>', `<queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>`);
   else manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>\n  </queries>\n</manifest>`);
@@ -157,6 +164,7 @@ await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.jo
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
 await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));
 await fs.copyFile(path.join(root, 'native/android/KrJobService.java'), path.join(pkgDir, 'KrJobService.java'));
+await fs.copyFile(path.join(root, 'native/android/KrTtsService.java'), path.join(pkgDir, 'KrTtsService.java'));
 await fs.copyFile(path.join(root, 'native/android/KrBrowser.java'), path.join(pkgDir, 'KrBrowser.java'));
 await fs.copyFile(path.join(root, 'native/android/KrPrint.java'), path.join(pkgDir, 'KrPrint.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join(pkgDir, 'KrDownloader.java'));

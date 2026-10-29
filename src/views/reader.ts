@@ -34,7 +34,7 @@ import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
 import { kittenReady, kittenSpeak, kittenCanRead } from '../kittentts';
 import { takeJump as takeSearchJump, storedPages, storePages } from '../booksearch';
-import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices } from '../tts';
+import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices, queueSpeech, speakQueue } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
 import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
@@ -1250,6 +1250,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       let end = startBlock.index; while (startBlock.doc.allBlocks[end + 1] && u.el.contains(startBlock.doc.allBlocks[end + 1])) end++;
       return end - startBlock.index;
     })();
+    // (Android, the device's voice, reading on from a place in the book: the passages handed to the device in
+    // batches, read in turn by the app itself — on with the screen off, under a media notification.)
+    const eng0 = getSettings().speechEngine;
+    const madeAudio = (eng0 === 'ai' && aiTtsSupported() && aiReady()) || (eng0 === 'kitten' && kittenReady());
+    if (queueSpeech() && !chunks.length && startBlock && !madeAudio) { speakQueued(startBlock, scopeEnd); return; }
     const queue: string[] = [];
     const next = () => {
       if (!speaking) return;
@@ -1305,6 +1310,47 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         .then((r) => { if (r !== 'ok' && speaking) noVoice(lang, r); });
     };
     next();
+  }
+  /** Reading on from a block through the device's own queue: a batch of passages now, more as it nears their
+   *  end; the passage being read shown and marked as it starts (when the page is awake to see it). */
+  function speakQueued(startBlock: { doc: OpenDoc; index: number }, scopeEnd: number): void {
+    const doc = startBlock.doc;
+    const last = scopeEnd === Infinity ? doc.allBlocks.length - 1 : Math.min(doc.allBlocks.length - 1, startBlock.index + scopeEnd);
+    let nextIdx = startBlock.index;
+    const batch = () => {
+      const items: { id: string; text: string; lang: string }[] = []; let n = 0;
+      while (nextIdx <= last && n < 120) {
+        const idx = nextIdx++; const block = doc.allBlocks[idx]; if (!block) break;
+        const text = plainText(block).replace(/\s+/g, ' ').trim();
+        if (!/[\p{L}\p{N}]/u.test(text)) continue;
+        speechPieces(text).forEach((p, k) => items.push({ id: `${idx}.${k}`, text: p, lang: speechLangOf(p, doc.book.language) }));
+        n++;
+      }
+      return items;
+    };
+    const opts = () => ({ rate: getSettings().speechRate, preferred: getSettings().speechVoice || undefined, title: doc.book.title });
+    const more = () => { const items = batch(); if (items.length) void speakQueue(items, { ...opts(), append: true }); return items.length; };
+    let shown = -1;
+    const on = {
+      start: (id: string) => {
+        if (!speaking) return;
+        const bi = Number(id.split('.')[0]); const block = doc.allBlocks[bi];
+        if (block && bi !== shown) {
+          shown = bi;
+          revealElement(block);
+          const sr = scroll.getBoundingClientRect(); const r = block.getBoundingClientRect();
+          if (r.bottom > sr.bottom || r.top < sr.top) scroll.scrollTop += r.top - sr.top - 40;
+          block.classList.add('kr-flash'); setTimeout(() => block.classList.remove('kr-flash'), 1200);
+        }
+        // (Topped up well before the end: a page asleep cannot hand the next batch over in time.)
+        if (bi >= nextIdx - 40 && nextIdx <= last) more();
+      },
+      end: () => { if (!speaking) return; if (nextIdx > last || !more()) { stopSpeaking(); if (scopeEnd !== Infinity) toast(t('chapterReadDone')); } },
+      stopped: () => { speaking = false; keepAwake(getSettings().keepAwake); },
+    };
+    const first = batch();
+    if (!first.length) { stopSpeaking(); return; }
+    void speakQueue(first, { ...opts(), on }).then((r) => { if (r !== 'ok' && speaking) noVoice(first[0].lang, 'unavailable'); });
   }
   function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); stopSpeech(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
   onDispose(stopSpeaking);

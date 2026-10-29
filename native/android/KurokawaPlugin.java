@@ -298,6 +298,7 @@ public class KurokawaPlugin extends Plugin {
     @Override
     public void load() {
         super.load();
+        current = this;
         try { KrDoh.provider = getContext().getSharedPreferences("kr", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {}
     }
 
@@ -1141,10 +1142,10 @@ public class KurokawaPlugin extends Plugin {
             ttsReady = status == TextToSpeech.SUCCESS;
             if (ttsReady) {
                 tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override public void onStart(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("ttsStart", o); }
-                    @Override public void onDone(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("ttsDone", o); }
-                    @Override @SuppressWarnings("deprecation") public void onError(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("ttsError", o); }
-                    @Override public void onError(String id, int code) { JSObject o = new JSObject(); o.put("id", id); o.put("code", code); notifyListeners("ttsError", o); }
+                    @Override public void onStart(String id) { JSObject o = new JSObject(); o.put("id", unq(id)); notifyListeners("ttsStart", o); }
+                    @Override public void onDone(String id) { JSObject o = new JSObject(); o.put("id", unq(id)); notifyListeners("ttsDone", o); if (id.startsWith("q:")) queueNext(id); }
+                    @Override @SuppressWarnings("deprecation") public void onError(String id) { JSObject o = new JSObject(); o.put("id", unq(id)); notifyListeners("ttsError", o); if (id.startsWith("q:")) queueNext(id); }
+                    @Override public void onError(String id, int code) { JSObject o = new JSObject(); o.put("id", unq(id)); o.put("code", code); notifyListeners("ttsError", o); if (id.startsWith("q:")) queueNext(id); }
                 });
             }
             List<Runnable> w;
@@ -1181,8 +1182,92 @@ public class KurokawaPlugin extends Plugin {
 
     @PluginMethod
     public void ttsStop(PluginCall call) {
+        synchronized (ttsQ) { ttsQ.clear(); ttsAt = 0; ttsPlaying = false; }
         if (tts != null) tts.stop();
+        KrTtsService.end(getContext());
         call.resolve();
+    }
+
+    /* ---------- read aloud as a queue (LNReader's): the passages of a chapter or more handed over at once and
+       spoken one after another here — with the screen off, the app behind others, its page asleep — under a
+       media notification (play, pause, next, previous; a headset's buttons too) ---------- */
+    static volatile KurokawaPlugin current;
+    private final List<JSObject> ttsQ = new ArrayList<>();
+    private int ttsAt = 0; private boolean ttsPlaying = false; private double ttsRate = 1.0; private String ttsTitle = "";
+    private static String unq(String id) { return id != null && id.startsWith("q:") ? id.substring(2) : id; }
+
+    /** {items: [{id, text, lang, voice?}], rate, title, append?} → the passages spoken in turn from the first
+     *  (or after those already queued). Events: ttsStart/ttsDone {id} per passage, ttsQueueEnd, ttsState {playing}. */
+    @PluginMethod
+    public void ttsQueue(PluginCall call) {
+        final JSArray items = call.getArray("items", new JSArray());
+        final boolean append = Boolean.TRUE.equals(call.getBoolean("append", false));
+        ttsRate = call.getDouble("rate", 1.0);
+        ttsTitle = call.getString("title", ttsTitle);
+        withTts(() -> {
+            if (!ttsReady) { JSObject r = new JSObject(); r.put("ok", false); r.put("reason", "unavailable"); call.resolve(r); return; }
+            boolean start;
+            synchronized (ttsQ) {
+                if (!append) { ttsQ.clear(); ttsAt = 0; }
+                try { for (int i = 0; i < items.length(); i++) ttsQ.add(JSObject.fromJSONObject(items.getJSONObject(i))); } catch (Exception ignored) {}
+                start = !ttsPlaying || !append;
+                ttsPlaying = true;
+            }
+            if (start) { if (!append) tts.stop(); speakAt(); }
+            KrTtsService.show(getContext(), ttsTitle, currentText(), true);
+            JSObject r = new JSObject(); r.put("ok", true); call.resolve(r);
+        });
+    }
+    @PluginMethod public void ttsPause(PluginCall call) { control("pause"); call.resolve(); }
+    @PluginMethod public void ttsResume(PluginCall call) { control("play"); call.resolve(); }
+
+    private String currentText() { synchronized (ttsQ) { if (ttsAt < ttsQ.size()) { String t = ttsQ.get(ttsAt).optString("text", ""); return t.length() > 120 ? t.substring(0, 120) + "…" : t; } } return ""; }
+
+    /** The passage at the head of the queue spoken (its own language and voice), or the end told. */
+    private void speakAt() {
+        JSObject it;
+        synchronized (ttsQ) {
+            if (!ttsPlaying) return;
+            if (ttsAt >= ttsQ.size()) { ttsPlaying = false; notifyListeners("ttsQueueEnd", new JSObject()); KrTtsService.end(getContext()); return; }
+            it = ttsQ.get(ttsAt);
+        }
+        String lang = it.optString("lang", ""); String voiceName = it.optString("voice", "");
+        Locale loc = lang.isEmpty() ? Locale.getDefault() : Locale.forLanguageTag(lang);
+        Voice chosen = null;
+        try { Set<Voice> vs = tts.getVoices(); if (vs != null && !voiceName.isEmpty()) for (Voice v : vs) if (v.getName().equals(voiceName)) { chosen = v; break; } } catch (Exception ignored) {}
+        if (chosen != null) tts.setVoice(chosen); else tts.setLanguage(loc);
+        tts.setSpeechRate((float) ttsRate);
+        tts.speak(it.optString("text", ""), TextToSpeech.QUEUE_FLUSH, new android.os.Bundle(), "q:" + it.optString("id", ""));
+    }
+    /** A queued passage over: the next one, unless the queue was moved meanwhile (paused, stepped, stopped). */
+    private void queueNext(String doneId) {
+        synchronized (ttsQ) {
+            if (!ttsPlaying || ttsAt >= ttsQ.size() || !("q:" + ttsQ.get(ttsAt).optString("id", "")).equals(doneId)) return;
+            ttsAt++;
+        }
+        speakAt();
+        KrTtsService.show(getContext(), ttsTitle, currentText(), true);
+    }
+    /** The notification's and the headset's buttons (and ttsPause/ttsResume). */
+    void control(String what) {
+        boolean playing;
+        synchronized (ttsQ) {
+            switch (what) {
+                case "pause": ttsPlaying = false; break;
+                case "play": ttsPlaying = !ttsQ.isEmpty() && ttsAt < ttsQ.size(); break;
+                case "toggle": ttsPlaying = !ttsPlaying && ttsAt < ttsQ.size(); break;
+                case "next": if (ttsAt < ttsQ.size() - 1) ttsAt++; break;
+                case "prev": if (ttsAt > 0) ttsAt--; break;
+                case "stop": ttsQ.clear(); ttsAt = 0; ttsPlaying = false; break;
+                default: break;
+            }
+            playing = ttsPlaying;
+        }
+        if (tts != null) tts.stop();
+        if (playing) speakAt();
+        if ("stop".equals(what)) { KrTtsService.end(getContext()); notifyListeners("ttsStopped", new JSObject()); }
+        else KrTtsService.show(getContext(), ttsTitle, currentText(), playing);
+        JSObject st = new JSObject(); st.put("playing", playing); notifyListeners("ttsState", st);
     }
 
     @PluginMethod

@@ -12,8 +12,12 @@ type Native = {
   ttsStop(): Promise<void>;
   ttsVoices(): Promise<{ voices: { name: string; lang: string; network?: boolean; installed?: boolean; quality?: number }[] }>;
   ttsInstallData?(): Promise<void>;
-  addListener(ev: string, fn: (d: { id: string; code?: number }) => void): Promise<{ remove(): void }>;
+  ttsQueue?(o: { items: QueueItem[]; rate: number; title: string; append?: boolean }): Promise<{ ok: boolean; reason?: string }>;
+  ttsPause?(): Promise<void>;
+  ttsResume?(): Promise<void>;
+  addListener(ev: string, fn: (d: { id: string; code?: number; playing?: boolean }) => void): Promise<{ remove(): void }>;
 };
+export interface QueueItem { id: string; text: string; lang: string; voice?: string }
 function native(): Native | null {
   const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: Native } } }).Capacitor;
   const k = cap?.getPlatform?.() === 'android' ? cap.Plugins?.Kurokawa : undefined;
@@ -118,7 +122,32 @@ export async function speakPassage(text: string, lang: string, rate: number, pre
   return 'ok';
 }
 
+/* ---------- read aloud as a queue (Android): with the screen off ---------- */
+/** Whether the device reads a queue of passages by itself (Android's engine, through the app). */
+export const queueSpeech = (): boolean => !!native()?.ttsQueue;
+let queueSubs: { remove(): void }[] = [];
+/** Passages handed to the device to read in turn (`append`: after those already given). The voice for each
+ *  passage's language is chosen here. `on` is told as each starts and when the queue runs out or is stopped. */
+export async function speakQueue(items: { id: string; text: string; lang: string }[], o: { rate: number; preferred?: string; title: string; append?: boolean; on?: { start?(id: string): void; end?(): void; stopped?(): void; state?(playing: boolean): void } }): Promise<SpeakResult> {
+  const n = native(); if (!n?.ttsQueue) return 'unavailable';
+  const list = await voices();
+  const voiceOf = new Map<string, string | undefined>();
+  const full: QueueItem[] = items.map((x) => { if (!voiceOf.has(x.lang)) voiceOf.set(x.lang, voiceFor(list, x.lang, o.preferred)?.name); return { ...x, voice: voiceOf.get(x.lang) }; });
+  if (!o.append) {
+    for (const s of queueSubs.splice(0)) s.remove();
+    if (o.on) {
+      const on = o.on;
+      queueSubs.push(await n.addListener('ttsStart', (d) => on.start?.(d.id)));
+      queueSubs.push(await n.addListener('ttsQueueEnd', () => on.end?.()));
+      queueSubs.push(await n.addListener('ttsStopped', () => on.stopped?.()));
+      queueSubs.push(await n.addListener('ttsState', (d) => on.state?.(!!d.playing)));
+    }
+  }
+  const r = await n.ttsQueue({ items: full, rate: o.rate, title: o.title, append: o.append }).catch(() => ({ ok: false, reason: 'unavailable' }));
+  return r.ok ? 'ok' : 'unavailable';
+}
 export function stopSpeech(): void {
+  for (const s of queueSubs.splice(0)) s.remove();
   const n = native();
   if (n) { cancelNative?.(); cancelNative = null; void n.ttsStop().catch(() => undefined); return; }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
