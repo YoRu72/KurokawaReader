@@ -4,7 +4,7 @@
 
 export type Format =
   | 'epub' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'txt' | 'md' | 'html'
-  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'webnovel' | 'unknown';
+  | 'fb2' | 'odt' | 'cbz' | 'image' | 'mobi' | 'anki' | 'audio' | 'shamela' | 'webnovel' | 'series' | 'unknown';
 
 export interface Locator {
   /** Which opened document (book id). */
@@ -120,7 +120,9 @@ export interface Book {
   /** A book from an online source (a Shamela book read from the site, a novel from an extension): where it
    *  came from, and whether its text still lives there (`online`) or has been fetched into its file; for a
    *  novel, how many chapters arrived since it was last opened and when the site was last asked. */
-  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number };
+  /** `link`: for a series kept in the library without its volumes (format 'series'), the page of the source
+   *  it opens — its volumes fetched from there, when wanted. */
+  remote?: { source: string; id: string; online?: boolean; newChapters?: number; checkedAt?: number; chapterCount?: number; link?: string };
   /** The series the book is a volume of, as its source said (a title's own numbering is read otherwise). */
   series?: { name: string; index?: number; source?: string; shelf?: string };
   pdfHighlights?: PdfHighlight[];

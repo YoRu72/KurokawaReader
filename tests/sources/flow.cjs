@@ -223,6 +223,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     // The series' button: every volume not yet in the library, into a folder of the library named after it.
     await page.goto(base + `#/sources/${dirId}?shelf=Alpha%2520Series`); await page.waitForSelector('.series-head .series-all', { timeout: 15000 }); await page.waitForTimeout(300);
     ok('the series offers all its volumes', /Download all 2 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
+    // Kept in the library without its volumes: a card that opens the series here.
+    const followHash = await page.evaluate(() => location.hash);
+    await page.click('.series-head .series-follow'); await page.waitForTimeout(800);
+    const followed = await page.$eval('.series-head .series-follow', (e) => e.classList.contains('on'));
+    await page.goto(base + '#/'); await page.waitForSelector('.library-view'); await page.waitForTimeout(800);
+    const followCard = await page.$('.book-card:has-text("Alpha Series")');
+    if (followCard) { await followCard.click(); await page.waitForTimeout(1500); }
+    const opened = await page.evaluate(() => location.hash);
+    ok('a series kept in the library without its volumes; its card opens the series on its source', followed && !!followCard && decodeURIComponent(opened) === decodeURIComponent(followHash));
+    if (!(followed && followCard && decodeURIComponent(opened) === decodeURIComponent(followHash))) console.log('  follow:', followed, !!followCard, opened, followHash);
+    await page.waitForSelector('.series-head .series-follow', { timeout: 15000 }); await page.click('.series-head .series-follow'); await page.waitForTimeout(600);
+    ok('… and taken out again from the same button', /Add to library/.test(await page.$eval('.series-head .series-follow', (e) => e.textContent)));
     await page.click('.series-head .series-all'); await page.waitForFunction(() => /All in the library/.test(document.querySelector('.series-head .series-all')?.textContent || ''), null, { timeout: 60000 });
     ok('… fetched: every row opens its book now', (await page.$$('.vol-row .vol-actions .btn.primary')).length === 2);
     await page.goto(base + '#/'); await page.reload(); await page.waitForSelector('.book-card'); await page.waitForTimeout(400);
@@ -294,6 +306,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Delta%20Omnibus')); await page.waitForSelector('.series-block', { timeout: 20000 });
     const headAtOnce = await page.evaluate(() => !!document.querySelector('.series-head .series-cover img'));
     ok('its page: the series\' cover on top at once, the very one its card showed', headAtOnce);
+    // (Covers are read as their rows come near the screen: the rows brought into view.)
+    await page.evaluate(() => document.querySelectorAll('.vol-row')[1]?.scrollIntoView({ block: 'center' }));
     await page.waitForFunction(() => document.querySelectorAll('.vol-row .vol-cover img').length === 2, null, { timeout: 30000 });
     const dRows = await page.$$eval('.vol-row', (rs) => rs.map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-kind')?.textContent}|${[...r.querySelectorAll('.vol-editions .chip')].map((c) => c.textContent + (c.classList.contains('on') ? '*' : '')).join('/')}`));
     ok('volume 1 shown as its EPUB first, the premium PDF beside it', dRows[0] === 'Volume 1|EPUB|Kobo · EPUB*/Premium · PDF' && dRows[1] === 'Volume 2|EPUB|');

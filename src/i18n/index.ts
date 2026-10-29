@@ -193,6 +193,7 @@ export function countChapters(n: number): string {
 export function formatLabel(format: string): string {
   if (format === 'shamela') return 'الشاملة';
   if (format === 'webnovel') return t('webnovelBadge');
+  if (format === 'series') return t('seriesBadge');
   return format.toUpperCase();
 }
 

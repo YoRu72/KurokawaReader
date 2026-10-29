@@ -65,6 +65,8 @@ export function readerView(ids: string[]): HTMLElement {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
     if (disposed) return;
     if (!books.length) { navigate('/', true); return; }
+    // (A series kept in the library without its volumes opens on its source, where its volumes are.)
+    if (books[0].format === 'series' && books[0].remote?.link) { navigate(books[0].remote.link, true); return; }
     setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
     if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); return; }
     if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); return; }

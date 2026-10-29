@@ -1431,6 +1431,10 @@ export const ar: Strings = {
   passCheck: 'أكّد أنّي إنسان',
   onlineBook: 'يُقرأ من الموقع',
   // مستودعات الإضافات والروايات وجديدها
+  seriesBadge: 'سلسلة',
+  addSeriesToLibrary: 'أضِفها إلى المكتبة',
+  seriesAddedOnline: 'أُضيفت إلى المكتبة، وتبقى مجلّداتها في مصدرها حتى تجلبها',
+  removedFromLibrary: 'أُزيلت من المكتبة',
   webnovelBadge: 'رواية',
   settingsNewChapters: '{n} جديدة في {books}',
   settingsExtUpdates: '{n} من تحديثات الإضافات',

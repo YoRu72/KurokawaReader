@@ -1426,6 +1426,10 @@ export const en = {
   passCheck: 'Confirm I’m human',
   onlineBook: 'Read from the site',
   // Extension repositories, novels, what's new
+  seriesBadge: 'Series',
+  addSeriesToLibrary: 'Add to library',
+  seriesAddedOnline: 'In the library: its volumes stay on the source until you fetch them',
+  removedFromLibrary: 'Removed from the library',
   webnovelBadge: 'Novel',
   settingsNewChapters: '{n} new in {books}',
   settingsExtUpdates: '{n} extension updates',

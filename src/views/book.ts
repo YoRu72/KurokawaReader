@@ -62,6 +62,7 @@ export function bookView(id: string): HTMLElement {
   void (async () => {
     const book = await db.getBook(id);
     if (!book) { navigate('/', true); return; }
+    if (book.format === 'series' && book.remote?.link) { navigate(book.remote.link, true); return; }
     top.querySelector('.title')!.textContent = book.title;
     render(book);
   })();

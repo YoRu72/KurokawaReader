@@ -733,7 +733,7 @@ function seriesHead(src: Source, b: SourceBook, lib: Map<string, string>, observ
       byline,
       b.author ? h('p', { class: 'src-author-line', dir: 'auto' }, b.author) : null,
       h('div', { class: 'src-chips' }, ...[b.badge, b.description, ...(b.formats ?? [])].filter(Boolean).map((x) => h('span', { class: 'src-chip' }, x!))),
-      h('div', { class: 'series-actions' }, next, btn, trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
+      h('div', { class: 'series-actions' }, next, btn, seriesRefButton(src.id, location.hash.replace(/^#/, ''), b.title, () => b.author || byline.textContent || undefined, () => cover.querySelector('img')), trackButton(src.id, async () => { for (const [, id] of lib) return id; return undefined; }, () => undefined)), status));
   // (The cover is the first volume's — its EPUB, else its PDF — the file the series' card on the shelf shows.)
   const v1 = b.coverFile ?? files.find((f) => f.ext === 'epub') ?? files.find((f) => f.ext === 'pdf');
   const v1b: SourceBook | undefined = v1 ? { id: `f:${v1.id}`, title: b.title, file: v1 } : undefined;
@@ -1105,6 +1105,37 @@ function detailsView(src: Source, id: string, hnd?: Handle): HTMLElement & { dis
 
 /** Held on a card (as Mihon adds a title from Browse with a long press): the book or series added to the
  *  library from here — a file fetched, a web novel followed — with the tags asked, or the file to the device. */
+/** A series kept in the library without its volumes (as Mihon keeps a title before any chapter is fetched): an
+ *  entry that opens the series on its source, where its volumes are read about and fetched when wanted. */
+async function seriesRef(srcId: string, link: string): Promise<Book | undefined> {
+  return (await db.allBooks()).find((x) => x.format === 'series' && x.remote?.source === srcId && x.remote?.link === link);
+}
+async function addSeriesRef(srcId: string, link: string, title: string, author: string | undefined, img: HTMLImageElement | null | undefined, hnd?: Handle): Promise<Book> {
+  const had = await seriesRef(srcId, link); if (had) return had;
+  let cover: Blob | undefined;
+  if (img) { try { const { coverBytes } = await import('../ui/coverview'); const { shrinkCover } = await import('../library'); const headers = hnd ? (hnd.ln?.imageRequestInit?.headers as Record<string, string> | undefined) ?? hnd.my?.headers ?? { referer: hnd.item.site } : undefined; cover = await shrinkCover(await coverBytes(img.currentSrc || img.src, headers)); } catch { /* no cover */ } }
+  const file = new File(['{}'], `${title}.series.json`, { type: 'application/json' });
+  const book: Book = { id: uid(), title, author, format: 'series', fileName: file.name, mime: file.type, size: 0, addedAt: Date.now(), bookmarks: [], highlights: [], cover, remote: { source: srcId, id: link, link, online: true } };
+  await db.putFile(book.id, file); await db.putBook(book);
+  return book;
+}
+/** The button that keeps a series in the library (or no longer), its volumes left on the source. */
+function seriesRefButton(srcId: string, link: string, title: string, author: () => string | undefined, img: () => HTMLImageElement | null | undefined, hnd?: Handle): HTMLButtonElement {
+  const btn = h('button', { type: 'button', class: 'btn tonal series-follow' }) as HTMLButtonElement;
+  let have: Book | undefined;
+  const draw = () => { btn.replaceChildren(icon(have ? 'heartFill' : 'heart'), h('span', null, have ? t('inLibrary') : t('addSeriesToLibrary'))); btn.classList.toggle('on', !!have); };
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      if (have) { const { removeBooks } = await import('../library'); await removeBooks([have.id]); have = undefined; toast(t('removedFromLibrary')); }
+      else { have = await addSeriesRef(srcId, link, title, author(), img(), hnd); toast(t('seriesAddedOnline')); }
+    } catch (e) { toast(describe(e), 'error'); }
+    finally { btn.disabled = false; draw(); }
+  });
+  draw(); void seriesRef(srcId, link).then((b) => { have = b; draw(); });
+  return btn;
+}
+
 async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>, coverEl?: HTMLElement): Promise<void> {
   const sh = openSheet(b.title, t('close'));
   sh.body.style.fontFamily = 'var(--font-ui)';
@@ -1128,7 +1159,12 @@ async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hn
     row('download', t('deviceOnly'), () => go(true));
   }
   if (b.look === 'series' || (b.look === 'folder' && b.openShelf !== undefined)) {
-    row('download', t('seriesInSource'), () => navigate(b.look === 'series' ? bookPath(src.id, b.id) : path(src.id, { shelf: b.openShelf })));
+    const link = b.look === 'series' ? bookPath(src.id, b.id) : path(src.id, { shelf: b.openShelf });
+    // (Kept in the library without its volumes: the entry opens the series here, its volumes fetched when wanted.)
+    const ref = await seriesRef(src.id, link);
+    if (ref) row('heartFill', `${t('inLibrary')} · ${t('open')}`, () => navigate(link));
+    else row('plus', t('addSeriesToLibrary'), async () => { await addSeriesRef(src.id, link, b.title, b.author, shown, hnd ?? undefined); toast(t('seriesAddedOnline')); });
+    row('download', t('seriesInSource'), () => navigate(link));
   }
   if (hnd && !b.file && b.look !== 'folder' && b.look !== 'series') {
     // A web novel: followed in the library (its chapters read online, fetched later from its page).
