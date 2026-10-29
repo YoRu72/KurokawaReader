@@ -21,7 +21,10 @@ export function goBack(): boolean {
   const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
   if (panelClose) { panelClose.click(); return true; }
   // Full-screen overlays (gallery, pages grid, lightbox, a cover) carry a dialog role and a close in their top bar.
-  const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && (d as HTMLElement).offsetParent !== null);
+  // (Shown, by its boxes: a fixed overlay — the cover view — has no offset parent though it is on the screen.)
+  const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && d.getClientRects().length > 0 && getComputedStyle(d).visibility !== 'hidden');
+  // (The app lock's cover: back does not get past it.)
+  if (overlays.some((d) => d.classList.contains('app-lock'))) return true;
   const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
   if (overlayBtn) { overlayBtn.click(); return true; }
   for (let i = handlers.length - 1; i >= 0; i--) { const fn = handlers[i]; if (fn()) return true; }

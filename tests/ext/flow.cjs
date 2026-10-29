@@ -58,7 +58,10 @@ const SITE = 'http://localhost:5403';
     // Discover: AniList's trending light novels on the hub; a tap searches every source.
     {
       await page.route('https://graphql.anilist.co/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { trending: { media: [{ id: 1, title: { english: 'Beta Blossom', romaji: 'Beta' }, coverImage: { large: '' }, averageScore: 81 }] }, popular: { media: [{ id: 2, title: { romaji: 'Alpha Ascension' } }] }, top: { media: [] } } }) }));
-      await page.evaluate(() => localStorage.removeItem('kr.discover')); await page.reload(); await page.waitForSelector('.discover .migrate-hit', { timeout: 15000 });
+      await page.evaluate(() => localStorage.removeItem('kr.discover')); await page.reload(); await page.waitForSelector('.repo-section'); await page.waitForTimeout(1500);
+      ok('Discover: not shown until an AniList account is linked', !(await page.$('.discover')));
+      await page.evaluate((k) => { const s = JSON.parse(localStorage.getItem(k) || '{}'); s.anilistEnabled = true; localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem('kr.anilist.token', 'test'); localStorage.setItem('kr.anilist.user', JSON.stringify({ id: 1, name: 'Tester' })); }, 'kr.visual');
+      await page.reload(); await page.waitForSelector('.discover .migrate-hit', { timeout: 15000 });
       const rows = await page.$$eval('.discover .discover-row h4', (es) => es.map((e) => e.textContent));
       await page.click('.discover .migrate-hit:has-text("Beta Blossom")'); await page.waitForFunction(() => /~all\?q=Beta/.test(location.hash), null, { timeout: 10000 });
       ok('Discover: trending and popular light novels from AniList; a tap searches every source', rows.length === 2 && /Trending/.test(rows[0]));

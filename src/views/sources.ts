@@ -220,7 +220,8 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
     if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
     // (Light novels trending on AniList, a tap from a search of the reader's sources — once there are some.)
-    if (exts.length || folders.length) reposBox.append(discoverBox());
+    // (Only for a reader who linked an AniList account: the rows are AniList's.)
+    if ((exts.length || folders.length) && (await import('../anilist').then((al) => al.anilistOn() && !!al.user()).catch(() => false))) reposBox.append(discoverBox());
   };
   void drawRepos();
   body.append(h('h3', { class: 'section-title' }, t('catalogsTitle')), h('p', { class: 'hint catalog-hint' }, t('sourcesHint')));
