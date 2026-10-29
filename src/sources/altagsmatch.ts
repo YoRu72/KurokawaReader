@@ -38,16 +38,38 @@ export function match(asked: string, titles: string[], also = ''): number {
 
 /** The query that searches for each name under an alias of its own (s0, s1, …): light novels only. */
 export function buildQuery(names: string[]): { query: string; variables: Record<string, string> } {
-  const parts = names.map((_, i) => `s${i}: Page(perPage: 5) { media(search: $q${i}, type: MANGA, format: NOVEL, sort: SEARCH_MATCH) { id title { romaji english native } synonyms genres averageScore tags { name rank isMediaSpoiler isGeneralSpoiler } } }`);
+  // (Each name twice: as a light novel, and — for a series AniList files only as its manga or manhwa (Solo
+  // Leveling) — as anything printed; the second is used only when the first finds nothing.)
+  const FIELDS = 'id title { romaji english native } synonyms genres averageScore tags { name rank isMediaSpoiler isGeneralSpoiler }';
+  const parts = names.map((_, i) => `s${i}: Page(perPage: 6) { media(search: $q${i}, type: MANGA, format: NOVEL, sort: SEARCH_MATCH) { ${FIELDS} } } t${i}: Page(perPage: 3) { media(search: $q${i}, type: MANGA, sort: SEARCH_MATCH) { ${FIELDS} } }`);
   const variables: Record<string, string> = {}; names.forEach((n, i) => { variables[`q${i}`] = n; });
   return { query: `query (${names.map((_, i) => `$q${i}: String`).join(', ')}) { ${parts.join(' ')} }`, variables };
 }
 
-/** Of AniList's answers for a name, the entry it is — or null when none matches well enough. */
-export function pick(asked: string, list: Raw[] | null | undefined, whole = ''): Picked | null {
-  let best: Raw | null = null; let score = 0;
-  for (const m of list ?? []) { const sc = match(asked, [m.title.english ?? '', m.title.romaji ?? '', ...(m.synonyms ?? [])], whole); if (sc > score) { score = sc; best = m; } }
-  if (!best || score < 0.7) return null;
+/** A title's names to compare with: each as it is, and without what follows its main title — a subtitle after a
+ *  colon ("Kino's Journey: The Beautiful World"), a part's number ("Ascendance of a Bookworm: Part 2"). */
+function namesOf(m: Raw): string[] {
+  const all = [m.title.english ?? '', m.title.romaji ?? '', ...(m.synonyms ?? [])].filter(Boolean);
+  const out = new Set(all);
+  for (const t of all) { const main = t.replace(/\s*[:：]\s.*$/, '').replace(/\s*[-–—]\s*(part|season|volume|vol\.?)\s*\d+.*$/i, '').replace(/\s+(part|season)\s*\d+$/i, '').trim(); if (main && main !== t) out.add(main); }
+  return [...out];
+}
+const partOf = (m: Raw) => Number(/\b(?:part|season)\s*(\d+)/i.exec(m.title.english ?? m.title.romaji ?? '')?.[1] ?? 0);
+
+/** Of AniList's answers for a name, the entry it is — or null when none matches well enough. Of a series
+ *  AniList keeps in parts, the first part. `other` is the answer for the name as anything printed, used when
+ *  the light novels give nothing. */
+export function pick(asked: string, list: Raw[] | null | undefined, whole = '', other?: Raw[] | null): Picked | null {
+  const choose = (l: Raw[] | null | undefined): Raw | null => {
+    let best: Raw | null = null; let score = 0;
+    for (const m of l ?? []) {
+      const sc = match(asked, namesOf(m), whole);
+      if (sc > score + 1e-9 || (best && Math.abs(sc - score) < 1e-9 && partOf(m) < partOf(best))) { score = sc; best = m; }
+    }
+    return best && score >= 0.7 ? best : null;
+  };
+  const best = choose(list) ?? choose(other);
+  if (!best) return null;
   return {
     id: best.id, genres: best.genres ?? [], score: best.averageScore,
     tags: (best.tags ?? []).filter((x) => !x.isMediaSpoiler && !x.isGeneralSpoiler && x.rank >= 55).sort((a, b) => b.rank - a.rank).slice(0, 10).map((x) => x.name),

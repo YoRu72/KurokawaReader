@@ -29,8 +29,9 @@ for (let i = 0; i < NAMES.length; i += 8) {
   if (!r.ok || json.errors) { notice(`HTTP ${r.status} ${JSON.stringify(json.errors ?? '').slice(0, 300)}`); process.exitCode = 1; break; }
   batch.forEach((name, j) => {
     const list = json.data?.[`s${j}`]?.media ?? [];
-    const p = pick(searchName(name), list, name);
-    const m = p ? list.find((x) => x.id === p.id) : null;
+    const other = json.data?.[`t${j}`]?.media ?? [];
+    const p = pick(searchName(name), list, name, other);
+    const m = p ? [...list, ...other].find((x) => x.id === p.id) : null;
     if (p) found++;
     lines.push(p ? `${name} → ${m.title.english || m.title.romaji} [${p.genres.join(', ')}] tags: ${p.tags.slice(0, 6).join(', ')}` : `${name} → (none; AniList offered: ${list.map((x) => x.title.english || x.title.romaji).join(' / ') || 'nothing'})`);
   });

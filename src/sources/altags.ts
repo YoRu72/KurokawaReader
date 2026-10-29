@@ -27,13 +27,13 @@ export async function loadTags(repoKey: string): Promise<Kept> {
 export const tagsNow = (repoKey: string): Kept | null => mem.get(repoKey) ?? null;
 
 /** One request for several series (each its own search under an alias). */
-async function ask(names: string[]): Promise<{ results: (Raw[] | null)[]; wait?: number }> {
+async function ask(names: string[]): Promise<{ results: (Raw[] | null)[]; others?: (Raw[] | null)[]; wait?: number }> {
   const { query, variables } = buildQuery(names);
   const r = await localHttp(API, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ query, variables }), timeoutMs: 25000 });
   if (r.status === 429) return { results: [], wait: Math.min(90, Number((r as { headers?: Record<string, string> }).headers?.['retry-after'] ?? 60) || 60) * 1000 };
   if (r.status >= 400) throw new Error(`AniList: HTTP ${r.status}`);
   const json = JSON.parse(r.body) as { data?: Record<string, { media?: Raw[] } | null> };
-  return { results: names.map((_, i) => json.data?.[`s${i}`]?.media ?? null) };
+  return { results: names.map((_, i) => json.data?.[`s${i}`]?.media ?? null), others: names.map((_, i) => json.data?.[`t${i}`]?.media ?? null) };
 }
 
 /** The series of a folder that are not yet known (or known too long ago) looked up, a few at a time; `changed`
@@ -54,7 +54,7 @@ export async function fillTags(repoKey: string, series: { rel: string; name: str
       if (got.wait) { await new Promise((r) => setTimeout(r, got.wait)); continue; }
       let learnt = false;
       batch.forEach((s, j) => {
-        const found = pick(searchName(s.name), got.results[j], s.name);
+        const found = pick(searchName(s.name), got.results[j], s.name, got.others?.[j]);
         k.at[s.rel] = Date.now(); k.tags[s.rel] = found; if (found) learnt = true;
       });
       await db.setMeta(KEY(repoKey), k).catch(() => undefined);
