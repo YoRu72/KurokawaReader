@@ -387,7 +387,7 @@ export function libraryView(): HTMLElement {
     const isNew = book.addedAt > lastVisit && !book.lastOpenedAt;
     const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
     const cover = h('div', { class: 'cover' },
-      url ? h('img', { src: url, alt: '', loading: 'lazy' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
+      url ? h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badges' }, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, formatLabel(book.format)), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
       doneBadge && doneAt !== 'beside' ? doneBadge : null,
@@ -593,7 +593,7 @@ export function libraryView(): HTMLElement {
       for (const b of visible.slice(0, 400)) {
         const url = coverUrl(b);
         const thumb = h('span', { class: 'thumb' });
-        if (url) thumb.append(h('img', { src: url, alt: '', loading: 'lazy' })); else { const [c1, c2] = coverColors(b.title); thumb.style.background = `linear-gradient(160deg, ${c1}, ${c2})`; }
+        if (url) thumb.append(h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' })); else { const [c1, c2] = coverColors(b.title); thumb.style.background = `linear-gradient(160deg, ${c1}, ${c2})`; }
         const row = h('label', { class: 'book-pick-row' + (sel.has(b.id) ? ' on' : '') },
           h('input', { type: 'checkbox', checked: sel.has(b.id), onchange: (e: Event) => { const on = (e.target as HTMLInputElement).checked; if (on) sel.add(b.id); else sel.delete(b.id); row.classList.toggle('on', on); sync(); } }),
           thumb,

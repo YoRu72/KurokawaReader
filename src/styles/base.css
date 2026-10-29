@@ -1796,3 +1796,8 @@ html[dir='rtl'] .repo-tree .repo-head-btn[aria-expanded='false'] .repo-chevron {
 .doh-row { display: flex; gap: 8px; align-items: center; }
 .doh-row .pick-btn { flex: 1; min-width: 0; }
 .doh-row > .btn { flex: none; }
+/* A source's cover fades in when it has come (the card's own colours under it until then). */
+.src-cover img.cv-img { opacity: 0; transition: opacity .2s ease-out; }
+.src-cover img.cv-img.loaded { opacity: 1; }
+.src-card.in-library .src-cover img.cv-img.loaded { opacity: .72; }
+@media (prefers-reduced-motion: reduce) { .src-cover img.cv-img { transition: none; } }

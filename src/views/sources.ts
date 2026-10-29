@@ -977,13 +977,55 @@ function openCover(img: HTMLImageElement, src: Source, title: string, hnd?: Hand
     });
   }
 }
+/* A source's covers: straight from the site as any page shows them (the web view's own cache keeps them); a
+   site that refuses them so (a referer wanted, a check) through the app's fetcher — remembered by host, so its
+   next covers go that way at once, without a refused request first — and those kept on the device. */
+const FETCH_HOSTS = 'kr.coverFetchHosts';
+const fetchHosts: Set<string> = (() => { try { return new Set(JSON.parse(localStorage.getItem(FETCH_HOSTS) ?? '[]') as string[]); } catch { return new Set<string>(); } })();
+const hostOfUrl = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
+const COVER_CACHE = 'kr-covers-v1';
+const fetched = new Map<string, Promise<string>>();
+/** A cover through the app's fetcher: from the device when kept, else fetched and kept (a month, by the
+ *  browser's own store); an address for it, made once a session. */
+function viaFetcher(url: string, hnd: Handle): Promise<string> {
+  let p = fetched.get(url);
+  if (p) return p;
+  p = (async () => {
+    let cache: Cache | null = null;
+    try { cache = await caches.open(COVER_CACHE); const hit = await cache.match(url); if (hit && Date.now() - Number(hit.headers.get('x-kr-at') ?? 0) < 30 * 86400000) return URL.createObjectURL(await hit.blob()); } catch { cache = null; }
+    const { fetchBytes } = await import('../sources/http');
+    const bytes = await fetchBytes(url, undefined, { headers: hnd.ln?.imageRequestInit?.headers ?? hnd.my?.headers ?? { referer: hnd.item.site } });
+    const blob = new Blob([bytes.buffer as ArrayBuffer]);
+    if (cache) void cache.put(url, new Response(blob, { headers: { 'x-kr-at': String(Date.now()) } })).catch(() => undefined);
+    return URL.createObjectURL(blob);
+  })();
+  p.catch(() => fetched.delete(url));
+  fetched.set(url, p);
+  return p;
+}
+let firstCovers = 0; let firstCoversAt = 0;
 function coverImg(url: string, hnd?: Handle): HTMLElement {
-  const img = h('img', { src: url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
+  // (The first screen's covers asked first; the rest when the browser gets to them.)
+  const now = performance.now(); if (now - firstCoversAt > 1500) { firstCovers = 0; firstCoversAt = now; }
+  const early = firstCovers++ < 12;
+  const img = h('img', { class: 'cv-img', alt: '', loading: early ? 'eager' : 'lazy', decoding: 'async', fetchpriority: early ? 'high' : 'auto', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
+  img.addEventListener('load', () => img.classList.add('loaded'), { once: true });
+  const host = hostOfUrl(url);
+  const byFetcher = (learn: boolean) => {
+    if (!hnd) { img.remove(); return; }
+    void viaFetcher(url, hnd).then((u) => {
+      img.src = u;
+      // (Learnt only when the fetcher got what the page could not: a picture simply gone teaches nothing.)
+      if (learn && host && !fetchHosts.has(host)) { fetchHosts.add(host); try { localStorage.setItem(FETCH_HOSTS, JSON.stringify([...fetchHosts].slice(-200))); } catch { /* this session */ } }
+    }).catch(() => img.remove());
+  };
+  if (hnd && host && fetchHosts.has(host)) { byFetcher(false); return img; }
   img.addEventListener('error', () => {
     if (img.dataset.retried || !hnd) { img.remove(); return; }
     img.dataset.retried = '1';
-    void import('../sources/http').then(({ fetchBytes }) => fetchBytes(url, undefined, { headers: hnd.ln?.imageRequestInit?.headers ?? hnd.my?.headers ?? { referer: hnd.item.site } })).then((bytes) => { img.src = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer])); }).catch(() => img.remove());
+    byFetcher(true);
   });
+  img.src = url;
   return img;
 }
 
