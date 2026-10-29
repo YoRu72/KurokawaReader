@@ -63,10 +63,15 @@ export function pick(asked: string, list: Raw[] | null | undefined, whole = '', 
   const choose = (l: Raw[] | null | undefined): Raw | null => {
     let best: Raw | null = null; let score = 0;
     for (const m of l ?? []) {
-      const sc = match(asked, namesOf(m), whole);
-      if (sc > score + 1e-9 || (best && Math.abs(sc - score) < 1e-9 && partOf(m) < partOf(best))) { score = sc; best = m; }
+      // (A name that matches as it is beats one that matches only without its subtitle; of those, a numbered
+      // part — the series itself, the first part first — beats a side book: "Part 1", not "Short Story
+      // Collection".)
+      const own = match(asked, [m.title.english ?? '', m.title.romaji ?? '', ...(m.synonyms ?? [])], whole);
+      const cut = match(asked, namesOf(m), whole);
+      const sc = own >= cut ? own : cut - (partOf(m) ? 0.004 * partOf(m) : 0.03);
+      if (sc > score + 1e-9) { score = sc; best = m; }
     }
-    return best && score >= 0.7 ? best : null;
+    return best && score >= 0.66 ? best : null;
   };
   const best = choose(list) ?? choose(other);
   if (!best) return null;
