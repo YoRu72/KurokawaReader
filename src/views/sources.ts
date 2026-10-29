@@ -525,7 +525,11 @@ function updatesSheet(after: () => void): void {
       sw(t('extAutoUpdate'), localStorage.getItem('kr.ext.autoUpdate') !== 'off', (v) => localStorage.setItem('kr.ext.autoUpdate', v ? 'on' : 'off')),
       sw(t('updWifiOnly'), pref.wifiOnly, (v) => setUpdatePref('wifiOnly', v)),
       sw(t('updOnlyOngoing'), pref.onlyOngoing, (v) => setUpdatePref('onlyOngoing', v)),
-      sw(t('updAutoFetch'), pref.autoFetch, (v) => setUpdatePref('autoFetch', v)));
+      sw(t('updAutoFetch'), pref.autoFetch, (v) => setUpdatePref('autoFetch', v)),
+      sw(t('updSmart'), pref.smart, (v) => setUpdatePref('smart', v)),
+      sw(t('updSkipUnread'), pref.skipUnread, (v) => setUpdatePref('skipUnread', v)),
+      sw(t('updSkipNotStarted'), pref.skipNotStarted, (v) => setUpdatePref('skipNotStarted', v)),
+      h('p', { class: 'hint' }, t('updRulesHint')));
     body.append(opts);
   };
   void draw();

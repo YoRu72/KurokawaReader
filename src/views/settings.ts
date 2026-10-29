@@ -169,8 +169,8 @@ export function settingsView(): HTMLElement {
       // How often the checks run by themselves (as in the bell's sheet).
       card.append(h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
         pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(checkEvery()), (v) => setCheckEvery(Number(v)), t('close'))));
-      const sw = (k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
-      card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')),
+      const sw = (k: import('../sources/updates').UpdatePref, label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
+      card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')), sw('smart', t('updSmart')), sw('skipUnread', t('updSkipUnread')), sw('skipNotStarted', t('updSkipNotStarted')),
         h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));
     });
     body.append(card);

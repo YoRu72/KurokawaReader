@@ -33,11 +33,28 @@ export function onUpdatesChanged(fn: () => void): () => void { listeners.add(fn)
 const emit = () => { for (const fn of listeners) fn(); };
 
 /** The reader's choices for the checks (kept in localStorage: kr.updates.*). */
-export function updatePrefs(): { wifiOnly: boolean; onlyOngoing: boolean; autoFetch: boolean } {
+export type UpdatePref = 'wifiOnly' | 'onlyOngoing' | 'autoFetch' | 'skipUnread' | 'skipNotStarted' | 'smart';
+export function updatePrefs(): Record<UpdatePref, boolean> {
   const g = (k: string) => { try { return localStorage.getItem(`kr.updates.${k}`) === 'on'; } catch { return false; } };
-  return { wifiOnly: g('wifiOnly'), onlyOngoing: g('onlyOngoing'), autoFetch: g('autoFetch') };
+  return { wifiOnly: g('wifiOnly'), onlyOngoing: g('onlyOngoing'), autoFetch: g('autoFetch'), skipUnread: g('skipUnread'), skipNotStarted: g('skipNotStarted'), smart: g('smart') };
 }
-export function setUpdatePref(k: 'wifiOnly' | 'onlyOngoing' | 'autoFetch', on: boolean): void { try { localStorage.setItem(`kr.updates.${k}`, on ? 'on' : 'off'); } catch { /* private mode */ } }
+/** Whether a novel is asked on a check of the app's own accord, by the reader's rules (Mihon's): those with
+ *  chapters still to read, or not started, left for later; those whose next chapter is not due yet — by how
+ *  often its chapters come out — not asked yet. */
+export function wantsCheck(b: Book, pref: Record<UpdatePref, boolean>, now = Date.now()): boolean {
+  const r = b.remote; if (!r) return false;
+  if (pref.onlyOngoing && r.finished) return false;
+  const read = b.progress?.toc ?? 0; const total = b.chapters ?? r.chapterCount ?? 0;
+  if (pref.skipNotStarted && !b.progress && !b.readToc) return false;
+  if (pref.skipUnread && ((r.newChapters ?? 0) > 0 || (total > 0 && Math.max(read, b.readToc ?? 0) < total))) return false;
+  if (pref.smart && r.every && r.lastAt) {
+    // (Due a little before its usual gap is up; asked again at most twice a gap after it was last asked.)
+    const due = r.lastAt + r.every * 0.8;
+    if (now < due && r.checkedAt && now - r.checkedAt < r.every / 2) return false;
+  }
+  return true;
+}
+export function setUpdatePref(k: UpdatePref, on: boolean): void { try { localStorage.setItem(`kr.updates.${k}`, on ? 'on' : 'off'); } catch { /* private mode */ } }
 
 export async function lastReport(): Promise<UpdateReport | null> { return (await db.getMeta<UpdateReport>(META)) ?? null; }
 export function isChecking(): boolean { return !!running; }
@@ -74,10 +91,12 @@ export function checkAll(opts: { quiet?: boolean; onProgress?: (done: number, to
     const pref = updatePrefs();
     const cellular = (() => { const c = (navigator as Navigator & { connection?: { type?: string; saveData?: boolean } }).connection; return !!(c?.type === 'cellular' || c?.saveData); })();
     let novels = opts.force || !pref.wifiOnly || !cellular ? await trackedNovels() : [];
+    // (A check asked for by the reader asks every novel; one of the app's own goes by the rules.)
+    if (!opts.force) novels = novels.filter((b) => wantsCheck(b, pref));
     if (pref.onlyOngoing) {
       const { readNovelFile } = await import('./ext/source');
       const keep: Book[] = [];
-      for (const b of novels) { const f = await readNovelFile(b.id).catch(() => null); if (!f?.status || !/^(completed|finished|complete|ended|مكتمل|منته)/i.test(f.status.trim())) keep.push(b); }
+      for (const b of novels) { if (b.remote?.finished === false) { keep.push(b); continue; } const f = await readNovelFile(b.id).catch(() => null); if (!f?.status || !/^(completed|finished|complete|ended|مكتمل|منته)/i.test(f.status.trim())) keep.push(b); }
       novels = keep;
     }
     let done = 0;

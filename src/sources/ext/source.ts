@@ -402,6 +402,17 @@ export async function novelToEpub(book: Book, onProgress: (step: 'chapters' | 'p
 }
 
 /** Ask the site for the novel's chapters again; new ones go into the file (and are counted on the book). */
+/** How often a novel's chapters come out — the middle gap between its latest dated ones — and when the latest
+ *  came (Mihon's fetch interval); unknown when the site gives no dates. */
+export function cadenceOf(chapters: WebChapter[]): { every?: number; lastAt?: number } {
+  const at = chapters.map((c) => (c.released ? Date.parse(c.released) : NaN)).filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b).slice(-12);
+  if (at.length < 3) return {};
+  const gaps = at.slice(1).map((x, i) => x - at[i]).filter((g) => g > 3600000).sort((a, b) => a - b);
+  if (!gaps.length) return { lastAt: at[at.length - 1] };
+  const mid = gaps[Math.floor(gaps.length / 2)];
+  return { every: Math.min(28, Math.max(1, mid / 86400000)) * 86400000, lastAt: at[at.length - 1] };
+}
+const FINISHED = /^(completed|finished|complete|ended|مكتمل|منته)/i;
 export async function checkNovel(book: Book, quiet = true): Promise<number> {
   const info = await readNovelFile(book.id); if (!info) return 0;
   const h = await extHandle(info.src);
@@ -412,5 +423,8 @@ export async function checkNovel(book: Book, quiet = true): Promise<number> {
     await saveNovelFile(book, (cur) => ({ ...cur, chapters: [...cur.chapters, ...added.filter((c) => !cur.chapters.some((k) => k.path === c.path))], status: fresh.status ?? cur.status, summary: cur.summary ?? fresh.summary }));
     await db.updateBook(book.id, (b) => { if (b.remote) { b.remote.newChapters = (b.remote.newChapters ?? 0) + added.length; b.remote.checkedAt = Date.now(); b.remote.online = true; } });
   } else await db.updateBook(book.id, (b) => { if (b.remote) b.remote.checkedAt = Date.now(); });
+  // (What the smart checks go by, kept on the book: no need to open its file to decide whether to ask.)
+  const cad = cadenceOf(fresh.chapters);
+  await db.updateBook(book.id, (b) => { if (!b.remote) return; b.remote.every = cad.every; b.remote.lastAt = cad.lastAt; b.remote.finished = !!fresh.status && FINISHED.test(fresh.status.trim()); });
   return added.length;
 }
