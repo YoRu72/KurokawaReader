@@ -454,7 +454,7 @@ function updatesSheet(after: () => void): void {
         list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } },
           url ? h('img', { class: 'upd-cover', src: url, alt: '' }) : h('span', { class: 'upd-cover gen' }, icon('books')),
           h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), b.remote?.checkedAt ? ` · ${ago(b.remote.checkedAt)}` : '')),
-          h('span', { class: 'badge new' }, localDigits(String(b.remote!.newChapters)))), dismiss(() => dismissChapters(b.id))));
+          h('span', { class: 'badge new' }, `+${localDigits(String(b.remote!.newChapters))}`)), dismiss(() => dismissChapters(b.id))));
       }
       body.append(list);
     }
@@ -464,7 +464,7 @@ function updatesSheet(after: () => void): void {
         h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const v of vols) await dismissVolumes(v.repoKey, v.series); void draw(); after(); } }, t('markAllSeen'))));
       const list = h('ul', { class: 'plain-list upd-list' });
       for (const v of vols) list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, h('span', { class: 'upd-cover gen' }, icon('books')),
-        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${v.at ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, localDigits(String(v.n)))), dismiss(() => dismissVolumes(v.repoKey, v.series))));
+        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${v.at ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, `+${localDigits(String(v.n))}`)), dismiss(() => dismissVolumes(v.repoKey, v.series))));
       body.append(list);
     }
     // Extensions with a newer version: each updated with a tap, or all at once.
