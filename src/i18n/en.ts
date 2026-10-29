@@ -902,7 +902,6 @@ export const en = {
   pinDot: 'Small dot',
   allNotes: 'Bookmarks & notes',
   noNotesAnywhere: 'Bookmarks and notes from all your books will gather here.',
-  itemsCount: '{n} item(s)',
   updateNow: 'Update',
   defaultApps: 'Make KurokawaReader the default for PDF, EPUB…',
   defaultAppsBody: 'Windows lets you choose default apps in Settings; this opens that page.',

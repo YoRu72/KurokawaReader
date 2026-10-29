@@ -252,6 +252,12 @@ export function countSeconds(n: number): string {
   return arCount(n, { one: 'ثانية واحدة', two: 'ثانيتان', few: 'ثوانٍ', many: 'ثانيةً', hundred: 'ثانيةٍ' });
 }
 
+/** "3 items" — in Arabic: عنصر واحد · عنصران · ٣–١٠ عناصر · ١١–٩٩ عنصرًا · ١٠٠ عنصرٍ. */
+export function countItems(n: number): string {
+  if (current !== 'ar') return `${n} ${n === 1 ? 'item' : 'items'}`;
+  return arCount(n, { one: 'عنصر واحد', two: 'عنصران', few: 'عناصر', many: 'عنصرًا', hundred: 'عنصرٍ' });
+}
+
 /** "12 cards" — in Arabic: بطاقة واحدة · بطاقتان · ٣–١٠ بطاقات · ١١–٩٩ بطاقةً · ١٠٠ بطاقةٍ. */
 export function countCards(n: number): string {
   if (current !== 'ar') return cjkCount(n, 'card') ?? `${n} ${n === 1 ? 'card' : 'cards'}`;
