@@ -72,7 +72,7 @@ function mountInner(route: Route): void {
     case 'subs': current = lazyView(() => import('./views/subs').then((m) => m.subsView(route.q))); break;
     case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q))); break;
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
-    case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q, route.addon))); break;
+    case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q))); break;
     case 'add': current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(route.u ?? '')), 50); break;
     default: current = downloadsView(route.filter);
   }
@@ -92,6 +92,7 @@ onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a 
 if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
 if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
 if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
+setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
 if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);

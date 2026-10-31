@@ -27,7 +27,7 @@ type Meta = { imdb_id: string; name: string; poster?: string; releaseInfo?: stri
 const fromMeta = (m: Meta, kind: 'movie' | 'series'): TitleCard => ({ kind, title: m.name, titles: [m.name], year: Number((m.releaseInfo ?? m.year ?? '').slice(0, 4)) || undefined, cover: m.poster, ids: { imdb: m.imdb_id } });
 
 /** Cards for what was typed: anime first when it is an anime word, films and series beside. */
-export async function lookup(q: string, adult = false): Promise<TitleCard[]> {
+export async function lookup(q: string, adult = false, only?: 'anime' | 'video'): Promise<TitleCard[]> {
   const ref = parseRef(q);
   if (ref) {
     if (ref.anilist) return [fromAnime(await al.media(ref.anilist))];
@@ -35,9 +35,9 @@ export async function lookup(q: string, adult = false): Promise<TitleCard[]> {
     if (ref.imdb) { const out: TitleCard[] = []; for (const kind of ['movie', 'series'] as const) { const r = await request(`https://v3-cinemeta.strem.io/meta/${kind}/${ref.imdb}.json`); if (r.status === 200) { const m = (JSON.parse(r.body) as { meta?: Meta & { videos?: { season: number }[] } }).meta; if (m) { const c = fromMeta(m, kind); if (kind === 'series' && m.videos) c.seasons = Math.max(0, ...m.videos.map((v) => v.season)); out.push(c); } } } return out; }
   }
   const [anime, movies, series] = await Promise.all([
-    al.search(q, { adult }).catch(() => [] as al.Anime[]),
-    request(`https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(q)}.json`).then((r) => (r.status === 200 ? ((JSON.parse(r.body) as { metas?: Meta[] }).metas ?? []) : [])).catch(() => [] as Meta[]),
-    request(`https://v3-cinemeta.strem.io/catalog/series/top/search=${encodeURIComponent(q)}.json`).then((r) => (r.status === 200 ? ((JSON.parse(r.body) as { metas?: Meta[] }).metas ?? []) : [])).catch(() => [] as Meta[]),
+    only === 'video' ? Promise.resolve([] as al.Anime[]) : al.search(q, { adult }).catch(() => [] as al.Anime[]),
+    only === 'anime' ? Promise.resolve([] as Meta[]) : request(`https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(q)}.json`).then((r) => (r.status === 200 ? ((JSON.parse(r.body) as { metas?: Meta[] }).metas ?? []) : [])).catch(() => [] as Meta[]),
+    only === 'anime' ? Promise.resolve([] as Meta[]) : request(`https://v3-cinemeta.strem.io/catalog/series/top/search=${encodeURIComponent(q)}.json`).then((r) => (r.status === 200 ? ((JSON.parse(r.body) as { metas?: Meta[] }).metas ?? []) : [])).catch(() => [] as Meta[]),
   ]);
   const cards = [...anime.slice(0, 8).map(fromAnime), ...movies.slice(0, 6).map((m) => fromMeta(m, 'movie')), ...series.slice(0, 6).map((m) => fromMeta(m, 'series'))];
   // The same work in two catalogues (an anime film is also in Cinemeta): one card, the ids merged.

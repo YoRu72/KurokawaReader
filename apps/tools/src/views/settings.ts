@@ -106,7 +106,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
           const kids = (a.children ?? []).map((id) => ix.addons.find((x) => x.id === id)).filter(Boolean) as AddonEntry[];
           const withSettings = [a, ...kids].filter((x) => x.settings?.length && installed(x.id));
           const gear = withSettings.length ? iconButton('settings', t('addonSettings'), () => addonSettingsSheet(withSettings, lang)) : null;
-          return h('div', { class: 'addon-row' + (child ? ' child' : '') }, icon(a.icon ?? 'puzzle'), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, nameOf(a, lang)), h('small', { class: 'src', dir: 'auto' }, descOf(a, lang)), kids.length ? h('small', { class: 'src' }, `${t('addonChildren')}: ${kids.map((k) => nameOf(k, lang)).join(' · ')}`) : null), gear, btn);
+          return h('div', { class: 'addon-row' + (child ? ' child' : ''), dataset: { id: a.id } }, icon(a.icon ?? 'puzzle'), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, nameOf(a, lang)), h('small', { class: 'src', dir: 'auto' }, descOf(a, lang)), kids.length ? h('small', { class: 'src' }, `${t('addonChildren')}: ${kids.map((k) => nameOf(k, lang)).join(' · ')}`) : null), gear, btn);
         };
         addonsBox.replaceChildren(...parents.map((a) => rowOf(a)));
       } catch (e) { addonsBox.replaceChildren(h('p', { class: 'src' }, t('addonsFailed', { error: String((e as Error).message ?? e) }))); }
