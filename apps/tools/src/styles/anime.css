@@ -154,6 +154,17 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .market-badge { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; vertical-align: middle; margin-inline-start: 4px; }
 .market-badge.s-working { background: color-mix(in srgb, #3c9 25%, transparent); color: #2b8; }
 .market-badge.s-broken { background: var(--md-error-container); color: var(--md-on-error-container); }
+.market-badge.s-stream { background: var(--md-tertiary-container, var(--md-secondary-container)); color: var(--md-on-tertiary-container, var(--md-on-secondary-container)); }
+.stream-sheet .stream-match > svg { width: 20px; height: 20px; flex: none; color: var(--md-primary); }
+.stream-sheet .stream-match { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.stream-sheet .stream-match .row { display: flex; gap: 8px; width: 100%; }
+.stream-sheet .stream-match .row .search-input { flex: 1; min-width: 0; }
+.stream-sheet .stream-match .result-list { width: 100%; }
+.stream-sheet .stream-sources { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.stream-sheet .stream-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 16px; background: var(--md-surface-container-high); }
+.stream-sheet .stream-row b { display: block; }
+.stream-sheet .row-busy { display: flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--md-on-surface-variant); }
+.chip-icon { width: 16px; height: 16px; border-radius: 4px; margin-inline-end: 4px; vertical-align: middle; }
 .market-badge.s-deprecated { background: var(--md-surface-container-highest); color: var(--md-on-surface-variant); }
 .addon-row.dim { opacity: .62; }
 .market-stremio { border-top: 1px solid var(--md-outline-variant); padding-top: 8px; }

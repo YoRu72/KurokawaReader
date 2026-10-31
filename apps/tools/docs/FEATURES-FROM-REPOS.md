@@ -57,7 +57,7 @@ Status: [x] done · [~] partly · [ ] to do. Kept current as each batch lands.
 ## Seanime (5rahim/seanime and the community repos)
 - [x] Torrent providers (Seanime and Hayase extensions), debrid
 - [x] Extension marketplaces browsed in the app (Seanime Marketplace, ASleepyDrink, Pal-droid, Hayase repos): status, language, one-tap install
-- [ ] Online streaming extensions (`onlinestream-provider`): watch or download episodes over HTTP/HLS
+- [x] Online streaming extensions (`onlinestream-provider`): watch or download episodes over HTTP/HLS — match kept per show, server fallback, subtitles, headers through a local proxy (HLS remuxed by ffmpeg on the desktop); TypeScript payloads compiled with the TypeScript compiler; `CryptoJS` (AES/MD5), `Buffer`, goquery-style `Doc`/`LoadDoc` shimmed. Not possible: `ChromeDP` (a headless browser)
 - [x] Stremio add-ons (any manifest URL with streams) as providers
 - [x] Auto Downloader: rules per show (group, resolution, terms), checked on a schedule
 - [ ] Local anime library (match files to shows), Continue watching / Up next

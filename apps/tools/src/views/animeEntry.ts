@@ -18,7 +18,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
   const body = h('div', { class: 'body anime-entry' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   const title = h('div', { class: 'title' }, h('span', null, ''));
   const root = h('div', { class: 'view anime-entry-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/anime')), title, h('div', { class: 'topbar-actions' })), body) as HTMLElement & { dispose?: () => void };
-  let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let fillers = new Set<number>();
+  let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let fillers = new Set<number>(); let streams = 0;
   const draw = () => {
     if (!a) return;
     const s = getSettings();
@@ -60,9 +60,10 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       const aired = n <= airedCount || a.status === 'FINISHED'; const at = sched.get(n); const seen = !!e && n <= e.progress; const st = stream.find((x) => x.n === n);
       const got = have.get(n); const filler = fillers.has(n);
       eps.push(h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : '') },
-        st?.thumbnail ? h('img', { class: 'ep-thumb', src: st.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(n)),
+        st?.thumbnail ? h('img', { class: 'ep-thumb', src: st.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(n, 'prose')),
         h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '') || t('episodeN', { n }), filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet'))),
         got && got.state === 'done' ? iconButton('play', t('play'), () => void import('./player').then((m) => m.playTaskFile(got, got.files.length > 1 ? Math.max(0, got.files.findIndex((f) => /\.(mkv|mp4|webm|avi|mov|m4v)$/i.test(f.path))) : 0))) : aired ? iconButton('download', t('animeFindTorrents'), () => torrentSheet(a!, n)) : null,
+        aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
         al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) })) : null));
     }
     const rule = ruleOf(a.id);
@@ -85,7 +86,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     sh.body.append(h('div', { class: 'score-row' }, range, out));
     sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void saveEntry({ ...a!.entry!, score: Number(range.value) }); } }, t('save')));
   };
-  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
+  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
   const tick = tickCountdowns(body);
   root.dispose = () => { gone = true; window.clearInterval(tick); };
   return root;
@@ -101,7 +102,7 @@ const relName = (r: string): string => ({ PREQUEL: t('relPrequel'), SEQUEL: t('r
 export async function torrentSheet(a: Anime, episode: number): Promise<void> {
   const sh = openSheet(episode ? `${titleOf(a)} · ${t('episodeN', { n: episode })}` : titleOf(a), t('close'));
   await syncBuiltins().catch(() => undefined);
-  const ps = (await providers()).filter((p) => p.enabled);
+  const ps = (await providers()).filter((p) => p.enabled && p.role !== 'stream');
   if (!ps.length) { sh.body.append(h('div', { class: 'empty small' }, h('p', null, t('animeNoProviders')), h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); navigate('/settings/anime'); } }, icon('puzzle'), t('animeProviders')))); return; }
   const status = h('div', { class: 'chips provider-chips' }, ...ps.map((p) => h('span', { class: 'chip small busy', dataset: { id: p.id } }, h('span', { class: 'spinner tiny' }), p.name)));
   const list = h('div', { class: 'torrent-list' });

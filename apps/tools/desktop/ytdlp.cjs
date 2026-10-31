@@ -75,18 +75,19 @@ class VideoJobs {
   emit() { this.send(); }
   async add(o) {
     const id = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container }, engine: 'native' };
+    const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container, headers: o.headers, outName: o.outName }, engine: 'native' };
     this.tasks.set(id, t); this.save(); this.emit(); if (!o.paused) void this.start(id); return t;
   }
   async start(id) {
     const t = this.tasks.get(id); if (!t || this.procs.has(id)) return;
     t.state = 'downloading'; t.error = undefined; this.emit();
     try { await ensure(); } catch (e) { t.state = 'failed'; t.error = String(e.message); this.emit(); this.save(); return; }
-    const m = t.meta || {}; const outTpl = path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
+    const m = t.meta || {}; const safe = (x) => String(x).replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().slice(0, 180); const outTpl = m.outName ? path.join(t.dir, `${safe(m.outName)}.%(ext)s`) : path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
     const args = [...common(), '--newline', '--no-playlist', '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.filename)s', '-o', outTpl];
     if (m.audioOnly) args.push('-f', m.format || 'bestaudio/best', '-x', ...(m.container ? ['--audio-format', m.container] : [])); else args.push('-f', m.format ? `${m.format}/best` : 'bestvideo+bestaudio/best', ...(m.container ? ['--merge-output-format', m.container] : ['--merge-output-format', 'mp4']));
     if (m.subs) args.push('--write-subs', '--sub-langs', m.subs, '--embed-subs'); if (m.embedThumb) args.push('--embed-thumbnail'); if (m.embedMeta !== false) args.push('--embed-metadata'); if (m.sponsorblock) args.push('--sponsorblock-remove', 'sponsor');
     if (m.cookiesFromBrowser) args.push('--cookies-from-browser', m.cookiesFromBrowser);
+    for (const [k, v] of Object.entries(m.headers || {})) if (k && v) args.push('--add-header', `${k}:${v}`);
     args.push(t.source.url);
     const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); this.procs.set(id, p); let err = ''; let buf = ''; let last = 0;
     p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) { if (l.startsWith('KT|')) { const [, done, total, est, speed, eta, file] = l.split('|'); t.done = Number(done) || 0; t.total = Number(total) || Number(est) || 0; t.downSpeed = Number(speed) || 0; t.eta = Number(eta) || undefined; if (file && file !== 'NA') { const base = path.basename(file).replace(/\.f\d+\.(\w+)$/, '.$1').replace(/\.part$/, ''); t.files = [{ index: 0, path: base, size: t.total, done: t.done, priority: 1 }]; t.name = base.replace(/\.[^.]+$/, '') || t.name; } } else if (/\[(Merger|ExtractAudio|EmbedSubtitle|Metadata|ffmpeg)\]/.test(l)) { t.detail = l.replace(/^\[\w+\]\s*/, '').slice(0, 120); if (/Merging into "(.+)"/.test(l)) { const f = /Merging into "(.+)"/.exec(l)[1]; t.files = [{ index: 0, path: path.basename(f), size: t.total, done: t.total, priority: 1 }]; t.name = path.basename(f).replace(/\.[^.]+$/, ''); } } const now = Date.now(); if (now - last > 300) { last = now; this.emit(); } } });

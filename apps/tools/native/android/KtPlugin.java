@@ -323,6 +323,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void roots(PluginCall call) { JSArray a = new JSArray(); a.put(engine().defaultDir().getAbsolutePath()); for (File f : getContext().getExternalFilesDirs(null)) if (f != null) a.put(f.getAbsolutePath()); JSObject r = new JSObject(); r.put("roots", a); call.resolve(r); }
 
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
+    @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
     @PluginMethod public void siblings(PluginCall call) {
         File f = fileOf(call.getString("path", "")); JSArray out = new JSArray(); File dir = f.getParentFile(); String base = f.getName().replaceAll("\\.[^.]+$", "").toLowerCase();
