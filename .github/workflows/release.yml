@@ -184,7 +184,7 @@ jobs:
           V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
           npm install
-          npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
+          node prepare.cjs && npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
           ls -la out
       - name: Report failure
         if: failure()
@@ -219,7 +219,7 @@ jobs:
           V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
           npm install
-          CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
+          node prepare.cjs && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
           ls -la out
       - name: Report failure
         if: failure()
@@ -254,7 +254,7 @@ jobs:
           V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
           npm install
-          npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee $RUNNER_TEMP/linux-build.log | tail -n 60
+          node prepare.cjs && npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee $RUNNER_TEMP/linux-build.log | tail -n 60
           ls -la out
       - name: Report failure
         if: failure()

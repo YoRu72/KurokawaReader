@@ -82,6 +82,11 @@ export function libraryView(): HTMLElement {
   convertBtn.classList.add('tool-btn');
   const pdfToolsBtn = iconButton('file', t('pdfTools'), () => void import('../ui/pdftools').then((m) => m.pdfToolsSheet(books, undefined, () => void refresh())));
   pdfToolsBtn.classList.add('tool-btn');
+  // Archives (the Tools app's engine, in the apps only): open one, see inside, extract — in place for ZIPs — or make a zip.
+  const archivesBtn = iconButton('archive', t('archives'), () => void import('../ui/archives').then((m) => archivesMenu(m)));
+  archivesBtn.classList.add('tool-btn'); archivesBtn.hidden = true;
+  void import('../archives').then((m) => { archivesBtn.hidden = !m.canArchive(); });
+  const archivesMenu = (m: typeof import('../ui/archives')) => { const sh = openSheet(t('archives'), t('close')); sh.body.append(h('p', { class: 'hint' }, t('archivesHint')), h('div', { class: 'dest-list' }, h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.openArchivePicker(); } }, icon('archive'), h('span', { class: 'name' }, t('openArchive'))), h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.createZipSheet(); } }, icon('plus'), h('span', { class: 'name' }, t('createZip'))))); };
   // Search across books: a word or phrase in many books at once.
   const randomBtn = iconButton('target', t('randomBook'), () => randomBook()); randomBtn.classList.add('tool-btn');
   const searchBooksBtn = iconButton('search', t('searchBooks'), () => void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder)));
@@ -101,7 +106,7 @@ export function libraryView(): HTMLElement {
     void import('../sources/updates').then(({ onUpdatesChanged }) => { const off = onUpdatesChanged(() => { if (!browseBtn.isConnected) { off(); return; } void refresh(); }); }); }
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, searchBooksBtn, randomBtn, downloadsBtn, browseBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, archivesBtn, searchBooksBtn, randomBtn, downloadsBtn, browseBtn),
     chips,
     tagChips,
     fmtChips,

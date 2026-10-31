@@ -1913,3 +1913,21 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 @media (prefers-reduced-motion: reduce) { .busy-bar.busy-any i { animation: none; width: 100% !important; opacity: .5; } }
 .search-missing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; font-size: 13px; }
 .gallery-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 2px 14px; font-size: 13px; }
+
+/* Archives (the sheet shared with Kurokawa Tools) */
+.entry-list { max-height: 240px; overflow: auto; border-radius: var(--sh-md); background: var(--md-surface-container-low); padding: 6px 10px; font-size: 13px; }
+.entry-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.entry-row svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; flex: none; color: var(--md-on-surface-variant); }
+.entry-row.dir { color: var(--md-on-surface-variant); }
+.entry-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.extract-progress { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+.extract-progress .task-bar { height: 8px; border-radius: 4px; background: var(--md-surface-container-highest); overflow: hidden; }
+.extract-progress .task-bar i { display: block; height: 100%; background: var(--md-primary); transition: width .2s; }
+.sheet .row > span > small, .sheet .switch-row > span > small { display: block; margin-top: 2px; }
+.app-row { display: flex; align-items: center; gap: 12px; }
+.app-row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.app-icon-box { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--md-primary-container); color: var(--md-on-primary-container); flex: none; }
+.app-icon-box svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; }
+.app-progress { display: flex; flex-direction: column; gap: 6px; min-width: 140px; }
+.app-progress .task-bar { height: 6px; border-radius: 3px; background: var(--md-surface-container-highest); overflow: hidden; }
+.app-progress .task-bar i { display: block; height: 100%; background: var(--md-primary); transition: width .2s; }

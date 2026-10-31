@@ -1724,6 +1724,11 @@ export const en = {
   localServerHint: "Any server with an OpenAI-style API works: Ollama, LM Studio, llama.cpp, Jan, KoboldCpp, GPT4All, LocalAI, vLLM. To use one on another computer from your phone, start it listening on the network (Ollama: OLLAMA_HOST=0.0.0.0) and enter its address, e.g. http://192.168.1.10:11434/v1. A server with a speech endpoint (Kokoro-FastAPI, LocalAI) can also read aloud.",
   localTry: "Try it",
   download: "Download",
-};
+  // Archives
+  archives: 'Archives', archivesHint: 'Open an archive to see inside and extract it — in place for ZIPs when space is short — or make a zip.',
+  extract: 'Extract…', extractNow: 'Extract', extractTo: 'Extract to', extractNewFolder: 'A folder of its name', extractHere: 'Beside the archive', extractElsewhere: 'Elsewhere…', chooseFolder: 'Choose a folder', existingFiles: 'Files already there', replaceFiles: 'Replace', skipFiles: 'Skip', keepBoth: 'Keep both',
+  extractInPlace: 'Extract in place', extractInPlaceHint: 'The archive shrinks as files come out, so the disk only needs room for the files — stopped half way, it continues later.', deleteArchiveAfter: 'Delete the archive afterwards', extracting: 'Extracting…', extracted: '{n} extracted', extractContinue: 'Continue extracting', extractResumable: 'half extracted', extractPausedInPlace: 'Stopped — the archive is kept as it is and can be continued', 
+  notAnArchive: 'This is not an archive the app can open.', encrypted: 'encrypted', password: 'Password', passwordNeeded: 'This archive asks for a password.', wrongPassword: 'That password is wrong.', noSpace: 'Not enough space on the disk.', openArchive: 'Open an archive', createZip: 'Make a zip', zipping: 'Zipping…', zipped: '{name} made ({size})',
+  otherApps: 'Other Kurokawa apps', otherAppsHint: 'The apps share one look, one AniList link and one repository of add-ons.', appTools: 'Kurokawa Tools', appToolsDesc: 'Downloads, torrents and streaming, with anime, subtitle and archive add-ons.', appInstalled: 'Installed · open', appGet: 'Get it', appOpenReleases: 'Open the releases page', appInstallerOpened: 'The installer has been handed the app', };
 
 export type Strings = typeof en;

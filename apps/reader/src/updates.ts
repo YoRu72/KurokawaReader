@@ -37,6 +37,14 @@ export async function fetchLatest(): Promise<ReleaseInfo> {
   return { version: j.tag_name.replace(/^v/, ''), url: j.html_url, notes: j.body ?? '', publishedAt: j.published_at, assets: j.assets.map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })) };
 }
 
+/** The newest release of another Kurokawa app in the same repository, by its tag prefix (`tools-v`). */
+export async function fetchLatestOf(prefix: string): Promise<ReleaseInfo> {
+  const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { accept: 'application/vnd.github+json' }, cache: 'no-store' });
+  if (!r.ok) throw new Error(String(r.status));
+  const all = ((await r.json()) as RawRelease[]).filter((x) => !x.draft && x.tag_name.startsWith(prefix)).sort((a, b) => cmp(b.tag_name.slice(prefix.length), a.tag_name.slice(prefix.length)));
+  const j = all[0]; if (!j) throw new Error('no release');
+  return { version: j.tag_name.slice(prefix.length), url: j.html_url, notes: j.body ?? '', publishedAt: j.published_at, assets: j.assets.map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })) };
+}
 export function lastChecked(): number { return Number(localStorage.getItem('kr.update.lastCheck') ?? 0); }
 
 /** Returns the release when it is newer than the running build. */
@@ -184,7 +192,7 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
 /** Download `asset` and hand it to the platform installer (or save/share it when there is none). */
 /** `alive`: whether the dialog that asked is still open — one closed meanwhile does not start the installer when
  *  the download ends (the update is kept; opening the dialog again installs it, once). */
-async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, alive: () => boolean = () => true): Promise<void> {
+export async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, alive: () => boolean = () => true, plain = false): Promise<void> {
   const platform = nativePlatform();
   if (platform === 'android') {
     const p = androidPlugins(); if (!p) throw new Error('native');
@@ -207,10 +215,10 @@ async function installAsset(asset: Asset, onProgress: (p: Progress) => void, sig
     return;
   }
   if (platform === 'desktop' && /\.(exe|dmg|AppImage)$/i.test(asset.name)) {
-    const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string, opts?: { beta: boolean }): Promise<void>; onUpdateProgress?(cb: (p: number | Progress) => void): void }) | undefined;
+    const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string, opts?: { beta: boolean; plain?: boolean }): Promise<void>; onUpdateProgress?(cb: (p: number | Progress) => void): void }) | undefined;
     if (!d?.installUpdate) throw new Error('desktop');
     d.onUpdateProgress?.((p) => onProgress(typeof p === 'number' ? { pct: p, got: 0, total: asset.size, speed: 0 } : p));
-    await d.installUpdate(asset.url, { beta: getSettings().updateChannel === 'beta' });
+    await d.installUpdate(asset.url, { beta: getSettings().updateChannel === 'beta', plain });
     return;
   }
   // Anything else: download in-app and hand the file over (share sheet / Downloads); when the

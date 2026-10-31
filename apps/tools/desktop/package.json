@@ -34,7 +34,7 @@
       "icon.png",
       "icon.ico",
       {
-        "from": "../dist",
+        "from": "dist",
         "to": "dist",
         "filter": [
           "**/*",

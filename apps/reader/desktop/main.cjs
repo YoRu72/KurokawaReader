@@ -1,7 +1,7 @@
 // Electron shell: serves the built web app from an app:// origin (so IndexedDB,
 // fonts and absolute paths behave exactly as on the web) and forwards files the
 // OS asks us to open (double-click, "Open with", drag onto the icon).
-const { app, BrowserWindow, WebContentsView, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session, dialog } = require('electron');
 // (Windows shows the app's notifications under its own name only with this.)
 if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.reader');
 const path = require('node:path');
@@ -182,12 +182,12 @@ async function differentialUpdate(e, beta) {
 }
 
 ipcMain.handle('kr:install-update', async (e, url, opts) => {
-  if (await differentialUpdate(e, opts && opts.beta)) return 'differential';
+  if (!(opts && opts.plain) && await differentialUpdate(e, opts && opts.beta)) return 'differential';
   const res = await net.fetch(url);
   if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
   const total = Number(res.headers.get('content-length') || 0);
   const ext = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage';
-  const file = path.join(app.getPath('temp'), `KurokawaReader-update-${Date.now()}` + ext);
+  const file = path.join(app.getPath('temp'), `${(opts && opts.plain) ? 'Kurokawa-install' : 'KurokawaReader-update'}-${Date.now()}` + ext);
   // Old leftovers (a locked one from a previous attempt must never take the app down).
   try { for (const f of fs.readdirSync(app.getPath('temp'))) if (f.startsWith('KurokawaReader-update') && f !== path.basename(file)) { try { fs.unlinkSync(path.join(app.getPath('temp'), f)); } catch { /* still busy */ } } } catch { /* ignore */ }
   const out = fs.createWriteStream(file);
@@ -241,6 +241,23 @@ ipcMain.handle('kr:install-update', async (e, url, opts) => {
   setTimeout(() => app.quit(), 1500);
   return file;
 });
+/* ---------- archives (the Tools app's engine, shared): list, extract (in place for ZIP), make a zip ---------- */
+const Archive = require('./archive.cjs'); const archiveJobs = new Map();
+ipcMain.handle('kr:archive-list', (_e, o) => Archive.list(String(o.path), o.password));
+ipcMain.handle('kr:archive-extract', async (e, o) => {
+  const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
+  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kr:archive-progress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
+  finally { if (o.id) archiveJobs.delete(o.id); }
+});
+ipcMain.handle('kr:archive-cancel', (_e, id) => { const s = archiveJobs.get(id); if (s) s.v = true; });
+ipcMain.handle('kr:archive-create', async (e, o) => {
+  const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
+  try { const files = await Archive.createZip(String(o.out), (o.inputs || []).map(String), { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kr:archive-progress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, path: o.out, size: fs.statSync(String(o.out)).size }; }
+  finally { if (o.id) archiveJobs.delete(o.id); }
+});
+ipcMain.handle('kr:archive-pick-file', async (e, o) => { const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: ['openFile', ...(o?.multiple ? ['multiSelections'] : [])] }); return r.canceled ? [] : r.filePaths; });
+ipcMain.handle('kr:archive-pick-dir', async (e) => { const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
+
 ipcMain.handle('kr:is-portable', () => !!process.env.PORTABLE_EXECUTABLE_DIR);
 
 // Whole-device scan: the user's home folder (Documents, Downloads, Desktop, …) plus any

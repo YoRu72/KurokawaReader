@@ -112,6 +112,10 @@ if (!manifest.includes('android.intent.action.TTS_SERVICE')) {
   if (manifest.includes('<queries>')) manifest = manifest.replace('<queries>', `<queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>`);
   else manifest = manifest.replace('</manifest>', `  <queries>\n    <intent>\n      <action android:name="android.intent.action.TTS_SERVICE" />\n    </intent>\n  </queries>\n</manifest>`);
 }
+if (!manifest.includes('app.kurokawa.tools')) {
+  const q = `    <package android:name="app.kurokawa.tools" />`;
+  manifest = manifest.includes('<queries>') ? manifest.replace('<queries>', `<queries>\n${q}`) : manifest.replace('</manifest>', `  <queries>\n${q}\n  </queries>\n</manifest>`);
+}
 if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
   const q = `    <intent>\n      <action android:name="android.intent.action.PROCESS_TEXT" />\n      <data android:mimeType="text/plain" />\n    </intent>`;
   manifest = manifest.includes('<queries>') ? manifest.replace('<queries>', `<queries>\n${q}`) : manifest.replace('</manifest>', `  <queries>\n${q}\n  </queries>\n</manifest>`);
@@ -179,6 +183,7 @@ await fs.copyFile(path.join(root, 'native/android/KrTtsService.java'), path.join
 await fs.copyFile(path.join(root, 'native/android/KrBrowser.java'), path.join(pkgDir, 'KrBrowser.java'));
 await fs.copyFile(path.join(root, 'native/android/KrPrint.java'), path.join(pkgDir, 'KrPrint.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join(pkgDir, 'KrDownloader.java'));
+await fs.copyFile(path.join(root, 'native/android/KrArchive.java'), path.join(pkgDir, 'KrArchive.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDoh.java'), path.join(pkgDir, 'KrDoh.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDohWeb.java'), path.join(pkgDir, 'KrDohWeb.java'));
 // (The print job's callbacks can only be made from the android.print package: that one class lives there.)
@@ -233,5 +238,14 @@ if (!gradle.includes('splits {')) {
         release {
             signingConfig signingConfigs.release`);
 }
+// Archives (the Tools app's engine, shared): zip is read by the app itself; 7z/tar/gz/xz/bz2, rar and encrypted
+// zips through their libraries.
+if (!gradle.includes('commons-compress')) gradle = gradle.replace(/dependencies \{/, `dependencies {
+    implementation "org.apache.commons:commons-compress:1.27.1"
+    implementation "org.tukaani:xz:1.10"
+    implementation "com.github.junrar:junrar:7.5.5"
+    implementation "net.lingala.zip4j:zip4j:2.11.5"`);
+const proPath = path.join(app, 'proguard-rules.pro');
+try { let pro = await fs.readFile(proPath, 'utf8'); if (!pro.includes('commons.compress')) await fs.writeFile(proPath, pro + '\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n'); } catch { /* no proguard file */ }
 await fs.writeFile(gradlePath, gradle);
 console.log('Android overlay applied');

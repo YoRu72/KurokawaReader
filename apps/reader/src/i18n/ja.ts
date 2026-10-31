@@ -101,4 +101,9 @@ export const ja: Partial<Strings> = {
   hskSentencesBody: '同じ HSK デッキの例文付き版。',
   addBooks: '本を追加', addBooksNow: '今すぐ本を追加', tagExists: '同じ名前のタグがあります', tagCreated: 'タグを作成しました', addedToTag: '{n} 冊を「{name}」に追加しました', emptyTagBody: 'このタグは空です。ライブラリから本を追加してください。',
   searching: '検索中…',
+  archives: 'アーカイブ', archivesHint: 'アーカイブを開いて中身を見て展開します（ZIP は空きが少なければその場で）。zip の作成も。',
+  extract: '展開…', extractNow: '展開', extractTo: '展開先', extractNewFolder: '同名のフォルダー', extractHere: 'アーカイブの隣', extractElsewhere: 'ほかの場所…', chooseFolder: 'フォルダーを選択', existingFiles: '既存のファイル', replaceFiles: '置き換え', skipFiles: 'スキップ', keepBoth: '両方残す',
+  extractInPlace: 'その場で展開', extractInPlaceHint: 'ファイルが出るたびにアーカイブが縮むので、ディスクにはファイル分の空きがあれば足ります。途中で止めても後で続けられます。', deleteArchiveAfter: '展開後にアーカイブを削除', extracting: '展開中…', extracted: '{n}を展開しました', extractContinue: '展開を続ける', extractResumable: '展開途中', extractPausedInPlace: '停止しました。アーカイブはそのまま残り、続きから再開できます', 
+  notAnArchive: 'このアプリで開けるアーカイブではありません。', encrypted: '暗号化', password: 'パスワード', passwordNeeded: 'このアーカイブにはパスワードが必要です。', wrongPassword: 'パスワードが違います。', noSpace: 'ディスクの空きが足りません。', andMore: '…ほか {n} 件', openArchive: 'アーカイブを開く', createZip: 'zip を作成', zipping: '圧縮中…', zipped: '{name} を作成しました（{size}）',
+  otherApps: 'ほかの Kurokawa アプリ', otherAppsHint: '各アプリは同じ外観、同じ AniList 連携、同じアドオンリポジトリを共有します。', appTools: 'Kurokawa Tools', appToolsDesc: 'ダウンロード、トレント、ストリーミング。アニメ・字幕・アーカイブのアドオン付き。', appInstalled: 'インストール済み · 開く', appGet: '入手', appOpenReleases: 'リリースページを開く', appInstallerOpened: 'インストーラーに渡しました', 
 };
