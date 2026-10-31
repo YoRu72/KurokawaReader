@@ -1,4 +1,4 @@
-[العربية](README.ar.md)
+[العربية](README.ar.md) · part of the [Kurokawa apps](../../README.md), beside **Kurokawa Tools** (downloads, torrents, streaming, a player)
 
 EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · FictionBook · OpenDocument · comics · images — one offline library.
 

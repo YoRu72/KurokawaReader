@@ -1,0 +1,35 @@
+{
+  "name": "kurokawa-tools-desktop",
+  "version": "0.1.0",
+  "description": "Kurokawa Tools for Windows, macOS and Linux",
+  "main": "main.cjs",
+  "private": true,
+  "author": "Kurokawa",
+  "kurokawa": { "repo": "YoRu72/KurokawaReader" },
+  "scripts": {
+    "start": "electron .",
+    "prepare:aria2": "node fetch-aria2.mjs",
+    "dist:win": "node fetch-aria2.mjs && electron-builder --win nsis portable",
+    "dist:mac": "node fetch-aria2.mjs && electron-builder --mac dmg zip --universal",
+    "dist:linux": "node fetch-aria2.mjs && electron-builder --linux AppImage"
+  },
+  "devDependencies": { "electron": "^33.0.0", "electron-builder": "^25.0.0" },
+  "build": {
+    "appId": "app.kurokawa.tools",
+    "productName": "Kurokawa Tools",
+    "artifactName": "KurokawaTools-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "out" },
+    "files": ["main.cjs", "preload.cjs", "aria2.cjs", "aria2rpc.cjs", "icon.png", "icon.ico", { "from": "../dist", "to": "dist", "filter": ["**/*", "!**/*.map"] }],
+    "extraResources": [{ "from": "aria2", "to": "aria2", "filter": ["**/*"] }],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }], "icon": "icon.ico" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false, "allowElevation": true, "createDesktopShortcut": "always", "createStartMenuShortcut": true, "runAfterFinish": true, "installerLanguages": ["en_US", "ar_SA"], "shortcutName": "Kurokawa Tools", "uninstallDisplayName": "Kurokawa Tools" },
+    "mac": { "target": ["dmg", "zip"], "icon": "icon.png", "category": "public.app-category.utilities" },
+    "linux": { "target": ["AppImage"], "icon": "icon.png", "category": "Network" },
+    "protocols": [{ "name": "Magnet link", "schemes": ["magnet"] }, { "name": "Kurokawa Tools", "schemes": ["kurokawatools"] }],
+    "fileAssociations": [{ "ext": "torrent", "name": "Torrent", "mimeType": "application/x-bittorrent", "role": "Viewer" }],
+    "portable": { "artifactName": "KurokawaTools-${version}-win-x64-portable.${ext}" },
+    "publish": null,
+    "electronLanguages": ["en-US", "en-GB", "ar", "ja", "ko", "zh-CN"],
+    "compression": "maximum"
+  }
+}

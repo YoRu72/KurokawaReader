@@ -1,0 +1,52 @@
+name: Pages
+
+# The site: the reader's web app at the root (as it has always been), Kurokawa Tools' under /tools/, and the
+# AltStore/SideStore source for the reader's IPA. Deployed after either app's release workflow, and on demand.
+on:
+  workflow_run:
+    workflows: ['Release reader', 'Release tools']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency: { group: pages, cancel-in-progress: true }
+
+jobs:
+  site:
+    name: Web apps & AltStore source
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build the reader
+        run: cd apps/reader && npm install && npm run build
+      - name: Build Kurokawa Tools
+        run: cd apps/tools && npm install && npm run build
+      - name: Assemble the site
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          mkdir -p site/tools
+          cp -r apps/reader/dist/. site/
+          cp -r apps/tools/dist/. site/tools/
+          touch site/.nojekyll
+          V=$(node -p "require('./apps/reader/package.json').version")
+          mkdir -p ipa && (gh release download "v$V" --pattern '*.ipa' --dir ipa || true)
+          node apps/reader/scripts/altstore.mjs "$V" "${{ github.repository }}" "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" ipa > site/altstore.json
+          node -e "JSON.parse(require('fs').readFileSync('site/altstore.json','utf8')); console.log('altstore.json ok')"
+      - uses: actions/configure-pages@v5
+        with: { enablement: true }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: deploy
+        uses: actions/deploy-pages@v4

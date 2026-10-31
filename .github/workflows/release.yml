@@ -331,34 +331,4 @@ jobs:
             artifacts/macos/*
             artifacts/linux/*
 
-  pages:
-    name: Web app & AltStore source (GitHub Pages)
-    needs: [version, release]
-    runs-on: ubuntu-latest
-    # Needs GitHub Pages turned on once (Settings → Pages → Source: GitHub Actions); until then this job
-    # fails on its own without touching the release.
-    continue-on-error: true
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { path: artifacts }
-      - name: Site = the web app + the AltStore/SideStore source
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: |
-          mkdir -p site && cd site && unzip -q ../artifacts/web/KurokawaReader-web.zip && cd ..
-          touch site/.nojekyll
-          node $APP/scripts/altstore.mjs "${{ needs.version.outputs.v }}" "${{ github.repository }}" "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" artifacts/ios > site/altstore.json
-          node -e "JSON.parse(require('fs').readFileSync('site/altstore.json','utf8')); console.log('altstore.json ok')"
-      - uses: actions/configure-pages@v5
-        with: { enablement: true }
-      - uses: actions/upload-pages-artifact@v3
-        with: { path: site }
-      - id: deploy
-        uses: actions/deploy-pages@v4
+  # (The Pages site — both apps' web builds and the AltStore source — is deployed by pages.yml once this run ends.)

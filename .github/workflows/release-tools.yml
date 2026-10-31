@@ -1,0 +1,244 @@
+name: Release tools
+
+# Every push to main that touches Kurokawa Tools builds it for Android, Windows, macOS and Linux and publishes
+# (or refreshes) the pre-release tools-v<version> (apps/tools/package.json). Pre-releases, so the reader's own
+# updater — which asks GitHub for the latest release — never mistakes a Tools release for one of its own.
+on:
+  push:
+    branches: [main]
+    paths: ['apps/tools/**', 'shared/**', '.github/workflows/release-tools.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP: apps/tools
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      v: ${{ steps.v.outputs.v }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "v=$(node -p "require('./apps/tools/package.json').version")" >> $GITHUB_OUTPUT
+
+  web:
+    name: Web build & tests
+    needs: version
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/tools } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm install --no-save playwright && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
+      - name: Package web build
+        run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
+      - uses: actions/upload-artifact@v4
+        with: { name: web, path: apps/tools/KurokawaTools-web.zip }
+
+  android:
+    needs: version
+    name: Android APKs
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/tools } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - run: npm install
+      - run: npm run build
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Create Android project
+        shell: bash
+        run: |
+          set -o pipefail
+          { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/android-prepare.log
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | tr -d ' \n\r' | base64 -d > $RUNNER_TEMP/kr.keystore
+            SP='${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'
+            AL='${{ secrets.ANDROID_KEY_ALIAS }}'; [ -n "$AL" ] || AL=kurokawa
+            KP='${{ secrets.ANDROID_KEY_PASSWORD }}'; [ -n "$KP" ] || KP="$SP"
+            echo "KR_KEYSTORE_PASSWORD=$SP" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=$AL" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=$KP" >> $GITHUB_ENV
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret missing — APKs signed with a one-off key."
+            keytool -genkeypair -v -keystore $RUNNER_TEMP/kr.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 10000 -storepass kurokawa -keypass kurokawa -dname "CN=KurokawaTools, O=Kurokawa, C=SA"
+            echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=kurokawa" >> $GITHUB_ENV
+          fi
+          echo "KR_KEYSTORE=$RUNNER_TEMP/kr.keystore" >> $GITHUB_ENV
+      - name: Build release APKs
+        shell: bash
+        run: |
+          set -o pipefail
+          cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/android-build.log | grep -vE "^\s*$" | tail -n 400
+      - name: Report failure
+        if: failure()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Tools Android job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/android-prepare.log $RUNNER_TEMP/android-build.log 2>/dev/null | tail -c 60000; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
+      - name: Collect APKs
+        run: |
+          mkdir -p out; V=${{ needs.version.outputs.v }}
+          for f in android/app/build/outputs/apk/release/*.apk; do base=$(basename "$f"); abi=$(echo "$base" | sed -E 's/app-(.*)-release.*\.apk/\1/'); cp "$f" "out/KurokawaTools-$V-$abi.apk"; done
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with: { name: android, path: apps/tools/out/*.apk }
+
+  windows:
+    needs: version
+    name: Windows EXE
+    runs-on: windows-latest
+    defaults: { run: { working-directory: apps/tools } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npm run build
+      - name: Build installer and portable EXE
+        shell: bash
+        run: |
+          cd desktop; V=${{ needs.version.outputs.v }}
+          npm version "$V" --no-git-tag-version --allow-same-version || true
+          npm install
+          node fetch-aria2.mjs
+          npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
+          ls -la out
+      - name: Report failure
+        if: failure()
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Tools Windows job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/win-build.log 2>/dev/null; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            apps/tools/desktop/out/*.exe
+
+  macos:
+    needs: version
+    name: macOS DMG
+    runs-on: macos-15
+    defaults: { run: { working-directory: apps/tools } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npm run build
+      - name: Build DMG (unsigned; universal)
+        shell: bash
+        run: |
+          cd desktop; V=${{ needs.version.outputs.v }}
+          npm version "$V" --no-git-tag-version --allow-same-version || true
+          npm install
+          node fetch-aria2.mjs
+          CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
+          ls -la out
+      - name: Report failure
+        if: failure()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Tools macOS job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/mac-build.log 2>/dev/null; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            apps/tools/desktop/out/*.dmg
+
+  linux:
+    needs: version
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/tools } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npm run build
+      - name: Build AppImage
+        shell: bash
+        run: |
+          cd desktop; V=${{ needs.version.outputs.v }}
+          npm version "$V" --no-git-tag-version --allow-same-version || true
+          npm install
+          node fetch-aria2.mjs
+          npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee $RUNNER_TEMP/linux-build.log | tail -n 60
+          ls -la out
+      - name: Report failure
+        if: failure()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          { echo "### Tools Linux job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/linux-build.log 2>/dev/null; echo '```'; } > body.md
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            apps/tools/desktop/out/*.AppImage
+
+  release:
+    name: Publish release
+    needs: [version, web, android, windows, macos, linux]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Release notes
+        run: |
+          V=${{ needs.version.outputs.v }}
+          {
+            echo "## Kurokawa Tools v$V"
+            echo
+            echo "## What's new"
+            if [ -s "$APP/docs/notes/v$V.md" ]; then cat "$APP/docs/notes/v$V.md"; else echo "- Fixes and improvements"; fi
+            if [ "${{ needs.macos.result }}" != "success" ]; then echo; echo "_The macOS build did not run this time; the next release will carry one._"; fi
+            echo
+            echo "## Files"
+            echo
+            echo "| Platform | File |"
+            echo "|---|---|"
+            echo "| Android (most phones) | \`*-arm64-v8a.apk\` |"
+            echo "| Android (older 32-bit phones) | \`*-armeabi-v7a.apk\` |"
+            echo "| Android (any, larger) | \`*-universal.apk\` |"
+            echo "| Windows | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
+            echo "| macOS | \`*-mac-universal.dmg\` (unsigned: right-click → Open the first time; torrents need \`brew install aria2\`) |"
+            echo "| Linux | \`*-linux-x64.AppImage\` (chmod +x, then run) |"
+            echo "| Web | \`KurokawaTools-web.zip\` — or https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/tools/ (downloads through the browser; torrents through a remote aria2) |"
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tools-v${{ needs.version.outputs.v }}
+          name: Kurokawa Tools v${{ needs.version.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
+          prerelease: true
+          make_latest: false
+          files: |
+            artifacts/web/*
+            artifacts/android/*
+            artifacts/windows/*
+            artifacts/macos/*
+            artifacts/linux/*

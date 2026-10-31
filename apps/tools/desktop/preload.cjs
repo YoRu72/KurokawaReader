@@ -1,0 +1,19 @@
+// The bridge the page sees as window.kurokawaTools (see src/engine/desktop.ts for its shape).
+const { contextBridge, ipcRenderer } = require('electron');
+const state = { available: false, reason: '', os: process.platform, arch: process.arch };
+const ready = ipcRenderer.invoke('kt:state').then((s) => Object.assign(state, s)).catch(() => state);
+const call = (ch, ...a) => ipcRenderer.invoke(ch, ...a);
+contextBridge.exposeInMainWorld('kurokawaTools', {
+  platform: 'desktop',
+  get available() { return state.available; },
+  get reason() { return state.reason; },
+  get os() { return state.os; },
+  ready: () => ready,
+  add: (o) => call('kt:add', o), list: () => call('kt:list'), pause: (id) => call('kt:pause', id), resume: (id) => call('kt:resume', id), remove: (id, del) => call('kt:remove', id, del),
+  setFiles: (id, p) => call('kt:setFiles', id, p), setLimits: (l) => call('kt:setLimits', l), configure: (o) => call('kt:configure', o), torrentInfo: (s) => call('kt:torrentInfo', s),
+  open: (id, i) => call('kt:open', id, i), defaultDir: () => call('kt:defaultDir'), pickDir: () => call('kt:pickDir'), openExternal: (u) => call('kt:openExternal', u), registerMagnet: () => call('kt:registerMagnet'),
+  checkUpdate: (o) => call('kt:checkUpdate', o), installUpdate: (u) => call('kt:installUpdate', u), readFile: (p) => call('kt:readFile', p),
+  onTasks: (cb) => { const fn = (_e, tasks) => cb(tasks); ipcRenderer.on('kt:tasks', fn); void call('kt:list').then(cb).catch(() => {}); return () => ipcRenderer.removeListener('kt:tasks', fn); },
+  onUpdateProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:update-progress', fn); return () => ipcRenderer.removeListener('kt:update-progress', fn); },
+});
+ipcRenderer.on('kt:open', (_e, u) => window.dispatchEvent(new CustomEvent('kt:open', { detail: u })));

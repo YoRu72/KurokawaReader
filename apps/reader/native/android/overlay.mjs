@@ -22,13 +22,17 @@ const MIMES = [
 const EXTS = ['mobi', 'azw', 'azw3', 'prc', 'apkg', 'colpkg', 'mp3', 'm4a', 'm4b', 'flac', 'ogg', 'opus', 'epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'csv', 'ttf', 'otf', 'woff', 'woff2', 'zip'];
 
 const data = (attrs) => `        <data ${attrs} />`;
+// (A ZIP is opened only when shared to the app — a zip of fonts — not from "Open with": an APK is a ZIP to some
+// file managers and installers, and the reader appeared in the menu of every APK.)
+const VIEW_MIMES = MIMES.filter((m) => !/zip-compressed|^application\/zip$/.test(m));
+const VIEW_EXTS = EXTS.filter((e) => e !== 'zip');
 const intentFilters = `
       <!-- Open documents from other apps (file managers, WhatsApp, browsers…) -->
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
         <category android:name="android.intent.category.BROWSABLE" />
-${MIMES.map((m) => data(`android:mimeType="${m}"`)).join('\n')}
+${VIEW_MIMES.map((m) => data(`android:mimeType="${m}"`)).join('\n')}
       </intent-filter>
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
@@ -36,8 +40,12 @@ ${MIMES.map((m) => data(`android:mimeType="${m}"`)).join('\n')}
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="content" />
         <data android:scheme="file" />
-        <data android:mimeType="*/*" />
-${EXTS.flatMap((e) => [data(`android:pathPattern=".*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\..*\\\\.${e}"`)]).join('\n')}
+        <!-- (Files whose type the sender does not know, by their extension — not */*, which put the reader in
+             the chooser for things it cannot open, an APK being installed among them.) -->
+        <data android:mimeType="application/octet-stream" />
+        <data android:mimeType="application/x-zip" />
+        <data android:mimeType="text/*" />
+${VIEW_EXTS.flatMap((e) => [data(`android:pathPattern=".*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\..*\\\\.${e}"`)]).join('\n')}
       </intent-filter>
       <!-- "Share to…" from other apps -->
       <intent-filter>

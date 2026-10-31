@@ -1,0 +1,1 @@
+{ "name": "capacitor-plugin-kurokawa-tools", "version": "0.1.0", "description": "Kurokawa Tools native plugin shell (the Android code is copied in by native/android/overlay.mjs).", "main": "index.js", "license": "MIT", "private": true, "files": ["index.js"], "peerDependencies": { "@capacitor/core": "^6.0.0" } }

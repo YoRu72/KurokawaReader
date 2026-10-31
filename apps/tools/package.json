@@ -1,0 +1,26 @@
+{
+  "name": "kurokawa-tools",
+  "version": "0.1.0",
+  "description": "Kurokawa Tools — downloads, torrents, streaming and the tools around them, with the Kurokawa add-ons.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch --serve",
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/smoke.cjs",
+    "android:prepare": "npx cap add android && node native/android/overlay.mjs && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/app": "^6.0.0",
+    "capacitor-plugin-kurokawa-tools": "file:native/capacitor-plugin-kurokawa-tools"
+  },
+  "devDependencies": {
+    "esbuild": ">=0.25.0",
+    "typescript": ">=5.6.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/android": "^6.1.0"
+  },
+  "license": "MIT"
+}

@@ -1,6 +1,6 @@
 <div dir="rtl">
 
-[English](README.md)
+[English](README.md) · من [تطبيقات كروكاوا](../../README.ar.md)، إلى جانب **أدوات كروكاوا** (التنزيل والتورنت والبثّ ومشغّل الفيديو)
 
 EPUB · PDF · Word · Excel · PowerPoint · نصوص وMarkdown · HTML · FictionBook · OpenDocument · قصص مصوّرة · صور — مكتبة واحدة تعمل دون اتّصال.
 

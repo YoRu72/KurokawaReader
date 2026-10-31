@@ -1,7 +1,7 @@
 // "Back", the same everywhere: Android's back gesture, a mouse's back button, Alt+← on a PC, the desktop
 // shell's back command. What is open on top closes first (the camera, a sheet, a side panel, a full-screen
 // view); then a place inside the view that the view itself keeps — a series opened in the library, the books
-// selected — then the view's own back; then the library. Only at the library's top does the app go away.
+// selected — then the view's own back; then the downloads. Only at the downloads' top does the app go away.
 import { navigate } from '../router';
 
 const handlers: (() => boolean)[] = [];
@@ -12,10 +12,8 @@ export function onBack(fn: () => boolean): () => void {
   return () => { const i = handlers.lastIndexOf(fn); if (i >= 0) handlers.splice(i, 1); };
 }
 
-/** One step back; false at the library's top (nothing left to go back from). */
+/** One step back; false at the downloads' top (nothing left to go back from). */
 export function goBack(): boolean {
-  const cam = document.querySelector('.cam-view .cam-close') as HTMLButtonElement | null;
-  if (cam) { cam.click(); return true; }
   const sheets = document.querySelectorAll('.sheet .sheet-head button');
   if (sheets.length) { (sheets[sheets.length - 1] as HTMLButtonElement).click(); return true; }
   const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
@@ -23,8 +21,6 @@ export function goBack(): boolean {
   // Full-screen overlays (gallery, pages grid, lightbox, a cover) carry a dialog role and a close in their top bar.
   // (Shown, by its boxes: a fixed overlay — the cover view — has no offset parent though it is on the screen.)
   const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && d.getClientRects().length > 0 && getComputedStyle(d).visibility !== 'hidden');
-  // (The app lock's cover: back does not get past it.)
-  if (overlays.some((d) => d.classList.contains('app-lock'))) return true;
   const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
   if (overlayBtn) { overlayBtn.click(); return true; }
   for (let i = handlers.length - 1; i >= 0; i--) { const fn = handlers[i]; if (fn()) return true; }
