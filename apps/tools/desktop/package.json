@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools-desktop",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Kurokawa Tools for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
@@ -42,7 +42,9 @@
         ]
       },
       "archive.cjs",
-      "ffmpeg.cjs"
+      "ffmpeg.cjs",
+      "ytdlp.cjs",
+      "streamproxy.cjs"
     ],
     "extraResources": [
       {

@@ -3,8 +3,10 @@
 //  • Hayase extensions (a repository is a JSON array of manifests; `code` is a bundled ESM file whose default
 //    export has `test/single/batch/movie(query, options)`; the app's fetch is handed in on the query);
 //  • Seanime extensions (a marketplace array or `{urls:[…]}` or one manifest; the payload defines a global
-//    class `Provider` with `search/smartSearch/getLatest/getSettings`; the globals it expects — `fetch` with
-//    synchronous `text()/json()`, `LoadDoc`, `$habari`, `$goFeed`, `$store`, `$getUserPreference` — are shimmed).
+//    class `Provider` — a torrent source's `search/smartSearch/getLatest/getSettings`, a streaming one's
+//    `search/findEpisodes/findEpisodeServer` — TypeScript compiled first; the globals it expects — `fetch` with
+//    synchronous `text()/json()`, `LoadDoc`/`Doc`, `CryptoJS`, `Buffer`, `$habari`, `$goFeed`, `$store`,
+//    `$getUserPreference` — are shimmed).
 // Every provider is installed by the user from a repository URL (Settings → Anime), kept in IndexedDB, and
 // run with a timeout; results are sanitised the Hayase way (a 40/64-hex hash is required).
 import { db } from '../db';
@@ -12,6 +14,8 @@ import { addonFetch, request } from '../http';
 import { getSettings, updateSettings } from '../settings';
 import { parseFilename } from './anitomy';
 import { idsOf, titlesOf, type Anime } from '../anilist';
+import { CryptoJS } from './cryptojs';
+import { toJs } from './tsjs';
 
 export type Accuracy = 'high' | 'medium' | 'low';
 export interface AnimeQuery {
@@ -33,6 +37,8 @@ export interface ProviderEntry {
   code: string; manifest?: string; repo?: string;
   options?: Record<string, { type: string; description?: string; label?: string; default?: string | number | boolean; values?: unknown[] }>;
   accuracy?: Accuracy; media?: string; languages?: string[]; enabled: boolean; builtin?: boolean;
+  /** A Seanime online-streaming extension (search → episodes → a server's video links) rather than a torrent source. */
+  role?: 'stream';
 }
 const KEY = 'anime:providers';
 let list: ProviderEntry[] | null = null;
@@ -50,12 +56,12 @@ export async function readRepo(url: string): Promise<ProviderEntry[]> {
   let j: unknown; try { j = JSON.parse(r.body); } catch { throw new Error('not JSON'); }
   const out: ProviderEntry[] = [];
   const takeSea = async (m: SeanimeManifest, from: string) => {
-    if (m.type !== 'anime-torrent-provider') return;
+    if (m.type !== 'anime-torrent-provider' && m.type !== 'onlinestream-provider') return;
     if (!m.payload && !m.payloadURI) { if (m.manifestURI) { const rr = await request(m.manifestURI); if (rr.status === 200) { try { m = { ...m, ...(JSON.parse(rr.body) as SeanimeManifest) }; } catch { return; } } } }
     if (!m.payload && !m.payloadURI) return;
     const options: ProviderEntry['options'] = {};
     for (const f of m.userConfig?.fields ?? []) options[f.name] = { type: f.type === 'switch' ? 'boolean' : f.type === 'select' ? 'select' : 'string', label: f.label, default: f.default, values: f.options?.map((o) => o.value) };
-    out.push({ id: `sea:${m.id}`, name: m.name, description: m.description, version: m.version, format: 'seanime', icon: m.icon, code: m.payloadURI ?? `inline:${m.payload}`, manifest: m.manifestURI ?? from, repo: from, options, enabled: true });
+    out.push({ id: `sea:${m.id}`, name: m.name, description: m.description, version: m.version, format: 'seanime', icon: m.icon, code: m.payloadURI ?? `inline:${m.payload}`, manifest: m.manifestURI ?? from, repo: from, options, enabled: true, ...(m.type === 'onlinestream-provider' ? { role: 'stream' as const } : {}) });
   };
   const takeHay = (m: HayaseManifest, from: string) => { if (m.type !== 'torrent' || !m.code) return; out.push({ id: `hay:${m.id}`, name: m.name, description: m.description, version: m.version, format: 'hayase', icon: m.icon, code: ghCode(m.code), repo: from, options: m.options, accuracy: m.accuracy, media: m.media, languages: m.languages, enabled: true }); };
   if (Array.isArray(j)) { for (const m of j as (HayaseManifest & SeanimeManifest)[]) { if ('manifestVersion' in m) takeHay(m, url); else await takeSea(m, url); } }
@@ -71,19 +77,19 @@ const stremioStreams = (m: StremioManifest): boolean => m.resources.some((r) => 
 export async function installEntry(p: ProviderEntry): Promise<void> {
   if (p.format !== 'stremio') {
     const code = p.code.startsWith('inline:') ? p.code.slice(7) : await (async () => { const r = await request(p.code); if (r.status !== 200) throw new Error(`${p.name}: HTTP ${r.status}`); return r.body; })();
-    await db.putFile(`provider:${p.id}`, new Blob([code], { type: 'text/javascript' }));
+    await db.putFile(`provider:${p.id}`, new Blob([p.format === 'seanime' ? await toJs(code) : code], { type: 'text/javascript' }));
   }
   const cur = await providers(); const i = cur.findIndex((x) => x.id === p.id); const merged = { ...p, enabled: i >= 0 ? cur[i].enabled : true };
   if (i >= 0) cur[i] = merged; else cur.push(merged); modules.delete(p.id); await keep([...cur]);
 }
 /** Installs (or updates) the providers of a repository: their code fetched and kept. */
 export async function installRepo(url: string): Promise<ProviderEntry[]> {
-  const found = await readRepo(url); if (!found.length) throw new Error('no anime torrent providers there');
+  const found = await readRepo(url); if (!found.length) throw new Error('no anime sources there');
   const cur = await providers();
   for (const p of found) {
     if (p.format !== 'stremio') {
       const code = p.code.startsWith('inline:') ? p.code.slice(7) : await (async () => { const r = await request(p.code); if (r.status !== 200) throw new Error(`${p.name}: HTTP ${r.status}`); return r.body; })();
-      await db.putFile(`provider:${p.id}`, new Blob([code], { type: 'text/javascript' }));
+      await db.putFile(`provider:${p.id}`, new Blob([p.format === 'seanime' ? await toJs(code) : code], { type: 'text/javascript' }));
     }
     const i = cur.findIndex((x) => x.id === p.id); const merged = { ...p, enabled: i >= 0 ? cur[i].enabled : true }; if (i >= 0) cur[i] = merged; else cur.push(merged);
   }
@@ -99,7 +105,7 @@ export const optionsOf = (p: ProviderEntry): Record<string, string | number | bo
 /* ---------- running ---------- */
 type HayaseModule = { test?: () => Promise<boolean>; single?: (q: unknown, o?: unknown) => Promise<unknown[]>; batch?: (q: unknown, o?: unknown) => Promise<unknown[]>; movie?: (q: unknown, o?: unknown) => Promise<unknown[]> };
 const modules = new Map<string, Promise<HayaseModule | SeanimeClass>>();
-type SeanimeClass = { new (): { search(o: unknown): Promise<unknown[]>; smartSearch?(o: unknown): Promise<unknown[]>; getLatest?(): Promise<unknown[]>; getSettings?(): { canSmartSearch?: boolean; smartSearchFilters?: string[] } }; __seanime: true };
+export type SeanimeClass = { new (): { search(o: unknown): Promise<unknown[]>; smartSearch?(o: unknown): Promise<unknown[]>; getLatest?(): Promise<unknown[]>; getSettings?(): { canSmartSearch?: boolean; smartSearchFilters?: string[]; episodeServers?: string[]; supportsDub?: boolean }; findEpisodes?(id: string): Promise<unknown[]>; findEpisodeServer?(ep: unknown, server: string): Promise<unknown> }; __seanime: true };
 
 /** The providers that came with the Anime add-on (children of kind `anime-provider`): listed from what the
  *  add-on store holds, so installing or removing the add-on is all it takes. */
@@ -115,12 +121,12 @@ export async function syncBuiltins(): Promise<void> {
   }
   if (changed) await keep([...cur]);
 }
-async function load(p: ProviderEntry): Promise<HayaseModule | SeanimeClass> {
+export async function load(p: ProviderEntry): Promise<HayaseModule | SeanimeClass> {
   let m = modules.get(p.id);
   if (!m) {
     m = (async () => {
       const b = await db.getFile(p.code.startsWith('addon:') ? p.code : `provider:${p.id}`); if (!b) throw new Error('not installed');
-      if (p.format === 'seanime') return seanimeClass(await b.text(), p);
+      if (p.format === 'seanime') return seanimeClass(await toJs(await b.text()), p);
       const u = URL.createObjectURL(b.type === 'text/javascript' ? b : new Blob([b], { type: 'text/javascript' }));
       try { const mod = (await import(/* @vite-ignore */ u)) as { default?: HayaseModule } & HayaseModule; return mod.default ?? mod; } finally { URL.revokeObjectURL(u); }
     })();
@@ -129,55 +135,95 @@ async function load(p: ProviderEntry): Promise<HayaseModule | SeanimeClass> {
   return m;
 }
 
-/** Seanime's payload: TypeScript stripped the cheap way (types only), run with its globals shimmed. */
-function seanimeClass(code: string, p: ProviderEntry): SeanimeClass {
-  const js = stripTypes(code);
+/** Seanime's payload (already JavaScript: see tsjs.ts), run with its globals shimmed. */
+function seanimeClass(js: string, p: ProviderEntry): SeanimeClass {
   const shim = seanimeGlobals(p);
   const fn = new Function(...Object.keys(shim), `${js}\n;return typeof Provider !== 'undefined' ? Provider : undefined;`);
   const cls = fn(...Object.values(shim)) as SeanimeClass | undefined;
   if (!cls) throw new Error('no Provider class');
   (cls as { __seanime: boolean }).__seanime = true; return cls;
 }
-/** Type annotations dropped: enough for the providers seen in the wild (interfaces, `: T`, `as T`, generics on calls). */
-function stripTypes(src: string): string {
-  return src
-    .replace(/^\s*\/\/\/\s*<reference[^\n]*$/gm, '')
-    .replace(/^\s*(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*(?:=\s*)?\{[\s\S]*?\n\}\s*;?/gm, '')
-    .replace(/^\s*(?:export\s+)?type\s+[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*=[^\n]*$/gm, '')
-    .replace(/^\s*import\s[^\n]*$/gm, '').replace(/^\s*export\s+(?=class|function|const|let|var)/gm, '')
-    .replace(/\)\s*:\s*(?:Promise<[^>]*>|[A-Za-z_$][\w$<>\[\]|, ]*)\s*(?={)/g, ') ')
-    .replace(/(\b(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*[A-Za-z_$][\w$<>\[\]|, .]*(?=\s*=)/g, '$1')
-    .replace(/\(([^()]*)\)\s*(?==>)/g, (m, a: string) => `(${a.replace(/:\s*[A-Za-z_$][\w$<>\[\]|, .]*(?=[,)]|$)/g, '')})`)
-    .replace(/\s+as\s+(?:const|[A-Za-z_$][\w$<>\[\]|.]*)/g, '')
-    .replace(/(?<=\w)!(?=[.\[)])/g, '')
-    .replace(/(?<=[\w)])<[A-Za-z_$][\w$<>\[\]|, .]*>(?=\()/g, '')
-    .replace(/^\s*(?:private|public|protected|readonly)\s+/gm, '');
-}
 function seanimeGlobals(p: ProviderEntry): Record<string, unknown> {
   const f = addonFetch(); const store = new Map<string, unknown>();
-  const fetchShim = async (url: string, init: RequestInit = {}) => { const r = await f(url, init); const body = await r.text(); return { status: r.status, statusText: r.statusText, ok: r.ok, url: r.url || url, headers: Object.fromEntries(r.headers.entries()), text: () => body, json: () => JSON.parse(body) }; };
+  // Seanime's fetch: `text()`/`json()` synchronous, an object body sent as JSON, headers and cookies flattened.
+  const fetchShim = async (url: string, init: { method?: string; headers?: Record<string, string>; body?: unknown; redirect?: RequestRedirect; timeout?: number } = {}) => {
+    const body = init.body === undefined || init.body === null || typeof init.body === 'string' || init.body instanceof FormData || init.body instanceof URLSearchParams || init.body instanceof Blob || init.body instanceof ArrayBuffer || ArrayBuffer.isView(init.body) ? (init.body as BodyInit | undefined) : JSON.stringify(init.body);
+    const headers = { ...(init.headers ?? {}) }; if (body && typeof init.body === 'object' && typeof body === 'string' && !Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) headers['Content-Type'] = 'application/json';
+    const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), (init.timeout ?? 35) * 1000);
+    try {
+      const r = await f(url, { method: init.method ?? 'GET', headers, body, redirect: init.redirect ?? 'follow', signal: ctl.signal }); const text = await r.text();
+      const hs = Object.fromEntries(r.headers.entries()); const cookies: Record<string, string> = {}; for (const c of (r.headers.get('set-cookie') ?? '').split(/,(?=[^;]+=)/)) { const m = /^\s*([^=;]+)=([^;]*)/.exec(c); if (m) cookies[m[1]] = m[2]; }
+      return { status: r.status, statusText: r.statusText, method: init.method ?? 'GET', ok: r.ok, url: r.url || url, redirected: r.redirected, headers: hs, rawHeaders: Object.fromEntries(Object.entries(hs).map(([k, v]) => [k, [v]])), cookies, contentType: hs['content-type'] ?? '', contentLength: Number(hs['content-length'] ?? text.length), text: () => text, json: () => JSON.parse(text) };
+    } finally { clearTimeout(tm); }
+  };
   const prefs = optionsOf(p);
+  const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
+  function Doc(this: unknown, html: string) { return selection([parse(html).documentElement]); }
+  const toStr = (v: unknown): string => (typeof v === 'string' ? v : v instanceof Uint8Array ? new TextDecoder().decode(v) : v instanceof ArrayBuffer ? new TextDecoder().decode(new Uint8Array(v)) : v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
   return {
-    fetch: fetchShim, console,
-    LoadDoc: (html: string) => { const doc = new DOMParser().parseFromString(html, 'text/html'); return (sel: string) => selection(Array.from(doc.querySelectorAll(sel))); },
-    Doc: class { constructor(html: string) { return (new DOMParser().parseFromString(html, 'text/html') as unknown) as object; } },
+    fetch: fetchShim, console, CryptoJS, Buffer: SeaBuffer, Doc,
+    LoadDoc: (html: string) => { const doc = parse(html); return (sel: string) => selection(Array.from(doc.querySelectorAll(sel))); },
+    __isOffline__: !navigator.onLine,
+    $toString: toStr, $toBytes: (v: unknown) => (v instanceof Uint8Array ? v : new TextEncoder().encode(toStr(v))),
+    $clone: <T>(v: T): T => structuredClone(v), $replace: (a: Record<string, unknown>, b: Record<string, unknown>) => { if (a && b && typeof a === 'object') { for (const k of Object.keys(a)) delete a[k]; Object.assign(a, b); } },
+    $await: (x: unknown) => x, $arrayOf: () => [], $unmarshalJSON: (d: unknown, dst: Record<string, unknown>) => { Object.assign(dst, typeof d === 'string' ? JSON.parse(d) : JSON.parse(toStr(d))); },
     $habari: { parse: parseFilename }, $goFeed: { parse: parseFeed },
     $store: { set: (k: string, v: unknown) => store.set(k, v), get: (k: string) => store.get(k), getUnsafe: (k: string) => store.get(k), has: (k: string) => store.has(k), getOrSet: (k: string, v: () => unknown) => { if (!store.has(k)) store.set(k, v()); return store.get(k); }, reset: () => store.clear(), values: () => [...store.values()], getAll: () => Object.fromEntries(store) },
     $getUserPreference: (k: string) => (prefs[k] === undefined ? undefined : String(prefs[k])), $sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
     $torrentUtils: { getMagnetLinkFromTorrentData: () => '' }, $isOffline: () => !navigator.onLine,
+    // (A headless browser is not something a phone app can carry: the extensions that need one say so.)
+    ChromeDP: { newBrowser: () => { throw new Error('ChromeDP is not available in Kurokawa Tools'); } },
     $scannerUtils: { normalizeTitle: (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim(), buildSeasonQuery: (t: string, s: number) => `(${t} S${String(s).padStart(2, '0')} | ${t} Season ${s})`, sanitizeQuery: (s: string) => s.replace(/[^\p{L}\p{N} ]+/gu, ' ').trim() },
   };
 }
-/** goquery-like selection over DOM elements (what Seanime's `LoadDoc` returns). */
-function selection(els: Element[]): Record<string, unknown> {
-  const S = (e: Element[]) => selection(e);
-  return {
-    length: () => els.length, first: () => S(els.slice(0, 1)), last: () => S(els.slice(-1)), eq: (i: number) => S(els.slice(i, i + 1)),
-    find: (sel: string) => S(els.flatMap((e) => Array.from(e.querySelectorAll(sel)))), children: (sel?: string) => S(els.flatMap((e) => Array.from(e.children).filter((c) => !sel || c.matches(sel)))),
-    parent: () => S(els.map((e) => e.parentElement).filter((x): x is HTMLElement => !!x)), next: () => S(els.map((e) => e.nextElementSibling).filter((x): x is Element => !!x)), prev: () => S(els.map((e) => e.previousElementSibling).filter((x): x is Element => !!x)),
-    text: () => els.map((e) => e.textContent ?? '').join(''), html: () => els[0]?.innerHTML ?? '', attr: (n: string) => { const v = els[0]?.getAttribute(n); return v === null || v === undefined ? [undefined, false] : [v, true]; },
-    each: (fn: (i: number, s: unknown) => void) => { els.forEach((e, i) => fn(i, S([e]))); }, map: (fn: (i: number, s: unknown) => unknown) => els.map((e, i) => fn(i, S([e]))), filter: (sel: string) => S(els.filter((e) => e.matches(sel))), is: (sel: string) => els.some((e) => e.matches(sel)), has: (sel: string) => S(els.filter((e) => !!e.querySelector(sel))), not: (sel: string) => S(els.filter((e) => !e.matches(sel))), closest: (sel: string) => S(els.map((e) => e.closest(sel)).filter((x): x is Element => !!x)),
+/** The Node-style Buffer Seanime gives its extensions (from/alloc/toString with utf8, base64, hex, latin1). */
+class SeaBuf extends Uint8Array {
+  equals(o: Uint8Array): boolean { return o.length === this.length && this.every((v, i) => v === o[i]); }
+  override toString(enc = 'utf8'): string {
+    const e = String(enc).toLowerCase().replace('-', ''); const u = new Uint8Array(this);
+    return e === 'base64' ? CryptoJS.enc.Base64.stringify(u) : e === 'base64url' ? CryptoJS.enc.Base64.stringify(u).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : e === 'hex' ? CryptoJS.enc.Hex.stringify(u) : e === 'latin1' || e === 'binary' || e === 'ascii' ? CryptoJS.enc.Latin1.stringify(u) : CryptoJS.enc.Utf8.stringify(u);
+  }
+}
+const SeaBuffer = {
+  poolSize: 8192, isBuffer: (x: unknown) => x instanceof SeaBuf,
+  from(x: string | ArrayLike<number> | ArrayBuffer, enc = 'utf8'): SeaBuf {
+    if (typeof x !== 'string') return new SeaBuf(x instanceof ArrayBuffer ? new Uint8Array(x) : Array.from(x));
+    const e = enc.toLowerCase().replace('-', '');
+    return new SeaBuf(e === 'base64' || e === 'base64url' ? CryptoJS.enc.Base64.parse(x.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(x.length / 4) * 4, '=')) : e === 'hex' ? CryptoJS.enc.Hex.parse(x) : e === 'latin1' || e === 'binary' || e === 'ascii' ? CryptoJS.enc.Latin1.parse(x) : CryptoJS.enc.Utf8.parse(x));
+  },
+  alloc(n: number, fill: number | string = 0): SeaBuf { const b = new SeaBuf(n); b.fill(typeof fill === 'number' ? fill : fill.charCodeAt(0) || 0); return b; },
+};
+type Pred = string | ((i: number, s: Sel) => boolean);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Sel = Record<string, (...a: any[]) => any>;
+/** goquery's selection (what Seanime's `LoadDoc` and `Doc` hand out), over DOM elements. */
+function selection(els: Element[], prevSel?: Sel): Sel {
+  const uniq = (a: (Element | null | undefined)[]) => [...new Set(a.filter((x): x is Element => !!x))];
+  const test = (p: Pred) => (e: Element, i: number) => (typeof p === 'string' ? e.matches(p) : !!p(i, selection([e])));
+  const sibs = (e: Element, dir: 'nextElementSibling' | 'previousElementSibling', stop?: string, filt?: string) => { const out: Element[] = []; for (let x = e[dir]; x; x = x[dir]) { if (stop && x.matches(stop)) break; if (!filt || x.matches(filt)) out.push(x); } return out; };
+  const ups = (e: Element, stop?: string, filt?: string) => { const out: Element[] = []; for (let x = e.parentElement; x; x = x.parentElement) { if (stop && x.matches(stop)) break; if (!filt || x.matches(filt)) out.push(x); } return out; };
+  const self: Sel = {
+    length: () => els.length, size: () => els.length, first: () => S(els.slice(0, 1)), last: () => S(els.slice(-1)), eq: (i: number) => S(i < 0 ? els.slice(i, i === -1 ? undefined : i + 1) : els.slice(i, i + 1)),
+    find: (sel: string) => S(uniq(els.flatMap((e) => Array.from(e.querySelectorAll(sel))))),
+    children: (sel?: string) => S(els.flatMap((e) => Array.from(e.children).filter((c) => !sel || c.matches(sel)))),
+    contents: () => S(els.flatMap((e) => Array.from(e.children))), contentsFiltered: (sel: string) => S(els.flatMap((e) => Array.from(e.children).filter((c) => c.matches(sel)))),
+    parent: (sel?: string) => S(uniq(els.map((e) => e.parentElement)).filter((x) => !sel || x.matches(sel))), parents: (sel?: string) => S(uniq(els.flatMap((e) => ups(e, undefined, sel)))), parentsUntil: (stop: string, filt?: string) => S(uniq(els.flatMap((e) => ups(e, stop, filt)))),
+    closest: (sel?: string) => S(uniq(els.map((e) => (sel ? e.closest(sel) : e)))),
+    next: (sel?: string) => S(els.map((e) => e.nextElementSibling).filter((x): x is Element => !!x && (!sel || x.matches(sel)))), prev: (sel?: string) => S(els.map((e) => e.previousElementSibling).filter((x): x is Element => !!x && (!sel || x.matches(sel)))),
+    nextAll: (sel?: string) => S(uniq(els.flatMap((e) => sibs(e, 'nextElementSibling', undefined, sel)))), prevAll: (sel?: string) => S(uniq(els.flatMap((e) => sibs(e, 'previousElementSibling', undefined, sel)))),
+    nextUntil: (stop: string, filt?: string) => S(uniq(els.flatMap((e) => sibs(e, 'nextElementSibling', stop, filt)))), prevUntil: (stop: string, filt?: string) => S(uniq(els.flatMap((e) => sibs(e, 'previousElementSibling', stop, filt)))),
+    siblings: (sel?: string) => S(uniq(els.flatMap((e) => Array.from(e.parentElement?.children ?? []).filter((c) => c !== e && (!sel || c.matches(sel)))))),
+    text: () => els.map((e) => e.textContent ?? '').join(''), html: () => (els[0] ? els[0].innerHTML : null),
+    attr: (n: string): string | undefined => { const v = els[0]?.getAttribute(n); return v === null || v === undefined ? undefined : v; },
+    attrs: () => Object.fromEntries(Array.from(els[0]?.attributes ?? []).map((a) => [a.name, a.value])),
+    data: (n?: string) => { const d = (els[0] as HTMLElement | undefined)?.dataset ?? {}; return n === undefined ? { ...d } : d[n.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())]; },
+    each: (fn: (i: number, s: Sel) => unknown) => { for (let i = 0; i < els.length; i++) if (fn(i, S([els[i]])) === false) break; return self; },
+    map: <T>(fn: (i: number, s: Sel) => T) => els.map((e, i) => fn(i, S([e]))),
+    filter: (p: Pred) => S(els.filter(test(p))), not: (p: Pred) => S(els.filter((e, i) => !test(p)(e, i))), is: (p: Pred) => els.some(test(p)),
+    has: (sel: string) => S(els.filter((e) => !!e.querySelector(sel))), end: () => prevSel ?? S([]),
   };
+  function S(e: Element[]): Sel { return selection(e, self); }
+  return self;
 }
 /** RSS/Atom items the way Seanime's `$goFeed.parse` hands them to providers. */
 export function parseFeed(xml: string): { items: { title: string; link: string; published: string; description?: string; guid?: string; enclosures: { url: string; length: string; type?: string }[]; extensions?: Record<string, unknown> }[] } {
@@ -262,7 +308,7 @@ function fromSeanime(t: Record<string, unknown>, p: ProviderEntry): TorrentResul
 /** All enabled providers at once; each one's results (or its error) reported as it answers. */
 export async function searchAll(q: AnimeQuery, onEach: (p: ProviderEntry, res: TorrentResult[] | Error) => void): Promise<TorrentResult[]> {
   await syncBuiltins().catch(() => undefined);
-  const ps = (await providers()).filter((p) => p.enabled);
+  const ps = (await providers()).filter((p) => p.enabled && p.role !== 'stream');
   const all: TorrentResult[] = []; const seen = new Map<string, TorrentResult>();
   await Promise.all(ps.map(async (p) => {
     try { const r = await runProvider(p, q); const fresh: TorrentResult[] = []; for (const x of r) { const k = x.hash || x.url || x.link; const had = seen.get(k); if (had) { had.seeders = Math.max(had.seeders, x.seeders); if (x.accuracy === 'high') had.accuracy = 'high'; continue; } seen.set(k, x); fresh.push(x); all.push(x); } onEach(p, fresh); }

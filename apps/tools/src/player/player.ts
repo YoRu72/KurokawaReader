@@ -12,7 +12,11 @@ import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, type
 import { request } from '../http';
 import { siblingFiles, readLocal } from './files';
 
-export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[] }
+export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[];
+  /** The show and episode when it is not a download's (an online source): for tracking, AniSkip, subtitles. */
+  meta?: Task['meta'];
+  /** Subtitles that come with an online source. */
+  subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[] }
 interface SubTrack { id: string; name: string; lang?: string; cues: Cue[]; ass?: string; fmt: string }
 
 const fmtTime = (s: number): string => { if (!isFinite(s)) return '–:––'; s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits((h ? `${h}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0')); };
@@ -79,7 +83,7 @@ export function openPlayer(src: PlayerSource): void {
   const seekBy = (dt: number) => { video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + dt)); flashText(`${dt > 0 ? '+' : '−'}${localDigits(Math.abs(Math.round(dt)))}s`); };
   const frameStep = (n: number) => { video.pause(); video.currentTime = Math.max(0, video.currentTime + n / 30); };
   function flashText(s: string, long = false) { flash.textContent = s; flash.classList.add('on'); window.clearTimeout((flash as HTMLElement & { _t?: number })._t); (flash as HTMLElement & { _t?: number })._t = window.setTimeout(() => flash.classList.remove('on'), long ? 1400 : 700); }
-  function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); const m = src.task?.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); void end; }
+  function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); void end; }
   function askResume(pos: number) { const sh = openSheet(t('resumeTitle'), t('close')); sh.body.append(h('p', null, t('resumeBody', { t: fmtTime(pos) }))); sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); } }, t('resumeFromStart')), h('button', { type: 'button', class: 'btn primary', onclick: () => { video.currentTime = pos; sh.close(); } }, t('resumeContinue'))); }
   function neighbour(dir: number) { const list = src.playlist ?? []; const i = list.findIndex((x) => x.url === src.url); const nx = getPrefs().shuffle && dir > 0 && list.length > 1 ? list.filter((x) => x.url !== src.url)[Math.floor(Math.random() * (list.length - 1))] : list[i + dir]; if (!nx) { toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); return; } close(); openPlayer({ ...nx, playlist: list }); }
 
@@ -178,6 +182,8 @@ export function openPlayer(src: PlayerSource): void {
     tracks = [...tracks.filter((x) => x.id !== tr.id), tr]; return tr;
   }
   async function loadSubtitleUrl(url: string, name: string, lang?: string) { try { const r = await request(url, { binary: true }); if (r.status >= 400) throw new Error(`HTTP ${r.status}`); const bytes = Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)); const tr = await addTrackFromBytes(name, bytes, lang); if (tr) { await useTrack(tr); toast(t('subsLoaded', { name })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
+  // Subtitles that came with an online source: the default one (or the only one) turned on.
+  void (async () => { const subs = src.subtitles ?? []; for (const sb of subs.slice(0, 12)) { try { const r = await request(sb.url, { binary: true }); if (r.status >= 400) continue; const tr = await addTrackFromBytes(sb.name, Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)), sb.lang); if (tr && !current && (sb.isDefault || subs.length === 1)) void useTrack(tr); } catch { /* one missing */ } } })();
   // Subtitles beside a local file (same base name) are offered first.
   void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr && !current && (mem?.sub === tr.id || list.length === 1)) void useTrack(tr); } } })();
 
@@ -205,7 +211,7 @@ export function openPlayer(src: PlayerSource): void {
   async function findSubs() {
     const { getSettings } = await import('../settings'); if (!getSettings().addons.includes('subtitles')) { toast(t('subsNoSources')); return; }
     const { lookup, enrich } = await import('../subs/lookup'); const { searchSubtitles, queryFor, rankSubs, resolveLink } = await import('../subs/search'); const { parseFilename } = await import('../anime/anitomy');
-    const m = src.task?.meta; const parsed = parseFilename(src.name); const q = m?.title ?? parsed.title; const ep = m?.episode ?? parsed.episode;
+    const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); const q = m?.title ?? parsed.title; const ep = m?.episode ?? parsed.episode;
     const sh = openSheet(t('subsFind'), t('close')); sh.body.append(h('p', { class: 'src' }, `${q}${ep ? ` · ${t('episodeN', { n: ep })}` : ''}`), h('div', { class: 'center' }, h('div', { class: 'spinner' })));
     try {
       let cards = m?.anilistId ? await lookup(`anilist:${m.anilistId}`) : await lookup(q); if (!cards.length) { sh.body.replaceChildren(h('p', { class: 'empty small' }, t('noResults'))); return; }
@@ -281,7 +287,7 @@ export function openPlayer(src: PlayerSource): void {
   function chaptersSheet() { const sh = openSheet(t('chapters'), t('close')); sh.body.append(h('div', { class: 'dest-list' }, ...chapters.map((c, i) => h('button', { type: 'button', class: 'dest-row' + (video.currentTime >= c.start && video.currentTime < c.end ? ' on' : ''), onclick: () => { video.currentTime = c.start; sh.close(); } }, h('span', { class: 'ep-num' }, localDigits(i + 1)), h('span', { class: 'name grow', dir: 'auto' }, c.title || t('chapterN', { n: i + 1 })), h('small', { class: 'src' }, fmtTime(c.start)))))); }
   // AniSkip: an anime episode's opening and ending times, shared by its viewers (by MyAnimeList id and episode).
   void (async () => {
-    const m = src.task?.meta as { anilistId?: number; episode?: number } | undefined; if (!m?.anilistId || !m.episode || getPrefs().autoSkip === 'off') return;
+    const m = (src.task?.meta ?? src.meta) as { anilistId?: number; episode?: number } | undefined; if (!m?.anilistId || !m.episode || getPrefs().autoSkip === 'off') return;
     const { idsOf } = await import('../anilist'); const ids = await idsOf(m.anilistId).catch(() => ({} as { mal?: number })); if (!ids.mal) return;
     const len = await new Promise<number>((res) => { if (video.duration) res(video.duration); else video.addEventListener('loadedmetadata', () => res(video.duration), { once: true }); });
     try {

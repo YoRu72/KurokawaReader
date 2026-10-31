@@ -47,7 +47,10 @@ class Aria2Engine {
     const sessionFile = path.join(this.userData, 'aria2.session'); if (!fs.existsSync(sessionFile)) fs.writeFileSync(sessionFile, '');
     const args = ['--enable-rpc', `--rpc-listen-port=${port}`, `--rpc-secret=${secret}`, '--rpc-listen-all=false', '--rpc-allow-origin-all=false', '--continue=true', `--max-connection-per-server=${Math.min(16, this.config.maxConnections)}`, `--split=${Math.min(16, this.config.maxConnections)}`, '--min-split-size=1M', '--max-concurrent-downloads=5', '--bt-save-metadata=true', '--bt-load-saved-metadata=true', `--seed-time=${this.config.seed ? 0 : 0}`, `--seed-ratio=${this.config.seed ? 0 : 0.0}`, `--dir=${this.defaultDir}`, `--save-session=${sessionFile}`, `--input-file=${sessionFile}`, '--save-session-interval=30', '--enable-dht=true', '--enable-dht6=true', '--bt-enable-lpd=true', '--follow-torrent=true', '--file-allocation=none', '--check-certificate=false', '--user-agent=KurokawaTools/0.1 aria2', '--summary-interval=0', '--console-log-level=warn', '--quiet=true', '--bt-detach-seed-only=true', '--auto-file-renaming=true', '--allow-overwrite=false', '--max-tries=5', '--retry-wait=3', '--dht-file-path=' + path.join(this.userData, 'dht.dat'), '--dht-file-path6=' + path.join(this.userData, 'dht6.dat')];
     if (this.config.listenPort > 0) { args.push(`--listen-port=${this.config.listenPort}`, `--dht-listen-port=${this.config.listenPort}`); } else { args.push('--listen-port=6881-6999', '--dht-listen-port=6881-6999'); }
-    if (!this.config.seed) { args.push('--seed-time=0'); }
+    // Senpwai's torrent options: peer discovery, encryption, and when seeding stops.
+    const c = this.config; if (!c.seed) args.push('--seed-time=0'); else args.push(`--seed-ratio=${c.seedRatio > 0 ? c.seedRatio : '0.0'}`, ...(c.seedMinutes > 0 ? [`--seed-time=${c.seedMinutes}`] : []));
+    if (c.dht === false) args.push('--enable-dht=false', '--enable-dht6=false'); if (c.lsd === false) args.push('--bt-enable-lpd=false'); else args.push('--bt-enable-lpd=true');
+    if (c.enc === 'forced') args.push('--bt-require-crypto=true', '--bt-min-crypto-level=arc4');
     this.proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     this.proc.stderr.on('data', (d) => console.warn('[aria2c]', String(d).trim()));
     this.proc.on('exit', (code) => { console.warn('[aria2c] exited', code); this.available = false; this.reason = `aria2c exited (${code})`; this.proc = null; });
@@ -112,7 +115,7 @@ class Aria2Engine {
   }
   async setFiles(id, priorities) { await this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }); this.tick(); }
   async setLimits(l) { await this.rpc.call('changeGlobalOption', { 'max-overall-download-limit': String(l.down || 0), 'max-overall-upload-limit': String(l.up || 0) }); }
-  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.maxConnections) await this.rpc.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined) await this.rpc.call('changeGlobalOption', { 'seed-time': o.seed ? '0' : '0', 'seed-ratio': o.seed ? '0' : '0.0' }).catch(() => {}); }
+  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.maxConnections) await this.rpc.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
   async torrentInfo(source) {
     const gid = source.torrent ? await this.rpc.call('addTorrent', source.torrent, [], { pause: 'true' }) : await this.rpc.call('addUri', [source.magnet], { 'bt-metadata-only': 'true', 'bt-save-metadata': 'false' });
     const until = Date.now() + 60000;

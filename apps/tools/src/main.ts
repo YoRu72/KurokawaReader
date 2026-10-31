@@ -73,7 +73,17 @@ function mountInner(route: Route): void {
     case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q))); break;
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q))); break;
-    case 'add': current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(route.u ?? '')), 50); break;
+    case 'add': {
+      // An AniList or MyAnimeList page opened with the app goes to the show's page (Open in Seanime's idea);
+      // anything else into the Add sheet.
+      const u = route.u ?? ''; const al = /anilist\.co\/anime\/(\d+)/i.exec(u); const mal = /myanimelist\.net\/anime\/(\d+)/i.exec(u);
+      if ((al || mal) && getSettings().addons.includes('anime')) {
+        current = downloadsView();
+        void (async () => { let id = al ? Number(al[1]) : 0; if (!id && mal) { const { gql } = await import('./anilist'); const d = await gql<{ Media: { id: number } | null }>('query ($mal: Int) { Media(idMal: $mal, type: ANIME) { id } }', { mal: Number(mal[1]) }, false).catch(() => null); id = d?.Media?.id ?? 0; } if (id) navigate(`/anime/${id}`, true); else void import('./views/add').then((m) => m.addSheet(u)); })();
+        break;
+      }
+      current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(u)), 50); break;
+    }
     default: current = downloadsView(route.filter);
   }
   app.appendChild(current);
@@ -93,6 +103,8 @@ if (getSettings().addons.includes('anime')) void import('./anime/progress').then
 if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
 if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
 setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
+// The privacy choices made once are applied at every start (DoH, screenshots blocked).
+{ const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
 void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
 if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
 if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());

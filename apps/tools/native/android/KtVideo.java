@@ -45,7 +45,10 @@ final class KtVideo {
         int idx = meta != null ? meta.optInt("playlistIndex", 0) : 0;
         YoutubeDLRequest r = new YoutubeDLRequest(url);
         r.addOption("--no-warnings"); r.addOption("--no-playlist"); r.addOption("--continue"); r.addOption("--no-mtime"); r.addOption("--newline");
-        r.addOption("-o", new File(dir, (idx > 0 ? String.format("%02d - ", idx) : "") + "%(title)s [%(id)s].%(ext)s").getAbsolutePath());
+        String outName = meta != null ? meta.optString("outName", "").replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]+", " ").trim() : "";
+        r.addOption("-o", new File(dir, !outName.isEmpty() ? outName + ".%(ext)s" : (idx > 0 ? String.format("%02d - ", idx) : "") + "%(title)s [%(id)s].%(ext)s").getAbsolutePath());
+        JSONObject hd = meta != null ? meta.optJSONObject("headers") : null;
+        if (hd != null) for (java.util.Iterator<String> it = hd.keys(); it.hasNext(); ) { String k = it.next(); String v = hd.optString(k, ""); if (!k.isEmpty() && !v.isEmpty()) r.addOption("--add-header", k + ":" + v); }
         if (audioOnly) { r.addOption("-f", format.isEmpty() ? "bestaudio/best" : format); r.addOption("-x"); if (!container.isEmpty()) r.addOption("--audio-format", container); }
         else { r.addOption("-f", format.isEmpty() ? "bestvideo+bestaudio/best" : format + "/best"); r.addOption("--merge-output-format", container.isEmpty() ? "mp4" : container); }
         if (meta != null && meta.has("subs")) { r.addOption("--write-subs"); r.addOption("--sub-langs", meta.optString("subs")); r.addOption("--embed-subs"); }

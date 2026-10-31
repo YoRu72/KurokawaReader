@@ -24,7 +24,7 @@ export interface MarketItem { entry: ProviderEntry; lang?: string; status?: 'wor
 type SeaRaw = { id: string; name: string; version?: string; description?: string; type: string; lang?: string; language?: string; icon?: string; author?: string; manifestURI?: string; payloadURI?: string; payload?: string; workingTag?: boolean; brokenTag?: boolean; deprecatedTag?: boolean; updatedAt?: string };
 
 const cache = new Map<string, { at: number; items: MarketItem[] }>();
-/** The anime torrent sources a marketplace lists (fetched fresh after ten minutes). */
+/** The anime sources a marketplace lists (torrent sources and online-streaming ones) (fetched fresh after ten minutes). */
 export async function readMarket(m: Market): Promise<MarketItem[]> {
   const had = cache.get(m.id); if (had && Date.now() - had.at < 600000) return had.items;
   let items: MarketItem[];
@@ -33,8 +33,8 @@ export async function readMarket(m: Market): Promise<MarketItem[]> {
     const j = JSON.parse(r.body) as SeaRaw[] | { extensions?: SeaRaw[]; urls?: string[] };
     const list: SeaRaw[] = Array.isArray(j) ? j : j.extensions ?? [];
     if (!list.length && !Array.isArray(j) && j.urls) items = (await readRepo(m.url)).map((entry) => ({ entry }));
-    else items = list.filter((x) => x && x.type === 'anime-torrent-provider' && (x.payloadURI || x.payload || x.manifestURI)).map((x) => ({
-      entry: { id: `sea:${x.id}`, name: x.name, description: x.description, version: x.version ?? '0', format: 'seanime', icon: x.icon, code: x.payloadURI ?? (x.payload ? `inline:${x.payload}` : `manifest:${x.manifestURI}`), manifest: x.manifestURI, repo: m.url, enabled: true },
+    else items = list.filter((x) => x && (x.type === 'anime-torrent-provider' || x.type === 'onlinestream-provider') && (x.payloadURI || x.payload || x.manifestURI)).map((x) => ({
+      entry: { id: `sea:${x.id}`, name: x.name, description: x.description, version: x.version ?? '0', format: 'seanime', icon: x.icon, code: x.payloadURI ?? (x.payload ? `inline:${x.payload}` : `manifest:${x.manifestURI}`), manifest: x.manifestURI, repo: m.url, enabled: true, ...(x.type === 'onlinestream-provider' ? { role: 'stream' as const } : {}) },
       lang: x.lang ?? (x.language && x.language.length <= 5 ? x.language : undefined), author: x.author, updatedAt: x.updatedAt,
       status: x.deprecatedTag ? 'deprecated' : x.brokenTag ? 'broken' : x.workingTag ? 'working' : undefined,
     }));
@@ -49,7 +49,7 @@ export async function resolveEntry(it: MarketItem): Promise<ProviderEntry> {
   if (e.format === 'seanime' && (e.code.startsWith('manifest:') || !e.options) && e.manifest) {
     const got = await readRepo(e.manifest).catch(() => [] as ProviderEntry[]);
     const full = got.find((x) => x.id === e.id) ?? got[0];
-    if (full) return { ...e, ...full, id: e.id, repo: e.repo };
+    if (full) return { ...e, ...full, id: e.id, repo: e.repo, role: e.role ?? full.role };
     if (e.code.startsWith('manifest:')) throw new Error(`${e.name}: manifest`);
   }
   return e;

@@ -58,7 +58,7 @@ public class KtPlugin extends Plugin {
         for (int i = 0; i < before.length(); i++) { JSONObject t = before.optJSONObject(i); if (t != null) was.put(t.optString("id"), t.optString("state")); }
         for (int i = 0; i < after.length(); i++) { JSONObject t = after.optJSONObject(i); if (t == null) continue; String st = t.optString("state"); String w = was.get(t.optString("id")); if (w == null || w.equals(st)) continue; if ("done".equals(st) || "seeding".equals(st) && !"seeding".equals(w) && "downloading".equals(w)) KtService.finished(getContext(), t.optString("name"), true, null); else if ("failed".equals(st)) KtService.finished(getContext(), t.optString("name"), false, t.optString("error", null)); }
     }
-    @Override public void load() { bg.execute(this::engine); }
+    @Override public void load() { try { KrDoh.provider = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {} bg.execute(this::engine); }
 
     private interface Work { void run() throws Exception; }
     private void run(PluginCall call, Work w) { bg.execute(() -> { try { w.run(); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } }); }
@@ -164,6 +164,16 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void clipboardText(PluginCall call) {
         getActivity().runOnUiThread(() -> { try { android.content.ClipboardManager cm = (android.content.ClipboardManager) getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE); JSObject r = new JSObject(); String text = ""; if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) { CharSequence c = cm.getPrimaryClip().getItemAt(0).coerceToText(getContext()); if (c != null) text = c.toString(); } r.put("text", text); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
     }
+    /** DNS over HTTPS (the reader's resolver): {provider: off | cloudflare | google | quad9 | adguard | https://…}; {test: host}. */
+    @PluginMethod public void setDoh(PluginCall call) {
+        String p = call.getString("provider", null);
+        if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }
+        final String test = call.getString("test", null); JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
+        if (test == null) { call.resolve(r); return; }
+        bg.execute(() -> { try { java.net.InetAddress[] ips = KrDoh.resolve(test); org.json.JSONArray a = new org.json.JSONArray(); for (java.net.InetAddress ip : ips) a.put(ip.getHostAddress()); r.put("ips", a); call.resolve(r); } catch (Exception e) { call.reject("DoH: " + e.getMessage(), e); } });
+    }
+    /** Screenshots and the recent-apps preview blocked (privacy). */
+    @PluginMethod public void secureScreen(PluginCall call) { final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false)); getActivity().runOnUiThread(() -> { if (on) getActivity().getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); else getActivity().getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); call.resolve(); }); }
     @PluginMethod public void openUrl(PluginCall call) {
         try { Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); }
     }
@@ -179,7 +189,7 @@ public class KtPlugin extends Plugin {
                 final File done0 = new File(dir, name); File out = new File(dir, name + ".part");
                 final AtomicLong got = new AtomicLong(); final KrDownloader.Result info = new KrDownloader.Result();
                 Runnable report = new Runnable() { long lastT = System.currentTimeMillis(), lastGot = 0; double speed = 0; public synchronized void run() { long now = System.currentTimeMillis(); if (now - lastT < 300) return; long g = got.get(); double inst = (g - lastGot) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + 0.4 * inst; lastT = now; lastGot = g; JSObject ev = new JSObject(); ev.put("id", id); ev.put("got", g); ev.put("total", info.total); ev.put("speed", speed); ev.put("pct", info.total > 0 ? (int) (g * 100 / info.total) : 0); ev.put("connections", info.connections); notifyListeners("downloadProgress", ev); } };
-                KrDownloader.Result res = KrDownloader.fetch(new URL(urlStr), out, connections, u -> { HttpURLConnection c = (HttpURLConnection) u.openConnection(); c.setConnectTimeout(20000); c.setReadTimeout(60000); c.setInstanceFollowRedirects(false); c.setRequestProperty("User-Agent", "KurokawaTools/0.1"); return c; }, cancelled, got, info, report);
+                KrDownloader.Result res = KrDownloader.fetch(new URL(urlStr), out, connections, u -> { HttpURLConnection c = KrDoh.open(u); c.setConnectTimeout(20000); c.setReadTimeout(60000); c.setInstanceFollowRedirects(false); c.setRequestProperty("User-Agent", "KurokawaTools/0.1"); return c; }, cancelled, got, info, report);
                 if (cancelled.get()) { out.delete(); call.reject("cancelled"); return; }
                 if (res.total > 0 && out.length() != res.total) { out.delete(); call.reject("Download failed: incomplete"); return; }
                 done0.delete(); if (!out.renameTo(done0)) { out.delete(); call.reject("Download failed: cannot keep the file"); return; }
@@ -313,6 +323,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void roots(PluginCall call) { JSArray a = new JSArray(); a.put(engine().defaultDir().getAbsolutePath()); for (File f : getContext().getExternalFilesDirs(null)) if (f != null) a.put(f.getAbsolutePath()); JSObject r = new JSObject(); r.put("roots", a); call.resolve(r); }
 
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
+    @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
     @PluginMethod public void siblings(PluginCall call) {
         File f = fileOf(call.getString("path", "")); JSArray out = new JSArray(); File dir = f.getParentFile(); String base = f.getName().replaceAll("\\.[^.]+$", "").toLowerCase();
@@ -355,20 +366,29 @@ public class KtPlugin extends Plugin {
         final JSObject headers = call.getObject("headers", new JSObject()); final boolean binary = Boolean.TRUE.equals(call.getBoolean("binary", false));
         bg.execute(() -> {
             try {
-                HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-                conn.setInstanceFollowRedirects(true); conn.setRequestMethod(method); conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
-                boolean hasUa = false; Iterator<String> it = headers.keys();
-                while (it.hasNext()) { String k = it.next(); if (k.equalsIgnoreCase("accept-encoding")) continue; conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; }
-                if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
-                try { String ck = android.webkit.CookieManager.getInstance().getCookie(urlStr); if (ck != null && !ck.isEmpty() && !headers.has("cookie") && !headers.has("Cookie")) conn.setRequestProperty("Cookie", ck); } catch (Exception ignored) {}
-                if (body != null) { conn.setDoOutput(true); try (java.io.OutputStream os = conn.getOutputStream()) { os.write(Boolean.TRUE.equals(call.getBoolean("bodyBase64", false)) ? android.util.Base64.decode(body, android.util.Base64.DEFAULT) : body.getBytes(java.nio.charset.StandardCharsets.UTF_8)); } }
-                int code = conn.getResponseCode();
+                // With DNS over HTTPS on, the connection goes to the address the resolver gave and redirects are
+                // followed here, each by its own name.
+                URL at = new URL(urlStr); HttpURLConnection conn; int code; int hop = 0;
+                while (true) {
+                    conn = KrDoh.open(at); if (!KrDoh.on()) conn.setInstanceFollowRedirects(true);
+                    conn.setRequestMethod(method); conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                    boolean hasUa = false; Iterator<String> it = headers.keys();
+                    while (it.hasNext()) { String k = it.next(); if (k.equalsIgnoreCase("accept-encoding")) continue; conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; }
+                    if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
+                    try { String ck = android.webkit.CookieManager.getInstance().getCookie(at.toString()); if (ck != null && !ck.isEmpty() && !headers.has("cookie") && !headers.has("Cookie")) conn.setRequestProperty("Cookie", ck); } catch (Exception ignored) {}
+                    if (body != null) { conn.setDoOutput(true); try (java.io.OutputStream os = conn.getOutputStream()) { os.write(Boolean.TRUE.equals(call.getBoolean("bodyBase64", false)) ? android.util.Base64.decode(body, android.util.Base64.DEFAULT) : body.getBytes(java.nio.charset.StandardCharsets.UTF_8)); } }
+                    code = conn.getResponseCode();
+                    String loc = conn.getHeaderField("Location");
+                    if (!KrDoh.on() || code < 300 || code >= 400 || loc == null || hop++ >= 9) break;
+                    at = new URL(at, loc); conn.disconnect();
+                }
+                final URL finalUrl = at;
                 try { java.util.List<String> set = conn.getHeaderFields().get("Set-Cookie"); if (set != null) { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(urlStr, c); } } catch (Exception ignored) {}
                 java.io.InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
                 if (in != null) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) { bos.write(buf, 0, n); if (bos.size() > 50_000_000) break; } }
                 byte[] bytes = bos.toByteArray();
-                JSObject ret = new JSObject(); ret.put("status", code); ret.put("url", conn.getURL().toString());
+                JSObject ret = new JSObject(); ret.put("status", code); ret.put("url", KrDoh.on() ? finalUrl.toString() : conn.getURL().toString());
                 if (binary) ret.put("body", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)); else ret.put("body", new String(bytes, charsetOf(conn.getContentType(), bytes)));
                 JSObject hs = new JSObject(); for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null && !e.getValue().isEmpty()) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
                 ret.put("headers", hs); call.resolve(ret);

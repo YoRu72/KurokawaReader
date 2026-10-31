@@ -80,6 +80,8 @@ final class KtEngine {
     private SessionManager session;
     private final Map<String, Task> byHash = new ConcurrentHashMap<>();
     private volatile boolean seedAfterDone = false;
+    /* Senpwai's torrent options: peer discovery, encryption, and when seeding stops (0 = never). */
+    private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
     private Thread ticker;
     private volatile long lastTell = 0;
@@ -97,12 +99,7 @@ final class KtEngine {
         if (session != null && session.isRunning()) return session;
         session = new SessionManager(false);
         SettingsPack sp = new SettingsPack();
-        sp.setBoolean(settings_pack.bool_types.enable_dht.swigValue(), true);
-        sp.setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), true);
-        sp.setBoolean(settings_pack.bool_types.enable_upnp.swigValue(), true);
-        sp.setBoolean(settings_pack.bool_types.enable_natpmp.swigValue(), true);
-        sp.setInteger(settings_pack.int_types.out_enc_policy.swigValue(), settings_pack.enc_policy.pe_enabled.swigValue());
-        sp.setInteger(settings_pack.int_types.in_enc_policy.swigValue(), settings_pack.enc_policy.pe_enabled.swigValue());
+        applyNet(sp);
         sp.setString(settings_pack.string_types.user_agent.swigValue(), "KurokawaTools/0.1 libtorrent/2.0");
         sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);
         sp.connectionsLimit(200);
@@ -233,17 +230,29 @@ final class KtEngine {
     void setFiles(String id, int[] prios) { Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x); persist(); tell(true); }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
     void setLimits(long down, long up) { SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
+    private void applyNet(SettingsPack sp) {
+        sp.setBoolean(settings_pack.bool_types.enable_dht.swigValue(), dht);
+        sp.setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), lsd);
+        sp.setBoolean(settings_pack.bool_types.enable_upnp.swigValue(), upnp);
+        sp.setBoolean(settings_pack.bool_types.enable_natpmp.swigValue(), natpmp);
+        int pol = "forced".equals(enc) ? settings_pack.enc_policy.pe_forced.swigValue() : "disabled".equals(enc) ? settings_pack.enc_policy.pe_disabled.swigValue() : settings_pack.enc_policy.pe_enabled.swigValue();
+        sp.setInteger(settings_pack.int_types.out_enc_policy.swigValue(), pol); sp.setInteger(settings_pack.int_types.in_enc_policy.swigValue(), pol);
+        sp.setInteger(settings_pack.int_types.share_ratio_limit.swigValue(), seedRatio > 0 ? (int) Math.round(seedRatio * 100) : 1000000);
+        sp.setInteger(settings_pack.int_types.seed_time_limit.swigValue(), seedMinutes > 0 ? seedMinutes * 60 : Integer.MAX_VALUE);
+    }
     void configure(JSONObject o) {
         if (o.has("seed")) seedAfterDone = o.optBoolean("seed");
+        if (o.has("dht")) dht = o.optBoolean("dht", true); if (o.has("lsd")) lsd = o.optBoolean("lsd", true); if (o.has("upnp")) upnp = o.optBoolean("upnp", true); if (o.has("natpmp")) natpmp = o.optBoolean("natpmp", true);
+        if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
         if (o.has("maxActive")) maxActive = Math.max(1, o.optInt("maxActive", 3));
         if (session != null && session.isRunning()) {
             SettingsPack sp = new SettingsPack(); sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);
             if (o.has("listenPort")) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), listenPort > 0 ? "0.0.0.0:" + listenPort + ",[::]:" + listenPort : "0.0.0.0:6881,[::]:6881");
-            session.applySettings(sp);
+            applyNet(sp); session.applySettings(sp);
             if (o.has("seed")) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.status().isFinished()) { if (seedAfterDone) x.th.resume(); else x.th.pause(); }
         }
-        try { JSONObject cfg = new JSONObject(); cfg.put("seed", seedAfterDone); cfg.put("listenPort", listenPort); cfg.put("maxActive", maxActive); write(new File(stateDir, "config.json"), cfg.toString()); } catch (Exception ignored) {}
+        try { JSONObject cfg = new JSONObject(); cfg.put("seed", seedAfterDone); cfg.put("listenPort", listenPort); cfg.put("maxActive", maxActive); cfg.put("dht", dht); cfg.put("lsd", lsd); cfg.put("upnp", upnp); cfg.put("natpmp", natpmp); cfg.put("enc", enc); cfg.put("seedRatio", seedRatio); cfg.put("seedMinutes", seedMinutes); write(new File(stateDir, "config.json"), cfg.toString()); } catch (Exception ignored) {}
     }
 
     /** A magnet's (or .torrent's) metadata without keeping it: name, size, files. */
@@ -297,7 +306,7 @@ final class KtEngine {
         KtService.ensure(ctx);
     }
     private HttpURLConnection open(URL u, JSONObject headers) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) u.openConnection();
+        HttpURLConnection c = KrDoh.open(u);
         c.setConnectTimeout(20000); c.setReadTimeout(60000); c.setInstanceFollowRedirects(false);
         c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1");
         if (headers != null) { Iterator<String> it = headers.keys(); while (it.hasNext()) { String k = it.next(); c.setRequestProperty(k, headers.optString(k)); } }
@@ -383,7 +392,7 @@ final class KtEngine {
     private static List<Integer> toList(int[] a) { List<Integer> l = new ArrayList<>(); for (int v : a) l.add(v); return l; }
     private static void write(File f, String s) throws IOException { File tmp = new File(f.getPath() + ".tmp"); try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(s.getBytes(StandardCharsets.UTF_8)); } if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f); } }
     private void load() {
-        try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); } } catch (Exception ignored) {}
+        try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); dht = c.optBoolean("dht", true); lsd = c.optBoolean("lsd", true); upnp = c.optBoolean("upnp", true); natpmp = c.optBoolean("natpmp", true); enc = c.optString("enc", "enabled"); seedRatio = c.optDouble("seedRatio", 0); seedMinutes = c.optInt("seedMinutes", 0); } } catch (Exception ignored) {}
         File f = new File(stateDir, "tasks.json"); if (!f.exists()) return;
         try {
             JSONArray arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
