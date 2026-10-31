@@ -246,9 +246,17 @@ const Archive = require('./archive.cjs'); const archiveJobs = new Map();
 ipcMain.handle('kr:archive-list', (_e, o) => Archive.list(String(o.path), o.password));
 ipcMain.handle('kr:archive-extract', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
-  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kr:archive-progress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
+  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password, verifyFirst: !!o.verifyFirst, ...(typeof o.keepFree === 'number' && o.keepFree >= 0 ? { keepFree: o.keepFree } : {}) }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kr:archive-progress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
   finally { if (o.id) archiveJobs.delete(o.id); }
 });
+ipcMain.handle('kr:archive-test', async (e, o) => {
+  const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
+  try { return await Archive.test(String(o.path), o.password, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kr:archive-progress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); }
+  finally { if (o.id) archiveJobs.delete(o.id); }
+});
+ipcMain.handle('kr:archive-restore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
+ipcMain.handle('kr:archive-free', async (_e, o) => { let d = String(o.dir); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
+ipcMain.handle('kr:archive-existing', async (_e, o) => ({ existing: await Archive.existing(String(o.dest), (o.names || []).map(String)) }));
 ipcMain.handle('kr:archive-cancel', (_e, id) => { const s = archiveJobs.get(id); if (s) s.v = true; });
 ipcMain.handle('kr:archive-create', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;

@@ -143,6 +143,17 @@ public class KtPlugin extends Plugin {
         o.put("url", result.getResultCode() == android.app.Activity.RESULT_OK && d != null ? d.getStringExtra(KtAuthActivity.RESULT_URL) : null);
         call.resolve(o);
     }
+    /** A video (a link, or a file here) handed to another player through Android's chooser (VLC, MX, mpv…). */
+    @PluginMethod public void openWith(PluginCall call) {
+        try {
+            String path = call.getString("path", null), url = call.getString("url", null), mime = call.getString("mime", "video/*");
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            if (path != null && !path.isEmpty()) { Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path)); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            else i.setDataAndType(Uri.parse(url), mime);
+            i.putExtra("title", call.getString("title", ""));
+            Intent ch = Intent.createChooser(i, call.getString("title", "")); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve();
+        } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
     @PluginMethod public void openUrl(PluginCall call) {
         try { Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); }
     }
