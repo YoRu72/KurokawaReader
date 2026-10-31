@@ -9,6 +9,6 @@ export const zh: Partial<Strings> = {
   filterAll: '全部', filterActive: '进行中', filterDone: '已完成', filterFailed: '失败',
   settings: '设置', general: '通用', language: '语言', languageSystem: '跟随系统', appearance: '外观', uiMode: '主题', uiSystem: '系统', uiLight: '浅色', uiDark: '深色', accent: '强调色',
   downloadsSection: '下载', downloadFolder: '下载文件夹', speedLimits: '速度限制', downLimit: '下载限速', upLimit: '上传限速', unlimited: '不限', seedAfterDone: '完成后继续做种',
-  remoteAria2: '远程 aria2', addons: '附加组件', addonInstall: '安装', addonInstalled: '已安装', addonRemove: '移除', otherApps: '其他 Kurokawa 应用', appReader: 'KurokawaReader',
+  remoteAria2: '远程 aria2', addons: '附加组件', addonSettings: '附加组件设置', addonInstall: '安装', addonInstalled: '已安装', addonRemove: '移除', otherApps: '其他 Kurokawa 应用', appReader: 'KurokawaReader',
   updates: '应用更新', checkUpdates: '检查更新', checking: '正在检查…', upToDate: '已是最新版本', updateAvailable: '有可用更新：{v}', updateNow: '更新', autoCheck: '联网时自动检查', about: '关于', version: '版本 {v}',
 };

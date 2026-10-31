@@ -88,6 +88,12 @@ ipcMain.handle('kt:defaultDir', () => engine?.defaultDir || app.getPath('downloa
 ipcMain.handle('kt:pickDir', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kt:openExternal', (_e, u) => shell.openExternal(String(u)));
 ipcMain.handle('kt:registerMagnet', () => { if (process.defaultApp) { if (process.argv.length >= 2) app.setAsDefaultProtocolClient('magnet', process.execPath, [path.resolve(process.argv[1])]); } else app.setAsDefaultProtocolClient('magnet'); return true; });
+ipcMain.handle('kt:http', async (_e, o) => {
+  const r = await net.fetch(String(o.url), { method: o.method || 'GET', headers: o.headers || {}, body: o.body ? (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body) : undefined, redirect: 'follow' });
+  const headers = {}; r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+  const buf = Buffer.from(await r.arrayBuffer());
+  return { status: r.status, url: r.url, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
+});
 ipcMain.handle('kt:readFile', async (_e, p) => { const b = await fs.promises.readFile(String(p)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
 
 /* ---------- updates: the repository's tools-v* releases ---------- */

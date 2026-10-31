@@ -174,6 +174,38 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void canInstall(PluginCall call) { JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r); }
 
+    /* ---------- requests for the add-ons (past the page's CORS), with the WebView's identity and cookies ---------- */
+    @PluginMethod public void httpRequest(PluginCall call) {
+        final String urlStr = call.getString("url", ""); final String method = call.getString("method", "GET"); final String body = call.getString("body", null);
+        final JSObject headers = call.getObject("headers", new JSObject()); final boolean binary = Boolean.TRUE.equals(call.getBoolean("binary", false));
+        bg.execute(() -> {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                conn.setInstanceFollowRedirects(true); conn.setRequestMethod(method); conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                boolean hasUa = false; Iterator<String> it = headers.keys();
+                while (it.hasNext()) { String k = it.next(); if (k.equalsIgnoreCase("accept-encoding")) continue; conn.setRequestProperty(k, headers.getString(k)); if (k.equalsIgnoreCase("user-agent")) hasUa = true; }
+                if (!hasUa) { try { conn.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext())); } catch (Exception ignored) {} }
+                try { String ck = android.webkit.CookieManager.getInstance().getCookie(urlStr); if (ck != null && !ck.isEmpty() && !headers.has("cookie") && !headers.has("Cookie")) conn.setRequestProperty("Cookie", ck); } catch (Exception ignored) {}
+                if (body != null) { conn.setDoOutput(true); try (java.io.OutputStream os = conn.getOutputStream()) { os.write(Boolean.TRUE.equals(call.getBoolean("bodyBase64", false)) ? android.util.Base64.decode(body, android.util.Base64.DEFAULT) : body.getBytes(java.nio.charset.StandardCharsets.UTF_8)); } }
+                int code = conn.getResponseCode();
+                try { java.util.List<String> set = conn.getHeaderFields().get("Set-Cookie"); if (set != null) { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(urlStr, c); } } catch (Exception ignored) {}
+                java.io.InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                if (in != null) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) { bos.write(buf, 0, n); if (bos.size() > 50_000_000) break; } }
+                byte[] bytes = bos.toByteArray();
+                JSObject ret = new JSObject(); ret.put("status", code); ret.put("url", conn.getURL().toString());
+                if (binary) ret.put("body", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)); else ret.put("body", new String(bytes, charsetOf(conn.getContentType(), bytes)));
+                JSObject hs = new JSObject(); for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null && !e.getValue().isEmpty()) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
+                ret.put("headers", hs); call.resolve(ret);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+        });
+    }
+    private static java.nio.charset.Charset charsetOf(String contentType, byte[] head) {
+        try { if (contentType != null) { java.util.regex.Matcher m = java.util.regex.Pattern.compile("charset=\"?([\\w-]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(contentType); if (m.find()) return java.nio.charset.Charset.forName(m.group(1)); } } catch (Exception ignored) {}
+        try { String s = new String(head, 0, Math.min(head.length, 2048), java.nio.charset.StandardCharsets.ISO_8859_1); java.util.regex.Matcher m = java.util.regex.Pattern.compile("<meta[^>]+charset=[\"']?([\\w-]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(s); if (m.find()) return java.nio.charset.Charset.forName(m.group(1)); } catch (Exception ignored) {}
+        return java.nio.charset.StandardCharsets.UTF_8;
+    }
+
     @SuppressWarnings("unused") private static Iterator<String> keys(JSONObject o) { return o.keys(); }
     @SuppressWarnings("unused") static DocumentFile tree(android.content.Context c, Uri u) { return DocumentFile.fromTreeUri(c, u); }
 }

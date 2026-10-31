@@ -27,6 +27,8 @@ export interface Settings {
   incognito: boolean;
   /** Installed add-ons by id. */
   addons: string[];
+  /** Each add-on's own settings (keys, choices), by add-on id. */
+  addonSettings: Record<string, Record<string, string | number | boolean>>;
 }
 
 const KEY = 'kt.settings';
@@ -34,7 +36,7 @@ const DEFAULTS: Settings = {
   uiMode: 'system', darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff',
   downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: true,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
-  autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [],
+  autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
 };
 
 let current: Settings = load();
