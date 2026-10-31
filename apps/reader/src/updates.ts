@@ -8,9 +8,9 @@ import { nativePlatform } from './native';
 
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
 /** The hosted web app and the AltStore/SideStore source (published by the release workflow to GitHub Pages). */
-export const WEB_APP_URL = 'https://yoru72.github.io/KurokawaReader/';
+import { REPO, WEB_APP_URL } from './repo';
+export { REPO, WEB_APP_URL };
 export const ALTSTORE_SOURCE = `${WEB_APP_URL}altstore.json`;
-const REPO = 'YoRu72/KurokawaReader';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const API_ALL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour

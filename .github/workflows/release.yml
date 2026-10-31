@@ -1,12 +1,17 @@
-name: Release
+name: Release reader
 
-# Every push to main builds all platforms and publishes (or refreshes) the
-# GitHub Release named after package.json's version, e.g. v0.2.0.
+# Every push to main that touches the reader builds all its platforms and publishes (or refreshes) the
+# GitHub Release named after apps/reader/package.json's version, e.g. v0.2.0. (The repository holds several
+# apps — apps/<name> — each with a workflow of its own; the add-on repository they share is under repo/.)
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths: ['apps/reader/**', 'shared/**', 'repo/**', '.github/workflows/release.yml']
   workflow_dispatch:
+
+env:
+  APP: apps/reader
 
 permissions:
   contents: write
@@ -20,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: v
-        run: echo "v=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: echo "v=$(node -p "require('./apps/reader/package.json').version")" >> $GITHUB_OUTPUT
       - name: Repository topics
         continue-on-error: true
         env: { GH_TOKEN: '${{ secrets.REPO_ADMIN_TOKEN || github.token }}' }
@@ -34,6 +39,7 @@ jobs:
     name: Web build & tests
     needs: version
     runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,12 +50,13 @@ jobs:
       - name: Package web build
         run: cd dist && zip -r ../KurokawaReader-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
-        with: { name: web, path: KurokawaReader-web.zip }
+        with: { name: web, path: apps/reader/KurokawaReader-web.zip }
 
   android:
     needs: version
     name: Android APKs
     runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -112,7 +119,7 @@ jobs:
           done
           ls -la out
       - uses: actions/upload-artifact@v4
-        with: { name: android, path: out/*.apk }
+        with: { name: android, path: apps/reader/out/*.apk }
 
   ios:
     needs: version
@@ -121,6 +128,7 @@ jobs:
     # (A macOS runner that never comes is not a reason to hold the release: the IPA is attached when it does.)
     timeout-minutes: 40
     continue-on-error: true
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -156,12 +164,13 @@ jobs:
           zip -qry "out/KurokawaReader-$V-ios-unsigned.ipa" Payload
           ls -la out
       - uses: actions/upload-artifact@v4
-        with: { name: ios, path: out/*.ipa }
+        with: { name: ios, path: apps/reader/out/*.ipa }
 
   windows:
     needs: version
     name: Windows EXE
     runs-on: windows-latest
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -188,14 +197,15 @@ jobs:
         with:
           name: windows
           path: |
-            desktop/out/*.exe
-            desktop/out/*.blockmap
-            desktop/out/latest.yml
+            apps/reader/desktop/out/*.exe
+            apps/reader/desktop/out/*.blockmap
+            apps/reader/desktop/out/latest.yml
 
   macos:
     needs: version
     name: macOS DMG
     runs-on: macos-14
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -221,15 +231,16 @@ jobs:
         with:
           name: macos
           path: |
-            desktop/out/*.dmg
-            desktop/out/*.zip
-            desktop/out/*.blockmap
-            desktop/out/latest-mac.yml
+            apps/reader/desktop/out/*.dmg
+            apps/reader/desktop/out/*.zip
+            apps/reader/desktop/out/*.blockmap
+            apps/reader/desktop/out/latest-mac.yml
 
   linux:
     needs: version
     name: Linux AppImage
     runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -255,8 +266,8 @@ jobs:
         with:
           name: linux
           path: |
-            desktop/out/*.AppImage
-            desktop/out/latest-linux.yml
+            apps/reader/desktop/out/*.AppImage
+            apps/reader/desktop/out/latest-linux.yml
 
   release:
     name: Publish release
@@ -276,7 +287,7 @@ jobs:
         run: |
           # What's new: commit subjects since the previous release, split into bullets.
           git fetch --tags --quiet || true
-          PREV=$(git tag --sort=-v:refname | grep "^v" | grep -v "^v${{ needs.version.outputs.v }}$" | head -n 1)
+          PREV=$(git tag --sort=-v:refname | grep "^v[0-9]" | grep -v "^v${{ needs.version.outputs.v }}$" | head -n 1)
           if [ -n "$PREV" ]; then RANGE="$PREV..HEAD"; else RANGE="HEAD~5..HEAD"; fi
           git log --format='%s' $RANGE | grep -v -i -E '^(ci|release|docs|chore|build|test)(\(|:)|readme|^merge |^update [a-z0-9_./-]+\.(md|yml|yaml|json|txt)$|^create [a-z0-9_./-]+\.(md|yml|yaml)$|^delete ' | sed -E 's/^v?[0-9]+\.[0-9]+\.[0-9]+: //' | tr ';' '\n' | sed -E 's/^ +//; s/^(.)/- \u\1/' | grep -v '^- $' > whatsnew.txt || true
           {
@@ -284,7 +295,7 @@ jobs:
             echo
             echo "## What's new"
             # (Notes written for this version, when there are any — docs/notes/v<version>.md — else the commits.)
-            if [ -s "docs/notes/v${{ needs.version.outputs.v }}.md" ]; then cat "docs/notes/v${{ needs.version.outputs.v }}.md"; elif [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
+            if [ -s "$APP/docs/notes/v${{ needs.version.outputs.v }}.md" ]; then cat "$APP/docs/notes/v${{ needs.version.outputs.v }}.md"; elif [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
             if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
             echo
             echo "## Files"
@@ -298,12 +309,12 @@ jobs:
             echo "| Windows | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
             echo "| macOS | \`*-mac-universal.dmg\` (unsigned: right-click → Open the first time) |"
             echo "| Linux | \`*-linux-x64.AppImage\` (chmod +x, then run) |"
-            echo "| iOS | \`*-ios-unsigned.ipa\` — AltStore / SideStore source: \`https://${{ github.repository_owner }}.github.io/KurokawaReader/altstore.json\` · TrollStore · or install the web app from https://${{ github.repository_owner }}.github.io/KurokawaReader/ |"
+            echo "| iOS | \`*-ios-unsigned.ipa\` — AltStore / SideStore source: \`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/altstore.json\` · TrollStore · or install the web app from https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ |"
             echo "| Web (self-host) | \`KurokawaReader-web.zip\` — or use the hosted app above |"
             echo
             echo "_\`latest*.yml\`, \`*.blockmap\` and the macOS zip are for the desktop app's own updater (differential updates); you do not need to download them._"
             echo
-            cat docs/INSTALL.md
+            cat $APP/docs/INSTALL.md
           } > notes.md
       - uses: softprops/action-gh-release@v2
         with:
@@ -343,7 +354,7 @@ jobs:
         run: |
           mkdir -p site && cd site && unzip -q ../artifacts/web/KurokawaReader-web.zip && cd ..
           touch site/.nojekyll
-          node scripts/altstore.mjs "${{ needs.version.outputs.v }}" "${{ github.repository }}" "https://${{ github.repository_owner }}.github.io/KurokawaReader" artifacts/ios > site/altstore.json
+          node $APP/scripts/altstore.mjs "${{ needs.version.outputs.v }}" "${{ github.repository }}" "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" artifacts/ios > site/altstore.json
           node -e "JSON.parse(require('fs').readFileSync('site/altstore.json','utf8')); console.log('altstore.json ok')"
       - uses: actions/configure-pages@v5
         with: { enablement: true }

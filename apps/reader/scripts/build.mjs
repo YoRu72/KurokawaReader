@@ -132,7 +132,7 @@ const buildOptions = {
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' },
   logLevel: 'info',
   plugins: [(await import('./patch-pdfjs.mjs')).pdfjsMainPlugin],
-  define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version) },
+  define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version), __REPO_SLUG__: JSON.stringify(process.env.GITHUB_REPOSITORY || 'YoRu72/KurokawaReader') },
 };
 
 // The extension sandbox's runtime: built alone (no app code, no chunks), inlined into a frame at run time.

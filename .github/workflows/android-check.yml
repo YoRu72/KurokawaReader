@@ -7,12 +7,13 @@ on:
   workflow_dispatch:
   push:
     branches: ['work-*']
-    paths: ['native/android/**', 'capacitor.config.*', 'package.json', '.github/workflows/android-check.yml']
+    paths: ['apps/reader/native/android/**', 'apps/reader/capacitor.config.*', 'apps/reader/package.json', '.github/workflows/android-check.yml']
 
 jobs:
   compile:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

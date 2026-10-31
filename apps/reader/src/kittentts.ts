@@ -32,7 +32,8 @@ export const KITTEN_VOICES: { id: string; name: string; key: string }[] = [
 ];
 // The files come from this app's own GitHub release first (a mirror made by .github/workflows/kittentts-models.yml,
 // named `<repo>.<file>`), from Hugging Face when the mirror has not got them.
-const MIRROR = 'https://github.com/YoRu72/KurokawaReader/releases/download/models-kittentts-0.8';
+import { REPO } from './repo';
+const MIRROR = `https://github.com/${REPO}/releases/download/models-kittentts-0.8`;
 const HF = (m: KittenModel, file: string) => `https://huggingface.co/${m.repo}/resolve/main/${file}`;
 const mirrorUrl = (m: KittenModel, file: string) => `${MIRROR}/${m.repo.split('/')[1]}.${file.split('/').pop()}`;
 /** The file from the mirror, else from Hugging Face; kept in the cache under the Hugging Face address either way. */

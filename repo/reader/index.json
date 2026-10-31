@@ -1,0 +1,7 @@
+{
+  "kurokawa": "addons",
+  "app": "reader",
+  "addons": [
+    { "id": "otl", "kind": "folder", "name": "Officially Translated Light Novels", "hidden": true, "manifest": "otl.json" }
+  ]
+}

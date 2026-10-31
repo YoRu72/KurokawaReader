@@ -14,7 +14,7 @@ import { navigate } from '../router';
 type Source = { repo: string; tag?: string; pick: (name: string) => boolean; label: string };
 interface DeckDef { id: string; title: string; lang: 'ja' | 'zh'; body: () => string; license: string; sources: Source[]; page: string }
 
-const APP_REPO = 'YoRu72/KurokawaReader';
+import { REPO as APP_REPO } from '../repo';
 export const DECKS: DeckDef[] = [
   {
     id: 'kaishi', title: 'Kaishi 1.5k', lang: 'ja', body: () => t('kaishiBody'), license: '—',

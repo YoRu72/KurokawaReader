@@ -1,0 +1,9 @@
+{
+  "kurokawa": "repo",
+  "name": "Kurokawa Apps",
+  "version": 1,
+  "apps": {
+    "reader": { "name": "KurokawaReader", "addons": "reader/index.json" },
+    "tools": { "name": "Kurokawa Tools", "addons": "tools/index.json" }
+  }
+}
