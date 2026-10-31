@@ -18,6 +18,9 @@ const URLS = {
 // package.json: the repository slug for the updater.
 const pkgPath = path.join(here, 'package.json'); const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
 if (process.env.GITHUB_REPOSITORY) { pkg.kurokawa = { ...(pkg.kurokawa || {}), repo: process.env.GITHUB_REPOSITORY }; await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n'); }
+// The web build copied beside the shell: electron-builder wants everything it packs under this folder.
+const distSrc = path.join(here, '..', 'dist'), distDst = path.join(here, 'dist');
+if (await fs.stat(distSrc).then(() => true).catch(() => false)) { await fs.rm(distDst, { recursive: true, force: true }); await fs.cp(distSrc, distDst, { recursive: true }); console.log('fetch-aria2: dist/ copied beside the shell'); }
 const url = URLS[`${plat}-${arch}`];
 if (!url) { console.log(`fetch-aria2: no bundled aria2c for ${plat}-${arch} (the app uses one on the PATH)`); process.exit(0); }
 const outDir = path.join(here, 'aria2', `${plat}-${arch}`); await fs.mkdir(outDir, { recursive: true });

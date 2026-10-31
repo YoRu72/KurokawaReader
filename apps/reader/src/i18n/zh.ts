@@ -101,4 +101,9 @@ export const zh: Partial<Strings> = {
   hskSentencesBody: '同一 HSK 卡组，附例句。',
   addBooks: '添加图书', addBooksNow: '现在就添加图书', tagExists: '已有同名标签', tagCreated: '已创建标签', addedToTag: '已将 {n} 本添加到“{name}”', emptyTagBody: '此标签为空。请从书库中添加图书。',
   searching: '搜索中…',
+  archives: '压缩包', archivesHint: '打开压缩包查看内容并解压（ZIP 在空间不足时可原地解压），或创建 zip。',
+  extract: '解压…', extractNow: '解压', extractTo: '解压到', extractNewFolder: '同名文件夹', extractHere: '压缩包旁', extractElsewhere: '其他位置…', chooseFolder: '选择文件夹', existingFiles: '已存在的文件', replaceFiles: '替换', skipFiles: '跳过', keepBoth: '两者保留',
+  extractInPlace: '原地解压', extractInPlaceHint: '文件每解出一个，压缩包就缩小一分，磁盘只需容纳文件本身；中途停止也可以稍后继续。', deleteArchiveAfter: '解压后删除压缩包', extracting: '正在解压…', extracted: '已解压 {n}', extractContinue: '继续解压', extractResumable: '已解压一半', extractPausedInPlace: '已停止——压缩包保持原样，可以继续', 
+  notAnArchive: '这不是本应用能打开的压缩包。', encrypted: '已加密', password: '密码', passwordNeeded: '此压缩包需要密码。', wrongPassword: '密码错误。', noSpace: '磁盘空间不足。', andMore: '…还有 {n} 个', openArchive: '打开压缩包', createZip: '创建 zip', zipping: '正在压缩…', zipped: '已创建 {name}（{size}）',
+  otherApps: '其他 Kurokawa 应用', otherAppsHint: '各应用共用同一外观、同一 AniList 关联和同一附加组件仓库。', appTools: 'Kurokawa Tools', appToolsDesc: '下载、种子与串流，以及动画、字幕、压缩包附加组件。', appInstalled: '已安装 · 打开', appGet: '获取', appOpenReleases: '打开发布页', appInstallerOpened: '已交给安装程序', 
 };

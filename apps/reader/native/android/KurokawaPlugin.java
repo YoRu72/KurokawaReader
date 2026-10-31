@@ -1354,4 +1354,92 @@ public class KurokawaPlugin extends Plugin {
         if (browser != null) { browser.closeAll(); browser = null; }
         super.handleOnDestroy();
     }
+
+    /* ---------- archives: what is inside, taking it out (in place when asked), making one ---------- */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> archiveJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ExecutorService archiveBg = java.util.concurrent.Executors.newCachedThreadPool();
+    private static File fileOf(String p) { if (p.startsWith("file://")) p = Uri.parse(p).getPath(); return new File(p); }
+    @PluginMethod public void archiveList(PluginCall call) {
+        archiveBg.execute(() -> { try { File f = fileOf(call.getString("path", "")); JSObject r = new JSObject(new org.json.JSONObject(KrArchive.list(f, call.getString("password", null)).toString()).toString()); r.put("resumable", KrArchive.hasJournal(f)); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } });
+    }
+    @PluginMethod public void archiveExtract(PluginCall call) {
+        final String id = call.getString("id", ""); final java.util.concurrent.atomic.AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
+        final File f = fileOf(call.getString("path", "")); final File dest = fileOf(call.getString("dest", f.getParent()));
+        final KrArchive.Options o = new KrArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)); o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
+        archiveBg.execute(() -> {
+            final long[] last = { 0 };
+            try {
+                int n = KrArchive.extract(f, dest, o, new KrArchive.Progress() {
+                    public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); }
+                    public boolean stopped() { return stop.get(); }
+                });
+                JSObject r = new JSObject(); r.put("files", n); r.put("dest", dest.getAbsolutePath()); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+            finally { if (!id.isEmpty()) archiveJobs.remove(id); }
+        });
+    }
+    @PluginMethod public void archiveCancel(PluginCall call) { java.util.concurrent.atomic.AtomicBoolean c = archiveJobs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
+    @PluginMethod public void archiveCreate(PluginCall call) {
+        final String id = call.getString("id", ""); final java.util.concurrent.atomic.AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
+        final File out = fileOf(call.getString("out", "")); final java.util.List<File> ins = new java.util.ArrayList<>();
+        try { JSArray a = call.getArray("inputs"); for (int i = 0; i < a.length(); i++) ins.add(fileOf(a.getString(i))); } catch (Exception e) { call.reject("inputs"); return; }
+        archiveBg.execute(() -> {
+            final long[] last = { 0 };
+            try { int n = KrArchive.createZip(out, ins, new KrArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } });
+                JSObject r = new JSObject(); r.put("files", n); r.put("path", out.getAbsolutePath()); r.put("size", out.length()); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+            finally { if (!id.isEmpty()) archiveJobs.remove(id); }
+        });
+    }
+    /** A file picked by the user (an archive to open), copied into the app's files when it is a content URI. */
+    @PluginMethod public void archivePickFile(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT); i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("*/*");
+        if (Boolean.TRUE.equals(call.getBoolean("multiple", false))) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(call, i, "archiveFilePicked");
+    }
+    @ActivityCallback private void archiveFilePicked(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); if (data == null) { call.reject("cancelled"); return; }
+        final java.util.List<Uri> uris = new java.util.ArrayList<>();
+        if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri()); else if (data.getData() != null) uris.add(data.getData());
+        if (uris.isEmpty()) { call.reject("cancelled"); return; }
+        archiveBg.execute(() -> {
+            try {
+                JSArray paths = new JSArray();
+                for (Uri u : uris) {
+                    String name = "file"; try (android.database.Cursor c = getContext().getContentResolver().query(u, null, null, null, null)) { if (c != null && c.moveToFirst()) { int ix = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME); if (ix >= 0) name = c.getString(ix); } }
+                    File dir = new File(getContext().getExternalFilesDir(null), "Archives"); dir.mkdirs(); File out = new File(dir, name);
+                    // (A file already in the app's folders is used where it is; anything else is copied in.)
+                    try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u); java.io.OutputStream os = new java.io.FileOutputStream(out)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) os.write(b, 0, n); }
+                    paths.put(out.getAbsolutePath());
+                }
+                JSObject r = new JSObject(); r.put("paths", paths); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+        });
+    }
+
+    /** A folder for extraction, as a path (a tree on the primary storage); other storages are refused for now. */
+    @PluginMethod public void archivePickDir(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(call, i, "archiveDirPicked");
+    }
+    @ActivityCallback private void archiveDirPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); Uri tree = data != null ? data.getData() : null; if (tree == null) { call.reject("cancelled"); return; }
+        try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); } catch (Exception ignored) {}
+        String docId = DocumentsContract.getTreeDocumentId(tree); String[] parts = docId.split(":", 2);
+        if (!"primary".equalsIgnoreCase(parts[0])) { call.reject("notPrimary"); return; }
+        JSObject r = new JSObject(); r.put("dir", new File(Environment.getExternalStorageDirectory(), parts.length > 1 ? parts[1] : "").getAbsolutePath()); call.resolve(r);
+    }
+
+
+    /* ---------- the other Kurokawa apps on this device ---------- */
+    @PluginMethod public void isInstalled(PluginCall call) {
+        JSObject r = new JSObject(); boolean on = false;
+        try { getContext().getPackageManager().getPackageInfo(call.getString("pkg", ""), 0); on = true; } catch (Exception ignored) {}
+        r.put("installed", on); call.resolve(r);
+    }
+    @PluginMethod public void launch(PluginCall call) {
+        Intent i = getContext().getPackageManager().getLaunchIntentForPackage(call.getString("pkg", ""));
+        if (i == null) { call.reject("notInstalled"); return; }
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve();
+    }
 }

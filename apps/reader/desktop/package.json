@@ -1,15 +1,15 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.54.1",
+  "version": "0.55.0",
   "description": "KurokawaReader for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
   "author": "KurokawaReader",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis portable",
-    "dist:mac": "electron-builder --mac dmg",
-    "dist:linux": "electron-builder --linux AppImage"
+    "dist:win": "node prepare.cjs && electron-builder --win nsis portable",
+    "dist:mac": "node prepare.cjs && electron-builder --mac dmg",
+    "dist:linux": "node prepare.cjs && electron-builder --linux AppImage"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -28,14 +28,16 @@
       "icon.png",
       "icon.ico",
       {
-        "from": "../dist",
+        "from": "dist",
         "to": "dist",
         "filter": [
           "**/*",
           "!**/*.map",
           "!samples/alice-in-wonderland.epub"
         ]
-      }
+      },
+      "archive.cjs",
+      "prepare.cjs"
     ],
     "win": {
       "target": [
@@ -168,9 +170,13 @@
       "zh-CN",
       "zh-TW"
     ],
-    "compression": "maximum"
+    "compression": "maximum",
+    "asarUnpack": [
+      "node_modules/7zip-bin/**"
+    ]
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "7zip-bin": "^5.2.0"
   }
 }
