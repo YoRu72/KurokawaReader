@@ -26,6 +26,7 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
