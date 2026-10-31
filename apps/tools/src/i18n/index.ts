@@ -111,18 +111,12 @@ export function formatHijri(d: Date, opts: Intl.DateTimeFormatOptions = { dateSt
   return new Intl.DateTimeFormat(`${base}-u-ca-islamic-umalqura${nu}`, opts).format(d);
 }
 export function formatDate(ts: number | undefined): string {
-  if (!ts) return t('never');
+  if (!ts) return '';
   const civil = new Intl.DateTimeFormat(dateLocale(), { dateStyle: 'medium' }).format(new Date(ts));
   const cal = calendarPref();
   if (cal === 'gregory') return civil;
   const hijri = formatHijri(new Date(ts));
   return cal === 'hijri' ? hijri : `${hijri} · ${civil}`;
-}
-
-/** Reading time as "2h 5m" (localised digits and unit). */
-export function formatDuration(ms: number): string {
-  const m = Math.round(ms / 60000);
-  return t('hoursMinutes', { h: Math.floor(m / 60), m: m % 60 });
 }
 
 export function formatBytes(n: number): string {
@@ -146,6 +140,8 @@ export function isRtlText(text: string): boolean {
 /** Arabic-Indic digits for Arabic UI. */
 /** A saved visual setting, read here so this file needs nothing of settings.ts. */
 function visualPref(key: string): string | undefined {
+  void key; return undefined;
+  // (The reader keeps such preferences in kr.visual; Tools has none of them yet.)
   try { return (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as Record<string, string>)[key]; } catch { return undefined; }
 }
 /** How digits are written in the Arabic interface: 'auto' keeps 123 for data (pages, sizes, times, dates) and

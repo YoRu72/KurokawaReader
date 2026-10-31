@@ -1,0 +1,8 @@
+{
+  "appId": "app.kurokawa.tools",
+  "appName": "Kurokawa Tools",
+  "webDir": "dist",
+  "android": { "allowMixedContent": true, "backgroundColor": "#121314" },
+  "server": { "androidScheme": "https" },
+  "plugins": { "SplashScreen": { "launchShowDuration": 0, "backgroundColor": "#121314" } }
+}
