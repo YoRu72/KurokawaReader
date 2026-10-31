@@ -62,6 +62,7 @@ export const en = {
   loopFile: 'Repeat this file', loopOff: 'Repeat off', sleepTimer: 'Sleep timer', sleepTimerSet: 'Pauses in {n} min', sleepTimerOff: 'Off', sleepTimerEnd: 'At the end of this video', minutesN: '{n} min', resetZoom: 'Reset zoom and brightness', mediaInfo: 'Media info', openWithSystem: 'Open with the system player', playerSettings: 'Player settings',
   doubleTapSeek: 'Double-tap seek (s)', longPressSpeed: 'Long-press speed (×)', volumeBoost: 'Volume boost (%)', swipeSeek: 'Swipe to seek', swipeVolume: 'Swipe for volume (right)', swipeBrightness: 'Swipe for brightness (left)', pinchZoom: 'Pinch to zoom', resumePlayback: 'Resume where I left off', resumeAlways: 'Always', resumeAsk: 'Ask', resumeNever: 'Never', watchedAt: 'Count as watched at (%)', markWatchedAuto: 'Mark the episode watched on AniList', autoplayNext: 'Play the next file automatically', keepScreenOn: 'Keep the screen on', orientation: 'Orientation', orientationAuto: 'Follow the device', orientationLandscape: 'Landscape', orientationSensor: 'Landscape (either way)', defaultAspect: 'Default aspect',
   direction: 'Layout direction', dirAuto: 'By language', dirLtr: 'Left to right', dirRtl: 'Right to left', crashTitle: 'Something went wrong', crashBody: 'The page could not be drawn. The details below help fixing it.',
+  uiScale: 'Interface size', uiScaleHint: 'Smaller when the phone shows things too big.',
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

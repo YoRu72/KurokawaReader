@@ -7,6 +7,8 @@ export type Accent = 'graphite' | 'mono' | 'teal' | 'aqua' | 'mint' | 'olive' | 
 
 export interface Settings {
   uiMode: UiMode;
+  /** The interface's size, in percent (phones with big system fonts want less). */
+  uiScale: number;
   darkTone: DarkTone;
   accent: Accent;
   accentCustom: string;
@@ -50,7 +52,7 @@ export interface Settings {
 
 const KEY = 'kt.settings';
 const DEFAULTS: Settings = {
-  uiMode: 'dark', darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff',
+  uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff',
   downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: true,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
@@ -81,6 +83,7 @@ export function applyChrome(s: Settings = current): void {
   const light = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : !!mql?.matches;
   const html = document.documentElement;
   html.dataset.ui = light ? 'light' : 'dark';
+  (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale && s.uiScale !== 100 ? String(s.uiScale / 100) : '';
   html.dataset.dark = s.darkTone;
   html.dataset.accent = s.accent;
   const roles = ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'];

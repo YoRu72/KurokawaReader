@@ -39,4 +39,5 @@ export const zh: Partial<Strings> = {
   loopFile: '重复此文件', loopOff: '关闭重复', sleepTimer: '睡眠定时', sleepTimerSet: '{n} 分钟后暂停', sleepTimerOff: '关', sleepTimerEnd: '本视频结束时', minutesN: '{n} 分钟', resetZoom: '重置缩放与亮度', mediaInfo: '媒体信息', openWithSystem: '用系统播放器打开', playerSettings: '播放器设置',
   doubleTapSeek: '双击跳转（秒）', longPressSpeed: '长按速度（×）', volumeBoost: '音量增强（%）', swipeSeek: '滑动跳转', swipeVolume: '滑动调音量（右侧）', swipeBrightness: '滑动调亮度（左侧）', pinchZoom: '双指缩放', resumePlayback: '从上次位置继续', resumeAlways: '总是', resumeAsk: '询问', resumeNever: '从不', watchedAt: '视为已看的进度（%）', markWatchedAuto: '在 AniList 标记该集已看', autoplayNext: '自动播放下一个文件', keepScreenOn: '保持屏幕常亮', orientation: '方向', orientationAuto: '跟随设备', orientationLandscape: '横屏', orientationSensor: '横屏（双向）', defaultAspect: '默认画面比例',
   direction: '布局方向', dirAuto: '按语言', dirLtr: '从左到右', dirRtl: '从右到左', crashTitle: '出了点问题', crashBody: '无法绘制页面。以下详情有助于修复。',
+  uiScale: '界面大小', uiScaleHint: '手机上显示过大时可调小。',
 };

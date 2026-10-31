@@ -19,7 +19,7 @@ export const titleOf = (a: Anime): string => { const p = getSettings().animeTitl
 export function animeCard(a: Anime, extra?: HTMLElement | null): HTMLElement {
   const facts = [a.format ? fmtFormat(a.format) : '', a.seasonYear ? localDigits(a.seasonYear) : '', a.episodes ? countEpisodes(a.episodes) : '', a.score ? `★ ${localDigits(a.score)}%` : ''].filter(Boolean).join(' · ');
   const next = a.nextAiring ? h('span', { class: 'anime-next' }, icon('clock'), t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - Date.now() / 1000) })) : null;
-  const prog = a.entry ? h('span', { class: `anime-entry s-${a.entry.status.toLowerCase()}` }, `${localDigits(a.entry.progress)}${a.episodes ? ` / ${localDigits(a.episodes)}` : ''}`) : null;
+  const prog = a.entry ? h('span', { class: `anime-badge s-${a.entry.status.toLowerCase()}` }, `${localDigits(a.entry.progress)}${a.episodes ? ` / ${localDigits(a.episodes)}` : ''}`) : null;
   return h('button', { type: 'button', class: 'anime-card', onclick: () => navigate(`/anime/${a.id}`), style: a.color ? { '--cover-color': a.color } : undefined },
     h('span', { class: 'anime-cover' }, a.cover ? h('img', { src: a.cover, alt: '', loading: 'lazy' }) : icon('film'), prog),
     h('span', { class: 'anime-text' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(a)), h('span', { class: 'anime-facts' }, facts), next, extra ?? null));

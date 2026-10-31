@@ -39,4 +39,5 @@ export const ja: Partial<Strings> = {
   loopFile: 'このファイルをリピート', loopOff: 'リピート解除', sleepTimer: 'スリープタイマー', sleepTimerSet: '{n} 分後に一時停止', sleepTimerOff: 'オフ', sleepTimerEnd: 'この動画の終わりに', minutesN: '{n} 分', resetZoom: 'ズームと明るさをリセット', mediaInfo: 'メディア情報', openWithSystem: 'システムのプレーヤーで開く', playerSettings: 'プレーヤー設定',
   doubleTapSeek: 'ダブルタップのシーク（秒）', longPressSpeed: '長押し時の速度（×）', volumeBoost: '音量ブースト（%）', swipeSeek: 'スワイプでシーク', swipeVolume: 'スワイプで音量（右側）', swipeBrightness: 'スワイプで明るさ（左側）', pinchZoom: 'ピンチでズーム', resumePlayback: '前回の位置から再開', resumeAlways: '常に', resumeAsk: '確認する', resumeNever: 'しない', watchedAt: '視聴済みとみなす位置（%）', markWatchedAuto: 'AniList でエピソードを視聴済みにする', autoplayNext: '次のファイルを自動再生', keepScreenOn: '画面を消灯しない', orientation: '画面の向き', orientationAuto: '端末に従う', orientationLandscape: '横向き', orientationSensor: '横向き（両方向）', defaultAspect: '既定のアスペクト',
   direction: 'レイアウトの向き', dirAuto: '言語に従う', dirLtr: '左から右', dirRtl: '右から左', crashTitle: '問題が発生しました', crashBody: 'ページを描画できませんでした。以下の詳細が修正の助けになります。',
+  uiScale: '表示サイズ', uiScaleHint: '表示が大きすぎる端末では小さく。',
 };

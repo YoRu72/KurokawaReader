@@ -39,4 +39,5 @@ export const ko: Partial<Strings> = {
   loopFile: '이 파일 반복', loopOff: '반복 끔', sleepTimer: '수면 타이머', sleepTimerSet: '{n}분 뒤 일시정지', sleepTimerOff: '끔', sleepTimerEnd: '이 영상이 끝날 때', minutesN: '{n}분', resetZoom: '확대와 밝기 초기화', mediaInfo: '미디어 정보', openWithSystem: '시스템 플레이어로 열기', playerSettings: '플레이어 설정',
   doubleTapSeek: '두 번 탭 탐색(초)', longPressSpeed: '길게 누를 때 속도(×)', volumeBoost: '음량 증폭(%)', swipeSeek: '밀어서 탐색', swipeVolume: '밀어서 음량(오른쪽)', swipeBrightness: '밀어서 밝기(왼쪽)', pinchZoom: '핀치로 확대', resumePlayback: '보던 곳에서 이어 보기', resumeAlways: '항상', resumeAsk: '묻기', resumeNever: '안 함', watchedAt: '시청한 것으로 치는 지점(%)', markWatchedAuto: 'AniList에 에피소드를 시청함으로 표시', autoplayNext: '다음 파일 자동 재생', keepScreenOn: '화면 켜 두기', orientation: '방향', orientationAuto: '기기 따라', orientationLandscape: '가로', orientationSensor: '가로(양방향)', defaultAspect: '기본 비율',
   direction: '레이아웃 방향', dirAuto: '언어에 따라', dirLtr: '왼쪽에서 오른쪽', dirRtl: '오른쪽에서 왼쪽', crashTitle: '문제가 생겼습니다', crashBody: '페이지를 그릴 수 없습니다. 아래 내용이 수정에 도움이 됩니다.',
+  uiScale: '인터페이스 크기', uiScaleHint: '휴대폰에서 너무 크게 보이면 줄이세요.',
 };
