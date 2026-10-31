@@ -184,6 +184,19 @@ public class KtPlugin extends Plugin {
             getActivity().startActivity(intent); call.resolve();
         } catch (Exception e) { call.reject("Cannot start installer: " + e.getMessage(), e); }
     }
+    /** What an APK or a split bundle installs (name, icon, package, version, the version here now). */
+    @PluginMethod public void apkInfo(PluginCall call) { final File f = fileOf(call.getString("path", "")); bg.execute(() -> { try { call.resolve(new JSObject(KtApk.info(getContext(), f).toString())); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } }); }
+    /** Installs through a session (a bundle's splits streamed from it, no extracting): progress and the system's
+     *  answer come as `apkInstall` events. */
+    @PluginMethod public void apkInstall(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            Intent s = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName())); s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(s);
+            call.reject("permission"); return;
+        }
+        final String id = call.getString("id", ""); final File f = fileOf(call.getString("path", "")); final boolean del = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false));
+        bg.execute(() -> { try { KtApk.install(getContext(), id, f, del, (ev) -> { try { notifyListeners("apkInstall", new JSObject(ev.toString())); } catch (Exception ignored) {} }); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } });
+    }
+    @PluginMethod public void launchApp(PluginCall call) { Intent i = getContext().getPackageManager().getLaunchIntentForPackage(call.getString("pkg", "")); if (i == null) { call.reject("notLaunchable"); return; } i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); }
     @PluginMethod public void canInstall(PluginCall call) { JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r); }
 
     /* ---------- archives: what is inside, taking it out (in place when asked), making one ---------- */
