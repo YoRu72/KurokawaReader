@@ -40,7 +40,11 @@ ${VIEW_MIMES.map((m) => data(`android:mimeType="${m}"`)).join('\n')}
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="content" />
         <data android:scheme="file" />
-        <data android:mimeType="*/*" />
+        <!-- (Files whose type the sender does not know, by their extension — not */*, which put the reader in
+             the chooser for things it cannot open, an APK being installed among them.) -->
+        <data android:mimeType="application/octet-stream" />
+        <data android:mimeType="application/x-zip" />
+        <data android:mimeType="text/*" />
 ${VIEW_EXTS.flatMap((e) => [data(`android:pathPattern=".*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\.${e}"`), data(`android:pathPattern=".*\\\\..*\\\\..*\\\\.${e}"`)]).join('\n')}
       </intent-filter>
       <!-- "Share to…" from other apps -->
