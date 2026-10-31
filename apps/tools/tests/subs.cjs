@@ -18,7 +18,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.route('https://subf2m.co/**', (r) => r.fulfill({ status: 403, body: 'cf' }));
   await p.route(/^https:\/\/([a-z.]*\.)?(yifysubtitles\.ch|jimaku\.cc|subdl\.com|opensubtitles\.com|subsource\.net)\//, (r) => r.fulfill({ status: 404, body: '' }));
   await p.addInitScript(() => { if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ subLangs: ['ar', 'en'] })); });
-  await p.goto(`http://127.0.0.1:${port}/#/settings`); await p.waitForSelector('.addon-row');
+  await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row');
   await p.click('.addon-row:has-text("Subtitles") .btn'); await p.waitForSelector('.toast'); console.log('toast:', await p.$eval('.toast', (e) => e.textContent), 'addons:', await p.evaluate(() => (JSON.parse(localStorage.getItem('kt.settings')).addons || []).join(','))); await p.reload(); await p.waitForSelector('[data-dest="subs"]');
   await p.click('[data-dest="subs"]'); await p.fill('.search-input', 'One Piece'); await p.press('.search-input', 'Enter'); await p.waitForSelector('.title-card');
   console.log('cards:', await p.$$eval('.title-card b', (e) => e.map((x) => x.textContent)).then((x) => x.join(' | ')), '| kinds:', await p.$$eval('.title-card small', (e) => e.map((x) => x.textContent)).then((x) => x.join(' | ')));

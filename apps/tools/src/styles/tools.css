@@ -133,3 +133,4 @@ input, textarea, pre, code, .selectable, .release-notes, .kv dd { -webkit-user-s
 .video-choices .chip svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
 .video-choices .chip.on { background: var(--md-primary); color: var(--md-on-primary); }
 .video-panel .check-row { font-size: 14px; }
+.settings-body .card.collapsed { padding-block: 16px; }

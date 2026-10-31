@@ -21,7 +21,7 @@ const lang = process.argv[2] || 'en';
   await p.click('.bottom-nav [data-dest="settings"]'); await p.waitForSelector('.settings-view'); await p.waitForTimeout(600);
   const cards = await p.$$eval('.settings-view .card h3', (es) => es.map((e) => e.textContent));
   ok('settings: general, downloads, aria2, add-ons, other apps, updates, about', cards.length >= 7);
-  await p.click('.settings-view .swatch[data-accent="teal"]'); await p.waitForTimeout(100);
+  await p.click('#general .card-title'); await p.click('.settings-view .swatch[data-accent="teal"]'); await p.waitForTimeout(100);
   ok('an accent applies', (await p.evaluate(() => document.documentElement.dataset.accent)) === 'teal');
   await p.screenshot({ path: path.join(__dirname, `shot-settings-${lang}.png`) });
   await p.goto('http://localhost:5480/#/'); await p.waitForTimeout(300); await p.screenshot({ path: path.join(__dirname, `shot-downloads-${lang}.png`) });
