@@ -18,7 +18,7 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   await p.route('https://torrentio.strem.fun/**', (r) => r.fulfill({ json: { streams: [{ name: 'Torrentio\n1080p', title: 'Frieren 05 [Erai]\n👤 120 💾 1.1 GB ⚙️ NyaaSi', infoHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', sources: ['tracker:udp://x/announce'] }] } }));
   await p.route('https://releases.moe/**', (r) => r.fulfill({ json: { items: [{ expand: { trs: [{ infoHash: 'cccccccccccccccccccccccccccccccccccccccc', isBest: true, releaseGroup: 'Vodes', dualAudio: true, tracker: 'Nyaa', files: [{ length: 1000 }] }] } }] } }));
   await p.route('https://feed.animetosho.org/**', (r) => r.fulfill({ json: [{ title: 'Frieren 05 tosho', info_hash: 'dddddddddddddddddddddddddddddddddddddddd', total_size: 5, seeders: 3, leechers: 1, timestamp: 1 }] }));
-  await p.goto(`http://127.0.0.1:${port}/#/settings`); await p.waitForSelector('.addon-row');
+  await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row');
   const rows = await p.$$eval('.addon-row b', (els) => els.map((e) => e.textContent)); console.log('add-ons:', rows.join(', '));
   const anime = (await p.$$('.addon-row')).find(async () => true); void anime;
   await p.click('.addon-row:has-text("Anime") .btn'); await p.waitForSelector('.toast');

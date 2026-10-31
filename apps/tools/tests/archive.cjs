@@ -17,7 +17,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       archiveCancel: async () => {}, archiveCreate: async (o) => { progressCbs.forEach((cb) => cb({ id: o.id, done: 1, total: 1, file: '' })); return { files: o.inputs.length, path: o.out, size: 4242 }; },
       pickFile: async (o) => (o && o.multiple ? ['/home/u/x/one.png', '/home/u/x/two.txt'] : ['/home/u/Downloads/Kurokawa/show.zip']), pathInfo: async () => ({ exists: true }), onArchiveProgress: (cb) => { progressCbs.push(cb); return () => {}; } };
   });
-  await p.goto(`http://127.0.0.1:${port}/#/settings`); await p.waitForSelector('.addon-row'); await p.click('.addon-row:has-text("Archives") .btn'); await p.waitForSelector('.toast');
+  await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row'); await p.click('.addon-row:has-text("Archives") .btn'); await p.waitForSelector('.toast');
   console.log('toast:', await p.$eval('.toast', (e) => e.textContent));
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.click('.fab'); await p.waitForSelector('.sheet');
   await p.click('.sheet button:has-text("Open an archive")'); await p.waitForSelector('.entry-list');

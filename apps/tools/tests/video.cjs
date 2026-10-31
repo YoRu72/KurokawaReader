@@ -35,7 +35,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__added.length === 2);
   console.log('file added:', JSON.stringify(await p.evaluate(() => window.__added[1])));
   // Settings card
-  await p.goto(base + '#/settings'); await p.waitForSelector('#video'); await p.waitForFunction(() => /2026/.test(document.querySelector('#video').innerText));
+  await p.goto(base + '#/settings/video'); await p.waitForSelector('#video'); await p.waitForFunction(() => /2026/.test(document.querySelector('#video').innerText));
   console.log('settings:', (await p.$eval('#video', (e) => e.innerText)).replace(/\n+/g, ' | '));
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); process.exit(errors.length ? 1 : 0);
