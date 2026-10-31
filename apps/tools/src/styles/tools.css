@@ -175,3 +175,6 @@ input.good { outline: 2px solid var(--md-primary); } input.bad { outline: 2px so
 .grab-list { display: flex; flex-direction: column; max-height: 50vh; overflow: auto; }
 .grab-list .file-row .grow { display: flex; flex-direction: column; min-width: 0; }
 .grab-list .file-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more-options { display: flex; flex-direction: column; gap: 10px; }
+.more-options > summary { cursor: pointer; font-weight: 600; padding: 6px 0; color: var(--md-on-surface-variant); }
+.more-options[open] > summary { color: var(--md-primary); }
