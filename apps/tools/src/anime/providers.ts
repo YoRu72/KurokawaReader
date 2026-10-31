@@ -26,7 +26,7 @@ export interface TorrentResult {
   url?: string;
 }
 
-export type ProviderFormat = 'module' | 'hayase' | 'seanime';
+export type ProviderFormat = 'module' | 'hayase' | 'seanime' | 'stremio';
 export interface ProviderEntry {
   id: string; name: string; description?: string; version: string; format: ProviderFormat; icon?: string;
   /** Where the code is (and, for Hayase/Seanime, where the manifest came from). */
@@ -60,16 +60,31 @@ export async function readRepo(url: string): Promise<ProviderEntry[]> {
   const takeHay = (m: HayaseManifest, from: string) => { if (m.type !== 'torrent' || !m.code) return; out.push({ id: `hay:${m.id}`, name: m.name, description: m.description, version: m.version, format: 'hayase', icon: m.icon, code: ghCode(m.code), repo: from, options: m.options, accuracy: m.accuracy, media: m.media, languages: m.languages, enabled: true }); };
   if (Array.isArray(j)) { for (const m of j as (HayaseManifest & SeanimeManifest)[]) { if ('manifestVersion' in m) takeHay(m, url); else await takeSea(m, url); } }
   else if (j && typeof j === 'object' && Array.isArray((j as { urls?: string[] }).urls)) { for (const u of (j as { urls: string[] }).urls) { try { out.push(...(await readRepo(u))); } catch { /* one bad manifest */ } } }
+  else if (j && typeof j === 'object' && Array.isArray((j as { resources?: unknown[] }).resources)) { const m = j as StremioManifest; if (stremioStreams(m)) out.push({ id: `stremio:${m.id}`, name: m.name, description: m.description, version: m.version ?? '0', format: 'stremio', icon: m.logo, code: url.replace(/\/manifest\.json(\?.*)?$/, ''), repo: url, media: (m.idPrefixes ?? []).join(','), enabled: true }); }
   else if (j && typeof j === 'object') { const m = j as HayaseManifest & SeanimeManifest; if ('manifestVersion' in m) takeHay(m, url); else await takeSea(m, url); }
   return out;
+}
+/** A Stremio add-on that hands out streams for series (Torrentio, AIOStreams, Comet, MediaFusion, …). */
+type StremioManifest = { id: string; name: string; version?: string; description?: string; logo?: string; resources: (string | { name: string; types?: string[]; idPrefixes?: string[] })[]; types?: string[]; idPrefixes?: string[] };
+const stremioStreams = (m: StremioManifest): boolean => m.resources.some((r) => (typeof r === 'string' ? r : r.name) === 'stream');
+/** One entry of a marketplace installed by itself (the user picks from the list instead of taking everything). */
+export async function installEntry(p: ProviderEntry): Promise<void> {
+  if (p.format !== 'stremio') {
+    const code = p.code.startsWith('inline:') ? p.code.slice(7) : await (async () => { const r = await request(p.code); if (r.status !== 200) throw new Error(`${p.name}: HTTP ${r.status}`); return r.body; })();
+    await db.putFile(`provider:${p.id}`, new Blob([code], { type: 'text/javascript' }));
+  }
+  const cur = await providers(); const i = cur.findIndex((x) => x.id === p.id); const merged = { ...p, enabled: i >= 0 ? cur[i].enabled : true };
+  if (i >= 0) cur[i] = merged; else cur.push(merged); modules.delete(p.id); await keep([...cur]);
 }
 /** Installs (or updates) the providers of a repository: their code fetched and kept. */
 export async function installRepo(url: string): Promise<ProviderEntry[]> {
   const found = await readRepo(url); if (!found.length) throw new Error('no anime torrent providers there');
   const cur = await providers();
   for (const p of found) {
-    const code = p.code.startsWith('inline:') ? p.code.slice(7) : await (async () => { const r = await request(p.code); if (r.status !== 200) throw new Error(`${p.name}: HTTP ${r.status}`); return r.body; })();
-    await db.putFile(`provider:${p.id}`, new Blob([code], { type: 'text/javascript' }));
+    if (p.format !== 'stremio') {
+      const code = p.code.startsWith('inline:') ? p.code.slice(7) : await (async () => { const r = await request(p.code); if (r.status !== 200) throw new Error(`${p.name}: HTTP ${r.status}`); return r.body; })();
+      await db.putFile(`provider:${p.id}`, new Blob([code], { type: 'text/javascript' }));
+    }
     const i = cur.findIndex((x) => x.id === p.id); const merged = { ...p, enabled: i >= 0 ? cur[i].enabled : true }; if (i >= 0) cur[i] = merged; else cur.push(merged);
   }
   await keep([...cur]);
@@ -192,6 +207,7 @@ const withTimeout = <T>(p: Promise<T>, ms: number, what: string): Promise<T> => 
 
 /** Runs one provider for a query: `single` for an episode, `batch`/`movie` otherwise (Seanime's `smartSearch`/`search`). */
 export async function runProvider(p: ProviderEntry, q: AnimeQuery): Promise<TorrentResult[]> {
+  if (p.format === 'stremio') return runStremio(p, q);
   const mod = await load(p); const opts = optionsOf(p);
   const isMovie = q.media.format === 'MOVIE' || (q.media.episodes === 1 && q.episode <= 1);
   let raw: unknown[] = [];
@@ -208,6 +224,28 @@ export async function runProvider(p: ProviderEntry, q: AnimeQuery): Promise<Torr
   if (!fn) return [];
   raw = await withTimeout(fn.call(hm, fq, opts), 20000, p.name);
   return (raw as Record<string, unknown>[]).map((t) => sanitize(t, p)).filter((x): x is TorrentResult => !!x);
+}
+/** A Stremio add-on asked for an episode: by Kitsu id when it takes them (anime numbering), else by IMDb id and
+ *  episode (season 1 — the IMDb seasons of a long anime rarely line up with AniList's entries). */
+async function runStremio(p: ProviderEntry, q: AnimeQuery): Promise<TorrentResult[]> {
+  const prefixes = (p.media ?? '').split(',').filter(Boolean); const isMovie = q.media.format === 'MOVIE';
+  const ep = q.episode || 1;
+  const id = q.kitsuId && (!prefixes.length || prefixes.includes('kitsu')) ? `kitsu:${q.kitsuId}${isMovie ? '' : `:${ep}`}` : q.imdbId ? (isMovie ? q.imdbId : `${q.imdbId}:1:${ep}`) : null;
+  if (!id) return [];
+  const type = isMovie && !id.startsWith('kitsu:') ? 'movie' : 'series';
+  const r = await withTimeout(request(`${p.code}/stream/${type}/${id}.json`), 20000, p.name); if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
+  const streams = ((JSON.parse(r.body) as { streams?: { name?: string; title?: string; description?: string; infoHash?: string; fileIdx?: number; url?: string; sources?: string[]; behaviorHints?: { filename?: string; videoSize?: number } }[] }).streams ?? []);
+  const out: TorrentResult[] = [];
+  for (const st of streams) {
+    const text = st.description || st.title || ''; const lines = text.split('\n'); const title = (st.behaviorHints?.filename || lines[0] || st.name || '').trim(); if (!title) continue;
+    const info = text; const seeds = Number(/👤\s*(\d+)/.exec(info)?.[1]) || 0; const sz = /💾\s*([\d.]+)\s*(TB|GB|MB)/.exec(info);
+    const size = st.behaviorHints?.videoSize || (sz ? Math.round(Number(sz[1]) * ({ TB: 1099511627776, GB: 1073741824, MB: 1048576 } as Record<string, number>)[sz[2]]) : 0);
+    const hash = (st.infoHash ?? '').toLowerCase(); if (!HEX.test(hash) && !st.url) continue;
+    const parsed = parseFilename(title);
+    const trackers = (st.sources ?? []).filter((x) => x.startsWith('tracker:')).map((x) => `&tr=${encodeURIComponent(x.slice(8))}`).join('');
+    out.push({ title, link: hash ? `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(title)}${trackers}` : st.url!, hash, size, seeders: seeds, leechers: 0, downloads: 0, accuracy: id.startsWith('kitsu:') ? 'high' : 'medium', provider: p.name, resolution: /\b(2160p|4k|1080p|720p|480p)\b/i.exec(`${st.name ?? ''} ${title}`)?.[1]?.toLowerCase().replace('4k', '2160p') ?? parsed.resolution, episode: parsed.episode, group: parsed.group, url: hash ? undefined : st.url, fileIdx: st.fileIdx });
+  }
+  return out;
 }
 function sanitize(t: Record<string, unknown>, p: ProviderEntry): TorrentResult | null {
   const link = String(t.link ?? ''); const hash = String(t.hash ?? '').toLowerCase() || hashOf(link); if (!HEX.test(hash) && !t.url) return null;

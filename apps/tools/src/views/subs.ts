@@ -34,7 +34,8 @@ export function subsView(q?: string): HTMLElement & { dispose?: () => void } {
     } catch (e) { cards.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
   };
   const pick = async (c: TitleCard) => {
-    current = await enrich(c); season = c.kind === 'series' ? 1 : undefined; episode = undefined;
+    picked.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }))); results.replaceChildren();
+    const want = c; current = await enrich(c).catch(() => c); if (want !== c) return; season = c.kind === 'series' ? 1 : undefined; episode = undefined;
     cards.querySelectorAll('.title-card').forEach((el) => el.classList.toggle('on', (el as HTMLElement).querySelector('b')?.textContent === c.title));
     drawPicked(); void run();
   };
@@ -43,7 +44,7 @@ export function subsView(q?: string): HTMLElement & { dispose?: () => void } {
     const num = (label: string, val: number | undefined, max: number | undefined, set: (v: number | undefined) => void) => h('label', { class: 'num-field' }, h('span', null, label), h('input', { type: 'number', min: '1', max: max ? String(max) : undefined, value: val ?? '', placeholder: t('subsAll'), inputmode: 'numeric', onchange: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); set(v > 0 ? v : undefined); void run(); } }));
     const langs = h('div', { class: 'chips lang-chips' }, ...s.subLangs.map((l) => h('span', { class: 'chip small on' }, LANG_NAMES[l] ?? l, iconButton('close', t('remove'), () => { updateSettings({ subLangs: s.subLangs.filter((x) => x !== l) }); drawPicked(); void run(); }))), h('button', { type: 'button', class: 'chip small', onclick: () => langSheet(() => { drawPicked(); void run(); }) }, icon('plus'), t('subsAddLang')));
     picked.replaceChildren(h('section', { class: 'card picked-card' }, h('div', { class: 'picked-row' }, c.cover ? h('img', { src: c.cover, alt: '' }) : null, h('div', { class: 'grow' }, h('b', { dir: 'auto' }, c.title), h('small', { class: 'src' }, [kindName(c.kind), c.year ? localDigits(c.year) : '', c.ids.imdb, c.ids.anilist ? `AniList ${localDigits(c.ids.anilist)}` : '', c.ids.mal ? `MAL ${localDigits(c.ids.mal)}` : ''].filter(Boolean).join(' · '))), iconButton('close', t('close'), () => { current = null; picked.replaceChildren(); results.replaceChildren(); })),
-      c.kind === 'movie' ? null : h('div', { class: 'num-row' }, c.kind === 'series' ? num(t('subsSeason'), season, c.seasons, (v) => { season = v; }) : null, num(t('subsEpisode'), episode, c.episodes, (v) => { episode = v; })),
+      c.kind === 'movie' ? null : h('div', { class: 'num-row' }, c.kind === 'series' ? num(t('subsSeason'), season, c.seasons, (v) => { season = v; }) : null, num(t('subsEpisode'), episode, c.episodes, (v) => { episode = v; drawPicked(); }), c.kind === 'anime' && episode && c.epMap?.[episode] ? h('small', { class: 'src', dir: 'ltr' }, `IMDb S${String(c.epMap[episode].s).padStart(2, '0')}E${String(c.epMap[episode].e).padStart(2, '0')}`) : null),
       langs));
   };
   const run = async () => {
@@ -76,7 +77,9 @@ export function subsView(q?: string): HTMLElement & { dispose?: () => void } {
       toast(t('taskAdded', { name: tk.name || base }));
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
-  if (q) void find(); else input.addEventListener('input', debounce(() => { if (parseRef(input.value)) void find(); }, 400));
+  // A pasted link is looked up at once; a name once typing pauses.
+  input.addEventListener('input', debounce(() => { const v = input.value.trim(); if (parseRef(v) || v.length >= 3) void find(); }, 700));
+  if (q) void find();
   root.dispose = () => { token++; };
   return root;
 }

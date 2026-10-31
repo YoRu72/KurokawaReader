@@ -214,6 +214,14 @@ export function countVideos(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'مقطع واحد', two: 'مقطعان', few: 'مقاطع', many: 'مقطعًا', hundred: 'مقطعٍ' });
   return cjkCount(n, 'video') ?? enCount(n, 'video', 'videos');
 }
+export function countDays(n: number): string {
+  if (current === 'ar') return arCount(n, { one: 'يوم واحد', two: 'يومان', few: 'أيام', many: 'يومًا', hundred: 'يومٍ' });
+  return enCount(n, 'day', 'days');
+}
+export function countHours(n: number): string {
+  if (current === 'ar') return arCount(n, { one: 'ساعة واحدة', two: 'ساعتان', few: 'ساعات', many: 'ساعةً', hundred: 'ساعةٍ' });
+  return enCount(n, 'hour', 'hours');
+}
 export function countMinutes(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: 'دقائق', many: 'دقيقةً', hundred: 'دقيقةٍ' });
   return cjkCount(n, 'minute') ?? enCount(n, 'minute', 'minutes');

@@ -7,7 +7,7 @@ import { addonFetch } from '../http';
 import { getSettings } from '../settings';
 import type { TitleCard } from './lookup';
 
-export interface SubQuery { title: string; titles: string[]; year?: number; kind: 'anime' | 'movie' | 'series'; imdbId?: string; anilistId?: number; malId?: number; tvdbId?: number; anidbAid?: number; season?: number; episode?: number; languages: string[]; fetch: (u: string, i?: RequestInit) => Promise<Response> }
+export interface SubQuery { title: string; titles: string[]; year?: number; kind: 'anime' | 'movie' | 'series'; imdbId?: string; anilistId?: number; malId?: number; tvdbId?: number; anidbAid?: number; season?: number; episode?: number; /** An anime's own episode number (episode/season above follow IMDb when known). */ animeEpisode?: number; languages: string[]; fetch: (u: string, i?: RequestInit) => Promise<Response> }
 export interface SubResult { title: string; note?: string; language?: string; site: string; url?: string; page?: string; hi?: boolean; partial?: boolean; ai?: boolean; downloads?: number; rating?: number; season?: number; episode?: number; archive?: 'zip' | 'rar' | '7z' | 'xz'; size?: number; resolve?: Record<string, unknown>; addon: string }
 type Mod = { search(q: SubQuery, ctx: { settings: Record<string, unknown>; lang: string }): Promise<SubResult[]>; resolve?(r: SubResult, q: SubQuery, ctx: { settings: Record<string, unknown> }): Promise<{ url: string; name?: string }> };
 
@@ -22,7 +22,8 @@ export async function subtitleSources(): Promise<AddonEntry[]> {
   return ix.addons.filter((a) => a.kind === 'subtitle-source' && a.module && installed(a.id));
 }
 export function queryFor(c: TitleCard, season: number | undefined, episode: number | undefined, languages: string[]): SubQuery {
-  return { title: c.title, titles: c.titles, year: c.year, kind: c.kind, imdbId: c.ids.imdb, anilistId: c.ids.anilist, malId: c.ids.mal, tvdbId: c.ids.tvdb, anidbAid: c.ids.anidb, season: c.kind === 'series' ? season ?? 1 : season, episode, languages, fetch: addonFetch() as SubQuery['fetch'] };
+  const mapped = c.kind === 'anime' && episode ? c.epMap?.[episode] : undefined;
+  return { title: c.title, titles: c.titles, year: c.year, kind: c.kind, imdbId: c.ids.imdb, anilistId: c.ids.anilist, malId: c.ids.mal, tvdbId: c.ids.tvdb, anidbAid: c.ids.anidb, season: mapped ? mapped.s : c.kind === 'series' ? season ?? 1 : season, episode: mapped ? mapped.e : episode, animeEpisode: c.kind === 'anime' ? episode : undefined, languages, fetch: addonFetch() as SubQuery['fetch'] };
 }
 const timeout = <T>(p: Promise<T>, ms: number, what: string) => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what}: timed out`)), ms))]);
 
@@ -49,6 +50,6 @@ export async function resolveLink(r: SubResult, q: SubQuery): Promise<{ url: str
 }
 export function rankSubs(rs: SubResult[], langs: string[], episode?: number): SubResult[] {
   const li = (l?: string) => { const i = l ? langs.indexOf(l) : -1; return i < 0 ? 99 : i; };
-  const ep = (r: SubResult) => (episode && r.episode !== undefined ? (r.episode === episode ? 0 : 1) : 0);
+  const ep = (r: SubResult) => (episode && r.episode !== undefined ? (r.episode === episode ? 0 : 1) : 0);  // (the anime number, or the IMDb one — either counts as the episode)
   return [...rs].sort((a, b) => li(a.language) - li(b.language) || ep(a) - ep(b) || (a.partial ? 1 : 0) - (b.partial ? 1 : 0) || (b.downloads ?? 0) - (a.downloads ?? 0));
 }

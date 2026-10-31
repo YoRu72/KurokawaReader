@@ -16,11 +16,15 @@
       "descriptions": {
         "ar": "ابحث في مواقع التورنت من تبويب البحث؛ كلُّ موقعٍ إضافةٌ مستقلةٌ أدناه."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "icon": "magnet",
       "children": [
         "torrent-search-nyaa",
-        "torrent-search-torrentio"
+        "torrent-search-torrentio",
+        "torrent-search-knaben",
+        "torrent-search-tpb",
+        "torrent-search-yts",
+        "torrent-search-eztv"
       ]
     },
     {
@@ -41,11 +45,11 @@
       "kind": "torrent-search",
       "parent": "torrent-search",
       "name": "Torrentio",
-      "description": "Films and series by name (IMDb through Cinemeta), with a debrid service's cached links when you give it your key. Add «S01E02» for an episode.",
+      "description": "Films, series and anime by their IMDb or Kitsu id (from the work you pick, or found by name), with cached links when a debrid key is set.",
       "descriptions": {
-        "ar": "الأفلام والمسلسلات بالاسم (IMDb عبر Cinemeta)، مع روابط خدمة الديبريد المخزَّنة إذا أعطيتها مفتاحك. أضف «S01E02» لحلقة."
+        "ar": "الأفلام والمسلسلات والأنمي بمعرّفاتها في IMDb وKitsu (من العمل الذي تختاره أو بالبحث عن اسمه)، مع روابط مخزَّنة إن أضفت مفتاح خدمة Debrid."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "torrent-search/torrentio.mjs",
       "icon": "magnet",
       "settings": [
@@ -83,6 +87,111 @@
           },
           "type": "number",
           "value": 10
+        }
+      ]
+    },
+    {
+      "id": "torrent-search-knaben",
+      "kind": "torrent-search",
+      "parent": "torrent-search",
+      "name": "Knaben",
+      "description": "One search across many public trackers (The Pirate Bay, 1337x, Nyaa and more).",
+      "descriptions": {
+        "ar": "بحث واحد في متتبِّعات عامة كثيرة (The Pirate Bay و1337x وNyaa وغيرها)."
+      },
+      "version": "0.1.0",
+      "module": "torrent-search/knaben.mjs",
+      "icon": "magnet",
+      "settings": [
+        {
+          "id": "size",
+          "label": "Results",
+          "labels": {
+            "ar": "عدد النتائج"
+          },
+          "type": "number",
+          "value": 60
+        },
+        {
+          "id": "hideXxx",
+          "label": "Hide adult results",
+          "labels": {
+            "ar": "أخفِ نتائج البالغين"
+          },
+          "type": "toggle",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "torrent-search-tpb",
+      "kind": "torrent-search",
+      "parent": "torrent-search",
+      "name": "The Pirate Bay",
+      "description": "Through its public API.",
+      "descriptions": {
+        "ar": "عبر واجهتها البرمجية العامة."
+      },
+      "version": "0.1.0",
+      "module": "torrent-search/tpb.mjs",
+      "icon": "magnet",
+      "settings": [
+        {
+          "id": "domain",
+          "label": "API address",
+          "labels": {
+            "ar": "عنوان الواجهة"
+          },
+          "type": "text",
+          "value": "https://apibay.org"
+        }
+      ]
+    },
+    {
+      "id": "torrent-search-yts",
+      "kind": "torrent-search",
+      "parent": "torrent-search",
+      "name": "YTS",
+      "description": "Films in small encodes, by IMDb id when a film is picked.",
+      "descriptions": {
+        "ar": "أفلام بترميزات صغيرة الحجم، بمعرّف IMDb حين تختار فيلمًا."
+      },
+      "version": "0.1.0",
+      "module": "torrent-search/yts.mjs",
+      "icon": "magnet",
+      "settings": [
+        {
+          "id": "domain",
+          "label": "API address",
+          "labels": {
+            "ar": "عنوان الواجهة"
+          },
+          "type": "text",
+          "value": "https://yts.mx"
+        }
+      ]
+    },
+    {
+      "id": "torrent-search-eztv",
+      "kind": "torrent-search",
+      "parent": "torrent-search",
+      "name": "EZTV",
+      "description": "Episodes of series by IMDb id (pick a series first).",
+      "descriptions": {
+        "ar": "حلقات المسلسلات بمعرّف IMDb (اختر المسلسل أولًا)."
+      },
+      "version": "0.1.0",
+      "module": "torrent-search/eztv.mjs",
+      "icon": "magnet",
+      "settings": [
+        {
+          "id": "domain",
+          "label": "API address",
+          "labels": {
+            "ar": "عنوان الواجهة"
+          },
+          "type": "text",
+          "value": "https://eztvx.to"
         }
       ]
     },

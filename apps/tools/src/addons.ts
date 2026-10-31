@@ -57,6 +57,7 @@ export async function install(id: string): Promise<void> {
     if (a.manifest) { const r = await fetch(addonUrl(`tools/${a.manifest}`), { cache: 'no-store' }); if (!r.ok) throw new Error(`HTTP ${r.status}`); await db.setMeta(`addon-manifest:${k}`, await r.json()); }
     await db.setMeta(`addon-version:${k}`, a.version);
   }
+  if (e.children?.length) await db.setMeta(`addon-children:${id}`, e.children);
   updateSettings({ addons: [...new Set([...getSettings().addons, ...ids])] });
 }
 export async function uninstall(id: string): Promise<void> {
@@ -72,6 +73,26 @@ export async function updatesAvailable(): Promise<string[]> {
   const out: string[] = [];
   for (const id of getSettings().addons) { const e = ix.addons.find((a) => a.id === id); if (!e) continue; const v = await db.getMeta<string>(`addon-version:${id}`); if (v !== e.version) out.push(id); }
   return out;
+}
+/** Installed add-ons brought up to date quietly: a changed module fetched again, and a group's new sources
+ *  added (the ones the user removed on purpose stay removed — only children the group did not have before). */
+export async function autoUpdate(): Promise<string[]> {
+  const ix = await loadIndex(true).catch(() => null); if (!ix) return [];
+  const done: string[] = [];
+  for (const id of [...getSettings().addons]) {
+    const e = ix.addons.find((a) => a.id === id); if (!e) continue;
+    const v = await db.getMeta<string>(`addon-version:${id}`); if (v === e.version) continue;
+    try {
+      if (e.module) { const r = await fetch(addonUrl(`tools/${e.module}`), { cache: 'no-store' }); if (!r.ok) continue; await db.putFile(`addon:${id}`, new Blob([await r.arrayBuffer()], { type: 'text/javascript' })); }
+      if (e.children?.length) {
+        const known = (await db.getMeta<string[]>(`addon-children:${id}`)) ?? e.children.filter((k) => getSettings().addons.includes(k));
+        for (const k of e.children) if (!known.includes(k) && !getSettings().addons.includes(k)) { await install(k); done.push(k); }
+        await db.setMeta(`addon-children:${id}`, e.children);
+      }
+      await db.setMeta(`addon-version:${id}`, e.version); done.push(id);
+    } catch { /* offline: next time */ }
+  }
+  return done;
 }
 /** An installed add-on's module, as a blob URL to import. */
 export async function moduleUrl(id: string): Promise<string | null> {

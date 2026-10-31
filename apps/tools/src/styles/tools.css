@@ -1,3 +1,4 @@
+.grow { flex: 1 1 auto; min-width: 0; }
 /* Kurokawa Tools — what is its own on top of the shared Material 3 Expressive kit (base.css). */
 #app { display: flex; flex-direction: column; min-height: 100dvh; }
 .view .body { flex: 1; min-height: 0; overflow: auto; padding: 8px 16px calc(96px + var(--safe-bottom, 0px)); }
@@ -134,3 +135,18 @@ input, textarea, pre, code, .selectable, .release-notes, .kv dd { -webkit-user-s
 .video-choices .chip.on { background: var(--md-primary); color: var(--md-on-primary); }
 .video-panel .check-row { font-size: 14px; }
 .settings-body .card.collapsed { padding-block: 16px; }
+
+/* Torrent search: releases under the works they belong to */
+.search-body > * { flex: none; }
+.search-tools { margin: 4px 0 8px; }
+.release-groups { display: flex; flex-direction: column; gap: 12px; }
+.release-group { background: var(--md-surface-container-low); border-radius: var(--sh-lg); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.release-head { display: flex; gap: 12px; align-items: center; padding: 2px 2px 6px; }
+.release-head.tappable { cursor: pointer; }
+.release-head .grow { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.release-head b { font-size: 15px; line-height: 1.25; }
+.release-cover { width: 46px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; background: var(--md-surface-container-high); flex: none; display: grid; place-items: center; }
+.release-cover.none svg { width: 20px; height: 20px; fill: none; stroke: var(--md-on-surface-variant); stroke-width: 1.8; }
+.release-rows .result-row { padding: 8px 6px; }
+.release-rows .result-title { font-size: 13.5px; overflow-wrap: anywhere; }
+.result-row > .grow { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
