@@ -5,7 +5,8 @@ import { h, icon, iconButton, toast, pickButton, openSheet } from '../ui/dom';
 import { t, getLang } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
 import * as al from '../anilist';
-import { providers, installRepo, removeProvider, setEnabled, updateAll, syncBuiltins, optionsOf, type ProviderEntry } from '../anime/providers';
+import { providers, installRepo, removeProvider, setEnabled, updateAll, syncBuiltins, optionsOf, installEntry, type ProviderEntry } from '../anime/providers';
+import { MARKETS, STREMIO_SUGGESTED, readMarket, resolveEntry, type MarketItem } from '../anime/market';
 import { ktPlugin } from '../native';
 
 const card = (id: string, title: string, ...kids: (Node | null)[]) => h('section', { class: 'card', id }, h('h3', null, title), ...kids.filter((k): k is Node => !!k));
@@ -54,7 +55,7 @@ export function animeSettingsCard(rerender: () => void): HTMLElement {
     list.replaceChildren(...ps.map((p) => {
       const sw = h('input', { type: 'checkbox', checked: p.enabled, onchange: (e: Event) => void setEnabled(p.id, (e.target as HTMLInputElement).checked) });
       return h('div', { class: 'addon-row' }, p.icon ? h('img', { class: 'addon-icon', src: p.icon, alt: '' }) : icon('magnet'),
-        h('div', { class: 'grow' }, h('b', { dir: 'auto' }, p.name), h('small', { class: 'src', dir: 'auto' }, [p.description, p.builtin ? t('animeProviderBuiltin') : p.repo ? new URL(p.repo).host : '', p.format === 'seanime' ? 'Seanime' : p.format === 'hayase' ? 'Hayase' : ''].filter(Boolean).join(' · '))),
+        h('div', { class: 'grow' }, h('b', { dir: 'auto' }, p.name), h('small', { class: 'src', dir: 'auto' }, [p.description, p.builtin ? t('animeProviderBuiltin') : p.repo ? new URL(p.repo).host : '', p.format === 'seanime' ? 'Seanime' : p.format === 'hayase' ? 'Hayase' : p.format === 'stremio' ? 'Stremio' : ''].filter(Boolean).join(' · '))),
         Object.keys(p.options ?? {}).length ? iconButton('settings', t('addonSettings'), () => optionsSheet(p, lang)) : null,
         p.builtin ? null : iconButton('trash', t('remove'), async () => { await removeProvider(p.id); void drawList(); }),
         h('label', { class: 'switch-row inline' }, sw));
@@ -66,6 +67,7 @@ export function animeSettingsCard(rerender: () => void): HTMLElement {
   const repos = getSettings().animeRepos.map((u) => h('div', { class: 'repo-row' }, h('span', { class: 'src grow', dir: 'ltr' }, u), iconButton('trash', t('animeRepoRemove'), async () => { const ps = await providers(); for (const p of ps) if (p.repo === u) await removeProvider(p.id); updateSettings({ animeRepos: getSettings().animeRepos.filter((x) => x !== u) }); rerender(); })));
   return card('anime', t('navAnime'), ...acct, ...prefs,
     h('h4', null, t('animeProviders')), list, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const n = await updateAll(); toast(t('animeRepoAdded', { n })); void drawList(); } finally { b.disabled = false; } } }, icon('refresh'), t('animeProvidersUpdate'))),
+    h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => marketSheet(() => void drawList()) }, icon('apps'), t('animeMarket'))),
     h('h4', null, t('animeRepos')), h('p', { class: 'hint' }, t('animeReposHint')), ...repos, h('div', { class: 'repo-add' }, urlIn, addBtn));
 }
 
@@ -80,4 +82,37 @@ function optionsSheet(p: ProviderEntry, lang: string): void {
     else if (f.type === 'select' && f.values?.length) sh.body.append(h('label', { class: 'field' }, h('span', null, label), h('select', { onchange: (e: Event) => save(k, (e.target as HTMLSelectElement).value) }, ...f.values.map((o) => { const v = typeof o === 'object' && o ? String((o as { value: unknown }).value) : String(o); return h('option', { value: v, selected: String(cur[k] ?? '') === v }, v || '—'); }))));
     else sh.body.append(h('label', { class: 'field' }, h('span', null, label), f.description && f.label ? h('small', { class: 'src' }, f.description) : null, h('input', { type: f.type === 'number' ? 'number' : f.type === 'password' ? 'password' : 'text', value: String(cur[k] ?? ''), dir: 'ltr', autocomplete: 'off', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value; save(k, f.type === 'number' ? Number(v) : v); } })));
   }
+}
+
+/** The marketplaces: every anime torrent source they list, filtered by name and language, installed one by one. */
+function marketSheet(changed: () => void): void {
+  const sh = openSheet(t('animeMarket'), t('close'));
+  sh.el.classList.add('market-sheet');
+  let market = MARKETS[0]; let q = ''; let lang = ''; let items: MarketItem[] = []; let mine = new Map<string, ProviderEntry>();
+  const tabs = h('div', { class: 'chip-row wrap' }); const filters = h('div', { class: 'chip-row wrap' }); const list = h('div', { class: 'addons-list market-list' });
+  const search = h('input', { type: 'search', class: 'search-input', placeholder: t('search'), oninput: (e: Event) => { q = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
+  const stremio = h('div', { class: 'market-stremio' }, h('h4', null, 'Stremio'), h('p', { class: 'hint' }, t('animeStremioHint')), h('div', { class: 'chip-row wrap' }, ...STREMIO_SUGGESTED.map((x) => h('button', { type: 'button', class: 'chip small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { await installRepo(x.url); toast(t('addonInstalledToast', { name: x.name })); changed(); } catch (er) { toast(`${x.name}: ${(er as Error).message}`, 'error'); } b.disabled = false; } }, icon('plus'), x.name))));
+  sh.body.append(tabs, search, filters, list, stremio);
+  const drawTabs = () => tabs.replaceChildren(...MARKETS.map((m) => h('button', { type: 'button', class: 'chip small' + (m === market ? ' on' : ''), onclick: () => { market = m; lang = ''; drawTabs(); void load(); } }, m.name)));
+  const load = async () => {
+    list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }))); filters.replaceChildren();
+    try { const [its, ps] = await Promise.all([readMarket(market), providers()]); items = its; mine = new Map(ps.map((p) => [p.id, p])); draw(); }
+    catch (e) { list.replaceChildren(h('p', { class: 'src' }, t('addonsFailed', { error: String((e as Error).message ?? e) }))); }
+  };
+  const draw = () => {
+    const langs = [...new Set(items.map((x) => x.lang).filter((x): x is string => !!x))].sort();
+    filters.replaceChildren(...(langs.length > 1 ? ['', ...langs].map((l) => h('button', { type: 'button', class: 'chip small' + (lang === l ? ' on' : ''), onclick: () => { lang = l; draw(); } }, l ? l.toUpperCase() : t('allQualities'))) : []));
+    const shown = items.filter((x) => (!lang || x.lang === lang) && (!q || `${x.entry.name} ${x.entry.description ?? ''} ${x.author ?? ''}`.toLowerCase().includes(q)))
+      .sort((a, b) => (a.status === 'broken' || a.status === 'deprecated' ? 1 : 0) - (b.status === 'broken' || b.status === 'deprecated' ? 1 : 0) || a.entry.name.localeCompare(b.entry.name));
+    if (!shown.length) { list.replaceChildren(h('p', { class: 'src' }, t('noResults'))); return; }
+    list.replaceChildren(...shown.map((it) => {
+      const e = it.entry; const have = mine.get(e.id);
+      const btn = h('button', { type: 'button', class: 'btn small ' + (have ? (have.version !== e.version ? 'tonal' : 'text') : 'primary'), disabled: !!have && have.version === e.version }, have ? (have.version !== e.version ? t('addonUpdate') : t('addonInstalled')) : t('addonInstall')) as HTMLButtonElement;
+      btn.addEventListener('click', async () => { btn.disabled = true; try { await installEntry(await resolveEntry(it)); mine.set(e.id, e); toast(t('addonInstalledToast', { name: e.name })); changed(); draw(); } catch (er) { toast(`${e.name}: ${(er as Error).message}`, 'error'); btn.disabled = false; } });
+      const badge = it.status ? h('span', { class: `market-badge s-${it.status}` }, t(it.status === 'working' ? 'marketWorking' : it.status === 'broken' ? 'marketBroken' : 'marketDeprecated')) : null;
+      return h('div', { class: 'addon-row' + (it.status === 'broken' || it.status === 'deprecated' ? ' dim' : '') }, e.icon ? h('img', { class: 'addon-icon', src: e.icon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onerror: (ev: Event) => { (ev.target as HTMLElement).replaceWith(icon('magnet')); } }) : icon('magnet'),
+        h('div', { class: 'grow' }, h('b', { dir: 'auto' }, e.name, ' ', badge), h('small', { class: 'src', dir: 'auto' }, [e.description, it.lang ? it.lang.toUpperCase() : '', it.author, `v${e.version}`].filter(Boolean).join(' · '))), btn);
+    }));
+  };
+  drawTabs(); void load();
 }

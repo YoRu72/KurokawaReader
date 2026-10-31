@@ -15,7 +15,7 @@ export const zh: Partial<Strings> = {
   seasonWinter: '冬', seasonSpring: '春', seasonSummer: '夏', seasonFall: '秋', sortPopular: '按人气', sortScore: '按评分', sortDate: '按日期', next: '下一个',
   formatShort: '短篇', formatMovie: '剧场版', formatSpecial: '特别篇', formatMusic: '音乐', episodeN: '第 {n} 集', episodes: '剧集', minutesEach: '每集 {n} 分钟',
   animeNextEp: '第 {n} 集还有 {t}', animeAiredNow: '已播出', animeAired: '已播出', animeNotYet: '尚未播出', untilDays: '{d} 天 {h} 小时', untilHours: '{h} 小时 {m} 分', untilMinutes: '{m} 分',
-  animeEpisodesReady: '{n} 集待看', animeListEmpty: '在看列表为空。', anilistLinkFirst: '请先登录 AniList（设置 → 动画）。', anilistSignIn: '登录 AniList',
+  animeEpisodesReady: '{n} 集待看', animeListEmpty: '此列表为空。', anilistLinkFirst: '请先登录 AniList（设置 → 动画）。', anilistSignIn: '登录 AniList',
   tracking: '进度追踪', animeStatus: '状态', statusWatching: '在看', statusPlanning: '想看', statusCompleted: '看过', statusPaused: '搁置', statusDropped: '抛弃', statusRepeating: '重看',
   less: '减一', animeScore: '评分', animeAddToList: '加入我的列表', animeRemoveEntry: '从我的列表移除', animeRemoveEntryConfirm: '要从 AniList 列表移除此作品吗？', animeRemoved: '已从列表移除', animeSaved: '已保存到 AniList', animeQueued: '已保存——连上 AniList 后发送',
   animeSynopsis: '简介', animeRelations: '相关作品', animeLinks: '链接', animeFindTorrents: '查找种子', animeBatch: '合集', animeBest: '最佳版本', animeSeen: '已看', animeMarkSeen: '标记为已看', animeOnlyMatching: '仅此集（含包含它的合集）',
@@ -44,4 +44,6 @@ export const zh: Partial<Strings> = {
   videoChecking: '正在检查链接…', videoAudioOnly: '仅音频', videoBest: '最佳', videoSubs: '字幕：{langs}', videoAll: '全部下载', videoPageNeedsAddon: '这是视频页面。添加“视频”附加组件即可在此下载。', videoAddIt: '添加', videoFallback: '无法作为视频读取此页面，将按原样下载。', videoVersion: 'yt-dlp {v}', videoUpdate: '更新 yt-dlp', videoUpdated: 'yt-dlp 已是最新（{v}）。', videoGetting: '正在获取 yt-dlp…', videoLive: '直播', videoQuality: '画质', videoContainer: '格式', videoEmbedThumb: '嵌入封面', videoSponsor: '跳过赞助片段（YouTube）', videoDefaultQuality: '首选画质', videoKind: '视频',
   searchSettings: '搜索设置',
   torrentSearchHint: '标题、发布名，或 IMDb / AniList 链接', torrentSearch: '种子搜索', torrentSearchNoSources: '还没有搜索来源。请在 设置 → 附加组件 中添加“种子搜索”及其来源。', openInAnime: '在动画中打开', allQualities: '全部', sortSeeds: '做种数', sortSize: '大小', showLess: '收起', showAllN: '显示全部 ({n})', timedOut: '超时',
+  sortBest: '最佳',
+  animeMarket: '浏览扩展', animeStremioHint: '为动画提供资源的 Stremio 附加组件（按 Kitsu ID）。其他附加组件请在下方粘贴其 manifest 地址。', marketWorking: '可用', marketBroken: '失效', marketDeprecated: '已停用',
 };

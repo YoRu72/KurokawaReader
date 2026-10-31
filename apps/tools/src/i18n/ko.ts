@@ -15,7 +15,7 @@ export const ko: Partial<Strings> = {
   seasonWinter: '겨울', seasonSpring: '봄', seasonSummer: '여름', seasonFall: '가을', sortPopular: '인기순', sortScore: '평점순', sortDate: '날짜순', next: '다음',
   formatShort: '단편', formatMovie: '영화', formatSpecial: '스페셜', formatMusic: '음악', episodeN: '{n}화', episodes: '에피소드', minutesEach: '편당 {n}분',
   animeNextEp: '{n}화까지 {t}', animeAiredNow: '방영됨', animeAired: '방영됨', animeNotYet: '방영 전', untilDays: '{d}일 {h}시간', untilHours: '{h}시간 {m}분', untilMinutes: '{m}분',
-  animeEpisodesReady: '{n}편 시청 가능', animeListEmpty: '시청 중인 작품이 없습니다.', anilistLinkFirst: '먼저 AniList에 로그인하세요 (설정 → 애니메이션).', anilistSignIn: 'AniList 로그인',
+  animeEpisodesReady: '{n}편 시청 가능', animeListEmpty: '이 목록은 비어 있습니다.', anilistLinkFirst: '먼저 AniList에 로그인하세요 (설정 → 애니메이션).', anilistSignIn: 'AniList 로그인',
   tracking: '진행 추적', animeStatus: '상태', statusWatching: '시청 중', statusPlanning: '볼 예정', statusCompleted: '완료', statusPaused: '보류', statusDropped: '중단', statusRepeating: '다시 보는 중',
   less: '하나 줄이기', animeScore: '점수', animeAddToList: '내 목록에 추가', animeRemoveEntry: '내 목록에서 제거', animeRemoveEntryConfirm: '이 작품을 AniList 목록에서 제거할까요?', animeRemoved: '목록에서 제거했습니다', animeSaved: 'AniList에 저장했습니다', animeQueued: '저장됨 — AniList에 연결되면 전송합니다',
   animeSynopsis: '줄거리', animeRelations: '관련 작품', animeLinks: '링크', animeFindTorrents: '토렌트 찾기', animeBatch: '일괄', animeBest: '최고의 릴리스', animeSeen: '시청함', animeMarkSeen: '시청함으로 표시', animeOnlyMatching: '이 화만 (포함된 일괄 포함)',
@@ -44,4 +44,6 @@ export const ko: Partial<Strings> = {
   videoChecking: '링크 확인 중…', videoAudioOnly: '오디오만', videoBest: '최고', videoSubs: '자막: {langs}', videoAll: '모두 받기', videoPageNeedsAddon: '동영상 페이지입니다. 여기서 받으려면 ‘동영상’ 부가 기능을 추가하세요.', videoAddIt: '추가', videoFallback: '동영상으로 읽을 수 없어 그대로 받습니다.', videoVersion: 'yt-dlp {v}', videoUpdate: 'yt-dlp 업데이트', videoUpdated: 'yt-dlp가 최신입니다 ({v}).', videoGetting: 'yt-dlp 받는 중…', videoLive: '라이브', videoQuality: '화질', videoContainer: '형식', videoEmbedThumb: '표지 넣기', videoSponsor: '스폰서 구간 건너뛰기 (YouTube)', videoDefaultQuality: '선호 화질', videoKind: '동영상',
   searchSettings: '설정 검색',
   torrentSearchHint: '제목, 릴리스 이름, 또는 IMDb / AniList 링크', torrentSearch: '토렌트 검색', torrentSearchNoSources: '검색 소스가 없습니다. 설정 → 부가 기능에서 ‘토렌트 검색’과 소스를 추가하세요.', openInAnime: '애니메이션에서 열기', allQualities: '전체', sortSeeds: '시더', sortSize: '크기', showLess: '접기', showAllN: '모두 보기 ({n})', timedOut: '시간 초과',
+  sortBest: '추천순',
+  animeMarket: '확장 기능 둘러보기', animeStremioHint: '애니메이션 스트림을 제공하는 Stremio 부가 기능(Kitsu ID). 그 밖의 부가 기능은 아래에 manifest 주소를 붙여 넣으세요.', marketWorking: '작동', marketBroken: '고장', marketDeprecated: '중단',
 };

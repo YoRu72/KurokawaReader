@@ -15,7 +15,7 @@ export const ja: Partial<Strings> = {
   seasonWinter: '冬', seasonSpring: '春', seasonSummer: '夏', seasonFall: '秋', sortPopular: '人気順', sortScore: '評価順', sortDate: '日付順', next: '次へ',
   formatShort: 'ショート', formatMovie: '映画', formatSpecial: 'スペシャル', formatMusic: '音楽', episodeN: '第{n}話', episodes: 'エピソード', minutesEach: '各{n}分',
   animeNextEp: '第{n}話まで {t}', animeAiredNow: '放送済み', animeAired: '放送済み', animeNotYet: '未放送', untilDays: '{d}日{h}時間', untilHours: '{h}時間{m}分', untilMinutes: '{m}分',
-  animeEpisodesReady: '未視聴 {n}', animeListEmpty: '視聴中の作品はありません。', anilistLinkFirst: 'まず AniList にサインインしてください（設定 → アニメ）。', anilistSignIn: 'AniList にサインイン',
+  animeEpisodesReady: '未視聴 {n}', animeListEmpty: 'このリストは空です。', anilistLinkFirst: 'まず AniList にサインインしてください（設定 → アニメ）。', anilistSignIn: 'AniList にサインイン',
   tracking: 'トラッキング', animeStatus: 'ステータス', statusWatching: '視聴中', statusPlanning: '視聴予定', statusCompleted: '視聴完了', statusPaused: '中断', statusDropped: '視聴中止', statusRepeating: '再視聴中',
   less: '1 つ減らす', animeScore: 'スコア', animeAddToList: 'マイリストに追加', animeRemoveEntry: 'マイリストから削除', animeRemoveEntryConfirm: 'この作品を AniList のリストから削除しますか？', animeRemoved: 'リストから削除しました', animeSaved: 'AniList に保存しました', animeQueued: '保存済み — AniList に接続でき次第送信します',
   animeSynopsis: 'あらすじ', animeRelations: '関連作品', animeLinks: 'リンク', animeFindTorrents: 'トレントを探す', animeBatch: 'バッチ', animeBest: 'ベストリリース', animeSeen: '視聴済み', animeMarkSeen: '視聴済みにする', animeOnlyMatching: 'この話数のみ（含むバッチも）',
@@ -44,4 +44,6 @@ export const ja: Partial<Strings> = {
   videoChecking: 'リンクを確認中…', videoAudioOnly: '音声のみ', videoBest: '最高', videoSubs: '字幕: {langs}', videoAll: 'すべてダウンロード', videoPageNeedsAddon: '動画ページです。ここでダウンロードするには「動画」アドオンを追加してください。', videoAddIt: '追加', videoFallback: '動画として読み取れなかったため、そのままダウンロードします。', videoVersion: 'yt-dlp {v}', videoUpdate: 'yt-dlp を更新', videoUpdated: 'yt-dlp は最新です ({v})。', videoGetting: 'yt-dlp を取得中…', videoLive: 'ライブ', videoQuality: '画質', videoContainer: '形式', videoEmbedThumb: 'カバーを埋め込む', videoSponsor: 'スポンサー部分を飛ばす (YouTube)', videoDefaultQuality: '優先する画質', videoKind: '動画',
   searchSettings: '設定を検索',
   torrentSearchHint: 'タイトル、リリース名、または IMDb / AniList のリンク', torrentSearch: 'トレント検索', torrentSearchNoSources: '検索ソースがありません。設定 → アドオンで「トレント検索」とそのソースを追加してください。', openInAnime: 'アニメで開く', allQualities: 'すべて', sortSeeds: 'シーダー', sortSize: 'サイズ', showLess: '閉じる', showAllN: 'すべて表示 ({n})', timedOut: 'タイムアウト',
+  sortBest: 'おすすめ順',
+  animeMarket: '拡張機能を探す', animeStremioHint: 'アニメのストリームを提供する Stremio アドオン（Kitsu ID）。その他はマニフェストのアドレスを下に貼り付けてください。', marketWorking: '動作中', marketBroken: '故障中', marketDeprecated: '廃止',
 };
