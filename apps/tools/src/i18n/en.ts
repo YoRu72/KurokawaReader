@@ -46,6 +46,11 @@ export const en = {
   // Subtitles
   navSubs: 'Subtitles', subsSearchHint: 'A title, or an AniList / MyAnimeList / IMDb link', kindAnime: 'Anime', kindSeries: 'Series', episodesN: '{n} episodes', subsAll: 'All', subsSeason: 'Season', subsEpisode: 'Episode',
   subsAddLang: 'Language', subsLanguages: 'Subtitle languages', subsPickLang: 'Choose at least one language.', subsNoSources: 'No subtitle sites are installed — add them under Add-ons → Subtitles.', subsHI: 'HI', subsPartial: 'incomplete', subsAI: 'machine',
+  // Archives
+  extract: 'Extract…', extractNow: 'Extract', extractTo: 'Extract to', extractNewFolder: 'A folder of its name', extractHere: 'Beside the archive', extractElsewhere: 'Elsewhere…', chooseFolder: 'Choose a folder', existingFiles: 'Files already there', replaceFiles: 'Replace', skipFiles: 'Skip', keepBoth: 'Keep both',
+  extractInPlace: 'Extract in place', extractInPlaceHint: 'The archive shrinks as files come out, so the disk only needs room for the files — stopped half way, it continues later.', deleteArchiveAfter: 'Delete the archive afterwards', extracting: 'Extracting…', extracted: '{n} extracted', extractContinue: 'Continue extracting', extractResumable: 'half extracted', extractPausedInPlace: 'Stopped — the archive is kept as it is and can be continued', cancelled: 'Cancelled',
+  notAnArchive: 'This is not an archive the app can open.', encrypted: 'encrypted', password: 'Password', passwordNeeded: 'This archive asks for a password.', wrongPassword: 'That password is wrong.', noSpace: 'Not enough space on the disk.', andMore: '…and {n} more', openArchive: 'Open an archive', createZip: 'Make a zip', zipping: 'Zipping…', zipped: '{name} made ({size})',
+  autoUnpackSubs: 'Unpack subtitle archives as they arrive', autoUnpackAll: 'Unpack every downloaded archive', autoUnpackAllHint: 'Into a folder of its name; the archive is deleted after.', autoUnpacked: '{name}: {n} unpacked', autoUnpackFailed: '{name} could not be unpacked: {error}',
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

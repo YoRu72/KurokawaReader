@@ -40,6 +40,9 @@ export interface Settings {
   animeTitleLang: 'preferred' | 'romaji' | 'english' | 'native';
   /** Subtitles: the languages wanted, in order. */
   subLangs: string[];
+  /** Archives: unpack subtitle archives as they arrive; unpack every downloaded archive. */
+  autoUnpackSubs: boolean;
+  autoUnpackAll: boolean;
 }
 
 const KEY = 'kt.settings';
@@ -49,7 +52,7 @@ const DEFAULTS: Settings = {
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
-  subLangs: [],
+  subLangs: [], autoUnpackSubs: true, autoUnpackAll: false,
 };
 
 let current: Settings = load();

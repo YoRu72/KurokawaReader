@@ -26,4 +26,8 @@ export const zh: Partial<Strings> = {
   animeRepos: '扩展仓库', animeReposHint: 'Hayase（index.json）与 Seanime（市场或清单）仓库：其中的动画种子提供者从这里安装并更新。', animeRepoUrl: '仓库 URL', animeRepoAdd: '添加', animeRepoAdded: '已安装 {n} 个来源', animeRepoRemove: '移除此仓库', animeProviderBuiltin: '来自 Kurokawa 仓库', animeProvidersUpdate: '全部更新', animeProvidersNone: '还没有来源。',
   navSubs: '字幕', subsSearchHint: '标题，或 AniList / MyAnimeList / IMDb 链接', kindAnime: '动画', kindSeries: '剧集', episodesN: '{n} 集', subsAll: '全部', subsSeason: '季', subsEpisode: '集',
   subsAddLang: '语言', subsLanguages: '字幕语言', subsPickLang: '至少选择一种语言。', subsNoSources: '尚未安装字幕站点——在附加组件 → 字幕中添加。', subsHI: '听障版', subsPartial: '未完成', subsAI: '机器翻译',
+  extract: '解压…', extractNow: '解压', extractTo: '解压到', extractNewFolder: '同名文件夹', extractHere: '压缩包旁', extractElsewhere: '其他位置…', chooseFolder: '选择文件夹', existingFiles: '已存在的文件', replaceFiles: '替换', skipFiles: '跳过', keepBoth: '两者保留',
+  extractInPlace: '原地解压', extractInPlaceHint: '文件每解出一个，压缩包就缩小一分，磁盘只需容纳文件本身；中途停止也可以稍后继续。', deleteArchiveAfter: '解压后删除压缩包', extracting: '正在解压…', extracted: '已解压 {n}', extractContinue: '继续解压', extractResumable: '已解压一半', extractPausedInPlace: '已停止——压缩包保持原样，可以继续', cancelled: '已取消',
+  notAnArchive: '这不是本应用能打开的压缩包。', encrypted: '已加密', password: '密码', passwordNeeded: '此压缩包需要密码。', wrongPassword: '密码错误。', noSpace: '磁盘空间不足。', andMore: '…还有 {n} 个', openArchive: '打开压缩包', createZip: '创建 zip', zipping: '正在压缩…', zipped: '已创建 {name}（{size}）',
+  autoUnpackSubs: '字幕压缩包到达后立即解压', autoUnpackAll: '解压所有下载的压缩包', autoUnpackAllHint: '解压到同名文件夹，随后删除压缩包。', autoUnpacked: '{name}：已解压 {n}', autoUnpackFailed: '无法解压 {name}：{error}',
 };

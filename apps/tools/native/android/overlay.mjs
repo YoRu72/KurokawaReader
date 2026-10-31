@@ -97,7 +97,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // --- gradle: libtorrent4j, ABI splits, signing, version ---
 const gradlePath = path.join(app, 'build.gradle');
@@ -111,7 +111,11 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "org.libtorrent4j:libtorrent4j-android-arm64:${LIBTORRENT4J}"
     implementation "org.libtorrent4j:libtorrent4j-android-arm:${LIBTORRENT4J}"
     implementation "org.libtorrent4j:libtorrent4j-android-x86_64:${LIBTORRENT4J}"
-    implementation "androidx.documentfile:documentfile:1.0.1"`);
+    implementation "androidx.documentfile:documentfile:1.0.1"
+    implementation "org.apache.commons:commons-compress:1.27.1"
+    implementation "org.tukaani:xz:1.10"
+    implementation "com.github.junrar:junrar:7.5.5"
+    implementation "net.lingala.zip4j:zip4j:2.11.5"`);
 }
 if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/android \{/, `android {
@@ -139,7 +143,7 @@ if (!gradle.includes('splits {')) {
 }
 // (libtorrent's JNI class must keep its name through R8.)
 if (!gradle.includes('proguard-kt.pro')) {
-  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n');
+  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n');
   gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
 await fs.writeFile(gradlePath, gradle);

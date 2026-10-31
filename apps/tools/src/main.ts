@@ -85,6 +85,7 @@ placeNav();
 wirePcBack();
 onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles').sort().join(); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
 if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
+if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());

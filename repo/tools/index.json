@@ -406,6 +406,27 @@
       "version": "0.1.0",
       "module": "subs/yify.mjs",
       "icon": "subtitles"
+    },
+    {
+      "id": "archives",
+      "kind": "archives",
+      "name": "Archives",
+      "names": {
+        "ar": "الأرشيفات",
+        "ja": "アーカイブ",
+        "ko": "압축 파일",
+        "zh": "压缩包"
+      },
+      "description": "Open zip, 7z, rar, tar and gzip/xz/bzip2 archives: see inside, extract beside them or elsewhere, extract ZIPs in place when the disk is short (the archive shrinks as files come out, resumable after a stop), make zips; subtitle archives unpacked as they arrive.",
+      "descriptions": {
+        "ar": "افتح أرشيفات zip و7z وrar وtar وgzip/xz/bzip2: انظر ما بداخلها، واستخرجها بجانبها أو في مكان آخر، واستخرج ملفات ZIP في مكانها حين تضيق المساحة (يتقلّص الأرشيف كلما خرجت الملفات، ويُستأنف بعد التوقف)، وأنشئ ملفات zip؛ وتُفكّ أرشيفات الترجمة حين تصل."
+      },
+      "version": "0.1.0",
+      "icon": "archive",
+      "platforms": [
+        "android",
+        "desktop"
+      ]
     }
   ]
 }

@@ -87,3 +87,13 @@
 .lang-chips .chip .icon-btn { width: 24px; height: 24px; margin-inline-end: -8px; }
 .sub-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .sub-row .lang-badge { min-width: 34px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--md-secondary-container); color: var(--md-on-secondary-container); flex: none; }
+/* Archives */
+.entry-list { max-height: 240px; overflow: auto; border-radius: var(--sh-md); background: var(--md-surface-container-low); padding: 6px 10px; font-size: 13px; }
+.entry-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.entry-row svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; flex: none; color: var(--md-on-surface-variant); }
+.entry-row.dir { color: var(--md-on-surface-variant); }
+.entry-row .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.extract-progress { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+.task-bar.big { height: 8px; }
+.entry-row .grow { flex: 1; min-width: 0; }
+.sheet .row > span > small, .sheet .switch-row > span > small { display: block; margin-top: 2px; }

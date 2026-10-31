@@ -42,4 +42,9 @@ export const ar: Partial<Strings> = {
   // Subtitles
   navSubs: 'الترجمات', subsSearchHint: 'عنوان، أو رابط AniList أو MyAnimeList أو IMDb', kindAnime: 'أنمي', kindSeries: 'مسلسل', episodesN: '{n} حلقة', subsAll: 'الكل', subsSeason: 'الموسم', subsEpisode: 'الحلقة',
   subsAddLang: 'لغة', subsLanguages: 'لغات الترجمة', subsPickLang: 'اختر لغةً واحدةً على الأقل.', subsNoSources: 'لم تُثبَّت مواقع ترجمة — أضفها من الإضافات ← الترجمات.', subsHI: 'لضعاف السمع', subsPartial: 'ناقصة', subsAI: 'آلية',
+  // Archives
+  extract: 'استخراج…', extractNow: 'استخراج', extractTo: 'الاستخراج إلى', extractNewFolder: 'مجلد باسمه', extractHere: 'بجانب الأرشيف', extractElsewhere: 'مكان آخر…', chooseFolder: 'اختر مجلدًا', existingFiles: 'الملفات الموجودة مسبقًا', replaceFiles: 'استبدال', skipFiles: 'تخطّ', keepBoth: 'إبقاء الاثنين',
+  extractInPlace: 'استخراج في المكان', extractInPlaceHint: 'يتقلّص الأرشيف كلما خرجت الملفات، فلا يحتاج القرص إلا إلى مساحة الملفات — وإن توقف في منتصفه أُكمل لاحقًا.', deleteArchiveAfter: 'حذف الأرشيف بعد الاستخراج', extracting: 'جارٍ الاستخراج…', extracted: 'استُخرج {n}', extractContinue: 'إكمال الاستخراج', extractResumable: 'مستخرج جزئيًا', extractPausedInPlace: 'توقف — بقي الأرشيف كما هو ويمكن إكماله', cancelled: 'أُلغي',
+  notAnArchive: 'هذا ليس أرشيفًا يستطيع التطبيق فتحه.', encrypted: 'مشفَّر', password: 'كلمة السر', passwordNeeded: 'يطلب هذا الأرشيف كلمة سر.', wrongPassword: 'كلمة السر خاطئة.', noSpace: 'لا تكفي المساحة على القرص.', andMore: '…و{n} غيرها', openArchive: 'فتح أرشيف', createZip: 'إنشاء ملف zip', zipping: 'جارٍ الضغط…', zipped: 'أُنشئ {name} ({size})',
+  autoUnpackSubs: 'فكّ أرشيفات الترجمة حين تصل', autoUnpackAll: 'فكّ كل أرشيف يُنزَّل', autoUnpackAllHint: 'في مجلد باسمه، ويُحذف الأرشيف بعدها.', autoUnpacked: '{name}: فُكّ {n}', autoUnpackFailed: 'تعذّر فكّ {name}: {error}',
 };
