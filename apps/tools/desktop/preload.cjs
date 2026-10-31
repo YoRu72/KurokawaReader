@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('kurokawaTools', {
   setFiles: (id, p) => call('kt:setFiles', id, p), setLimits: (l) => call('kt:setLimits', l), configure: (o) => call('kt:configure', o), torrentInfo: (s) => call('kt:torrentInfo', s),
   open: (id, i) => call('kt:open', id, i), defaultDir: () => call('kt:defaultDir'), pickDir: () => call('kt:pickDir'), openExternal: (u) => call('kt:openExternal', u), registerMagnet: () => call('kt:registerMagnet'),
   http: (o) => call('kt:http', o), captureUrl: (o) => call('kt:captureUrl', o),
+  videoInfo: (o) => call('kt:videoInfo', o), videoReady: () => call('kt:videoReady'), isVideoHost: (u) => call('kt:isVideoHost', u), videoVersion: () => call('kt:videoVersion'), videoUpdate: () => call('kt:videoUpdate'),
   listDir: (p) => call('kt:listDir', p), deletePath: (p) => call('kt:deletePath', p), roots: () => call('kt:roots'),
   ffmpegAvailable: () => call('kt:ffmpegAvailable'), ffmpeg: (o) => call('kt:ffmpeg', o), ffmpegCancel: (id) => call('kt:ffmpegCancel', id), ffprobe: (p) => call('kt:ffprobe', p), writeTemp: (name, text) => call('kt:writeTemp', { name, text }), siblings: (p) => call('kt:siblings', p), fileUrl: (p) => call('kt:fileUrl', p),
   onFfmpegProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:ffmpegProgress', fn); return () => ipcRenderer.removeListener('kt:ffmpegProgress', fn); },

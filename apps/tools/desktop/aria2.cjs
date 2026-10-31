@@ -10,6 +10,13 @@ const { Aria2Rpc } = require('./aria2rpc.cjs');
 
 const num = (s) => Number(s ?? 0) || 0;
 
+/** aria2's piece bitfield as segments of done bytes (runs of finished pieces), for the details page's file map. */
+function piecesToSegments(st) {
+  const bits = st.bitfield; const n = Number(st.numPieces) || 0; const len = Number(st.pieceLength) || 0; const total = Number(st.totalLength) || 0; if (!bits || !n || !len) return undefined;
+  const out = []; let run = -1;
+  for (let i = 0; i <= n; i++) { const on = i < n && ((parseInt(bits[i >> 2], 16) >> (3 - (i & 3))) & 1); if (on && run < 0) run = i; else if (!on && run >= 0) { out.push({ start: run * len, pos: Math.min(total, i * len), end: Math.min(total, i * len), active: false, worker: 0 }); run = -1; } }
+  return out.slice(0, 400);
+}
 class Aria2Engine {
   constructor(o) {
     this.userData = o.userData; this.resources = o.resources; this.defaultDir = o.defaultDir;
@@ -67,6 +74,7 @@ class Aria2Engine {
       dir, state: this.stateOf(st), done, total, downSpeed: speed, upSpeed: num(st.uploadSpeed), eta: speed > 0 && total > done ? Math.round((total - done) / speed) : undefined,
       peers: st.bittorrent ? num(st.connections) : undefined, seeds: st.numSeeders !== undefined ? num(st.numSeeders) : undefined, connections: st.bittorrent ? undefined : num(st.connections), infoHash: st.infoHash,
       files: (st.files || []).map((f) => ({ index: Number(f.index) - 1, path: (f.path || '').startsWith(dir) ? f.path.slice(dir.length).replace(/^[\\/]+/, '') : f.path, size: num(f.length), done: num(f.completedLength), priority: f.selected === 'true' ? 1 : 0 })),
+      segments: st.status === 'active' && !st.bittorrent ? piecesToSegments(st) : undefined,
       error: st.status === 'error' ? `${st.errorMessage || ''} (${st.errorCode})` : undefined, addedAt: extra.addedAt || Date.now(), doneAt: st.status === 'complete' ? extra.doneAt || Date.now() : undefined, meta: extra.meta, engine: 'native',
     };
   }

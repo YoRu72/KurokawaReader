@@ -9,6 +9,10 @@ const fs = require('node:fs');
 const { Aria2Engine } = require('./aria2.cjs');
 const Archive = require('./archive.cjs');
 const Ffmpeg = require('./ffmpeg.cjs');
+const Ytdlp = require('./ytdlp.cjs');
+let videos = null; let lastAria = [];
+const allTasks = () => [...lastAria, ...(videos ? videos.list() : [])];
+const isVideoId = (id) => typeof id === 'string' && id.startsWith('v') && videos && videos.list().some((t) => t.id === id);
 
 const DIST = path.join(__dirname, 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm' };
@@ -64,28 +68,30 @@ else {
     const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true });
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
     await engine.start().catch((e) => { engine.available = false; engine.reason = String(e.message || e); });
-    engine.onTasks((tasks) => send('kt:tasks', tasks));
+    videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
+    engine.onTasks((tasks) => { lastAria = tasks; send('kt:tasks', allTasks()); });
+    setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
     createWindow();
     process.argv.slice(1).forEach(takeArg);
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { engine?.stop(); });
+  app.on('before-quit', () => { engine?.stop(); videos?.stop(); });
 }
 
 /* ---------- the engine, to the page ---------- */
 const E = () => { if (!engine) throw new Error('engine'); return engine; };
 ipcMain.handle('kt:state', () => ({ available: !!engine?.available, reason: engine?.reason || '', os: process.platform, arch: process.arch }));
-ipcMain.handle('kt:list', () => E().list());
-ipcMain.handle('kt:add', (_e, o) => E().add(o));
-ipcMain.handle('kt:pause', (_e, id) => E().pause(id));
-ipcMain.handle('kt:resume', (_e, id) => E().resume(id));
-ipcMain.handle('kt:remove', (_e, id, del) => E().remove(id, !!del));
+ipcMain.handle('kt:list', async () => { lastAria = await E().list(); return allTasks(); });
+ipcMain.handle('kt:add', (_e, o) => (o.video ? videos.add({ ...o.video, url: o.source.url, dir: o.dir || engine.defaultDir, paused: o.paused, meta: o.meta }) : E().add(o)));
+ipcMain.handle('kt:pause', (_e, id) => (isVideoId(id) ? videos.pause(id) : E().pause(id)));
+ipcMain.handle('kt:resume', (_e, id) => (isVideoId(id) ? videos.resume(id) : E().resume(id)));
+ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, !!del) : E().remove(id, !!del)));
 ipcMain.handle('kt:setFiles', (_e, id, p) => E().setFiles(id, p));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => E().configure(o));
 ipcMain.handle('kt:torrentInfo', (_e, s) => E().torrentInfo(s));
-ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = await E().fileOf(id, fileIndex); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
+ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
 ipcMain.handle('kt:defaultDir', () => engine?.defaultDir || app.getPath('downloads'));
 ipcMain.handle('kt:pickDir', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('kt:openExternal', (_e, u) => shell.openExternal(String(u)));
@@ -129,6 +135,13 @@ ipcMain.handle('kt:pathInfo', async (_e, p) => { try { const st = await fs.promi
 ipcMain.handle('kt:listDir', async (_e, p) => { try { const ents = await fs.promises.readdir(String(p), { withFileTypes: true }); const out = []; for (const en of ents) { try { const st = await fs.promises.stat(path.join(String(p), en.name)); out.push({ name: en.name, path: path.join(String(p), en.name), dir: st.isDirectory(), size: st.isFile() ? st.size : 0, mtime: st.mtimeMs }); } catch { /* vanished */ } } return { entries: out, exists: true }; } catch { return { entries: [], exists: false }; } });
 ipcMain.handle('kt:deletePath', async (_e, p) => { try { await shell.trashItem(String(p)); return { ok: true }; } catch { try { await fs.promises.rm(String(p), { recursive: true, force: true }); return { ok: true }; } catch { return { ok: false }; } } });
 ipcMain.handle('kt:roots', () => ({ roots: [engine?.defaultDir || app.getPath('downloads'), app.getPath('downloads'), app.getPath('videos'), app.getPath('home')].filter((x, i, a) => x && a.indexOf(x) === i) }));
+
+/* ---------- yt-dlp: what a page offers, the binary ---------- */
+ipcMain.handle('kt:videoInfo', (_e, o) => Ytdlp.info(String(o.url), o));
+ipcMain.handle('kt:videoReady', async (e) => { try { await Ytdlp.ensure((p) => e.sender.send('kt:update-progress', { pct: p.total ? Math.round((p.got / p.total) * 100) : 0, got: p.got, total: p.total, what: 'yt-dlp' })); return { ok: true, version: await Ytdlp.version() }; } catch (err) { return { ok: false, why: String(err.message) }; } });
+ipcMain.handle('kt:videoVersion', async () => ({ version: Ytdlp.haveBinary() ? await Ytdlp.version() : null, ready: Ytdlp.haveBinary() }));
+ipcMain.handle('kt:videoUpdate', async () => Ytdlp.update(true));
+ipcMain.handle('kt:isVideoHost', (_e, u) => { try { return Ytdlp.VIDEO_HOSTS.test(new URL(String(u)).hostname); } catch { return false; } });
 
 /* ---------- the player: ffmpeg for clips, files beside a video, a file's bytes ---------- */
 ipcMain.handle('kt:ffmpegAvailable', () => Ffmpeg.available());

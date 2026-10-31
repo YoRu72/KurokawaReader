@@ -5,6 +5,7 @@ import { getEngine, displayName, isVideo } from '../engine';
 import type { Task } from '../engine/types';
 import { back } from '../router';
 import { stateLabel, fmtEta } from './downloads';
+import { historyOf, fileMap, lanes, speedChart, logList } from './taskmap';
 
 export function taskView(id: string): HTMLElement & { dispose?: () => void } {
   const eng = getEngine();
@@ -34,10 +35,13 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
       eng.setFiles ? h('select', { class: 'prio', onchange: (e: Event) => { const v = Number((e.target as HTMLSelectElement).value) as 0 | 1 | 2; const p = x.files.map((g) => (g.index === f.index ? v : g.priority)); void eng.setFiles!(x.id, p).catch((er) => toast(String(er.message ?? er), 'error')); } },
         ...([[0, t('fileSkip')], [1, t('fileNormal')], [2, t('fileHigh')]] as [number, string][]).map(([v, l]) => h('option', { value: String(v), selected: f.priority === v }, l))) : null,
       isVideo(f.path) && (eng.streamUrl || x.state === 'done') && f.priority > 0 ? iconButton('film', t('play'), () => void import('./player').then((m) => m.playTaskFile(x, f.index)).catch((er) => toast(String(er.message ?? er), 'error'))) : null)))) : null;
+    const hst = historyOf(x);
+    const map = x.kind !== 'torrent' ? h('section', { class: 'card' }, h('h3', null, t('connectionsTitle')), fileMap(x), lanes(x), speedChart(hst)) : h('section', { class: 'card' }, h('h3', null, t('speedTitle')), fileMap(x), speedChart(hst));
+    const log = h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst));
     body.replaceChildren(
       h('section', { class: 'card task-head' }, h('div', { class: 'task-bar big' + (x.total ? '' : ' busy-any') }, h('i', { style: { width: `${x.total ? (x.done / x.total) * 100 : 0}%` } })), h('dl', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('dt', null, k), h('dd', { dir: 'auto' }, v)])), acts),
-      files ?? h('span'),
-      x.error ? h('p', { class: 'hint error' }, x.error) : h('span'));
+      map, files ?? h('span'),
+      x.error ? h('p', { class: 'hint error' }, x.error) : h('span'), log);
   };
   const off = eng.onChange((ts) => { const found = ts.find((x) => x.id === id); if (!found) { if (task) back('/'); return; } task = found; draw(); });
   root.dispose = () => off();

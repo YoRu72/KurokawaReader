@@ -5,8 +5,11 @@ import { t, formatBytes, localDigits } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
 import type { TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
+import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin } from '../native';
+import { videoPanel, preferredFormat } from './addVideo';
+import { videoEnabled, isVideoHost } from '../video/ytdlp';
 
 const toBase64 = (buf: ArrayBuffer): string => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); };
 
@@ -26,7 +29,8 @@ export function addSheet(initial = ''): void {
   // Options
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
-  const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); dir.textContent = d; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
+  let dirChosen = false;
+  const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
   const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName') }) as HTMLInputElement;
   const seq = h('input', { type: 'checkbox', checked: s.sequentialVideo }) as HTMLInputElement;
   const paused = h('input', { type: 'checkbox' }) as HTMLInputElement;
@@ -43,11 +47,13 @@ export function addSheet(initial = ''): void {
   const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
   const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
-  sh.body.append(ta, tools, fileNote, fileIn, filesBox, debridRow, opts);
+  const video = videoPanel(() => undefined);
+  sh.body.append(ta, video.el, tools, fileNote, fileIn, filesBox, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
   sh.actions.append(go);
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
   const metadata = async () => {
+    { const one = sources(); video.check(one.length === 1 && one[0].url ? one[0].url : null); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }
     const my = ++metaToken;
@@ -78,11 +84,20 @@ export function addSheet(initial = ''): void {
     }
     if (!eng.can.torrents && srcs.some((x) => x.magnet || x.torrent)) { toast(t('noEngine'), 'error'); return; }
     go.disabled = true;
+    // A page yt-dlp read (one video, or a playlist's videos), and video-site links among several: video tasks.
+    const videoDir = dirChosen ? (getSettings().downloadDir || undefined) : (categoryDir(categoryOf('x.mp4')) ?? (getSettings().downloadDir || undefined));
+    try {
+      await video.busy();
+      const picks = video.picks();
+      if (picks) { for (const p of picks) await eng.add({ source: { url: p.url }, dir: videoDir, paused: paused.checked, video: p.video }); toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
+    } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     try {
       for (const src of srcs) {
+        if (srcs.length > 1 && src.url && videoEnabled() && isVideoHost(src.url)) { const tk = await eng.add({ source: src, dir: videoDir, paused: paused.checked, video: { ...preferredFormat(), container: preferredFormat().audioOnly ? undefined : getSettings().videoContainer, embedThumb: getSettings().videoEmbedThumb, sponsorblock: getSettings().videoSponsor } }); toast(t('taskAdded', { name: tk.name || src.url })); continue; }
         const videoish = !!src.magnet || !!src.torrent || isVideo(src.url ?? '');
         const files = info && srcs.length === 1 && chosen.size < info.files.length ? [...chosen] : undefined;
-        const tk = await eng.add({ source: src, dir: getSettings().downloadDir || undefined, name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined, sequential: videoish && seq.checked, paused: paused.checked, connections: Number(conn.value) || 8, files });
+        const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
+        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (catDir ?? getSettings().downloadDir ?? undefined), name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined, sequential: videoish && seq.checked, paused: paused.checked, connections: Number(conn.value) || 8, files });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
       }
       sh.close();

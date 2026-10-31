@@ -92,6 +92,7 @@ onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a 
 if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
 if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
 if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
+if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());

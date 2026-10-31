@@ -28,6 +28,10 @@ export interface DesktopBridge {
   checkUpdate?(o: { beta: boolean }): Promise<{ version: string; url: string; notes: string; asset?: string } | null>;
   installUpdate?(url: string): Promise<void>;
   readFile?(path: string): Promise<ArrayBuffer>;
+  videoInfo?(o: { url: string; playlist?: boolean }): Promise<unknown>;
+  videoReady?(): Promise<unknown>;
+  videoVersion?(): Promise<{ version: string | null; ready: boolean }>;
+  videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }>;
 }
 
 export class DesktopEngine implements Engine {

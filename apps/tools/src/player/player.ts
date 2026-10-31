@@ -15,7 +15,7 @@ import { siblingFiles, readLocal } from './files';
 export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[] }
 interface SubTrack { id: string; name: string; lang?: string; cues: Cue[]; ass?: string; fmt: string }
 
-const fmtTime = (s: number): string => { if (!isFinite(s)) return '–:––'; s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return (h ? `${localDigits(h)}:${String(m).padStart(2, '0')}:` : `${localDigits(m)}:`) + String(sec).padStart(2, '0'); };
+const fmtTime = (s: number): string => { if (!isFinite(s)) return '–:––'; s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits((h ? `${h}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0')); };
 
 export function openPlayer(src: PlayerSource): void {
   const P = getPrefs(); const key = src.localPath ?? src.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
