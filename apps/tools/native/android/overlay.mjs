@@ -29,6 +29,7 @@ if (!manifest.includes('FOREGROUND_SERVICE_DATA_SYNC')) {
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <application`);
   manifest = manifest.replace('</application>', `    <service android:name=".KtService" android:exported="false" android:foregroundServiceType="dataSync" />
+    <activity android:name=".KtAuthActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>`);
 }
 if (!manifest.includes('android:scheme="magnet"')) {
@@ -96,7 +97,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // --- gradle: libtorrent4j, ABI splits, signing, version ---
 const gradlePath = path.join(app, 'build.gradle');

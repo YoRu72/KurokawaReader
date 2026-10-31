@@ -29,6 +29,15 @@ export interface Settings {
   addons: string[];
   /** Each add-on's own settings (keys, choices), by add-on id. */
   addonSettings: Record<string, Record<string, string | number | boolean>>;
+  /** AniList: the OAuth client id the user made, changes queued while offline, progress marked as episodes are watched. */
+  anilistClientId: string;
+  anilistPending: Record<string, unknown>;
+  anilistAutoProgress: boolean;
+  /** Anime: extension repositories (Hayase index.json or Seanime marketplace URLs), the preferred quality, adult shows. */
+  animeRepos: string[];
+  animeQuality: '' | '2160' | '1080' | '720' | '480';
+  animeAdult: boolean;
+  animeTitleLang: 'preferred' | 'romaji' | 'english' | 'native';
 }
 
 const KEY = 'kt.settings';
@@ -37,6 +46,7 @@ const DEFAULTS: Settings = {
   downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: true,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
+  anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
 };
 
 let current: Settings = load();

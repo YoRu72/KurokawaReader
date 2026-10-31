@@ -8,6 +8,7 @@ import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
 import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
+import { animeSettingsCard } from './animeSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
@@ -87,7 +88,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
-    return [general, downloads, aria2, addons, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
+    return [general, downloads, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

@@ -1,11 +1,12 @@
 import './styles/fonts.css';
 import './styles/base.css';
 import './styles/tools.css';
+import './styles/anime.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, type Route } from './router';
 import { h, icon } from './ui/dom';
 import { goBack, wirePcBack } from './ui/backstack';
-import { applyChrome, onSettingsChange } from './settings';
+import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
 import { scheduleAutoCheck } from './updates';
@@ -22,9 +23,10 @@ function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): 
 }
 
 /* The navigation: a bar at the bottom on phones, a rail at the side on a PC (the reader's look). */
-const DESTS: [string, string, string, () => void][] = [
+const DESTS = (): [string, string, string, () => void][] => [
   ['downloads', 'download', 'navDownloads', () => navigate('/')],
   ['search', 'search', 'navSearch', () => navigate('/search')],
+  ...(getSettings().addons.includes('anime') ? [['anime', 'tv', 'navAnime', () => navigate('/anime')] as [string, string, string, () => void]] : []),
   ['settings', 'settings', 'navSettings', () => navigate('/settings')],
 ];
 const wide = matchMedia('(min-width: 1024px) and (pointer: fine)');
@@ -32,11 +34,11 @@ const isPc = () => (!!window.kurokawaTools && matchMedia('(min-width: 720px)').m
 let nav: HTMLElement | null = null;
 function buildNav(): HTMLElement {
   const pc = isPc();
-  const items = DESTS.map(([name, ic, key, go]) => h('button', { type: 'button', class: pc ? 'rail-item' : 'nav-item', 'data-dest': name, onclick: go, title: t(key as 'navDownloads') },
+  const items = DESTS().map(([name, ic, key, go]) => h('button', { type: 'button', class: pc ? 'rail-item' : 'nav-item', 'data-dest': name, onclick: go, title: t(key as 'navDownloads') },
     h('span', { class: pc ? 'rail-pill' : 'nav-pill' }, icon(ic)), h('span', { class: pc ? 'rail-label' : 'nav-label' }, t(key as 'navDownloads'))));
   if (pc) return h('nav', { class: 'nav-rail', 'aria-label': t('appName') }, h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' })),
     h('button', { type: 'button', class: 'rail-fab', title: t('addDownload'), 'aria-label': t('addDownload'), onclick: () => void import('./views/add').then((m) => m.addSheet()) }, icon('plus')),
-    h('div', { class: 'rail-items' }, ...items.slice(0, 2)), h('div', { class: 'rail-end' }, items[2]));
+    h('div', { class: 'rail-items' }, ...items.slice(0, -1)), h('div', { class: 'rail-end' }, items[items.length - 1]));
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }
 function placeNav(): void {
@@ -46,7 +48,7 @@ function placeNav(): void {
   markNav(parseRoute());
 }
 function markNav(r: Route): void {
-  const dest = r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' ? 'settings' : 'search';
+  const dest = r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : 'search';
   nav?.querySelectorAll<HTMLElement>('[data-dest]').forEach((b) => { const on = b.dataset.dest === dest; b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
 }
 wide.addEventListener('change', placeNav);
@@ -61,6 +63,8 @@ function mount(route: Route): void {
     case 'task': current = lazyView(() => import('./views/task').then((m) => m.taskView(route.id))); break;
     case 'settings': current = lazyView(() => import('./views/settings').then((m) => m.settingsView(route.section))); break;
     case 'addons': current = lazyView(() => import('./views/settings').then((m) => m.settingsView('addons'))); break;
+    case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q))); break;
+    case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q, route.addon))); break;
     case 'add': current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(route.u ?? '')), 50); break;
     default: current = downloadsView(route.filter);
@@ -77,7 +81,8 @@ applyDocumentLang();
 applyChrome();
 placeNav();
 wirePcBack();
-onSettingsChange((s) => applyChrome(s));
+onSettingsChange((s) => { applyChrome(s); const want = s.addons.includes('anime'); if (!!nav?.querySelector('[data-dest="anime"]') !== want) placeNav(); });
+if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());

@@ -94,6 +94,16 @@ ipcMain.handle('kt:http', async (_e, o) => {
   const buf = Buffer.from(await r.arrayBuffer());
   return { status: r.status, url: r.url, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
 });
+/** A small window for a sign-in: resolves with the first address that carries `marker` (the token in AniList's
+ *  pin page URL), or null when the window is closed first. Nothing of the page is read beyond its address. */
+ipcMain.handle('kt:captureUrl', (_e, o) => new Promise((resolve) => {
+  const w = new BrowserWindow({ width: 520, height: 720, parent: win || undefined, title: String(o.title || ''), autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:signin' } });
+  let done = false; const finish = (v) => { if (done) return; done = true; resolve(v); setTimeout(() => { if (!w.isDestroyed()) w.close(); }, 50); };
+  const check = (u) => { if (typeof u === 'string' && u.includes(String(o.marker))) finish(u); };
+  w.webContents.on('will-navigate', (_ev, u) => check(u)); w.webContents.on('will-redirect', (_ev, u) => check(u)); w.webContents.on('did-navigate', (_ev, u) => check(u)); w.webContents.on('did-navigate-in-page', (_ev, u) => check(u));
+  w.on('closed', () => finish(null));
+  w.loadURL(String(o.url));
+}));
 ipcMain.handle('kt:readFile', async (_e, p) => { const b = await fs.promises.readFile(String(p)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
 
 /* ---------- updates: the repository's tools-v* releases ---------- */

@@ -29,6 +29,20 @@ export const en = {
   installApk: 'Install', installing: 'Installing…', installDone: 'Installed', installFailed: 'Install failed: {error}', installPermission: 'Allow Kurokawa Tools to install apps on the page that opens, then come back.',
   // Misc
   todayAt: 'Today {t}', yesterday: 'Yesterday', bytesOf: '{done} of {total}', nothingToPaste: 'The clipboard holds no link', invalidLink: 'That is not a link, a magnet or a torrent', folderPicked: 'Downloads go to {dir}', confirmRemoveFiles: 'Delete the downloaded files of “{name}” too?',
+  // Anime
+  navAnime: 'Anime', animeSearchHint: 'Search AniList for a show', animeSeason: 'Season', animeSchedule: 'Schedule', animeMyList: 'My list', animeProviders: 'Anime sources', animeLeftovers: 'Leftovers',
+  seasonWinter: 'Winter', seasonSpring: 'Spring', seasonSummer: 'Summer', seasonFall: 'Fall', sortPopular: 'Popular', sortScore: 'Top rated', sortDate: 'By date', next: 'Next',
+  formatShort: 'Short', formatMovie: 'Film', formatSpecial: 'Special', formatMusic: 'Music', episodeN: 'Episode {n}', episodes: 'Episodes', minutesEach: '{n} min each',
+  animeNextEp: 'Ep. {n} in {t}', animeAiredNow: 'Aired', animeAired: 'Aired', animeNotYet: 'Not yet aired', untilDays: '{d} d {h} h', untilHours: '{h} h {m} min', untilMinutes: '{m} min',
+  animeEpisodesReady: '{n} to watch', animeListEmpty: 'Nothing on your watching list.', anilistLinkFirst: 'Sign in to AniList first (Settings → Anime).', anilistSignIn: 'Sign in to AniList',
+  tracking: 'Tracking', animeStatus: 'Status', statusWatching: 'Watching', statusPlanning: 'Planning', statusCompleted: 'Completed', statusPaused: 'Paused', statusDropped: 'Dropped', statusRepeating: 'Rewatching',
+  less: 'One less', animeScore: 'Score', animeAddToList: 'Add to my list', animeRemoveEntry: 'Remove from my list', animeRemoveEntryConfirm: 'Remove this show from your AniList list?', animeRemoved: 'Removed from your list', animeSaved: 'Saved to AniList', animeQueued: 'Kept — sent when AniList can be reached',
+  animeSynopsis: 'Synopsis', animeRelations: 'Related', animeLinks: 'Links', animeFindTorrents: 'Find torrents', animeBatch: 'Batch', animeBest: 'Best release', animeSeen: 'Watched', animeMarkSeen: 'Mark as watched', animeOnlyMatching: 'Only this episode (and batches holding it)',
+  animeNoProviders: 'No anime sources are set up. Install the Anime add-on’s sources, or add an extension repository.', animeProgressMarked: '{title}: episode {n} marked as watched',
+  relPrequel: 'Prequel', relSequel: 'Sequel', relSide: 'Side story', relParent: 'Parent', relAlternative: 'Alternative', relSpinoff: 'Spin-off', relSource: 'Source', relAdaptation: 'Adaptation',
+  anilistClientId: 'AniList client id', anilistHowTo: 'Make an API client on AniList (any name; redirect URL https://anilist.co/api/v2/oauth/pin), then paste its id here and sign in.', anilistTokenPlaceholder: 'Or paste the token AniList shows after signing in', anilistLink: 'Link', anilistLinkedAs: 'Signed in as {name}', anilistUnlink: 'Sign out', anilistNeedClient: 'The client id is needed first', anilistSignInWindow: 'Sign in to AniList', anilistAutoProgress: 'Mark episodes watched as their downloads finish',
+  animeQuality: 'Preferred quality', animeAdult: 'Show adult titles', animeTitleLang: 'Titles', titlePreferred: 'As on AniList', titleRomaji: 'Romaji', titleEnglish: 'English', titleNative: 'Native',
+  animeRepos: 'Extension repositories', animeReposHint: 'Hayase (index.json) and Seanime (marketplace or manifest) repositories: their anime torrent providers are installed and updated from here.', animeRepoUrl: 'Repository URL', animeRepoAdd: 'Add', animeRepoAdded: '{n} sources installed', animeRepoRemove: 'Remove this repository', animeProviderBuiltin: 'From the Kurokawa repository', animeProvidersUpdate: 'Update all', animeProvidersNone: 'No sources yet.',
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

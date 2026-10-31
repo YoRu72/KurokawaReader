@@ -131,6 +131,18 @@ public class KtPlugin extends Plugin {
         if (i == null) { call.reject("notInstalled"); return; }
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve();
     }
+    /** A sign-in page shown in the app, resolved with the address it ends on (null when closed first). */
+    @PluginMethod public void captureUrl(PluginCall call) {
+        Intent i = new Intent(getContext(), KtAuthActivity.class);
+        i.putExtra(KtAuthActivity.EXTRA_URL, call.getString("url", "")); i.putExtra(KtAuthActivity.EXTRA_MARKER, call.getString("marker", "")); i.putExtra(KtAuthActivity.EXTRA_TITLE, call.getString("title", ""));
+        startActivityForResult(call, i, "urlCaptured");
+    }
+    @ActivityCallback private void urlCaptured(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject o = new JSObject(); Intent d = result.getData();
+        o.put("url", result.getResultCode() == android.app.Activity.RESULT_OK && d != null ? d.getStringExtra(KtAuthActivity.RESULT_URL) : null);
+        call.resolve(o);
+    }
     @PluginMethod public void openUrl(PluginCall call) {
         try { Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); }
     }
