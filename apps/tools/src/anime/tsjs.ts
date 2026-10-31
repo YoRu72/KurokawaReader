@@ -5,7 +5,8 @@ export function parsesAsJs(code: string): boolean { try { new Function(code); re
 
 export async function toJs(code: string): Promise<string> {
   if (parsesAsJs(code)) return code;
-  const ts = (await import('typescript')).default;
+  // (Pinned under its own name: TypeScript 7 is a native compiler whose npm package has no JavaScript API.)
+  const ts = (await import('typescript-js-api')).default;
   const out = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, useDefineForClassFields: true, removeComments: false, isolatedModules: true }, reportDiagnostics: false }).outputText;
   // (The payload runs as a function body: module syntax has no place there.)
   return out.replace(/^\s*import\s[^\n]*$/gm, '').replace(/^\s*export\s*\{[^}]*\}\s*;?\s*$/gm, '').replace(/^(\s*)export\s+(default\s+)?(?=class|function|async|const|let|var)/gm, '$1');
