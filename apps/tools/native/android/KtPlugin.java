@@ -131,6 +131,18 @@ public class KtPlugin extends Plugin {
         if (i == null) { call.reject("notInstalled"); return; }
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve();
     }
+    /** A sign-in page shown in the app, resolved with the address it ends on (null when closed first). */
+    @PluginMethod public void captureUrl(PluginCall call) {
+        Intent i = new Intent(getContext(), KtAuthActivity.class);
+        i.putExtra(KtAuthActivity.EXTRA_URL, call.getString("url", "")); i.putExtra(KtAuthActivity.EXTRA_MARKER, call.getString("marker", "")); i.putExtra(KtAuthActivity.EXTRA_TITLE, call.getString("title", ""));
+        startActivityForResult(call, i, "urlCaptured");
+    }
+    @ActivityCallback private void urlCaptured(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject o = new JSObject(); Intent d = result.getData();
+        o.put("url", result.getResultCode() == android.app.Activity.RESULT_OK && d != null ? d.getStringExtra(KtAuthActivity.RESULT_URL) : null);
+        call.resolve(o);
+    }
     @PluginMethod public void openUrl(PluginCall call) {
         try { Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); }
     }
@@ -173,6 +185,67 @@ public class KtPlugin extends Plugin {
         } catch (Exception e) { call.reject("Cannot start installer: " + e.getMessage(), e); }
     }
     @PluginMethod public void canInstall(PluginCall call) { JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r); }
+
+    /* ---------- archives: what is inside, taking it out (in place when asked), making one ---------- */
+    private final java.util.Map<String, AtomicBoolean> archiveJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    private static File fileOf(String p) { if (p.startsWith("file://")) p = Uri.parse(p).getPath(); return new File(p); }
+    @PluginMethod public void archiveList(PluginCall call) {
+        bg.execute(() -> { try { File f = fileOf(call.getString("path", "")); JSObject r = new JSObject(new org.json.JSONObject(KtArchive.list(f, call.getString("password", null)).toString()).toString()); r.put("resumable", KtArchive.hasJournal(f)); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } });
+    }
+    @PluginMethod public void archiveExtract(PluginCall call) {
+        final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
+        final File f = fileOf(call.getString("path", "")); final File dest = fileOf(call.getString("dest", f.getParent()));
+        final KtArchive.Options o = new KtArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)); o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
+        bg.execute(() -> {
+            final long[] last = { 0 };
+            try {
+                int n = KtArchive.extract(f, dest, o, new KtArchive.Progress() {
+                    public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); }
+                    public boolean stopped() { return stop.get(); }
+                });
+                JSObject r = new JSObject(); r.put("files", n); r.put("dest", dest.getAbsolutePath()); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+            finally { if (!id.isEmpty()) archiveJobs.remove(id); }
+        });
+    }
+    @PluginMethod public void archiveCancel(PluginCall call) { AtomicBoolean c = archiveJobs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
+    @PluginMethod public void archiveCreate(PluginCall call) {
+        final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
+        final File out = fileOf(call.getString("out", "")); final java.util.List<File> ins = new java.util.ArrayList<>();
+        try { JSArray a = call.getArray("inputs"); for (int i = 0; i < a.length(); i++) ins.add(fileOf(a.getString(i))); } catch (Exception e) { call.reject("inputs"); return; }
+        bg.execute(() -> {
+            final long[] last = { 0 };
+            try { int n = KtArchive.createZip(out, ins, new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } });
+                JSObject r = new JSObject(); r.put("files", n); r.put("path", out.getAbsolutePath()); r.put("size", out.length()); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+            finally { if (!id.isEmpty()) archiveJobs.remove(id); }
+        });
+    }
+    /** A file picked by the user (an archive to open), copied into the app's files when it is a content URI. */
+    @PluginMethod public void pickFile(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT); i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("*/*");
+        if (Boolean.TRUE.equals(call.getBoolean("multiple", false))) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(call, i, "filePicked");
+    }
+    @ActivityCallback private void filePicked(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); if (data == null) { call.reject("cancelled"); return; }
+        final java.util.List<Uri> uris = new java.util.ArrayList<>();
+        if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri()); else if (data.getData() != null) uris.add(data.getData());
+        if (uris.isEmpty()) { call.reject("cancelled"); return; }
+        bg.execute(() -> {
+            try {
+                JSArray paths = new JSArray();
+                for (Uri u : uris) {
+                    String name = "file"; try (android.database.Cursor c = getContext().getContentResolver().query(u, null, null, null, null)) { if (c != null && c.moveToFirst()) { int ix = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME); if (ix >= 0) name = c.getString(ix); } }
+                    File dir = new File(engine().defaultDir(), "Archives"); dir.mkdirs(); File out = new File(dir, name);
+                    // (A file already in the app's folders is used where it is; anything else is copied in.)
+                    try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u); java.io.OutputStream os = new java.io.FileOutputStream(out)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) os.write(b, 0, n); }
+                    paths.put(out.getAbsolutePath());
+                }
+                JSObject r = new JSObject(); r.put("paths", paths); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
+        });
+    }
 
     /* ---------- requests for the add-ons (past the page's CORS), with the WebView's identity and cookies ---------- */
     @PluginMethod public void httpRequest(PluginCall call) {

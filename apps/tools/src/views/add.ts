@@ -4,6 +4,7 @@ import { h, icon, openSheet, toast } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
 import type { TaskSource, TorrentInfo } from '../engine/types';
+import { canArchive, pickFiles } from '../archives';
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin } from '../native';
 
@@ -20,7 +21,8 @@ export function addSheet(initial = ''): void {
   fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (!f) return; torrentFile = { name: f.name, b64: toBase64(await f.arrayBuffer()) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); });
   const tools = h('div', { class: 'add-tools' },
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { const s = await navigator.clipboard.readText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value ? ta.value + '\n' : '') + s.trim(); void metadata(); } catch { toast(t('nothingToPaste'), 'error'); } } }, icon('copy'), t('pasteLink')),
-    ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []));
+    ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []),
+    ...(getSettings().addons.includes('archives') && canArchive() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const [f] = await pickFiles(false); if (!f) return; sh.close(); void import('./extract').then((m) => m.extractSheet(f)); } }, icon('archive'), t('openArchive')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./extract').then((m) => m.createZipSheet()); } }, icon('plus'), t('createZip'))] : []));
   // Options
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));

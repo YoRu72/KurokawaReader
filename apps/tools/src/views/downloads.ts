@@ -7,6 +7,7 @@ import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
 import { addSheet } from './add';
 import { getSettings } from '../settings';
+import { canArchive, isArchiveName } from '../archives';
 
 const ACTIVE: TaskState[] = ['queued', 'metadata', 'downloading', 'checking', 'seeding'];
 export const stateLabel = (s: TaskState): string => t(({ queued: 'stateQueued', metadata: 'stateMetadata', downloading: 'stateDownloading', seeding: 'stateSeeding', paused: 'statePaused', done: 'stateDone', failed: 'stateFailed', checking: 'stateChecking' } as const)[s]);
@@ -84,6 +85,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(x.id)}`));
     if (x.state === 'done' && eng.open) { row('play', t('open'), () => void eng.open!(x.id)); row('folder', t('openFolder'), () => void eng.open!(x.id, -1)); }
+    if (x.state === 'done' && x.kind !== 'torrent' && getSettings().addons.includes('archives') && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('archive', t('extract'), () => void import('./extract').then((m) => m.extractSheet(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)));
     if (x.source.magnet) row('copy', t('copyMagnet'), () => void navigator.clipboard?.writeText(x.source.magnet!).then(() => toast(t('copied'))));
     if (x.source.url) row('copy', t('copyLink'), () => void navigator.clipboard?.writeText(x.source.url!).then(() => toast(t('copied'))));
     row('trash', t('removeKeepFiles'), () => void eng.remove(x.id, false).then(() => toast(t('taskRemoved'))).catch((er) => toast(String(er.message ?? er), 'error')));

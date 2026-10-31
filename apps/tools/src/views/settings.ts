@@ -8,6 +8,7 @@ import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
 import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
+import { animeSettingsCard } from './animeSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
@@ -42,7 +43,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       eng.can.limits ? row(t('upLimit'), numberField(Math.round(s.limits.up / 1024), (v) => { const l = { ...s.limits, up: v * 1024 }; updateSettings({ limits: l }); void eng.setLimits?.(l); }, { width: '7em' }), 'KB/s · 0 = ' + t('unlimited')) : null,
       eng.can.seeding ? toggle(t('seedAfterDone'), s.seedAfterDone, (v) => { updateSettings({ seedAfterDone: v }); void (window.kurokawaTools?.configure?.({ seed: v }) ?? ktPlugin()?.configure({ seed: v })); }) : null,
       eng.can.torrents && eng.id === 'native' ? row(t('listenPort'), numberField(s.listenPort, (v) => { updateSettings({ listenPort: v }); void (window.kurokawaTools?.configure?.({ listenPort: v }) ?? ktPlugin()?.configure({ listenPort: v })); }, { min: 0, max: 65535, width: '7em' }), `0 = ${t('portRandom')}`) : null,
-      toggle(t('sequential'), s.sequentialVideo, (v) => updateSettings({ sequentialVideo: v })));
+      toggle(t('sequential'), s.sequentialVideo, (v) => updateSettings({ sequentialVideo: v })),
+      ...(s.addons.includes('archives') ? [toggle(t('autoUnpackSubs'), s.autoUnpackSubs, (v) => updateSettings({ autoUnpackSubs: v })), toggle(t('autoUnpackAll'), s.autoUnpackAll, (v) => updateSettings({ autoUnpackAll: v }), t('autoUnpackAllHint'))] : []));
     void dirLabel;
     // Remote aria2
     const url = h('input', { type: 'url', value: s.aria2.url, dir: 'ltr', placeholder: 'http://192.168.1.10:6800/jsonrpc' }) as HTMLInputElement;
@@ -87,7 +89,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
-    return [general, downloads, aria2, addons, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
+    return [general, downloads, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

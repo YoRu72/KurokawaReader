@@ -7,6 +7,7 @@ if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.tools');
 const path = require('node:path');
 const fs = require('node:fs');
 const { Aria2Engine } = require('./aria2.cjs');
+const Archive = require('./archive.cjs');
 
 const DIST = path.join(__dirname, 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm' };
@@ -94,7 +95,34 @@ ipcMain.handle('kt:http', async (_e, o) => {
   const buf = Buffer.from(await r.arrayBuffer());
   return { status: r.status, url: r.url, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
 });
+/** A small window for a sign-in: resolves with the first address that carries `marker` (the token in AniList's
+ *  pin page URL), or null when the window is closed first. Nothing of the page is read beyond its address. */
+ipcMain.handle('kt:captureUrl', (_e, o) => new Promise((resolve) => {
+  const w = new BrowserWindow({ width: 520, height: 720, parent: win || undefined, title: String(o.title || ''), autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:signin' } });
+  let done = false; const finish = (v) => { if (done) return; done = true; resolve(v); setTimeout(() => { if (!w.isDestroyed()) w.close(); }, 50); };
+  const check = (u) => { if (typeof u === 'string' && u.includes(String(o.marker))) finish(u); };
+  w.webContents.on('will-navigate', (_ev, u) => check(u)); w.webContents.on('will-redirect', (_ev, u) => check(u)); w.webContents.on('did-navigate', (_ev, u) => check(u)); w.webContents.on('did-navigate-in-page', (_ev, u) => check(u));
+  w.on('closed', () => finish(null));
+  w.loadURL(String(o.url));
+}));
 ipcMain.handle('kt:readFile', async (_e, p) => { const b = await fs.promises.readFile(String(p)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
+
+/* ---------- archives ---------- */
+const archiveJobs = new Map();
+ipcMain.handle('kt:archiveList', (_e, o) => Archive.list(String(o.path), o.password));
+ipcMain.handle('kt:archiveExtract', async (e, o) => {
+  const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
+  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
+  finally { if (o.id) archiveJobs.delete(o.id); }
+});
+ipcMain.handle('kt:archiveCancel', (_e, id) => { const s = archiveJobs.get(id); if (s) s.v = true; });
+ipcMain.handle('kt:archiveCreate', async (e, o) => {
+  const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
+  try { const files = await Archive.createZip(String(o.out), (o.inputs || []).map(String), { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, path: o.out, size: fs.statSync(String(o.out)).size }; }
+  finally { if (o.id) archiveJobs.delete(o.id); }
+});
+ipcMain.handle('kt:pickFile', async (_e, o) => { const r = await dialog.showOpenDialog(win, { properties: ['openFile', ...(o?.multiple ? ['multiSelections'] : [])], filters: o?.filters }); return r.canceled ? null : r.filePaths; });
+ipcMain.handle('kt:pathInfo', async (_e, p) => { try { const st = await fs.promises.stat(String(p)); return { exists: true, dir: st.isDirectory(), size: st.size, name: path.basename(String(p)), parent: path.dirname(String(p)) }; } catch { return { exists: false }; } });
 
 /* ---------- updates: the repository's tools-v* releases ---------- */
 const cmp = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; } return 0; };
