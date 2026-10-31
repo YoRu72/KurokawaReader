@@ -6,9 +6,10 @@ import { t, localDigits, countEpisodes, dateLocale, getLang, countDays, countHou
 import { navigate } from '../router';
 import { getSettings } from '../settings';
 import * as al from '../anilist';
+import * as guide from '../anime/guide';
 import type { Anime, Season, AlStatus } from '../anilist';
 
-export type AnimeTab = 'search' | 'season' | 'schedule' | 'list';
+export type AnimeTab = 'search' | 'season' | 'schedule' | 'list' | 'diary';
 const TAB_KEY = 'kt.anime.tab';
 
 export const seasonName = (s: Season): string => t(({ WINTER: 'seasonWinter', SPRING: 'seasonSpring', SUMMER: 'seasonSummer', FALL: 'seasonFall' } as const)[s]);
@@ -41,13 +42,15 @@ export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?:
   const body = h('div', { class: 'body anime-body' });
   const chips = h('div', { class: 'chips filter-chips' });
   const root = h('div', { class: 'view anime-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navAnime'))), h('div', { class: 'topbar-actions' }, iconButton('puzzle', t('animeProviders'), () => navigate('/settings/anime')))), chips, body) as HTMLElement & { dispose?: () => void };
-  const TABS: [AnimeTab, string, string][] = [['search', t('navSearch'), 'search'], ['season', t('animeSeason'), 'calendar'], ['schedule', t('animeSchedule'), 'clock'], ['list', t('animeMyList'), 'bookmark']];
+  const TABS: [AnimeTab, string, string][] = [['search', t('navSearch'), 'search'], ['season', t('animeSeason'), 'calendar'], ['schedule', t('animeSchedule'), 'clock'], ['list', t('animeMyList'), 'bookmark'], ...(al.linked() ? [['diary', t('animeDiary'), 'chart'] as [AnimeTab, string, string]] : [])];
   let timer = 0; let token = 0;
   const drawChips = () => chips.replaceChildren(...TABS.map(([k, label, ic]) => h('button', { type: 'button', class: 'chip' + (current === k ? ' on' : ''), 'aria-pressed': String(current === k), onclick: () => { current = k; localStorage.setItem(TAB_KEY, k); navigate(`/anime?tab=${k}`, true); draw(); } }, icon(ic), label)));
   const grid = (items: Anime[], extra?: (a: Anime) => HTMLElement | null) => h('div', { class: 'anime-grid' }, ...items.map((a) => animeCard(a, extra?.(a))));
   const spinner = () => h('div', { class: 'center' }, h('div', { class: 'spinner' }));
   const fail = (e: unknown) => h('p', { class: 'empty small' }, String((e as Error)?.message ?? e));
 
+  /** «+ Plan» on a card of a show not on the list (the Season Guide's quick add). */
+  const planBtn = (a: Anime): HTMLElement | null => (!al.linked() || a.entry ? null : h('span', { class: 'plan-chip', role: 'button', tabindex: '0', onclick: async (e: Event) => { e.stopPropagation(); const el = e.currentTarget as HTMLElement; el.classList.add('busy'); try { const r = await al.saveOrQueue(a.id, { status: 'PLANNING', progress: 0, score: 0 }); a.entry = r.entry; el.replaceWith(h('span', { class: 'plan-chip done' }, icon('check'), t('statusPlanning'))); } catch (er) { toast(String((er as Error).message ?? er), 'error'); el.classList.remove('busy'); } } }, icon('plus'), t('plan')));
   const draw = () => {
     drawChips(); window.clearInterval(timer); const my = ++token; body.replaceChildren();
     if (current === 'search') {
@@ -66,15 +69,19 @@ export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?:
         const mine = ++loads;
         head.replaceChildren(iconButton('chevronLeft', t('back'), () => { at = al.seasonShift(at, -1); void load(); }), h('h2', null, `${seasonName(at.season)} ${localDigits(at.year)}`), iconButton('chevronRight', t('next'), () => { at = al.seasonShift(at, 1); void load(); }),
           h('div', { class: 'grow' }), h('button', { type: 'button', class: 'chip' + (leftovers ? ' on' : ''), onclick: () => { leftovers = !leftovers; void load(); } }, t('animeLeftovers')),
-          h('button', { type: 'button', class: 'chip', onclick: () => { sort = sort === 'POPULARITY_DESC' ? 'SCORE_DESC' : sort === 'SCORE_DESC' ? 'START_DATE' : 'POPULARITY_DESC'; void load(); } }, icon('sort'), t(sort === 'POPULARITY_DESC' ? 'sortPopular' : sort === 'SCORE_DESC' ? 'sortScore' : 'sortDate')));
+          h('button', { type: 'button', class: 'chip', onclick: () => { const order = ['POPULARITY_DESC', 'SCORE_DESC', 'START_DATE', ...(al.linked() ? ['FOR_YOU'] : [])]; sort = order[(order.indexOf(sort) + 1) % order.length]; void load(); } }, icon('sort'), t(sort === 'POPULARITY_DESC' ? 'sortPopular' : sort === 'SCORE_DESC' ? 'sortScore' : sort === 'FOR_YOU' ? 'sortForYou' : 'sortDate')));
         list.replaceChildren(spinner());
         try {
           let r: Anime[];
           if (leftovers) r = await al.leftovers(al.seasonShift(at, -1).season, al.seasonShift(at, -1).year, adult);
-          else { r = []; for (let page = 1; page <= 4; page++) { const c = await al.seasonChart(at.season, at.year, { adult, sort, page }); if (my !== token || mine !== loads) return; r.push(...c.media); if (page === 1) list.replaceChildren(grid(r)); if (!c.hasNext) break; } }
+          else { r = []; for (let page = 1; page <= 4; page++) { const c = await al.seasonChart(at.season, at.year, { adult, sort: sort === 'FOR_YOU' ? 'POPULARITY_DESC' : sort, page }); if (my !== token || mine !== loads) return; r.push(...c.media); if (page === 1 && sort !== 'FOR_YOU') list.replaceChildren(grid(r, planBtn)); if (!c.hasNext) break; } }
           if (my !== token || mine !== loads) return;
+          // «For you»: the season in the order of your taste, each card with how well it fits.
+          if (sort === 'FOR_YOU') { const w = await guide.taste().catch(() => new Map<string, number>()); if (my !== token || mine !== loads) return; const fits = new Map(r.map((a) => [a.id, guide.fit(a, w)])); r = [...r].sort((x, y) => fits.get(y.id)! - fits.get(x.id)!); list.replaceChildren(grid(r, (a) => { const f = fits.get(a.id)!; const pl = planBtn(a); return h('span', { class: 'anime-fit' }, h('b', null, `${localDigits(f)}%`), ' ', t('fitForYou'), pl); })); return; }
+          // The season's top ten as tiers, above the grid.
+          if (!leftovers && r.length > 12) { const top = guide.tiers(r); list.replaceChildren(h('div', { class: 'tier-strip' }, ...(['S', 'A', 'B', 'C'] as const).map((tier) => h('div', { class: `tier-row t-${tier}` }, h('b', { class: 'tier-letter' }, tier), h('div', { class: 'tier-items' }, ...top.filter((x) => x.tier === tier).map(({ a }) => h('button', { type: 'button', class: 'tier-item', title: titleOf(a), onclick: () => navigate(`/anime/${a.id}`) }, a.cover ? h('img', { src: a.cover, alt: '', loading: 'lazy' }) : icon('film'))))))), grid(r, planBtn)); return; }
           // The shows on the user's list first within the season's order, so «what am I watching this season» is on top.
-          list.replaceChildren(r.length ? grid(r) : h('p', { class: 'empty small' }, t('noResults')));
+          list.replaceChildren(r.length ? grid(r, planBtn) : h('p', { class: 'empty small' }, t('noResults')));
         } catch (e) { if (mine === loads) list.replaceChildren(fail(e)); }
       };
       body.append(head, list); void load();
@@ -95,6 +102,20 @@ export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?:
           timer = window.setInterval(() => { const n = Math.floor(Date.now() / 1000); list.querySelectorAll<HTMLElement>('.sched-row').forEach((row, i) => { const it = items[i]; if (!it) return; const u = row.querySelector('.sched-until')!; u.textContent = it.airingAt <= n ? t('animeAiredNow') : fmtUntil(it.airingAt - n); row.classList.toggle('aired', it.airingAt <= n); }); }, 30000);
         } catch (e) { list.replaceChildren(fail(e)); }
       })();
+    } else if (current === 'diary') {
+      const sub = h('div', { class: 'chip-row wrap list-status' }); const out = h('div'); body.append(sub, out); let which = localStorage.getItem('kt.anime.diary') ?? 'calendar';
+      const drawSub = () => sub.replaceChildren(...([['calendar', t('diaryCalendar')], ['unfinished', t('diaryUnfinished')], ['year', t('diaryYear')]] as const).map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (which === k ? ' on' : ''), onclick: () => { which = k; try { localStorage.setItem('kt.anime.diary', k); } catch { /* none */ } drawSub(); void show(); } }, l)));
+      let acts: Awaited<ReturnType<typeof guide.activities>> | null = null;
+      const show = async () => {
+        out.replaceChildren(spinner());
+        try {
+          if (which === 'unfinished') { const u = await guide.unfinished(); if (my !== token) return; out.replaceChildren(u.length ? grid(u.map((x) => x.a), (a) => { const x = u.find((y) => y.a.id === a.id)!; return h('span', { class: 'anime-facts' }, [x.behind ? t('diaryBehind', { n: countEpisodes(x.behind) }) : '', new Intl.DateTimeFormat(dateLocale('prose'), { day: 'numeric', month: 'short' }).format(new Date(x.updatedAt * 1000))].filter(Boolean).join(' · ')); }) : h('p', { class: 'empty small' }, t('animeListEmpty'))); return; }
+          acts ??= await guide.activities(); if (my !== token) return;
+          if (which === 'calendar') out.replaceChildren(diaryCalendar(guide.diaryDays(acts)));
+          else out.replaceChildren(diaryYear(acts));
+        } catch (e) { out.replaceChildren(fail(e)); }
+      };
+      drawSub(); void show();
     } else {
       if (!al.linked()) { body.append(h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('user')), h('h2', null, t('animeMyList')), h('p', null, t('anilistLinkFirst')), h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn primary', onclick: () => navigate('/settings/anime') }, icon('link'), t('anilistSignIn'))))); return; }
       const stats: (AlStatus | 'ALL')[] = ['CURRENT', 'PLANNING', 'PAUSED', 'COMPLETED', 'DROPPED', 'REPEATING'];
@@ -122,3 +143,41 @@ export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?:
 /** «٣ حلقات للمشاهدة» — the count with its noun in Arabic and English; CJK strings carry their own counter. */
 const readyText = (n: number): string => (getLang() === 'ar' || getLang() === 'en' ? t('animeEpisodesReady', { n: countEpisodes(n) }) : t('animeEpisodesReady', { n }));
 export const statusName = (s: al.AlStatus): string => t(({ CURRENT: 'statusWatching', PLANNING: 'statusPlanning', COMPLETED: 'statusCompleted', PAUSED: 'statusPaused', DROPPED: 'statusDropped', REPEATING: 'statusRepeating' } as const)[s]);
+
+/** The year as a heatmap of episodes watched (each day a square, darker for more), and the days listed below. */
+function diaryCalendar(days: Map<string, guide.DiaryDay>): HTMLElement {
+  const year = new Date().getFullYear(); let shownYear = year;
+  const box = h('div', { class: 'diary' }); const detail = h('div', { class: 'diary-day' });
+  const draw = () => {
+    const start = new Date(shownYear, 0, 1); const cells: HTMLElement[] = []; const lead = start.getDay();
+    for (let i = 0; i < lead; i++) cells.push(h('i', { class: 'hm empty' }));
+    for (let d = new Date(start); d.getFullYear() === shownYear; d.setDate(d.getDate() + 1)) {
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; const day = days.get(key);
+      const n = day ? day.items.reduce((s, x) => s + Math.max(1, x.episodes.length), 0) : 0; const lvl = n === 0 ? 0 : n < 2 ? 1 : n < 4 ? 2 : n < 8 ? 3 : 4;
+      const cell = h('button', { type: 'button', class: `hm l${lvl}`, title: key, onclick: () => showDay(key) }); cells.push(cell);
+    }
+    box.replaceChildren(h('div', { class: 'season-head' }, iconButton('chevronLeft', t('back'), () => { shownYear--; draw(); }), h('h2', null, localDigits(shownYear, 'prose')), iconButton('chevronRight', t('next'), () => { if (shownYear < year) { shownYear++; draw(); } })), h('div', { class: 'heatmap' }, ...cells), detail);
+    const recent = [...days.keys()].filter((k) => k.startsWith(String(shownYear))).sort().pop(); if (recent) showDay(recent); else detail.replaceChildren();
+    // (Today's end of the year in view.)
+    requestAnimationFrame(() => { const hm = box.querySelector<HTMLElement>('.heatmap'); if (hm) hm.scrollLeft = hm.scrollWidth; });
+  };
+  const showDay = (key: string) => { const d = days.get(key); const df = new Intl.DateTimeFormat(dateLocale('prose'), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); detail.replaceChildren(h('h3', null, df.format(new Date(`${key}T12:00:00`))), ...(d ? d.items.map((it) => h('button', { type: 'button', class: 'sched-row', onclick: () => navigate(`/anime/${it.id}`) }, it.cover ? h('img', { src: it.cover, alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }), h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, it.title), h('small', { class: 'src' }, it.episodes.length ? t('diaryEpisodes', { n: [...new Set(it.episodes)].sort((a, b) => a - b).map((x) => localDigits(x, 'prose')).join('، ') }) : statusText(it.status))))) : [h('p', { class: 'empty small' }, t('diaryNothing'))])); };
+  draw(); return box;
+}
+const statusText = (s: string) => (/completed/.test(s) ? t('statusCompleted') : /dropped/.test(s) ? t('statusDropped') : /paused/.test(s) ? t('statusPaused') : /plans/.test(s) ? t('statusPlanning') : s);
+/** The year in review: episodes, hours, shows, the longest streak, the busiest day, months, top shows, genres, studios. */
+function diaryYear(acts: Awaited<ReturnType<typeof guide.activities>>): HTMLElement {
+  let y = new Date().getFullYear(); const box = h('div', { class: 'diary' });
+  const draw = () => {
+    const r = guide.yearReview(acts, y); const max = Math.max(1, ...r.months);
+    const stat = (v: string, l: string) => h('div', { class: 'stat' }, h('b', null, v), h('small', null, l));
+    const bars = (rows: [string, number][]) => h('div', { class: 'bars' }, ...rows.map(([k, v]) => h('div', { class: 'bar-row' }, h('span', { class: 'grow', dir: 'auto' }, k), h('i', { style: { inlineSize: `${(v / Math.max(1, rows[0]?.[1] ?? 1)) * 60}%` } }), h('small', null, localDigits(v, 'prose')))));
+    const mf = new Intl.DateTimeFormat(dateLocale('prose'), { month: 'short' });
+    box.replaceChildren(h('div', { class: 'season-head' }, iconButton('chevronLeft', t('back'), () => { y--; draw(); }), h('h2', null, localDigits(y, 'prose')), iconButton('chevronRight', t('next'), () => { if (y < new Date().getFullYear()) { y++; draw(); } })),
+      h('div', { class: 'stats' }, stat(localDigits(r.episodes, 'prose'), t('diaryStatEpisodes')), stat(localDigits(Math.round(r.minutes / 60), 'prose'), t('diaryStatHours')), stat(localDigits(r.shows, 'prose'), t('diaryStatShows')), stat(localDigits(r.completed, 'prose'), t('statusCompleted')), stat(localDigits(r.longestStreak, 'prose'), t('diaryStatStreak'))),
+      ...(r.busiest ? [h('p', { class: 'src' }, t('diaryBusiest', { date: new Intl.DateTimeFormat(dateLocale('prose'), { day: 'numeric', month: 'long' }).format(new Date(`${r.busiest.date}T12:00:00`)), n: countEpisodes(r.busiest.episodes) }))] : []),
+      h('div', { class: 'months' }, ...r.months.map((v, i) => h('div', { class: 'month' }, h('i', { style: { blockSize: `${(v / max) * 100}%` } }), h('small', null, mf.format(new Date(y, i, 1)))))),
+      ...(r.top.length ? [h('h3', null, t('diaryTopShows')), bars(r.top)] : []), ...(r.genres.length ? [h('h3', null, t('diaryTopGenres')), bars(r.genres)] : []), ...(r.studios.length ? [h('h3', null, t('diaryTopStudios')), bars(r.studios)] : []));
+  };
+  draw(); return box;
+}

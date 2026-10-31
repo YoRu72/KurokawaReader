@@ -70,6 +70,15 @@ if (!manifest.includes('android:scheme="magnet"')) {
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="kurokawatools" />
       </intent-filter>
+      <!-- An anime's page on AniList or MyAnimeList: offered to open in the app (the show's page) -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" />
+        <data android:host="anilist.co" android:pathPrefix="/anime/" />
+        <data android:host="myanimelist.net" android:pathPrefix="/anime/" />
+      </intent-filter>
 `);
 }
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');

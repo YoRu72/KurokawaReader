@@ -73,7 +73,17 @@ function mountInner(route: Route): void {
     case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q))); break;
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q))); break;
-    case 'add': current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(route.u ?? '')), 50); break;
+    case 'add': {
+      // An AniList or MyAnimeList page opened with the app goes to the show's page (Open in Seanime's idea);
+      // anything else into the Add sheet.
+      const u = route.u ?? ''; const al = /anilist\.co\/anime\/(\d+)/i.exec(u); const mal = /myanimelist\.net\/anime\/(\d+)/i.exec(u);
+      if ((al || mal) && getSettings().addons.includes('anime')) {
+        current = downloadsView();
+        void (async () => { let id = al ? Number(al[1]) : 0; if (!id && mal) { const { gql } = await import('./anilist'); const d = await gql<{ Media: { id: number } | null }>('query ($mal: Int) { Media(idMal: $mal, type: ANIME) { id } }', { mal: Number(mal[1]) }, false).catch(() => null); id = d?.Media?.id ?? 0; } if (id) navigate(`/anime/${id}`, true); else void import('./views/add').then((m) => m.addSheet(u)); })();
+        break;
+      }
+      current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(u)), 50); break;
+    }
     default: current = downloadsView(route.filter);
   }
   app.appendChild(current);
