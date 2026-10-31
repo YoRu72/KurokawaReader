@@ -93,6 +93,7 @@ if (getSettings().addons.includes('anime')) void import('./anime/progress').then
 if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
 if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
 setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
+void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
 if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
 if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });

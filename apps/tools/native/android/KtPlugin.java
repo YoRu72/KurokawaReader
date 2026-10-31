@@ -154,6 +154,16 @@ public class KtPlugin extends Plugin {
             Intent ch = Intent.createChooser(i, call.getString("title", "")); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve();
         } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
+    /** A file's checksums (Prism's «verify»): MD5, SHA-1 and SHA-256 in one read. */
+    @PluginMethod public void hashFile(PluginCall call) {
+        final File f = fileOf(call.getString("path", ""));
+        bg.execute(() -> { try { java.security.MessageDigest md5 = java.security.MessageDigest.getInstance("MD5"), sha1 = java.security.MessageDigest.getInstance("SHA-1"), sha256 = java.security.MessageDigest.getInstance("SHA-256"); byte[] b = new byte[1 << 16]; try (java.io.InputStream in = new java.io.FileInputStream(f)) { int n; while ((n = in.read(b)) > 0) { md5.update(b, 0, n); sha1.update(b, 0, n); sha256.update(b, 0, n); } } JSObject r = new JSObject(); r.put("md5", hex(md5.digest())); r.put("sha1", hex(sha1.digest())); r.put("sha256", hex(sha256.digest())); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
+    }
+    private static String hex(byte[] d) { StringBuilder sb = new StringBuilder(); for (byte x : d) sb.append(String.format("%02x", x)); return sb.toString(); }
+    /** What is on the clipboard (read while the app is in front, as Android allows), for the clipboard monitor. */
+    @PluginMethod public void clipboardText(PluginCall call) {
+        getActivity().runOnUiThread(() -> { try { android.content.ClipboardManager cm = (android.content.ClipboardManager) getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE); JSObject r = new JSObject(); String text = ""; if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) { CharSequence c = cm.getPrimaryClip().getItemAt(0).coerceToText(getContext()); if (c != null) text = c.toString(); } r.put("text", text); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
+    }
     @PluginMethod public void openUrl(PluginCall call) {
         try { Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); }
     }

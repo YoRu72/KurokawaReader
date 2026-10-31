@@ -28,7 +28,7 @@ export function preferredFormat(): Pick<VideoPick, 'format' | 'audioOnly' | 'lab
   return { format: `bestvideo[height<=${q}]+bestaudio/best[height<=${q}]`, label: `${q}p` };
 }
 /** A link worth asking yt-dlp about: a web page (a video site's, or any page not naming a file). */
-export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (isVideoHost(url) || !looksLikeFile(url));
+export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (isVideoHost(url) || /\.(m3u8|mpd)(\?|$)/i.test(url) || !looksLikeFile(url));
 
 export function videoPanel(onChange: () => void): VideoPanel {
   const el = h('div', { class: 'video-panel', hidden: true });

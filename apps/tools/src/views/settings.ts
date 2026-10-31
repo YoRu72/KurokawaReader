@@ -78,6 +78,10 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       toggle(t('sequential'), s.sequentialVideo, (v) => updateSettings({ sequentialVideo: v })),
       toggle(t('useCategoryFolders'), s.useCategoryFolders, (v) => updateSettings({ useCategoryFolders: v }), t('useCategoryFoldersHint')),
       ...(s.addons.includes('debrid') ? [toggle(t('debridDefault'), s.debridDefault, (v) => updateSettings({ debridDefault: v }), t('debridDefaultHint'))] : []),
+      toggle(t('clipboardWatch'), s.clipboardWatch, (v) => updateSettings({ clipboardWatch: v }), t('clipboardWatchHint')),
+      toggle(t('scheduleOn'), s.schedule.enabled, (v) => { updateSettings({ schedule: { ...getSettings().schedule, enabled: v } }); rerender(); void import('../downloads/prism').then((m) => m.startScheduler()); }, t('scheduleHint')),
+      ...(s.schedule.enabled ? [h('div', { class: 'row' }, h('span', null, t('scheduleHours')), h('span', { class: 'row-actions', dir: 'ltr' }, h('input', { type: 'time', value: s.schedule.start, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, start: (e.target as HTMLInputElement).value } }) }), ' – ', h('input', { type: 'time', value: s.schedule.stop, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, stop: (e.target as HTMLInputElement).value } }) }))),
+        h('div', { class: 'chip-row wrap' }, ...[0, 1, 2, 3, 4, 5, 6].map((d) => h('button', { type: 'button', class: 'chip small' + (s.schedule.days.includes(d) ? ' on' : ''), onclick: () => { const cur = getSettings().schedule.days; updateSettings({ schedule: { ...getSettings().schedule, days: cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d] } }); rerender(); } }, new Intl.DateTimeFormat(dateLocale('prose'), { weekday: 'short' }).format(new Date(2026, 10, 1 + d)))))] : []),
       );
     void dirLabel;
     // Remote aria2

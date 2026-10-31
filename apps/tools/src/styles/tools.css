@@ -166,3 +166,12 @@ input, textarea, pre, code, .selectable, .release-notes, .kv dd { -webkit-user-s
 .plan-row.good b { color: var(--md-primary); } .plan-row.bad b { color: var(--md-error); }
 .plan-note { margin: 4px 0 0; font-size: 13px; }
 .entry-details summary { cursor: pointer; font-size: 13px; color: var(--md-on-surface-variant); padding: 4px 0; }
+/* Prism's tools: checksums, the grabber */
+.hash-list { display: flex; flex-direction: column; gap: 6px; }
+.hash-row { display: grid; grid-template-columns: 4.5em 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 10px; background: var(--md-surface-container-low); }
+.hash-row code { font-size: 11.5px; overflow-wrap: anywhere; }
+.hash-row.match { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
+input.good { outline: 2px solid var(--md-primary); } input.bad { outline: 2px solid var(--md-error); }
+.grab-list { display: flex; flex-direction: column; max-height: 50vh; overflow: auto; }
+.grab-list .file-row .grow { display: flex; flex-direction: column; min-width: 0; }
+.grab-list .file-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
