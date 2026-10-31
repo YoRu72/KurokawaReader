@@ -53,7 +53,7 @@ export async function install(id: string): Promise<void> {
   const ids = [id, ...(e.children ?? [])];
   for (const k of ids) {
     const a = ix.addons.find((x) => x.id === k); if (!a) continue;
-    if (a.module) { const r = await fetch(addonUrl(`tools/${a.module}`), { cache: 'no-store' }); if (!r.ok) throw new Error(`HTTP ${r.status}`); await db.putFile(`addon:${k}`, await r.blob()); }
+    if (a.module) { const r = await fetch(addonUrl(`tools/${a.module}`), { cache: 'no-store' }); if (!r.ok) throw new Error(`HTTP ${r.status}`); await db.putFile(`addon:${k}`, new Blob([await r.arrayBuffer()], { type: 'text/javascript' })); }  // (GitHub serves .mjs as text/plain; a module import needs a script type)
     if (a.manifest) { const r = await fetch(addonUrl(`tools/${a.manifest}`), { cache: 'no-store' }); if (!r.ok) throw new Error(`HTTP ${r.status}`); await db.setMeta(`addon-manifest:${k}`, await r.json()); }
     await db.setMeta(`addon-version:${k}`, a.version);
   }
@@ -75,7 +75,7 @@ export async function updatesAvailable(): Promise<string[]> {
 }
 /** An installed add-on's module, as a blob URL to import. */
 export async function moduleUrl(id: string): Promise<string | null> {
-  const b = await db.getFile(`addon:${id}`); return b ? URL.createObjectURL(b) : null;
+  const b = await db.getFile(`addon:${id}`); return b ? URL.createObjectURL(b.type === 'text/javascript' ? b : new Blob([b], { type: 'text/javascript' })) : null;
 }
 export const nameOf = (a: AddonEntry, lang: string): string => a.names?.[lang] ?? a.name;
 export const descOf = (a: AddonEntry, lang: string): string => a.descriptions?.[lang] ?? a.description ?? '';

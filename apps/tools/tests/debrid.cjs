@@ -8,7 +8,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
-  await p.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { const f = path.join(REPO, r.request().url().split('/main/repo/')[1]); if (!fs.existsSync(f)) return r.fulfill({ status: 404 }); r.fulfill({ body: fs.readFileSync(f), contentType: MIME[path.extname(f)] || 'application/octet-stream' }); });
+  await p.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { const f = path.join(REPO, r.request().url().split('/main/repo/')[1]); if (!fs.existsSync(f)) return r.fulfill({ status: 404 }); r.fulfill({ body: fs.readFileSync(f), contentType: /\.mjs$/.test(f) ? 'text/plain' : (MIME[path.extname(f)] || 'application/octet-stream') }); });  // (GitHub serves .mjs as text/plain)
   let polls = 0;
   await p.route('https://api.real-debrid.com/**', (r) => { const u = r.request().url(); const auth = r.request().headers().authorization; if (auth !== 'Bearer RDKEY') return r.fulfill({ status: 401, json: { error: 'bad_token' } });
     if (u.endsWith('/user')) return r.fulfill({ json: { username: 'maomao', type: 'premium', expiration: '2027-01-01T00:00:00Z' } });

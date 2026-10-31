@@ -106,7 +106,7 @@ async function load(p: ProviderEntry): Promise<HayaseModule | SeanimeClass> {
     m = (async () => {
       const b = await db.getFile(p.code.startsWith('addon:') ? p.code : `provider:${p.id}`); if (!b) throw new Error('not installed');
       if (p.format === 'seanime') return seanimeClass(await b.text(), p);
-      const u = URL.createObjectURL(b);
+      const u = URL.createObjectURL(b.type === 'text/javascript' ? b : new Blob([b], { type: 'text/javascript' }));
       try { const mod = (await import(/* @vite-ignore */ u)) as { default?: HayaseModule } & HayaseModule; return mod.default ?? mod; } finally { URL.revokeObjectURL(u); }
     })();
     modules.set(p.id, m);

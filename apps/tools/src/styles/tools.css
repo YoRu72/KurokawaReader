@@ -94,3 +94,5 @@ html.pc .fab { display: none; }
 /* Selection: the app's words are not text to pick. */
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 input, textarea, pre, code, .selectable, .release-notes, .kv dd { -webkit-user-select: text; user-select: text; }
+
+.crash-detail { font-size: 11px; text-align: start; white-space: pre-wrap; word-break: break-all; max-width: 100%; background: var(--md-surface-container-high); padding: 10px; border-radius: 10px; color: var(--md-on-surface-variant); }

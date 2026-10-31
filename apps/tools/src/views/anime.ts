@@ -68,11 +68,11 @@ export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?:
         try {
           const now = Math.floor(Date.now() / 1000); const start = now - 6 * 3600; const items = (await al.airing(start, now + 7 * 86400)).filter((x) => getSettings().animeAdult || !x.media.isAdult);
           if (my !== token) return;
-          const days = new Map<string, al.AiringItem[]>(); const df = new Intl.DateTimeFormat(dateLocale('prose'), { weekday: 'long', day: 'numeric', month: 'long' }); const tf = new Intl.DateTimeFormat(dateLocale('data'), { hour: '2-digit', minute: '2-digit' });
+          const days = new Map<string, al.AiringItem[]>(); const df = new Intl.DateTimeFormat(dateLocale('prose'), { weekday: 'long', day: 'numeric', month: 'long' }); const tf = new Intl.DateTimeFormat(dateLocale('data'), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
           for (const it of items) { const k = df.format(new Date(it.airingAt * 1000)); (days.get(k) ?? days.set(k, []).get(k)!).push(it); }
           list.replaceChildren(...[...days].map(([day, its]) => h('section', { class: 'sched-day' }, h('h3', null, day), ...its.map((it) => h('button', { type: 'button', class: 'sched-row' + (it.airingAt <= now ? ' aired' : ''), onclick: () => navigate(`/anime/${it.media.id}`) },
-            h('span', { class: 'sched-time' }, tf.format(new Date(it.airingAt * 1000))), it.media.cover ? h('img', { src: it.media.cover, alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }),
-            h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(it.media)), h('small', { class: 'src' }, `${t('episodeN', { n: it.episode })}${it.media.episodes ? ` / ${localDigits(it.media.episodes)}` : ''}${it.media.entry ? ` · ${statusName(it.media.entry.status)}` : ''}`)),
+            h('span', { class: 'sched-time', dir: 'ltr' }, tf.format(new Date(it.airingAt * 1000))), it.media.cover ? h('img', { src: it.media.cover, alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }),
+            h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(it.media)), h('small', { class: 'src' }, `${t('episodeN', { n: it.episode })}${it.media.episodes ? ` / ${localDigits(it.media.episodes, 'prose')}` : ''}${it.media.entry ? ` · ${statusName(it.media.entry.status)}` : ''}`)),
             h('span', { class: 'sched-until' }, it.airingAt <= now ? t('animeAiredNow') : fmtUntil(it.airingAt - now)))))));
           if (!days.size) list.replaceChildren(h('p', { class: 'empty small' }, t('noResults')));
           timer = window.setInterval(() => { const n = Math.floor(Date.now() / 1000); list.querySelectorAll<HTMLElement>('.sched-row').forEach((row, i) => { const it = items[i]; if (!it) return; const u = row.querySelector('.sched-until')!; u.textContent = it.airingAt <= n ? t('animeAiredNow') : fmtUntil(it.airingAt - n); row.classList.toggle('aired', it.airingAt <= n); }); }, 30000);

@@ -8,6 +8,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { Aria2Engine } = require('./aria2.cjs');
 const Archive = require('./archive.cjs');
+const Ffmpeg = require('./ffmpeg.cjs');
 
 const DIST = path.join(__dirname, 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm' };
@@ -123,6 +124,20 @@ ipcMain.handle('kt:archiveCreate', async (e, o) => {
 });
 ipcMain.handle('kt:pickFile', async (_e, o) => { const r = await dialog.showOpenDialog(win, { properties: ['openFile', ...(o?.multiple ? ['multiSelections'] : [])], filters: o?.filters }); return r.canceled ? null : r.filePaths; });
 ipcMain.handle('kt:pathInfo', async (_e, p) => { try { const st = await fs.promises.stat(String(p)); return { exists: true, dir: st.isDirectory(), size: st.size, name: path.basename(String(p)), parent: path.dirname(String(p)) }; } catch { return { exists: false }; } });
+
+/* ---------- the Files add-on ---------- */
+ipcMain.handle('kt:listDir', async (_e, p) => { try { const ents = await fs.promises.readdir(String(p), { withFileTypes: true }); const out = []; for (const en of ents) { try { const st = await fs.promises.stat(path.join(String(p), en.name)); out.push({ name: en.name, path: path.join(String(p), en.name), dir: st.isDirectory(), size: st.isFile() ? st.size : 0, mtime: st.mtimeMs }); } catch { /* vanished */ } } return { entries: out, exists: true }; } catch { return { entries: [], exists: false }; } });
+ipcMain.handle('kt:deletePath', async (_e, p) => { try { await shell.trashItem(String(p)); return { ok: true }; } catch { try { await fs.promises.rm(String(p), { recursive: true, force: true }); return { ok: true }; } catch { return { ok: false }; } } });
+ipcMain.handle('kt:roots', () => ({ roots: [engine?.defaultDir || app.getPath('downloads'), app.getPath('downloads'), app.getPath('videos'), app.getPath('home')].filter((x, i, a) => x && a.indexOf(x) === i) }));
+
+/* ---------- the player: ffmpeg for clips, files beside a video, a file's bytes ---------- */
+ipcMain.handle('kt:ffmpegAvailable', () => Ffmpeg.available());
+ipcMain.handle('kt:ffmpeg', (e, o) => { let last = 0; return Ffmpeg.run(String(o.id), (o.args || []).map(String), (p) => { const now = Date.now(); if (now - last < 300 && !p.done) return; last = now; e.sender.send('kt:ffmpegProgress', { id: o.id, ...p }); }); });
+ipcMain.handle('kt:ffmpegCancel', (_e, id) => Ffmpeg.cancel(String(id)));
+ipcMain.handle('kt:ffprobe', (_e, p) => Ffmpeg.probe(String(p)));
+ipcMain.handle('kt:writeTemp', async (_e, o) => { const dir = path.join(app.getPath('temp'), 'kurokawa-clip'); fs.mkdirSync(path.join(dir, 'fonts'), { recursive: true }); const f = path.join(dir, String(o.name).replace(/[\\/]/g, '_')); await fs.promises.writeFile(f, String(o.text), 'utf8'); return f; });
+ipcMain.handle('kt:siblings', async (_e, p) => { try { const dir = path.dirname(String(p)); const base = path.basename(String(p)).replace(/\.[^.]+$/, '').toLowerCase(); return (await fs.promises.readdir(dir)).filter((n) => n.toLowerCase().startsWith(base) && n !== path.basename(String(p))).map((n) => path.join(dir, n)); } catch { return []; } });
+ipcMain.handle('kt:fileUrl', (_e, p) => 'file://' + String(p));
 
 /* ---------- updates: the repository's tools-v* releases ---------- */
 const cmp = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; } return 0; };

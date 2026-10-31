@@ -12,6 +12,8 @@ import { downloadsView } from './views/downloads';
 import { scheduleAutoCheck } from './updates';
 
 const app = document.getElementById('app')!;
+window.addEventListener('error', (e) => { console.error(e.error ?? e.message); void import('./ui/dom').then((m) => m.toast(String(e.error?.message ?? e.message), 'error', 6000)); });
+window.addEventListener('unhandledrejection', (e) => { const r = (e as PromiseRejectionEvent).reason; console.error(r); void import('./ui/dom').then((m) => m.toast(String(r?.message ?? r), 'error', 6000)); });
 let current: (HTMLElement & { dispose?: () => void }) | null = null; let currentKey = '';
 
 function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): HTMLElement & { dispose?: () => void } {
@@ -55,6 +57,9 @@ function markNav(r: Route): void {
 wide.addEventListener('change', placeNav);
 
 function mount(route: Route): void {
+  try { mountInner(route); } catch (e) { console.error(e); currentKey = ''; current?.remove(); current = h('div', { class: 'view' }, h('div', { class: 'body' }, h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('alert')), h('h2', null, t('crashTitle')), h('p', null, t('crashBody')), h('pre', { class: 'crash-detail', dir: 'ltr' }, `${String((e as Error)?.message ?? e)}\n${String((e as Error)?.stack ?? '').slice(0, 1200)}`), h('button', { type: 'button', class: 'btn tonal', onclick: () => { currentKey = ''; mount(parseRoute()); } }, t('retry'))))) as HTMLElement & { dispose?: () => void }; app.appendChild(current); }
+}
+function mountInner(route: Route): void {
   const key = JSON.stringify(route);
   if (key === currentKey && current) return;
   currentKey = key;

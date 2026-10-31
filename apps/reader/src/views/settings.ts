@@ -350,8 +350,6 @@ export function settingsView(): HTMLElement {
   const desk = (window as unknown as { kurokawaDesktop?: { platform?: string; openDefaultApps?(): Promise<unknown> } }).kurokawaDesktop;
   if (desk?.openDefaultApps && desk.platform === 'win32') upd.append(h('p', { style: { marginTop: '12px' } }, t('defaultAppsBody')), h('button', { class: 'btn small', onclick: () => void desk.openDefaultApps!() }, icon('external'), t('defaultApps')));
   body.append(upd);
-  // Other Kurokawa apps
-  void import('../ui/otherapps').then((m) => upd.after(m.otherAppsCard()));
 
   // Storage
   const storageP = h('p', null, t('storageUnknown'));

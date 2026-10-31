@@ -115,7 +115,11 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "org.apache.commons:commons-compress:1.27.1"
     implementation "org.tukaani:xz:1.10"
     implementation "com.github.junrar:junrar:7.5.5"
-    implementation "net.lingala.zip4j:zip4j:2.11.5"`);
+    implementation "net.lingala.zip4j:zip4j:2.11.5"
+    implementation "dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9"`);
+// Two libraries ship libc++_shared.so (libtorrent4j and ffmpeg-kit): one copy is kept.
+if (!gradle.includes("pickFirst '**/libc++_shared.so'")) gradle = gradle.replace(/android \{/, `android {
+    packagingOptions { jniLibs { pickFirsts += ['**/libc++_shared.so'] } }`);
 }
 if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/android \{/, `android {
