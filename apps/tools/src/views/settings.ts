@@ -8,7 +8,7 @@ import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
 import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
-import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, type AddonEntry } from '../addons';
+import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
 
@@ -68,7 +68,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
           const on = installed(a.id); const btn = h('button', { type: 'button', class: `btn small ${on ? 'tonal' : 'primary'}`, disabled: !ok }, icon(on ? (upd.includes(a.id) ? 'refresh' : 'trash') : 'download'), on ? (upd.includes(a.id) ? t('addonUpdate') : t('addonRemove')) : t('addonInstall')) as HTMLButtonElement;
           btn.addEventListener('click', async () => { btn.disabled = true; try { if (on && !upd.includes(a.id)) { await uninstall(a.id); toast(t('addonRemovedToast', { name: nameOf(a, lang) })); } else { await install(a.id); toast(t('addonInstalledToast', { name: nameOf(a, lang) })); } await drawAddons(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); btn.disabled = false; } });
           const kids = (a.children ?? []).map((id) => ix.addons.find((x) => x.id === id)).filter(Boolean) as AddonEntry[];
-          return h('div', { class: 'addon-row' + (child ? ' child' : '') }, icon(a.icon ?? 'puzzle'), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, nameOf(a, lang)), h('small', { class: 'src', dir: 'auto' }, descOf(a, lang)), kids.length ? h('small', { class: 'src' }, `${t('addonChildren')}: ${kids.map((k) => nameOf(k, lang)).join(' · ')}`) : null), btn);
+          const withSettings = [a, ...kids].filter((x) => x.settings?.length && installed(x.id));
+          const gear = withSettings.length ? iconButton('settings', t('addonSettings'), () => addonSettingsSheet(withSettings, lang)) : null;
+          return h('div', { class: 'addon-row' + (child ? ' child' : '') }, icon(a.icon ?? 'puzzle'), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, nameOf(a, lang)), h('small', { class: 'src', dir: 'auto' }, descOf(a, lang)), kids.length ? h('small', { class: 'src' }, `${t('addonChildren')}: ${kids.map((k) => nameOf(k, lang)).join(' · ')}`) : null), gear, btn);
         };
         addonsBox.replaceChildren(...parents.map((a) => rowOf(a)));
       } catch (e) { addonsBox.replaceChildren(h('p', { class: 'src' }, t('addonsFailed', { error: String((e as Error).message ?? e) }))); }
@@ -117,4 +119,20 @@ async function drawOtherApp(box: HTMLElement): Promise<void> {
     finally { get.disabled = false; }
   });
   box.replaceChildren(get, h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/releases`) }, icon('external'), t('appOpenReleases')));
+}
+
+/** The settings of installed add-ons that have any: a field per declared setting, saved as typed. */
+function addonSettingsSheet(list: AddonEntry[], lang: string): void {
+  const sh = openSheet(t('addonSettings'), t('close'));
+  for (const a of list) {
+    const cur = addonSettings(a);
+    sh.body.append(h('h4', { dir: 'auto' }, nameOf(a, lang)));
+    for (const f of a.settings ?? []) {
+      const label = f.labels?.[lang] ?? f.label;
+      const save = (v: string | number | boolean) => setAddonSettings(a.id, { ...addonSettings(a), [f.id]: v });
+      if (f.type === 'toggle') sh.body.append(h('label', { class: 'switch-row' }, h('span', { class: 'grow' }, label), h('input', { type: 'checkbox', checked: !!cur[f.id], onchange: (e: Event) => save((e.target as HTMLInputElement).checked) })));
+      else if (f.type === 'select') sh.body.append(h('label', { class: 'field' }, h('span', null, label), h('select', { onchange: (e: Event) => save((e.target as HTMLSelectElement).value) }, ...(f.options ?? []).map((o) => h('option', { value: o, selected: String(cur[f.id] ?? '') === o }, o || '—')))));
+      else sh.body.append(h('label', { class: 'field' }, h('span', null, label), h('input', { type: f.type === 'number' ? 'number' : f.type === 'password' ? 'password' : 'text', value: String(cur[f.id] ?? ''), autocomplete: 'off', spellcheck: 'false', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value; save(f.type === 'number' ? Number(v) : v); } })));
+    }
+  }
 }

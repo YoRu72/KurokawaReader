@@ -9,6 +9,6 @@ export const ja: Partial<Strings> = {
   filterAll: 'すべて', filterActive: '進行中', filterDone: '完了', filterFailed: '失敗',
   settings: '設定', general: '一般', language: '言語', languageSystem: 'システムに従う', appearance: '外観', uiMode: 'テーマ', uiSystem: 'システム', uiLight: 'ライト', uiDark: 'ダーク', accent: 'アクセントカラー',
   downloadsSection: 'ダウンロード', downloadFolder: '保存フォルダ', speedLimits: '速度制限', downLimit: 'ダウンロード制限', upLimit: 'アップロード制限', unlimited: '無制限', seedAfterDone: '完了後もシードを続ける',
-  remoteAria2: 'リモート aria2', addons: 'アドオン', addonInstall: 'インストール', addonInstalled: 'インストール済み', addonRemove: '削除', otherApps: 'ほかの Kurokawa アプリ', appReader: 'KurokawaReader',
+  remoteAria2: 'リモート aria2', addons: 'アドオン', addonSettings: 'アドオンの設定', addonInstall: 'インストール', addonInstalled: 'インストール済み', addonRemove: '削除', otherApps: 'ほかの Kurokawa アプリ', appReader: 'KurokawaReader',
   updates: 'アプリの更新', checkUpdates: '更新を確認', checking: '確認中…', upToDate: '最新版です', updateAvailable: '更新があります: {v}', updateNow: '更新', autoCheck: 'オンライン時に自動で確認', about: '情報', version: 'バージョン {v}',
 };

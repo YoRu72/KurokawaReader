@@ -24,7 +24,10 @@ export interface AddonEntry {
   /** The platforms it runs on; undefined: all. */
   platforms?: ('android' | 'desktop' | 'web' | 'ios')[];
   icon?: string;
+  /** Fields the user fills in for this add-on (a debrid key, a choice), shown in its settings. */
+  settings?: AddonSetting[];
 }
+export interface AddonSetting { id: string; label: string; labels?: Record<string, string>; type: 'text' | 'password' | 'number' | 'select' | 'toggle'; options?: string[]; value?: string | number | boolean }
 export interface AddonIndex { kurokawa: 'addons'; app: 'tools'; addons: AddonEntry[] }
 
 const INDEX_KEY = 'addons:index';
@@ -76,3 +79,12 @@ export async function moduleUrl(id: string): Promise<string | null> {
 }
 export const nameOf = (a: AddonEntry, lang: string): string => a.names?.[lang] ?? a.name;
 export const descOf = (a: AddonEntry, lang: string): string => a.descriptions?.[lang] ?? a.description ?? '';
+/** The user's settings of one add-on, defaults filled in. */
+export function addonSettings(a: AddonEntry): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const f of a.settings ?? []) if (f.value !== undefined) out[f.id] = f.value;
+  return { ...out, ...(getSettings().addonSettings[a.id] ?? {}) };
+}
+export function setAddonSettings(id: string, v: Record<string, string | number | boolean>): void {
+  updateSettings({ addonSettings: { ...getSettings().addonSettings, [id]: v } });
+}

@@ -1,5 +1,90 @@
 {
   "kurokawa": "addons",
   "app": "tools",
-  "addons": []
+  "addons": [
+    {
+      "id": "torrent-search",
+      "kind": "group",
+      "name": "Torrent search",
+      "names": {
+        "ar": "بحث التورنت",
+        "ja": "トレント検索",
+        "ko": "토렌트 검색",
+        "zh": "种子搜索"
+      },
+      "description": "Search torrent sites from the Search tab; each site is an add-on of its own below.",
+      "descriptions": {
+        "ar": "ابحث في مواقع التورنت من تبويب البحث؛ كلُّ موقعٍ إضافةٌ مستقلةٌ أدناه."
+      },
+      "version": "0.1.0",
+      "icon": "magnet",
+      "children": [
+        "torrent-search-nyaa",
+        "torrent-search-torrentio"
+      ]
+    },
+    {
+      "id": "torrent-search-nyaa",
+      "kind": "torrent-search",
+      "parent": "torrent-search",
+      "name": "Nyaa",
+      "description": "Anime torrents from nyaa.si, sorted by seeders.",
+      "descriptions": {
+        "ar": "تورنتات الأنمي من nyaa.si، مرتبةً بعدد الباذرين."
+      },
+      "version": "0.1.0",
+      "module": "torrent-search/nyaa.mjs",
+      "icon": "magnet"
+    },
+    {
+      "id": "torrent-search-torrentio",
+      "kind": "torrent-search",
+      "parent": "torrent-search",
+      "name": "Torrentio",
+      "description": "Films and series by name (IMDb through Cinemeta), with a debrid service's cached links when you give it your key. Add «S01E02» for an episode.",
+      "descriptions": {
+        "ar": "الأفلام والمسلسلات بالاسم (IMDb عبر Cinemeta)، مع روابط خدمة الديبريد المخزَّنة إذا أعطيتها مفتاحك. أضف «S01E02» لحلقة."
+      },
+      "version": "0.1.0",
+      "module": "torrent-search/torrentio.mjs",
+      "icon": "magnet",
+      "settings": [
+        {
+          "id": "debrid",
+          "label": "Debrid service",
+          "labels": {
+            "ar": "خدمة الديبريد"
+          },
+          "type": "select",
+          "options": [
+            "",
+            "realdebrid",
+            "alldebrid",
+            "premiumize",
+            "torbox",
+            "debridlink",
+            "offcloud",
+            "putio"
+          ]
+        },
+        {
+          "id": "debridKey",
+          "label": "Debrid API key",
+          "labels": {
+            "ar": "مفتاح واجهة الديبريد"
+          },
+          "type": "password"
+        },
+        {
+          "id": "limit",
+          "label": "Results per quality",
+          "labels": {
+            "ar": "النتائج لكل جودة"
+          },
+          "type": "number",
+          "value": 10
+        }
+      ]
+    }
+  ]
 }
