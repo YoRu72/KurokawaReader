@@ -34,6 +34,7 @@ export function parseSources(text: string): TaskSource[] {
   for (const raw of text.split(/[\s\n]+/)) {
     const s = raw.trim(); if (!s) continue;
     if (/^magnet:\?/i.test(s)) out.push({ magnet: s });
+    else if (/^data:application\/x-bittorrent;base64,/i.test(s)) out.push({ torrent: s.split(',')[1] });
     else if (/^(https?|ftp|sftp):\/\/\S+/i.test(s)) out.push({ url: s });
     else if (/^[a-f0-9]{40}$/i.test(s) || /^[a-z2-7]{32}$/i.test(s)) out.push({ magnet: `magnet:?xt=urn:btih:${s}` });
     else if (/^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(s)) out.push({ url: `https://${s}` });

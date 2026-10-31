@@ -6,6 +6,10 @@ export interface DesktopBridge {
   platform: 'desktop';
   available: boolean;
   reason?: string;
+  os?: string;
+  /** Resolves once the main process has said whether aria2c is there. */
+  ready?(): Promise<unknown>;
+  onUpdateProgress?(cb: (p: { pct: number; got: number; total: number }) => void): () => void;
   add(o: AddOptions): Promise<Task>;
   list(): Promise<Task[]>;
   pause(id: string): Promise<void>;

@@ -71,6 +71,7 @@ function mount(route: Route): void {
 }
 
 await loadLang(getLang());
+await window.kurokawaTools?.ready?.();
 registerNativePlugins();
 applyDocumentLang();
 applyChrome();
