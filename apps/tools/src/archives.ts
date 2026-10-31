@@ -5,8 +5,8 @@ import { ktPlugin } from './native';
 import { uid } from './db';
 
 export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean }
-export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean }
-export interface ExtractOptions { path: string; dest?: string; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; password?: string }
+export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string }
+export interface ExtractOptions { path: string; dest?: string; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; password?: string; verifyFirst?: boolean; keepFree?: number }
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
 
 type Bridge = { archiveList(o: { path: string; password?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<{ files: number; dest: string }>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
@@ -54,3 +54,19 @@ export const parentOf = (p: string): string => p.replace(/[\\/][^\\/]*$/, '');
 export const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 /** `name.tar.gz` → `name`; `name.zip` → `name`. */
 export const stem = (n: string): string => n.replace(ARCHIVE_RE, '').replace(/\.tar$/i, '');
+
+/* ---------- HatchZip's other verbs ---------- */
+type More = { archiveTest(o: { id: string; path: string; password?: string }): Promise<{ ok: boolean; files: number; bad: string[] }>; archiveRestore(o: { path: string }): Promise<{ left: number }>; archiveFree(o: { dir: string }): Promise<{ free: number }>; archiveExisting(o: { dest: string; names: string[] }): Promise<{ existing: string[] }> };
+const more = (): More | null => (desk() as unknown as More | null) ?? (plug() as unknown as More | null);
+/** Every file read and its checksum compared; nothing written. */
+export function testArchiveJob(path: string, password: string | undefined, onProgress?: (p: ArchiveProgress) => void): { id: string; done: Promise<{ ok: boolean; files: number; bad: string[] }> } {
+  wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
+  const m = more(); if (!m?.archiveTest) return { id, done: Promise.reject(new Error('unsupported')) };
+  return { id, done: m.archiveTest({ id, path, password }).finally(() => listeners.delete(id)) };
+}
+/** An extraction in place given up: what is left becomes a normal archive again. */
+export async function restoreArchive(path: string): Promise<number> { const m = more(); if (!m?.archiveRestore) throw new Error('unsupported'); return (await m.archiveRestore({ path })).left; }
+export async function freeSpaceAt(dir: string): Promise<number> { try { const m = more(); return m?.archiveFree ? (await m.archiveFree({ dir })).free : -1; } catch { return -1; } }
+export async function existingIn(dest: string, names: string[]): Promise<string[]> { try { const m = more(); return m?.archiveExisting ? (await m.archiveExisting({ dest, names })).existing : []; } catch { return []; } }
+/** HatchZip's «Extract here»: one top-level item lands beside the archive; several go into a folder named after it. */
+export function topLevel(entries: ArchiveEntry[]): 'one' | 'many' { const tops = new Set(entries.map((e) => e.path.replace(/^\.\//, '').split('/')[0]).filter(Boolean)); return tops.size <= 1 ? 'one' : 'many'; }

@@ -78,7 +78,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       toggle(t('sequential'), s.sequentialVideo, (v) => updateSettings({ sequentialVideo: v })),
       toggle(t('useCategoryFolders'), s.useCategoryFolders, (v) => updateSettings({ useCategoryFolders: v }), t('useCategoryFoldersHint')),
       ...(s.addons.includes('debrid') ? [toggle(t('debridDefault'), s.debridDefault, (v) => updateSettings({ debridDefault: v }), t('debridDefaultHint'))] : []),
-      ...(s.addons.includes('archives') ? [toggle(t('autoUnpackSubs'), s.autoUnpackSubs, (v) => updateSettings({ autoUnpackSubs: v })), toggle(t('autoUnpackAll'), s.autoUnpackAll, (v) => updateSettings({ autoUnpackAll: v }), t('autoUnpackAllHint'))] : []));
+      );
     void dirLabel;
     // Remote aria2
     const url = h('input', { type: 'url', value: s.aria2.url, dir: 'ltr', placeholder: 'http://192.168.1.10:6800/jsonrpc' }) as HTMLInputElement;
@@ -124,6 +124,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
+    // The Archives add-on (HatchZip): unpacking downloads, the space margin, verify first, closing when done.
+    let archives: HTMLElement | null = null;
+    if (s.addons.includes('archives')) { archives = card('archives', t('archivesSection'), toggle(t('autoUnpackSubs'), s.autoUnpackSubs, (v) => updateSettings({ autoUnpackSubs: v })), toggle(t('autoUnpackAll'), s.autoUnpackAll, (v) => updateSettings({ autoUnpackAll: v }), t('autoUnpackAllHint'))); void import('./extract').then((m) => archives!.append(...m.archiveSettingsRows(row, toggle))); }
     // The Video add-on: yt-dlp's version and an update now, the quality and format taken by default.
     let video: HTMLElement | null = null;
     if (s.addons.includes('video')) {
@@ -137,7 +140,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         toggle(t('videoEmbedThumb'), s.videoEmbedThumb, (v) => updateSettings({ videoEmbedThumb: v })),
         toggle(t('videoSponsor'), s.videoSponsor, (v) => updateSettings({ videoSponsor: v })));
     }
-    return [general, downloads, video, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, downloads, video, archives, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

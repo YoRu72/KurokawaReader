@@ -32,7 +32,7 @@ async function readZip(fd, length) {
     it.name = cd.toString(flags & 0x800 ? 'utf8' : 'latin1', p + 46, p + 46 + nl).replace(/\\/g, '/');
     let xp = p + 46 + nl; const xe = xp + xl;
     while (xp + 4 <= xe) { const id = cd.readUInt16LE(xp), sz = cd.readUInt16LE(xp + 2); if (id === 1) { let q = xp + 4; if (it.usize === 0xffffffff) { it.usize = Number(cd.readBigUInt64LE(q)); q += 8; } if (it.csize === 0xffffffff) { it.csize = Number(cd.readBigUInt64LE(q)); q += 8; } if (it.offset === 0xffffffff) it.offset = Number(cd.readBigUInt64LE(q)); } xp += 4 + sz; }
-    it.dir = it.name.endsWith('/'); if (it.name) items.push(it); p += 46 + nl + xl + cl;
+    it.raw = cd.subarray(p, p + 46 + nl + xl + cl); it.dir = it.name.endsWith('/'); if (it.name) items.push(it); p += 46 + nl + xl + cl;
   }
   return { items, cdStart: cdOff, length };
 }
@@ -44,18 +44,23 @@ const hasJournal = (file) => fs.existsSync(journalOf(file));
 /* ---------- listing ---------- */
 async function list(file, password) {
   const entries = []; let total = 0, encrypted = false, format;
-  if (hasJournal(file)) {
+  if (hasJournal(file) && isTar(file)) { format = 'tar'; const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
+  else if (hasJournal(file)) {
     format = 'zip'; const j = JSON.parse(await fsp.readFile(journalOf(file), 'utf8')); const t = await fsp.open(tailOf(file), 'r');
     try { const ix = await readZip(t, (await t.stat()).size); for (const it of ix.items) if (it.offset < j.committed) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir }); total += it.usize; } } finally { await t.close(); }
   } else if ((format = await formatOf(file)) === 'zip') {
     const fd = await fsp.open(file, 'r'); try { const ix = await readZip(fd, (await fd.stat()).size); for (const it of ix.items) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir }); total += it.usize; encrypted ||= it.encrypted; } } finally { await fd.close(); }
-  } else if (format === 'gz' || format === 'xz' || format === 'bz2') { entries.push({ path: path.basename(file).replace(/\.(gz|xz|bz2)$/i, ''), size: -1, dir: false }); }
+  } else if (format === 'tar') { const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
+  else if (format === 'gz' || format === 'xz' || format === 'bz2') { entries.push({ path: path.basename(file).replace(/\.(gz|xz|bz2)$/i, ''), size: -1, dir: false }); }
   else {
     const out = await run7z(['l', '-slt', '-ba', ...(password ? [`-p${password}`] : ['-p']), file]);
     let cur = null; for (const line of out.split(/\r?\n/)) { const m = /^(\w[\w ]*) = (.*)$/.exec(line); if (!m) { if (cur) { entries.push(cur); cur = null; } continue; } if (m[1] === 'Path') cur = { path: m[2].replace(/\\/g, '/'), size: 0, dir: false }; else if (!cur) continue; else if (m[1] === 'Size') { cur.size = Number(m[2]) || 0; total += cur.size; } else if (m[1] === 'Packed Size' && m[2]) cur.compressed = Number(m[2]); else if (m[1] === 'Folder' || m[1] === 'Attributes') { if (m[2] === '+' || /^D/.test(m[2])) cur.dir = true; } else if (m[1] === 'Encrypted' && m[2] === '+') encrypted = true; }
     if (cur) entries.push(cur);
   }
-  return { format, entries, total, encrypted, inPlaceOk: format === 'zip' && !encrypted, resumable: hasJournal(file) };
+  let largest = 0; const seen = new Set(); let duplicate, bad;
+  for (const e of entries) { if (!e.dir) largest = Math.max(largest, e.size); if (!bad && unsafe(e.path)) bad = e.path; if (!e.dir) { const k = e.path.toLowerCase(); if (seen.has(k) && !duplicate) duplicate = e.path; seen.add(k); } }
+  const sfv = sfvOf(file);
+  return { format, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: hasJournal(file), largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
 }
 
 /* ---------- 7-Zip ---------- */
@@ -86,7 +91,7 @@ async function writeEntry(fd, it, out, ctl) {
   const state = { crc: 0xffffffff, n: 0 }; const part = out + '.part';
   const chain = [src, ...(it.method === 8 ? [zlib.createInflateRaw()] : it.method === 0 ? [] : [null]), crcStream(state), new Transform({ transform(c, _e, cb) { if (ctl.stopped()) return cb(new Error('stopped')); ctl.tick(c.length); cb(null, c); } }), fs.createWriteStream(part)];
   if (chain.includes(null)) throw new Error(`unsupportedMethod ${it.method} ${it.name}`);
-  await pipeline(chain);
+  try { await pipeline(chain); } catch (e) { await fsp.rm(part, { force: true }); throw e; }
   if (((state.crc ^ 0xffffffff) >>> 0) !== it.crc) { await fsp.rm(part, { force: true }); throw new Error('crcMismatch ' + it.name); }
   await fsp.rm(out, { force: true }); await fsp.rename(part, out);
 }
@@ -126,7 +131,7 @@ async function extractZipInPlace(file, dest, o, pr) {
     let i = 0;
     while (i < items.length) {
       if (pr.stopped()) throw new Error('stopped');
-      const free = await freeSpace(dest) - 64 * 1024 * 1024; let used = 0, end = i; const written = [];
+      const free = await freeSpace(dest) - (o.keepFree ?? 64 * 1024 * 1024); let used = 0, end = i; const written = [];
       while (end < items.length && end - i < BATCH.count && (end === i || used + items[end].usize <= Math.min(free, BATCH.bytes))) { used += items[end].usize; end++; }
       if (items[i].usize > free) throw new Error('noSpace');
       for (let k = i; k < end; k++) {
@@ -163,8 +168,14 @@ async function extract7z(file, dest, o, pr) {
 }
 async function extract(file, dest, o, pr) {
   await fsp.mkdir(dest, { recursive: true });
-  if (hasJournal(file)) return extractZipInPlace(file, dest, o, pr);
+  if (hasJournal(file)) return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr);
   const fmt = await formatOf(file); let n;
+  // HatchZip's rules before anything is touched: a hostile archive refused, an .sfv beside it checked, and with
+  // «verify first» every checksum read before the archive is cut.
+  const info = await list(file, o.password); if (info.unsafe) throw new Error('unsafePath ' + info.unsafe); if (info.duplicate && o.inPlace) throw new Error('duplicateEntry ' + info.duplicate);
+  const sfv = sfvOf(file); if (sfv) { const c = await checkSfv(sfv, pr); if (c.bad.length) throw new Error('sfvMismatch ' + c.bad.join(', ')); }
+  if (o.verifyFirst && o.inPlace && fmt === 'zip') { const tr = await test(file, o.password, pr); if (tr.bad.length) throw new Error('damaged ' + tr.bad.join(', ')); }
+  if (o.inPlace && fmt === 'tar') return extractTarInPlace(file, dest, o, pr);
   if (fmt === 'zip') { const fd = await fsp.open(file, 'r'); let enc = false; try { enc = (await readZip(fd, (await fd.stat()).size)).items.some((x) => x.encrypted); } finally { await fd.close(); } n = enc ? await extract7z(file, dest, o, pr) : o.inPlace ? await extractZipInPlace(file, dest, o, pr) : await extractZip(file, dest, o, pr); }
   else if (fmt === 'tar.gz' || fmt === 'tar.xz' || fmt === 'tar.bz2') { // two layers: 7z needs the inner tar first
     const tmp = path.join(dest, `.${path.basename(file)}.tar`); await extract7z(file, path.dirname(tmp), { ...o, replace: 'replace' }, { on: (d, t) => pr.on(d / 2, t, file), stopped: pr.stopped });
@@ -207,4 +218,102 @@ async function createZip(out, inputs, pr) {
 }
 async function walk(dir, prefix, out) { for (const e of await fsp.readdir(dir, { withFileTypes: true })) { if (e.isDirectory()) await walk(path.join(dir, e.name), prefix + e.name + '/', out); else if (e.isFile()) out.push([path.join(dir, e.name), prefix + e.name]); } }
 
-module.exports = { formatOf, list, extract, createZip, hasJournal, BATCH };
+/* ---------- HatchZip: test, restore, .sfv, tar in place ---------- */
+async function test(file, password, pr) {
+  const fmt = await formatOf(file); const bad = []; let files = 0;
+  if (fmt === 'zip') {
+    const fd = await fsp.open(file, 'r');
+    try {
+      const ix = await readZip(fd, (await fd.stat()).size);
+      if (!ix.items.some((x) => x.encrypted)) {
+        const total = ix.items.reduce((a, x) => a + x.usize, 0); let done = 0; const T = crcTable();
+        for (const it of ix.items) {
+          if (it.dir) continue; if (pr.stopped()) throw new Error('stopped'); pr.on(done, total, it.name); files++;
+          try { const start = await dataStart(fd, it); const src = rangeStream(fd, start, it.csize); const state = { crc: 0xffffffff };
+            await pipeline([src, ...(it.method === 8 ? [zlib.createInflateRaw()] : []), new Transform({ transform(c, _e, cb) { let x = state.crc; for (let i = 0; i < c.length; i++) x = T[(x ^ c[i]) & 0xff] ^ (x >>> 8); state.crc = x; done += c.length; cb(); } })]);
+            if (((state.crc ^ 0xffffffff) >>> 0) !== it.crc) bad.push(it.name);
+          } catch (e) { if (e.message === 'stopped') throw e; bad.push(it.name); }
+        }
+        pr.on(total, total, ''); return { ok: !bad.length, files, bad };
+      }
+    } finally { await fd.close(); }
+  }
+  // 7-Zip tests the rest (and encrypted zips): every file decoded, its checksum compared.
+  try { const out = await run7z(['t', '-bb1', password ? `-p${password}` : '-p', file]); files = (out.match(/^T /gm) || []).length; } catch (e) { bad.push(e.message); }
+  return { ok: !bad.length, files, bad };
+}
+/** Giving up an extraction in place: what is left becomes a normal ZIP again (the remaining entries' directory
+ *  records written after them, then the end records); a cut tar is a valid tar already. */
+async function restore(file) {
+  const journal = journalOf(file), tail = tailOf(file); if (!fs.existsSync(journal)) throw new Error('nothingToRestore');
+  if (isTar(file)) { await fsp.rm(journal, { force: true }); return -1; }
+  const committed = JSON.parse(await fsp.readFile(journal, 'utf8')).committed;
+  const t = await fsp.open(tail, 'r'); let left; try { left = (await readZip(t, (await t.stat()).size)).items.filter((x) => x.offset < committed).sort((a, b) => a.offset - b.offset); } finally { await t.close(); }
+  const fd = await fsp.open(file, 'r+');
+  try {
+    if ((await fd.stat()).size > committed) await fd.truncate(committed);
+    const cd = Buffer.concat(left.map((x) => x.raw)); const cdStart = committed, cdEnd = cdStart + cd.length; const z64 = left.length >= 0xffff || cdStart >= 0xffffffff || cd.length >= 0xffffffff;
+    const parts = [cd];
+    if (z64) { const z = Buffer.alloc(56); z.writeUInt32LE(0x06064b50, 0); z.writeBigUInt64LE(44n, 4); z.writeUInt16LE(45, 12); z.writeUInt16LE(45, 14); z.writeBigUInt64LE(BigInt(left.length), 24); z.writeBigUInt64LE(BigInt(left.length), 32); z.writeBigUInt64LE(BigInt(cd.length), 40); z.writeBigUInt64LE(BigInt(cdStart), 48); const loc = Buffer.alloc(20); loc.writeUInt32LE(0x07064b50, 0); loc.writeBigUInt64LE(BigInt(cdEnd), 8); loc.writeUInt32LE(1, 16); parts.push(z, loc); }
+    const e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(Math.min(left.length, 0xffff), 8); e.writeUInt16LE(Math.min(left.length, 0xffff), 10); e.writeUInt32LE(Math.min(cd.length, 0xffffffff), 12); e.writeUInt32LE(Math.min(cdStart, 0xffffffff), 16); parts.push(e);
+    const all = Buffer.concat(parts); await fd.write(all, 0, all.length, committed); try { await fd.sync(); } catch { /* ignore */ }
+  } finally { await fd.close(); }
+  await fsp.rm(journal, { force: true }); await fsp.rm(tail, { force: true }); return left.length;
+}
+function sfvOf(file) { const dir = path.dirname(file), n = path.basename(file); for (const c of [n + '.sfv', n.replace(/\.(zip|7z|rar|tar)(\.\d{3})?$/i, '') + '.sfv', n.replace(/\.part\d+\.rar$|\.\d{3}$/i, '') + '.sfv']) { const p = path.join(dir, c); try { if (fs.statSync(p).isFile()) return p; } catch { /* none */ } } return null; }
+async function checkSfv(sfv, pr) {
+  const bad = []; let files = 0; const T = crcTable();
+  for (let line of (await fsp.readFile(sfv, 'latin1')).split(/\r?\n/)) {
+    line = line.trim(); if (!line || line.startsWith(';')) continue; const sp = line.lastIndexOf(' '); if (sp < 0) continue;
+    const name = line.slice(0, sp).trim(); const want = parseInt(line.slice(sp + 1), 16); if (!Number.isFinite(want)) continue; files++;
+    const p = path.join(path.dirname(sfv), name); if (!fs.existsSync(p)) { bad.push(name); continue; }
+    let c = 0xffffffff; let done = 0; const total = fs.statSync(p).size;
+    for await (const chunk of fs.createReadStream(p, { highWaterMark: 1 << 20 })) { if (pr.stopped()) throw new Error('stopped'); for (let i = 0; i < chunk.length; i++) c = T[(c ^ chunk[i]) & 0xff] ^ (c >>> 8); done += chunk.length; pr.on(done, total, name); }
+    if (((c ^ 0xffffffff) >>> 0) !== want >>> 0) bad.push(name);
+  }
+  return { files, bad };
+}
+const isTar = (file) => /\.tar$/i.test(file);
+async function scanTar(fd) {
+  const out = []; const len = (await fd.stat()).size; const h = Buffer.alloc(512); let pos = 0, longName = null, group = -1;
+  const cstr = (b, o, l) => { let e = o; while (e < o + l && b[e] !== 0) e++; return b.toString('utf8', o, e); };
+  const octal = (b, o, l) => { if (b[o] & 0x80) { let v = 0n; for (let i = o + 1; i < o + l; i++) v = (v << 8n) | BigInt(b[i]); return Number(v); } const s = cstr(b, o, l).trim(); return s ? parseInt(s, 8) : 0; };
+  while (pos + 512 <= len) {
+    await fd.read(h, 0, 512, pos); if (h.every((x) => x === 0)) break; if (group < 0) group = pos;
+    let name = cstr(h, 0, 100); const size = octal(h, 124, 12); const type = h[156] ? String.fromCharCode(h[156]) : '0';
+    if (cstr(h, 257, 6).startsWith('ustar')) { const pre = cstr(h, 345, 155); if (pre) name = pre + '/' + name; }
+    const data = pos + 512, next = data + Math.ceil(size / 512) * 512;
+    if (type === 'L') { const b = Buffer.alloc(size); await fd.read(b, 0, size, data); longName = b.toString('utf8').replace(/\0+$/, ''); pos = next; continue; }
+    if (type === 'x') { const b = Buffer.alloc(size); await fd.read(b, 0, size, data); for (const rec of b.toString('utf8').split('\n')) { const i = rec.indexOf(' path='); if (i > 0) longName = rec.slice(i + 6); } pos = next; continue; }
+    if (type === 'g') { pos = next; continue; }
+    out.push({ name: (longName ?? name).replace(/^\.\//, ''), head: group, data, size, type }); longName = null; group = -1; pos = next;
+  }
+  return out.filter((x) => x.name && x.name !== '.');
+}
+async function extractTarInPlace(file, dest, o, pr) {
+  const journal = journalOf(file); let n = 0; const fd = await fsp.open(file, 'r+');
+  try {
+    if (fs.existsSync(journal)) { const c = JSON.parse(await fsp.readFile(journal, 'utf8')).committed; if ((await fd.stat()).size > c) await fd.truncate(c); }
+    else await writeAtomic(journal, JSON.stringify({ version: 1, format: 'tar', committed: (await fd.stat()).size, output: dest }));
+    const items = await scanTar(fd); const total = items.reduce((a, x) => a + x.size, 0); let done = 0;
+    for (const it of items) if (unsafe(it.name)) throw new Error('unsafePath ' + it.name);
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i]; if (pr.stopped()) throw new Error('stopped');
+      if (it.type === '5') await fsp.mkdir(path.join(dest, it.name), { recursive: true });
+      else if (it.type === '0' || it.type === '7') {
+        if (it.size > await freeSpace(dest) - (o.keepFree ?? 64 * 1024 * 1024)) throw new Error('noSpace');
+        const out = await targetFor(dest, it.name, o.replace);
+        if (out) { pr.on(done, total, it.name); const part = out + '.part'; try { await pipeline([rangeStream(fd, it.data, it.size), new Transform({ transform(c, _e, cb) { if (pr.stopped()) return cb(new Error('stopped')); cb(null, c); } }), fs.createWriteStream(part)]); } catch (e) { await fsp.rm(part, { force: true }); throw e; } const h = await fsp.open(part, 'r+'); try { await h.sync(); } catch { /* ignore */ } finally { await h.close(); } await fsp.rm(out, { force: true }); await fsp.rename(part, out); n++; }
+      }
+      done += it.size;
+      await writeAtomic(journal, JSON.stringify({ version: 1, format: 'tar', committed: it.head, output: dest }));
+      await fd.truncate(it.head); try { await fd.sync(); } catch { /* ignore */ }
+    }
+    pr.on(total, total, '');
+  } finally { await fd.close(); }
+  await fsp.rm(file, { force: true }); await fsp.rm(journal, { force: true });
+  return n;
+}
+async function existing(dest, names) { const out = []; for (const n of names) { try { if (fs.statSync(path.join(dest, n)).isFile()) out.push(n); } catch { /* not there */ } } return out; }
+
+module.exports = { formatOf, list, extract, createZip, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing };
