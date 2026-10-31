@@ -42,4 +42,5 @@ export const ja: Partial<Strings> = {
   uiScale: '表示サイズ', uiScaleHint: '表示が大きすぎる端末では小さく。',
   catVideo: '動画', catMusic: '音楽', catDocuments: '文書', catPrograms: 'プログラム', catCompressed: 'アーカイブ', catImages: '画像', catSubtitles: '字幕', catOther: 'その他', sortBy: '並べ替え', sort_added: '新しい順', sort_name: '名前', sort_size: 'サイズ', sort_state: '状態', useCategoryFolders: 'カテゴリごとのフォルダー', useCategoryFoldersHint: 'ダウンロードフォルダー内に 動画、音楽、文書… を作ります。', connectionsTitle: '接続', speedTitle: '速度', logTitle: 'ログ', fileMapHint: 'ファイル: 各接続の範囲をその色で、取得した分だけ塗ります', logAdded: '追加', logState: '{s} になりました', logConnections: '接続 {n}',
   videoChecking: 'リンクを確認中…', videoAudioOnly: '音声のみ', videoBest: '最高', videoSubs: '字幕: {langs}', videoAll: 'すべてダウンロード', videoPageNeedsAddon: '動画ページです。ここでダウンロードするには「動画」アドオンを追加してください。', videoAddIt: '追加', videoFallback: '動画として読み取れなかったため、そのままダウンロードします。', videoVersion: 'yt-dlp {v}', videoUpdate: 'yt-dlp を更新', videoUpdated: 'yt-dlp は最新です ({v})。', videoGetting: 'yt-dlp を取得中…', videoLive: 'ライブ', videoQuality: '画質', videoContainer: '形式', videoEmbedThumb: 'カバーを埋め込む', videoSponsor: 'スポンサー部分を飛ばす (YouTube)', videoDefaultQuality: '優先する画質', videoKind: '動画',
+  searchSettings: '設定を検索',
 };

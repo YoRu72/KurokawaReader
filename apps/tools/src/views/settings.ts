@@ -22,7 +22,37 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   const s = getSettings();
   const body = h('div', { class: 'body settings-body' });
   const root = h('div', { class: 'view settings-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }, h('span', null, t('settings')))), body) as HTMLElement & { dispose?: () => void };
-  const rerender = () => { body.replaceChildren(...sections()); };
+  // The reader's way: every card folded to its heading (a short page of sections), chips to jump to one, a
+  // search box that opens and filters the rows that mention what is typed. What is open stays open on redraw.
+  const open = new Set<string>(section ? [section] : ['updates']);
+  const search = h('input', { type: 'search', class: 'settings-search', placeholder: t('searchSettings'), 'aria-label': t('searchSettings') }) as HTMLInputElement;
+  const nav = h('div', { class: 'folder-chips settings-nav', role: 'tablist' });
+  const head = h('div', { class: 'settings-head' }, search, nav);
+  const decorate = () => {
+    nav.replaceChildren();
+    for (const card of Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'))) {
+      const title = card.querySelector<HTMLElement>(':scope > h3'); if (!title) continue;
+      title.classList.add('card-title'); title.setAttribute('role', 'button'); title.setAttribute('tabindex', '0'); title.setAttribute('aria-expanded', String(open.has(card.id)));
+      if (!title.querySelector('svg')) title.prepend(icon('chevronDown'));
+      card.classList.toggle('collapsed', !open.has(card.id));
+      const flip = () => { const on = card.classList.toggle('collapsed'); if (on) open.delete(card.id); else open.add(card.id); title.setAttribute('aria-expanded', String(!on)); };
+      title.onclick = flip; title.onkeydown = (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } };
+      nav.append(h('button', { type: 'button', class: 'chip small', onclick: () => { open.add(card.id); card.classList.remove('collapsed'); title.setAttribute('aria-expanded', 'true'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
+    }
+    applySearch();
+  };
+  const applySearch = () => {
+    const q = search.value.trim().toLowerCase();
+    for (const card of Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'))) {
+      const rows = Array.from(card.children).filter((r) => !r.matches('h3')) as HTMLElement[];
+      if (!q) { card.hidden = false; rows.forEach((r) => { r.hidden = false; }); card.classList.toggle('collapsed', !open.has(card.id)); continue; }
+      const titleHit = (card.querySelector(':scope > h3')?.textContent ?? '').toLowerCase().includes(q);
+      let any = false; for (const r of rows) { const hit = titleHit || (r.textContent ?? '').toLowerCase().includes(q); r.hidden = !hit; if (hit) any = true; }
+      card.hidden = !any; card.classList.remove('collapsed');
+    }
+  };
+  search.addEventListener('input', applySearch);
+  const rerender = () => { body.replaceChildren(head, ...sections()); decorate(); };
 
   const sections = (): HTMLElement[] => {
     const s = getSettings();
@@ -111,6 +141,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
+  void decorate;
   void s; void navigate; void localDigits; void formatBytes; void openSheet; void countAddons;
   return root;
 }

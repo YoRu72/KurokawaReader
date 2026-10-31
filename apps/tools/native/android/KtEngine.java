@@ -394,7 +394,7 @@ final class KtEngine {
                 x.done = o.optLong("done"); x.total = o.optLong("total"); x.addedAt = o.optLong("addedAt", System.currentTimeMillis()); x.doneAt = o.optLong("doneAt"); x.meta = o.optJSONObject("meta"); x.sequential = o.optBoolean("sequential"); x.paused = o.optBoolean("paused"); x.infoHash = o.optString("infoHash", null); x.error = o.optString("error", null); x.wantConnections = o.optInt("connections", 8);
                 JSONArray pr = o.optJSONArray("priorities"); if (pr != null) { x.priorities = new int[pr.length()]; for (int k = 0; k < pr.length(); k++) x.priorities[k] = pr.getInt(k); }
                 if ("http".equals(x.kind)) { x.httpOut = new File(x.dir, x.name); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
-                if ("video".equals(x.kind)) { String f = o.optString("file", ""); if (!f.isEmpty()) x.httpOut = new File(x.dir, f); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
+                if ("video".equals(x.kind)) { String vf = o.optString("file", ""); if (!vf.isEmpty()) x.httpOut = new File(x.dir, vf); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
                 tasks.put(x.id, x);
                 if ("torrent".equals(x.kind)) {
                     File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) { try { x.source.put("torrent", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(tf.toPath()), android.util.Base64.NO_WRAP)); } catch (Exception ignored) {} }
