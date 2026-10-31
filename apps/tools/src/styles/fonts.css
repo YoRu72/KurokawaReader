@@ -1,0 +1,35 @@
+/* Kurokawa Tools — interface fonts (the reader's: Inter for Latin, Sultan for Arabic, the system's CJK sans). */
+/* Interface fonts */
+@font-face {
+  font-family: 'Inter';
+  src: url('../assets/fonts/Inter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+/* Sultan draws ( ) as the ornate Qur'anic ayah brackets ﴿ ﴾ and ASCII digits as
+   Arabic-Indic ones; leave both out of its range so they fall through to Inter
+   (Arabic digits are produced explicitly with localDigits()). */
+@font-face {
+  font-family: 'AL-Mohanad';
+  src: url('../assets/fonts/AL-Mohanad.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sultan';
+  src: url('../assets/fonts/Sultan-Medium.woff2') format('woff2');
+  font-weight: 400 600;
+  font-display: swap;
+  unicode-range: U+0000-0027, U+002A-002F, U+003A-10FFFF;
+}
+
+:root {
+  /* Latin first, Arabic second: browsers fall through per glyph, so Arabic letters
+     inside an English interface still land on Sultan, and vice versa. */
+  --font-cjk: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo', 'PingFang SC', 'Microsoft YaHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK JP', 'Noto Sans CJK SC', 'Noto Sans CJK KR', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans KR', 'Source Han Sans', sans-serif;
+  --font-ui: 'Inter', 'Sultan', system-ui, -apple-system, 'Segoe UI', var(--font-cjk);
+  --font-ui-ar: 'Sultan', 'Inter', 'Noto Naskh Arabic', system-ui, sans-serif;
+}
+html[dir='rtl'] { --font-ui: var(--font-ui-ar); }
+/* Chinese, Japanese and Korean interfaces use the platform's own CJK sans; reading text in those scripts falls back to it too. */
+html[lang^='ja'], html[lang^='zh'], html[lang^='ko'] { --font-ui: var(--font-cjk); }

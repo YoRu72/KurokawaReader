@@ -124,7 +124,7 @@ jobs:
   ios:
     needs: version
     name: iOS IPA (unsigned, for AltStore / SideStore)
-    runs-on: macos-14
+    runs-on: macos-15
     # (A macOS runner that never comes is not a reason to hold the release: the IPA is attached when it does.)
     timeout-minutes: 40
     continue-on-error: true
@@ -204,7 +204,7 @@ jobs:
   macos:
     needs: version
     name: macOS DMG
-    runs-on: macos-14
+    runs-on: macos-15
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
