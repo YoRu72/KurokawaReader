@@ -15,18 +15,18 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       archiveList: async (o) => ({ format: 'zip', entries: [{ path: 'a/', size: 0, dir: true }, { path: 'a/film.mkv', size: 1500000000, dir: false }, { path: 'readme.txt', size: 1200, dir: false }], total: 1500001200, encrypted: false, inPlaceOk: true }),
       archiveExtract: async (o) => { for (let i = 0; i <= 4; i++) { await new Promise((r) => setTimeout(r, 60)); progressCbs.forEach((cb) => cb({ id: o.id, done: i * 375000300, total: 1500001200, file: i < 3 ? 'a/film.mkv' : 'readme.txt' })); } window.__extracted = o; return { files: 2, dest: o.dest }; },
       archiveCancel: async () => {}, archiveCreate: async (o) => { progressCbs.forEach((cb) => cb({ id: o.id, done: 1, total: 1, file: '' })); return { files: o.inputs.length, path: o.out, size: 4242 }; },
-      pickFile: async (o) => (o && o.multiple ? ['/home/u/x/one.png', '/home/u/x/two.txt'] : ['/home/u/Downloads/Kurokawa/show.zip']), pathInfo: async () => ({ exists: true }), onArchiveProgress: (cb) => { progressCbs.push(cb); return () => {}; } };
+      pickFile: async (o) => (window.__zipping ? ['/home/u/x/one.png', '/home/u/x/two.txt'] : ['/home/u/Downloads/Kurokawa/show.zip']), pathInfo: async () => ({ exists: true }), archiveFree: async () => ({ free: 5000000000 }), archiveExisting: async () => ({ existing: ['readme.txt'] }), archiveTest: async (o) => ({ ok: true, files: 2, bad: [] }), onArchiveProgress: (cb) => { progressCbs.push(cb); return () => {}; } };
   });
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row'); await p.click('.addon-row:has-text("Archives") .btn'); await p.waitForSelector('.toast');
   console.log('toast:', await p.$eval('.toast', (e) => e.textContent));
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.click('.fab'); await p.waitForSelector('.sheet');
-  await p.click('.sheet button:has-text("Open an archive")'); await p.waitForSelector('.entry-list');
+  await p.click('.sheet button:has-text("Open an archive")'); await p.waitForSelector('.space-plan .plan-row'); await p.click('.entry-details summary');
   console.log('sheet:', (await p.$eval('.sheet', (e) => e.innerText)).replace(/\n+/g, ' | ').slice(0, 400));
-  await p.click('.sheet .switch-row:has-text("in place") input');
+  await p.click('.sheet .switch-row:has-text("in place") input').catch(() => {}); console.log('plan:', (await p.$eval('.space-plan', (e) => e.innerText)).replace(/\n+/g, ' | '), '| conflicts:', await p.$eval('.conflicts', (e) => e.textContent));
   await p.screenshot({ path: 'shot-extract.png' });
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__extracted); await p.waitForSelector('.toast:has-text("extracted")');
   console.log('extract call:', JSON.stringify(await p.evaluate(() => window.__extracted)));
-  await p.click('.fab'); await p.waitForSelector('.sheet'); await p.click('.sheet button:has-text("Make a zip")'); await p.waitForSelector('.sheet input[type=text]');
+  await p.evaluate(() => { window.__zipping = true; }); await p.click('.fab'); await p.waitForSelector('.sheet'); await p.click('.sheet button:has-text("Make a zip")'); await p.waitForSelector('.sheet input[type=text]');
   console.log('zip name:', await p.$eval('.sheet input[type=text]', (e) => e.value), '| dir:', await p.$eval('.sheet p[dir=ltr]', (e) => e.textContent));
   await p.click('.sheet .btn.primary'); await p.waitForSelector('.toast:has-text("made")'); console.log('zip toast:', await p.$eval('.toast', (e) => e.textContent));
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');

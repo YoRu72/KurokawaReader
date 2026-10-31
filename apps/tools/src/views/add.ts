@@ -1,7 +1,7 @@
 // A new download: links or magnets typed or pasted (several at once), a .torrent file chosen; the folder, the
 // name, the connections; for a torrent, its files picked once the metadata is here.
 import { h, icon, openSheet, toast } from '../ui/dom';
-import { t, formatBytes, localDigits } from '../i18n';
+import { t, formatBytes, localDigits, countFiles } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
 import type { TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
@@ -25,7 +25,8 @@ export function addSheet(initial = ''): void {
   const tools = h('div', { class: 'add-tools' },
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { const s = await navigator.clipboard.readText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value ? ta.value + '\n' : '') + s.trim(); void metadata(); } catch { toast(t('nothingToPaste'), 'error'); } } }, icon('copy'), t('pasteLink')),
     ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []),
-    ...(getSettings().addons.includes('archives') && canArchive() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const [f] = await pickFiles(false); if (!f) return; sh.close(); void import('./extract').then((m) => m.extractSheet(f)); } }, icon('archive'), t('openArchive')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./extract').then((m) => m.createZipSheet()); } }, icon('plus'), t('createZip'))] : []));
+    h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const one = parseSources(ta.value)[0]?.url ?? ''; sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(one)); } }, icon('link'), t('grabTitle')),
+    ...(getSettings().addons.includes('archives') && canArchive() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const fs = await pickFiles(true); if (!fs.length) return; sh.close(); void import('./extract').then((m) => m.extractMany(fs)); } }, icon('archive'), t('openArchive')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./extract').then((m) => m.createZipSheet()); } }, icon('plus'), t('createZip'))] : []));
   // Options
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
@@ -34,6 +35,7 @@ export function addSheet(initial = ''): void {
   const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName') }) as HTMLInputElement;
   const seq = h('input', { type: 'checkbox', checked: s.sequentialVideo }) as HTMLInputElement;
   const paused = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const later = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const conn = h('input', { type: 'number', min: '1', max: '16', value: '8', style: { width: '5em' } }) as HTMLInputElement;
   const filesBox = h('div', { class: 'add-files', hidden: true });
   let info: TorrentInfo | null = null; let chosen = new Set<number>(); let metaToken = 0;
@@ -42,18 +44,21 @@ export function addSheet(initial = ''): void {
     h('label', { class: 'field' }, h('span', { class: 'label' }, t('fileName')), name),
     h('label', { class: 'check-row' }, seq, h('span', null, t('sequential'))),
     h('label', { class: 'check-row' }, paused, h('span', null, t('startPaused'))),
+    ...(getSettings().schedule.enabled ? [h('label', { class: 'check-row' }, later, h('span', null, t('downloadLater')))] : []),
     h('label', { class: 'field row' }, h('span', { class: 'label' }, t('connections')), conn));
   // Through a debrid service (the Debrid add-on with a key): the cloud fetches it, the app downloads the result.
   const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
   const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
   const video = videoPanel(() => undefined);
-  sh.body.append(ta, video.el, tools, fileNote, fileIn, filesBox, debridRow, opts);
+  const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
+  sh.body.append(ta, video.el, tools, fileNote, fileIn, filesBox, zipBox, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
   sh.actions.append(go);
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
+  const peekZip = async (u: string | null) => { if (!u || !/\.(zip|cbz|apks|xapk|apkm)(\?|$)/i.test(u)) { zipBox.hidden = true; zipFor = ''; return; } if (zipFor === u) return; zipFor = u; zipBox.hidden = false; zipBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('zipPeeking')}`)); const m = await import('../downloads/prism'); const r = await m.remoteZipEntries(u).catch(() => null); if (zipFor !== u) return; if (!r) { zipBox.hidden = true; return; } zipBox.replaceChildren(h('details', null, h('summary', null, `${t('archiveContents')} · ${countFiles(r.entries.length)} · ${formatBytes(r.total)}`), h('div', { class: 'file-rows' }, ...r.entries.slice(0, 300).map((e) => h('div', { class: 'file-row' }, h('span', { class: 'grow', dir: 'ltr' }, e.path), h('small', { class: 'src' }, formatBytes(e.size))))))); };
   const metadata = async () => {
-    { const one = sources(); video.check(one.length === 1 && one[0].url ? one[0].url : null); }
+    { const one = sources(); video.check(one.length === 1 && one[0].url ? one[0].url : null); void peekZip(one.length === 1 && one[0].url ? one[0].url : null); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }
     const my = ++metaToken;
@@ -97,7 +102,8 @@ export function addSheet(initial = ''): void {
         const videoish = !!src.magnet || !!src.torrent || isVideo(src.url ?? '');
         const files = info && srcs.length === 1 && chosen.size < info.files.length ? [...chosen] : undefined;
         const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
-        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (catDir ?? getSettings().downloadDir ?? undefined), name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined, sequential: videoish && seq.checked, paused: paused.checked, connections: Number(conn.value) || 8, files });
+        const wait = later.checked && !(await import('../downloads/prism')).inWindow();
+        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (catDir ?? getSettings().downloadDir ?? undefined), name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined, sequential: videoish && seq.checked, paused: paused.checked || wait, connections: Number(conn.value) || 8, files, ...(later.checked ? { meta: { later: true } as never } : {}) });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
       }
       sh.close();

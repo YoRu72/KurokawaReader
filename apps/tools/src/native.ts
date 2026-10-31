@@ -48,3 +48,7 @@ export async function openExternal(url: string): Promise<void> {
   const p = ktPlugin(); if (p?.openUrl) { try { await p.openUrl({ url }); return; } catch { /* below */ } }
   window.open(url, '_blank', 'noopener');
 }
+
+/** A folder opened in the system's file manager (the desktop); false where that cannot be done. */
+export async function openFolder(path: string): Promise<boolean> { const d = window.kurokawaTools as { openPath?(p: string): Promise<void> } | undefined; if (d?.openPath) { await d.openPath(path); return true; } return false; }
+export const canOpenFolder = (): boolean => !!(window.kurokawaTools as { openPath?: unknown } | undefined)?.openPath;

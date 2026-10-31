@@ -22,6 +22,6 @@ function run(id, args, onProgress) {
 function cancel(id) { const p = jobs.get(id); if (p) { try { p.kill('SIGINT'); setTimeout(() => { try { p.kill('SIGKILL'); } catch { /* gone */ } }, 3000); } catch { /* gone */ } } }
 /** ffprobe's JSON (streams and format) — through ffmpeg itself when ffprobe is not beside it. */
 function probe(file) {
-  return new Promise((res) => { execFile(probeBinary(), ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file], { maxBuffer: 20 << 20 }, (err, out) => { if (!err) { try { return res(JSON.parse(out)); } catch { /* fall through */ } } res(null); }); });
+  return new Promise((res) => { execFile(probeBinary(), ['-v', 'error', '-show_streams', '-show_format', '-show_chapters', '-of', 'json', file], { maxBuffer: 20 << 20 }, (err, out) => { if (!err) { try { return res(JSON.parse(out)); } catch { /* fall through */ } } res(null); }); });
 }
 module.exports = { available, run, cancel, probe, binary };

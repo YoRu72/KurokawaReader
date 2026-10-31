@@ -143,6 +143,27 @@ public class KtPlugin extends Plugin {
         o.put("url", result.getResultCode() == android.app.Activity.RESULT_OK && d != null ? d.getStringExtra(KtAuthActivity.RESULT_URL) : null);
         call.resolve(o);
     }
+    /** A video (a link, or a file here) handed to another player through Android's chooser (VLC, MX, mpv…). */
+    @PluginMethod public void openWith(PluginCall call) {
+        try {
+            String path = call.getString("path", null), url = call.getString("url", null), mime = call.getString("mime", "video/*");
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            if (path != null && !path.isEmpty()) { Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path)); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            else i.setDataAndType(Uri.parse(url), mime);
+            i.putExtra("title", call.getString("title", ""));
+            Intent ch = Intent.createChooser(i, call.getString("title", "")); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve();
+        } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    /** A file's checksums (Prism's «verify»): MD5, SHA-1 and SHA-256 in one read. */
+    @PluginMethod public void hashFile(PluginCall call) {
+        final File f = fileOf(call.getString("path", ""));
+        bg.execute(() -> { try { java.security.MessageDigest md5 = java.security.MessageDigest.getInstance("MD5"), sha1 = java.security.MessageDigest.getInstance("SHA-1"), sha256 = java.security.MessageDigest.getInstance("SHA-256"); byte[] b = new byte[1 << 16]; try (java.io.InputStream in = new java.io.FileInputStream(f)) { int n; while ((n = in.read(b)) > 0) { md5.update(b, 0, n); sha1.update(b, 0, n); sha256.update(b, 0, n); } } JSObject r = new JSObject(); r.put("md5", hex(md5.digest())); r.put("sha1", hex(sha1.digest())); r.put("sha256", hex(sha256.digest())); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
+    }
+    private static String hex(byte[] d) { StringBuilder sb = new StringBuilder(); for (byte x : d) sb.append(String.format("%02x", x)); return sb.toString(); }
+    /** What is on the clipboard (read while the app is in front, as Android allows), for the clipboard monitor. */
+    @PluginMethod public void clipboardText(PluginCall call) {
+        getActivity().runOnUiThread(() -> { try { android.content.ClipboardManager cm = (android.content.ClipboardManager) getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE); JSObject r = new JSObject(); String text = ""; if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) { CharSequence c = cm.getPrimaryClip().getItemAt(0).coerceToText(getContext()); if (c != null) text = c.toString(); } r.put("text", text); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
+    }
     @PluginMethod public void openUrl(PluginCall call) {
         try { Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); }
     }
@@ -184,6 +205,19 @@ public class KtPlugin extends Plugin {
             getActivity().startActivity(intent); call.resolve();
         } catch (Exception e) { call.reject("Cannot start installer: " + e.getMessage(), e); }
     }
+    /** What an APK or a split bundle installs (name, icon, package, version, the version here now). */
+    @PluginMethod public void apkInfo(PluginCall call) { final File f = fileOf(call.getString("path", "")); bg.execute(() -> { try { call.resolve(new JSObject(KtApk.info(getContext(), f).toString())); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } }); }
+    /** Installs through a session (a bundle's splits streamed from it, no extracting): progress and the system's
+     *  answer come as `apkInstall` events. */
+    @PluginMethod public void apkInstall(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            Intent s = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName())); s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(s);
+            call.reject("permission"); return;
+        }
+        final String id = call.getString("id", ""); final File f = fileOf(call.getString("path", "")); final boolean del = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false));
+        bg.execute(() -> { try { KtApk.install(getContext(), id, f, del, (ev) -> { try { notifyListeners("apkInstall", new JSObject(ev.toString())); } catch (Exception ignored) {} }); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } });
+    }
+    @PluginMethod public void launchApp(PluginCall call) { Intent i = getContext().getPackageManager().getLaunchIntentForPackage(call.getString("pkg", "")); if (i == null) { call.reject("notLaunchable"); return; } i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); }
     @PluginMethod public void canInstall(PluginCall call) { JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r); }
 
     /* ---------- archives: what is inside, taking it out (in place when asked), making one ---------- */
@@ -196,6 +230,7 @@ public class KtPlugin extends Plugin {
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
         final File f = fileOf(call.getString("path", "")); final File dest = fileOf(call.getString("dest", f.getParent()));
         final KtArchive.Options o = new KtArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)); o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
+        o.verifyFirst = Boolean.TRUE.equals(call.getBoolean("verifyFirst", false)); Double kf = call.getDouble("keepFree"); if (kf != null && kf >= 0) o.keepFree = kf.longValue();
         bg.execute(() -> {
             final long[] last = { 0 };
             try {
@@ -207,6 +242,20 @@ public class KtPlugin extends Plugin {
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
             finally { if (!id.isEmpty()) archiveJobs.remove(id); }
         });
+    }
+    /** HatchZip's other verbs: test (read every file, write nothing), restore (give up an extraction in place),
+     *  the free space of a folder, and which of an archive's files already exist where it would go. */
+    private KtArchive.Progress progressFor(String id, AtomicBoolean stop) { final long[] last = { 0 }; return new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } }; }
+    @PluginMethod public void archiveTest(PluginCall call) {
+        final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
+        final File f = fileOf(call.getString("path", ""));
+        bg.execute(() -> { try { call.resolve(new JSObject(KtArchive.test(f, call.getString("password", null), progressFor(id, stop)).toString())); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } finally { archiveJobs.remove(id); } });
+    }
+    @PluginMethod public void archiveRestore(PluginCall call) { final File f = fileOf(call.getString("path", "")); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("left", KtArchive.restore(f)); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } }); }
+    @PluginMethod public void archiveFree(PluginCall call) { File d = fileOf(call.getString("dir", "")); while (d != null && !d.exists()) d = d.getParentFile(); JSObject r = new JSObject(); r.put("free", d == null ? -1 : d.getUsableSpace()); call.resolve(r); }
+    @PluginMethod public void archiveExisting(PluginCall call) {
+        final File dest = fileOf(call.getString("dest", "")); JSArray names = call.getArray("names", new JSArray());
+        bg.execute(() -> { JSArray out = new JSArray(); try { for (int i = 0; i < names.length(); i++) { String n = names.getString(i); if (new File(dest, n).isFile()) out.put(n); } } catch (Exception ignored) {} JSObject r = new JSObject(); r.put("existing", out); call.resolve(r); });
     }
     @PluginMethod public void archiveCancel(PluginCall call) { AtomicBoolean c = archiveJobs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
     @PluginMethod public void archiveCreate(PluginCall call) {

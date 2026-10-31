@@ -1931,3 +1931,11 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .app-progress { display: flex; flex-direction: column; gap: 6px; min-width: 140px; }
 .app-progress .task-bar { height: 6px; border-radius: 3px; background: var(--md-surface-container-highest); overflow: hidden; }
 .app-progress .task-bar i { display: block; height: 100%; background: var(--md-primary); transition: width .2s; }
+
+/* Archives: HatchZip's space plan */
+.space-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container-low); }
+.space-plan:empty { display: none; }
+.plan-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.plan-row.good b { color: var(--md-primary); } .plan-row.bad b { color: var(--md-error); }
+.plan-note { margin: 4px 0 0; font-size: 13px; } .plan-note.bad, .extract-progress .src.bad { color: var(--md-error); }
+.entry-details summary { cursor: pointer; font-size: 13px; color: var(--md-on-surface-variant); padding: 4px 0; }

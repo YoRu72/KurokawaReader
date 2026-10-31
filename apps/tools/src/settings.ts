@@ -37,6 +37,8 @@ export interface Settings {
   anilistAutoProgress: boolean;
   /** Anime: extension repositories (Hayase index.json or Seanime marketplace URLs), the preferred quality, adult shows. */
   animeRepos: string[];
+  /** Auto-download rules (anime/auto.ts): a show's choices and the next episode to fetch. */
+  animeAuto: unknown[];
   animeQuality: '' | '2160' | '1080' | '720' | '480';
   animeAdult: boolean;
   animeTitleLang: 'preferred' | 'romaji' | 'english' | 'native';
@@ -54,6 +56,8 @@ export interface Settings {
   sort: 'added' | 'name' | 'size' | 'state';
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
   clipboardWatch: boolean;
+  /** Archives (HatchZip): space never used by an extraction in place (bytes), every checksum read before an archive is cut, the sheet closed when done. */
+  archiveKeepFree: number; archiveVerifyFirst: boolean; archiveCloseWhenDone: boolean;
   /** The Video add-on: the quality taken when none is picked, the container, the cover and sponsor-skip. */
   videoQuality: 'best' | '2160' | '1440' | '1080' | '720' | '480' | 'audio'; videoContainer: 'mp4' | 'mkv' | 'webm'; videoEmbedThumb: boolean; videoSponsor: boolean;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
@@ -65,9 +69,9 @@ const DEFAULTS: Settings = {
   downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: true,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
-  anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
+  anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
   subLangs: [], autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
-  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
+  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
 };
 
 let current: Settings = load();

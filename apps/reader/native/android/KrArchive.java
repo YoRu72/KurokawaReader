@@ -61,7 +61,7 @@ public final class KrArchive {
     }
 
     /* ---------- the ZIP parser (central directory) ---------- */
-    public static final class ZipItem { public String name; public int method; public long csize, usize, crc, offset; public boolean dir, encrypted; }
+    public static final class ZipItem { public String name; public int method; public long csize, usize, crc, offset; public boolean dir, encrypted; public byte[] raw; }
     public static final class ZipIndex { public final List<ZipItem> items = new ArrayList<>(); public long cdStart, length; }
 
     static long u32(ByteBuffer b, int at) { return b.getInt(at) & 0xffffffffL; }
@@ -95,6 +95,7 @@ public final class KrArchive {
             while (xp + 4 <= xe) { int id = u16(c, xp), sz = u16(c, xp + 2); if (id == 1) { int q = xp + 4; if (it.usize == 0xffffffffL) { it.usize = c.getLong(q); q += 8; } if (it.csize == 0xffffffffL) { it.csize = c.getLong(q); q += 8; } if (it.offset == 0xffffffffL) { it.offset = c.getLong(q); } } xp += 4 + sz; }
             it.dir = it.name.endsWith("/") || (it.usize == 0 && it.name.endsWith("\\"));
             it.name = it.name.replace('\\', '/');
+            it.raw = java.util.Arrays.copyOfRange(cd, p, p + 46 + nl + xl + cl);
             if (!it.name.isEmpty()) ix.items.add(it);
             p += 46 + nl + xl + cl;
         }
@@ -111,7 +112,9 @@ public final class KrArchive {
     /* ---------- listing ---------- */
     public static JSONObject list(File f, String password) throws Exception {
         JSONArray arr = new JSONArray(); long total = 0; boolean enc = false; String fmt;
-        if (hasJournal(f)) {
+        if (hasJournal(f) && isTar(f)) {
+            fmt = "tar"; try (RandomAccessFile r = new RandomAccessFile(f, "r")) { for (TarItem it : scanTar(r)) { arr.put(item(it.name, it.size, 0, it.type == '5')); total += it.size; } }
+        } else if (hasJournal(f)) {
             // Half extracted in place: the directory lives in the tail file; what is left starts below the journal's mark.
             fmt = "zip"; long committed = new JSONObject(new String(readFile(new File(f.getPath() + ".kurokawa-unzip")), StandardCharsets.UTF_8)).getLong("committed");
             try (RandomAccessFile t = new RandomAccessFile(new File(f.getPath() + ".kurokawa-tail"), "r")) { for (ZipItem it : readZip(t).items) if (it.offset < committed) { arr.put(item(it.name, it.usize, it.csize, it.dir)); total += it.usize; } }
@@ -124,7 +127,14 @@ public final class KrArchive {
         } else if (fmt.startsWith("tar")) {
             try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
         } else { String inner = f.getName().replaceAll("\\.(gz|xz|bz2)$", ""); arr.put(item(inner, -1, f.length(), false)); }
-        JSONObject o = new JSONObject(); o.put("format", fmt); o.put("entries", arr); o.put("total", total); o.put("encrypted", enc); o.put("inPlaceOk", fmt.equals("zip") && !enc); return o;
+        long largest = 0; java.util.Set<String> seen = new java.util.HashSet<>(); String dup = null, bad = null;
+        for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); String n = e.getString("path"); if (unsafe(n) && bad == null) bad = n; if (!e.getBoolean("dir") && !seen.add(n.toLowerCase(java.util.Locale.ROOT)) && dup == null) dup = n; }
+        JSONObject o = new JSONObject(); o.put("format", fmt); o.put("entries", arr); o.put("total", total); o.put("encrypted", enc);
+        o.put("inPlaceOk", (fmt.equals("zip") && !enc) || fmt.equals("tar")); o.put("largest", largest);
+        File dir = f.getAbsoluteFile().getParentFile(); if (dir != null) o.put("free", dir.getUsableSpace());
+        if (bad != null) o.put("unsafe", bad); if (dup != null) o.put("duplicate", dup);
+        File sfv = sfvOf(f); if (sfv != null) o.put("sfv", sfv.getName());
+        return o;
     }
     static JSONObject item(String name, long size, long csize, boolean dir) throws Exception { JSONObject o = new JSONObject(); o.put("path", name); o.put("size", size); if (csize > 0) o.put("compressed", csize); o.put("dir", dir); return o; }
     static InputStream decompressor(String fmt, InputStream in) throws IOException {
@@ -135,13 +145,19 @@ public final class KrArchive {
     }
 
     /* ---------- extracting ---------- */
-    public static final class Options { public boolean inPlace, deleteAfter; public String replace = "replace"; public String password; }
+    public static final class Options { public boolean inPlace, deleteAfter, verifyFirst; public String replace = "replace"; public String password; public long keepFree = 64L << 20; }
 
     /** Extracts into `dest`; returns the number of files written. */
     public static int extract(File f, File dest, Options o, Progress pr) throws Exception {
         if (!dest.isDirectory() && !dest.mkdirs()) throw new IOException("cannotCreate " + dest);
-        if (hasJournal(f)) return extractZipInPlace(f, dest, o, pr);
+        if (hasJournal(f)) return isTar(f) ? extractTarInPlace(f, dest, o, pr) : extractZipInPlace(f, dest, o, pr);
         String fmt = formatOf(f);
+        // HatchZip's rules before anything is touched: a hostile archive is refused, an .sfv beside it checked,
+        // and with «verify first» every file's checksum read before the archive is cut.
+        JSONObject info = list(f, o.password); if (info.has("unsafe")) throw new IOException("unsafePath " + info.getString("unsafe")); if (info.has("duplicate") && o.inPlace) throw new IOException("duplicateEntry " + info.getString("duplicate"));
+        File sfv = sfvOf(f); if (sfv != null) { JSONObject chk = checkSfv(sfv, pr); if (chk.getJSONArray("bad").length() > 0) throw new IOException("sfvMismatch " + chk.getJSONArray("bad").join(", ").replace("\"", "")); }
+        if (o.verifyFirst && o.inPlace && fmt.equals("zip")) { JSONObject tr = test(f, o.password, pr); if (tr.getJSONArray("bad").length() > 0) throw new IOException("damaged " + tr.getJSONArray("bad").join(", ").replace("\"", "")); }
+        if (o.inPlace && fmt.equals("tar")) return extractTarInPlace(f, dest, o, pr);
         int n;
         if (fmt.equals("zip")) {
             boolean enc; try (RandomAccessFile r = new RandomAccessFile(f, "r")) { enc = false; for (ZipItem it : readZip(r).items) enc |= it.encrypted; }
@@ -164,6 +180,7 @@ public final class KrArchive {
     static long writeAll(InputStream in, File out, long crcWant, Progress pr, long tick) throws IOException {
         File part = new File(out.getPath() + ".part"); CRC32 crc = new CRC32(); long n = 0; byte[] buf = new byte[1 << 16];
         try (OutputStream os = new BufferedOutputStream(new FileOutputStream(part), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { if (pr.stopped()) throw new IOException("stopped"); os.write(buf, 0, r); crc.update(buf, 0, r); n += r; } }
+        catch (IOException e) { part.delete(); throw e; }
         if (crcWant >= 0 && crc.getValue() != crcWant) { part.delete(); throw new IOException("crcMismatch " + out.getName()); }
         if (out.exists() && !out.delete()) throw new IOException("cannotReplace " + out);
         if (!part.renameTo(out)) throw new IOException("cannotRename " + out);
@@ -226,7 +243,7 @@ public final class KrArchive {
             while (i < items.size()) {
                 if (pr.stopped()) throw new IOException("stopped");
                 // One batch: up to 64 entries or 512 MB of output, never more than the free space allows.
-                long free = dest.getUsableSpace() - (64L << 20); long used = 0; int end = i; List<File> written = new ArrayList<>();
+                long free = dest.getUsableSpace() - o.keepFree; long used = 0; int end = i; List<File> written = new ArrayList<>();
                 while (end < items.size() && end - i < BATCH_COUNT && (end == i || used + items.get(end).usize <= Math.min(free, BATCH_BYTES))) { used += items.get(end).usize; end++; }
                 if (items.get(i).usize > free) throw new IOException("noSpace");
                 for (int k = i; k < end; k++) {
@@ -254,6 +271,114 @@ public final class KrArchive {
     static void writeAtomic(File f, byte[] data) throws IOException { File tmp = new File(f.getPath() + ".tmp"); try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(data); o.getFD().sync(); } if (!tmp.renameTo(f)) { f.delete(); if (!tmp.renameTo(f)) throw new IOException("journal"); } }
     /** Is there a half-done in-place extraction of this archive to continue? */
     public static boolean hasJournal(File f) { return new File(f.getPath() + ".kurokawa-unzip").exists(); }
+
+    /* ---------- HatchZip: test, restore, .sfv, tar in place ---------- */
+    /** Every file read and its checksum compared, nothing written: the names that failed. */
+    public static JSONObject test(File f, String password, Progress pr) throws Exception {
+        JSONArray bad = new JSONArray(); int files = 0; String fmt = formatOf(f); long done = 0, total = 0;
+        if (fmt.equals("zip") && !isEncryptedZip(f)) {
+            try (RandomAccessFile r = new RandomAccessFile(f, "r")) {
+                ZipIndex ix = readZip(r); for (ZipItem it : ix.items) total += it.usize; byte[] buf = new byte[1 << 16];
+                for (ZipItem it : ix.items) {
+                    if (it.dir) continue; if (pr.stopped()) throw new IOException("stopped"); pr.on(done, total, it.name);
+                    CRC32 c = new CRC32(); try (InputStream in = entryStream(r, it)) { int n; while ((n = in.read(buf)) > 0) { c.update(buf, 0, n); done += n; } if (c.getValue() != it.crc) bad.put(it.name); } catch (IOException e) { if ("stopped".equals(e.getMessage())) throw e; bad.put(it.name); }
+                    files++;
+                }
+            }
+        } else {
+            // The libraries check what the format carries (7z and rar CRCs, zip4j's); a tar can only be read in full.
+            File sink = new File(f.getParentFile(), ".kurokawa-test-" + System.nanoTime()); Options o = new Options(); o.password = password;
+            try { files = extract(f, sink, o, pr); } catch (IOException e) { if ("stopped".equals(e.getMessage())) throw e; bad.put(e.getMessage()); } finally { deleteTree(sink); }
+        }
+        pr.on(total, total, ""); JSONObject out = new JSONObject(); out.put("ok", bad.length() == 0); out.put("files", files); out.put("bad", bad); return out;
+    }
+    static boolean isEncryptedZip(File f) throws IOException { try (RandomAccessFile r = new RandomAccessFile(f, "r")) { for (ZipItem it : readZip(r).items) if (it.encrypted) return true; } return false; }
+    static void deleteTree(File d) { File[] k = d.listFiles(); if (k != null) for (File x : k) deleteTree(x); d.delete(); }
+
+    /** Giving up an extraction in place: what is left of the archive becomes a normal ZIP again (its remaining
+     *  entries' directory records written after them, then the end records); the extracted files stay. */
+    public static int restore(File f) throws Exception {
+        File journal = new File(f.getPath() + ".kurokawa-unzip"), tail = new File(f.getPath() + ".kurokawa-tail");
+        if (!journal.exists()) throw new IOException("nothingToRestore");
+        if (isTar(f)) { journal.delete(); return -1; }   // a cut tar is a valid tar already
+        long committed = new JSONObject(new String(readFile(journal), StandardCharsets.UTF_8)).getLong("committed");
+        List<ZipItem> left = new ArrayList<>(); try (RandomAccessFile t = new RandomAccessFile(tail, "r")) { for (ZipItem it : readZip(t).items) if (it.offset < committed) left.add(it); }
+        Collections.sort(left, (a, b) -> Long.compare(a.offset, b.offset));
+        try (RandomAccessFile r = new RandomAccessFile(f, "rw")) {
+            if (r.length() > committed) r.setLength(committed);
+            r.seek(committed); long cdStart = committed; long cdSize = 0;
+            for (ZipItem it : left) { r.write(it.raw); cdSize += it.raw.length; }
+            long cdEnd = cdStart + cdSize; boolean z64 = left.size() >= 0xffff || cdStart >= 0xffffffffL || cdSize >= 0xffffffffL;
+            ByteBuffer b = ByteBuffer.allocate(56 + 20 + 22).order(ByteOrder.LITTLE_ENDIAN);
+            if (z64) { b.putInt(0x06064b50).putLong(44).putShort((short) 45).putShort((short) 45).putInt(0).putInt(0).putLong(left.size()).putLong(left.size()).putLong(cdSize).putLong(cdStart); b.putInt(0x07064b50).putInt(0).putLong(cdEnd).putInt(1); }
+            b.putInt(0x06054b50).putShort((short) 0).putShort((short) 0).putShort((short) Math.min(left.size(), 0xffff)).putShort((short) Math.min(left.size(), 0xffff)).putInt((int) Math.min(cdSize, 0xffffffffL)).putInt((int) Math.min(cdStart, 0xffffffffL)).putShort((short) 0);
+            r.write(b.array(), 0, b.position()); r.getFD().sync();
+        }
+        journal.delete(); tail.delete(); return left.size();
+    }
+
+    /** The .sfv beside an archive (named after it, or after its stem). */
+    static File sfvOf(File f) { File dir = f.getAbsoluteFile().getParentFile(); if (dir == null) return null; String n = f.getName(); for (String c : new String[]{ n + ".sfv", n.replaceAll("\\.(zip|7z|rar|tar)(\\.\\d{3})?$", "") + ".sfv", n.replaceAll("\\.part\\d+\\.rar$|\\.\\d{3}$", "") + ".sfv" }) { File s = new File(dir, c); if (s.isFile()) return s; } return null; }
+    /** Every file an .sfv names, its CRC-32 compared: the ones missing or different. */
+    public static JSONObject checkSfv(File sfv, Progress pr) throws Exception {
+        JSONArray bad = new JSONArray(); int n = 0; byte[] buf = new byte[1 << 16];
+        for (String line : new String(readFile(sfv), StandardCharsets.ISO_8859_1).split("\r?\n")) {
+            line = line.trim(); if (line.isEmpty() || line.startsWith(";")) continue;
+            int sp = line.lastIndexOf(' '); if (sp < 0) continue; String name = line.substring(0, sp).trim(); long want; try { want = Long.parseLong(line.substring(sp + 1).trim(), 16); } catch (NumberFormatException e) { continue; }
+            File x = new File(sfv.getParentFile(), name); n++; if (!x.isFile()) { bad.put(name); continue; }
+            CRC32 c = new CRC32(); long done = 0, total = x.length(); try (InputStream in = new BufferedInputStream(new FileInputStream(x), 1 << 16)) { int k; while ((k = in.read(buf)) > 0) { if (pr.stopped()) throw new IOException("stopped"); c.update(buf, 0, k); done += k; if ((done & 0x3ffffff) < k) pr.on(done, total, name); } }
+            if (c.getValue() != want) bad.put(name);
+        }
+        JSONObject o = new JSONObject(); o.put("files", n); o.put("bad", bad); return o;
+    }
+
+    /* tar in place: headers scanned (GNU long names, pax paths), the last entry first, the file cut back to the
+     * first header of each entry once it is written; resuming is a fresh scan of what is left. */
+    static boolean isTar(File f) { String n = f.getName().toLowerCase(java.util.Locale.ROOT); return n.endsWith(".tar"); }
+    static final class TarItem { String name; long head, data, size; char type; }
+    static List<TarItem> scanTar(RandomAccessFile r) throws IOException {
+        List<TarItem> out = new ArrayList<>(); long pos = 0, len = r.length(); byte[] h = new byte[512]; String longName = null; long groupStart = -1;
+        while (pos + 512 <= len) {
+            r.seek(pos); r.readFully(h); boolean zero = true; for (byte b : h) if (b != 0) { zero = false; break; } if (zero) break;
+            if (groupStart < 0) groupStart = pos;
+            String name = cstr(h, 0, 100); long size = octal(h, 124, 12); char type = (char) (h[156] == 0 ? '0' : h[156]);
+            String magic = cstr(h, 257, 6); if (magic.startsWith("ustar")) { String pre = cstr(h, 345, 155); if (!pre.isEmpty()) name = pre + "/" + name; }
+            long data = pos + 512; long next = data + ((size + 511) / 512) * 512;
+            if (type == 'L') { byte[] b = new byte[(int) size]; r.seek(data); r.readFully(b); longName = new String(b, StandardCharsets.UTF_8).replace("\0", ""); pos = next; continue; }
+            if (type == 'x') { byte[] b = new byte[(int) size]; r.seek(data); r.readFully(b); for (String rec : new String(b, StandardCharsets.UTF_8).split("\n")) { int eq = rec.indexOf(" path="); if (eq > 0) longName = rec.substring(eq + 6); } pos = next; continue; }
+            if (type == 'g') { pos = next; continue; }
+            TarItem it = new TarItem(); it.name = longName != null ? longName : name; it.head = groupStart; it.data = data; it.size = size; it.type = type; out.add(it);
+            longName = null; groupStart = -1; pos = next;
+        }
+        return out;
+    }
+    static String cstr(byte[] b, int off, int len) { int e = off; while (e < off + len && b[e] != 0) e++; return new String(b, off, e - off, StandardCharsets.UTF_8); }
+    static long octal(byte[] b, int off, int len) { if ((b[off] & 0x80) != 0) { long v = 0; for (int i = off + 1; i < off + len; i++) v = (v << 8) | (b[i] & 0xff); return v; } String s = cstr(b, off, len).trim(); return s.isEmpty() ? 0 : Long.parseLong(s, 8); }
+    static int extractTarInPlace(File f, File dest, Options o, Progress pr) throws Exception {
+        File journal = new File(f.getPath() + ".kurokawa-unzip"); int n = 0;
+        try (RandomAccessFile r = new RandomAccessFile(f, "rw")) {
+            if (journal.exists()) { long c = new JSONObject(new String(readFile(journal), StandardCharsets.UTF_8)).getLong("committed"); if (r.length() > c) r.setLength(c); }
+            else { JSONObject j = new JSONObject(); j.put("version", 1); j.put("format", "tar"); j.put("committed", r.length()); j.put("output", dest.getPath()); writeAtomic(journal, j.toString().getBytes(StandardCharsets.UTF_8)); }
+            List<TarItem> items = scanTar(r); long total = 0; for (TarItem it : items) total += it.size; long done = 0;
+            for (TarItem it : items) if (unsafe(it.name)) throw new IOException("unsafePath " + it.name);
+            List<String> links = new ArrayList<>();
+            for (int i = items.size() - 1; i >= 0; i--) {
+                TarItem it = items.get(i); if (pr.stopped()) throw new IOException("stopped");
+                if (it.type == '5') new File(dest, it.name).mkdirs();
+                else if (it.type == '0' || it.type == '7') {
+                    if (it.size > dest.getUsableSpace() - o.keepFree) throw new IOException("noSpace");
+                    File out = target(dest, it.name, o);
+                    if (out != null) { pr.on(done, total, it.name); try (InputStream in = new RangeStream(r, it.data, it.size)) { writeAll(in, out, -1, pr, total); } try (FileOutputStream fo = new FileOutputStream(out, true)) { fo.getFD().sync(); } catch (IOException ignored) {} n++; }
+                } else if (it.type == '2' || it.type == '1') links.add(it.name);   // (links are not made: nothing is written through one)
+                done += it.size;
+                JSONObject j = new JSONObject(); j.put("version", 1); j.put("format", "tar"); j.put("committed", it.head); j.put("output", dest.getPath()); writeAtomic(journal, j.toString().getBytes(StandardCharsets.UTF_8));
+                r.setLength(it.head); r.getFD().sync();
+            }
+            pr.on(total, total, "");
+        }
+        if (!f.delete()) Log.w(TAG, "could not delete " + f); journal.delete();
+        return n;
+    }
 
     /* ---------- the other formats ---------- */
     static int extract7z(File f, File dest, Options o, Progress pr) throws Exception {

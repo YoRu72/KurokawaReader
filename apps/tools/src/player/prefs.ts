@@ -7,6 +7,8 @@ export interface PlayerPrefs {
   resume: 'always' | 'ask' | 'never'; watchedAt: number; markWatched: boolean; autoplayNext: boolean; keepScreenOn: boolean; orientation: 'auto' | 'landscape' | 'sensor';
   aspect: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3' | '21:9';
   sleepTimer: number;
+  /** REX Player's extras: a skip button's amount, skipping openings/endings (AniSkip, chapters), the picture's filters, the ambient glow, the remaining time, the double-tap zones' width (%), shuffle. */
+  skipAmount: number; autoSkip: 'off' | 'button' | 'auto'; filters: { brightness: number; contrast: number; saturation: number; hue: number }; ambient: boolean; showRemaining: boolean; doubleTapArea: number; shuffle: boolean;
 }
 export const DEFAULT_PREFS: PlayerPrefs = {
   doubleTapSeek: 10, swipeSeek: true, swipeVolume: true, swipeBrightness: true, longPressSpeed: 2, pinchZoom: true,
@@ -14,6 +16,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   subSize: 100, subColor: '#ffffff', subBackground: 'shadow', subPos: 100, subFont: '', subBold: false, subCodepage: '', subAssOverride: false, subDelay: 0,
   resume: 'always', watchedAt: 90, markWatched: true, autoplayNext: true, keepScreenOn: true, orientation: 'auto',
   aspect: 'fit', sleepTimer: 0,
+  skipAmount: 85, autoSkip: 'button', filters: { brightness: 100, contrast: 100, saturation: 100, hue: 0 }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
 };
 const KEY = 'kt.player'; const MEM = 'kt.player.memory';
 let prefs: PlayerPrefs = load();

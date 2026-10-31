@@ -150,3 +150,28 @@ input, textarea, pre, code, .selectable, .release-notes, .kv dd { -webkit-user-s
 .release-rows .result-row { padding: 8px 6px; }
 .release-rows .result-title { font-size: 13.5px; overflow-wrap: anywhere; }
 .result-row > .grow { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* The app installer */
+.apk-head { display: flex; gap: 14px; align-items: center; }
+.apk-head .grow { display: flex; flex-direction: column; gap: 3px; }
+.apk-head b { font-size: 17px; }
+.apk-icon { width: 56px; height: 56px; border-radius: 14px; flex: none; display: grid; place-items: center; background: var(--md-surface-container-high); object-fit: cover; }
+.apk-change { margin: 4px 0; font-weight: 600; }
+.apk-change.upgrade { color: var(--md-primary); } .apk-change.downgrade { color: var(--md-error); }
+.extract-progress .src.bad, .plan-note.bad { color: var(--md-error); }
+/* The space plan */
+.space-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container-low); }
+.space-plan:empty { display: none; }
+.plan-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.plan-row.good b { color: var(--md-primary); } .plan-row.bad b { color: var(--md-error); }
+.plan-note { margin: 4px 0 0; font-size: 13px; }
+.entry-details summary { cursor: pointer; font-size: 13px; color: var(--md-on-surface-variant); padding: 4px 0; }
+/* Prism's tools: checksums, the grabber */
+.hash-list { display: flex; flex-direction: column; gap: 6px; }
+.hash-row { display: grid; grid-template-columns: 4.5em 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 10px; background: var(--md-surface-container-low); }
+.hash-row code { font-size: 11.5px; overflow-wrap: anywhere; }
+.hash-row.match { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
+input.good { outline: 2px solid var(--md-primary); } input.bad { outline: 2px solid var(--md-error); }
+.grab-list { display: flex; flex-direction: column; max-height: 50vh; overflow: auto; }
+.grab-list .file-row .grow { display: flex; flex-direction: column; min-width: 0; }
+.grab-list .file-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

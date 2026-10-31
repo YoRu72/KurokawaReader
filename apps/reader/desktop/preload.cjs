@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   installDownloadedUpdate() { return ipcRenderer.invoke('kr:update-install'); },
   onUpdateProgress(cb) { ipcRenderer.removeAllListeners('kr:update-progress'); ipcRenderer.on('kr:update-progress', (_e, p) => cb(p)); },
   isPortable() { return ipcRenderer.invoke('kr:is-portable'); },
-  archiveList(o) { return ipcRenderer.invoke('kr:archive-list', o); }, archiveExtract(o) { return ipcRenderer.invoke('kr:archive-extract', o); }, archiveCancel(id) { return ipcRenderer.invoke('kr:archive-cancel', id); }, archiveCreate(o) { return ipcRenderer.invoke('kr:archive-create', o); },
+  archiveList(o) { return ipcRenderer.invoke('kr:archive-list', o); }, archiveExtract(o) { return ipcRenderer.invoke('kr:archive-extract', o); }, archiveCancel(id) { return ipcRenderer.invoke('kr:archive-cancel', id); }, archiveCreate(o) { return ipcRenderer.invoke('kr:archive-create', o); }, archiveTest(o) { return ipcRenderer.invoke('kr:archive-test', o); }, archiveRestore(o) { return ipcRenderer.invoke('kr:archive-restore', o); }, archiveFree(o) { return ipcRenderer.invoke('kr:archive-free', o); }, archiveExisting(o) { return ipcRenderer.invoke('kr:archive-existing', o); },
   archivePickFile(o) { return ipcRenderer.invoke('kr:archive-pick-file', o); }, archivePickDir() { return ipcRenderer.invoke('kr:archive-pick-dir'); },
   onArchiveProgress(cb) { const fn = (_e, p) => cb(p); ipcRenderer.on('kr:archive-progress', fn); return () => ipcRenderer.removeListener('kr:archive-progress', fn); },
   scanDevice(exts) { return ipcRenderer.invoke('kr:scan-device', exts); },

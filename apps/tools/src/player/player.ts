@@ -28,19 +28,22 @@ export function openPlayer(src: PlayerSource): void {
   // ---- chrome
   const title = h('span', { class: 'kt-title grow', dir: 'auto' }, src.name);
   const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('more', t('more'), () => moreSheet()));
-  const timeNow = h('span', { class: 'kt-time' }, '0:00'); const timeEnd = h('span', { class: 'kt-time end' }, '–:––');
+  const timeNow = h('span', { class: 'kt-time' }, '0:00'); const timeEnd = h('button', { type: 'button', class: 'kt-time end', title: t('showRemaining'), onclick: () => { updatePrefs({ showRemaining: !getPrefs().showRemaining }); onTime(); } }, '–:––');
   const bar = h('div', { class: 'kt-seek', role: 'slider', tabindex: '0' }, h('div', { class: 'kt-buf' }), h('div', { class: 'kt-played' }), h('div', { class: 'kt-knob' }), h('i', { class: 'kt-mark a', hidden: true }), h('i', { class: 'kt-mark b', hidden: true }));
   const playBtn = iconButton('play', t('play'), () => toggle()); playBtn.classList.add('kt-play');
   const speedBtn = h('button', { type: 'button', class: 'kt-chip', onclick: () => speedSheet() }, `${localDigits(speed)}×`);
   const abBtn = h('button', { type: 'button', class: 'kt-chip', onclick: () => abPress() }, 'A/B');
   const aspectBtn = h('button', { type: 'button', class: 'kt-chip', onclick: () => cycleAspect() }, t('aspectFit'));
+  const skipBtn = h('button', { type: 'button', class: 'kt-chip', title: t('skipAhead'), onclick: () => seekBy(getPrefs().skipAmount) }, `+${localDigits(P.skipAmount)}`);
+  // The floating «Skip opening» button, shown while an opening/ending/recap is on screen.
+  const skipOp = h('button', { type: 'button', class: 'kt-skip-op', hidden: true }) as HTMLButtonElement;
   const bottom = h('div', { class: 'kt-bottom' },
     h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
     h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('rotate', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null,
-      h('span', { class: 'grow' }), speedBtn, abBtn, aspectBtn, iconButton('camera', t('screenshot'), () => screenshot()), 'pictureInPictureEnabled' in document ? iconButton('tv', t('pip'), () => void pip()) : null, iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
+      h('span', { class: 'grow' }), skipBtn, speedBtn, abBtn, aspectBtn, iconButton('camera', t('screenshot'), () => screenshot()), 'pictureInPictureEnabled' in document ? iconButton('tv', t('pip'), () => void pip()) : null, iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
   const centre = h('div', { class: 'kt-centre' }, h('div', { class: 'kt-flash' })); const flash = centre.firstChild as HTMLElement;
   const unlockBtn = iconButton('lock', t('unlock'), () => lock(false)); unlockBtn.classList.add('kt-unlock'); unlockBtn.hidden = true;
-  const root = h('div', { class: 'player-view kt-player', role: 'dialog', 'aria-label': src.name }, stage, centre, top, bottom, unlockBtn);
+  const root = h('div', { class: 'player-view kt-player', role: 'dialog', 'aria-label': src.name }, stage, centre, top, bottom, unlockBtn, skipOp);
   document.body.append(root);
   const wake = navigator.wakeLock && P.keepScreenOn ? navigator.wakeLock.request('screen').catch(() => null) : null;
   if (P.orientation !== 'auto') void (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock?.(P.orientation === 'landscape' ? 'landscape' : 'landscape-primary').catch(() => undefined);
@@ -64,7 +67,7 @@ export function openPlayer(src: PlayerSource): void {
   function onTime() {
     const d = video.duration || 0, c = video.currentTime;
     if (abA !== null && abB !== null && c >= abB) video.currentTime = abA;
-    timeNow.textContent = fmtTime(c); if (d) (bar.querySelector('.kt-played') as HTMLElement).style.width = `${(c / d) * 100}%`; (bar.querySelector('.kt-knob') as HTMLElement).style.insetInlineStart = d ? `${(c / d) * 100}%` : '0';
+    timeNow.textContent = fmtTime(c); if (d) timeEnd.textContent = getPrefs().showRemaining ? `−${fmtTime((d - c) / (video.playbackRate || 1))}` : fmtTime(d); skipCheck(c); if (d) (bar.querySelector('.kt-played') as HTMLElement).style.width = `${(c / d) * 100}%`; (bar.querySelector('.kt-knob') as HTMLElement).style.insetInlineStart = d ? `${(c / d) * 100}%` : '0';
     drawSubs(c);
     if (Math.floor(c) % 5 === 0) remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay });
     if (d && P.markWatched && !watchedSent && c / d * 100 >= P.watchedAt) markWatched(false);
@@ -78,7 +81,7 @@ export function openPlayer(src: PlayerSource): void {
   function flashText(s: string, long = false) { flash.textContent = s; flash.classList.add('on'); window.clearTimeout((flash as HTMLElement & { _t?: number })._t); (flash as HTMLElement & { _t?: number })._t = window.setTimeout(() => flash.classList.remove('on'), long ? 1400 : 700); }
   function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); const m = src.task?.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); void end; }
   function askResume(pos: number) { const sh = openSheet(t('resumeTitle'), t('close')); sh.body.append(h('p', null, t('resumeBody', { t: fmtTime(pos) }))); sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); } }, t('resumeFromStart')), h('button', { type: 'button', class: 'btn primary', onclick: () => { video.currentTime = pos; sh.close(); } }, t('resumeContinue'))); }
-  function neighbour(dir: number) { const list = src.playlist ?? []; const i = list.findIndex((x) => x.url === src.url); const nx = list[i + dir]; if (!nx) { toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); return; } close(); openPlayer({ ...nx, playlist: list }); }
+  function neighbour(dir: number) { const list = src.playlist ?? []; const i = list.findIndex((x) => x.url === src.url); const nx = getPrefs().shuffle && dir > 0 && list.length > 1 ? list.filter((x) => x.url !== src.url)[Math.floor(Math.random() * (list.length - 1))] : list[i + dir]; if (!nx) { toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); return; } close(); openPlayer({ ...nx, playlist: list }); }
 
   // ---- controls visibility
   function showControls() { controlsOn = true; root.classList.remove('hide-ui'); scheduleHide(); }
@@ -114,7 +117,7 @@ export function openPlayer(src: PlayerSource): void {
     if (gesture === 'pinch') { panX += e.movementX; panY += e.movementY; applyZoom(); }
     else if (gesture === 'seek') { const dt = (dx / r.width) * Math.min(video.duration || 600, 600); const to = Math.max(0, Math.min(video.duration || 0, start.t + dt)); flashText(`${fmtTime(to)}  (${dt >= 0 ? '+' : '−'}${fmtTime(Math.abs(dt))})`, true); (stage as HTMLElement & { _seekTo?: number })._seekTo = to; }
     else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); flashText(`${icon('speak') && '🔊'} ${localDigits(Math.round(v * 100))}%`); }
-    else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); video.style.filter = brightness === 1 ? '' : `brightness(${brightness})`; flashText(`☀ ${localDigits(Math.round(brightness * 100))}%`); }
+    else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); applyFilters(); flashText(`☀ ${localDigits(Math.round(brightness * 100))}%`); }
   });
   const endPointer = (e: PointerEvent) => {
     pts.delete(e.pointerId); window.clearTimeout(pressTimer);
@@ -125,7 +128,7 @@ export function openPlayer(src: PlayerSource): void {
     if (moved || locked) return;
     // Taps: one toggles the controls; two seek on the sides, play/pause in the middle.
     const now = Date.now(); const r = stage.getBoundingClientRect(); const zone = (e.clientX - r.left) / r.width;
-    if (now - lastTap < 300) { window.clearTimeout(tapTimer); lastTap = 0; if (zone < 0.35) seekBy(-P.doubleTapSeek); else if (zone > 0.65) seekBy(P.doubleTapSeek); else toggle(); return; }
+    if (now - lastTap < 300) { window.clearTimeout(tapTimer); lastTap = 0; const w = getPrefs().doubleTapArea / 100; if (zone < w) seekBy(-P.doubleTapSeek); else if (zone > 1 - w) seekBy(P.doubleTapSeek); else toggle(); return; }
     lastTap = now; tapTimer = window.setTimeout(() => { if (controlsOn) hideControls(); else showControls(); }, 280);
   };
   stage.addEventListener('pointerup', endPointer); stage.addEventListener('pointercancel', endPointer);
@@ -222,7 +225,12 @@ export function openPlayer(src: PlayerSource): void {
       row('scroll', t('cutClip'), () => void cutSheet(), abA !== null && abB !== null ? `${fmtTime(abA)} – ${fmtTime(abB)}` : t('cutClipHint')),
       row('refresh', loopFile ? t('loopOff') : t('loopFile'), () => { loopFile = !loopFile; toast(loopFile ? t('loopFile') : t('loopOff')); }),
       row('clock', t('sleepTimer'), () => sleepSheet(), sleepAt ? fmtTime((sleepAt - Date.now()) / 1000) : undefined),
-      row('zoomIn', t('resetZoom'), () => { zoom = 1; panX = panY = 0; applyZoom(); brightness = 1; video.style.filter = ''; }),
+      row('zoomIn', t('resetZoom'), () => { zoom = 1; panX = panY = 0; applyZoom(); brightness = 1; applyFilters(); }),
+      row('settings', t('videoFilters'), () => filtersSheet()),
+      ...(chapters.length ? [row('list', t('chapters'), () => chaptersSheet(), localDigits(chapters.length))] : []),
+      ...(src.playlist && src.playlist.length > 1 ? [row('refresh', getPrefs().shuffle ? t('shuffleOff') : t('shuffleOn'), () => { updatePrefs({ shuffle: !getPrefs().shuffle }); toast(getPrefs().shuffle ? t('shuffleOn') : t('shuffleOff')); })] : []),
+      row('heart', getPrefs().ambient ? t('ambientOff') : t('ambientOn'), () => { updatePrefs({ ambient: !getPrefs().ambient }); ambientTick(); }),
+      ...(canOpenWith() ? [row('external', t('openWithPlayer'), () => void openWith())] : []),
       row('info', t('mediaInfo'), () => infoSheet()),
       row('external', t('openWithSystem'), () => void import('../native').then((n) => n.openExternal(src.localPath ? `file://${src.localPath}` : src.url))),
       row('settings', t('playerSettings'), () => playerSettingsSheet())));
@@ -236,16 +244,75 @@ export function openPlayer(src: PlayerSource): void {
     const sw = (label: string, key: keyof PlayerPrefs) => h('label', { class: 'row switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: !!p[key], onchange: (e: Event) => updatePrefs({ [key]: (e.target as HTMLInputElement).checked } as Partial<PlayerPrefs>) }));
     sh.body.append(num(t('doubleTapSeek'), 'doubleTapSeek', 3, 60), num(t('longPressSpeed'), 'longPressSpeed', 1.25, 4, 0.25), num(t('volumeBoost'), 'volumeBoost', 0, 200, 10), sw(t('swipeSeek'), 'swipeSeek'), sw(t('swipeVolume'), 'swipeVolume'), sw(t('swipeBrightness'), 'swipeBrightness'), sw(t('pinchZoom'), 'pinchZoom'),
       h('div', { class: 'row' }, h('span', null, t('resumePlayback')), pickButton(t('resumePlayback'), [['always', t('resumeAlways')], ['ask', t('resumeAsk')], ['never', t('resumeNever')]], p.resume, (v) => updatePrefs({ resume: v }), t('close'))),
+      num(t('skipAhead'), 'skipAmount', 5, 300, 5), h('div', { class: 'row' }, h('span', null, t('autoSkip'), h('small', { class: 'src' }, t('autoSkipHint'))), pickButton(t('autoSkip'), [['button', t('autoSkipButton')], ['auto', t('autoSkipAuto')], ['off', t('autoSkipOff')]], p.autoSkip, (v) => updatePrefs({ autoSkip: v }), t('close'))), num(t('doubleTapArea'), 'doubleTapArea', 15, 45, 5),
       num(t('watchedAt'), 'watchedAt', 50, 100, 5), sw(t('markWatchedAuto'), 'markWatched'), sw(t('autoplayNext'), 'autoplayNext'), sw(t('keepScreenOn'), 'keepScreenOn'),
       h('div', { class: 'row' }, h('span', null, t('orientation')), pickButton(t('orientation'), [['auto', t('orientationAuto')], ['landscape', t('orientationLandscape')], ['sensor', t('orientationSensor')]], p.orientation, (v) => updatePrefs({ orientation: v }), t('close'))),
       h('div', { class: 'row' }, h('span', null, t('defaultAspect')), pickButton(t('defaultAspect'), ASPECTS.map((a) => [a, aspectName(a)] as [typeof a, string]), p.aspect, (v) => { updatePrefs({ aspect: v }); aspect = v; applyAspect(); }, t('close'))));
   }
   async function cutSheet() { const { cutClipSheet } = await import('./cut'); await cutClipSheet({ src, a: abA ?? Math.max(0, video.currentTime - 30), b: abB ?? video.currentTime, duration: video.duration, subtitle: current ? { name: current.name, ass: current.ass, cues: current.cues, delay: subDelay } : undefined, video }); }
 
+  // ---- REX Player's extras: filters, ambient glow, chapters, skipping openings (AniSkip), another player
+  function applyFilters() { const f = getPrefs().filters; const parts = [brightness !== 1 || f.brightness !== 100 ? `brightness(${(brightness * f.brightness) / 100})` : '', f.contrast !== 100 ? `contrast(${f.contrast / 100})` : '', f.saturation !== 100 ? `saturate(${f.saturation / 100})` : '', f.hue ? `hue-rotate(${f.hue}deg)` : ''].filter(Boolean); video.style.filter = parts.join(' '); }
+  applyFilters();
+  function filtersSheet() {
+    const sh = openSheet(t('videoFilters'), t('close'));
+    const slider = (label: string, k: keyof PlayerPrefs['filters'], min: number, max: number) => { const out = h('b', null, localDigits(getPrefs().filters[k])); const r = h('input', { type: 'range', min: String(min), max: String(max), step: '1', value: String(getPrefs().filters[k]), oninput: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); updatePrefs({ filters: { ...getPrefs().filters, [k]: v } }); out.textContent = localDigits(v); applyFilters(); } }); return h('label', { class: 'field' }, h('span', { class: 'row' }, h('span', null, label), out), r); };
+    sh.body.append(slider(t('filterBrightness'), 'brightness', 30, 200), slider(t('filterContrast'), 'contrast', 30, 200), slider(t('filterSaturation'), 'saturation', 0, 300), slider(t('filterHue'), 'hue', -180, 180));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { updatePrefs({ filters: { brightness: 100, contrast: 100, saturation: 100, hue: 0 } }); brightness = 1; applyFilters(); sh.close(); } }, t('reset')));
+  }
+  // The ambient glow: the picture's average colour spilled around it, a few times a second.
+  const amb = document.createElement('canvas'); amb.width = 8; amb.height = 5; let ambTimer = 0;
+  function ambientTick() { window.clearInterval(ambTimer); root.classList.toggle('ambient', getPrefs().ambient); if (!getPrefs().ambient) return; const g = amb.getContext('2d', { willReadFrequently: true }); ambTimer = window.setInterval(() => { if (!g || video.paused || !video.videoWidth) return; try { g.drawImage(video, 0, 0, 8, 5); const d = g.getImageData(0, 0, 8, 5).data; let r = 0, gg = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; } const n = d.length / 4; root.style.setProperty('--ambient', `rgb(${Math.round(r / n)} ${Math.round(gg / n)} ${Math.round(b / n)})`); } catch { /* a protected stream */ } }, 350); }
+  ambientTick();
+  // Chapters of a local file (ffprobe), marked on the bar; openings and endings among them become skips.
+  let chapters: { start: number; end: number; title: string }[] = [];
+  let skips: { start: number; end: number; kind: 'op' | 'ed' | 'recap' }[] = [];
+  void (async () => {
+    if (!src.localPath) return;
+    const d = window.kurokawaTools as unknown as { ffprobe?(p: string): Promise<{ chapters?: { start_time: string; end_time: string; tags?: { title?: string } }[] } | null> } | undefined;
+    const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { ffprobe?(o: { path: string }): Promise<{ json: string }> } | null;
+    let probe: { chapters?: { start_time: string; end_time: string; tags?: { title?: string } }[] } | null = null;
+    try { probe = d?.ffprobe ? await d.ffprobe(src.localPath) : kp?.ffprobe ? JSON.parse((await kp.ffprobe({ path: src.localPath })).json) : null; } catch { probe = null; }
+    chapters = (probe?.chapters ?? []).map((c) => ({ start: Number(c.start_time), end: Number(c.end_time), title: c.tags?.title ?? '' })).filter((c) => isFinite(c.start) && c.end > c.start);
+    for (const c of chapters) { const k = /^(op|opening|intro)\b/i.test(c.title) ? 'op' : /^(ed|ending|outro|credits)\b/i.test(c.title) ? 'ed' : /recap|previously/i.test(c.title) ? 'recap' : null; if (k) skips.push({ start: c.start, end: c.end, kind: k }); }
+    const draw = () => { const dur = video.duration || 0; if (!dur) return; bar.querySelectorAll('.kt-chapter').forEach((x) => x.remove()); for (const c of chapters.slice(1)) bar.append(h('i', { class: 'kt-chapter', style: { insetInlineStart: `${(c.start / dur) * 100}%` } })); };
+    if (video.duration) draw(); else video.addEventListener('loadedmetadata', draw, { once: true });
+  })();
+  function chaptersSheet() { const sh = openSheet(t('chapters'), t('close')); sh.body.append(h('div', { class: 'dest-list' }, ...chapters.map((c, i) => h('button', { type: 'button', class: 'dest-row' + (video.currentTime >= c.start && video.currentTime < c.end ? ' on' : ''), onclick: () => { video.currentTime = c.start; sh.close(); } }, h('span', { class: 'ep-num' }, localDigits(i + 1)), h('span', { class: 'name grow', dir: 'auto' }, c.title || t('chapterN', { n: i + 1 })), h('small', { class: 'src' }, fmtTime(c.start)))))); }
+  // AniSkip: an anime episode's opening and ending times, shared by its viewers (by MyAnimeList id and episode).
+  void (async () => {
+    const m = src.task?.meta as { anilistId?: number; episode?: number } | undefined; if (!m?.anilistId || !m.episode || getPrefs().autoSkip === 'off') return;
+    const { idsOf } = await import('../anilist'); const ids = await idsOf(m.anilistId).catch(() => ({} as { mal?: number })); if (!ids.mal) return;
+    const len = await new Promise<number>((res) => { if (video.duration) res(video.duration); else video.addEventListener('loadedmetadata', () => res(video.duration), { once: true }); });
+    try {
+      const r = await request(`https://api.aniskip.com/v2/skip-times/${ids.mal}/${m.episode}?types[]=op&types[]=ed&types[]=mixed-op&types[]=mixed-ed&types[]=recap&episodeLength=${Math.round(len)}`);
+      if (r.status !== 200) return; const j = JSON.parse(r.body) as { found?: boolean; results?: { interval: { startTime: number; endTime: number }; skipType: string }[] };
+      for (const x of j.results ?? []) skips.push({ start: x.interval.startTime, end: x.interval.endTime, kind: /ed/.test(x.skipType) ? 'ed' : x.skipType === 'recap' ? 'recap' : 'op' });
+    } catch { /* offline */ }
+  })();
+  let skipped = new Set<number>();
+  function skipCheck(c: number) {
+    const mode = getPrefs().autoSkip; const sk = mode === 'off' ? undefined : skips.find((x) => c >= x.start && c < x.end - 1);
+    if (!sk) { skipOp.hidden = true; return; }
+    const i = skips.indexOf(sk);
+    if (mode === 'auto' && !skipped.has(i)) { skipped.add(i); video.currentTime = sk.end; flashText(t(sk.kind === 'op' ? 'skippedOpening' : sk.kind === 'ed' ? 'skippedEnding' : 'skippedRecap')); return; }
+    skipOp.hidden = false; skipOp.textContent = t(sk.kind === 'op' ? 'skipOpening' : sk.kind === 'ed' ? 'skipEnding' : 'skipRecap'); skipOp.onclick = () => { video.currentTime = sk.end; skipOp.hidden = true; };
+  }
+  // Dragging the subtitles up or down moves them (REX Player's way); the position is kept.
+  for (const box of [subBox, subTop]) box.addEventListener('pointerdown', (e) => {
+    if (locked || !(e.target as HTMLElement).closest('.kt-cue')) return; e.stopPropagation(); const r = stage.getBoundingClientRect(); const y0 = e.clientY; const p0 = getPrefs().subPos; box.setPointerCapture(e.pointerId);
+    const mv = (ev: PointerEvent) => { updatePrefs({ subPos: Math.max(5, Math.min(100, Math.round(p0 - ((y0 - ev.clientY) / r.height) * 100))) }); applySubStyle(); };
+    const up = () => { box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); box.removeEventListener('pointercancel', up); };
+    box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
+  });
+  // Another player (VLC, MX, mpv…) through Android's chooser.
+  function canOpenWith() { return !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.(); }
+  async function openWith() { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { openWith?(o: { url?: string; path?: string; mime: string; title: string }): Promise<void> } | null; try { video.pause(); await kp?.openWith?.({ url: src.localPath ? undefined : src.url, path: src.localPath, mime: 'video/*', title: src.name }); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
+
   // ---- closing
   function close() {
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
-    video.pause(); ass?.free(); try { ctx?.close(); } catch { /* ignore */ } video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey);
+    window.clearInterval(ambTimer); video.pause(); ass?.free(); try { ctx?.close(); } catch { /* ignore */ } video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }
   root.addEventListener('kt-close', close);

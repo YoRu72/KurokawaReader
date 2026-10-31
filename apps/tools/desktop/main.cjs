@@ -119,9 +119,20 @@ const archiveJobs = new Map();
 ipcMain.handle('kt:archiveList', (_e, o) => Archive.list(String(o.path), o.password));
 ipcMain.handle('kt:archiveExtract', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
-  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
+  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password, verifyFirst: !!o.verifyFirst, ...(typeof o.keepFree === 'number' && o.keepFree >= 0 ? { keepFree: o.keepFree } : {}) }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
   finally { if (o.id) archiveJobs.delete(o.id); }
 });
+ipcMain.handle('kt:archiveTest', async (e, o) => {
+  const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
+  try { return await Archive.test(String(o.path), o.password, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); }
+  finally { if (o.id) archiveJobs.delete(o.id); }
+});
+ipcMain.handle('kt:hashFile', (_e, p) => new Promise((res, rej) => { const crypto = require('node:crypto'); const hs = { md5: crypto.createHash('md5'), sha1: crypto.createHash('sha1'), sha256: crypto.createHash('sha256') }; const st = fs.createReadStream(String(p), { highWaterMark: 1 << 20 }); st.on('data', (c) => { for (const h of Object.values(hs)) h.update(c); }); st.on('error', rej); st.on('end', () => res({ md5: hs.md5.digest('hex'), sha1: hs.sha1.digest('hex'), sha256: hs.sha256.digest('hex'), size: fs.statSync(String(p)).size })); }));
+ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
+ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(String(p)); if (err) throw new Error(err); });
+ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
+ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
+ipcMain.handle('kt:archiveExisting', async (_e, o) => ({ existing: await Archive.existing(String(o.dest), (o.names || []).map(String)) }));
 ipcMain.handle('kt:archiveCancel', (_e, id) => { const s = archiveJobs.get(id); if (s) s.v = true; });
 ipcMain.handle('kt:archiveCreate', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
