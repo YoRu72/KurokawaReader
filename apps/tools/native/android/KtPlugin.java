@@ -288,6 +288,13 @@ public class KtPlugin extends Plugin {
         });
         ffJobs.put(id, s.getSessionId());
     }
+    /* ---------- yt-dlp (the video add-on): what a page offers, its version, and updating it ---------- */
+    @PluginMethod public void videoInfo(PluginCall call) {
+        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false));
+        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
+    }
+    @PluginMethod public void videoVersion(PluginCall call) { bg.execute(() -> { JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); r.put("ready", v != null); call.resolve(r); }); }
+    @PluginMethod public void videoUpdate(PluginCall call) { bg.execute(() -> { KtVideo.update(getContext()); JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); call.resolve(r); }); }
     @PluginMethod public void ffmpegCancel(PluginCall call) { Long sid = ffJobs.get(call.getString("id", "")); if (sid != null) com.arthenica.ffmpegkit.FFmpegKit.cancel(sid); call.resolve(); }
     @PluginMethod public void ffprobe(PluginCall call) {
         bg.execute(() -> { try { com.arthenica.ffmpegkit.MediaInformationSession s = com.arthenica.ffmpegkit.FFprobeKit.getMediaInformation(call.getString("path", "")); com.arthenica.ffmpegkit.MediaInformation mi = s.getMediaInformation(); JSObject r = new JSObject(); r.put("json", mi != null && mi.getAllProperties() != null ? mi.getAllProperties().toString() : "{}"); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage()); } });

@@ -6,6 +6,7 @@ import { DesktopEngine } from './desktop';
 import { Aria2Engine, Aria2Rpc } from './aria2';
 import { BrowserEngine } from './browser';
 import { getSettings, onSettingsChange } from '../settings';
+import { expandPattern } from '../downloads/categories';
 
 let engine: Engine | null = null; let key = '';
 const listeners = new Set<(e: Engine) => void>();
@@ -31,7 +32,7 @@ onSettingsChange(() => pick());
 /** Links, magnets and torrents out of free text (several, one per line or space-separated). */
 export function parseSources(text: string): TaskSource[] {
   const out: TaskSource[] = [];
-  for (const raw of text.split(/[\s\n]+/)) {
+  for (const raw0 of text.split(/[\s\n]+/)) for (const raw of (/\[[\da-zA-Z]+-[\da-zA-Z]+(?::\d+)?\]/.test(raw0) ? expandPattern(raw0) : [raw0])) {
     const s = raw.trim(); if (!s) continue;
     if (/^magnet:\?/i.test(s)) out.push({ magnet: s });
     else if (/^data:application\/x-bittorrent;base64,/i.test(s)) out.push({ torrent: s.split(',')[1] });

@@ -46,6 +46,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       eng.can.seeding ? toggle(t('seedAfterDone'), s.seedAfterDone, (v) => { updateSettings({ seedAfterDone: v }); void (window.kurokawaTools?.configure?.({ seed: v }) ?? ktPlugin()?.configure({ seed: v })); }) : null,
       eng.can.torrents && eng.id === 'native' ? row(t('listenPort'), numberField(s.listenPort, (v) => { updateSettings({ listenPort: v }); void (window.kurokawaTools?.configure?.({ listenPort: v }) ?? ktPlugin()?.configure({ listenPort: v })); }, { min: 0, max: 65535, width: '7em' }), `0 = ${t('portRandom')}`) : null,
       toggle(t('sequential'), s.sequentialVideo, (v) => updateSettings({ sequentialVideo: v })),
+      toggle(t('useCategoryFolders'), s.useCategoryFolders, (v) => updateSettings({ useCategoryFolders: v }), t('useCategoryFoldersHint')),
       ...(s.addons.includes('debrid') ? [toggle(t('debridDefault'), s.debridDefault, (v) => updateSettings({ debridDefault: v }), t('debridDefaultHint'))] : []),
       ...(s.addons.includes('archives') ? [toggle(t('autoUnpackSubs'), s.autoUnpackSubs, (v) => updateSettings({ autoUnpackSubs: v })), toggle(t('autoUnpackAll'), s.autoUnpackAll, (v) => updateSettings({ autoUnpackAll: v }), t('autoUnpackAllHint'))] : []));
     void dirLabel;
@@ -93,7 +94,20 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
-    return [general, downloads, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    // The Video add-on: yt-dlp's version and an update now, the quality and format taken by default.
+    let video: HTMLElement | null = null;
+    if (s.addons.includes('video')) {
+      const ver = h('small', { class: 'src', dir: 'ltr' }, '…');
+      void import('../video/ytdlp').then(async (m) => { const v = await m.videoVersion(); ver.textContent = v ?? t('videoGetting'); });
+      const upd = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { upd.disabled = true; ver.textContent = t('videoGetting'); try { const m = await import('../video/ytdlp'); const v = await m.updateVideo(); ver.textContent = v ?? ''; toast(t('videoUpdated', { v: v ?? '' })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } upd.disabled = false; } }, icon('refresh'), t('videoUpdate')) as HTMLButtonElement;
+      video = card('video', t('videoKind'),
+        h('div', { class: 'row' }, h('span', null, 'yt-dlp', ver), upd),
+        row(t('videoDefaultQuality'), pickButton(t('videoDefaultQuality'), [['best', t('videoBest')], ['2160', '2160p'], ['1440', '1440p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p'], ['audio', t('videoAudioOnly')]], s.videoQuality, (v) => { updateSettings({ videoQuality: v as 'best' }); rerender(); }, t('close'))),
+        row(t('videoContainer'), pickButton(t('videoContainer'), [['mp4', 'MP4'], ['mkv', 'MKV'], ['webm', 'WebM']], s.videoContainer, (v) => { updateSettings({ videoContainer: v as 'mp4' }); rerender(); }, t('close'))),
+        toggle(t('videoEmbedThumb'), s.videoEmbedThumb, (v) => updateSettings({ videoEmbedThumb: v })),
+        toggle(t('videoSponsor'), s.videoSponsor, (v) => updateSettings({ videoSponsor: v })));
+    }
+    return [general, downloads, video, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

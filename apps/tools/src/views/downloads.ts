@@ -8,13 +8,15 @@ import { navigate } from '../router';
 import { addSheet } from './add';
 import { getSettings } from '../settings';
 import { canArchive, isArchiveName } from '../archives';
+import { allCategories, categoryOf, categoryName } from '../downloads/categories';
+import { updateSettings } from '../settings';
 
 const ACTIVE: TaskState[] = ['queued', 'metadata', 'downloading', 'checking', 'seeding'];
 export const stateLabel = (s: TaskState): string => t(({ queued: 'stateQueued', metadata: 'stateMetadata', downloading: 'stateDownloading', seeding: 'stateSeeding', paused: 'statePaused', done: 'stateDone', failed: 'stateFailed', checking: 'stateChecking' } as const)[s]);
 export const fmtEta = (s: number): string => { if (s < 60) return `${localDigits(Math.round(s))} ${t('perSecond', { n: '' }).replace('/', '').trim() || 's'}`.trim(); if (s < 3600) return `${localDigits(Math.round(s / 60))} min`; return `${localDigits(Math.floor(s / 3600))} h ${localDigits(Math.round((s % 3600) / 60))} min`; };
 
 export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => void } {
-  let tasks: Task[] = []; let current = filter;
+  let tasks: Task[] = []; let current = filter; let cat = '';
   const list = h('div', { class: 'task-list' });
   const empty = h('div', { class: 'empty', hidden: true }, h('div', { class: 'glyph' }, icon('download')), h('h2', null, t('downloadsEmptyTitle')), h('p', null, t('downloadsEmptyBody')));
   const chips = h('div', { class: 'chips filter-chips' });
@@ -31,8 +33,20 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, chips, empty, list), fab) as HTMLElement & { dispose?: () => void };
 
   const FILTERS: [string, string][] = [['all', t('filterAll')], ['active', t('filterActive')], ['done', t('filterDone')], ['failed', t('filterFailed')]];
-  const drawChips = () => chips.replaceChildren(...FILTERS.map(([k, label]) => h('button', { type: 'button', class: 'chip' + (current === k ? ' on' : ''), 'aria-pressed': String(current === k), onclick: () => { current = k; navigate(`/${k === 'all' ? '' : `?f=${k}`}`, true); draw(); } }, label)));
-  const shown = () => tasks.filter((x) => current === 'all' ? true : current === 'active' ? ACTIVE.includes(x.state) || x.state === 'paused' : current === 'done' ? x.state === 'done' : x.state === 'failed');
+  const catOf = (x: Task) => categoryOf(displayName(x), x.kind);
+  const drawChips = () => {
+    const cats = allCategories().filter((c) => tasks.some((x) => catOf(x).id === c.id));
+    chips.replaceChildren(...FILTERS.map(([k, label]) => h('button', { type: 'button', class: 'chip' + (current === k ? ' on' : ''), 'aria-pressed': String(current === k), onclick: () => { current = k; navigate(`/${k === 'all' ? '' : `?f=${k}`}`, true); draw(); } }, label)),
+      ...(cats.length > 1 ? [h('span', { class: 'chip-sep' }), ...cats.map((c) => h('button', { type: 'button', class: 'chip' + (cat === c.id ? ' on' : ''), onclick: () => { cat = cat === c.id ? '' : c.id; draw(); } }, icon(c.icon), categoryName(c)))] : []),
+      h('button', { type: 'button', class: 'chip sort-chip', onclick: () => sortSheet() }, icon('sort'), t(`sort_${getSettings().sort}` as 'sort_added')));
+  };
+  const sortSheet = () => { const sh = openSheet(t('sortBy'), t('close')); sh.body.append(h('div', { class: 'dest-list' }, ...(['added', 'name', 'size', 'state'] as const).map((k) => h('label', { class: 'dest-row' + (getSettings().sort === k ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sort', checked: getSettings().sort === k, onchange: () => { updateSettings({ sort: k }); sh.close(); draw(); } }), h('span', { class: 'name' }, t(`sort_${k}` as 'sort_added')))))); };
+  const ORDER: Record<TaskState, number> = { downloading: 0, metadata: 1, checking: 2, queued: 3, seeding: 4, paused: 5, failed: 6, done: 7 };
+  const shown = () => {
+    const list = tasks.filter((x) => (current === 'all' ? true : current === 'active' ? ACTIVE.includes(x.state) || x.state === 'paused' : current === 'done' ? x.state === 'done' : x.state === 'failed') && (!cat || catOf(x).id === cat));
+    const k = getSettings().sort;
+    return k === 'name' ? [...list].sort((a, b) => displayName(a).localeCompare(displayName(b))) : k === 'size' ? [...list].sort((a, b) => (b.total || 0) - (a.total || 0)) : k === 'state' ? [...list].sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.addedAt - a.addedAt) : [...list].sort((a, b) => b.addedAt - a.addedAt);
+  };
   const cards = new Map<string, HTMLElement>();
   const draw = () => {
     drawChips();
@@ -61,7 +75,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const card = (x: Task): HTMLElement => {
     const el = h('article', { class: `task-card state-${x.state}`, dataset: { id: x.id } },
       h('button', { type: 'button', class: 'task-main', onclick: () => navigate(`/task/${encodeURIComponent(x.id)}`) },
-        h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : isVideo(displayName(x)) ? 'film' : 'file')),
+        h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
         h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i', { style: { width: `${bar(x)}%` } })))),
       h('span', { class: 'task-actions' }));
     update(el, x); return el;

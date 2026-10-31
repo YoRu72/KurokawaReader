@@ -48,6 +48,15 @@ export interface Settings {
   /** Debrid: torrents go through the service by default; the transfers waiting on it. */
   debridDefault: boolean;
   debridTransfers: unknown[];
+  /** Categories (Prism's): the user's own, folders per category, how the list is sorted. */
+  categories: { id: string; name: string; icon: string; exts: string[]; dir?: string }[];
+  useCategoryFolders: boolean;
+  sort: 'added' | 'name' | 'size' | 'state';
+  /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
+  clipboardWatch: boolean;
+  /** The Video add-on: the quality taken when none is picked, the container, the cover and sponsor-skip. */
+  videoQuality: 'best' | '2160' | '1440' | '1080' | '720' | '480' | 'audio'; videoContainer: 'mp4' | 'mkv' | 'webm'; videoEmbedThumb: boolean; videoSponsor: boolean;
+  schedule: { enabled: boolean; start: string; stop: string; days: number[] };
 }
 
 const KEY = 'kt.settings';
@@ -58,6 +67,7 @@ const DEFAULTS: Settings = {
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
   subLangs: [], autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
+  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
 };
 
 let current: Settings = load();

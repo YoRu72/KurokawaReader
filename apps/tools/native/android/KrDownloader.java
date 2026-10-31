@@ -25,7 +25,10 @@ final class KrDownloader {
     interface Opener { HttpURLConnection open(URL url) throws IOException; }
 
     /** What is learnt as the download goes (read by the progress reports while it runs). */
-    static final class Result { volatile long total = -1; volatile boolean ranged; volatile int connections = 1; volatile URL finalUrl; }
+    static final class Result { volatile long total = -1; volatile boolean ranged; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
+    /** One range a connection is fetching (or fetched): what the details page draws as the file map and the lanes. */
+    static final class Seg { final long start, end; volatile long pos; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
+        void advance(long p) { pos = p; long now = System.currentTimeMillis(); if (now - lastT >= 500) { double inst = (p - lastPos) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + inst * 0.4; lastT = now; lastPos = p; } } }
 
     private KrDownloader() {}
 
@@ -98,6 +101,7 @@ final class KrDownloader {
         final URL direct = res.finalUrl;
         Thread[] workers = new Thread[n];
         for (int i = 0; i < n; i++) {
+            final int wid = i;
             workers[i] = new Thread(() -> {
                 try (RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
                     while (fail.get() == null && !cancelled.get()) {
@@ -105,6 +109,7 @@ final class KrDownloader {
                         if (from >= total) break;
                         long to = Math.min(total - 1, from + chunk - 1);
                         long pos = from;
+                        final Seg seg = new Seg(from, to + 1, wid); res.segs.add(seg);
                         for (int attempt = 0; pos <= to && !cancelled.get(); attempt++) {
                             // (The signed address may have run out: the first address again, redirects and all.)
                             URL u = attempt >= 2 ? url : direct;
@@ -116,7 +121,8 @@ final class KrDownloader {
                                 if (rc != 206) throw new IOException("HTTP " + rc);
                                 try (InputStream in = c.getInputStream()) {
                                     raf.seek(pos);
-                                    copy(in, raf, to - pos + 1, cancelled, got, tick, wrote);
+                                    final long base = pos; final long[] w = wrote;
+                                    copy(in, raf, to - pos + 1, cancelled, got, () -> { seg.advance(base + w[0]); tick.run(); }, wrote);
                                 }
                                 pos += wrote[0]; wrote[0] = 0;
                                 // (An answer that ended early without an error is a failed attempt too.)
@@ -129,6 +135,7 @@ final class KrDownloader {
                                 try { Thread.sleep(400L * (attempt + 1)); } catch (InterruptedException ie) { throw e; }
                             }
                         }
+                        seg.pos = Math.min(pos, to + 1); seg.active = false; seg.speed = 0;
                     }
                 } catch (Exception e) { fail.compareAndSet(null, e); }
             });

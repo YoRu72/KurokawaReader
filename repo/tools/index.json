@@ -408,6 +408,30 @@
       "icon": "subtitles"
     },
     {
+      "id": "video",
+      "kind": "video",
+      "name": "Video",
+      "names": {
+        "ar": "الفيديو",
+        "ja": "動画",
+        "ko": "동영상",
+        "zh": "视频"
+      },
+      "description": "Paste a link from YouTube and over a thousand other sites into the Add bar: the downloader reads the page with yt-dlp, shows the qualities, audio and subtitles, and downloads it like any other task — playlists too. yt-dlp comes from its own GitHub releases and keeps itself up to date.",
+      "descriptions": {
+        "ar": "الصق رابطًا من يوتيوب أو من أكثر من ألف موقع آخر في خانة الإضافة: يقرأ المنزِّل الصفحة بأداة yt-dlp، ويعرض الجودات والصوت والترجمات، ثم ينزّله كأي مهمة أخرى، وكذا قوائم التشغيل. تُجلَب yt-dlp من إصداراتها على GitHub وتُحدِّث نفسها.",
+        "ja": "YouTube など千以上のサイトのリンクを追加欄に貼るだけ。yt-dlp でページを読み、画質・音声・字幕を表示して通常のタスクとしてダウンロードします（再生リストも）。yt-dlp は GitHub の公式リリースから取得し、自動で更新されます。",
+        "ko": "YouTube 등 천 개가 넘는 사이트의 링크를 추가 창에 붙여 넣으세요. yt-dlp로 페이지를 읽어 화질·오디오·자막을 보여 주고 일반 작업처럼 받습니다(재생목록 포함). yt-dlp는 GitHub 공식 릴리스에서 받아 스스로 업데이트합니다.",
+        "zh": "把 YouTube 及上千个其他网站的链接粘贴到添加栏：下载器用 yt-dlp 读取页面，列出画质、音频和字幕，像其他任务一样下载（包括播放列表）。yt-dlp 取自其 GitHub 官方发布，并会自动更新。"
+      },
+      "version": "0.1.0",
+      "icon": "film",
+      "platforms": [
+        "android",
+        "desktop"
+      ]
+    },
+    {
       "id": "archives",
       "kind": "archives",
       "name": "Archives",

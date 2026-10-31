@@ -4,7 +4,7 @@
 // points the app at, or the browser's own download on the web. The views speak this and nothing else.
 
 export type TaskState = 'queued' | 'metadata' | 'downloading' | 'seeding' | 'paused' | 'done' | 'failed' | 'checking';
-export type TaskKind = 'http' | 'torrent' | 'debrid';
+export type TaskKind = 'http' | 'torrent' | 'debrid' | 'video';
 
 /** Where the bytes come from. Exactly one of the three is set. */
 export interface TaskSource {
@@ -54,6 +54,8 @@ export interface Task {
   addedAt: number;
   doneAt?: number;
   /** What added it: a search add-on, a page, the user — for the list's groups and the anime add-on's tracking. */
+  /** The ranges the connections are fetching (plain files): what the details page draws. */
+  segments?: { start: number; pos: number; end: number; speed?: number; active: boolean; worker: number }[];
   meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
@@ -73,6 +75,8 @@ export interface AddOptions {
   meta?: Task['meta'];
   /** Start paused (to pick files once the metadata is here). */
   paused?: boolean;
+  /** A page for yt-dlp (the Video add-on): the format chosen and what the list shows. */
+  video?: { format?: string; title?: string; site?: string; label?: string; audioOnly?: boolean; container?: string; subs?: string; thumbnail?: string; playlistIndex?: number; embedThumb?: boolean; sponsorblock?: boolean };
 }
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }
