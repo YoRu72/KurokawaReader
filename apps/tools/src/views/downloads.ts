@@ -26,6 +26,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     iconButton('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch((e) => toast(String(e.message ?? e), 'error'))),
     iconButton('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch((e) => toast(String(e.message ?? e), 'error'))),
     iconButton('trash', t('clearDone'), () => void Promise.all(tasks.filter((x) => x.state === 'done' || x.state === 'failed').map((x) => getEngine().remove(x.id, false))).then((r) => toast(t('tasksRemoved', { n: countItems(r.length) }))).catch((e) => toast(String(e.message ?? e), 'error'))),
+    ...(getSettings().addons.includes('debrid') ? [iconButton('cloud', t('cloud'), () => void import('./cloud').then((m) => m.cloudSheet()))] : []),
     iconButton('settings', t('settings'), () => navigate('/settings')));
   const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, chips, empty, list), fab) as HTMLElement & { dispose?: () => void };
 

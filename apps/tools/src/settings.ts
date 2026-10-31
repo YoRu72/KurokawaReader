@@ -43,6 +43,9 @@ export interface Settings {
   /** Archives: unpack subtitle archives as they arrive; unpack every downloaded archive. */
   autoUnpackSubs: boolean;
   autoUnpackAll: boolean;
+  /** Debrid: torrents go through the service by default; the transfers waiting on it. */
+  debridDefault: boolean;
+  debridTransfers: unknown[];
 }
 
 const KEY = 'kt.settings';
@@ -52,7 +55,7 @@ const DEFAULTS: Settings = {
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
-  subLangs: [], autoUnpackSubs: true, autoUnpackAll: false,
+  subLangs: [], autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
 };
 
 let current: Settings = load();

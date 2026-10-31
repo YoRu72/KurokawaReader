@@ -39,7 +39,11 @@ export function addSheet(initial = ''): void {
     h('label', { class: 'check-row' }, seq, h('span', null, t('sequential'))),
     h('label', { class: 'check-row' }, paused, h('span', null, t('startPaused'))),
     h('label', { class: 'field row' }, h('span', { class: 'label' }, t('connections')), conn));
-  sh.body.append(ta, tools, fileNote, fileIn, filesBox, opts);
+  // Through a debrid service (the Debrid add-on with a key): the cloud fetches it, the app downloads the result.
+  const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
+  const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
+  void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
+  sh.body.append(ta, tools, fileNote, fileIn, filesBox, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
   sh.actions.append(go);
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
@@ -66,6 +70,12 @@ export function addSheet(initial = ''): void {
   go.addEventListener('click', async () => {
     const srcs = sources();
     if (!srcs.length) { toast(t('invalidLink'), 'error'); ta.focus(); return; }
+    if (!debridRow.hidden && viaDebrid.checked) {
+      go.disabled = true;
+      try { const { sendToDebrid } = await import('../debrid/transfers'); for (const src of srcs) { const r = await sendToDebrid(src, { dir: getSettings().downloadDir || undefined, name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined }); toast(r.kind === 'cloud' ? t('debridSent', { name: r.name }) : t('taskAdded', { name: r.name })); } sh.close(); }
+      catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; }
+      return;
+    }
     if (!eng.can.torrents && srcs.some((x) => x.magnet || x.torrent)) { toast(t('noEngine'), 'error'); return; }
     go.disabled = true;
     try {

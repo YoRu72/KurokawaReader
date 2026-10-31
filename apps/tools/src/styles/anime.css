@@ -97,3 +97,6 @@
 .task-bar.big { height: 8px; }
 .entry-row .grow { flex: 1; min-width: 0; }
 .sheet .row > span > small, .sheet .switch-row > span > small { display: block; margin-top: 2px; }
+.cloud-box { display: flex; flex-direction: column; gap: 8px; }
+.cloud-box h4 { margin: 10px 0 2px; font-size: 13px; font-weight: 700; color: var(--md-primary); }
+.cloud-row { padding: 8px 10px; }

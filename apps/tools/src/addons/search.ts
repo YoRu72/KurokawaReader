@@ -6,6 +6,7 @@ import { getEngine } from '../engine';
 import { moduleUrl, loadIndex, nameOf, addonSettings } from '../addons';
 import { getLang } from '../i18n';
 import { addonFetch } from '../http';
+import { getSettings } from '../settings';
 
 export interface SearchResult { title: string; magnet?: string; url?: string; torrent?: string; size?: number; seeds?: number; peers?: number; date?: string; source: string; link?: string; quality?: string; meta?: Record<string, unknown> }
 export interface SearchModule { search(query: string, ctx: { fetch: typeof fetch; lang: string; settings: Record<string, string | number | boolean> }): Promise<SearchResult[]> }
@@ -33,6 +34,8 @@ export async function runSearch(query: string, addons: string[], box: HTMLElemen
   if (!box.children.length) box.append(h('p', { class: 'empty small' }, t('noResults')));
 }
 async function add(r: SearchResult): Promise<void> {
-  try { const tk = await getEngine().add({ source: r.magnet ? { magnet: r.magnet } : r.torrent ? { torrent: r.torrent } : { url: r.url! }, name: r.magnet || r.torrent ? undefined : r.title, sequential: true, meta: { addon: r.source, title: r.title, quality: r.quality } }); toast(t('taskAdded', { name: tk.name || r.title })); }
+  try {
+    if ((r.magnet || r.torrent) && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); const d = await sendToDebrid(r.magnet ? { magnet: r.magnet } : { torrent: r.torrent! }, { meta: { addon: r.source, title: r.title, quality: r.quality } }); toast(d.kind === 'cloud' ? t('debridSent', { name: d.name }) : t('taskAdded', { name: d.name })); return; }
+    const tk = await getEngine().add({ source: r.magnet ? { magnet: r.magnet } : r.torrent ? { torrent: r.torrent } : { url: r.url! }, name: r.magnet || r.torrent ? undefined : r.title, sequential: true, meta: { addon: r.source, title: r.title, quality: r.quality } }); toast(t('taskAdded', { name: tk.name || r.title })); }
   catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
 }

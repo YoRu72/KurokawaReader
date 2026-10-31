@@ -54,7 +54,7 @@ export interface Task {
   addedAt: number;
   doneAt?: number;
   /** What added it: a search add-on, a page, the user — for the list's groups and the anime add-on's tracking. */
-  meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number };
+  meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }

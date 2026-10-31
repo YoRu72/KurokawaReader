@@ -427,6 +427,72 @@
         "android",
         "desktop"
       ]
+    },
+    {
+      "id": "debrid",
+      "kind": "debrid",
+      "name": "Debrid",
+      "names": {
+        "ar": "الديبريد",
+        "ja": "デブリッド",
+        "ko": "데브리드",
+        "zh": "Debrid"
+      },
+      "description": "Real-Debrid, AllDebrid, Premiumize and TorBox: torrents and hoster links fetched in the cloud and downloaded from there at full speed — from the add sheet, the search and the anime pickers; a Cloud view of what the service holds.",
+      "descriptions": {
+        "ar": "Real-Debrid وAllDebrid وPremiumize وTorBox: تُجلب التورنتات وروابط المستضيفين في السحابة وتُنزَّل منها بأقصى سرعة — من ورقة الإضافة والبحث ومنتقيات الأنمي؛ وعرضٌ للسحابة بما تحمله الخدمة."
+      },
+      "version": "0.1.0",
+      "icon": "cloud",
+      "settings": [
+        {
+          "id": "preferred",
+          "label": "Preferred service",
+          "labels": {
+            "ar": "الخدمة المفضلة"
+          },
+          "type": "select",
+          "options": [
+            "realdebrid",
+            "alldebrid",
+            "premiumize",
+            "torbox"
+          ],
+          "value": "realdebrid"
+        },
+        {
+          "id": "realdebridKey",
+          "label": "Real-Debrid API token (real-debrid.com/apitoken)",
+          "labels": {
+            "ar": "رمز Real-Debrid (real-debrid.com/apitoken)"
+          },
+          "type": "password"
+        },
+        {
+          "id": "alldebridKey",
+          "label": "AllDebrid API key",
+          "labels": {
+            "ar": "مفتاح AllDebrid"
+          },
+          "type": "password"
+        },
+        {
+          "id": "premiumizeKey",
+          "label": "Premiumize API key",
+          "labels": {
+            "ar": "مفتاح Premiumize"
+          },
+          "type": "password"
+        },
+        {
+          "id": "torboxKey",
+          "label": "TorBox API key",
+          "labels": {
+            "ar": "مفتاح TorBox"
+          },
+          "type": "password"
+        }
+      ]
     }
   ]
 }

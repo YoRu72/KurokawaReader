@@ -105,8 +105,9 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
   };
   const add = async (r: TorrentResult) => {
     try {
-      const source = r.url ? { url: r.url } : { magnet: magnetOf(r) };
-      const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: true, meta: { anilistId: a.id, title: titleOf(a), episode: episode || undefined, batch: !episode || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx } });
+      const source = r.url ? { url: r.url } : { magnet: magnetOf(r) }; const meta = { anilistId: a.id, title: titleOf(a), episode: episode || undefined, batch: !episode || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx };
+      if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); const d = await sendToDebrid(source, { meta }); toast(d.kind === 'cloud' ? t('debridSent', { name: d.name }) : t('taskAdded', { name: d.name })); sh.close(); navigate('/'); return; }
+      const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: true, meta });
       toast(t('taskAdded', { name: tk.name || r.title })); sh.close(); navigate('/');
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
