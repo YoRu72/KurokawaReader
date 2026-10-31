@@ -1,5 +1,7 @@
 # Kurokawa apps
 
+[العربية](README.ar.md)
+
 Two apps that share one look (Material 3 Expressive), one set of languages (العربية · English · 日本語 · 한국어 · 中文), one AniList link, and one [add-on repository](repo/).
 
 | App | What it is | Get it |
