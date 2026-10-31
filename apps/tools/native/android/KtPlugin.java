@@ -247,6 +247,52 @@ public class KtPlugin extends Plugin {
         });
     }
 
+    /* ---------- the Files add-on: folders of the device ---------- */
+    @PluginMethod public void listDir(PluginCall call) {
+        bg.execute(() -> {
+            try {
+                File d = fileOf(call.getString("path", "")); File[] kids = d.listFiles(); JSArray out = new JSArray();
+                if (kids != null) for (File k : kids) { JSObject o = new JSObject(); o.put("name", k.getName()); o.put("path", k.getAbsolutePath()); o.put("dir", k.isDirectory()); o.put("size", k.isFile() ? k.length() : 0); o.put("mtime", k.lastModified()); out.put(o); }
+                JSObject r = new JSObject(); r.put("entries", out); r.put("exists", d.isDirectory()); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage()); }
+        });
+    }
+    @PluginMethod public void deletePath(PluginCall call) {
+        bg.execute(() -> { try { File f = fileOf(call.getString("path", "")); boolean ok = deleteTree(f); JSObject r = new JSObject(); r.put("ok", ok); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage()); } });
+    }
+    private static boolean deleteTree(File f) { if (f.isDirectory()) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); } return f.delete(); }
+    @PluginMethod public void roots(PluginCall call) { JSArray a = new JSArray(); a.put(engine().defaultDir().getAbsolutePath()); for (File f : getContext().getExternalFilesDirs(null)) if (f != null) a.put(f.getAbsolutePath()); JSObject r = new JSObject(); r.put("roots", a); call.resolve(r); }
+
+    /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
+    @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
+    @PluginMethod public void siblings(PluginCall call) {
+        File f = fileOf(call.getString("path", "")); JSArray out = new JSArray(); File dir = f.getParentFile(); String base = f.getName().replaceAll("\\.[^.]+$", "").toLowerCase();
+        File[] kids = dir != null ? dir.listFiles() : null; if (kids != null) for (File k : kids) if (k.isFile() && !k.equals(f) && k.getName().toLowerCase().startsWith(base)) out.put(k.getAbsolutePath());
+        JSObject r = new JSObject(); r.put("paths", out); call.resolve(r);
+    }
+    @PluginMethod public void clipsDir(PluginCall call) { File d = new File(engine().defaultDir(), "Clips"); d.mkdirs(); JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); call.resolve(r); }
+    @PluginMethod public void writeTemp(PluginCall call) {
+        try { File dir = new File(getContext().getCacheDir(), "clip"); new File(dir, "fonts").mkdirs(); File f = new File(dir, call.getString("name", "clip.txt").replaceAll("[\\\\/]", "_")); try (java.io.Writer w = new java.io.OutputStreamWriter(new java.io.FileOutputStream(f), java.nio.charset.StandardCharsets.UTF_8)) { w.write(call.getString("text", "")); } JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r); }
+        catch (Exception e) { call.reject(e.getMessage()); }
+    }
+    private final java.util.Map<String, Long> ffJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void ffmpeg(PluginCall call) {
+        final String id = call.getString("id", ""); final java.util.List<String> args = new java.util.ArrayList<>();
+        try { JSArray a = call.getArray("args"); for (int i = 0; i < a.length(); i++) args.add(a.getString(i)); } catch (Exception e) { call.reject("args"); return; }
+        final long[] last = { 0 };
+        com.arthenica.ffmpegkit.FFmpegSession s = com.arthenica.ffmpegkit.FFmpegKit.executeWithArgumentsAsync(args.toArray(new String[0]), session -> {
+            ffJobs.remove(id); JSObject r = new JSObject(); r.put("code", session.getReturnCode() != null ? session.getReturnCode().getValue() : 1); String log = session.getAllLogsAsString(); r.put("log", log.length() > 20000 ? log.substring(log.length() - 20000) : log); call.resolve(r);
+        }, log -> {}, st -> {
+            long now = System.currentTimeMillis(); if (now - last[0] < 300) return; last[0] = now;
+            JSObject ev = new JSObject(); ev.put("id", id); ev.put("time", st.getTime() / 1000.0); ev.put("size", st.getSize()); ev.put("speed", st.getSpeed()); notifyListeners("ffmpegProgress", ev);
+        });
+        ffJobs.put(id, s.getSessionId());
+    }
+    @PluginMethod public void ffmpegCancel(PluginCall call) { Long sid = ffJobs.get(call.getString("id", "")); if (sid != null) com.arthenica.ffmpegkit.FFmpegKit.cancel(sid); call.resolve(); }
+    @PluginMethod public void ffprobe(PluginCall call) {
+        bg.execute(() -> { try { com.arthenica.ffmpegkit.MediaInformationSession s = com.arthenica.ffmpegkit.FFprobeKit.getMediaInformation(call.getString("path", "")); com.arthenica.ffmpegkit.MediaInformation mi = s.getMediaInformation(); JSObject r = new JSObject(); r.put("json", mi != null && mi.getAllProperties() != null ? mi.getAllProperties().toString() : "{}"); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage()); } });
+    }
+
     /* ---------- requests for the add-ons (past the page's CORS), with the WebView's identity and cookies ---------- */
     @PluginMethod public void httpRequest(PluginCall call) {
         final String urlStr = call.getString("url", ""); final String method = call.getString("method", "GET"); final String body = call.getString("body", null);

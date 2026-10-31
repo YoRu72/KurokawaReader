@@ -35,6 +35,8 @@ final class KtStream {
         }
         return "http://127.0.0.1:" + port + "/" + taskId + "/" + fileIndex;
     }
+    /** A local file's URL on this server. */
+    synchronized String fileUrl(String path) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/file?p=" + java.net.URLEncoder.encode(path, "UTF-8"); }
 
     private void serve(Socket s) {
         try (Socket sock = s) {
@@ -45,8 +47,19 @@ final class KtStream {
             String path = req[1]; long rangeStart = 0, rangeEnd = -1; boolean ranged = false;
             for (String h; (h = readLine(in)) != null && !h.isEmpty(); ) { if (h.toLowerCase().startsWith("range:")) { String v = h.substring(6).trim().replace("bytes=", ""); String[] p = v.split("-"); try { rangeStart = Long.parseLong(p[0].trim()); if (p.length > 1 && !p[1].trim().isEmpty()) rangeEnd = Long.parseLong(p[1].trim()); ranged = true; } catch (Exception ignored) {} } }
             String[] parts = path.replaceFirst("^/", "").split("/");
-            KtEngine.Task x = parts.length >= 1 ? engine.task(parts[0]) : null; int index = parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
             BufferedOutputStream out = new BufferedOutputStream(rawOut, 1 << 16);
+            // /file?p=<path>: any file of the device (the player's local files and their subtitles), served with ranges.
+            if (path.startsWith("/file?p=")) {
+                File lf = new File(java.net.URLDecoder.decode(path.substring(8), "UTF-8"));
+                if (!lf.isFile()) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                long lsize = lf.length(); if (rangeEnd < 0 || rangeEnd >= lsize) rangeEnd = lsize - 1; if (rangeStart > rangeEnd) { out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + lsize + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                long llen = rangeEnd - rangeStart + 1;
+                out.write(((ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + rangeStart + "-" + rangeEnd + "/" + lsize + "\r\n" : "HTTP/1.1 200 OK\r\n") + "Content-Type: " + mimeOf(lf.getName()) + "\r\nAccept-Ranges: bytes\r\nContent-Length: " + llen + "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                if ("HEAD".equals(req[0])) { out.flush(); return; }
+                try (RandomAccessFile raf = new RandomAccessFile(lf, "r")) { raf.seek(rangeStart); byte[] b = new byte[1 << 17]; long left = llen; while (left > 0) { int n = raf.read(b, 0, (int) Math.min(b.length, left)); if (n <= 0) break; out.write(b, 0, n); left -= n; } }
+                out.flush(); return;
+            }
+            KtEngine.Task x = parts.length >= 1 ? engine.task(parts[0]) : null; int index = parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
             if (x == null) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
             File f = engine.fileOf(x, index); long size;
             TorrentHandle th = x.th; TorrentInfo ti = th != null && th.isValid() ? th.torrentFile() : null;
