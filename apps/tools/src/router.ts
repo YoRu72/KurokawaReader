@@ -7,7 +7,8 @@ export type Route =
   | { name: 'settings'; section?: string }
   | { name: 'addons' }
   | { name: 'anime'; tab?: string; q?: string }
-  | { name: 'animeEntry'; id: number };
+  | { name: 'animeEntry'; id: number }
+  | { name: 'subs'; q?: string };
 
 const listeners = new Set<(r: Route) => void>();
 export function parseRoute(hash = location.hash): Route {
@@ -18,6 +19,7 @@ export function parseRoute(hash = location.hash): Route {
   if (p.startsWith('/search')) return { name: 'search', q: sp.get('q') ?? undefined, addon: sp.get('addon') ?? undefined };
   if (p.startsWith('/addons')) return { name: 'addons' };
   const an = /^\/anime\/(\d+)/.exec(p); if (an) return { name: 'animeEntry', id: Number(an[1]) };
+  if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   if (p.startsWith('/anime')) return { name: 'anime', tab: sp.get('tab') ?? undefined, q: sp.get('q') ?? undefined };
   const st = /^\/settings(?:\/([^/]+))?/.exec(p); if (st) return { name: 'settings', section: st[1] };
   return { name: 'downloads', filter: sp.get('f') ?? undefined };

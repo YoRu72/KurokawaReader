@@ -221,6 +221,191 @@
       "version": "0.1.0",
       "module": "anime/animetosho.mjs",
       "icon": "magnet"
+    },
+    {
+      "id": "subtitles",
+      "kind": "subtitles",
+      "name": "Subtitles",
+      "names": {
+        "ar": "الترجمات",
+        "ja": "字幕",
+        "ko": "자막",
+        "zh": "字幕"
+      },
+      "description": "A Subtitles tab: a title — or an AniList, MyAnimeList or IMDb link — resolved to the show or film, then every site below searched at once, by episode and language; the file downloaded in a tap.",
+      "descriptions": {
+        "ar": "تبويب للترجمات: عنوان — أو رابط AniList أو MyAnimeList أو IMDb — يُحلّ إلى العمل، ثم تُبحث كل المواقع أدناه دفعةً واحدةً بالحلقة واللغة؛ ويُنزَّل الملف بلمسة."
+      },
+      "version": "0.1.0",
+      "icon": "subtitles",
+      "children": [
+        "subs-subdl",
+        "subs-opensubtitles",
+        "subs-subsource",
+        "subs-gestdown",
+        "subs-podnapisi",
+        "subs-subf2m",
+        "subs-animetosho",
+        "subs-jimaku",
+        "subs-yify"
+      ]
+    },
+    {
+      "id": "subs-subdl",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "SubDL",
+      "description": "subdl.com — films and series by IMDb id; a free key from your SubDL account.",
+      "descriptions": {
+        "ar": "subdl.com — الأفلام والمسلسلات بمعرّف IMDb؛ مفتاح مجاني من حسابك في SubDL."
+      },
+      "version": "0.1.0",
+      "module": "subs/subdl.mjs",
+      "icon": "subtitles",
+      "settings": [
+        {
+          "id": "apiKey",
+          "label": "SubDL API key",
+          "labels": {
+            "ar": "مفتاح واجهة SubDL"
+          },
+          "type": "password"
+        }
+      ]
+    },
+    {
+      "id": "subs-opensubtitles",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "OpenSubtitles",
+      "description": "opensubtitles.com — the largest library; a free consumer API key (opensubtitles.com/consumers).",
+      "descriptions": {
+        "ar": "opensubtitles.com — أكبر مكتبة؛ مفتاح مجاني من opensubtitles.com/consumers."
+      },
+      "version": "0.1.0",
+      "module": "subs/opensubtitles.mjs",
+      "icon": "subtitles",
+      "settings": [
+        {
+          "id": "apiKey",
+          "label": "OpenSubtitles API key",
+          "labels": {
+            "ar": "مفتاح واجهة OpenSubtitles"
+          },
+          "type": "password"
+        }
+      ]
+    },
+    {
+      "id": "subs-subsource",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "SubSource",
+      "description": "subsource.net — films and series; an API key from your account.",
+      "descriptions": {
+        "ar": "subsource.net — الأفلام والمسلسلات؛ مفتاح من حسابك."
+      },
+      "version": "0.1.0",
+      "module": "subs/subsource.mjs",
+      "icon": "subtitles",
+      "settings": [
+        {
+          "id": "apiKey",
+          "label": "SubSource API key",
+          "labels": {
+            "ar": "مفتاح واجهة SubSource"
+          },
+          "type": "password"
+        }
+      ]
+    },
+    {
+      "id": "subs-gestdown",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "Gestdown (Addic7ed)",
+      "description": "Series subtitles mirrored from Addic7ed; no key.",
+      "descriptions": {
+        "ar": "ترجمات المسلسلات من مرآة Addic7ed؛ بلا مفتاح."
+      },
+      "version": "0.1.0",
+      "module": "subs/gestdown.mjs",
+      "icon": "subtitles"
+    },
+    {
+      "id": "subs-podnapisi",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "Podnapisi",
+      "description": "podnapisi.net — films and series in many languages; no key.",
+      "descriptions": {
+        "ar": "podnapisi.net — الأفلام والمسلسلات بلغات كثيرة؛ بلا مفتاح."
+      },
+      "version": "0.1.0",
+      "module": "subs/podnapisi.mjs",
+      "icon": "subtitles"
+    },
+    {
+      "id": "subs-subf2m",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "Subf2m",
+      "description": "subf2m.co (Subscene's successor); no key — the site may refuse automated requests.",
+      "descriptions": {
+        "ar": "subf2m.co (خلف Subscene)؛ بلا مفتاح — وقد يرفض الموقع الطلبات الآلية."
+      },
+      "version": "0.1.0",
+      "module": "subs/subf2m.mjs",
+      "icon": "subtitles"
+    },
+    {
+      "id": "subs-animetosho",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "AnimeTosho",
+      "description": "Subtitles pulled out of anime releases (anime only); no key.",
+      "descriptions": {
+        "ar": "ترجمات مستخرجة من إصدارات الأنمي (للأنمي فقط)؛ بلا مفتاح."
+      },
+      "version": "0.1.0",
+      "module": "subs/animetosho.mjs",
+      "icon": "subtitles"
+    },
+    {
+      "id": "subs-jimaku",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "Jimaku",
+      "description": "jimaku.cc — Japanese anime subtitles by AniList id; a free key from your account.",
+      "descriptions": {
+        "ar": "jimaku.cc — ترجمات الأنمي اليابانية بمعرّف AniList؛ مفتاح مجاني من حسابك."
+      },
+      "version": "0.1.0",
+      "module": "subs/jimaku.mjs",
+      "icon": "subtitles",
+      "settings": [
+        {
+          "id": "apiKey",
+          "label": "Jimaku API key",
+          "labels": {
+            "ar": "مفتاح واجهة Jimaku"
+          },
+          "type": "password"
+        }
+      ]
+    },
+    {
+      "id": "subs-yify",
+      "kind": "subtitle-source",
+      "parent": "subtitles",
+      "name": "YIFY Subtitles",
+      "description": "yifysubtitles.ch — films by IMDb id; no key.",
+      "descriptions": {
+        "ar": "yifysubtitles.ch — الأفلام بمعرّف IMDb؛ بلا مفتاح."
+      },
+      "version": "0.1.0",
+      "module": "subs/yify.mjs",
+      "icon": "subtitles"
     }
   ]
 }

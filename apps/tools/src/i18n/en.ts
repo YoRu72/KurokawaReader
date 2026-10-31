@@ -43,6 +43,9 @@ export const en = {
   anilistClientId: 'AniList client id', anilistHowTo: 'Make an API client on AniList (any name; redirect URL https://anilist.co/api/v2/oauth/pin), then paste its id here and sign in.', anilistTokenPlaceholder: 'Or paste the token AniList shows after signing in', anilistLink: 'Link', anilistLinkedAs: 'Signed in as {name}', anilistUnlink: 'Sign out', anilistNeedClient: 'The client id is needed first', anilistSignInWindow: 'Sign in to AniList', anilistAutoProgress: 'Mark episodes watched as their downloads finish',
   animeQuality: 'Preferred quality', animeAdult: 'Show adult titles', animeTitleLang: 'Titles', titlePreferred: 'As on AniList', titleRomaji: 'Romaji', titleEnglish: 'English', titleNative: 'Native',
   animeRepos: 'Extension repositories', animeReposHint: 'Hayase (index.json) and Seanime (marketplace or manifest) repositories: their anime torrent providers are installed and updated from here.', animeRepoUrl: 'Repository URL', animeRepoAdd: 'Add', animeRepoAdded: '{n} sources installed', animeRepoRemove: 'Remove this repository', animeProviderBuiltin: 'From the Kurokawa repository', animeProvidersUpdate: 'Update all', animeProvidersNone: 'No sources yet.',
+  // Subtitles
+  navSubs: 'Subtitles', subsSearchHint: 'A title, or an AniList / MyAnimeList / IMDb link', kindAnime: 'Anime', kindSeries: 'Series', episodesN: '{n} episodes', subsAll: 'All', subsSeason: 'Season', subsEpisode: 'Episode',
+  subsAddLang: 'Language', subsLanguages: 'Subtitle languages', subsPickLang: 'Choose at least one language.', subsNoSources: 'No subtitle sites are installed — add them under Add-ons → Subtitles.', subsHI: 'HI', subsPartial: 'incomplete', subsAI: 'machine',
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

@@ -38,6 +38,8 @@ export interface Settings {
   animeQuality: '' | '2160' | '1080' | '720' | '480';
   animeAdult: boolean;
   animeTitleLang: 'preferred' | 'romaji' | 'english' | 'native';
+  /** Subtitles: the languages wanted, in order. */
+  subLangs: string[];
 }
 
 const KEY = 'kt.settings';
@@ -47,9 +49,11 @@ const DEFAULTS: Settings = {
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
+  subLangs: [],
 };
 
 let current: Settings = load();
+if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
 function load(): Settings {
   try { return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>), aria2: { ...DEFAULTS.aria2, ...((JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>).aria2 ?? {}) } }; } catch { return { ...DEFAULTS }; }

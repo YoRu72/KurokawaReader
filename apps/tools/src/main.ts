@@ -27,6 +27,7 @@ const DESTS = (): [string, string, string, () => void][] => [
   ['downloads', 'download', 'navDownloads', () => navigate('/')],
   ['search', 'search', 'navSearch', () => navigate('/search')],
   ...(getSettings().addons.includes('anime') ? [['anime', 'tv', 'navAnime', () => navigate('/anime')] as [string, string, string, () => void]] : []),
+  ...(getSettings().addons.includes('subtitles') ? [['subs', 'subtitles', 'navSubs', () => navigate('/subs')] as [string, string, string, () => void]] : []),
   ['settings', 'settings', 'navSettings', () => navigate('/settings')],
 ];
 const wide = matchMedia('(min-width: 1024px) and (pointer: fine)');
@@ -42,13 +43,13 @@ function buildNav(): HTMLElement {
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }
 function placeNav(): void {
-  nav?.remove(); nav = buildNav();
+  nav?.remove(); nav = buildNav(); nav.dataset.addons = getSettings().addons.filter((a) => a === 'anime' || a === 'subtitles').sort().join();
   document.documentElement.classList.toggle('pc', isPc());
   if (isPc()) document.body.prepend(nav); else document.body.append(nav);
   markNav(parseRoute());
 }
 function markNav(r: Route): void {
-  const dest = r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : 'search';
+  const dest = r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : r.name === 'subs' ? 'subs' : 'search';
   nav?.querySelectorAll<HTMLElement>('[data-dest]').forEach((b) => { const on = b.dataset.dest === dest; b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
 }
 wide.addEventListener('change', placeNav);
@@ -63,6 +64,7 @@ function mount(route: Route): void {
     case 'task': current = lazyView(() => import('./views/task').then((m) => m.taskView(route.id))); break;
     case 'settings': current = lazyView(() => import('./views/settings').then((m) => m.settingsView(route.section))); break;
     case 'addons': current = lazyView(() => import('./views/settings').then((m) => m.settingsView('addons'))); break;
+    case 'subs': current = lazyView(() => import('./views/subs').then((m) => m.subsView(route.q))); break;
     case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q))); break;
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q, route.addon))); break;
@@ -81,7 +83,7 @@ applyDocumentLang();
 applyChrome();
 placeNav();
 wirePcBack();
-onSettingsChange((s) => { applyChrome(s); const want = s.addons.includes('anime'); if (!!nav?.querySelector('[data-dest="anime"]') !== want) placeNav(); });
+onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles').sort().join(); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
 if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);

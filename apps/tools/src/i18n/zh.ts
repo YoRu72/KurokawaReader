@@ -24,4 +24,6 @@ export const zh: Partial<Strings> = {
   anilistClientId: 'AniList 客户端 ID', anilistHowTo: '在 AniList 创建一个 API 客户端（名称任意，重定向 URL 填 https://anilist.co/api/v2/oauth/pin），把它的 ID 粘贴到这里，然后登录。', anilistTokenPlaceholder: '或粘贴登录后 AniList 显示的令牌', anilistLink: '关联', anilistLinkedAs: '已登录：{name}', anilistUnlink: '退出登录', anilistNeedClient: '需要先填写客户端 ID', anilistSignInWindow: '登录 AniList', anilistAutoProgress: '下载完成后标记为已看',
   animeQuality: '首选画质', animeAdult: '显示成人作品', animeTitleLang: '标题', titlePreferred: '按 AniList 设置', titleRomaji: '罗马音', titleEnglish: '英文', titleNative: '原文',
   animeRepos: '扩展仓库', animeReposHint: 'Hayase（index.json）与 Seanime（市场或清单）仓库：其中的动画种子提供者从这里安装并更新。', animeRepoUrl: '仓库 URL', animeRepoAdd: '添加', animeRepoAdded: '已安装 {n} 个来源', animeRepoRemove: '移除此仓库', animeProviderBuiltin: '来自 Kurokawa 仓库', animeProvidersUpdate: '全部更新', animeProvidersNone: '还没有来源。',
+  navSubs: '字幕', subsSearchHint: '标题，或 AniList / MyAnimeList / IMDb 链接', kindAnime: '动画', kindSeries: '剧集', episodesN: '{n} 集', subsAll: '全部', subsSeason: '季', subsEpisode: '集',
+  subsAddLang: '语言', subsLanguages: '字幕语言', subsPickLang: '至少选择一种语言。', subsNoSources: '尚未安装字幕站点——在附加组件 → 字幕中添加。', subsHI: '听障版', subsPartial: '未完成', subsAI: '机器翻译',
 };

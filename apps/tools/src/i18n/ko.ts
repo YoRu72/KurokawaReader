@@ -24,4 +24,6 @@ export const ko: Partial<Strings> = {
   anilistClientId: 'AniList 클라이언트 ID', anilistHowTo: 'AniList에서 API 클라이언트를 만들고(이름은 자유, 리디렉션 URL은 https://anilist.co/api/v2/oauth/pin) 그 ID를 여기에 붙여 넣은 뒤 로그인하세요.', anilistTokenPlaceholder: '또는 로그인 후 AniList가 보여 주는 토큰을 붙여 넣기', anilistLink: '연결', anilistLinkedAs: '{name}(으)로 로그인됨', anilistUnlink: '로그아웃', anilistNeedClient: '클라이언트 ID가 먼저 필요합니다', anilistSignInWindow: 'AniList 로그인', anilistAutoProgress: '다운로드가 끝나면 시청함으로 표시',
   animeQuality: '선호 화질', animeAdult: '성인 작품 표시', animeTitleLang: '제목', titlePreferred: 'AniList 설정대로', titleRomaji: '로마자', titleEnglish: '영어', titleNative: '원어',
   animeRepos: '확장 저장소', animeReposHint: 'Hayase(index.json)와 Seanime(마켓플레이스 또는 매니페스트) 저장소: 여기서 애니 토렌트 공급자를 설치하고 업데이트합니다.', animeRepoUrl: '저장소 URL', animeRepoAdd: '추가', animeRepoAdded: '소스 {n}개를 설치했습니다', animeRepoRemove: '이 저장소 제거', animeProviderBuiltin: 'Kurokawa 저장소에서', animeProvidersUpdate: '모두 업데이트', animeProvidersNone: '아직 소스가 없습니다.',
+  navSubs: '자막', subsSearchHint: '제목 또는 AniList / MyAnimeList / IMDb 링크', kindAnime: '애니', kindSeries: '시리즈', episodesN: '{n}화', subsAll: '전체', subsSeason: '시즌', subsEpisode: '에피소드',
+  subsAddLang: '언어', subsLanguages: '자막 언어', subsPickLang: '언어를 하나 이상 고르세요.', subsNoSources: '설치된 자막 사이트가 없습니다. 부가 기능 → 자막에서 추가하세요.', subsHI: '청각장애인용', subsPartial: '미완성', subsAI: '기계 번역',
 };
