@@ -17,7 +17,7 @@ export const fmtUntil = (secs: number): string => {
   const d = Math.floor(secs / 86400), hh = Math.floor((secs % 86400) / 3600), m = Math.max(1, Math.floor((secs % 3600) / 60));
   // Arabic counts its nouns: «يومان و٣ ساعات», «ساعة واحدة و٢٠ دقيقةً».
   if (getLang() === 'ar') return d ? `${countDays(d)}${hh ? ` و${countHours(hh)}` : ''}` : hh ? `${countHours(hh)}${m ? ` و${countMinutes(m)}` : ''}` : countMinutes(m);
-  return d ? t('untilDays', { d, h: hh }) : hh ? t('untilHours', { h: hh, m }) : t('untilMinutes', { m });
+  return d ? (hh ? t('untilDays', { d, h: hh }) : t('untilDaysOnly', { d })) : hh ? t('untilHours', { h: hh, m }) : t('untilMinutes', { m });
 };
 /** Countdowns on the page kept current: every element with data-at (seconds) shows the time left. */
 export function tickCountdowns(root: HTMLElement): number {
