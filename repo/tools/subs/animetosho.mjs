@@ -4,8 +4,8 @@ const FEED = 'https://feed.animetosho.org/json';
 export default {
   async search(q) {
     if (!q.anilistId && !q.anidbAid) return [];
-    const ep = q.episode ? ` ${String(q.episode).padStart(2, '0')}` : '';
-    const r = await q.fetch(q.anidbAid ? `${FEED}?aid=${q.anidbAid}${q.episode ? `&q=${encodeURIComponent(`"${ep.trim()}"`)}&qx=1` : ''}` : `${FEED}?q=${encodeURIComponent(q.title + ep)}&qx=1`); if (!r.ok) throw new Error(`AnimeTosho: HTTP ${r.status}`);
+    const epn = q.animeEpisode ?? q.episode; const ep = epn ? ` ${String(epn).padStart(2, "0")}` : "";
+    const r = await q.fetch(q.anidbAid ? `${FEED}?aid=${q.anidbAid}${epn ? `&q=${encodeURIComponent(`"${ep.trim()}"`)}&qx=1` : ''}` : `${FEED}?q=${encodeURIComponent(q.title + ep)}&qx=1`); if (!r.ok) throw new Error(`AnimeTosho: HTTP ${r.status}`);
     const entries = (await r.json()).slice(0, 8); const out = [];
     for (const e of entries) {
       const rr = await q.fetch(`${FEED}?show=torrent&id=${e.id}`); if (!rr.ok) continue; const t = await rr.json();

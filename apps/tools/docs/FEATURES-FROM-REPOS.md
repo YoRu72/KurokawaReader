@@ -56,9 +56,9 @@ Status: [x] done · [~] partly · [ ] to do. Kept current as each batch lands.
 
 ## Seanime (5rahim/seanime and the community repos)
 - [x] Torrent providers (Seanime and Hayase extensions), debrid
-- [ ] Extension marketplaces browsed in the app (Seanime Marketplace, ASleepyDrink, Pal-droid, Hayase repos): status, language, one-tap install
+- [x] Extension marketplaces browsed in the app (Seanime Marketplace, ASleepyDrink, Pal-droid, Hayase repos): status, language, one-tap install
 - [ ] Online streaming extensions (`onlinestream-provider`): watch or download episodes over HTTP/HLS
-- [ ] Stremio add-ons (any manifest URL with streams) as providers
+- [x] Stremio add-ons (any manifest URL with streams) as providers
 - [ ] Auto Downloader: rules per show (group, resolution, terms), checked on a schedule
 - [ ] Local anime library (match files to shows), Continue watching / Up next
 - [ ] Missed episodes in the schedule
@@ -67,8 +67,8 @@ Status: [x] done · [~] partly · [ ] to do. Kept current as each batch lands.
 - [ ] Open AniList / MyAnimeList links in the app
 
 ## The owner's own asks (this round)
-- [ ] Torrent search: covers and titles matched on AniList and IMDb (as OTL in the reader), results grouped under them
-- [ ] Anime: fixes (countdowns, long series, episode titles, paging, my-list statuses, Arabic durations)
-- [ ] Subtitle search: anime episodes mapped to IMDb seasons, busy states, typing finds titles
+- [x] Torrent search: covers and titles matched on AniList and IMDb (as OTL in the reader), results grouped under them
+- [x] Anime: fixes (countdowns, long series, episode titles, paging, my-list statuses, Arabic durations)
+- [x] Subtitle search: anime episodes mapped to IMDb seasons, busy states, typing finds titles
 - [x] Settings folded like the reader's, with search
 - [ ] Reader settings worth having here (digits, fonts, haptics, reduce motion, backups)

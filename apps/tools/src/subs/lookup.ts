@@ -9,6 +9,8 @@ export type TitleKind = 'anime' | 'movie' | 'series';
 export interface TitleCard {
   kind: TitleKind; title: string; titles: string[]; year?: number; cover?: string; episodes?: number; seasons?: number;
   ids: { anilist?: number; mal?: number; imdb?: string; tvdb?: number; anidb?: number; kitsu?: number; tmdb?: number };
+  /** An anime's episodes in the TVDB/IMDb numbering (episode 30 → S02E05), from ani.zip. */
+  epMap?: Record<number, { s: number; e: number }>;
 }
 
 /** An id or a link the user pasted, when it is one. */
@@ -50,6 +52,10 @@ export async function lookup(q: string, adult = false, only?: 'anime' | 'video')
 /** Every id the sites could want, filled in from the mapping services for an anime. */
 export async function enrich(c: TitleCard): Promise<TitleCard> {
   if (c.kind === 'anime' && c.ids.anilist) { const ids = await al.idsOf(c.ids.anilist).catch(() => ({} as al.IdMap)); c.ids = { ...c.ids, imdb: c.ids.imdb ?? ids.imdb, tvdb: c.ids.tvdb ?? ids.tvdb, anidb: c.ids.anidb ?? ids.anidb, kitsu: c.ids.kitsu ?? ids.kitsu, mal: c.ids.mal ?? ids.mal, tmdb: c.ids.tmdb ?? ids.tmdb }; }
+  if (c.kind === 'anime' && c.ids.anilist && !c.epMap) {
+    const r = await request(`https://api.ani.zip/mappings?anilist_id=${c.ids.anilist}`).catch(() => null);
+    if (r?.status === 200) { try { const j = JSON.parse(r.body) as { episodes?: Record<string, { seasonNumber?: number; episodeNumber?: number }>; mappings?: Record<string, unknown> }; const map: Record<number, { s: number; e: number }> = {}; for (const [k, v] of Object.entries(j.episodes ?? {})) { const n = Number(k); if (n > 0 && v.seasonNumber && v.episodeNumber) map[n] = { s: v.seasonNumber, e: v.episodeNumber }; } c.epMap = map; const m = j.mappings ?? {}; c.ids.imdb ??= typeof m.imdb_id === 'string' ? m.imdb_id : undefined; c.ids.tvdb ??= typeof m.thetvdb_id === 'number' ? m.thetvdb_id : undefined; } catch { /* none */ } }
+  }
   if (c.kind === 'series' && c.ids.imdb && !c.seasons) { const r = await request(`https://v3-cinemeta.strem.io/meta/series/${c.ids.imdb}.json`).catch(() => null); if (r?.status === 200) { const m = (JSON.parse(r.body) as { meta?: { videos?: { season: number }[] } }).meta; if (m?.videos) c.seasons = Math.max(0, ...m.videos.map((v) => v.season)); } }
   return c;
 }
