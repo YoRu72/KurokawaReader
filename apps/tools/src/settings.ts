@@ -56,6 +56,8 @@ export interface Settings {
   sort: 'added' | 'name' | 'size' | 'state';
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
   clipboardWatch: boolean;
+  /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */
+  doh: string; secureScreen: boolean;
   /** Archives (HatchZip): space never used by an extraction in place (bytes), every checksum read before an archive is cut, the sheet closed when done. */
   archiveKeepFree: number; archiveVerifyFirst: boolean; archiveCloseWhenDone: boolean;
   /** The Video add-on: the quality taken when none is picked, the container, the cover and sponsor-skip. */
@@ -71,7 +73,7 @@ const DEFAULTS: Settings = {
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
   subLangs: [], autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
-  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
+  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, doh: 'off', secureScreen: false, archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
 };
 
 let current: Settings = load();

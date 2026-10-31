@@ -297,7 +297,7 @@ final class KtEngine {
         KtService.ensure(ctx);
     }
     private HttpURLConnection open(URL u, JSONObject headers) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) u.openConnection();
+        HttpURLConnection c = KrDoh.open(u);
         c.setConnectTimeout(20000); c.setReadTimeout(60000); c.setInstanceFollowRedirects(false);
         c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1");
         if (headers != null) { Iterator<String> it = headers.keys(); while (it.hasNext()) { String k = it.next(); c.setRequestProperty(k, headers.optString(k)); } }

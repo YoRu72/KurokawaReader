@@ -1,7 +1,7 @@
 // Settings: the look and the language, the downloads (folder, limits, seeding, port), a remote aria2, the
 // add-ons from the Kurokawa repository, the other Kurokawa apps (installed, or fetched from here), updates, about.
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
-import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, type DirPref } from '../i18n';
+import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
 import { getSettings, updateSettings, type Accent, type UiMode, type DarkTone } from '../settings';
 import { back, navigate } from '../router';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
@@ -128,6 +128,21 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
+    // Privacy (from the reader): DNS over HTTPS — sites blocked by the network's resolver reached through another —
+    // and screenshots blocked; the Arabic digits; a backup of the settings.
+    const dohOut = h('small', { class: 'src', dir: 'ltr' });
+    const setDoh = async (provider: string, test?: string) => { const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; const p = ktPlugin() as unknown as { setDoh?(o: { provider?: string; test?: string }): Promise<{ ips?: string[] }> } | null; if (d?.setDoh) await d.setDoh({ provider }); else if (p?.setDoh) { const r = await p.setDoh({ provider, test }); if (test) dohOut.textContent = (r.ips ?? []).join(', '); } };
+    const dohCustom = h('input', { type: 'url', dir: 'ltr', placeholder: 'https://…/dns-query', value: /^https:/.test(s.doh) ? s.doh : '', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (/^https:\/\//.test(v)) { updateSettings({ doh: v }); void setDoh(v).catch((er) => toast(String((er as Error).message ?? er), 'error')); } } }) as HTMLInputElement;
+    const dohWrap = h('div', { hidden: !/^https:/.test(s.doh) }, dohCustom);
+    const privacy = card('privacy', t('privacy'),
+      row(t('dohTitle'), pickButton(t('dohTitle'), [['off', t('dohOff')], ['cloudflare', 'Cloudflare'], ['google', 'Google'], ['quad9', 'Quad9'], ['adguard', 'AdGuard'], ['custom', t('dohCustom')]], /^https:/.test(s.doh) ? 'custom' : s.doh, (v) => { if (v === 'custom') { dohWrap.hidden = false; dohCustom.focus(); return; } updateSettings({ doh: v }); void setDoh(v).then(() => toast(v === 'off' ? t('dohOff') : t('dohOn', { name: v }))).catch((er) => toast(String((er as Error).message ?? er), 'error')); rerender(); }, t('close')), t('dohHint')),
+      dohWrap,
+      ...(ktPlugin() && s.doh !== 'off' ? [h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn text small', onclick: () => { dohOut.textContent = '…'; void setDoh(getSettings().doh, 'nyaa.si').catch((er) => { dohOut.textContent = String((er as Error).message ?? er); }); } }, icon('check'), t('dohTest')), dohOut)] : []),
+      ...(ktPlugin() ? [toggle(t('secureScreen'), s.secureScreen, (v) => { updateSettings({ secureScreen: v }); void (ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: v }); }, t('secureScreenHint'))] : []),
+      ...(getLang() === 'ar' ? [row(t('digitsPref'), pickButton(t('digitsPref'), [['auto', t('digitsAuto')], ['western', '123'], ['eastern', '١٢٣']], digitsPref(), (v) => { try { const o = JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as Record<string, string>; o.arDigits = v; localStorage.setItem('kr.visual', JSON.stringify(o)); } catch { /* none */ } location.reload(); }, t('close')))] : []));
+    const backup = card('backup', t('backup'), h('p', { class: 'hint' }, t('backupHint')), h('div', { class: 'row-actions wrap' },
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const data: Record<string, string> = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i)!; if (/^(kt\.|kr\.)/.test(k)) data[k] = localStorage.getItem(k) ?? ''; } const b = new Blob([JSON.stringify({ kurokawa: 'tools-backup', version: APP_VERSION, at: new Date().toISOString(), data }, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `kurokawa-tools-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('backupMade')); } }, icon('download'), t('backupSave')),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const fi = h('input', { type: 'file', accept: '.json,application/json' }) as HTMLInputElement; fi.onchange = async () => { const f = fi.files?.[0]; if (!f) return; try { const j = JSON.parse(await f.text()) as { kurokawa?: string; data?: Record<string, string> }; if (j.kurokawa !== 'tools-backup' || !j.data) throw new Error(t('backupNotOurs')); for (const [k, v] of Object.entries(j.data)) if (/^(kt\.|kr\.)/.test(k)) localStorage.setItem(k, v); toast(t('backupRestored')); setTimeout(() => location.reload(), 800); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }; fi.click(); } }, icon('upload'), t('backupRestore'))));
     // The Archives add-on (HatchZip): unpacking downloads, the space margin, verify first, closing when done.
     let archives: HTMLElement | null = null;
     if (s.addons.includes('archives')) { archives = card('archives', t('archivesSection'), toggle(t('autoUnpackSubs'), s.autoUnpackSubs, (v) => updateSettings({ autoUnpackSubs: v })), toggle(t('autoUnpackAll'), s.autoUnpackAll, (v) => updateSettings({ autoUnpackAll: v }), t('autoUnpackAllHint'))); void import('./extract').then((m) => archives!.append(...m.archiveSettingsRows(row, toggle))); }
@@ -144,7 +159,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         toggle(t('videoEmbedThumb'), s.videoEmbedThumb, (v) => updateSettings({ videoEmbedThumb: v })),
         toggle(t('videoSponsor'), s.videoSponsor, (v) => updateSettings({ videoSponsor: v })));
     }
-    return [general, downloads, video, archives, aria2, addons, anime, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, downloads, video, archives, privacy, aria2, addons, anime, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

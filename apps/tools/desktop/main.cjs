@@ -129,6 +129,9 @@ ipcMain.handle('kt:archiveTest', async (e, o) => {
 });
 ipcMain.handle('kt:hashFile', (_e, p) => new Promise((res, rej) => { const crypto = require('node:crypto'); const hs = { md5: crypto.createHash('md5'), sha1: crypto.createHash('sha1'), sha256: crypto.createHash('sha256') }; const st = fs.createReadStream(String(p), { highWaterMark: 1 << 20 }); st.on('data', (c) => { for (const h of Object.values(hs)) h.update(c); }); st.on('error', rej); st.on('end', () => res({ md5: hs.md5.digest('hex'), sha1: hs.sha1.digest('hex'), sha256: hs.sha256.digest('hex'), size: fs.statSync(String(p)).size })); }));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
+// DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.
+const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query' };
+ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
 ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(String(p)); if (err) throw new Error(err); });
 ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
 ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
