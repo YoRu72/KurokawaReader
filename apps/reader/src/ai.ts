@@ -1,6 +1,7 @@
 // AI providers for chapter translation and read-aloud: Gemini, OpenAI and
 // OpenAI-compatible endpoints (OpenRouter, local servers), Anthropic.
 // Keys live in the visual settings (localStorage) and are excluded from backups.
+import { REPO } from './repo';
 import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp } from './glossary';
 import { getSettings } from './settings';
 
@@ -108,7 +109,7 @@ async function chat(system: string, user: string, json = true): Promise<string> 
     // OpenAI and compatible
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (key) headers.authorization = `Bearer ${key}`;
-    if (s.aiProvider === 'openrouter') { headers['HTTP-Referer'] = 'https://github.com/YoRu72/KurokawaReader'; headers['X-Title'] = 'KurokawaReader'; }
+    if (s.aiProvider === 'openrouter') { headers['HTTP-Referer'] = `https://github.com/${REPO}`; headers['X-Title'] = 'KurokawaReader'; }
     const r = await fetch(`${base}/chat/completions`, {
       method: 'POST', headers, signal: ctl.signal,
       body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),

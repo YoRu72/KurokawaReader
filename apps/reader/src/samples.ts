@@ -11,7 +11,8 @@ export const SAMPLES = [
 
 /** Where a sample the app does not carry is fetched from: the web app's own copy (the apps leave Alice out —
  *  4 MB of engravings — and fetch it when asked). */
-const WEB_SAMPLES = 'https://yoru72.github.io/KurokawaReader/';
+import { WEB_APP_URL } from './repo';
+const WEB_SAMPLES = WEB_APP_URL;
 
 export async function importSamples(): Promise<Book[]> {
   const files: File[] = [];

@@ -262,7 +262,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('the same folder again is refused', /already/i.test(await page.$eval('.sheet .hint', (e) => e.textContent)) && (await page.$$('.folder-card')).length === 1);
     // The hidden extension: "OTL" in the + sheet fetches its manifest from the app's repository (listed
     // nowhere) and adds server.elscione.com's folder — an h5ai server, here a mock shaped like the real one.
-    await ctx.route('https://raw.githubusercontent.com/YoRu72/KurokawaReader/main/extensions/otl.json', async (route) => route.fulfill({ response: await route.fetch({ url: 'http://localhost:5401/extensions/otl.json' }) }));
+    await ctx.route('https://raw.githubusercontent.com/YoRu72/KurokawaReader/main/repo/reader/otl.json', async (route) => route.fulfill({ response: await route.fetch({ url: 'http://localhost:5401/extensions/otl.json' }) }));
     await ctx.route('https://server.elscione.com/**', async (route) => {
       const req = route.request(); const u = new URL(req.url());
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' } });

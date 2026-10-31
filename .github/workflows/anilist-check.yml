@@ -6,11 +6,12 @@ on:
   workflow_dispatch:
   push:
     branches: ['work-*']
-    paths: ['src/sources/altagsmatch.ts', 'scripts/check-anilist.mjs', '.github/workflows/anilist-check.yml']
+    paths: ['apps/reader/src/sources/altagsmatch.ts', 'apps/reader/scripts/check-anilist.mjs', '.github/workflows/anilist-check.yml']
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

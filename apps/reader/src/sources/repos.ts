@@ -6,6 +6,7 @@
 // files, as servers make for a folder (see folder.ts) — is added the same way and browsed as a source of its
 // own. Every repo is a section of its own in Sources; a repo already added — under any of its addresses —
 // is refused.
+import { addonUrl } from '../repo';
 import { db } from '../db';
 import { fetchText, request } from './http';
 import { isListing, isH5ai, parseListing, folderName, forgetListings, forgetFolder } from './folder';
@@ -73,7 +74,7 @@ async function saveRepos(list: Repo[]): Promise<void> { cache = list; await db.s
 // (Each word stands for an extension kept in the app's repository — its manifest, listed nowhere — added
 // like any other: fetched, installed, refreshed from there. Nothing of it is in the app itself.)
 const HIDDEN: Record<string, string> = {
-  otl: 'https://raw.githubusercontent.com/YoRu72/KurokawaReader/main/extensions/otl.json',
+  otl: addonUrl('reader/otl.json'),
 };
 export const hiddenAddress = (given: string): string | undefined => HIDDEN[given.trim().toLowerCase()];
 
