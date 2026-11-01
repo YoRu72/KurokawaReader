@@ -86,7 +86,7 @@ final class KtEngine {
     /* Prism's connection settings: the name the app gives servers, tries per chunk, how long to wait, a proxy,
        and what to do when the file is there already. Plus what each server was found to accept. */
     static final String APP_UA = "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1";
-    private volatile String ua = APP_UA, proxy = "", conflict = "rename"; private volatile int retries = 5, timeoutS = 60;
+    private volatile String ua = APP_UA, proxy = "", conflict = "rename", bindIface = ""; private volatile int retries = 5, timeoutS = 60; private volatile boolean torrentProxy = false, anonymous = false;
     private final Map<String, Integer> hostLimit = new ConcurrentHashMap<>();
     private Thread ticker;
     private volatile long lastTell = 0;
@@ -245,6 +245,18 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.out_enc_policy.swigValue(), pol); sp.setInteger(settings_pack.int_types.in_enc_policy.swigValue(), pol);
         sp.setInteger(settings_pack.int_types.share_ratio_limit.swigValue(), seedRatio > 0 ? (int) Math.round(seedRatio * 100) : 1000000);
         sp.setInteger(settings_pack.int_types.seed_time_limit.swigValue(), seedMinutes > 0 ? seedMinutes * 60 : Integer.MAX_VALUE);
+        // Senpwai's: the Connection proxy for torrents too (peers, trackers, names), a network interface to keep to
+        // (a VPN's: tun0, wg0…), anonymous mode.
+        java.net.Proxy px = torrentProxy ? proxyOf(proxy) : null;
+        if (px != null && px.address() instanceof java.net.InetSocketAddress) {
+            java.net.InetSocketAddress ad = (java.net.InetSocketAddress) px.address();
+            sp.setInteger(settings_pack.int_types.proxy_type.swigValue(), px.type() == java.net.Proxy.Type.SOCKS ? settings_pack.proxy_type_t.socks5.swigValue() : settings_pack.proxy_type_t.http.swigValue());
+            sp.setString(settings_pack.string_types.proxy_hostname.swigValue(), ad.getHostString()); sp.setInteger(settings_pack.int_types.proxy_port.swigValue(), ad.getPort());
+            sp.setBoolean(settings_pack.bool_types.proxy_peer_connections.swigValue(), true); sp.setBoolean(settings_pack.bool_types.proxy_tracker_connections.swigValue(), true); sp.setBoolean(settings_pack.bool_types.proxy_hostnames.swigValue(), true);
+        } else sp.setInteger(settings_pack.int_types.proxy_type.swigValue(), settings_pack.proxy_type_t.none.swigValue());
+        sp.setString(settings_pack.string_types.outgoing_interfaces.swigValue(), bindIface);
+        if (!bindIface.isEmpty()) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), bindIface + ":" + (listenPort > 0 ? listenPort : 6881));
+        sp.setBoolean(settings_pack.bool_types.anonymous_mode.swigValue(), anonymous);
     }
     void configure(JSONObject o) {
         if (o.has("seed")) seedAfterDone = o.optBoolean("seed");
@@ -252,15 +264,16 @@ final class KtEngine {
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
+        if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
+        if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
+        if (o.has("torrentProxy")) torrentProxy = o.optBoolean("torrentProxy"); if (o.has("bindIface")) bindIface = o.optString("bindIface", "").trim(); if (o.has("anonymous")) anonymous = o.optBoolean("anonymous");
         if (session != null && session.isRunning()) {
             SettingsPack sp = new SettingsPack(); sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);
             if (o.has("listenPort")) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), listenPort > 0 ? "0.0.0.0:" + listenPort + ",[::]:" + listenPort : "0.0.0.0:6881,[::]:6881");
             applyNet(sp); session.applySettings(sp);
             if (o.has("seed")) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.status().isFinished()) { if (seedAfterDone) x.th.resume(); else x.th.pause(); }
         }
-        if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
-        if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
-        try { JSONObject cfg = new JSONObject(); cfg.put("ua", ua); cfg.put("retries", retries); cfg.put("timeout", timeoutS); cfg.put("proxy", proxy); cfg.put("conflict", conflict); cfg.put("seed", seedAfterDone); cfg.put("listenPort", listenPort); cfg.put("maxActive", maxActive); cfg.put("dht", dht); cfg.put("lsd", lsd); cfg.put("upnp", upnp); cfg.put("natpmp", natpmp); cfg.put("enc", enc); cfg.put("seedRatio", seedRatio); cfg.put("seedMinutes", seedMinutes); write(new File(stateDir, "config.json"), cfg.toString()); } catch (Exception ignored) {}
+        try { JSONObject cfg = new JSONObject(); cfg.put("ua", ua); cfg.put("torrentProxy", torrentProxy); cfg.put("bindIface", bindIface); cfg.put("anonymous", anonymous); cfg.put("retries", retries); cfg.put("timeout", timeoutS); cfg.put("proxy", proxy); cfg.put("conflict", conflict); cfg.put("seed", seedAfterDone); cfg.put("listenPort", listenPort); cfg.put("maxActive", maxActive); cfg.put("dht", dht); cfg.put("lsd", lsd); cfg.put("upnp", upnp); cfg.put("natpmp", natpmp); cfg.put("enc", enc); cfg.put("seedRatio", seedRatio); cfg.put("seedMinutes", seedMinutes); write(new File(stateDir, "config.json"), cfg.toString()); } catch (Exception ignored) {}
     }
 
     /** A magnet's (or .torrent's) metadata without keeping it: name, size, files. */
@@ -472,7 +485,7 @@ final class KtEngine {
     private static List<Integer> toList(int[] a) { List<Integer> l = new ArrayList<>(); for (int v : a) l.add(v); return l; }
     private static void write(File f, String s) throws IOException { File tmp = new File(f.getPath() + ".tmp"); try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(s.getBytes(StandardCharsets.UTF_8)); } if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f); } }
     private void load() {
-        try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); dht = c.optBoolean("dht", true); lsd = c.optBoolean("lsd", true); upnp = c.optBoolean("upnp", true); natpmp = c.optBoolean("natpmp", true); enc = c.optString("enc", "enabled"); seedRatio = c.optDouble("seedRatio", 0); seedMinutes = c.optInt("seedMinutes", 0); ua = c.optString("ua", APP_UA); retries = c.optInt("retries", 5); timeoutS = c.optInt("timeout", 60); proxy = c.optString("proxy", ""); conflict = c.optString("conflict", "rename"); } } catch (Exception ignored) {}
+        try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); dht = c.optBoolean("dht", true); lsd = c.optBoolean("lsd", true); upnp = c.optBoolean("upnp", true); natpmp = c.optBoolean("natpmp", true); enc = c.optString("enc", "enabled"); seedRatio = c.optDouble("seedRatio", 0); seedMinutes = c.optInt("seedMinutes", 0); ua = c.optString("ua", APP_UA); torrentProxy = c.optBoolean("torrentProxy", false); bindIface = c.optString("bindIface", ""); anonymous = c.optBoolean("anonymous", false); retries = c.optInt("retries", 5); timeoutS = c.optInt("timeout", 60); proxy = c.optString("proxy", ""); conflict = c.optString("conflict", "rename"); } } catch (Exception ignored) {}
         try { File hf = new File(stateDir, "hosts.json"); if (hf.exists()) { JSONObject h = new JSONObject(new String(java.nio.file.Files.readAllBytes(hf.toPath()), StandardCharsets.UTF_8)); for (Iterator<String> it = h.keys(); it.hasNext(); ) { String k = it.next(); hostLimit.put(k, h.optInt(k, 8)); } } } catch (Exception ignored) {}
         File f = new File(stateDir, "tasks.json"), bak = new File(stateDir, "tasks.json.bak"); if (!f.exists() && !bak.exists()) return;
         try {

@@ -98,6 +98,8 @@ public class KtPlugin extends Plugin {
         } catch (Exception ignored) {}
         r.put("text", sb.length() > 0 ? sb.toString() : null); call.resolve(r);
     }
+    /** The device's network interfaces that are up (for binding torrents to a VPN's). */
+    @PluginMethod public void interfaces(PluginCall call) { run(call, () -> { JSArray out = new JSArray(); java.util.Enumeration<java.net.NetworkInterface> e = java.net.NetworkInterface.getNetworkInterfaces(); while (e != null && e.hasMoreElements()) { java.net.NetworkInterface n = e.nextElement(); if (!n.isUp() || n.isLoopback()) continue; JSObject o = new JSObject(); o.put("name", n.getName()); o.put("vpn", n.getName().matches("(tun|wg|ppp|tap|ipsec).*")); out.put(o); } JSObject r = new JSObject(); r.put("interfaces", out); call.resolve(r); }); }
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
     @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { engine().setUrl(call.getString("id", ""), call.getString("url", "")); call.resolve(); }); }
     @PluginMethod public void hosts(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("hosts", engine().hosts()); call.resolve(r); }); }

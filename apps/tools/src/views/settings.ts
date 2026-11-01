@@ -96,7 +96,10 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('details', { class: 'more-options' }, h('summary', null, t('torrentOptions')),
           ...(s.seedAfterDone ? [row(t('seedRatio'), numberField(tor.seedRatio, (v) => set({ seedRatio: Math.max(0, v) }), { min: 0, max: 100, step: 0.1, width: '6em' }), t('zeroUnlimited')), row(t('seedMinutes'), numberField(tor.seedMinutes, (v) => set({ seedMinutes: Math.max(0, v) }), { min: 0, max: 100000, width: '6em' }), t('zeroUnlimited'))] : []),
           row(t('encryption'), pickButton(t('encryption'), [['enabled', t('encEnabled')], ['forced', t('encForced')], ['disabled', t('encDisabled')]], tor.enc, (v) => set({ enc: v }), t('close'))),
-          toggle('DHT', tor.dht, (v) => set({ dht: v })), toggle(t('lsdLabel'), tor.lsd, (v) => set({ lsd: v })), toggle('UPnP', tor.upnp, (v) => set({ upnp: v })), toggle('NAT-PMP', tor.natpmp, (v) => set({ natpmp: v })))]; })() : []),
+          toggle('DHT', tor.dht, (v) => set({ dht: v })), toggle(t('lsdLabel'), tor.lsd, (v) => set({ lsd: v })), toggle('UPnP', tor.upnp, (v) => set({ upnp: v })), toggle('NAT-PMP', tor.natpmp, (v) => set({ natpmp: v })),
+          toggle(t('torrentProxy'), !!tor.torrentProxy, (v) => set({ torrentProxy: v }), t('torrentProxyHint')),
+          row(t('bindIface'), (() => { const b = pickButton(t('bindIface'), [['', t('bindAny')], ...(tor.bindIface ? [[tor.bindIface, tor.bindIface] as [string, string]] : [])], tor.bindIface ?? '', (v) => set({ bindIface: v }), t('close')); void (ktPlugin() as unknown as { interfaces?(): Promise<{ interfaces: { name: string; vpn: boolean }[] }> } | null)?.interfaces?.().then((r) => { const nb = pickButton(t('bindIface'), [['', t('bindAny')], ...r.interfaces.map((x) => [x.name, x.vpn ? `${x.name} · VPN` : x.name] as [string, string])], getSettings().torrent.bindIface ?? '', (v) => set({ bindIface: v }), t('close')); b.replaceWith(nb); }).catch(() => undefined); return b; })(), t('bindIfaceHint')),
+          toggle(t('anonymousMode'), !!tor.anonymous, (v) => set({ anonymous: v }), t('anonymousHint')))]; })() : []),
       toggle(t('clipboardWatch'), s.clipboardWatch, (v) => updateSettings({ clipboardWatch: v }), t('clipboardWatchHint')),
       toggle(t('scheduleOn'), s.schedule.enabled, (v) => { updateSettings({ schedule: { ...getSettings().schedule, enabled: v } }); rerender(); void import('../downloads/prism').then((m) => m.startScheduler()); }, t('scheduleHint')),
       ...(s.schedule.enabled ? [h('div', { class: 'row' }, h('span', null, t('scheduleHours')), h('span', { class: 'row-actions', dir: 'ltr' }, h('input', { type: 'time', value: s.schedule.start, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, start: (e.target as HTMLInputElement).value } }) }), ' – ', h('input', { type: 'time', value: s.schedule.stop, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, stop: (e.target as HTMLInputElement).value } }) }))),
@@ -219,7 +222,19 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./models').then((m) => m.modelsSheet()) }, icon('search'), t('hfBrowse'))));
     // Storage: the packs (Python, ffmpeg) fetched for add-ons, with their sizes, removable.
     const packsBox = h('div'); void import('../packs').then((m) => { const c = m.packsCard(); if (c) packsBox.replaceChildren(c); });
-    const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), packsBox) : null;
+    // Senpwai's storage view: what the downloads take, by kind, and what is left on the disk.
+    const usage = h('div', { class: 'usage' }, h('div', { class: 'spinner small' }));
+    void (async () => {
+      const ts = await getEngine().list().catch(() => []); const { categoryOf, categoryName } = await import('../downloads/categories'); const { displayName } = await import('../engine');
+      const by = new Map<string, { label: string; size: number; n: number }>(); let total = 0;
+      for (const x of ts) { const size = x.state === 'done' || x.state === 'seeding' ? x.total || x.done : x.done; if (!size) continue; const c = categoryOf(displayName(x), x.kind); const k = c.id; const e = by.get(k) ?? { label: categoryName(c), size: 0, n: 0 }; e.size += size; e.n++; by.set(k, e); total += size; }
+      const free = await import('../archives').then((m) => m.freeSpaceAt(getSettings().downloadDir || '')).catch(() => -1);
+      const rows = [...by.values()].sort((a, b) => b.size - a.size);
+      usage.replaceChildren(h('div', { class: 'usage-bar' }, ...rows.map((r, i) => h('i', { style: { width: `${total ? (r.size / Math.max(total, total + Math.max(0, free))) * 100 : 0}%`, '--c': `var(--cat-${i % 6})` }, title: r.label }))),
+        ...rows.map((r, i) => h('div', { class: 'usage-row' }, h('span', { class: 'dot', style: { '--c': `var(--cat-${i % 6})` } }), h('span', { class: 'grow' }, r.label, h('small', { class: 'src' }, ` · ${localDigits(r.n)}`)), h('b', null, formatBytes(r.size)))),
+        h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
+    })();
+    const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     return [general, downloads, connection, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();

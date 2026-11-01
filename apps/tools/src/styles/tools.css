@@ -407,3 +407,7 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .mini-idle { margin: 6px 0 0; color: var(--md-on-surface-variant); } .mini-more { text-align: center; }
 .crash-card .crash-text { margin: 8px 0 0; padding: 8px 10px; max-height: 140px; overflow: auto; border-radius: 10px; background: var(--md-surface-container-highest); font: 11px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .get-ic.bad { background: color-mix(in srgb, var(--md-error) 20%, transparent); color: var(--md-error); }
+/* Storage usage */
+:root { --cat-0: #6aa9ff; --cat-1: #f59f6b; --cat-2: #7bd88f; --cat-3: #c792ea; --cat-4: #ffd166; --cat-5: #ef6f8b; }
+.usage-bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--md-surface-container-highest); margin: 4px 0 8px; } .usage-bar i { background: var(--c); }
+.usage-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13.5px; } .usage-row .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; } .usage-row.total { border-top: 1px solid var(--md-outline-variant); margin-top: 4px; padding-top: 6px; }
