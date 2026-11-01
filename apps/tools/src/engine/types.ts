@@ -56,7 +56,9 @@ export interface Task {
   /** What added it: a search add-on, a page, the user — for the list's groups and the anime add-on's tracking. */
   /** The ranges the connections are fetching (plain files): what the details page draws. */
   segments?: { start: number; pos: number; end: number; speed?: number; active: boolean; worker: number }[];
-  meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number };
+  meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number;
+    /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
+    hf?: string; sha256?: string };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }
@@ -100,6 +102,10 @@ export interface Engine {
   setFiles?(id: string, priorities: (0 | 1 | 2)[]): Promise<void>;
   setSequential?(id: string, on: boolean): Promise<void>;
   setLimits?(l: Limits): Promise<void>;
+  /** A new address for a file download whose link ran out: the same file, gone on from where it stopped. */
+  setUrl?(id: string, url: string): Promise<void>;
+  /** Moved in the queue: -1 up, +1 down, -2 to the top, +2 to the bottom. */
+  move?(id: string, how: -2 | -1 | 1 | 2): Promise<void>;
   /** The metadata of a magnet or .torrent, without adding it. */
   torrentInfo?(source: TaskSource): Promise<TorrentInfo>;
   /** A local address the file can be played from while it comes (range requests served from the pieces). */

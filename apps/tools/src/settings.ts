@@ -53,7 +53,7 @@ export interface Settings {
   /** Categories (Prism's): the user's own, folders per category, how the list is sorted. */
   categories: { id: string; name: string; icon: string; exts: string[]; dir?: string }[];
   useCategoryFolders: boolean;
-  sort: 'added' | 'name' | 'size' | 'state' | 'progress' | 'speed' | 'eta';
+  sort: 'queue' | 'added' | 'name' | 'size' | 'state' | 'progress' | 'speed' | 'eta';
   /** The Downloads page's options (filters, order, look): see views/downloadsOptions.ts. */
   dl?: import('./views/downloadsOptions').DlPrefs;
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
@@ -66,7 +66,11 @@ export interface Settings {
   playerWith: 'ask' | 'app' | 'external';
   /** Sounds and the «Download complete» card (downloads/done.ts). */
   sounds?: import('./downloads/done').SoundPrefs;
+  net?: Partial<import('./downloads/net').NetPrefs>;
+  miniAuto?: boolean;
   /** The antivirus check after a download (the computer): which scanner, a command of one's own, which kinds of file. */
+  /** Hugging Face: the server (or a mirror), the access token, the models folder. */
+  hf?: import('./hf/hf').HfPrefs;
   av?: { on: boolean; kind: 'auto' | 'defender' | 'clamav' | 'custom'; command: string; args: string; extensions: string };
   /** Archives (HatchZip): space never used by an extraction in place (bytes), every checksum read before an archive is cut, the sheet closed when done. */
   archiveKeepFree: number; archiveVerifyFirst: boolean; archiveCloseWhenDone: boolean;

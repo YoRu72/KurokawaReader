@@ -17,6 +17,8 @@ export class NativeEngine implements Engine {
   setFiles(id: string, priorities: (0 | 1 | 2)[]) { return this.p.setFiles({ id, priorities }); }
   setSequential(id: string, on: boolean) { return this.p.setSequential({ id, on }); }
   setLimits(l: Limits) { return this.p.setLimits(l); }
+  setUrl(id: string, url: string) { return this.p.setUrl({ id, url }); }
+  move(id: string, how: -2 | -1 | 1 | 2) { return this.p.move({ id, how }); }
   async torrentInfo(source: TaskSource) { return (await this.p.torrentInfo({ source })).info as TorrentInfo; }
   async streamUrl(id: string, fileIndex: number) { return (await this.p.streamUrl({ id, fileIndex })).url; }
   open(id: string, fileIndex?: number) { return this.p.open({ id, fileIndex }); }

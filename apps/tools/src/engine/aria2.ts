@@ -91,6 +91,13 @@ export class Aria2Engine implements Engine {
     void deleteFiles; delete this.keep[id]; this.save(); this.poke();
   }
   setFiles(id: string, priorities: (0 | 1 | 2)[]) { return this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }).then(() => this.poke()); }
+  async move(id: string, how: -2 | -1 | 1 | 2): Promise<void> { await this.rpc.call('changePosition', id, how === -2 || how === 2 ? 0 : how, how === -2 ? 'POS_SET' : how === 2 ? 'POS_END' : 'POS_CUR'); this.poke(); }
+  async setUrl(id: string, url: string): Promise<void> {
+    const st = await this.rpc.call<{ status: string; files?: { uris?: { uri: string }[] }[] }>('tellStatus', id);
+    if (!['active', 'waiting', 'paused'].includes(st.status)) throw new Error(st.status);
+    const old = [...new Set((st.files?.[0]?.uris ?? []).map((u) => u.uri))];
+    await this.rpc.call('changeUri', id, 1, old, [url]); if (st.status === 'paused') await this.rpc.call('unpause', id).catch(() => undefined); this.poke();
+  }
   setLimits(l: Limits) { return this.rpc.call('changeGlobalOption', { 'max-overall-download-limit': String(l.down), 'max-overall-upload-limit': String(l.up) }).then(() => undefined); }
   async torrentInfo(source: TaskSource): Promise<TorrentInfo> {
     const opts = { 'bt-metadata-only': 'true', 'bt-save-metadata': 'false', pause: 'false' };

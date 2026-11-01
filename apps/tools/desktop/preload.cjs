@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('kurokawaTools', {
   get os() { return state.os; },
   ready: () => ready,
   add: (o) => call('kt:add', o), list: () => call('kt:list'), pause: (id) => call('kt:pause', id), resume: (id) => call('kt:resume', id), remove: (id, del) => call('kt:remove', id, del),
-  setFiles: (id, p) => call('kt:setFiles', id, p), setLimits: (l) => call('kt:setLimits', l), configure: (o) => call('kt:configure', o), torrentInfo: (s) => call('kt:torrentInfo', s),
+  setFiles: (id, p) => call('kt:setFiles', id, p), setUrl: (id, url) => call('kt:setUrl', id, url), move: (id, how) => call('kt:move', id, how), mini: (o) => call('kt:mini', o), exists: (ps) => call('kt:exists', ps), setLimits: (l) => call('kt:setLimits', l), configure: (o) => call('kt:configure', o), torrentInfo: (s) => call('kt:torrentInfo', s),
   open: (id, i) => call('kt:open', id, i), defaultDir: () => call('kt:defaultDir'), pickDir: () => call('kt:pickDir'), openExternal: (u) => call('kt:openExternal', u), registerMagnet: () => call('kt:registerMagnet'),
   http: (o) => call('kt:http', o), captureUrl: (o) => call('kt:captureUrl', o),
   videoInfo: (o) => call('kt:videoInfo', o), videoReady: () => call('kt:videoReady'), isVideoHost: (u) => call('kt:isVideoHost', u), videoVersion: () => call('kt:videoVersion'), videoUpdate: () => call('kt:videoUpdate'),

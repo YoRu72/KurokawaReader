@@ -31,7 +31,7 @@ export function startDoneWatch(): void {
     if (!first) for (const x of ts) {
       const was = seen.get(x.id);
       if (was && was !== x.state) {
-        if (x.state === 'done' || (x.state === 'seeding' && was !== 'done' && was !== 'paused')) { if (p.on) playSound('complete'); if (p.card) doneCard(x); notify(x); void scanDone(x); }
+        if (x.state === 'done' || (x.state === 'seeding' && was !== 'done' && was !== 'paused')) { if (p.on) playSound('complete'); if (p.card) doneCard(x); notify(x); void scanDone(x); void checkSha(x); }
         else if (x.state === 'failed') { if (p.on && p.failed) playSound('failed'); }
       }
     }
@@ -93,4 +93,16 @@ async function scanDone(x: Task): Promise<void> {
   else if (r.result === 'infected') { line('bad', t('avThreat')); toast(t('avThreatToast', { name }), 'error', 15000); playSound('failed'); }
   else if (r.result === 'error') line('bad', r.detail === 'no-scanner' ? t('avNoScanner') : t('avError', { why: (r.detail ?? '').split('\n')[0] }));
   else document.querySelector('.done-card .av-line')?.remove();
+}
+
+/* ---------- a file with a known SHA-256 (Hugging Face) checked when it is done ---------- */
+async function checkSha(x: Task): Promise<void> {
+  const want = x.meta?.sha256; if (!want || !x.dir) return;
+  const file = `${x.dir.replace(/[\\/]$/, '')}/${displayName(x)}`;
+  try {
+    const { hashFile } = await import('./prism'); const got = await hashFile(file);
+    if (!got) return;
+    if (got.sha256.toLowerCase() === want.toLowerCase()) toast(t('shaOk', { name: displayName(x) }));
+    else { toast(t('shaBad', { name: displayName(x) }), 'error', 15000); playSound('failed'); }
+  } catch { /* cannot read it here */ }
 }

@@ -20,19 +20,23 @@ Status: [x] done · [~] partly · [ ] to do. Kept current as each batch lands.
 
 ## Prism download manager (FortoGraphy/prism-download-manager)
 - [x] Segments per connection, file map, speed chart, log; categories with folders; sort; batch patterns `[001-100]`
-- [x] yt-dlp: qualities, audio only, subtitles, SponsorBlock, cover; [ ] chapters embedded, [ ] only a part (time range)
+- [x] yt-dlp: qualities, audio only, subtitles, SponsorBlock, cover; [x] chapters embedded, [x] only a part (time range), name template, cookies
 - [x] HLS/DASH links (.m3u8/.mpd) go to yt-dlp
-- [ ] Dynamic segmentation (a finished connection takes half of the largest remaining part); per-host connection limit remembered
-- [ ] Resume checks the file has not changed (ETag / Last-Modified, If-Range)
+- [x] Dynamic segmentation — as small chunks each free connection takes next (a slow one holds up only its chunk); per-host connection limit remembered (Android; aria2 on a computer)
+- [x] Resume after a pause or restart, checked with If-Range (ETag / Last-Modified); a changed file is downloaded afresh
 - [x] What is inside a ZIP before downloading it (central directory read with range requests)
 - [x] Queues with a schedule (start/stop times, days) and their own speed limit; action when done (desktop: sleep/shut down)
 - [x] Clipboard monitor (ask before adding copied links)
-- [x] Site grabber: links of chosen types collected from a page
+- [x] Site grabber: links of chosen types collected from a page; crawl depth (3 levels, under the folder) and saved projects
 - [x] Convert (pictures, music, video) and Make smaller (fit 8/10/20/25/50 MB) with ffmpeg, saved beside the original
 - [x] Done sheet: open, show in folder, verify checksum (MD5/SHA-1/SHA-256)
-- [ ] Trash for removed downloads; remove entries whose files were deleted
-- [ ] Hugging Face models by name or link, files checked by SHA-256
-- [ ] Compact list view
+- [x] Trash (Recently removed, put back); remove entries whose files were deleted
+- [x] Hugging Face models by name, link, search or trending; GGUF version picks; files checked by SHA-256
+- [x] Compact list view (Minimal look), grouping, filters, search, selection, keyboard
+- [x] Speed chart, connection lanes, KPIs, status bar, completion card and sounds, antivirus check, drop zone, shortcuts
+- [x] Connection settings: identify as, tries, wait, proxy, file already there (keep both / replace / skip)
+- [x] New address for an expired link; download again; queue order moved up/down
+- [x] Mini window (computer)
 
 ## REX Player (mpvRex/REX-Player) — the player
 - [x] Gestures (seek, volume, brightness, long-press speed, pinch zoom), A/B loop, cut, subtitle styling, resume, sleep timer pref

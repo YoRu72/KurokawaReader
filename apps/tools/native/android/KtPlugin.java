@@ -71,6 +71,9 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void remove(PluginCall call) { run(call, () -> { engine().remove(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("deleteFiles", false))); call.resolve(); }); }
     @PluginMethod public void setFiles(PluginCall call) { run(call, () -> { JSArray a = call.getArray("priorities"); int[] p = new int[a.length()]; for (int i = 0; i < a.length(); i++) p[i] = a.getInt(i); engine().setFiles(call.getString("id", ""), p); call.resolve(); }); }
     @PluginMethod public void setSequential(PluginCall call) { run(call, () -> { engine().setSequential(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("on", true))); call.resolve(); }); }
+    @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
+    @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { engine().setUrl(call.getString("id", ""), call.getString("url", "")); call.resolve(); }); }
+    @PluginMethod public void hosts(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("hosts", engine().hosts()); call.resolve(r); }); }
     @PluginMethod public void setLimits(PluginCall call) { run(call, () -> { engine().setLimits(call.getLong("down", 0L), call.getLong("up", 0L)); call.resolve(); }); }
     @PluginMethod public void configure(PluginCall call) { run(call, () -> { engine().configure(new JSONObject(call.getData().toString())); call.resolve(); }); }
     @PluginMethod public void torrentInfo(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("info", obj(engine().torrentInfo(new JSONObject(call.getObject("source").toString())))); call.resolve(r); }); }
@@ -155,6 +158,8 @@ public class KtPlugin extends Plugin {
         } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /** A file's checksums (Prism's «verify»): MD5, SHA-1 and SHA-256 in one read. */
+    /** Whether files are there (for «Remove the ones whose files are gone»). */
+    @PluginMethod public void exists(PluginCall call) { run(call, () -> { JSArray in = call.getArray("paths"); JSArray out = new JSArray(); if (in != null) for (int i = 0; i < in.length(); i++) out.put(fileOf(in.optString(i, "")).exists()); JSObject r = new JSObject(); r.put("exists", out); call.resolve(r); }); }
     @PluginMethod public void hashFile(PluginCall call) {
         final File f = fileOf(call.getString("path", ""));
         bg.execute(() -> { try { java.security.MessageDigest md5 = java.security.MessageDigest.getInstance("MD5"), sha1 = java.security.MessageDigest.getInstance("SHA-1"), sha256 = java.security.MessageDigest.getInstance("SHA-256"); byte[] b = new byte[1 << 16]; try (java.io.InputStream in = new java.io.FileInputStream(f)) { int n; while ((n = in.read(b)) > 0) { md5.update(b, 0, n); sha1.update(b, 0, n); sha256.update(b, 0, n); } } JSObject r = new JSObject(); r.put("md5", hex(md5.digest())); r.put("sha1", hex(sha1.digest())); r.put("sha256", hex(sha256.digest())); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });

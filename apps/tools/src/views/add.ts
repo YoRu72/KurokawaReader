@@ -53,13 +53,19 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
   const video = videoPanel(() => undefined);
   const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
-  sh.body.append(ta, video.el, tools, fileNote, fileIn, filesBox, zipBox, debridRow, opts);
+  // A Hugging Face model's page: offered to the model window, where its files can be picked.
+  const hfBox = h('div', { class: 'plan-note hf-offer', hidden: true });
+  const peekHf = (u: string | null) => void import('../hf/hf').then((HF) => {
+    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; return; }
+    hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
+  });
+  sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
   sh.actions.append(go);
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
   const peekZip = async (u: string | null) => { if (!u || !/\.(zip|cbz|apks|xapk|apkm)(\?|$)/i.test(u)) { zipBox.hidden = true; zipFor = ''; return; } if (zipFor === u) return; zipFor = u; zipBox.hidden = false; zipBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('zipPeeking')}`)); const m = await import('../downloads/prism'); const r = await m.remoteZipEntries(u).catch(() => null); if (zipFor !== u) return; if (!r) { zipBox.hidden = true; return; } zipBox.replaceChildren(h('details', null, h('summary', null, `${t('archiveContents')} · ${countFiles(r.entries.length)} · ${formatBytes(r.total)}`), h('div', { class: 'file-rows' }, ...r.entries.slice(0, 300).map((e) => h('div', { class: 'file-row' }, h('span', { class: 'grow', dir: 'ltr' }, e.path), h('small', { class: 'src' }, formatBytes(e.size))))))); };
   const metadata = async () => {
-    { const one = sources(); video.check(one.length === 1 && one[0].url ? one[0].url : null); void peekZip(one.length === 1 && one[0].url ? one[0].url : null); }
+    { const one = sources(); video.check(one.length === 1 && one[0].url ? one[0].url : null); void peekZip(one.length === 1 && one[0].url ? one[0].url : null); peekHf(one.length === 1 && one[0].url ? one[0].url : null); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }
     const my = ++metaToken;

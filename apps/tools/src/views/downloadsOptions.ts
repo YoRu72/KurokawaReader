@@ -9,7 +9,7 @@ import { displayName } from '../engine';
 import type { Task, TaskState } from '../engine/types';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 
-export type DlSort = 'added' | 'name' | 'size' | 'state' | 'progress' | 'speed' | 'eta';
+export type DlSort = 'queue' | 'added' | 'name' | 'size' | 'state' | 'progress' | 'speed' | 'eta';
 export type DlLook = 'comfortable' | 'compact' | 'minimal';
 export type DlGroup = 'none' | 'state' | 'category' | 'day';
 export interface DlPrefs {
@@ -24,7 +24,7 @@ const setDl = (o: Partial<DlPrefs>) => updateSettings({ dl: { ...dlPrefs(), ...o
 const STATE_GROUPS: [string, string, TaskState[]][] = [['downloading', 'stateDownloading', ['downloading', 'metadata', 'checking']], ['queued', 'stateQueued', ['queued']], ['paused', 'statePaused', ['paused']], ['seeding', 'stateSeeding', ['seeding']], ['done', 'stateDone', ['done']], ['failed', 'stateFailed', ['failed']]];
 const KINDS: [string, string, string][] = [['torrent', 'kindTorrent', 'magnet'], ['http', 'kindHttp', 'link'], ['video', 'kindVideo', 'film'], ['debrid', 'kindDebrid', 'cloud']];
 const SIZES: [string, string, (n: number) => boolean][] = [['s', 'sizeSmall', (n) => n > 0 && n < 100 * 1048576], ['m', 'sizeMedium', (n) => n >= 100 * 1048576 && n < 1073741824], ['l', 'sizeLarge', (n) => n >= 1073741824]];
-const SORTS: [DlSort, string, string][] = [['added', 'sort_added', 'clock'], ['name', 'sort_name', 'type'], ['size', 'sort_size', 'archive'], ['progress', 'sortProgress', 'chart'], ['speed', 'sortSpeed', 'flash'], ['eta', 'sortEta', 'calendar'], ['state', 'sort_state', 'list']];
+const SORTS: [DlSort, string, string][] = [['queue', 'sortQueue', 'list'], ['added', 'sort_added', 'clock'], ['name', 'sort_name', 'type'], ['size', 'sort_size', 'archive'], ['progress', 'sortProgress', 'chart'], ['speed', 'sortSpeed', 'flash'], ['eta', 'sortEta', 'calendar'], ['state', 'sort_state', 'filter']];
 const catOf = (x: Task) => categoryOf(displayName(x), x.kind);
 const kindOf = (x: Task) => (x.meta as { kind?: string } | undefined)?.kind === 'video' ? 'video' : x.kind;
 const ACTIVE: TaskState[] = ['downloading', 'metadata', 'checking', 'queued', 'seeding'];
@@ -42,7 +42,9 @@ export function sortTasks(list: Task[]): Task[] {
   const k = getSettings().sort as DlSort; const p = dlPrefs(); const dir = p.desc ? -1 : 1;
   const prog = (x: Task) => (x.total ? x.done / x.total : x.state === 'done' ? 1 : 0);
   const eta = (x: Task) => (x.eta && x.eta > 0 ? x.eta : x.state === 'done' ? 0 : Infinity);
+  const pos = new Map(list.map((x, i) => [x.id, i]));
   const by: Record<DlSort, (a: Task, b: Task) => number> = {
+    queue: (a, b) => ((pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0)) * dir,
     added: (a, b) => (a.addedAt - b.addedAt) * dir, name: (a, b) => displayName(a).localeCompare(displayName(b), undefined, { numeric: true }) * dir,
     size: (a, b) => ((a.total || 0) - (b.total || 0)) * dir, progress: (a, b) => (prog(a) - prog(b)) * dir, speed: (a, b) => ((a.downSpeed || 0) - (b.downSpeed || 0)) * dir,
     eta: (a, b) => (eta(a) === eta(b) ? 0 : eta(a) < eta(b) ? -1 : 1) * dir, state: (a, b) => (ORDER[a.state] - ORDER[b.state]) * -dir || b.addedAt - a.addedAt,
@@ -84,7 +86,7 @@ export function downloadsOptionsSheet(tasks: Task[], changed: () => void, tab: '
       if (activeFilters(p)) panel.append(h('button', { type: 'button', class: 'btn tonal small', onclick: () => { setDl({ states: [], kinds: [], cats: [], sizes: [] }); draw(which); changed(); } }, icon('close'), t('clearFilters')));
     } else if (which === 'sort') {
       const cur = getSettings().sort as DlSort;
-      for (const [id, label, ic] of SORTS) panel.append(row(t(label as 'sort_added'), cur === id, () => { if (cur === id) setDl({ desc: !p.desc }); else { updateSettings({ sort: id as 'added' }); setDl({ desc: id !== 'name' && id !== 'eta' }); } }, cur === id ? 'sort' : ic, cur === id ? (p.desc ? t('sortDescending') : t('sortAscending')) : undefined));
+      for (const [id, label, ic] of SORTS) panel.append(row(t(label as 'sort_added'), cur === id, () => { if (cur === id) setDl({ desc: !p.desc }); else { updateSettings({ sort: id as 'added' }); setDl({ desc: id !== 'name' && id !== 'eta' && id !== 'queue' }); } }, cur === id ? 'sort' : ic, cur === id ? (p.desc ? t('sortDescending') : t('sortAscending')) : undefined));
       panel.append(row(t('dlActiveFirst'), p.activeFirst, () => setDl({ activeFirst: !p.activeFirst })));
       panel.append(h('p', { class: 'hint' }, t('sortDirHint')));
     } else {

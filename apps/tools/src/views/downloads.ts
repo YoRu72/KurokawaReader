@@ -35,6 +35,9 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     row('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch(err));
     row('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch(err));
     row('trash', t('clearDone'), () => void Promise.all(tasks.filter((x) => x.state === 'done' || x.state === 'failed').map((x) => getEngine().remove(x.id, false))).then((r) => toast(t('tasksRemoved', { n: countItems(r.length) }))).catch(err));
+    { const mb = window.kurokawaTools as unknown as { mini?(o: { action: string }): Promise<unknown> } | undefined; if (mb?.mini) row('mini', t('miniOpen'), () => void mb.mini!({ action: 'open' })); }
+    row('folder', t('removeMissing'), () => void removeMissing(tasks).catch(err));
+    row('history', t('trashTitle'), () => void import('./trash').then((m) => m.trashSheet()));
     if (getSettings().addons.includes('debrid')) row('cloud', t('cloud'), () => void import('./cloud').then((m) => m.cloudSheet()));
     row('settings', t('settings'), () => navigate('/settings'));
   };
@@ -169,6 +172,12 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'done' && x.dir && !x.dir.startsWith('content:') && x.kind !== 'torrent') { const fp = `${x.dir.replace(/[\\/]$/, '')}/${displayName(x)}`; void import('./convert').then((m) => { const k = m.kindOf(displayName(x)); const at = sh.body.children[2] ?? null; if (m.canConvert() && k) { sh.body.insertBefore(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.convertSheet(fp, 'convert'); } }, icon('convert'), h('span', { class: 'name' }, t('convertTitle'))), at); if (k !== 'image' || true) sh.body.insertBefore(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.convertSheet(fp, 'shrink'); } }, icon('archive'), h('span', { class: 'name' }, t('shrinkTitle'))), at); } }); row('check', t('verifyTitle'), () => void import('../downloads/prism').then((m) => m.verifySheet(fp))); }
     if (x.source.magnet) row('copy', t('copyMagnet'), () => void navigator.clipboard?.writeText(x.source.magnet!).then(() => toast(t('copied'))));
     if (x.source.url) row('copy', t('copyLink'), () => void navigator.clipboard?.writeText(x.source.url!).then(() => toast(t('copied'))));
+    if (eng.move && (x.state === 'queued' || x.state === 'paused' || (x.state === 'downloading' && eng.id === 'native'))) {
+      const mv = (how: -2 | -1 | 1 | 2) => () => { if (getSettings().sort !== 'queue') { updateSettings({ sort: 'queue', dl: { ...dlPrefs(), desc: false } }); toast(t('sortedQueue')); } void eng.move!(x.id, how).catch((er) => toast(String(er.message ?? er), 'error')); };
+      sh.body.append(h('div', { class: 'move-row' }, h('span', { class: 'grow' }, t('queuePlace')), iconButton('top', t('moveTop'), mv(-2)), iconButton('up', t('moveUp'), mv(-1)), iconButton('down', t('moveDown'), mv(1)), iconButton('bottom', t('moveBottom'), mv(2))));
+    }
+    if (x.kind === 'http' && x.state !== 'done' && eng.setUrl) row('link', t('newUrl'), () => newUrlSheet(x));
+    if ((x.kind === 'http' && x.source.url) || (x.kind === 'torrent' && x.source.magnet)) { if (x.state === 'done' || x.state === 'failed' || x.state === 'seeding') row('refresh', t('redownload'), () => { if (!confirm(t('confirmRedownload', { name: displayName(x) }))) return; void (async () => { await eng.remove(x.id, true); await eng.add({ source: x.source, dir: x.dir, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('taskAdded', { name: displayName(x) })); })().catch((er) => toast(String(er.message ?? er), 'error')); }); }
     row('trash', t('removeKeepFiles'), () => void eng.remove(x.id, false).then(() => toast(t('taskRemoved'))).catch((er) => toast(String(er.message ?? er), 'error')));
     if (eng.id !== 'aria2' || !getSettings().aria2.use) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { if (!confirm(t('confirmRemoveFiles', { name: displayName(x) }))) return; sh.close(); void eng.remove(x.id, true).then(() => toast(t('taskRemoved'))).catch((er) => toast(String(er.message ?? er), 'error')); } }, icon('trash'), t('removeWithFiles')));
   };
@@ -202,3 +211,29 @@ function nextStart(sch: { start: string; days: number[] }): string | null {
   }
   return null;
 }
+
+/** A fresh link for a download whose link ran out: the same file, gone on from where it stopped. */
+function newUrlSheet(x: Task): void {
+  const sh = openSheet(t('newUrl'), t('close'));
+  const input = h('input', { type: 'url', dir: 'ltr', class: 'wide-input', value: '', placeholder: x.source.url ?? 'https://', autocomplete: 'off' }) as HTMLInputElement;
+  const go = h('button', { type: 'button', class: 'btn primary' }, icon('link'), t('newUrlSet')) as HTMLButtonElement;
+  go.addEventListener('click', () => {
+    const v = input.value.trim(); if (!/^https?:\/\/\S+$/i.test(v)) { toast(t('invalidLink'), 'error'); input.focus(); return; }
+    go.disabled = true; void getEngine().setUrl!(x.id, v).then(() => { toast(t('newUrlSet')); sh.close(); }).catch((e) => { go.disabled = false; toast(String((e as Error).message ?? e), 'error'); });
+  });
+  sh.body.append(h('p', { class: 'hint' }, t('newUrlHint')), input); sh.actions.append(go);
+  setTimeout(() => input.focus(), 50);
+}
+/** Prism's «remove the ones whose files are gone»: finished downloads whose file was deleted outside the app. */
+async function removeMissing(ts: Task[]): Promise<void> {
+  const { existing } = await import('../downloads/net');
+  const done = ts.filter((x) => (x.state === 'done' || x.state === 'seeding') && x.dir && !x.dir.startsWith('content:'));
+  const paths = done.map((x) => `${x.dir!.replace(/[\\/]$/, '')}/${x.kind === 'torrent' ? x.name : displayName(x)}`);
+  const there = paths.length ? await existing(paths) : [];
+  if (!there) { toast(t('notHere'), 'error'); return; }
+  const gone = done.filter((_, i) => !there[i]);
+  if (!gone.length) { toast(t('noneMissing')); return; }
+  for (const x of gone) await getEngine().remove(x.id, false);
+  toast(t('removedMissing', { n: countItems(gone.length) }));
+}
+

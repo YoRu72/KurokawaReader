@@ -27,6 +27,9 @@ export interface KtPlugin {
   setFiles(o: { id: string; priorities: number[] }): Promise<void>;
   setSequential(o: { id: string; on: boolean }): Promise<void>;
   setLimits(o: { down: number; up: number }): Promise<void>;
+  setUrl(o: { id: string; url: string }): Promise<void>;
+  move(o: { id: string; how: number }): Promise<void>;
+  hosts(): Promise<{ hosts: Record<string, number> }>;
   torrentInfo(o: { source: unknown }): Promise<{ info: unknown }>;
   streamUrl(o: { id: string; fileIndex: number }): Promise<{ url: string }>;
   open(o: { id: string; fileIndex?: number }): Promise<void>;
