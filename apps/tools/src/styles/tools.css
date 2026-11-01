@@ -252,7 +252,7 @@ html.pc .select-bar { bottom: 20px; inset-inline-start: 104px; }
 .selecting ~ .fab, .downloads-view.selecting .fab { display: none; }
 
 /* The download card (an add-on or a pack offered, then its progress) — as the updater's */
-.get-card { position: fixed; inset-inline: 12px; bottom: calc(92px + var(--safe-bottom, 0px)); z-index: 80; max-width: 460px; margin-inline: auto; padding: 14px 14px 10px; border-radius: 24px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); animation: get-in var(--dur-med, .28s) var(--ease-spring, ease-out); }
+.get-card { position: fixed; inset-inline: 12px; bottom: calc(158px + var(--safe-bottom, 0px)); z-index: 80; max-width: 460px; margin-inline: auto; padding: 14px 14px 10px; border-radius: 24px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); animation: get-in var(--dur-med, .28s) var(--ease-spring, ease-out); }
 html.pc .get-card { inset-inline: auto 20px; bottom: 20px; width: 420px; }
 .get-card.leaving { opacity: 0; transform: translateY(10px); transition: opacity .18s, transform .18s; }
 .get-head { display: flex; gap: 12px; align-items: flex-start; }
@@ -353,3 +353,10 @@ html.pc .get-card { inset-inline: auto 20px; bottom: 20px; width: 420px; }
 html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: auto 0 0; border-radius: 0; border-top: 1px solid var(--md-outline-variant); padding: 7px 16px; }
 .kt-hero > .grow { min-width: 0; flex: 1; }
 .kt-name { overflow-wrap: anywhere; }
+.get-ic.ok { background: color-mix(in srgb, #34c759 22%, transparent); color: #2fb350; }
+.done-card .get-head small + small { margin-top: 1px; }
+.done-more { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.done-more:empty { display: none; }
+.get-actions.wrap { flex-wrap: wrap; align-items: center; }
+.get-actions .grow { flex: 1; }
+.done-card .icon-btn { margin: -6px -6px 0 0; }
