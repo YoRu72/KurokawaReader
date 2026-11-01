@@ -9,6 +9,7 @@ import { nativePlatform, ktPlugin, openExternal } from '../native';
 import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
 import { animeSettingsCard } from './animeSettings';
+import { tvSettingsCard } from './tvSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
@@ -150,6 +151,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
+    const tvCard = s.addons.includes('tv') ? tvSettingsCard(rerender) : null;
     // Privacy (from the reader): DNS over HTTPS — sites blocked by the network's resolver reached through another —
     // and screenshots blocked; the Arabic digits; a backup of the settings.
     const dohOut = h('small', { class: 'src', dir: 'ltr' });
@@ -235,7 +237,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
-    return [general, downloads, connection, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, downloads, connection, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

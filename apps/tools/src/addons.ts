@@ -5,7 +5,7 @@ import { addonUrl } from './repo';
 import { db } from './db';
 import { getSettings, updateSettings } from './settings';
 
-export type AddonKind = 'group' | 'torrent-search' | 'anime' | 'anime-provider' | 'subtitles' | 'subtitle-source' | 'debrid' | 'archives' | 'player' | 'source' | 'video';
+export type AddonKind = 'group' | 'torrent-search' | 'anime' | 'anime-provider' | 'subtitles' | 'subtitle-source' | 'debrid' | 'archives' | 'player' | 'source' | 'video' | 'tv';
 export interface AddonEntry {
   id: string;
   name: string;

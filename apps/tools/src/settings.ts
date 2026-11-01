@@ -76,6 +76,9 @@ export interface Settings {
   animeHideSpoilers?: boolean;
   /** Senpwai's review of the picks before a range is added. */
   animeReview?: boolean;
+  /** The TV & Movies add-on: Torrentio's options, and the series followed. */
+  tv?: Partial<import('./tv/torrentio').TvPrefs>;
+  tvFollows?: import('./tv/library').Follow[];
   /** Hayase's lookup preference: among equally good releases, the best quality, the smallest, or the most seeded. */
   animeLookup?: 'quality' | 'size' | 'seeders';
   /** The antivirus check after a download (the computer): which scanner, a command of one's own, which kinds of file. */
