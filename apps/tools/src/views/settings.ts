@@ -185,7 +185,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // The player: how videos are watched (another app, or the in-app player of the Player add-on).
     const plat = nativePlatform();
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
-      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close')))) : null;
+      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
+      ...(s.addons.includes('player') ? fontRows(plat === 'desktop') : [])) : null;
     // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.
     const sp = (s.sounds ?? {}) as Partial<import('../downloads/done').SoundPrefs>; const SP = { on: true, complete: 'classic', failed: true, allDone: true, volume: 0.7, card: true, ...sp };
     const setSp = (o: Partial<typeof SP>) => { updateSettings({ sounds: { ...SP, ...o } }); };
@@ -271,3 +272,25 @@ export function addonSettingsSheet(list: AddonEntry[], lang: string, opts: { not
     }
   }
 }
+
+/** The Player add-on's fonts for styled subtitles: a folder (the computer's, or one the phone lets the app read)
+ *  and fonts added to the app itself; how many there are, and the list to remove from. */
+function fontRows(desktop: boolean): HTMLElement[] {
+  const info = h('small', { class: 'src' });
+  const count = async () => { const f = await import('../player/fonts'); const lib = await f.library(); const dir = getSettings().playerFontsDir ? await f.folderFonts().catch(() => []) : []; info.textContent = t('fontsCount', { app: localDigits(lib.length), dir: localDigits(dir.length) }); };
+  void count();
+  const dirIn = h('input', { type: 'text', dir: 'ltr', value: getSettings().playerFontsDir ?? '', placeholder: desktop ? 'C:\\Windows\\Fonts' : '/storage/emulated/0/Fonts', onchange: (e: Event) => { updateSettings({ playerFontsDir: (e.target as HTMLInputElement).value.trim() || undefined }); info.textContent = '…'; void count(); } }) as HTMLInputElement;
+  const pick = desktop ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const d = window.kurokawaTools as unknown as { pickDir?(): Promise<string | null> } | undefined; const p = await d?.pickDir?.(); if (p) { dirIn.value = p; updateSettings({ playerFontsDir: p }); info.textContent = '…'; void count(); } } }, icon('folder'), t('chooseFolder')) : null;
+  const file = h('input', { type: 'file', multiple: true, accept: '.ttf,.otf,.ttc,.otc,.woff,.woff2', hidden: true, onchange: async (e: Event) => { const fs = Array.from((e.target as HTMLInputElement).files ?? []); if (!fs.length) return; const n = await (await import('../player/fonts')).addFonts(fs); toast(t('fontsAdded', { n: localDigits(n) })); void count(); } }) as HTMLInputElement;
+  const manage = async () => {
+    const f = await import('../player/fonts'); const sh = openSheet(t('fontsTitle'), t('close'));
+    const draw = async () => { const lib = await f.library(); sh.body.replaceChildren(...(lib.length ? lib.map((x) => h('div', { class: 'dest-row' }, icon('type'), h('span', { class: 'grow' }, h('span', { dir: 'auto' }, x.families[0] ?? x.file), h('small', { class: 'src', dir: 'ltr' }, ` ${x.file} · ${formatBytes(x.size)}`)), iconButton('trash', t('remove'), () => void f.removeFont(x.id).then(draw).then(count)))) : [h('p', { class: 'empty small' }, t('fontsNone'))])); };
+    void draw();
+  };
+  return [
+    h('p', { class: 'hint' }, t('fontsHint')),
+    row(t('fontsDir'), h('div', { class: 'row-inline' }, dirIn, pick), desktop ? '' : t('fontsDirPhone')),
+    h('div', { class: 'row-actions' }, file, h('button', { type: 'button', class: 'btn tonal small', onclick: () => file.click() }, icon('plus'), t('fontsAdd')), h('button', { type: 'button', class: 'btn text small', onclick: () => void manage() }, icon('list'), t('fontsManage')), info),
+  ];
+}
+
