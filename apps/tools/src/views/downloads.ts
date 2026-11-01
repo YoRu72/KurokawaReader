@@ -132,7 +132,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
-    if (x.state === 'failed' && x.error) parts.push(x.error);
+    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error);
     return parts.join(' · ');
   };
   const card = (x: Task): HTMLElement => {
@@ -176,6 +176,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       const mv = (how: -2 | -1 | 1 | 2) => () => { if (getSettings().sort !== 'queue') { updateSettings({ sort: 'queue', dl: { ...dlPrefs(), desc: false } }); toast(t('sortedQueue')); } void eng.move!(x.id, how).catch((er) => toast(String(er.message ?? er), 'error')); };
       sh.body.append(h('div', { class: 'move-row' }, h('span', { class: 'grow' }, t('queuePlace')), iconButton('top', t('moveTop'), mv(-2)), iconButton('up', t('moveUp'), mv(-1)), iconButton('down', t('moveDown'), mv(1)), iconButton('bottom', t('moveBottom'), mv(2))));
     }
+    if (x.kind === 'http' && x.state === 'failed' && x.source.url) void import('../browser').then((m) => { if (m.canBrowse()) row('globe', t('openInBrowser'), () => m.openBrowser(x.source.url!)); });
     if (x.kind === 'http' && x.state !== 'done' && eng.setUrl) row('link', t('newUrl'), () => newUrlSheet(x));
     if ((x.kind === 'http' && x.source.url) || (x.kind === 'torrent' && x.source.magnet)) { if (x.state === 'done' || x.state === 'failed' || x.state === 'seeding') row('refresh', t('redownload'), () => { if (!confirm(t('confirmRedownload', { name: displayName(x) }))) return; void (async () => { await eng.remove(x.id, true); await eng.add({ source: x.source, dir: x.dir, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('taskAdded', { name: displayName(x) })); })().catch((er) => toast(String(er.message ?? er), 'error')); }); }
     row('trash', t('removeKeepFiles'), () => void eng.remove(x.id, false).then(() => toast(t('taskRemoved'))).catch((er) => toast(String(er.message ?? er), 'error')));

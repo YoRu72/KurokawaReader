@@ -70,7 +70,7 @@ final class KtEngine {
         // torrent
         TorrentHandle th; String magnet; byte[] torrentBytes;
         // http
-        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot;
+        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName;
     }
 
     private final Context ctx;
@@ -177,7 +177,7 @@ final class KtEngine {
         if (files != null) { x.priorities = new int[0]; List<Integer> want = new ArrayList<>(); for (int i = 0; i < files.length(); i++) want.add(files.getInt(i)); x.priorities = new int[Math.max(0, max(want) + 1)]; for (int i : want) x.priorities[i] = 1; }
         if (o.has("video") && x.source.has("url")) { x.kind = "video"; JSONObject v = o.getJSONObject("video"); if (x.meta == null) x.meta = new JSONObject(); x.meta.put("kind", "video"); for (java.util.Iterator<String> it = v.keys(); it.hasNext(); ) { String k = it.next(); x.meta.put(k, v.get(k)); } if (x.name == null) x.name = v.optString("title", x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (!x.paused) startVideo(x); else x.state = "paused"; }
         else if (x.source.has("magnet") || x.source.has("torrent")) { x.kind = "torrent"; addTorrent(x); }
-        else if (x.source.has("url")) { x.kind = "http"; if (x.name == null) x.name = nameFromUrl(x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (x.paused) x.state = "paused"; else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); }
+        else if (x.source.has("url")) { x.kind = "http"; if (x.name == null) { x.name = nameFromUrl(x.source.getString("url")); x.autoName = true; } synchronized (this) { tasks.put(x.id, x); } if (x.paused) x.state = "paused"; else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); }
         else throw new IllegalArgumentException("source");
         persist(); tell(true);
         return json(x);
@@ -308,8 +308,20 @@ final class KtEngine {
                 x.httpOut = new File(dir, safe);
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
-                final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = retries; opt.state = state;
-                KrDownloader.Result r = KrDownloader.fetch(new URL(url), part, lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim)), u -> open(u, headers), x.cancel, x.got, info, () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } }, opt);
+                final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = retries; opt.state = state; opt.expectName = safe;
+                opt.cookies = (u, set) -> { try { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(u.toString(), c); } catch (Throwable ignored) {} };
+                final int conns = lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim));
+                final Runnable tick = () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } };
+                KrDownloader.Result r;
+                try { r = KrDownloader.fetch(new URL(url), part, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                catch (IOException e) {
+                    // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
+                    // tried once more by the network's own DNS.)
+                    if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || x.cancel.get()) throw e;
+                    r = KrDownloader.fetch(new URL(url), part, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt);
+                }
+                // (The name the server gives — Content-Disposition — when the user gave none and the link's was a code.)
+                if (x.autoName && r.fileName != null) { String n = r.fileName.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); if (want.exists() && !"overwrite".equals(conflict)) n = freeName(dir, n); x.name = n; x.httpOut = new File(dir, n); } x.autoName = false; }
                 // (A server that refused connections: asked no more than it accepted next time.)
                 if (r.refused && !host.isEmpty()) { hostLimit.put(host, Math.max(1, r.connections)); saveHosts(); }
                 if (x.cancel.get()) { x.downSpeed = 0; x.done = x.got.get(); persist(); return; }
@@ -318,7 +330,7 @@ final class KtEngine {
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0;
-            } catch (Exception e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
+            } catch (Exception e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         }, "kt-http-" + x.id);
         x.httpThread.start();
@@ -352,9 +364,11 @@ final class KtEngine {
         if (x.cancel != null) x.cancel.set(true); if (x.httpThread != null) x.httpThread.join(5000);
         x.source.put("url", url); x.paused = false; x.error = null; persist(); startHttp(x); tell(true);
     }
-    private HttpURLConnection open(URL u, JSONObject headers) throws IOException {
+    private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
         java.net.Proxy px = proxyOf(proxy);
-        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : KrDoh.open(u);
+        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
+        // (The cookies the site set — here or in the app's browser, where a site's check is passed.)
+        try { String ck = android.webkit.CookieManager.getInstance().getCookie(u.toString()); if (ck != null && !ck.isEmpty() && (headers == null || (!headers.has("Cookie") && !headers.has("cookie")))) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) {}
         c.setConnectTimeout(Math.min(30000, timeoutS * 1000)); c.setReadTimeout(timeoutS * 1000); c.setInstanceFollowRedirects(false);
         c.setRequestProperty("User-Agent", ua);
         if (headers != null) { Iterator<String> it = headers.keys(); while (it.hasNext()) { String k = it.next(); c.setRequestProperty(k, headers.optString(k)); } }
@@ -367,7 +381,16 @@ final class KtEngine {
             s = s.replaceFirst("^[a-zA-Z0-9]+://", ""); int c = s.lastIndexOf(':'); String h = c > 0 ? s.substring(0, c) : s; int port = c > 0 ? Integer.parseInt(s.substring(c + 1).replaceAll("/.*$", "")) : (t == java.net.Proxy.Type.SOCKS ? 1080 : 8080);
             return new java.net.Proxy(t, java.net.InetSocketAddress.createUnresolved(h, port)); } catch (Exception e) { return null; }
     }
-    static String nameFromUrl(String url) { try { String p = new URL(url).getPath(); String n = p.substring(p.lastIndexOf('/') + 1); n = java.net.URLDecoder.decode(n, "UTF-8"); return n.isEmpty() ? "download" : n; } catch (Exception e) { return "download"; } }
+    static String nameFromUrl(String url) {
+        try {
+            URL u = new URL(url); String p = u.getPath(); String n = java.net.URLDecoder.decode(p.substring(p.lastIndexOf('/') + 1).replace("+", "%2B"), "UTF-8");
+            // (A name in the query — ?f=, ?filename=, ?name=, ?file=, ?title= — with an extension: that one.)
+            String q = u.getRawQuery();
+            if (q != null) for (String kv : q.split("&")) { int i = kv.indexOf('='); if (i <= 0) continue; String k = kv.substring(0, i).toLowerCase(java.util.Locale.ROOT); if (!(k.equals("f") || k.equals("filename") || k.equals("name") || k.equals("file") || k.equals("title") || k.equals("fn") || k.equals("response-content-disposition"))) continue;
+                String v = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"); if (k.equals("response-content-disposition")) { String d = KrDownloader.dispositionName(v); if (d == null) continue; v = d; } v = v.replaceAll(".*[\\\\/]", "").trim(); if (v.matches(".+\\.[A-Za-z0-9]{1,5}")) return v; }
+            return n.isEmpty() ? "download" : n;
+        } catch (Exception e) { return "download"; }
+    }
 
     /* ---------- what the page sees ---------- */
     boolean anyActive() { for (Task x : snapshot()) if ("downloading".equals(x.state) || "metadata".equals(x.state) || "checking".equals(x.state) || ("seeding".equals(x.state) && seedAfterDone)) return true; return false; }

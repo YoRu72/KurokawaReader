@@ -58,7 +58,14 @@ public class KtPlugin extends Plugin {
         for (int i = 0; i < before.length(); i++) { JSONObject t = before.optJSONObject(i); if (t != null) was.put(t.optString("id"), t.optString("state")); }
         for (int i = 0; i < after.length(); i++) { JSONObject t = after.optJSONObject(i); if (t == null) continue; String st = t.optString("state"); String w = was.get(t.optString("id")); if (w == null || w.equals(st)) continue; if ("done".equals(st) || "seeding".equals(st) && !"seeding".equals(w) && "downloading".equals(w)) KtService.finished(getContext(), t.optString("name"), true, null); else if ("failed".equals(st)) KtService.finished(getContext(), t.optString("name"), false, t.optString("error", null)); }
     }
-    @Override public void load() { try { KrDoh.provider = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {} bg.execute(this::engine); }
+    private static KtPlugin self;
+    /** From the app's browser: a link to add, or the links of a page to pick from (event «browser»). */
+    static void browserEvent(JSONObject o) { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("browser", JSObject.fromJSONObject(o), true); } catch (Exception ignored) {} }
+    @PluginMethod public void browse(PluginCall call) {
+        Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(i); call.resolve();
+    }
+    @Override public void load() { self = this; try { KrDoh.provider = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {} bg.execute(this::engine); }
 
     private interface Work { void run() throws Exception; }
     private void run(PluginCall call, Work w) { bg.execute(() -> { try { w.run(); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } }); }

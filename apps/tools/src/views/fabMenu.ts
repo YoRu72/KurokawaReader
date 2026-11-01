@@ -1,6 +1,7 @@
 // The + button's menu, the way Prism and the other download managers do it: the ways to add something, one tap
 // each — a link or magnet, whatever is on the clipboard, a .torrent file, a video page (yt-dlp: ready, or where to
 // get it), and the links of a page. Opens from the floating button on a phone and the rail's button on a computer.
+import { canBrowse } from '../browser';
 import { h, icon, toast } from '../ui/dom';
 import { t } from '../i18n';
 import { getEngine, parseSources } from '../engine';
@@ -21,7 +22,8 @@ export function fabMenu(anchor: HTMLElement): void {
     ...(eng.can.torrents ? [item('file', t('pickTorrentFile'), null, () => addSheet('', { pickTorrent: true }))] : []),
     videoItem,
     item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))),
-    item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())));
+    item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())),
+    ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []));
   const scrim = h('div', { class: 'fab-scrim', onclick: close });
   open = h('div', { class: 'fab-menu-wrap' }, scrim, menu);
   document.body.append(open); anchor.classList.add('open'); anchor.setAttribute('aria-expanded', 'true');

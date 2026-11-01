@@ -138,6 +138,7 @@ else {
   if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
   void import('./downloads/done').then((m) => m.startDoneWatch());
   void import('./downloads/trash').then((m) => m.startTrash());
+  void import('./browser').then((m) => m.startBrowserEvents());
   setTimeout(() => void import('./ui/crash').then((m) => m.showLastCrash()), 1500);
   void import('./downloads/net').then((m) => m.applyNet());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());

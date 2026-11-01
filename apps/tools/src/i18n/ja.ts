@@ -75,4 +75,5 @@ export const ja: Partial<Strings> = {
   miniOpen: "ミニウィンドウ", miniMain: "アプリに戻る", miniActive: "{n} 件ダウンロード中、{q} 件待機", miniIdle: "ダウンロード中のものはありません。", miniMore: "ほか {n} 件", miniAuto: "アプリを最小化したらミニウィンドウ", miniAutoHint: "速度とダウンロード中の項目を表示する、常に手前の小さなウィンドウ。",
   searchAgain: "もう一度検索", subsNeedsKey: "キーが必要", subsKeyHint: "{name} は自分のキーでのみ応答します（サイトで無料取得）：", subsCheck: "確認", subsCheckHint: "サイトの確認を済ませてからウィンドウを閉じると、再検索します。",
   appCrashTitle: "前回アプリが予期せず終了しました", crashHint: "このレポートに原因があります。送っていただくと修正に役立ちます。", crashCopy: "レポートをコピー", crashSend: "GitHub で報告",
+  grabInBrowser: "ページをブラウザで開く", browserShort: "ブラウザ", grabNothing: "読み込んだページには何もありません。リンクはスクリプトで描かれているかもしれません。ブラウザで開いて「取得」を押してください。", grabOther: "その他のリンク", browseTitle: "ウェブを閲覧", browseHint: "サイトを開くと、ダウンロードとリンクがここに届きます", errPage: "サイトがファイルの代わりにページを返しました（確認やサインイン）。一度ブラウザで開いてから再試行してください。", errPageShort: "ファイルではなくページが届きました", openInBrowser: "ブラウザで開く", browsePh: "アドレスまたは検索語", browseRecent: "最近", browseGo: "開く",
 };

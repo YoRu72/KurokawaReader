@@ -49,10 +49,12 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const panel = h('section', { class: 'card kt-panel' },
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,
       speedChart(hst, x));
-    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, x.error) : h('span'), acts),
+    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, errorText(x.error), x.error === 'page' && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : null) : h('span'), acts),
       panel, files ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   const off = eng.onChange((ts) => { const found = ts.find((x) => x.id === id); if (!found) { if (task) back('/'); return; } task = found; draw(); });
   root.dispose = () => off();
   return root;
 }
+/** A download's error in words: «page» is the site's page sent instead of the file (its check, a sign-in). */
+export const errorText = (e: string): string => (e === 'page' ? t('errPage') : e);

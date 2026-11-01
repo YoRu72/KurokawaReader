@@ -113,6 +113,38 @@ ipcMain.handle('kt:mini', (_e, o) => { const a = o && o.action; if (a === 'open'
 // A site opened in a window of the app's own session (the one its requests use), for the user to pass the
 // site's browser check by hand; resolves when the window is closed.
 ipcMain.handle('kt:siteWindow', (_e, o) => new Promise((resolve) => { const u = String(o && o.url || ''); if (!/^https:\/\//.test(u)) { resolve(false); return; } const w = new BrowserWindow({ width: 520, height: 720, parent: win || undefined, title: String(o.title || ''), autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); w.on('closed', () => resolve(true)); w.loadURL(u); }));
+/* ---------- the app's browser (the computer): a site in a window of the app's session, its DNS over HTTPS
+   included; a file it downloads goes to the app's Add sheet, «Grab links» hands the page's links and media to
+   the app to pick from ---------- */
+const GRAB_JS = "(function(){var o=[],s={};function add(u,t,k){if(!u||s[u])return;if(!/^(https?:|magnet:)/i.test(u))return;s[u]=1;o.push({href:u,text:(t||'').trim().slice(0,200),kind:k||''});}document.querySelectorAll('a[href]').forEach(function(a){add(a.href,a.textContent||a.title||a.getAttribute('download'),'a');});document.querySelectorAll('video[src],audio[src],source[src],img[src],iframe[src],track[src],embed[src],object[data]').forEach(function(e){add(e.currentSrc||e.src||e.data,e.alt||e.title||'',e.tagName.toLowerCase());});document.querySelectorAll('[data-src],[data-href],[data-url],[data-file]').forEach(function(e){var u=e.dataset.src||e.dataset.href||e.dataset.url||e.dataset.file;try{add(new URL(u,location.href).href,e.textContent,'data');}catch(x){}});try{performance.getEntriesByType('resource').forEach(function(r){if(/\\.(m3u8|mpd|mp4|mkv|webm|m4v|mov|mp3|m4a|flac|ogg|opus|zip|7z|rar|apk|pdf|epub)(\\?|$)/i.test(r.name))add(r.name,'','media');});}catch(x){}return {url:location.href,title:document.title,links:o.slice(0,3000)};})()";
+let browserWin = null; let browserMedia = new Map();
+function openBrowser(url) {
+  const u = /^https?:\/\//i.test(url) ? url : 'https://duckduckgo.com/';
+  if (browserWin) { browserWin.loadURL(u); browserWin.show(); browserWin.focus(); return; }
+  const w = browserWin = new BrowserWindow({ width: 1100, height: 800, parent: undefined, title: 'Kurokawa Tools', autoHideMenuBar: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  browserMedia = new Map();
+  const toApp = (o) => { if (win && !win.webContents.isLoading()) { win.webContents.send('kt:browser', o); if (win.isMinimized()) win.restore(); win.focus(); } };
+  const grab = async () => { try { const page = await w.webContents.executeJavaScript(GRAB_JS, true); for (const m of browserMedia.keys()) page.links.push({ href: m, text: '', kind: 'media' }); toApp({ kind: 'links', ...page, ua: w.webContents.getUserAgent() }); } catch (e) { dialog.showErrorBox('Kurokawa Tools', String(e && e.message || e)); } };
+  w.setMenu(Menu.buildFromTemplate([
+    { label: '‹', accelerator: 'Alt+Left', click: () => { if (w.webContents.navigationHistory?.canGoBack?.() ?? w.webContents.canGoBack()) w.webContents.goBack(); } },
+    { label: '›', accelerator: 'Alt+Right', click: () => { if (w.webContents.navigationHistory?.canGoForward?.() ?? w.webContents.canGoForward()) w.webContents.goForward(); } },
+    { label: '↻', accelerator: 'F5', click: () => w.webContents.reload() },
+    { label: 'Grab links', accelerator: 'CmdOrCtrl+G', click: () => void grab() },
+    { label: 'Copy address', accelerator: 'CmdOrCtrl+L', click: () => require('electron').clipboard.writeText(w.webContents.getURL()) },
+    { label: 'Open in system browser', click: () => shell.openExternal(w.webContents.getURL()) },
+  ]));
+  w.webContents.setWindowOpenHandler(({ url: to }) => { if (/^magnet:/i.test(to)) { toApp({ kind: 'download', url: to }); return { action: 'deny' }; } if (/^https?:/i.test(to)) w.loadURL(to); return { action: 'deny' }; });
+  w.webContents.on('will-navigate', (e, to) => { if (/^magnet:/i.test(to)) { e.preventDefault(); toApp({ kind: 'download', url: to }); } });
+  w.webContents.on('page-title-updated', (_e, t) => w.setTitle(`${t} — Kurokawa Tools`));
+  const onDl = (e, item, wc) => { if (wc !== w.webContents) return; e.preventDefault(); const url = item.getURL(); const name = item.getFilename(); void w.webContents.session.cookies.get({ url }).catch(() => []).then((cs) => toApp({ kind: 'download', url, name, referer: w.webContents.getURL(), ua: w.webContents.getUserAgent(), cookie: cs.map((c) => `${c.name}=${c.value}`).join('; ') })); };
+  w.webContents.session.on('will-download', onDl);
+  const seen = (d) => { if (d.webContentsId === w.webContents.id && /\.(m3u8|mpd|mp4|mkv|webm|m4v|mov|mp3|m4a|flac|ogg|opus|zip|7z|rar|apk|pdf|epub)(\?|$)/i.test(d.url) && browserMedia.size < 400) browserMedia.set(d.url, 1); };
+  w.webContents.session.webRequest.onCompleted({ urls: ['http://*/*', 'https://*/*'] }, seen);
+  w.on('closed', () => { try { w.webContents.session.removeListener('will-download', onDl); } catch { /* gone */ } browserWin = null; });
+  w.webContents.on('did-navigate', () => { browserMedia = new Map(); });
+  w.loadURL(u);
+}
+ipcMain.handle('kt:browse', (_e, o) => { openBrowser(String(o && o.url || '')); return true; });
 ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));

@@ -98,6 +98,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   miniOpen: "Mini window", miniMain: "Back to the app", miniActive: "{n} downloading, {q} waiting", miniIdle: "Nothing is downloading.", miniMore: "and {n} more", miniAuto: "The mini window when the app is minimized", miniAutoHint: "A small window above the others with the speed and what is downloading.",
   searchAgain: "Search again", subsNeedsKey: "needs a key", subsKeyHint: "{name} answers only with your own key, free from its site:", subsCheck: "check", subsCheckHint: "Pass the site's check, then close the window: the search runs again.",
   appCrashTitle: "The app closed unexpectedly last time", crashHint: "This report says why; sending it helps fix it.", crashCopy: "Copy the report", crashSend: "Report on GitHub",
+  grabInBrowser: "Open the page in the browser", browserShort: "Browser", grabNothing: "Nothing found in the page as it was read; its links may be drawn by its scripts. Open it in the browser and tap Grab.", grabOther: "Other links", browseTitle: "Browse the web", browseHint: "Open a site; its downloads and links come here", errPage: "The site sent a web page instead of the file (a check or a sign-in). Open it in the browser once, then try again.", errPageShort: "a page came instead of the file", openInBrowser: "Open in the browser", browsePh: "Address or words to search", browseRecent: "Recent", browseGo: "Open",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('kurokawaTools', {
   onArchiveProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:archiveProgress', fn); return () => ipcRenderer.removeListener('kt:archiveProgress', fn); },
   checkUpdate: (o) => call('kt:checkUpdate', o), installUpdate: (u) => call('kt:installUpdate', u), readFile: (p) => call('kt:readFile', p),
   onTasks: (cb) => { const fn = (_e, tasks) => cb(tasks); ipcRenderer.on('kt:tasks', fn); void call('kt:list').then(cb).catch(() => {}); return () => ipcRenderer.removeListener('kt:tasks', fn); },
+  onBrowser: (cb) => { const fn = (_e, o) => cb(o); ipcRenderer.on('kt:browser', fn); return () => ipcRenderer.removeListener('kt:browser', fn); },
+  browse: (o) => call('kt:browse', o),
   onUpdateProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:update-progress', fn); return () => ipcRenderer.removeListener('kt:update-progress', fn); },
 });
 ipcRenderer.on('kt:open', (_e, u) => window.dispatchEvent(new CustomEvent('kt:open', { detail: u })));

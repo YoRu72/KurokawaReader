@@ -75,4 +75,5 @@ export const zh: Partial<Strings> = {
   miniOpen: "迷你窗口", miniMain: "返回应用", miniActive: "{n} 个下载中，{q} 个等待", miniIdle: "没有正在下载的内容。", miniMore: "还有 {n} 个", miniAuto: "应用最小化时显示迷你窗口", miniAutoHint: "置于其他窗口之上的小窗口，显示速度和正在下载的内容。",
   searchAgain: "再次搜索", subsNeedsKey: "需要密钥", subsKeyHint: "{name} 只接受你自己的密钥（可在其网站免费获取）：", subsCheck: "验证", subsCheckHint: "通过网站验证后关闭窗口，即会重新搜索。",
   appCrashTitle: "上次应用意外关闭", crashHint: "此报告说明了原因，发送它有助于修复。", crashCopy: "复制报告", crashSend: "在 GitHub 上报告",
+  grabInBrowser: "在浏览器中打开页面", browserShort: "浏览器", grabNothing: "按原样读取的页面中什么也没找到，其链接可能由脚本生成。请在浏览器中打开并点击“抓取”。", grabOther: "其他链接", browseTitle: "浏览网页", browseHint: "打开网站，其下载和链接会来到这里", errPage: "网站返回了网页而不是文件（验证或登录）。请先在浏览器中打开一次，然后重试。", errPageShort: "收到的是网页而不是文件", openInBrowser: "在浏览器中打开", browsePh: "网址或搜索词", browseRecent: "最近", browseGo: "打开",
 };

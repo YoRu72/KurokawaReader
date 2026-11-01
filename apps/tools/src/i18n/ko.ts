@@ -75,4 +75,5 @@ export const ko: Partial<Strings> = {
   miniOpen: "미니 창", miniMain: "앱으로 돌아가기", miniActive: "{n}개 받는 중, {q}개 대기", miniIdle: "받는 중인 항목이 없습니다.", miniMore: "외 {n}개", miniAuto: "앱을 최소화하면 미니 창", miniAutoHint: "다른 창 위에 뜨는 작은 창으로 속도와 받는 중인 항목을 보여 줍니다.",
   searchAgain: "다시 검색", subsNeedsKey: "키 필요", subsKeyHint: "{name}은(는) 본인 키로만 응답합니다(사이트에서 무료 발급):", subsCheck: "확인", subsCheckHint: "사이트 확인을 통과한 뒤 창을 닫으면 다시 검색합니다.",
   appCrashTitle: "지난번에 앱이 예기치 않게 종료되었습니다", crashHint: "이 보고서에 원인이 있습니다. 보내 주시면 수정에 도움이 됩니다.", crashCopy: "보고서 복사", crashSend: "GitHub에 신고",
+  grabInBrowser: "브라우저에서 페이지 열기", browserShort: "브라우저", grabNothing: "읽은 페이지에서 아무것도 찾지 못했습니다. 링크가 스크립트로 그려질 수 있습니다. 브라우저에서 열고 “가져오기”를 누르세요.", grabOther: "기타 링크", browseTitle: "웹 둘러보기", browseHint: "사이트를 열면 다운로드와 링크가 여기로 옵니다", errPage: "사이트가 파일 대신 웹 페이지를 보냈습니다(확인 또는 로그인). 브라우저에서 한 번 연 뒤 다시 시도하세요.", errPageShort: "파일 대신 페이지가 왔습니다", openInBrowser: "브라우저에서 열기", browsePh: "주소 또는 검색어", browseRecent: "최근", browseGo: "열기",
 };
