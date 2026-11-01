@@ -162,16 +162,42 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         row(t('videoDefaultQuality'), pickButton(t('videoDefaultQuality'), [['best', t('videoBest')], ['2160', '2160p'], ['1440', '1440p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p'], ['audio', t('videoAudioOnly')]], s.videoQuality, (v) => { updateSettings({ videoQuality: v as 'best' }); rerender(); }, t('close'))),
         row(t('videoContainer'), pickButton(t('videoContainer'), [['mp4', 'MP4'], ['mkv', 'MKV'], ['webm', 'WebM']], s.videoContainer, (v) => { updateSettings({ videoContainer: v as 'mp4' }); rerender(); }, t('close'))),
         toggle(t('videoEmbedThumb'), s.videoEmbedThumb, (v) => updateSettings({ videoEmbedThumb: v })),
-        toggle(t('videoSponsor'), s.videoSponsor, (v) => updateSettings({ videoSponsor: v })));
+        toggle(t('videoSponsor'), s.videoSponsor, (v) => updateSettings({ videoSponsor: v })),
+        toggle(t('videoChapters'), s.videoChapters !== false, (v) => updateSettings({ videoChapters: v })),
+        toggle(t('videoNumber'), s.videoNumber !== false, (v) => updateSettings({ videoNumber: v }), t('videoNumberHint')),
+        row(t('videoTemplate'), h('input', { type: 'text', dir: 'ltr', value: s.videoTemplate ?? '', placeholder: '%(title)s [%(id)s]', onchange: (e: Event) => updateSettings({ videoTemplate: (e.target as HTMLInputElement).value.trim() }) }), t('videoTemplateHint')),
+        ...(nativePlatform() === 'desktop' ? [row(t('videoCookies'), pickButton(t('videoCookies'), [['', t('videoCookiesNone')], ['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox'], ['brave', 'Brave'], ['opera', 'Opera'], ['vivaldi', 'Vivaldi'], ['chromium', 'Chromium'], ['safari', 'Safari']], s.videoCookies ?? '', (v) => { updateSettings({ videoCookies: v }); rerender(); }, t('close')), t('videoCookiesHint'))] : []));
     }
     // The player: how videos are watched (another app, or the in-app player of the Player add-on).
     const plat = nativePlatform();
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
       row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close')))) : null;
+    // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.
+    const sp = (s.sounds ?? {}) as Partial<import('../downloads/done').SoundPrefs>; const SP = { on: true, complete: 'classic', failed: true, allDone: true, volume: 0.7, card: true, ...sp };
+    const setSp = (o: Partial<typeof SP>) => { updateSettings({ sounds: { ...SP, ...o } }); };
+    const playIt = (k: 'complete' | 'failed' | 'queue', which?: string) => void import('../downloads/done').then((m) => m.playSound(k, which));
+    const soundNames: [string, string][] = [['classic', t('soundClassic')], ['prism', 'Prism'], ['pop', t('soundPop')], ['kalimba', t('soundKalimba')], ['snap', t('soundSnap')], ['cascade', t('soundCascade')], ['glide', t('soundGlide')], ['harp', t('soundHarp')], ['droplet', t('soundDroplet')], ['music-box', t('soundMusicBox')], ['sparkle', t('soundSparkle')]];
+    const vol = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(SP.volume), onchange: (e: Event) => { setSp({ volume: Number((e.target as HTMLInputElement).value) }); playIt('complete'); } }) as HTMLInputElement;
+    const sounds = card('sounds', t('soundsSection'),
+      toggle(t('soundsOn'), SP.on, (v) => { setSp({ on: v }); rerender(); }),
+      ...(SP.on ? [
+        row(t('soundComplete'), h('span', { class: 'row-actions' }, pickButton(t('soundComplete'), soundNames, SP.complete, (v) => { setSp({ complete: v }); playIt('complete', v); rerender(); }, t('close')), iconButton('play', t('soundPreview'), () => playIt('complete', getSettings().sounds?.complete ?? 'classic')))),
+        toggle(t('soundFailed'), SP.failed, (v) => { setSp({ failed: v }); if (v) playIt('failed'); }),
+        toggle(t('soundAllDone'), SP.allDone, (v) => { setSp({ allDone: v }); if (v) playIt('queue'); }),
+        row(t('soundVolume'), vol)] : []),
+      toggle(t('doneCardSetting'), SP.card, (v) => setSp({ card: v }), t('doneCardHint')));
+    // The antivirus check after a download (Prism's): on a computer.
+    const AV = { on: false, kind: 'auto' as const, command: '', args: '{file}', extensions: '', ...(s.av ?? {}) } as NonNullable<typeof s.av>;
+    const setAv = (o: Partial<typeof AV>) => updateSettings({ av: { ...AV, ...o } });
+    const avBox = nativePlatform() === 'desktop' ? card('antivirus', t('avSection'), h('p', { class: 'hint' }, t('avHint')),
+      toggle(t('avOn'), AV.on, (v) => { setAv({ on: v, extensions: AV.extensions || 'exe msi zip rar 7z apk dmg pkg deb rpm appimage bat cmd ps1 jar iso' }); rerender(); }),
+      ...(AV.on ? [row(t('avScanner'), pickButton(t('avScanner'), [['auto', t('avAuto')], ['defender', 'Microsoft Defender'], ['clamav', 'ClamAV'], ['custom', t('avCustom')]], AV.kind, (v) => { setAv({ kind: v as 'auto' }); rerender(); }, t('close'))),
+        ...(AV.kind === 'custom' ? [row(t('avCommand'), h('input', { type: 'text', dir: 'ltr', value: AV.command, placeholder: '/usr/bin/clamdscan', onchange: (e: Event) => setAv({ command: (e.target as HTMLInputElement).value }) })), row(t('avArgs'), h('input', { type: 'text', dir: 'ltr', value: AV.args, placeholder: '--no-summary {file}', onchange: (e: Event) => setAv({ args: (e.target as HTMLInputElement).value }) }), t('avArgsHint'))] : []),
+        row(t('avExtensions'), h('input', { type: 'text', dir: 'ltr', value: AV.extensions, onchange: (e: Event) => setAv({ extensions: (e.target as HTMLInputElement).value }) }), t('avExtensionsHint'))] : [])) : null;
     // Storage: the packs (Python, ffmpeg) fetched for add-ons, with their sizes, removable.
     const packsBox = h('div'); void import('../packs').then((m) => { const c = m.packsCard(); if (c) packsBox.replaceChildren(c); });
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), packsBox) : null;
-    return [general, downloads, player, video, archives, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, downloads, sounds, player, video, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

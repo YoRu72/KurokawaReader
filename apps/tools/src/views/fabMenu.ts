@@ -1,9 +1,8 @@
 // The + button's menu, the way Prism and the other download managers do it: the ways to add something, one tap
 // each — a link or magnet, whatever is on the clipboard, a .torrent file, a video page (yt-dlp: ready, or where to
 // get it), and the links of a page. Opens from the floating button on a phone and the rail's button on a computer.
-import { h, icon, toast, openSheet } from '../ui/dom';
+import { h, icon, toast } from '../ui/dom';
 import { t } from '../i18n';
-import { navigate } from '../router';
 import { getEngine, parseSources } from '../engine';
 import { addSheet } from './add';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
@@ -41,10 +40,7 @@ async function fromClipboard(): Promise<void> {
  *  in Settings → Add-ons. */
 async function videoEntry(): Promise<void> {
   if (videoEnabled()) { addSheet('', { video: true }); return; }
-  const sh = openSheet(t('fabVideo'), t('close'));
-  if (!videoSupported()) { sh.body.append(h('p', null, t('videoYtdlpNotHereLong'))); return; }
-  sh.body.append(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('film')), h('p', null, t('videoYtdlpMissingLong'))));
-  const get = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('videoAddIt')) as HTMLButtonElement;
-  get.addEventListener('click', async () => { get.disabled = true; try { const { install } = await import('../addons'); await install('video'); toast(t('addonInstalledToast', { name: t('videoKind') })); sh.close(); addSheet('', { video: true }); } catch (e) { toast(String((e as Error).message ?? e), 'error'); get.disabled = false; } });
-  sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); navigate('/settings/addons'); } }, icon('settings'), t('videoOpenAddons')), get);
+  if (!videoSupported()) { toast(t('videoYtdlpNotHereLong'), 'error', 6000); return; }
+  const { needAddon } = await import('../addons/need');
+  if (await needAddon('video', t('addonWhyVideo'))) addSheet('', { video: true });
 }

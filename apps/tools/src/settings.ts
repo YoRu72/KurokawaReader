@@ -64,10 +64,15 @@ export interface Settings {
   doh: string; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
   playerWith: 'ask' | 'app' | 'external';
+  /** Sounds and the «Download complete» card (downloads/done.ts). */
+  sounds?: import('./downloads/done').SoundPrefs;
+  /** The antivirus check after a download (the computer): which scanner, a command of one's own, which kinds of file. */
+  av?: { on: boolean; kind: 'auto' | 'defender' | 'clamav' | 'custom'; command: string; args: string; extensions: string };
   /** Archives (HatchZip): space never used by an extraction in place (bytes), every checksum read before an archive is cut, the sheet closed when done. */
   archiveKeepFree: number; archiveVerifyFirst: boolean; archiveCloseWhenDone: boolean;
   /** The Video add-on: the quality taken when none is picked, the container, the cover and sponsor-skip. */
   videoQuality: 'best' | '2160' | '1440' | '1080' | '720' | '480' | 'audio'; videoContainer: 'mp4' | 'mkv' | 'webm'; videoEmbedThumb: boolean; videoSponsor: boolean;
+  videoChapters?: boolean; videoTemplate?: string; videoNumber?: boolean; videoCookies?: string;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
 }
 

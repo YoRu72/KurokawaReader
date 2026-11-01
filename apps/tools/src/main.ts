@@ -77,9 +77,10 @@ function mountInner(route: Route): void {
       // An AniList or MyAnimeList page opened with the app goes to the show's page (Open in Seanime's idea);
       // anything else into the Add sheet.
       const u = route.u ?? ''; const al = /anilist\.co\/anime\/(\d+)/i.exec(u); const mal = /myanimelist\.net\/anime\/(\d+)/i.exec(u);
-      if ((al || mal) && getSettings().addons.includes('anime')) {
+      if (al || mal) {
         current = downloadsView();
-        void (async () => { let id = al ? Number(al[1]) : 0; if (!id && mal) { const { gql } = await import('./anilist'); const d = await gql<{ Media: { id: number } | null }>('query ($mal: Int) { Media(idMal: $mal, type: ANIME) { id } }', { mal: Number(mal[1]) }, false).catch(() => null); id = d?.Media?.id ?? 0; } if (id) navigate(`/anime/${id}`, true); else void import('./views/add').then((m) => m.addSheet(u)); })();
+        // (An AniList / MyAnimeList show: its page in the Anime tab — the add-on offered first when it is missing.)
+        void (async () => { if (!getSettings().addons.includes('anime')) { const { needAddon } = await import('./addons/need'); const { t } = await import('./i18n'); if (!(await needAddon('anime', t('addonWhyAnime')))) return; } let id = al ? Number(al[1]) : 0; if (!id && mal) { const { gql } = await import('./anilist'); const d = await gql<{ Media: { id: number } | null }>('query ($mal: Int) { Media(idMal: $mal, type: ANIME) { id } }', { mal: Number(mal[1]) }, false).catch(() => null); id = d?.Media?.id ?? 0; } if (id) navigate(`/anime/${id}`, true); else void import('./views/add').then((m) => m.addSheet(u)); })();
         break;
       }
       current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(u)), 50); break;
@@ -107,6 +108,8 @@ setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() =>
 { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
 void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
 if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
+void import('./downloads/done').then((m) => m.startDoneWatch());
+void import('./ui/dropzone').then((m) => m.startDropAndKeys());
 if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);

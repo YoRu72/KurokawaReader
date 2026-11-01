@@ -32,6 +32,7 @@ export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (
 
 export function videoPanel(onChange: () => void): VideoPanel {
   const el = h('div', { class: 'video-panel', hidden: true });
+  const part = { on: false, from: '', to: '' };
   let url: string | null = null; let info: PageInfo | null = null; let chosen: VideoChoice | null = null; let subs = false; let token = 0; let running: Promise<void> = Promise.resolve();
   const s = getSettings();
   const pickDefault = (i: PageInfo) => {
@@ -62,12 +63,15 @@ export function videoPanel(onChange: () => void): VideoPanel {
         h('div', { class: 'video-text' }, h('b', { dir: 'auto' }, i.title), meta ? h('small', { class: 'src', dir: 'auto' }, meta) : null, i.live ? h('span', { class: 'badge live' }, t('videoLive')) : null)),
       i.choices.length ? h('div', { class: 'video-choices' }, h('span', { class: 'label' }, t('videoQuality')), h('div', { class: 'chip-row wrap' }, ...i.choices.map(chip))) : null,
       i.audio.length ? h('div', { class: 'video-choices' }, h('span', { class: 'label' }, t('videoAudioOnly')), h('div', { class: 'chip-row wrap' }, ...i.audio.map(chip))) : null,
-      langs.length ? h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: subs, onchange: (e: Event) => { subs = (e.target as HTMLInputElement).checked; } }), h('span', null, t('videoSubs', { langs: langs.join('، ') }))) : null].filter((x): x is NonNullable<typeof x> => !!x));
+      langs.length ? h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: subs, onchange: (e: Event) => { subs = (e.target as HTMLInputElement).checked; } }), h('span', null, t('videoSubs', { langs: langs.join('، ') }))) : null,
+      // Only a part (Prism's): from–to, as 1:30 or 1:02:00.
+      i.duration && !i.live ? h('div', { class: 'video-part' }, h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: part.on, onchange: (e: Event) => { part.on = (e.target as HTMLInputElement).checked; draw(); onChange(); } }), h('span', null, t('videoPart'))),
+        part.on ? h('span', { class: 'video-part-range', dir: 'ltr' }, h('input', { type: 'text', inputmode: 'numeric', value: part.from || '0:00', placeholder: '0:00', 'aria-label': t('videoPartFrom'), oninput: (e: Event) => { part.from = (e.target as HTMLInputElement).value; } }), '–', h('input', { type: 'text', inputmode: 'numeric', value: part.to || dur(i.duration).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), placeholder: '1:00', 'aria-label': t('videoPartTo'), oninput: (e: Event) => { part.to = (e.target as HTMLInputElement).value; } })) : null) : null].filter((x): x is NonNullable<typeof x> => !!x));
   };
   const offerAddon = () => {
     el.hidden = false;
     el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoYtdlpMissingLong'))),
-      h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { install } = await import('../addons'); await install(VIDEO_ADDON); const u = url; url = null; check(u); } catch (er) { toast(String((er as Error).message ?? er), 'error'); b.disabled = false; } } }, t('videoAddIt')),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; const { needAddon } = await import('../addons/need'); if (await needAddon(VIDEO_ADDON, t('addonWhyVideo'), { start: true })) { const u = url; url = null; check(u); } else b.disabled = false; } }, t('videoAddIt')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => { document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()); void import('../router').then((r) => r.navigate('/settings/addons')); } }, t('videoOpenAddons'))));
   };
   const check = (u: string | null) => {
@@ -83,15 +87,16 @@ export function videoPanel(onChange: () => void): VideoPanel {
       onChange();
     });
   };
-  const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor });
+  const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
   return {
     el, check, busy: () => running,
     picks() {
       if (!url || !info) return null;
-      if (info.kind === 'playlist') return info.entries.filter((e) => e.url).map((e, n) => ({ url: e.url, video: { ...base(preferredFormat().audioOnly), ...preferredFormat(), title: e.title, playlistIndex: n + 1 } }));
+      if (info.kind === 'playlist') return info.entries.filter((e) => e.url).map((e, n) => ({ url: e.url, video: { ...base(preferredFormat().audioOnly), ...preferredFormat(), title: e.title, playlistIndex: s.videoNumber === false ? undefined : n + 1 } }));
       const i = info; const c = chosen;
       const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
-      return [{ url: i.url || url, video: { ...base(c?.kind === 'audio'), format: c?.id, audioOnly: c?.kind === 'audio', label: c?.label, title: i.title, site: i.site, thumbnail: i.thumbnail, subs: subs && langs.length ? langs.join(',') : undefined } }];
+      const sec = part.on && part.from.trim() && part.to.trim() ? `${part.from.trim()}-${part.to.trim()}` : undefined;
+      return [{ url: i.url || url, video: { ...base(c?.kind === 'audio'), format: c?.id, audioOnly: c?.kind === 'audio', label: c?.label, title: i.title, site: i.site, thumbnail: i.thumbnail, subs: subs && langs.length ? langs.join(',') : undefined, section: sec } }];
     },
   };
 }
