@@ -647,6 +647,23 @@
           "type": "password"
         }
       ]
+    },
+    {
+      "id": "tv",
+      "kind": "tv",
+      "name": "TV & Movies",
+      "names": {
+        "ar": "أفلام ومسلسلات",
+        "ja": "映画・ドラマ",
+        "ko": "영화·드라마",
+        "zh": "影视"
+      },
+      "description": "A TV & Movies tab: popular, new and top-rated films and series by genre (Cinemeta), search, a watchlist, «continue watching», and every film or episode watched now or downloaded from Torrentio — only the episode's file of a season pack, in the quality you set (a debrid key from the Debrid add-on resolves them to direct links). Followed series download their new episodes as they air.",
+      "descriptions": {
+        "ar": "تبويب للأفلام والمسلسلات: الرائج والجديد والأعلى تقييمًا حسب النوع (من Cinemeta)، والبحث، وقائمة المشاهدة، و«تابِع المشاهدة»، وكل فيلم أو حلقة تُشاهَد فورًا أو تُنزَّل من Torrentio — ملف الحلقة وحده من حزمة الموسم، بالجودة التي تختارها (ومفتاح إضافة Debrid يحوّلها إلى روابط مباشرة). والمسلسلات المتابَعة تُنزَّل حلقاتها الجديدة فور عرضها."
+      },
+      "version": "0.1.0",
+      "icon": "film"
     }
   ]
 }

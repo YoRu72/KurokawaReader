@@ -86,7 +86,9 @@ async function scanDone(x: Task): Promise<void> {
   const av = getSettings().av; const d = window.kurokawaTools as unknown as { avScan?(o: { file: string; cfg: unknown }): Promise<AvResult> } | undefined;
   if (!av?.on || !d?.avScan || !x.dir) return;
   const name = displayName(x); const file = `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? x.name : name}`;
-  const line = (cls: string, text: string) => { const card = document.querySelector('.done-card .get-head .grow'); if (card) { card.querySelector('.av-line')?.remove(); card.append(h('small', { class: `av-line ${cls}` }, text)); } };
+  // (Each line with «Turn off»: the check stopped for later downloads from where it shows, not only in Settings.)
+  const off = () => h('button', { type: 'button', class: 'btn text small av-off', onclick: (e: Event) => { const now = getSettings().av; if (now) updateSettings({ av: { ...now, on: false } }); (e.currentTarget as HTMLElement).replaceWith(h('span', null, ` · ${t('avTurnedOff')}`)); toast(t('avTurnedOff')); } }, t('avTurnOff'));
+  const line = (cls: string, text: string) => { const card = document.querySelector('.done-card .get-head .grow'); if (card) { card.querySelector('.av-line')?.remove(); card.append(h('small', { class: `av-line ${cls}` }, text, ' ', off())); } };
   line('busy', t('avScanning'));
   const r = await d.avScan({ file, cfg: { ...av, extensions: av.extensions.split(/[\s,]+/).filter(Boolean) } }).catch((e) => ({ result: 'error', detail: String((e as Error).message ?? e) }) as AvResult);
   if (r.result === 'clean') line('ok', t('avClean'));
