@@ -365,3 +365,6 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .drop-box { display: grid; justify-items: center; gap: 8px; padding: 40px 56px; border-radius: 28px; border: 2px dashed var(--md-primary); background: var(--md-surface-container-high); color: var(--md-on-surface); text-align: center; }
 .drop-box svg { width: 40px; height: 40px; color: var(--md-primary); fill: none; stroke: currentColor; stroke-width: 2; }
 .drop-box b { font-size: 18px; } .drop-box small { color: var(--md-on-surface-variant); }
+.video-part { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.video-part-range { display: inline-flex; align-items: center; gap: 6px; }
+.video-part-range input { width: 5.5em; text-align: center; font-variant-numeric: tabular-nums; }

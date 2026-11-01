@@ -76,7 +76,9 @@ export interface AddOptions {
   /** Start paused (to pick files once the metadata is here). */
   paused?: boolean;
   /** A page for yt-dlp (the Video add-on): the format chosen and what the list shows. */
-  video?: { format?: string; title?: string; site?: string; label?: string; audioOnly?: boolean; container?: string; subs?: string; thumbnail?: string; playlistIndex?: number; embedThumb?: boolean; sponsorblock?: boolean; headers?: Record<string, string>; outName?: string };
+  video?: { format?: string; title?: string; site?: string; label?: string; audioOnly?: boolean; container?: string; subs?: string; thumbnail?: string; playlistIndex?: number; embedThumb?: boolean; sponsorblock?: boolean; headers?: Record<string, string>; outName?: string;
+    /** Chapters kept in the file; the file name's pattern (yt-dlp's); only a part («1:00-2:30»); a browser's cookies (desktop). */
+    chapters?: boolean; template?: string; section?: string; cookies?: string };
 }
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }

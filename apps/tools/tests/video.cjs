@@ -27,8 +27,11 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   console.log('panel:', (await p.$eval('.video-panel', (e) => e.innerText)).replace(/\n+/g, ' | '));
   await p.screenshot({ path: path.join(__dirname, `shot-video-${lang}.png`) });
   await p.click('.video-choices .chip:has-text("720")');
+  // Only a part: 1:00 to 2:30
+  await p.click('.video-part input[type=checkbox]'); const ins = await p.$$('.video-part-range input'); await ins[0].fill('1:00'); await ins[1].fill('2:30');
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__added.length === 1);
-  console.log('added:', JSON.stringify(await p.evaluate(() => window.__added[0])));
+  const added0 = await p.evaluate(() => window.__added[0]); console.log('added:', JSON.stringify(added0));
+  if (added0.video.section !== '1:00-2:30' || added0.video.chapters !== true) { console.log('FAILED: part or chapters missing'); process.exit(1); }
   // A file link: no panel, an ordinary task.
   await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet'); await p.fill('.add-input', 'https://example.com/files/linux.iso'); await p.waitForTimeout(900);
   console.log('file panel hidden:', await p.$eval('.video-panel', (e) => e.hidden));
