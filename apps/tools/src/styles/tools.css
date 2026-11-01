@@ -270,3 +270,86 @@ html.pc .get-card { inset-inline: auto 20px; bottom: 20px; width: 420px; }
 .get-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
 .get-card.ready .get-ic { background: var(--md-primary); color: var(--md-on-primary); }
 @keyframes get-in { from { opacity: 0; transform: translateY(16px) scale(.98); } }
+
+/* ---- Prism's details visuals ---- */
+.kt-hero { display: flex; gap: 14px; align-items: flex-start; }
+.task-kind.big { width: 48px; height: 48px; border-radius: 14px; flex: none; }
+.task-kind.big svg { width: 26px; height: 26px; }
+.kt-name { font-size: 16px; font-weight: 600; word-break: break-word; }
+.kt-url { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12.5px; color: var(--md-on-surface-variant); min-width: 0; }
+.kt-url > svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.kt-url .sel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; font-family: ui-monospace, 'JetBrains Mono', monospace; }
+.kt-copy { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--md-on-surface-variant); flex: none; }
+.kt-copy:hover { background: var(--md-surface-container-highest); color: var(--md-primary); }
+.kt-copy svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+.kt-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.kt-badge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--md-surface-container-highest); color: var(--md-on-surface-variant); }
+.kt-badge svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; }
+.kt-badge.ok { background: color-mix(in srgb, #34c759 18%, transparent); color: #2fb350; }
+.kt-badge.state-downloading, .kt-badge.state-metadata { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.kt-badge.state-failed { background: var(--md-error-container); color: var(--md-on-error-container); }
+.kt-badge.state-done { background: color-mix(in srgb, #34c759 18%, transparent); color: #2fb350; }
+.kt-live { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: kt-pulse 1.4s ease-in-out infinite; }
+@keyframes kt-pulse { 50% { opacity: .35; transform: scale(.8); } }
+.kt-meter-row { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
+.kt-pct { font-size: 40px; font-weight: 650; letter-spacing: -.04em; line-height: .9; font-variant-numeric: tabular-nums; }
+.kt-pct small { font-size: 19px; font-weight: 500; color: var(--md-on-surface-variant); margin-inline-start: 1px; }
+.kt-of { font-size: 13px; color: var(--md-on-surface-variant); padding-bottom: 2px; }
+.kt-kpis { margin-inline-start: auto; display: flex; gap: 20px; }
+.kt-kpi .k, .kt-stat .k { font-size: 11px; color: var(--md-on-surface-variant); margin-bottom: 3px; }
+.kt-kpi .v { font-size: 16px; font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kt-map { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--md-on-surface-variant); }
+.kt-segbar { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--md-surface-container-highest); overflow: hidden; direction: ltr; }
+.kt-seg { position: absolute; top: 0; bottom: 0; box-shadow: inset -1px 0 0 var(--md-surface-container); }
+.kt-seg b { display: block; height: 100%; }
+.kt-seg.active b { box-shadow: 1px 0 0 #fff; }
+.kt-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kt-panel { display: grid; gap: 18px; }
+@media (min-width: 900px) { .kt-panel { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.kt-ph { font-size: 13px; font-weight: 600; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; }
+.kt-ph small { font-weight: 400; color: var(--md-on-surface-variant); }
+.kt-lanes { display: grid; gap: 6px; }
+.kt-lane { display: grid; grid-template-columns: 22px minmax(60px, 1fr) auto; grid-template-areas: 'id track speed' 'id range range'; align-items: center; column-gap: 10px; row-gap: 1px; }
+@media (min-width: 600px) { .kt-lane { grid-template-columns: 22px minmax(80px, 1fr) 128px 76px; grid-template-areas: 'id track range speed'; } }
+.kt-lane-id { grid-area: id; font: 10.5px ui-monospace, monospace; color: var(--md-on-surface-variant); }
+.kt-lane-track { grid-area: track; position: relative; height: 7px; border-radius: 4px; background: var(--md-surface-container-highest); direction: ltr; }
+.kt-lane-fill { position: absolute; inset: 0; border-radius: 4px; background: var(--c); transform-origin: left; box-shadow: 0 0 8px -1px var(--c); transition: transform .45s linear; }
+.kt-lane-head { position: absolute; top: -2px; bottom: -2px; width: 2px; border-radius: 1px; background: var(--md-on-surface); transition: left .45s linear; }
+.kt-lane-range { grid-area: range; font: 10.5px ui-monospace, monospace; color: var(--md-on-surface-variant); text-align: end; white-space: nowrap; }
+.kt-lane-speed { grid-area: speed; font: 10.5px ui-monospace, monospace; text-align: end; white-space: nowrap; }
+.kt-empty { font-size: 12.5px; color: var(--md-on-surface-variant); margin: 4px 0; }
+.kt-chart { position: relative; height: 150px; margin-inline-start: 64px; color: var(--md-primary); direction: ltr; }
+.kt-chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.kt-chart .grid { stroke: var(--md-outline-variant); stroke-width: 1; }
+.kt-chart-y { position: absolute; right: 100%; margin-right: 8px; transform: translateY(-50%); font: 9.5px ui-monospace, monospace; color: var(--md-on-surface-variant); white-space: nowrap; }
+.kt-chart-dot { position: absolute; right: -4px; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: var(--md-primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--md-primary) 25%, transparent); }
+.kt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 6px; margin-top: 10px; }
+.kt-stat { padding: 8px 10px; border-radius: 12px; background: var(--md-surface-container-high); }
+.kt-stat .v { font-size: 13.5px; font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kt-kv { display: grid; gap: 2px; margin: 0; }
+.kt-kv-row { display: grid; grid-template-columns: minmax(90px, 32%) 1fr; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--md-outline-variant); }
+.kt-kv-row:last-child { border-bottom: 0; }
+.kt-kv dt { font-size: 12.5px; color: var(--md-on-surface-variant); }
+.kt-kv dd { margin: 0; display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 13px; }
+.kt-kv dd .sel { overflow-wrap: anywhere; user-select: text; flex: 1; min-width: 0; }
+.kt-kv dd.mono .sel { font-family: ui-monospace, monospace; font-size: 12px; }
+.kt-files summary { list-style: none; cursor: pointer; } .kt-files summary::-webkit-details-marker { display: none; }
+.task-bar.state-done i { background: #34c759; } .task-bar.state-failed i { background: var(--md-error); }
+.kt-spark { width: 110px; height: 20px; color: var(--md-primary); margin-top: 3px; direction: ltr; }
+.kt-spark svg { width: 100%; height: 100%; display: block; }
+/* ---- the status bar (Prism's) ---- */
+.dl-status { order: 2; display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; padding: 6px 12px; margin: 0 0 10px; border-radius: 14px; font-size: 12px; color: var(--md-on-surface-variant); background: color-mix(in srgb, var(--md-surface-container) 88%, transparent); backdrop-filter: blur(12px); }
+.dl-status .sb { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.dl-status .sb b { color: var(--md-on-surface); font-variant-numeric: tabular-nums; }
+.dl-status .sb.down svg { color: var(--md-primary); }
+.dl-status svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; }
+.dl-status .grow { flex: 1; }
+.dl-status .sb-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 10px; }
+.dl-status .sb-btn:hover { background: var(--md-surface-container-highest); }
+.dl-status .sb-btn.on { color: var(--md-primary); font-weight: 600; }
+.downloads-view .body { display: flex; flex-direction: column; }
+.downloads-view .body > .chips { order: 1; } .downloads-view .body > .dl-search { order: 0; } .downloads-view .body > .engine-note { order: 0; } .downloads-view .body > .empty, .downloads-view .body > .task-list { order: 3; }
+/* On a computer it sits at the bottom, as Prism's does. */
+html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: auto 0 0; border-radius: 0; border-top: 1px solid var(--md-outline-variant); padding: 7px 16px; }
+.kt-hero > .grow { min-width: 0; flex: 1; }
+.kt-name { overflow-wrap: anywhere; }

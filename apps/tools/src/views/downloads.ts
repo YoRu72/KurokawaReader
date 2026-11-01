@@ -12,10 +12,12 @@ import { canArchive, isArchiveName } from '../archives';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 import { updateSettings } from '../settings';
 import { dlPrefs, applyFilters, sortTasks, groupOf, activeFilters, downloadsOptionsSheet } from './downloadsOptions';
+import { historyOf, sparkline } from './taskmap';
 
 const ACTIVE: TaskState[] = ['queued', 'metadata', 'downloading', 'checking', 'seeding'];
 export const stateLabel = (s: TaskState): string => t(({ queued: 'stateQueued', metadata: 'stateMetadata', downloading: 'stateDownloading', seeding: 'stateSeeding', paused: 'statePaused', done: 'stateDone', failed: 'stateFailed', checking: 'stateChecking' } as const)[s]);
-export const fmtEta = (s: number): string => { if (s < 60) return `${localDigits(Math.round(s))} ${t('perSecond', { n: '' }).replace('/', '').trim() || 's'}`.trim(); if (s < 3600) return `${localDigits(Math.round(s / 60))} min`; return `${localDigits(Math.floor(s / 3600))} h ${localDigits(Math.round((s % 3600) / 60))} min`; };
+/** Time left as a clock (3:15, 1:02:40), the way the details page shows it — no unit words to translate. */
+export const fmtEta = (s: number): string => { s = Math.max(0, Math.round(s)); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits(hh ? `${hh}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`); };
 
 export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => void } {
   let tasks: Task[] = []; let current = filter; let cat = ''; let query = ''; const picked = new Set<string>(); let selecting = false;
@@ -26,19 +28,49 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const note = problem ? h('p', { class: 'hint engine-note' }, icon('info'), t('engineUnavailable', { why: problem })) : null;
   const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus'), h('span', null, t('addDownload')));
   const title = h('div', { class: 'title' }, h('span', null, t('navDownloads')), h('small', { class: 'count' }));
-  const actions = h('div', { class: 'topbar-actions' },
-    iconButton('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch((e) => toast(String(e.message ?? e), 'error'))),
-    iconButton('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch((e) => toast(String(e.message ?? e), 'error'))),
-    iconButton('trash', t('clearDone'), () => void Promise.all(tasks.filter((x) => x.state === 'done' || x.state === 'failed').map((x) => getEngine().remove(x.id, false))).then((r) => toast(t('tasksRemoved', { n: countItems(r.length) }))).catch((e) => toast(String(e.message ?? e), 'error'))),
-    ...(getSettings().addons.includes('debrid') ? [iconButton('cloud', t('cloud'), () => void import('./cloud').then((m) => m.cloudSheet()))] : []),
-    iconButton('settings', t('settings'), () => navigate('/settings')));
+  const err = (e: unknown) => toast(String((e as Error).message ?? e), 'error');
+  const moreMenu = () => {
+    const sh = openSheet(t('navDownloads'), t('close'));
+    const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
+    row('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch(err));
+    row('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch(err));
+    row('trash', t('clearDone'), () => void Promise.all(tasks.filter((x) => x.state === 'done' || x.state === 'failed').map((x) => getEngine().remove(x.id, false))).then((r) => toast(t('tasksRemoved', { n: countItems(r.length) }))).catch(err));
+    if (getSettings().addons.includes('debrid')) row('cloud', t('cloud'), () => void import('./cloud').then((m) => m.cloudSheet()));
+    row('settings', t('settings'), () => navigate('/settings'));
+  };
+  const actions = h('div', { class: 'topbar-actions' }, iconButton('more', t('more'), moreMenu));
   // Search, options (with how many filters are on), select
   const searchIn = h('input', { type: 'search', class: 'search-input', placeholder: t('dlSearch'), dir: 'auto', oninput: () => { query = searchIn.value; draw(); } }) as HTMLInputElement;
   const searchRow = h('div', { class: 'dl-search', hidden: true }, searchIn);
   const optBtn = iconButton('filter', t('dlOptions'), () => downloadsOptionsSheet(tasks, draw)); optBtn.classList.add('opt-badge');
   actions.prepend(iconButton('search', t('search'), () => { searchRow.hidden = !searchRow.hidden; if (!searchRow.hidden) searchIn.focus(); else { searchIn.value = ''; query = ''; draw(); } }), optBtn, iconButton('check', t('dlSelect'), () => setSelecting(!selecting)));
   const selectBar = h('div', { class: 'select-bar', hidden: true });
-  const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, searchRow, chips, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
+  // The status bar, as Prism's: total speeds, active · queued, the next scheduled start, the limiter at a tap, free space.
+  const statusBar = h('footer', { class: 'dl-status', 'aria-live': 'off' }); let free = -1; let freeAt = 0;
+  const drawStatus = () => {
+    const s = getSettings(); const down = tasks.reduce((a, x) => a + (x.downSpeed || 0), 0); const up = tasks.reduce((a, x) => a + (x.upSpeed || 0), 0);
+    const act = tasks.filter((x) => x.state === 'downloading' || x.state === 'metadata' || x.state === 'checking').length; const queued = tasks.filter((x) => x.state === 'queued').length;
+    const next = s.schedule.enabled ? nextStart(s.schedule) : null;
+    const lim = s.limits.down;
+    statusBar.replaceChildren(...[
+      h('span', { class: 'sb down', title: t('sbTotalDown') }, icon('download'), h('b', { dir: 'ltr' }, t('perSecond', { n: formatBytes(down) }))),
+      up ? h('span', { class: 'sb', title: t('sbTotalUp') }, h('span', { class: 'sb-up' }, '↑'), h('b', { dir: 'ltr' }, t('perSecond', { n: formatBytes(up) }))) : null,
+      h('span', { class: 'sb' }, t('sbActive', { a: localDigits(act), q: localDigits(queued) })),
+      next ? h('span', { class: 'sb' }, icon('clock'), t('sbNext', { time: next })) : null,
+      h('span', { class: 'grow' }),
+      getEngine().can.limits ? h('button', { type: 'button', class: 'sb sb-btn' + (lim ? ' on' : ''), onclick: () => toggleLimiter() }, icon('flash'), lim ? t('sbLimit', { v: t('perSecond', { n: formatBytes(lim) }) }) : t('sbLimitOff')) : null,
+      free >= 0 ? h('span', { class: 'sb' }, t('sbFree', { size: formatBytes(free) })) : null].filter((n): n is HTMLElement => !!n));
+    if (Date.now() - freeAt > 60000) { freeAt = Date.now(); void import('../archives').then((m) => m.freeSpaceAt(getSettings().downloadDir || '')).then((f) => { if (f !== free) { free = f; drawStatus(); } }).catch(() => undefined); }
+  };
+  const LIM_KEY = 'kt.lastLimit';
+  const toggleLimiter = () => {
+    const s = getSettings(); const eng = getEngine();
+    let l: typeof s.limits;
+    if (s.limits.down) { try { localStorage.setItem(LIM_KEY, String(s.limits.down)); } catch { /* none */ } l = { ...s.limits, down: 0 }; }
+    else { let v = 2 * 1048576; try { v = Number(localStorage.getItem(LIM_KEY)) || v; } catch { /* none */ } l = { ...s.limits, down: v }; }
+    updateSettings({ limits: l }); void eng.setLimits?.(l); toast(l.down ? t('sbLimit', { v: t('perSecond', { n: formatBytes(l.down) }) }) : t('sbLimitOff')); drawStatus();
+  };
+  const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, searchRow, chips, statusBar, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
 
   const FILTERS: [string, string][] = [['all', t('filterAll')], ['active', t('filterActive')], ['done', t('filterDone')], ['failed', t('filterFailed')]];
   const catOf = (x: Task) => categoryOf(displayName(x), x.kind);
@@ -76,7 +108,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     nodes.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] ?? null); });
     if (!vis.length && tasks.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
     else list.querySelector(':scope > p.empty')?.remove();
-    drawSelectBar();
+    drawSelectBar(); drawStatus();
   };
   const cardFor = (x: Task): HTMLElement => { let el = cards.get(x.id); if (!el) { el = card(x); cards.set(x.id, el); } else update(el, x); return el; };
   /* ---------- several at once ---------- */
@@ -117,6 +149,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     update(el, x); return el;
   };
   const update = (el: HTMLElement, x: Task) => {
+    { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
     el.className = `task-card state-${x.state}`;
     (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
@@ -150,4 +183,16 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   draw();
   root.dispose = () => { off(); offEngine(); };
   return root;
+}
+/** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */
+function nextStart(sch: { start: string; days: number[] }): string | null {
+  const [hh, mm] = sch.start.split(':').map(Number); if (!Number.isFinite(hh)) return null;
+  const now = new Date();
+  for (let d = 0; d < 8; d++) {
+    const at = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d, hh, mm || 0);
+    if (at <= now) continue; if (sch.days.length && !sch.days.includes(at.getDay())) continue;
+    const time = localDigits(`${String(hh).padStart(2, '0')}:${String(mm || 0).padStart(2, '0')}`);
+    return d === 0 ? time : `${new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(at)} ${time}`;
+  }
+  return null;
 }
