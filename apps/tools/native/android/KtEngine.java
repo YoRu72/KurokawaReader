@@ -131,7 +131,10 @@ final class KtEngine {
             if (aa.error().isError()) { Task x = byHash.get(hashOf(aa.params())); if (x != null) { x.state = "failed"; x.error = aa.error().getMessage(); } persist(); tell(true); return; }
             TorrentHandle th = aa.handle(); String h = th.infoHash().toHex();
             Task x = byHash.get(h);
-            if (x != null) { x.th = th; if (x.priorities != null) applyPriorities(x); if (x.sequential) th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); if (x.paused) th.pause(); else th.resume(); }
+            // The handle an alert gives points into the alert itself, which libtorrent frees once the alert has been
+            // handled: kept, it was read later from another thread (the page asking for the list) and the whole app
+            // ended (SIGSEGV in torrent_handle::is_valid, from KtEngine.files). The session's own copy is kept instead.
+            if (x != null) { TorrentHandle own = session.find(th.infoHash()); x.th = own; if (own == null) { tell(true); return; } th = own; if (x.priorities != null) applyPriorities(x); if (x.sequential) th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); if (x.paused) th.pause(); else th.resume(); }
             tell(true);
         } else if (t == AlertType.METADATA_RECEIVED) {
             TorrentHandle th = ((MetadataReceivedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
@@ -156,6 +159,8 @@ final class KtEngine {
         ticker = new Thread(() -> {
             while (session != null && session.isRunning()) {
                 try { Thread.sleep(700); } catch (InterruptedException e) { return; }
+                // (A torrent whose handle could not be had when it was added: asked of the session again.)
+                try { for (Task x : snapshot()) if ("torrent".equals(x.kind) && x.th == null && x.infoHash != null && !x.infoHash.isEmpty()) { TorrentHandle h = session.find(org.libtorrent4j.Sha1Hash.parseHex(x.infoHash)); if (h != null) { x.th = h; if (x.paused) h.pause(); } } } catch (Throwable ignored) {}
                 try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Throwable ignored) {}
                 // (Resume data saved now and then, so a kill loses little.)
                 try { if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } catch (Throwable ignored) {}
