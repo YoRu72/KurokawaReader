@@ -231,3 +231,10 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .anime-filters .af-cat summary { cursor: pointer; padding: 6px 0; font-weight: 600; } .anime-filters .af-tags { max-height: 46vh; overflow: auto; }
 .anime-filters .search-input.small { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
 .anime-filters .num-small { width: 7em; margin-top: 6px; } .anime-more { display: block; margin: 12px auto; } .genre-start { margin-top: 8px; }
+/* The library */
+.lib-head { align-items: center; margin-bottom: 8px; } .lib-h { margin: 14px 0 8px; font-size: 15px; }
+.cont-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
+.cont-card { all: unset; cursor: pointer; flex: none; width: 240px; display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 16px; background: var(--md-surface-container); scroll-snap-align: start; }
+.cont-card img { width: 52px; height: 74px; object-fit: cover; border-radius: 8px; } .cont-card .grow { display: grid; gap: 2px; min-width: 0; } .cont-card .anime-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cont-card svg { width: 22px; height: 22px; fill: none; stroke: var(--md-primary); stroke-width: 2; flex: none; }
+.mini-cover { width: 34px; height: 48px; object-fit: cover; border-radius: 6px; }

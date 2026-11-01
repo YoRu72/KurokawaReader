@@ -18,7 +18,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
   const body = h('div', { class: 'body anime-entry' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   const title = h('div', { class: 'title' }, h('span', null, ''));
   const root = h('div', { class: 'view anime-entry-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/anime')), title, h('div', { class: 'topbar-actions' })), body) as HTMLElement & { dispose?: () => void };
-  let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let fillers = new Set<number>(); let streams = 0;
+  let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let disk = new Map<number, { path: string; name: string }>(); let fillers = new Set<number>(); let streams = 0;
   const draw = () => {
     if (!a) return;
     const s = getSettings();
@@ -59,12 +59,15 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     for (let n = from; n <= to; n++) {
       const aired = n <= airedCount || a.status === 'FINISHED'; const at = sched.get(n); const seen = !!e && n <= e.progress; const st = stream.find((x) => x.n === n);
       const got = have.get(n); const filler = fillers.has(n);
-      const epTitle = st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '') || t('episodeN', { n });
+      // (Hayase's «hide spoilers»: past the next episode, no title and no picture.)
+      const spoil = !!s.animeHideSpoilers && n > (e?.progress ?? 0) + 1;
+      const epTitle = (!spoil && st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '')) || t('episodeN', { n }); const onDisk = !got ? disk.get(n) : undefined;
       eps.push(h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { ep: String(n) }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined,
         onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(a!, n, epTitle, st?.thumbnail, () => draw()); } },
-        st?.thumbnail ? h('img', { class: 'ep-thumb', src: st.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(n, 'prose')),
-        h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '') || t('episodeN', { n }), filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet')),
+        st?.thumbnail && !spoil ? h('img', { class: 'ep-thumb', src: st.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(n, 'prose')),
+        h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, epTitle, onDisk ? h('span', { class: 'ep-badge have' }, t('onDisk')) : null, filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet')),
           got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' + (got.state === 'paused' || got.state === 'failed' ? ' paused' : '') }, h('i', { style: { width: `${got.total ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
+        onDisk ? iconButton('play', t('play'), () => void import('./anime').then((m) => m.playLocal(a!, n, onDisk.path, onDisk.name))) :
         got && got.state === 'done' ? iconButton('play', t('play'), () => void import('./player').then((m) => m.playTaskFile(got, got.files.length > 1 ? Math.max(0, got.files.findIndex((f) => /\.(mkv|mp4|webm|avi|mov|m4v)$/i.test(f.path))) : 0))) : aired ? iconButton('download', t('animeFindTorrents'), () => torrentSheet(a!, n)) : null,
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
         al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) })) : null));
@@ -89,7 +92,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     sh.body.append(h('div', { class: 'score-row' }, range, out));
     sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void saveEntry({ ...a!.entry!, score: Number(range.value) }); } }, t('save')));
   };
-  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
+  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void import('../anime/library').then((l) => l.filesFor(m.id)).then((f) => { disk = f; if (f.size && !gone) draw(); }).catch(() => undefined); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
   // Downloads of this show followed as they go: each episode's bar and percentage moved in place; the page
   // redrawn when one is added, finishes or fails.
   const offTasks = getEngine().onChange((ts) => {

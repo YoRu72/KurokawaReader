@@ -5,11 +5,12 @@ import { h, icon, iconButton, openSheet, toast, debounce } from '../ui/dom';
 import { t, localDigits, countEpisodes, dateLocale, getLang, countDays, countHours, countMinutes } from '../i18n';
 import { navigate } from '../router';
 import { getSettings } from '../settings';
+import { nativePlatform } from '../native';
 import * as al from '../anilist';
 import * as guide from '../anime/guide';
 import type { Anime, Season, AlStatus } from '../anilist';
 
-export type AnimeTab = 'search' | 'season' | 'schedule' | 'list' | 'diary';
+export type AnimeTab = 'search' | 'season' | 'schedule' | 'list' | 'library' | 'diary';
 const TAB_KEY = 'kt.anime.tab';
 
 export const seasonName = (s: Season): string => t(({ WINTER: 'seasonWinter', SPRING: 'seasonSpring', SUMMER: 'seasonSummer', FALL: 'seasonFall' } as const)[s]);
@@ -42,7 +43,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
   const body = h('div', { class: 'body anime-body' });
   const chips = h('div', { class: 'chips filter-chips' });
   const root = h('div', { class: 'view anime-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navAnime'))), h('div', { class: 'topbar-actions' }, iconButton('puzzle', t('animeProviders'), () => navigate('/settings/anime')))), chips, body) as HTMLElement & { dispose?: () => void };
-  const TABS: [AnimeTab, string, string][] = [['search', t('navSearch'), 'search'], ['season', t('animeSeason'), 'calendar'], ['schedule', t('animeSchedule'), 'clock'], ['list', t('animeMyList'), 'bookmark'], ...(al.linked() ? [['diary', t('animeDiary'), 'chart'] as [AnimeTab, string, string]] : [])];
+  const TABS: [AnimeTab, string, string][] = [['search', t('navSearch'), 'search'], ['season', t('animeSeason'), 'calendar'], ['schedule', t('animeSchedule'), 'clock'], ['list', t('animeMyList'), 'bookmark'], ...(nativePlatform() === 'android' || nativePlatform() === 'desktop' ? [['library', t('animeLibrary'), 'folder'] as [AnimeTab, string, string]] : []), ...(al.linked() ? [['diary', t('animeDiary'), 'chart'] as [AnimeTab, string, string]] : [])];
   let timer = 0; let token = 0;
   const drawChips = () => chips.replaceChildren(...TABS.map(([k, label, ic]) => h('button', { type: 'button', class: 'chip' + (current === k ? ' on' : ''), 'aria-pressed': String(current === k), onclick: () => { current = k; localStorage.setItem(TAB_KEY, k); navigate(`/anime?tab=${k}`, true); draw(); } }, icon(ic), label)));
   const grid = (items: Anime[], extra?: (a: Anime) => HTMLElement | null) => h('div', { class: 'anime-grid' }, ...items.map((a) => animeCard(a, extra?.(a))));
@@ -124,6 +125,8 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
           timer = window.setInterval(() => { const n = Math.floor(Date.now() / 1000); list.querySelectorAll<HTMLElement>('.sched-row').forEach((row, i) => { const it = items[i]; if (!it) return; const u = row.querySelector('.sched-until')!; u.textContent = it.airingAt <= n ? t('animeAiredNow') : fmtUntil(it.airingAt - n); row.classList.toggle('aired', it.airingAt <= n); }); }, 30000);
         } catch (e) { list.replaceChildren(fail(e)); }
       })();
+    } else if (current === 'library') {
+      void libraryTab(body, () => my === token, grid);
     } else if (current === 'diary') {
       const sub = h('div', { class: 'chip-row wrap list-status' }); const out = h('div'); body.append(sub, out); let which = localStorage.getItem('kt.anime.diary') ?? 'calendar';
       const drawSub = () => sub.replaceChildren(...([['calendar', t('diaryCalendar')], ['unfinished', t('diaryUnfinished')], ['year', t('diaryYear')]] as const).map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (which === k ? ' on' : ''), onclick: () => { which = k; try { localStorage.setItem('kt.anime.diary', k); } catch { /* none */ } drawSub(); void show(); } }, l)));
@@ -140,17 +143,19 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
       drawSub(); void show();
     } else {
       if (!al.linked()) { body.append(h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('user')), h('h2', null, t('animeMyList')), h('p', null, t('anilistLinkFirst')), h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn primary', onclick: () => navigate('/settings/anime') }, icon('link'), t('anilistSignIn'))))); return; }
-      const stats: (AlStatus | 'ALL')[] = ['CURRENT', 'PLANNING', 'PAUSED', 'COMPLETED', 'DROPPED', 'REPEATING'];
-      let which = (localStorage.getItem('kt.anime.listStatus') as AlStatus | null) ?? 'CURRENT';
+      const stats: (AlStatus | 'ALL' | 'SEQUELS')[] = ['CURRENT', 'PLANNING', 'PAUSED', 'COMPLETED', 'DROPPED', 'REPEATING', 'SEQUELS'];
+      let which = (localStorage.getItem('kt.anime.listStatus') as AlStatus | 'SEQUELS' | null) ?? 'CURRENT';
       const sChips = h('div', { class: 'chip-row wrap list-status' });
-      const drawS = () => sChips.replaceChildren(...stats.map((st) => h('button', { type: 'button', class: 'chip small' + (which === st ? ' on' : ''), onclick: () => { which = st as AlStatus; try { localStorage.setItem('kt.anime.listStatus', which); } catch { /* none */ } drawS(); void loadList(); } }, statusName(st as AlStatus))));
+      const drawS = () => sChips.replaceChildren(...stats.map((st) => h('button', { type: 'button', class: 'chip small' + (which === st ? ' on' : ''), onclick: () => { which = st as AlStatus; try { localStorage.setItem('kt.anime.listStatus', which); } catch { /* none */ } drawS(); void loadList(); } }, st === 'SEQUELS' ? t('missedSequels') : statusName(st as AlStatus))));
       drawS();
       const list = h('div'); body.append(sChips, list);
       let loadsL = 0;
       const loadList = async () => {
         const mine = ++loadsL; list.replaceChildren(spinner());
         try {
-          const r = await al.myList(which); if (my !== token || mine !== loadsL) return;
+          // Seanime's «missed sequels»: the shows you finished whose sequel you have not started.
+          if (which === 'SEQUELS') { const ms = await al.missedSequels(); if (my !== token || mine !== loadsL) return; list.replaceChildren(ms.length ? h('div', { class: 'sequel-list' }, ...ms.map((m) => h('button', { type: 'button', class: 'result-row', onclick: () => navigate(`/anime/${m.sequel.id}`) }, icon('chevronRight'), h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, m.sequel.title), h('small', { class: 'src', dir: 'auto' }, t('sequelOf', { title: titleOf(m.from) })))))) : h('p', { class: 'empty small' }, t('noSequels'))); return; }
+          const r = await al.myList(which as AlStatus); if (my !== token || mine !== loadsL) return;
           r.sort((a, b) => { const an = a.nextAiring ? 1 : 0, bn = b.nextAiring ? 1 : 0; const ar = a.entry && (a.nextAiring ? a.nextAiring.episode - 1 : a.episodes ?? 0) > a.entry.progress ? 1 : 0, br = b.entry && (b.nextAiring ? b.nextAiring.episode - 1 : b.episodes ?? 0) > b.entry.progress ? 1 : 0; return br - ar || bn - an; });
           list.replaceChildren(r.length ? grid(r, (a) => { const ready = a.entry && (which === 'CURRENT' || which === 'REPEATING') ? (a.nextAiring ? a.nextAiring.episode - 1 : a.episodes ?? 0) - a.entry.progress : 0; return ready > 0 ? h('span', { class: 'anime-ready' }, icon('download'), readyText(ready)) : null; }) : h('p', { class: 'empty small' }, t('animeListEmpty')));
         } catch (e) { if (mine === loadsL) list.replaceChildren(fail(e)); }
@@ -247,5 +252,49 @@ function filterSheet(f: al.SearchFilters, done: () => void): void {
     sec(t('animeSeasonYear'), one('season', al.SEASONS.map((x) => [x, seasonName(x)])), year),
     sec(t('animeMinScore'), h('div', { class: 'score-row' }, score, scoreOut)));
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); done(); } }, icon('search'), t('animeShowResults')));
+}
+
+/* ---------- the local library (Seanime's; Senpwai's scan of the disk) ---------- */
+async function libraryTab(body: HTMLElement, alive: () => boolean, grid: (items: Anime[], extra?: (a: Anime) => HTMLElement | null) => HTMLElement): Promise<void> {
+  const lib = await import('../anime/library');
+  const status = h('small', { class: 'src' }); const out = h('div');
+  const addDir = async () => { const d = window.kurokawaTools as unknown as { pickDir?(): Promise<string | null> } | undefined; let p: string | null | undefined = await d?.pickDir?.(); if (!d?.pickDir) p = prompt(t('libraryAddDirAsk'), '/storage/emulated/0/') ?? ''; if (p) { lib.addLibraryDir(p); void load(true); } };
+  body.append(h('div', { class: 'row-actions wrap lib-head' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void load(true) }, icon('refresh'), t('libraryRescan')), h('button', { type: 'button', class: 'btn text small', onclick: () => void addDir() }, icon('folder'), t('libraryAddDir')), status), out);
+  const load = async (refresh = false) => {
+    out.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }))); status.textContent = '';
+    try {
+      const { shows, unmatched } = await lib.library(refresh, (w) => { status.textContent = t(w === 'scan' ? 'libraryScanning' : 'libraryMatching'); }); if (!alive()) return;
+      status.textContent = t('libraryCount', { shows: localDigits(new Set(shows.map((x) => x.anilistId)).size), files: localDigits(shows.reduce((n, g) => n + g.files.length, 0) + unmatched.reduce((n, g) => n + g.files.length, 0)) });
+      const ids = [...new Set(shows.map((g) => g.anilistId!))]; const media = ids.length ? await al.mediaMany(ids).catch(() => [] as Anime[]) : [];
+      const byId = new Map(media.map((m) => [m.id, m]));
+      // What to continue: shows you are watching whose next episode is on the disk.
+      const cont: HTMLElement[] = [];
+      const files = new Map<number, Map<number, import('../anime/library').LibFile>>();
+      for (const g of shows) { const m = files.get(g.anilistId!) ?? new Map(); for (const [ep, f] of lib.episodesOf(g)) if (!m.has(ep)) m.set(ep, f); files.set(g.anilistId!, m); }
+      for (const [id, eps] of files) {
+        const a = byId.get(id); if (!a) continue; const next = (a.entry?.progress ?? 0) + 1; const f = eps.get(next);
+        if (f && (!a.entry || a.entry.status === 'CURRENT' || a.entry.status === 'REPEATING' || a.entry.status === 'PAUSED')) cont.push(h('button', { type: 'button', class: 'cont-card', onclick: () => void playLocal(a, next, f.path, f.name) }, a.cover ? h('img', { src: a.cover, alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }), h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(a)), h('small', { class: 'src' }, t('episodeN', { n: next }))), icon('play')));
+      }
+      const extra = (a: Anime) => { const eps = files.get(a.id); if (!eps) return null; const aired = a.nextAiring ? a.nextAiring.episode - 1 : a.status === 'FINISHED' ? a.episodes ?? 0 : 0; let missing = 0; for (let e = (a.entry?.progress ?? 0) + 1; e <= aired; e++) if (!eps.has(e)) missing++; return h('span', { class: 'anime-facts' }, [t('libraryOnDisk', { n: localDigits(eps.size) }), missing ? t('libraryMissing', { n: localDigits(missing) }) : ''].filter(Boolean).join(' · ')); };
+      out.replaceChildren(
+        ...(cont.length ? [h('h3', { class: 'lib-h' }, t('continueWatching')), h('div', { class: 'cont-row' }, ...cont)] : []),
+        ...(media.length ? [h('h3', { class: 'lib-h' }, t('libraryShows')), grid(media, extra)] : [h('p', { class: 'empty small' }, t('libraryEmpty'))]),
+        ...(unmatched.length ? [h('h3', { class: 'lib-h' }, t('libraryUnmatched')), ...unmatched.map((g) => h('div', { class: 'result-row' }, icon('film'), h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, g.title), h('small', { class: 'src' }, t('libraryFiles', { n: localDigits(g.files.length) }))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => matchSheet(g.key, g.title, () => void load(true)) }, t('libraryMatch'))))] : []));
+    } catch (e) { out.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
+  };
+  void load();
+}
+/** A file on the disk played, the show and episode remembered (progress tracked on AniList as from the downloads). */
+export async function playLocal(a: Anime, ep: number, path: string, name: string): Promise<void> {
+  const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(path); if (!u) { toast(t('playerCantPlay'), 'error'); return; }
+  const { openPlayer } = await import('./player'); await openPlayer(u, name, { localPath: path, meta: { anilistId: a.id, episode: ep, title: titleOf(a), cover: a.cover } as never });
+}
+/** A group of files matched to a show by hand. */
+function matchSheet(key: string, title: string, done: () => void): void {
+  const sh = openSheet(t('libraryMatch'), t('close'));
+  const input = h('input', { type: 'search', class: 'search-input', value: title, dir: 'auto' }) as HTMLInputElement; const out = h('div');
+  const run = async () => { out.replaceChildren(h('div', { class: 'spinner small' })); try { const r = await al.search(input.value.trim(), { adult: getSettings().animeAdult }); out.replaceChildren(...r.map((a) => h('button', { type: 'button', class: 'result-row', onclick: () => { void import('../anime/library').then((m) => { m.setMatch(key, a.id); sh.close(); done(); }); } }, a.cover ? h('img', { class: 'mini-cover', src: a.cover, alt: '' }) : icon('film'), h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, titleOf(a)), h('small', { class: 'src' }, [a.format ? fmtFormat(a.format) : '', a.seasonYear ? localDigits(a.seasonYear) : ''].filter(Boolean).join(' · ')))))); } catch (e) { out.replaceChildren(h('p', null, String((e as Error).message ?? e))); } };
+  input.addEventListener('input', debounce(() => void run(), 400));
+  sh.body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input), out); void run();
 }
 

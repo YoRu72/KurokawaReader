@@ -30,6 +30,7 @@ export interface Anime {
   links?: { site: string; url: string; type?: string }[];
   relations?: { relation: string; id: number; title: string; format?: string }[];
   entry?: AlEntry;
+  sequels?: { id: number; title: string; status: string; onList: boolean }[];
 }
 
 export function token(): string { try { return localStorage.getItem(TOKEN_KEY) ?? ''; } catch { return ''; } }
@@ -102,6 +103,22 @@ export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Ani
   const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList) { ${CARD} } } }`, v);
   const out = { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage };
   searchCache.set(key, { at: Date.now(), v: out }); if (searchCache.size > 60) searchCache.delete(searchCache.keys().next().value!);
+  return out;
+}
+/** Several shows at once (the library's covers). */
+export async function mediaMany(ids: number[]): Promise<Anime[]> {
+  const out: Anime[] = [];
+  for (let i = 0; i < ids.length; i += 50) { const d = await gql<{ Page: { media: Raw[] } }>(`query ($ids: [Int]) { Page(perPage: 50) { media(id_in: $ids, type: ANIME) { ${CARD} relations { edges { relationType(version: 2) node { id type status format title { userPreferred romaji } mediaListEntry { status } } } } } } }`, { ids: ids.slice(i, i + 50) }); out.push(...d.Page.media.map((m) => { const a = toAnime(m); a.sequels = ((m as unknown as { relations?: { edges: { relationType: string; node: { id: number; type: string; status: string; format?: string; title: { userPreferred?: string; romaji?: string }; mediaListEntry?: { status: string } | null } }[] } }).relations?.edges ?? []).filter((e) => e.relationType === 'SEQUEL' && e.node.type === 'ANIME').map((e) => ({ id: e.node.id, title: e.node.title.userPreferred || e.node.title.romaji || '', status: e.node.status, onList: !!e.node.mediaListEntry })); return a; })); }
+  return out;
+}
+/** Finished shows whose sequel you have not started (Seanime's «missed sequels»): the sequels, released or airing. */
+export async function missedSequels(): Promise<{ from: Anime; sequel: { id: number; title: string; status: string } }[]> {
+  const u = user(); if (!u) return [];
+  const d = await gql<{ MediaListCollection: { lists: { entries: { media: { id: number } }[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME, status_in: [COMPLETED]) { lists { entries { media { id } } } } }', { user: u.id });
+  const ids = [...new Set(d.MediaListCollection.lists.flatMap((l) => l.entries.map((e) => e.media.id)))];
+  const shows = await mediaMany(ids.slice(0, 300));
+  const out: { from: Anime; sequel: { id: number; title: string; status: string } }[] = []; const seen = new Set<number>();
+  for (const a of shows) for (const s of a.sequels ?? []) if (!s.onList && s.status !== 'NOT_YET_RELEASED' && s.status !== 'CANCELLED' && !seen.has(s.id)) { seen.add(s.id); out.push({ from: a, sequel: s }); }
   return out;
 }
 export interface AlTag { name: string; category: string; description?: string; isAdult: boolean }

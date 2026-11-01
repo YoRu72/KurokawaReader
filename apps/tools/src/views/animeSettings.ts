@@ -43,6 +43,7 @@ export function animeSettingsCard(rerender: () => void): HTMLElement {
   }
   const prefs = [
     row(t('animeQuality'), pickButton(t('animeQuality'), [['', t('unlimited')], ['2160', '2160p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']], s.animeQuality, (v) => updateSettings({ animeQuality: v as '' }), t('close'))),
+    h('label', { class: 'row switch-row' }, h('span', null, t('hideSpoilers'), h('small', { class: 'src' }, t('hideSpoilersHint'))), h('input', { type: 'checkbox', checked: !!s.animeHideSpoilers, onchange: (e: Event) => updateSettings({ animeHideSpoilers: (e.target as HTMLInputElement).checked }) })),
     row(t('animeLookup'), pickButton(t('animeLookup'), [['quality', t('lookupQuality')], ['size', t('lookupSize')], ['seeders', t('lookupSeeders')]], s.animeLookup ?? 'quality', (v) => updateSettings({ animeLookup: v as 'quality' }), t('close'))),
     row(t('animeTitleLang'), pickButton(t('animeTitleLang'), [['preferred', t('titlePreferred')], ['romaji', t('titleRomaji')], ['english', t('titleEnglish')], ['native', t('titleNative')]], s.animeTitleLang, (v) => updateSettings({ animeTitleLang: v as 'preferred' }), t('close'))),
     toggle(t('animeAdult'), s.animeAdult, (v) => updateSettings({ animeAdult: v })),
