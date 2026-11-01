@@ -42,7 +42,9 @@ final class KtApk {
     interface Events { void on(JSONObject ev); }
     static final String ACTION = "app.kurokawa.tools.INSTALL_RESULT";
 
-    static boolean isBundle(File f) { String n = f.getName().toLowerCase(Locale.ROOT); return n.endsWith(".apks") || n.endsWith(".xapk") || n.endsWith(".apkm") || (n.endsWith(".zip") && zipHasApk(f)); }
+    static boolean isBundle(File f) { String n = f.getName().toLowerCase(Locale.ROOT); return n.endsWith(".apks") || n.endsWith(".xapk") || n.endsWith(".apkm"); }
+    /** Any other archive (ZIP, 7z, RAR, tar): the app is found inside it and streamed out of it. */
+    static boolean isContainer(File f) { return !f.getName().toLowerCase(Locale.ROOT).endsWith(".apk") && !isBundle(f); }
     static boolean zipHasApk(File f) { try (ZipFile z = new ZipFile(f)) { Enumeration<? extends ZipEntry> e = z.entries(); while (e.hasMoreElements()) if (e.nextElement().getName().toLowerCase(Locale.ROOT).endsWith(".apk")) return true; } catch (Exception ignored) {} return false; }
 
     /** The APKs of a bundle to install: the base, the feature splits, and the configuration splits that fit this
@@ -63,9 +65,33 @@ final class KtApk {
     static ZipEntry baseOf(ZipFile z, List<ZipEntry> apks) { for (ZipEntry x : apks) { String n = x.getName().toLowerCase(Locale.ROOT); if (n.equals("base.apk") || n.endsWith("/base.apk")) return x; } ZipEntry big = null; for (ZipEntry x : apks) if (!x.getName().toLowerCase(Locale.ROOT).startsWith("split") && (big == null || x.getSize() > big.getSize())) big = x; return big != null ? big : apks.isEmpty() ? null : apks.get(0); }
 
     /** What the file installs: name, package, version, icon (PNG, base64), the version installed now. */
-    static JSONObject info(Context ctx, File f) throws Exception {
+    static JSONObject info(Context ctx, File f) throws Exception { return info(ctx, f, null, null); }
+    static JSONObject info(Context ctx, File f, String password, String select) throws Exception {
         PackageManager pm = ctx.getPackageManager(); File apk = f; File tmp = null; JSONObject o = new JSONObject(); int splits = 0; long size = f.length();
-        if (isBundle(f)) {
+        if (isContainer(f)) {
+            // (An app inside an archive: what the archive offers listed, one chosen — asked when there are several —,
+            // its base APK read out to learn what it is; the parts to install handed back for the install.)
+            List<KtApkPlan.Entry> all = list(f, password); List<KtApkPlan.App> apps = KtApkPlan.apps(all);
+            if (apps.isEmpty()) throw new Exception("noApkInside");
+            KtApkPlan.App app = null; for (KtApkPlan.App a : apps) if (a.select.equals(select)) app = a;
+            if (app == null && apps.size() > 1) { JSONArray ch = new JSONArray(); for (KtApkPlan.App a : apps) { JSONObject c = new JSONObject(); c.put("select", a.select); c.put("label", a.label); c.put("size", a.size); ch.put(c); } o.put("choose", ch); return o; }
+            if (app == null) app = apps.get(0);
+            List<KtApkPlan.Entry> parts; String inner = null;
+            if (app.select.startsWith("bundle:")) { inner = app.select.substring(7); parts = KtApkPlan.parts(KtApkPlan.apksOf(listInner(f, password, inner), "bundle:"), Build.SUPPORTED_ABIS); }
+            else parts = KtApkPlan.parts(KtApkPlan.apksOf(all, app.select), Build.SUPPORTED_ABIS);
+            KtApkPlan.Entry base = KtApkPlan.base(parts); if (base == null) throw new Exception("noApkInside");
+            tmp = new File(ctx.getCacheDir(), "kt-base-" + System.nanoTime() + ".apk");
+            final File out = tmp; final String want = base.path; final String in2 = inner;
+            KtArchive.walk(f, password, (name, sz, in) -> {
+                if (in2 == null) { if (!name.equals(want)) return true; try (OutputStream os = new FileOutputStream(out)) { copy(in, os, null); } return false; }
+                if (!name.equals(in2)) return true;
+                java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in); ZipEntry e;
+                while ((e = z.getNextEntry()) != null) if (e.getName().equals(want)) { try (OutputStream os = new FileOutputStream(out)) { copy(z, os, null); } break; }
+                return false;
+            });
+            apk = tmp; long s = 0; JSONArray pa = new JSONArray(); for (KtApkPlan.Entry e : parts) { s += Math.max(0, e.size); pa.put(e.path); } size = s; splits = parts.size() > 1 ? parts.size() : 0;
+            o.put("select", app.select); o.put("parts", pa); o.put("container", true);
+        } else if (isBundle(f)) {
             try (ZipFile z = new ZipFile(f)) {
                 List<ZipEntry> apks = chosen(z); splits = apks.size(); ZipEntry base = baseOf(z, apks); if (base == null) throw new Exception("noApkInside");
                 tmp = new File(ctx.getCacheDir(), "kt-base-" + System.nanoTime() + ".apk");
@@ -81,7 +107,8 @@ final class KtApk {
             if (ai != null) { o.put("label", String.valueOf(ai.loadLabel(pm))); if (Build.VERSION.SDK_INT >= 24) o.put("minSdk", ai.minSdkVersion); try { o.put("icon", png(ai.loadIcon(pm))); } catch (Exception ignored) {} }
             try { PackageInfo cur = pm.getPackageInfo(p.packageName, 0); long cv = Build.VERSION.SDK_INT >= 28 ? cur.getLongVersionCode() : cur.versionCode; long nv = o.getLong("versionCode"); o.put("installed", cur.versionName == null ? "" : cur.versionName); o.put("change", nv > cv ? "upgrade" : nv == cv ? "same" : "downgrade"); }
             catch (PackageManager.NameNotFoundException e) { o.put("change", "new"); }
-            o.put("splits", splits); o.put("size", size); o.put("bundle", splits > 0); o.put("supported", !o.has("minSdk") || o.getInt("minSdk") <= Build.VERSION.SDK_INT);
+            o.put("splits", splits); o.put("size", size); o.put("bundle", splits > 0);
+            try { o.put("free", android.os.Environment.getDataDirectory().getUsableSpace()); } catch (Exception ignored) {} o.put("supported", !o.has("minSdk") || o.getInt("minSdk") <= Build.VERSION.SDK_INT);
             return o;
         } finally { if (tmp != null) tmp.delete(); }
     }
@@ -89,13 +116,29 @@ final class KtApk {
 
     /** One install session: the APK (or every chosen split of a bundle) written into it with progress, then
      *  committed; the system's answer comes back through the result receiver. */
-    static void install(Context ctx, String id, File f, boolean deleteAfter, Events ev) throws Exception {
+    static void install(Context ctx, String id, File f, boolean deleteAfter, Events ev) throws Exception { install(ctx, id, f, deleteAfter, null, null, null, ev); }
+    static void install(Context ctx, String id, File f, boolean deleteAfter, String password, String select, JSONArray partList, Events ev) throws Exception {
         PackageInstaller pi = ctx.getPackageManager().getPackageInstaller();
         PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
         int sid = pi.createSession(params); PackageInstaller.Session s = pi.openSession(sid);
         try {
-            if (isBundle(f)) {
+            if (isContainer(f)) {
+                // (Straight out of the archive into the session — out of a bundle inside it too —, nothing extracted.)
+                if (select == null || partList == null) { JSONObject plan = info(ctx, f, password, select); if (plan.has("choose")) throw new Exception("chooseApp"); select = plan.getString("select"); partList = plan.getJSONArray("parts"); }
+                final java.util.Set<String> want = new java.util.HashSet<>(); for (int k = 0; k < partList.length(); k++) want.add(partList.getString(k));
+                List<KtApkPlan.Entry> listed = select.startsWith("bundle:") ? listInner(f, password, select.substring(7)) : list(f, password);
+                long total = 0; for (KtApkPlan.Entry e : listed) if (want.contains(e.path)) total += Math.max(0, e.size);
+                final long T = total; final long[] done = { 0 }; final String inner = select.startsWith("bundle:") ? select.substring(7) : null; final int[] wrote = { 0 };
+                KtArchive.walk(f, password, (name, sz, in) -> {
+                    if (inner == null) { if (!want.contains(name)) return true; write(s, name, sz, in, ev, id, done, T); wrote[0]++; return wrote[0] < want.size(); }
+                    if (!name.equals(inner)) return true;
+                    java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in); ZipEntry e;
+                    while ((e = z.getNextEntry()) != null) if (want.contains(e.getName())) { write(s, e.getName(), e.getSize(), z, ev, id, done, T); wrote[0]++; }
+                    return false;
+                });
+                if (wrote[0] < want.size()) throw new Exception("missingParts " + wrote[0] + "/" + want.size());
+            } else if (isBundle(f)) {
                 try (ZipFile z = new ZipFile(f)) {
                     List<ZipEntry> apks = chosen(z); long total = 0; for (ZipEntry x : apks) total += Math.max(0, x.getSize()); final long[] done = { 0 }; final long T = total;
                     for (ZipEntry x : apks) { String name = x.getName().replaceAll(".*/", ""); try (InputStream in = z.getInputStream(x); OutputStream os = s.openWrite(name, 0, x.getSize() > 0 ? x.getSize() : -1)) { copy(in, os, (k) -> { done[0] += k; progress(ev, id, done[0], T); }); s.fsync(os); } }
@@ -110,6 +153,24 @@ final class KtApk {
             JSONObject o = new JSONObject(); o.put("id", id); o.put("status", "committed"); ev.on(o);
         } catch (Exception e) { s.abandon(); throw e; }
         finally { s.close(); }
+    }
+    /** The archive's files (names and sizes; nothing read). */
+    static List<KtApkPlan.Entry> list(File f, String password) throws Exception { List<KtApkPlan.Entry> out = new ArrayList<>(); KtArchive.walk(f, password, (n, sz, in) -> { out.add(new KtApkPlan.Entry(n, sz)); return true; }); return out; }
+    /** A bundle's files, inside an archive (read through once: a zip read as a stream tells sizes as it goes). */
+    static List<KtApkPlan.Entry> listInner(File f, String password, String inner) throws Exception {
+        List<KtApkPlan.Entry> out = new ArrayList<>(); byte[] skip = new byte[1 << 16];
+        KtArchive.walk(f, password, (n, sz, in) -> {
+            if (!n.equals(inner)) return true;
+            java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in); ZipEntry e;
+            while ((e = z.getNextEntry()) != null) { if (e.isDirectory()) continue; long size = e.getSize(); if (size < 0) { size = 0; int r; while ((r = z.read(skip)) > 0) size += r; } out.add(new KtApkPlan.Entry(e.getName(), size)); }
+            return false;
+        });
+        return out;
+    }
+    /** One APK into the session, under its own file name (sizes unknown are given as -1, which the session allows). */
+    static void write(PackageInstaller.Session s, String path, long size, InputStream in, Events ev, String id, long[] done, long total) throws Exception {
+        String name = path.replaceAll(".*/", ""); if (!name.toLowerCase(Locale.ROOT).endsWith(".apk")) name = name + ".apk";
+        try (OutputStream os = s.openWrite(name, 0, size > 0 ? size : -1)) { copy(in, os, (k) -> { done[0] += k; progress(ev, id, done[0], Math.max(total, done[0])); }); s.fsync(os); }
     }
     interface Tick { void on(int n); }
     static long lastTick = 0;

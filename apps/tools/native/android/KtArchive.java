@@ -215,6 +215,42 @@ public final class KtArchive {
         @Override public int read(byte[] b, int off, int len) throws IOException { if (pos >= end) return -1; r.seek(pos); int n = r.read(b, off, (int) Math.min(len, end - pos)); if (n > 0) pos += n; return n; }
     }
 
+    /* ---------- walking an archive: each file as a stream, in the archive's own order ---------- */
+    public interface Visitor { /** False stops the walk. The stream need not be read, and is closed after. */ boolean entry(String name, long size, InputStream in) throws Exception; }
+    /** Every file of a ZIP (encrypted too), 7z, RAR or tar, one stream at a time and nothing written to the disk
+     *  (what the app installer streams from). A wrong or missing password: IOException("password"). */
+    public static void walk(File f, String password, Visitor v) throws Exception {
+        String fmt = formatOf(f); char[] pw = password == null || password.isEmpty() ? null : password.toCharArray();
+        try {
+            if (fmt.equals("zip")) {
+                try (RandomAccessFile r = new RandomAccessFile(f, "r")) {
+                    ZipIndex ix = readZip(r); boolean enc = false; for (ZipItem it : ix.items) enc |= it.encrypted;
+                    if (!enc) { for (ZipItem it : ix.items) { if (it.dir) continue; try (InputStream in = entryStream(r, it)) { if (!v.entry(it.name, it.usize, in)) return; } } return; }
+                }
+                if (pw == null) throw new IOException("password");
+                try (net.lingala.zip4j.ZipFile z = new net.lingala.zip4j.ZipFile(f, pw)) {
+                    for (net.lingala.zip4j.model.FileHeader h : z.getFileHeaders()) { if (h.isDirectory()) continue; try (InputStream in = z.getInputStream(h)) { if (!v.entry(h.getFileName(), h.getUncompressedSize(), in)) return; } }
+                }
+            } else if (fmt.equals("7z")) {
+                try (SevenZFile z = pw != null ? new SevenZFile(f, pw) : new SevenZFile(f)) {
+                    SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { if (e.isDirectory() || !e.hasStream()) continue; if (!v.entry(e.getName(), e.getSize(), z.getInputStream(e))) return; }
+                }
+            } else if (fmt.equals("rar")) {
+                try (com.github.junrar.Archive a = pw != null ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) {
+                    for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { if (h.isDirectory()) continue; try (InputStream in = a.getInputStream(h)) { if (!v.entry(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), in)) return; } }
+                }
+            } else if (fmt.startsWith("tar")) {
+                try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16)))) {
+                    ArchiveEntry e; while ((e = t.getNextEntry()) != null) { if (e.isDirectory()) continue; InputStream keep = new java.io.FilterInputStream(t) { @Override public void close() {} }; if (!v.entry(e.getName(), e.getSize(), keep)) return; }
+                }
+            } else throw new IOException("notArchive");
+        } catch (Exception e) {
+            String m = String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            if (e instanceof net.lingala.zip4j.exception.ZipException && m.contains("password") || m.contains("password") || e.getClass().getName().contains("Password") || e.getClass().getName().contains("Crypt")) throw new IOException("password");
+            throw e;
+        }
+    }
+
     /* ---------- in place: last entry first, the archive cut back after every committed batch ---------- */
     public static long BATCH_BYTES = 512L << 20; public static int BATCH_COUNT = 64;  // (tests shrink these)
     static int extractZipInPlace(File f, File dest, Options o, Progress pr) throws Exception {

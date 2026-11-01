@@ -9,20 +9,39 @@ import { uid } from '../db';
 
 export const APK_RE = /\.(apk|apks|xapk|apkm)$/i;
 export const isApkName = (n: string): boolean => APK_RE.test(n);
-type ApkInfo = { package: string; version: string; versionCode: number; label?: string; icon?: string; minSdk?: number; installed?: string; change: 'new' | 'upgrade' | 'same' | 'downgrade'; splits: number; size: number; bundle: boolean; supported: boolean; obb?: boolean };
+type ApkInfo = { choose?: { select: string; label: string; size: number }[]; select?: string; parts?: string[]; container?: boolean; free?: number; package: string; version: string; versionCode: number; label?: string; icon?: string; minSdk?: number; installed?: string; change: 'new' | 'upgrade' | 'same' | 'downgrade'; splits: number; size: number; bundle: boolean; supported: boolean; obb?: boolean };
 type Ev = { id: string; status: 'progress' | 'committed' | 'confirm' | 'success' | 'failure'; done?: number; total?: number; message?: string; code?: number; package?: string };
-type P = { apkInfo(o: { path: string }): Promise<ApkInfo>; apkInstall(o: { id: string; path: string; deleteAfter?: boolean }): Promise<void>; launchApp(o: { pkg: string }): Promise<void>; addListener(ev: 'apkInstall', fn: (e: Ev) => void): Promise<{ remove(): void }> };
+type P = { apkInfo(o: { path: string; password?: string; select?: string }): Promise<ApkInfo>; apkInstall(o: { id: string; path: string; deleteAfter?: boolean; password?: string; select?: string; parts?: string[] }): Promise<void>; launchApp(o: { pkg: string }): Promise<void>; addListener(ev: 'apkInstall', fn: (e: Ev) => void): Promise<{ remove(): void }> };
 const plug = (): P | null => { const p = ktPlugin() as unknown as P | null; return p?.apkInfo ? p : null; };
 export const canInstallApps = (): boolean => !!plug();
 
-export async function installSheet(path: string): Promise<void> {
+/** The app installer for a file: an APK, a bundle, or any archive (ZIP, 7z, RAR, tar — password-protected too)
+ *  with an app inside, streamed out of it with nothing extracted; several apps inside: the one to install asked. */
+export async function installSheet(path: string, o: { password?: string; select?: string } = {}): Promise<void> {
   const p = plug(); if (!p) { toast(t('apkAndroidOnly'), 'error'); return; }
   const name = path.split(/[\\/]/).pop() ?? path;
   const sh = openSheet(t('apkInstallTitle'), t('close'));
-  sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
+  sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), h('p', { class: 'src small' }, t('apkReading'))));
   let info: ApkInfo;
-  try { info = await p.apkInfo({ path }); }
-  catch (e) { sh.body.replaceChildren(h('p', { class: 'empty small' }, /noApkInside|notAnApk/.test(String((e as Error).message)) ? t('apkNotApp') : String((e as Error).message ?? e))); return; }
+  try { info = await p.apkInfo({ path, password: o.password, select: o.select }); }
+  catch (e) {
+    const m = String((e as Error).message ?? e);
+    // (A locked archive: its password asked here, then read again.)
+    if (m === 'password') {
+      const pw = h('input', { type: 'password', class: 'text-input', autocomplete: 'off', placeholder: t('password') }) as HTMLInputElement;
+      const go = () => { if (!pw.value) return; sh.close(); void installSheet(path, { ...o, password: pw.value }); };
+      pw.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go(); });
+      sh.body.replaceChildren(h('p', null, o.password ? t('wrongPassword') : t('passwordNeeded')), h('p', { class: 'src', dir: 'ltr' }, name), pw);
+      sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: go }, icon('key'), t('apkUnlock'))); setTimeout(() => pw.focus(), 60); return;
+    }
+    sh.body.replaceChildren(h('p', { class: 'empty small' }, /noApkInside|notAnApk/.test(m) ? t('apkNotApp') : m)); return;
+  }
+  // (Several apps in the archive: one chosen, then read.)
+  if (info.choose) {
+    sh.body.replaceChildren(h('p', null, t('apkChooseApp')), h('p', { class: 'src', dir: 'ltr' }, name),
+      ...info.choose.map((c) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void installSheet(path, { ...o, select: c.select }); } }, icon(/^bundle:/.test(c.select) ? 'archive' : 'apps'), h('span', { class: 'grow' }, h('span', { dir: 'ltr' }, c.label), h('small', { class: 'src' }, `${/^dir:/.test(c.select) ? t('apkSplitFolder') : /^bundle:/.test(c.select) ? t('apkBundle') : 'APK'}${c.size > 0 ? ` · ${formatBytes(c.size)}` : ''}`)))));
+    return;
+  }
   let deleteAfter = false;
   const change = info.change === 'new' ? t('apkNew') : info.change === 'upgrade' ? t('apkUpgrade', { from: info.installed ?? '' }) : info.change === 'same' ? t('apkSame') : t('apkDowngrade', { from: info.installed ?? '' });
   sh.body.replaceChildren(
@@ -31,8 +50,11 @@ export async function installSheet(path: string): Promise<void> {
     h('p', { class: 'apk-change ' + info.change }, change),
     ...(info.supported ? [] : [h('p', { class: 'plan-note bad' }, t('apkTooNew', { n: info.minSdk ?? 0 }))]),
     ...(info.obb ? [h('p', { class: 'hint' }, t('apkObb'))] : []),
+    ...(info.container ? [h('p', { class: 'hint' }, t('apkFromArchive'))] : []),
+    // (Room: the system copies the app in and prepares it, which takes about twice its size.)
+    ...(info.free !== undefined && info.free < info.size * 2 ? [h('p', { class: 'plan-note bad' }, t('apkLowSpace', { need: formatBytes(info.size * 2), free: formatBytes(info.free) }))] : []),
     h('p', { class: 'src', dir: 'ltr' }, name),
-    h('label', { class: 'row switch-row' }, h('span', null, t('apkDeleteAfter')), h('input', { type: 'checkbox', onchange: (e: Event) => { deleteAfter = (e.target as HTMLInputElement).checked; } })));
+    h('label', { class: 'row switch-row' }, h('span', null, info.container ? t('apkDeleteAfterArchive') : t('apkDeleteAfter')), h('input', { type: 'checkbox', onchange: (e: Event) => { deleteAfter = (e.target as HTMLInputElement).checked; } })));
   const go = h('button', { type: 'button', class: 'btn primary', disabled: !info.supported }, icon('download'), info.change === 'upgrade' ? t('apkUpdate') : t('apkInstall')) as HTMLButtonElement;
   sh.actions.replaceChildren(go);
   go.addEventListener('click', async () => {
@@ -46,7 +68,7 @@ export async function installSheet(path: string): Promise<void> {
       else if (e.status === 'success') { sub.remove(); toast(t('apkDone', { name: info.label || info.package })); sh.body.replaceChildren(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('apkDone', { name: info.label || info.package })))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('done')), h('button', { type: 'button', class: 'btn primary', onclick: () => { void p.launchApp({ pkg: info.package }).catch(() => undefined); sh.close(); } }, icon('external'), t('apkOpen'))); }
       else if (e.status === 'failure') { sub.remove(); line.textContent = t('apkFailed', { why: failWhy(e) }); line.classList.add('bad'); go.disabled = false; }
     });
-    try { await p.apkInstall({ id, path, deleteAfter }); }
+    try { await p.apkInstall({ id, path, deleteAfter, password: o.password, select: info.select, parts: info.parts }); }
     catch (e) { sub.remove(); const m = String((e as Error).message ?? e); line.textContent = m === 'permission' ? t('apkPermission') : t('apkFailed', { why: m }); go.disabled = false; }
   });
 }
