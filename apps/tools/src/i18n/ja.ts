@@ -74,4 +74,5 @@ export const ja: Partial<Strings> = {
   grabDepth: "リンクをたどる", grabDepth0: "このページのみ", grabBelow: "このフォルダ以下のページのみ", grabKept: "保存しました：上の「プロジェクト」にあります。", grabKeep: "プロジェクトとして保存", grabProjects: "プロジェクト", grabReading: "読んだページ：{n} · 見つかったファイル：{files}", grabRead: "{n} ページを読み、{files} 個のファイルが見つかりました。",
   miniOpen: "ミニウィンドウ", miniMain: "アプリに戻る", miniActive: "{n} 件ダウンロード中、{q} 件待機", miniIdle: "ダウンロード中のものはありません。", miniMore: "ほか {n} 件", miniAuto: "アプリを最小化したらミニウィンドウ", miniAutoHint: "速度とダウンロード中の項目を表示する、常に手前の小さなウィンドウ。",
   searchAgain: "もう一度検索", subsNeedsKey: "キーが必要", subsKeyHint: "{name} は自分のキーでのみ応答します（サイトで無料取得）：", subsCheck: "確認", subsCheckHint: "サイトの確認を済ませてからウィンドウを閉じると、再検索します。",
+  appCrashTitle: "前回アプリが予期せず終了しました", crashHint: "このレポートに原因があります。送っていただくと修正に役立ちます。", crashCopy: "レポートをコピー", crashSend: "GitHub で報告",
 };

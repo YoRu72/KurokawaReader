@@ -129,10 +129,10 @@ final class KtEngine {
             tell(true);
         } else if (t == AlertType.METADATA_RECEIVED) {
             TorrentHandle th = ((MetadataReceivedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
-            if (x != null) { TorrentInfo ti = th.torrentFile(); if (ti != null) { x.name = ti.name(); x.total = ti.totalSize(); if (x.priorities != null) applyPriorities(x); } th.saveResumeData(); persist(); tell(true); }
+            if (x != null) { TorrentInfo ti = th.torrentFile(); if (ti != null) { x.name = ti.name(); x.total = ti.totalSize(); if (x.priorities != null) applyPriorities(x); } th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); persist(); tell(true); }
         } else if (t == AlertType.TORRENT_FINISHED) {
             TorrentHandle th = ((TorrentFinishedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
-            if (x != null) { if (x.doneAt == 0) x.doneAt = System.currentTimeMillis(); th.saveResumeData(); if (!seedAfterDone) th.pause(); persist(); tell(true); }
+            if (x != null) { if (x.doneAt == 0) x.doneAt = System.currentTimeMillis(); th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); if (!seedAfterDone) th.pause(); persist(); tell(true); }
         } else if (t == AlertType.SAVE_RESUME_DATA) {
             SaveResumeDataAlert sa = (SaveResumeDataAlert) a; Task x = byHash.get(sa.handle().infoHash().toHex());
             if (x != null) { try { byte[] data = AddTorrentParams.writeResumeDataBuf(sa.params()); try (FileOutputStream fo = new FileOutputStream(new File(stateDir, x.id + ".fastresume"))) { fo.write(data); } } catch (Exception e) { Log.w(TAG, "resume", e); } }
@@ -152,7 +152,7 @@ final class KtEngine {
                 try { Thread.sleep(700); } catch (InterruptedException e) { return; }
                 try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Exception ignored) {}
                 // (Resume data saved now and then, so a kill loses little.)
-                if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData();
+                if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT);
             }
         }, "kt-ticker");
         ticker.setDaemon(true); ticker.start();
@@ -220,7 +220,7 @@ final class KtEngine {
     }
     private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = x.th.torrentFile(); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
 
-    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
+    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
     void resume(String id) throws Exception { Task x = task(id); if (x == null) return; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
     void remove(String id, boolean deleteFiles) {
         Task x; synchronized (this) { x = tasks.remove(id); } if (x == null) return;
@@ -441,7 +441,9 @@ final class KtEngine {
         try {
             JSONArray arr = new JSONArray();
             for (Task x : tasks.values()) { JSONObject o = json(x); o.put("priorities", x.priorities == null ? JSONObject.NULL : new JSONArray(toList(x.priorities))); o.put("paused", x.paused); o.put("connections", x.wantConnections); o.put("files", JSONObject.NULL); if ("video".equals(x.kind) && x.httpOut != null) o.put("file", x.httpOut.getName()); arr.put(o); }
-            write(new File(stateDir, "tasks.json"), arr.toString());
+            // (The list as it was kept beside the new one: read back if the new one is ever cut short.)
+            File cur = new File(stateDir, "tasks.json"); if (cur.length() > 2) { try { java.nio.file.Files.copy(cur.toPath(), new File(stateDir, "tasks.json.bak").toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING); } catch (Exception ignored) {} }
+            write(cur, arr.toString());
         } catch (Exception e) { Log.w(TAG, "persist", e); }
     }
     private static List<Integer> toList(int[] a) { List<Integer> l = new ArrayList<>(); for (int v : a) l.add(v); return l; }
@@ -449,11 +451,12 @@ final class KtEngine {
     private void load() {
         try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); dht = c.optBoolean("dht", true); lsd = c.optBoolean("lsd", true); upnp = c.optBoolean("upnp", true); natpmp = c.optBoolean("natpmp", true); enc = c.optString("enc", "enabled"); seedRatio = c.optDouble("seedRatio", 0); seedMinutes = c.optInt("seedMinutes", 0); ua = c.optString("ua", APP_UA); retries = c.optInt("retries", 5); timeoutS = c.optInt("timeout", 60); proxy = c.optString("proxy", ""); conflict = c.optString("conflict", "rename"); } } catch (Exception ignored) {}
         try { File hf = new File(stateDir, "hosts.json"); if (hf.exists()) { JSONObject h = new JSONObject(new String(java.nio.file.Files.readAllBytes(hf.toPath()), StandardCharsets.UTF_8)); for (Iterator<String> it = h.keys(); it.hasNext(); ) { String k = it.next(); hostLimit.put(k, h.optInt(k, 8)); } } } catch (Exception ignored) {}
-        File f = new File(stateDir, "tasks.json"); if (!f.exists()) return;
+        File f = new File(stateDir, "tasks.json"), bak = new File(stateDir, "tasks.json.bak"); if (!f.exists() && !bak.exists()) return;
         try {
-            JSONArray arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+            // (The last good copy when this one cannot be read — a write cut short.)
+            JSONArray arr; try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); } catch (Exception e) { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(bak.toPath()), StandardCharsets.UTF_8)); }
             boolean any = false;
-            for (int i = 0; i < arr.length(); i++) {
+            for (int i = 0; i < arr.length(); i++) { try {
                 JSONObject o = arr.getJSONObject(i); Task x = new Task();
                 x.id = o.getString("id"); x.kind = o.getString("kind"); x.name = o.optString("name"); x.source = o.optJSONObject("source"); if (x.source == null) x.source = new JSONObject(); x.dir = o.optString("dir"); x.state = o.optString("state", "paused");
                 x.done = o.optLong("done"); x.total = o.optLong("total"); x.addedAt = o.optLong("addedAt", System.currentTimeMillis()); x.doneAt = o.optLong("doneAt"); x.meta = o.optJSONObject("meta"); x.sequential = o.optBoolean("sequential"); x.paused = o.optBoolean("paused"); x.infoHash = o.optString("infoHash", null); x.error = o.optString("error", null); x.wantConnections = o.optInt("connections", 8);
@@ -465,7 +468,7 @@ final class KtEngine {
                     File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) { try { x.source.put("torrent", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(tf.toPath()), android.util.Base64.NO_WRAP)); } catch (Exception ignored) {} }
                     if (!"done".equals(x.state) || seedAfterDone) { any = true; }
                 }
-            }
+            } catch (Exception e) { Log.w(TAG, "load one", e); } }
             if (any) { for (Task x : snapshot()) if ("torrent".equals(x.kind) && (!"done".equals(x.state) || seedAfterDone)) { try { if ("done".equals(x.state)) x.paused = !seedAfterDone; addTorrent(x); } catch (Exception e) { x.state = "failed"; x.error = e.getMessage(); } } }
         } catch (Exception e) { Log.w(TAG, "load", e); }
     }

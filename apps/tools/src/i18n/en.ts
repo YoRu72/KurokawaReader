@@ -97,6 +97,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   grabDepth: "Follow links", grabDepth0: "This page only", grabBelow: "Only pages under this folder", grabKept: "Kept: it is under Projects at the top.", grabKeep: "Keep as a project", grabProjects: "Projects", grabReading: "Pages read: {n} · files found: {files}", grabRead: "Read {n} pages; {files} files found.",
   miniOpen: "Mini window", miniMain: "Back to the app", miniActive: "{n} downloading, {q} waiting", miniIdle: "Nothing is downloading.", miniMore: "and {n} more", miniAuto: "The mini window when the app is minimized", miniAutoHint: "A small window above the others with the speed and what is downloading.",
   searchAgain: "Search again", subsNeedsKey: "needs a key", subsKeyHint: "{name} answers only with your own key, free from its site:", subsCheck: "check", subsCheckHint: "Pass the site's check, then close the window: the search runs again.",
+  appCrashTitle: "The app closed unexpectedly last time", crashHint: "This report says why; sending it helps fix it.", crashCopy: "Copy the report", crashSend: "Report on GitHub",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

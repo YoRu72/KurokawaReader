@@ -26,11 +26,11 @@ function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): 
 
 /* The navigation: a bar at the bottom on phones, a rail at the side on a PC (the reader's look). */
 const DESTS = (): [string, string, string, () => void][] => [
-  ['downloads', 'download', 'navDownloads', () => navigate('/')],
-  ['search', 'search', 'navSearch', () => navigate('/search')],
-  ...(getSettings().addons.includes('anime') ? [['anime', 'tv', 'navAnime', () => navigate('/anime')] as [string, string, string, () => void]] : []),
-  ...(getSettings().addons.includes('subtitles') ? [['subs', 'subtitles', 'navSubs', () => navigate('/subs')] as [string, string, string, () => void]] : []),
-  ['settings', 'settings', 'navSettings', () => navigate('/settings')],
+  ['downloads', 'download', 'navDownloads', () => goTab('downloads', '/')],
+  ['search', 'search', 'navSearch', () => goTab('search', '/search')],
+  ...(getSettings().addons.includes('anime') ? [['anime', 'tv', 'navAnime', () => goTab('anime', '/anime')] as [string, string, string, () => void]] : []),
+  ...(getSettings().addons.includes('subtitles') ? [['subs', 'subtitles', 'navSubs', () => goTab('subs', '/subs')] as [string, string, string, () => void]] : []),
+  ['settings', 'settings', 'navSettings', () => goTab('settings', '/settings')],
 ];
 const wide = matchMedia('(min-width: 1024px) and (pointer: fine)');
 const isPc = () => (!!window.kurokawaTools && matchMedia('(min-width: 720px)').matches) || wide.matches;
@@ -50,8 +50,18 @@ function placeNav(): void {
   if (isPc()) document.body.prepend(nav); else document.body.append(nav);
   markNav(parseRoute());
 }
+const destOf = (r: Route): string => (r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : r.name === 'subs' ? 'subs' : 'search');
+/* Each tab remembers where it was (a show's page in Anime, a section of Settings…): going back to the tab
+   brings that screen back as it was, scrolled where it was; tapping the tab that is open goes to its start. */
+const lastPath = new Map<string, string>();
+const kept = new Map<string, { key: string; el: HTMLElement & { dispose?: () => void }; scroll: number; inner: number }>();
+function goTab(dest: string, root: string): void {
+  const here = destOf(parseRoute());
+  const want = here === dest ? root : lastPath.get(dest) ?? root;
+  navigate(want);
+}
 function markNav(r: Route): void {
-  const dest = r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : r.name === 'subs' ? 'subs' : 'search';
+  const dest = destOf(r);
   nav?.querySelectorAll<HTMLElement>('[data-dest]').forEach((b) => { const on = b.dataset.dest === dest; b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
 }
 wide.addEventListener('change', placeNav);
@@ -62,9 +72,23 @@ function mount(route: Route): void {
 function mountInner(route: Route): void {
   const key = JSON.stringify(route);
   if (key === currentKey && current) return;
+  const prevRoute = currentKey ? (JSON.parse(currentKey) as Route) : null;
   currentKey = key;
-  current?.dispose?.(); current?.remove();
+  const dest = destOf(route); lastPath.set(dest, location.hash.replace(/^#/, '') || '/');
+  // Leaving a tab: its screen kept (not torn down) to come back to; staying in the tab: replaced as before.
+  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add') {
+    const pd = destOf(prevRoute); const old = kept.get(pd); if (old && old.el !== current) { old.el.dispose?.(); old.el.remove(); }
+    kept.set(pd, { key: JSON.stringify(prevRoute), el: current, scroll: window.scrollY, inner: current.querySelector<HTMLElement>('.body')?.scrollTop ?? 0 });
+    current.remove();
+  } else { current?.dispose?.(); current?.remove(); }
   document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove());
+  const back = kept.get(dest);
+  if (back && back.key === key) {
+    kept.delete(dest); current = back.el; app.appendChild(current);
+    requestAnimationFrame(() => { window.scrollTo(0, back.scroll); const b = current?.querySelector<HTMLElement>('.body'); if (b) b.scrollTop = back.inner; });
+    markNav(route); return;
+  }
+  if (back) { back.el.dispose?.(); back.el.remove(); kept.delete(dest); }
   switch (route.name) {
     case 'task': current = lazyView(() => import('./views/task').then((m) => m.taskView(route.id))); break;
     case 'settings': current = lazyView(() => import('./views/settings').then((m) => m.settingsView(route.section))); break;
@@ -114,6 +138,7 @@ else {
   if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
   void import('./downloads/done').then((m) => m.startDoneWatch());
   void import('./downloads/trash').then((m) => m.startTrash());
+  setTimeout(() => void import('./ui/crash').then((m) => m.showLastCrash()), 1500);
   void import('./downloads/net').then((m) => m.applyNet());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
   if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());

@@ -405,3 +405,5 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .mini-line { display: flex; gap: 8px; align-items: baseline; } .mini-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mini-bar { height: 4px; border-radius: 2px; background: var(--md-surface-container-highest); overflow: hidden; } .mini-bar i { display: block; height: 100%; background: var(--md-primary); border-radius: 2px; transition: width .4s; }
 .mini-idle { margin: 6px 0 0; color: var(--md-on-surface-variant); } .mini-more { text-align: center; }
+.crash-card .crash-text { margin: 8px 0 0; padding: 8px 10px; max-height: 140px; overflow: auto; border-radius: 10px; background: var(--md-surface-container-highest); font: 11px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.get-ic.bad { background: color-mix(in srgb, var(--md-error) 20%, transparent); color: var(--md-error); }

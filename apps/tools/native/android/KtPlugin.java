@@ -71,6 +71,26 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void remove(PluginCall call) { run(call, () -> { engine().remove(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("deleteFiles", false))); call.resolve(); }); }
     @PluginMethod public void setFiles(PluginCall call) { run(call, () -> { JSArray a = call.getArray("priorities"); int[] p = new int[a.length()]; for (int i = 0; i < a.length(); i++) p[i] = a.getInt(i); engine().setFiles(call.getString("id", ""), p); call.resolve(); }); }
     @PluginMethod public void setSequential(PluginCall call) { run(call, () -> { engine().setSequential(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("on", true))); call.resolve(); }); }
+    /** Why the app ended last time, when it was not the user: a crash written down by the app, or what Android
+     *  recorded (a crash in native code, the app not answering, memory). Given once. */
+    @PluginMethod public void lastCrash(PluginCall call) {
+        JSObject r = new JSObject(); StringBuilder sb = new StringBuilder();
+        java.io.File f = new java.io.File(new java.io.File(getContext().getFilesDir(), "kt"), "crash.txt");
+        try { if (f.exists()) { sb.append(new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8)); f.delete(); } } catch (Exception ignored) {}
+        if (Build.VERSION.SDK_INT >= 30) try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(android.content.Context.ACTIVITY_SERVICE);
+            java.util.List<android.app.ApplicationExitInfo> l = am.getHistoricalProcessExitReasons(getContext().getPackageName(), 0, 1);
+            android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE);
+            if (!l.isEmpty()) { android.app.ApplicationExitInfo x = l.get(0); int why = x.getReason(); long at = x.getTimestamp();
+                boolean bad = why == android.app.ApplicationExitInfo.REASON_CRASH || why == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE || why == android.app.ApplicationExitInfo.REASON_ANR || why == android.app.ApplicationExitInfo.REASON_LOW_MEMORY || why == android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE || why == android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE;
+                if (bad && sp.getLong("exitSeen", 0) != at) { sp.edit().putLong("exitSeen", at).apply();
+                    String[] names = { "unknown", "exit self", "signaled", "low memory", "crash", "native crash", "not responding (ANR)", "initialization failure", "permission change", "excessive resource use", "user requested", "user stopped", "dependency died", "other", "freezer", "package state change", "package updated" };
+                    if (sb.length() == 0 || why != android.app.ApplicationExitInfo.REASON_CRASH) sb.append(sb.length() > 0 ? "\n\n" : "").append("android says: ").append(why < names.length ? names[why] : String.valueOf(why)).append(" at ").append(new java.util.Date(at)).append(x.getDescription() != null ? " — " + x.getDescription() : "").append("\nandroid: ").append(Build.VERSION.RELEASE).append(" (").append(Build.VERSION.SDK_INT).append(") ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL);
+                    if (why == android.app.ApplicationExitInfo.REASON_ANR) { try (java.io.InputStream in = x.getTraceInputStream()) { if (in != null) { byte[] b = new byte[6000]; int n = in.read(b); if (n > 0) sb.append("\n\n").append(new String(b, 0, n, java.nio.charset.StandardCharsets.UTF_8)); } } catch (Exception ignored) {} }
+                } }
+        } catch (Exception ignored) {}
+        r.put("text", sb.length() > 0 ? sb.toString() : null); call.resolve(r);
+    }
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
     @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { engine().setUrl(call.getString("id", ""), call.getString("url", "")); call.resolve(); }); }
     @PluginMethod public void hosts(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("hosts", engine().hosts()); call.resolve(r); }); }
