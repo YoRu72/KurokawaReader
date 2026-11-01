@@ -222,9 +222,10 @@ export function openPlayer(src: PlayerSource): void {
     if (moved || locked) return;
     // Taps: one toggles the controls; two do what each zone was given (a third, fourth… keep seeking).
     const now = Date.now(); const r = stage.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width; const w = getPrefs().doubleTapArea / 100;
-    const rtl = getComputedStyle(root).direction === 'rtl'; const zone = x < w ? -1 : x > 1 - w ? 1 : 0; const side = rtl ? -zone : zone;
+    // (Sides as seen: the left one goes back, the right one on — in Arabic too, as players do.)
+    const zone = x < w ? -1 : x > 1 - w ? 1 : 0; const side = zone;
     const action = (z: number): TapAction => (z < 0 ? getPrefs().tapLeft : z > 0 ? getPrefs().tapRight : getPrefs().tapCentre);
-    if (seekAcc.total && zone === seekAcc.side * (rtl ? -1 : 1) && action(zone) === 'seek') { window.clearTimeout(tapTimer); lastTap = now; runTap('seek', side); return; }
+    if (seekAcc.total && zone === seekAcc.side && action(zone) === 'seek') { window.clearTimeout(tapTimer); lastTap = now; runTap('seek', side); return; }
     if (now - lastTap < 300 && zone === lastTapZone) { window.clearTimeout(tapTimer); lastTap = now; runTap(action(zone), zone === 0 ? 0 : side); return; }
     lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => { if (controlsOn) hideControls(); else showControls(); }, 280);
   };

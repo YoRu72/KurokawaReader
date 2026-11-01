@@ -274,3 +274,9 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .pp-group .row > span { flex: 1 1 10em; min-width: 0; }
 .pp-group .row small { display: block; font-size: 12.5px; opacity: .8; }
 .dest-row .plain { all: unset; display: flex; align-items: center; gap: 10px; cursor: pointer; flex: 1; min-width: 0; }
+/* The player's sheets: a label and its value apart, chips clear of what follows. */
+.sheet .field > .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sheet .chips { margin-bottom: 10px; flex-wrap: wrap; }
+.sheet .chips + .field, .sheet .chips + label.field { margin-top: 6px; }
+.kt-eq { height: 190px; }
+.kt-eq-band input[type=range] { accent-color: var(--md-primary); }
