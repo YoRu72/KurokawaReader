@@ -56,6 +56,9 @@ public class ApkT {
     // 5) nothing to install
     File none = new File(dir, "docs.zip"); try (FileOutputStream o = new FileOutputStream(none)) { o.write(zip(m("a.txt", new byte[5]), false)); }
     ok("no apps in a zip of documents", KtApkPlan.apps(list(none, null)).isEmpty());
+    // What each part of a split app is, and which may be left out.
+    ok("kinds: base, abi, lang, density, feature", KtApkPlan.kindOf("base.apk").equals("base") && KtApkPlan.kindOf("split_config.arm64_v8a.apk").equals("abi") && KtApkPlan.kindOf("split_config.ar.apk").equals("lang") && KtApkPlan.kindOf("config.xxhdpi.apk").equals("density") && KtApkPlan.kindOf("split_feature_maps.apk").equals("feature") && KtApkPlan.kindOf("Game/com.x.config.en_US.apk").equals("lang"));
+    ok("only languages and densities are optional", KtApkPlan.optional("split_config.fr.apk") && KtApkPlan.optional("config.hdpi.apk") && !KtApkPlan.optional("base.apk") && !KtApkPlan.optional("split_config.x86_64.apk") && !KtApkPlan.optional("split_feature_maps.apk"));
     System.out.println(fails == 0 ? "apk installer: all passed" : fails + " failed"); System.exit(fails == 0 ? 0 : 1);
   }
 }

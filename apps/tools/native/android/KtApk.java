@@ -91,6 +91,7 @@ final class KtApk {
             });
             apk = tmp; long s = 0; JSONArray pa = new JSONArray(); for (KtApkPlan.Entry e : parts) { s += Math.max(0, e.size); pa.put(e.path); } size = s; splits = parts.size() > 1 ? parts.size() : 0;
             o.put("select", app.select); o.put("parts", pa); o.put("container", true);
+            { JSONArray all2 = new JSONArray(); for (KtApkPlan.Entry e : parts) { JSONObject x = new JSONObject(); x.put("name", e.path); x.put("size", e.size); x.put("kind", KtApkPlan.kindOf(e.path)); x.put("optional", KtApkPlan.optional(e.path)); all2.put(x); } o.put("partsAll", all2); }
         } else if (isBundle(f)) {
             try (ZipFile z = new ZipFile(f)) {
                 List<ZipEntry> apks = chosen(z); splits = apks.size(); ZipEntry base = baseOf(z, apks); if (base == null) throw new Exception("noApkInside");
@@ -98,10 +99,15 @@ final class KtApk {
                 try (InputStream in = z.getInputStream(base); OutputStream os = new FileOutputStream(tmp)) { copy(in, os, null); }
                 apk = tmp; long s = 0; for (ZipEntry x : apks) s += Math.max(0, x.getSize()); size = s;
                 ZipEntry man = z.getEntry("manifest.json"); if (man != null) { try (InputStream in = z.getInputStream(man)) { JSONObject m = new JSONObject(new String(readAll(in), "UTF-8")); if (m.has("expansions") || m.has("obb")) o.put("obb", true); } catch (Exception ignored) {} }
+                // (Every part, for choosing: languages and densities may be left out; the chosen ones ticked.)
+                JSONArray pa = new JSONArray(); for (ZipEntry x : apks) pa.put(x.getName()); o.put("parts", pa); o.put("partsAll", partsJson(apks));
+                int obb = 0; Enumeration<? extends ZipEntry> en = z.entries(); while (en.hasMoreElements()) { ZipEntry x = en.nextElement(); if (!x.isDirectory() && x.getName().toLowerCase(Locale.ROOT).endsWith(".obb")) obb++; } if (obb > 0) { o.put("obb", true); o.put("obbFiles", obb); }
             }
         }
         try {
-            PackageInfo p = pm.getPackageArchiveInfo(apk.getPath(), 0); if (p == null) throw new Exception("notAnApk");
+            int flags = PackageManager.GET_PERMISSIONS | (Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES);
+            PackageInfo p = pm.getPackageArchiveInfo(apk.getPath(), flags); if (p == null) p = pm.getPackageArchiveInfo(apk.getPath(), 0); if (p == null) throw new Exception("notAnApk");
+            details(ctx, pm, p, apk, o);
             ApplicationInfo ai = p.applicationInfo; if (ai != null) { ai.sourceDir = apk.getPath(); ai.publicSourceDir = apk.getPath(); }
             o.put("package", p.packageName); o.put("version", p.versionName == null ? "" : p.versionName); o.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
             if (ai != null) { o.put("label", String.valueOf(ai.loadLabel(pm))); if (Build.VERSION.SDK_INT >= 24) o.put("minSdk", ai.minSdkVersion); try { o.put("icon", png(ai.loadIcon(pm))); } catch (Exception ignored) {} }
@@ -112,6 +118,59 @@ final class KtApk {
             return o;
         } finally { if (tmp != null) tmp.delete(); }
     }
+    /** The rest of what is shown before installing: target and minimum Android, the processors its code is
+     *  built for (and whether this phone's is among them), what it asks to access (the risky ones marked), and
+     *  who signed it — compared with the copy installed now, whose signer must be the same for an update. */
+    static void details(Context ctx, PackageManager pm, PackageInfo p, File apk, JSONObject o) {
+        try {
+            if (p.applicationInfo != null) o.put("targetSdk", p.applicationInfo.targetSdkVersion);
+            // Processors: the lib/<abi>/ folders of the base (a bundle's code splits are judged by their names).
+            java.util.Set<String> abis = new java.util.TreeSet<>();
+            try (ZipFile z = new ZipFile(apk)) { Enumeration<? extends ZipEntry> e = z.entries(); while (e.hasMoreElements()) { String n = e.nextElement().getName(); if (n.startsWith("lib/") && n.indexOf('/', 4) > 4) abis.add(n.substring(4, n.indexOf('/', 4))); } } catch (Exception ignored) {}
+            if (o.has("partsAll")) { JSONArray pa = o.getJSONArray("partsAll"); for (int i = 0; i < pa.length(); i++) { String a = KtApkPlan.abiOf(pa.getJSONObject(i).getString("name")); if (a != null) abis.add(a.replace('_', '-')); } }
+            JSONArray ab = new JSONArray(); for (String a : abis) ab.put(a); o.put("abis", ab);
+            boolean fits = abis.isEmpty(); for (String a : Build.SUPPORTED_ABIS) if (abis.contains(a)) fits = true; o.put("abiFits", fits);
+            JSONArray dev = new JSONArray(); for (String a : Build.SUPPORTED_ABIS) dev.put(a); o.put("deviceAbis", dev);
+            // Permissions.
+            JSONArray perms = new JSONArray(); int risky = 0;
+            if (p.requestedPermissions != null) for (String name : p.requestedPermissions) {
+                boolean danger = false; String label = null;
+                try { android.content.pm.PermissionInfo pi = pm.getPermissionInfo(name, 0); int prot = Build.VERSION.SDK_INT >= 28 ? pi.getProtection() : (pi.protectionLevel & android.content.pm.PermissionInfo.PROTECTION_MASK_BASE); danger = prot == android.content.pm.PermissionInfo.PROTECTION_DANGEROUS; CharSequence l = pi.loadLabel(pm); if (l != null && !l.toString().equals(name)) label = l.toString(); } catch (Exception ignored) {}
+                if (danger) risky++; JSONObject x = new JSONObject(); x.put("name", name); x.put("danger", danger); if (label != null) x.put("label", label); perms.put(x);
+                if (perms.length() >= 120) break;
+            }
+            o.put("permissions", perms); o.put("riskyPermissions", risky);
+            // Signers.
+            java.util.List<String> mine = signers(p);
+            if (!mine.isEmpty()) o.put("signer", mine.get(0));
+            try {
+                int f2 = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+                PackageInfo cur = pm.getPackageInfo(p.packageName, f2); java.util.List<String> theirs = signers(cur);
+                boolean same = mine.isEmpty() || theirs.isEmpty(); for (String x : mine) if (theirs.contains(x)) same = true;
+                o.put("sameSigner", same); if (!same && !theirs.isEmpty()) o.put("installedSigner", theirs.get(0));
+            } catch (PackageManager.NameNotFoundException ignored) {}
+        } catch (Exception ignored) {}
+    }
+    /** Every certificate an app was signed with (its rotation history too), as SHA-256 fingerprints. */
+    @SuppressWarnings("deprecation")
+    static java.util.List<String> signers(PackageInfo p) {
+        java.util.List<String> out = new ArrayList<>(); android.content.pm.Signature[] sig = null;
+        if (Build.VERSION.SDK_INT >= 28 && p.signingInfo != null) sig = p.signingInfo.hasMultipleSigners() ? p.signingInfo.getApkContentsSigners() : p.signingInfo.getSigningCertificateHistory();
+        if (sig == null) sig = p.signatures;
+        if (sig != null) for (android.content.pm.Signature s : sig) { try { java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256"); StringBuilder b = new StringBuilder(); for (byte x : md.digest(s.toByteArray())) b.append(String.format("%02X", x)); out.add(b.toString()); } catch (Exception ignored) {} }
+        return out;
+    }
+    static JSONArray partsJson(List<ZipEntry> apks) throws Exception { JSONArray a = new JSONArray(); for (ZipEntry x : apks) { JSONObject o = new JSONObject(); o.put("name", x.getName()); o.put("size", Math.max(0, x.getSize())); o.put("kind", KtApkPlan.kindOf(x.getName())); o.put("optional", KtApkPlan.optional(x.getName())); a.put(o); } return a; }
+    /** A bundle's game data (Android/obb/<package>/…): put where the game reads it — straight into Android/obb when
+     *  the system allows it, else into Download/obb/<package> to be moved there by hand. */
+    static JSONObject copyObb(Context ctx, File f, String pkg) throws Exception {
+        JSONObject r = new JSONObject(); int n = 0; File root = android.os.Environment.getExternalStorageDirectory();
+        File direct = new File(root, "Android/obb/" + pkg); File fallback = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "obb/" + pkg);
+        boolean useDirect = (direct.isDirectory() || direct.mkdirs()) && direct.canWrite(); File to = useDirect ? direct : fallback; to.mkdirs();
+        try (ZipFile z = new ZipFile(f)) { Enumeration<? extends ZipEntry> e = z.entries(); while (e.hasMoreElements()) { ZipEntry x = e.nextElement(); String nm = x.getName(); if (x.isDirectory() || !nm.toLowerCase(Locale.ROOT).endsWith(".obb")) continue; File out = new File(to, nm.replaceAll(".*/", "")); try (InputStream in = z.getInputStream(x); OutputStream os = new FileOutputStream(out)) { copy(in, os, null); } n++; } }
+        r.put("copied", n); r.put("to", to.getAbsolutePath()); r.put("direct", useDirect); return r;
+    }
+
     static String png(Drawable d) { Bitmap b; if (d instanceof BitmapDrawable && ((BitmapDrawable) d).getBitmap() != null) b = ((BitmapDrawable) d).getBitmap(); else { int w = Math.max(1, Math.min(192, d.getIntrinsicWidth() > 0 ? d.getIntrinsicWidth() : 144)), h = Math.max(1, Math.min(192, d.getIntrinsicHeight() > 0 ? d.getIntrinsicHeight() : 144)); b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(b); d.setBounds(0, 0, w, h); d.draw(c); } ByteArrayOutputStream o = new ByteArrayOutputStream(); b.compress(Bitmap.CompressFormat.PNG, 100, o); return "data:image/png;base64," + Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP); }
 
     /** One install session: the APK (or every chosen split of a bundle) written into it with progress, then
@@ -140,7 +199,10 @@ final class KtApk {
                 if (wrote[0] < want.size()) throw new Exception("missingParts " + wrote[0] + "/" + want.size());
             } else if (isBundle(f)) {
                 try (ZipFile z = new ZipFile(f)) {
-                    List<ZipEntry> apks = chosen(z); long total = 0; for (ZipEntry x : apks) total += Math.max(0, x.getSize()); final long[] done = { 0 }; final long T = total;
+                    List<ZipEntry> apks = chosen(z);
+                    // (Parts chosen in the sheet — languages or densities left out — when it gave them.)
+                    if (partList != null && partList.length() > 0) { java.util.Set<String> want = new java.util.HashSet<>(); for (int k = 0; k < partList.length(); k++) want.add(partList.getString(k)); List<ZipEntry> keep = new ArrayList<>(); Enumeration<? extends ZipEntry> en = z.entries(); while (en.hasMoreElements()) { ZipEntry x = en.nextElement(); if (want.contains(x.getName())) keep.add(x); } if (!keep.isEmpty()) apks = keep; }
+                    long total = 0; for (ZipEntry x : apks) total += Math.max(0, x.getSize()); final long[] done = { 0 }; final long T = total;
                     for (ZipEntry x : apks) { String name = x.getName().replaceAll(".*/", ""); try (InputStream in = z.getInputStream(x); OutputStream os = s.openWrite(name, 0, x.getSize() > 0 ? x.getSize() : -1)) { copy(in, os, (k) -> { done[0] += k; progress(ev, id, done[0], T); }); s.fsync(os); } }
                 }
             } else {

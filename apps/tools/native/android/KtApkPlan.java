@@ -68,4 +68,17 @@ final class KtApkPlan {
         if (out.isEmpty() && !select.startsWith("apk:")) for (Entry e : entries) if (isApk(e.path)) out.add(e);
         return out;
     }
+
+    /** What a part of a split app is: the base, a processor's native code, a screen density's pictures, a
+     *  language's texts, or a feature of its own. */
+    static String kindOf(String path) {
+        String n = lower(name(path)); if (n.equals("base.apk") || !isSplitPart(path)) return "base";
+        if (abiOf(path) != null) return "abi";
+        String q = n.replaceAll("\\.apk$", "").replaceAll("^(split_)?config\\.", "").replaceAll("^.*\\.config\\.", "");
+        if (q.matches("(l|m|tv|h|xh|xxh|xxxh|no|any)dpi")) return "density";
+        if (q.matches("[a-z]{2,3}(_[a-z0-9]{2,4})?")) return "lang";
+        return "feature";
+    }
+    /** Whether a part may be left out by choice (languages and densities; the base, code and features must go). */
+    static boolean optional(String path) { String k = kindOf(path); return k.equals("lang") || k.equals("density"); }
 }

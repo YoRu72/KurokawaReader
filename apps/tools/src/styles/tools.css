@@ -491,3 +491,17 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .task-bar.indet i { width: 35% !important; animation: kt-indet 1.2s ease-in-out infinite; }
 @keyframes kt-indet { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
 html[dir='rtl'] .task-bar.indet i { animation-direction: reverse; }
+
+/* The app installer up close: its details, permissions (the sensitive ones marked), a bundle's parts. */
+.apk-details { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.apk-details .kv { margin: 0; }
+.apk-details code { font-size: 12.5px; }
+.apk-perms, .apk-parts { border-radius: 14px; background: var(--md-surface-container); padding: 6px 12px; }
+.apk-perms > summary, .apk-parts > summary { min-height: 40px; display: flex; align-items: center; cursor: pointer; font-weight: 600; }
+.apk-perms ul { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.apk-perms li { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 8px; font-size: 14px; }
+.apk-perms li > small { grid-column: 2; font-size: 11.5px; opacity: .7; }
+.apk-perms li.danger { color: var(--md-error); }
+.apk-perms li svg { width: 16px; height: 16px; }
+.apk-perms li:not(.danger) > span:first-child { grid-column: 1 / span 2; }
+.plan-note.bad .btn { margin-top: 8px; }

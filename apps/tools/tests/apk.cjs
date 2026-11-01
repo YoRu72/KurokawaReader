@@ -22,9 +22,10 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
         if (!o.password) throw new Error('password');
         if (o.password !== 'right') throw new Error('password');
         if (!o.select) return { choose: [{ select: 'bundle:Game.xapk', label: 'Game.xapk', size: 4e8 }, { select: 'apk:Tools/Other.apk', label: 'Other.apk', size: 2e7 }] };
-        return { select: o.select, parts: ['base.apk', 'split_config.arm64_v8a.apk'], container: true, package: 'com.example.game', version: '1.2', versionCode: 12, label: 'Game', change: 'new', splits: 2, size: 4e8, bundle: true, supported: true, free: 5e8 };
+        return { select: o.select, parts: ['base.apk', 'split_config.arm64_v8a.apk', 'split_config.ar.apk'], partsAll: [{ name: 'base.apk', size: 3e8, kind: 'base', optional: false }, { name: 'split_config.arm64_v8a.apk', size: 9e7, kind: 'abi', optional: false }, { name: 'split_config.ar.apk', size: 1e6, kind: 'lang', optional: true }, { name: 'split_config.xxhdpi.apk', size: 2e6, kind: 'density', optional: true }], targetSdk: 35, minSdk: 24, abis: ['arm64-v8a'], abiFits: true, deviceAbis: ['arm64-v8a'], permissions: [{ name: 'android.permission.INTERNET', danger: false }, { name: 'android.permission.CAMERA', danger: true, label: 'take pictures and videos' }], riskyPermissions: 1, signer: 'AB'.repeat(32), sameSigner: false, installed: '1.1', container: true, package: 'com.example.game', version: '1.2', versionCode: 12, label: 'Game', change: 'upgrade', splits: 3, size: 4e8, bundle: true, supported: true, free: 5e8 };
       },
       pickFile: async () => ({ paths: ['/storage/emulated/0/Download/Picked.apk'] }), archiveList: async () => ({}),
+      uninstallApp: async (o) => { window.__calls.push(['uninstall', o]); }, appInstalled: async () => ({ installed: true }),
       apkInstall: async (o) => { window.__calls.push(['install', o]); setTimeout(() => (listeners.apkInstall || []).forEach((f) => f({ id: o.id, status: 'success', package: 'com.example.game' })), 50); },
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -43,6 +44,13 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   check('from the archive, nothing extracted', /straight from the archive/i.test(body));
   check('low room warned of', /may not have room/i.test(body));
   check('the archive is what may be deleted', /Delete the archive once installed/.test(body));
+  check('another signer: said, and the way out offered', /signed by someone other/.test(body) && !!(await p.$('.sheet .plan-note.bad button')));
+  check('details: Android, processors, signer', /Android 7/.test(body) && /Android 15/.test(body) && /arm64-v8a/.test(body) && /AB:AB:AB/.test(body));
+  await p.click('.sheet .apk-perms summary'); check('permissions, the sensitive one marked', (await p.$$('.sheet .apk-perms li.danger')).length === 1 && /Take pictures/.test(await p.$eval('.sheet .apk-perms', (e) => e.innerText)));
+  await p.click('.sheet .plan-note.bad button'); await p.waitForTimeout(100); check('uninstall asked of the system', await p.evaluate(() => window.__calls.some((c) => c[0] === 'uninstall' && c[1].pkg === 'com.example.game')));
+  await p.click('.sheet .apk-parts summary'); const partBoxes = await p.$$eval('.sheet .apk-parts input', (e) => e.map((x) => [x.checked, x.disabled]));
+  console.log('parts:', JSON.stringify(partBoxes)); check('a bundle\'s parts: the needed ones locked, languages and densities free', partBoxes.length === 4 && partBoxes[0][1] && partBoxes[1][1] && !partBoxes[2][1] && partBoxes[2][0] && !partBoxes[3][0]);
+  await p.click('.sheet .apk-parts label >> nth=2 >> input');
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'install'));
   const inst = await p.evaluate(() => window.__calls.find((c) => c[0] === 'install')[1]); console.log('install:', JSON.stringify(inst));
   check('install handed the password, the choice and the parts', inst.password === 'right' && inst.select === 'bundle:Game.xapk' && JSON.stringify(inst.parts) === '["base.apk","split_config.arm64_v8a.apk"]' && inst.path === '/sdcard/Download/Games.apks');
