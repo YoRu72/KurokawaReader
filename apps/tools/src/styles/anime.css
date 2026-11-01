@@ -217,3 +217,10 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .bar-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .bar-row i { display: block; height: 8px; border-radius: 4px; background: var(--md-primary); }
 .provider-chips .chip.needs { color: var(--md-tertiary, var(--md-primary)); cursor: pointer; border: 1px dashed currentColor; } .provider-chips .chip.needs svg, .provider-chips .chip.failed svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; margin-inline-end: 4px; }
+/* An episode tapped: its sheet; downloads' progress on the rows */
+.ep-row[role=button] { cursor: pointer; } .ep-row[role=button]:hover { background: var(--md-surface-container-high); }
+.ep-row .ep-prog { margin-top: 5px; max-width: 260px; } .task-bar.paused i { background: var(--md-outline); }
+.ep-sheet-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; } .ep-sheet-head img { width: 112px; aspect-ratio: 16/9; object-fit: cover; border-radius: 10px; }
+.ep-sheet-prog { display: grid; gap: 4px; margin: 0 0 8px; }
+.ep-sheet .dest-row .grow { display: grid; gap: 2px; text-align: start; } .ep-sheet .dest-row.primary { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: 14px; }
+.watch-card .task-bar { margin-top: 8px; }

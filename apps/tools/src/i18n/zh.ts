@@ -76,4 +76,6 @@ export const zh: Partial<Strings> = {
   searchAgain: "再次搜索", subsNeedsKey: "需要密钥", subsKeyHint: "{name} 只接受你自己的密钥（可在其网站免费获取）：", subsCheck: "验证", subsCheckHint: "通过网站验证后关闭窗口，即会重新搜索。",
   appCrashTitle: "上次应用意外关闭", crashHint: "此报告说明了原因，发送它有助于修复。", crashCopy: "复制报告", crashSend: "在 GitHub 上报告",
   grabInBrowser: "在浏览器中打开页面", browserShort: "浏览器", grabNothing: "按原样读取的页面中什么也没找到，其链接可能由脚本生成。请在浏览器中打开并点击“抓取”。", grabOther: "其他链接", browseTitle: "浏览网页", browseHint: "打开网站，其下载和链接会来到这里", errPage: "网站返回了网页而不是文件（验证或登录）。请先在浏览器中打开一次，然后重试。", errPageShort: "收到的是网页而不是文件", openInBrowser: "在浏览器中打开", browsePh: "网址或搜索词", browseRecent: "最近", browseGo: "打开",
+  watchNeedsApp: "边下边看需要手机或电脑上的应用。", watchFinding: "正在寻找最佳版本…", watchNone: "未找到这一集的版本。", watchMeta: "正在获取种子信息", watchOpening: "正在打开播放器…", peersN: "{n} 个节点", epStreamHint: "边下载边播放", epWatchNow: "立即观看", epWatchNowHint: "最佳版本，边下边播", epOnlineHint: "通过流媒体扩展", epDownloadBest: "下载最佳版本", epDownloadBestHint: "按你对本作的设置（画质、字幕组…）", epChoose: "选择版本", epChooseHint: "从所有来源的结果中挑选",
+  animeLookup: "同等版本中优先", lookupQuality: "最佳画质", lookupSize: "最小体积", lookupSeeders: "做种最多",
 };

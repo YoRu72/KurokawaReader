@@ -68,6 +68,8 @@ export interface Settings {
   sounds?: import('./downloads/done').SoundPrefs;
   net?: Partial<import('./downloads/net').NetPrefs>;
   miniAuto?: boolean;
+  /** Hayase's lookup preference: among equally good releases, the best quality, the smallest, or the most seeded. */
+  animeLookup?: 'quality' | 'size' | 'seeders';
   /** The antivirus check after a download (the computer): which scanner, a command of one's own, which kinds of file. */
   /** Hugging Face: the server (or a mirror), the access token, the models folder. */
   hf?: import('./hf/hf').HfPrefs;

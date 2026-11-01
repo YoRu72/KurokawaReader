@@ -76,4 +76,6 @@ export const ko: Partial<Strings> = {
   searchAgain: "다시 검색", subsNeedsKey: "키 필요", subsKeyHint: "{name}은(는) 본인 키로만 응답합니다(사이트에서 무료 발급):", subsCheck: "확인", subsCheckHint: "사이트 확인을 통과한 뒤 창을 닫으면 다시 검색합니다.",
   appCrashTitle: "지난번에 앱이 예기치 않게 종료되었습니다", crashHint: "이 보고서에 원인이 있습니다. 보내 주시면 수정에 도움이 됩니다.", crashCopy: "보고서 복사", crashSend: "GitHub에 신고",
   grabInBrowser: "브라우저에서 페이지 열기", browserShort: "브라우저", grabNothing: "읽은 페이지에서 아무것도 찾지 못했습니다. 링크가 스크립트로 그려질 수 있습니다. 브라우저에서 열고 “가져오기”를 누르세요.", grabOther: "기타 링크", browseTitle: "웹 둘러보기", browseHint: "사이트를 열면 다운로드와 링크가 여기로 옵니다", errPage: "사이트가 파일 대신 웹 페이지를 보냈습니다(확인 또는 로그인). 브라우저에서 한 번 연 뒤 다시 시도하세요.", errPageShort: "파일 대신 페이지가 왔습니다", openInBrowser: "브라우저에서 열기", browsePh: "주소 또는 검색어", browseRecent: "최근", browseGo: "열기",
+  watchNeedsApp: "받으면서 보기는 휴대폰이나 컴퓨터 앱이 필요합니다.", watchFinding: "가장 좋은 릴리스를 찾는 중…", watchNone: "이 에피소드의 릴리스를 찾지 못했습니다.", watchMeta: "토렌트 정보를 가져오는 중", watchOpening: "플레이어를 여는 중…", peersN: "피어 {n}", epStreamHint: "나머지를 받으면서 재생", epWatchNow: "지금 보기", epWatchNowHint: "가장 좋은 릴리스를 받으면서 재생", epOnlineHint: "스트리밍 확장으로", epDownloadBest: "가장 좋은 릴리스 받기", epDownloadBestHint: "이 작품 설정(화질, 그룹…)에 따라", epChoose: "릴리스 고르기", epChooseHint: "모든 소스의 결과에서 고르기",
+  animeLookup: "비슷한 릴리스 중에서는", lookupQuality: "최고 화질", lookupSize: "가장 작은 크기", lookupSeeders: "시드가 가장 많은",
 };

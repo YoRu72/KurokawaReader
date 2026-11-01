@@ -38,6 +38,12 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   console.log('results:', await p.$$eval('.torrent-list .result-row .result-title', (e) => e.map((x) => x.textContent)).then((x) => x.join(' | ')));
   await p.screenshot({ path: 'shot-anime-torrents.png' });
   await p.click('.switch-row.small input'); console.log('unfiltered:', await p.$$eval('.torrent-list .result-row', (e) => e.length));
+  // An episode tapped: its sheet with Watch now, Download the best release, Choose a release.
+  await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.locator('.ep-row:not(.future)').nth(2).locator('.ep-title').click(); await p.waitForSelector('.ep-sheet .dest-row'); await p.waitForTimeout(400);
+  const epRows = await p.$$eval('.ep-sheet .dest-row', (r) => r.map((x) => x.innerText.split('\n')[0]));
+  console.log('episode sheet:', epRows.join(' | '));
+  if (!epRows.some((x) => /Watch now/.test(x)) || !epRows.some((x) => /Choose a release/.test(x))) errors.push('episode sheet');
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); repo.close(); process.exit(errors.length ? 1 : 0);
 })();
