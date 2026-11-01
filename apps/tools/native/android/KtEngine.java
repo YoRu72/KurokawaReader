@@ -172,6 +172,7 @@ final class KtEngine {
                 try { for (Task x : snapshot()) if ("torrent".equals(x.kind) && x.th == null && x.infoHash != null && !x.infoHash.isEmpty()) { TorrentHandle h = session.find(org.libtorrent4j.Sha1Hash.parseHex(x.infoHash)); if (h != null) { x.th = h; applyOwn(x); if (x.paused) h.pause(); } } } catch (Throwable ignored) {}
                 try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Throwable ignored) {}
                 try { if (System.currentTimeMillis() % 600000 < 700) saveDht(); } catch (Throwable ignored) {}
+                try { releaseOthers(); } catch (Throwable ignored) {}
                 // (Resume data saved now and then, so a kill loses little.)
                 try { if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } catch (Throwable ignored) {}
             }
@@ -286,6 +287,16 @@ final class KtEngine {
         try { TorrentStatus st = x.th.status(); o.put("seeds", st.numSeeds()); o.put("peersConnected", st.numPeers()); o.put("seedsInSwarm", st.listSeeds()); o.put("peersInSwarm", st.listPeers()); o.put("ratio", st.allTimeDownload() > 0 ? (double) st.allTimeUpload() / st.allTimeDownload() : 0); } catch (Throwable ignored) {}
         return o;
     }
+    /* ---------- watching first: while a stream is read, the other torrents wait (a trickle each) ---------- */
+    private volatile long streamAt = 0; private volatile String streamHash = null; private volatile boolean othersHeld = false;
+    void streaming(TorrentHandle th) {
+        streamAt = System.currentTimeMillis();
+        try { String hsh = th.infoHash().toHex(); if (othersHeld && hsh.equals(streamHash)) return; streamHash = hsh; othersHeld = true;
+            for (Task x : snapshot()) if (x.th != null && x.th.isValid() && !hsh.equals(x.infoHash)) x.th.setDownloadLimit(48 * 1024);
+        } catch (Throwable e) { Log.w(TAG, "streaming", e); }
+    }
+    /** No stream read for a minute: the others back to their own limits. */
+    private void releaseOthers() { if (!othersHeld || System.currentTimeMillis() - streamAt < 60000) return; othersHeld = false; streamHash = null; for (Task x : snapshot()) applyOwn(x); }
     void recheck(String id) { Task x = task(id); if (x != null && x.th != null && x.th.isValid()) { x.th.forceRecheck(); x.state = "checking"; tell(true); } }
     void reannounce(String id) { Task x = task(id); if (x != null && x.th != null && x.th.isValid()) { x.th.forceReannounce(); try { x.th.swig().force_dht_announce(); } catch (Throwable ignored) {} } }
     void setTaskLimits(String id, int down, int up) { Task x = task(id); if (x == null) return; x.limitDown = Math.max(0, down); x.limitUp = Math.max(0, up); applyOwn(x); persist(); tell(true); }
@@ -320,6 +331,11 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.dht_upload_rate_limit.swigValue(), 50000);
         sp.setInteger(settings_pack.int_types.max_peerlist_size.swigValue(), 4000);
         sp.setBoolean(settings_pack.bool_types.smooth_connects.swigValue(), false);
+        // (TCP before µTP when a peer has both — µTP backs off sooner, and phones see slower µTP than TCP — and
+        // bigger socket buffers, so a fast peer is not held back by a small window.)
+        sp.setInteger(settings_pack.int_types.mixed_mode_algorithm.swigValue(), settings_pack.bandwidth_mixed_algo_t.prefer_tcp.swigValue());
+        sp.setInteger(settings_pack.int_types.recv_socket_buffer_size.swigValue(), 1 << 20);
+        sp.setInteger(settings_pack.int_types.send_socket_buffer_size.swigValue(), 1 << 20);
     }
     /** The DHT's nodes kept for the next start. */
     void saveDht() {
@@ -519,7 +535,7 @@ final class KtEngine {
             if (x.th == null || !x.th.isValid()) continue;
             try {
                 TorrentStatus st = x.th.status();
-                x.done = st.totalWantedDone(); x.total = st.totalWanted() > 0 ? st.totalWanted() : st.total(); x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.peers = st.numPeers(); x.seeds = st.numSeeds();
+                x.done = st.totalWantedDone(); x.total = st.totalWanted() > 0 ? st.totalWanted() : st.total(); x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.seeds = st.numSeeds(); x.peers = Math.max(0, st.numPeers() - x.seeds);   // (libtorrent's peers count the seeds too)
                 if (x.name == null || x.name.isEmpty() || "magnet".equals(x.name)) { String n = st.name(); if (n != null && !n.isEmpty()) x.name = n; }
                 if (x.paused) x.state = "paused";
                 else if (st.errorCode() != null && st.errorCode().isError()) { x.state = "failed"; x.error = st.errorCode().getMessage(); }

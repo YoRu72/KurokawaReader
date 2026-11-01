@@ -78,3 +78,14 @@ export async function createAssRenderer(video: HTMLVideoElement, canvas: HTMLCan
   const r = new J({ video, canvas, subContent: content, workerUrl: `${base}jassub-worker.js`, wasmUrl: `${base}jassub-worker.wasm`, fonts, fallbackFont: 'liberation sans', availableFonts: { 'liberation sans': `${base}default.woff2`, ...extra }, prescaleFactor: 0.8, dropAllAnimations: false });
   return { setTrack: (c) => r.setTrack(c), free: () => r.destroy(), setOffset: (s) => { r.timeOffset = s; }, resize: () => r.resize() };
 }
+
+const LANG3: Record<string, string> = { ara: 'ar', eng: 'en', jpn: 'ja', jap: 'ja', spa: 'es', fre: 'fr', fra: 'fr', ger: 'de', deu: 'de', por: 'pt', ita: 'it', rus: 'ru', chi: 'zh', zho: 'zh', chs: 'zh', cht: 'zh', kor: 'ko', ind: 'id', tur: 'tr', per: 'fa', fas: 'fa', hin: 'hi', vie: 'vi', tha: 'th', pol: 'pl', dut: 'nl', nld: 'nl', may: 'ms', msa: 'ms', urd: 'ur' };
+const LANG_WORDS: [RegExp, string][] = [[/arabic|عربي/i, 'ar'], [/english/i, 'en'], [/japanese/i, 'ja'], [/spanish|español|latino/i, 'es'], [/french|français/i, 'fr'], [/german|deutsch/i, 'de'], [/portuguese|português|brazil/i, 'pt'], [/italian/i, 'it'], [/russian/i, 'ru'], [/chinese|简体|繁體/i, 'zh'], [/korean/i, 'ko'], [/indonesian/i, 'id'], [/turkish/i, 'tr'], [/persian|farsi/i, 'fa'], [/vietnamese/i, 'vi'], [/thai\b/i, 'th']];
+/** A subtitle track's language: its own tag, else read from its name — «x.ar.srt», «x.eng.ass», «[Arabic]». */
+export function langOfTrack(tr: { lang?: string; name: string }): string | undefined {
+  const tag = (tr.lang ?? '').toLowerCase().split(/[-_]/)[0]; if (tag) return LANG3[tag] ?? (tag.length === 2 ? tag : undefined);
+  for (const [re, l] of LANG_WORDS) if (re.test(tr.name)) return l;
+  const parts = tr.name.toLowerCase().replace(/\.(srt|ass|ssa|vtt|sub|txt)$/, '').split(/[.\s_\[\]()-]+/).reverse();
+  for (const p of parts.slice(0, 3)) { if (LANG3[p]) return LANG3[p]; if (/^[a-z]{2}$/.test(p) && ['ar', 'en', 'ja', 'es', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'id', 'tr', 'fa', 'hi', 'vi', 'th', 'pl', 'nl', 'ms', 'ur'].includes(p)) return p; }
+  return undefined;
+}

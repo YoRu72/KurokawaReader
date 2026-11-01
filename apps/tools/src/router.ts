@@ -38,9 +38,19 @@ export function navigate(path: string, replace = false): void {
   if (replace) { move = 'replace'; stack[stack.length - 1] = path; location.replace(target); return; }
   pushing = path; location.hash = target;
 }
-/** Back to the view this one was opened from; `fallback` when there is none. */
+/** The part of the app a place belongs to (the tab it lives under). */
+export function sectionOf(path: string): string {
+  const p = path.split('?')[0];
+  if (p.startsWith('/anime')) return 'anime'; if (p.startsWith('/tv')) return 'tv'; if (p.startsWith('/subs')) return 'subs';
+  if (p.startsWith('/settings') || p.startsWith('/addons')) return 'settings'; if (p.startsWith('/search')) return 'search';
+  return 'downloads';
+}
+/** Up from this view: to the one it was opened from when that is in the same part of the app (a show opened from
+ *  its list), else to `fallback`, its part's own top — never into another tab's past, which made Back go round
+ *  between two tabs. */
 export function back(fallback = '/'): void {
-  if (stack.length > 1) { history.back(); return; }
+  const prev = stack[stack.length - 2];
+  if (stack.length > 1 && prev !== undefined && sectionOf(prev) === sectionOf(current()) && prev !== current()) { history.back(); return; }
   navigate(fallback, true);
 }
 window.addEventListener('hashchange', () => {

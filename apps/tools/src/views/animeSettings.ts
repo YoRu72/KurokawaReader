@@ -22,7 +22,9 @@ async function captureAddress(url: string, marker: string, title: string): Promi
   return undefined;
 }
 
-export function animeSettingsCard(rerender: () => void): HTMLElement {
+/** The AniList account (Settings shows it on its own, near the top, once the Anime add-on is in): linked, who it is
+ *  and the progress sent by itself; else how to link it. */
+export function anilistCard(rerender: () => void): HTMLElement {
   const s = getSettings(); const u = al.user();
   const acct: HTMLElement[] = [];
   if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))),
@@ -41,6 +43,11 @@ export function animeSettingsCard(rerender: () => void): HTMLElement {
       } }, icon('external'), t('anilistSignIn'))),
       tk, h('div', null, h('button', { type: 'button', class: 'btn primary small', onclick: () => void linkWith(tk.value) }, icon('check'), t('anilistLink'))));
   }
+  return card('anilist', 'AniList', h('p', { class: 'hint' }, t('anilistCardHint')), ...acct);
+}
+
+export function animeSettingsCard(rerender: () => void): HTMLElement {
+  const s = getSettings();
   const prefs = [
     row(t('animeQuality'), pickButton(t('animeQuality'), [['', t('unlimited')], ['2160', '2160p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']], s.animeQuality, (v) => updateSettings({ animeQuality: v as '' }), t('close'))),
     h('label', { class: 'row switch-row' }, h('span', null, t('animePreloadNext'), h('small', { class: 'src' }, t('animePreloadNextHint'))), h('input', { type: 'checkbox', checked: getSettings().animePreloadNext !== false, onchange: (e: Event) => updateSettings({ animePreloadNext: (e.target as HTMLInputElement).checked }) })),
@@ -68,7 +75,7 @@ export function animeSettingsCard(rerender: () => void): HTMLElement {
   const urlIn = h('input', { type: 'url', placeholder: 'https://…/index.json', dir: 'ltr', class: 'grow' }) as HTMLInputElement;
   const addBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const u = urlIn.value.trim(); if (!u) return; addBtn.disabled = true; try { const r = await installRepo(u); toast(t('animeRepoAdded', { what: countSources(r.length) })); urlIn.value = ''; rerender(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } finally { addBtn.disabled = false; } } }, icon('plus'), t('animeRepoAdd')) as HTMLButtonElement;
   const repos = getSettings().animeRepos.map((u) => h('div', { class: 'repo-row' }, h('span', { class: 'src grow', dir: 'ltr' }, u), iconButton('trash', t('animeRepoRemove'), async () => { const ps = await providers(); for (const p of ps) if (p.repo === u) await removeProvider(p.id); updateSettings({ animeRepos: getSettings().animeRepos.filter((x) => x !== u) }); rerender(); })));
-  return card('anime', t('navAnime'), ...acct, ...prefs,
+  return card('anime', t('navAnime'), ...prefs,
     h('h4', null, t('animeProviders')), list, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const n = await updateAll(); toast(t('animeRepoAdded', { what: countSources(n) })); void drawList(); } finally { b.disabled = false; } } }, icon('refresh'), t('animeProvidersUpdate'))),
     h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => marketSheet(() => void drawList()) }, icon('apps'), t('animeMarket'))),
     h('h4', null, t('animeRepos')), h('p', { class: 'hint' }, t('animeReposHint')), ...repos, h('div', { class: 'repo-add' }, urlIn, addBtn));

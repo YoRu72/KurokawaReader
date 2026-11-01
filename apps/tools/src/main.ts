@@ -147,6 +147,8 @@ else {
   void import('./downloads/net').then((m) => m.applyNet());
   // (Public trackers for torrents, refreshed daily, handed to the phone's engine.)
   void import('./downloads/trackers').then((m) => m.startTrackers());
+  // (Watched episodes let go after the days chosen.)
+  if (getSettings().addons.includes('anime') || getSettings().addons.includes('tv')) void import('./downloads/episodeCache').then((m) => m.startEpisodeCache());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
   if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
   onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
@@ -157,6 +159,14 @@ else {
 
   // Android's back: the native side asks the page (through the plugin's `backButton` event when present).
   window.addEventListener('kt:back', () => { if (!goBack()) (window.Capacitor?.Plugins?.App as { exitApp?(): void } | undefined)?.exitApp?.(); });
+  // (Android's own back, taken from the WebView — which otherwise stepped back through every tab switched to,
+  // round and round between two of them —: the open sheet first, then up a level, then the downloads; only from
+  // the downloads' top does the app go to the background.)
+  if (window.Capacitor?.isNativePlatform?.() && window.Capacitor.getPlatform?.() === 'android') {
+    type AppPlugin = { addListener(ev: 'backButton', fn: () => void): Promise<unknown>; minimizeApp(): Promise<void>; exitApp(): Promise<void> };
+    const App = (window.Capacitor.Plugins?.App ?? window.Capacitor.registerPlugin?.('App')) as AppPlugin | undefined;
+    if (App) void App.addListener('backButton', () => { if (!goBack()) void App.minimizeApp().catch(() => App.exitApp()); }).catch(() => undefined);
+  }
   // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
   if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }

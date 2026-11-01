@@ -9,7 +9,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
 import { getPrefs, updatePrefs, memoryOf, remember, type PlayerPrefs } from './prefs';
-import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, type Cue, type AssRenderer } from './subs';
+import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, type Cue, type AssRenderer } from './subs';
 import { request } from '../http';
 import { siblingFiles, readLocal } from './files';
 
@@ -87,7 +87,7 @@ export function openPlayer(src: PlayerSource): void {
   const frameStep = (n: number) => { video.pause(); video.currentTime = Math.max(0, video.currentTime + n / 30); };
   function flashText(s: string, long = false) { flash.textContent = s; flash.classList.add('on'); window.clearTimeout((flash as HTMLElement & { _t?: number })._t); (flash as HTMLElement & { _t?: number })._t = window.setTimeout(() => flash.classList.remove('on'), long ? 1400 : 700); }
   let preloadSent = false;
-  function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); if (m?.imdbId) void import('../tv/library').then((l) => l.markWatched(m.imdbId!, m.season, m.episode)); void end; }
+  function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); void import('../downloads/episodeCache').then((c) => c.noteWatched(src.task)); const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); if (m?.imdbId) void import('../tv/library').then((l) => l.markWatched(m.imdbId!, m.season, m.episode)); void end; }
   function askResume(pos: number) { const sh = openSheet(t('resumeTitle'), t('close')); sh.body.append(h('p', null, t('resumeBody', { t: fmtTime(pos) }))); sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); } }, t('resumeFromStart')), h('button', { type: 'button', class: 'btn primary', onclick: () => { video.currentTime = pos; sh.close(); } }, t('resumeContinue'))); }
   function neighbour(dir: number) { const list = src.playlist ?? []; const i = list.findIndex((x) => x.url === src.url); const nx = getPrefs().shuffle && dir > 0 && list.length > 1 ? list.filter((x) => x.url !== src.url)[Math.floor(Math.random() * (list.length - 1))] : list[i + dir]; if (!nx) { toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); return; } close(); openPlayer({ ...nx, playlist: list }); }
 
@@ -178,7 +178,17 @@ export function openPlayer(src: PlayerSource): void {
     if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, [], own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
-  function cycleSub() { if (!tracks.length) { void subsSheet(); return; } const i = current ? tracks.indexOf(current) : -1; const nx = tracks[i + 1] ?? null; void useTrack(nx); flashText(nx ? nx.name : t('subsOff')); }
+  function cycleSub() { chosenByHand = true; if (!tracks.length) { void subsSheet(); return; } const i = current ? tracks.indexOf(current) : -1; const nx = tracks[i + 1] ?? null; void useTrack(nx); flashText(nx ? nx.name : t('subsOff')); }
+  // (The subtitle in the first of the preferred languages that came is the one shown — unless one was chosen by
+  // hand, or this video's own choice was remembered.)
+  let chosenByHand = false;
+  const langRank = (tr: SubTrack): number => { const l = langOfTrack(tr); const i = l ? getSettings().subLangs.indexOf(l) : -1; return i < 0 ? 999 : i; };
+  function offer(tr: SubTrack, fallback: boolean): void {
+    if (chosenByHand) return;
+    if (mem?.sub && current?.id === mem.sub) return;
+    if (mem?.sub === tr.id) { void useTrack(tr); return; }
+    if (!current ? langRank(tr) < 999 || fallback : langRank(tr) < langRank(current)) void useTrack(tr);
+  }
   async function addTrackFromBytes(name: string, bytes: Uint8Array, lang?: string): Promise<SubTrack | null> {
     const text = decodeSubtitle(bytes, getPrefs().subCodepage || undefined); const fmt = sniffFormat(name, text);
     if (fmt === 'unknown') { toast(t('subsUnknownFormat', { name }), 'error'); return null; }
@@ -187,14 +197,14 @@ export function openPlayer(src: PlayerSource): void {
   }
   async function loadSubtitleUrl(url: string, name: string, lang?: string) { try { const r = await request(url, { binary: true }); if (r.status >= 400) throw new Error(`HTTP ${r.status}`); const bytes = Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)); const tr = await addTrackFromBytes(name, bytes, lang); if (tr) { await useTrack(tr); toast(t('subsLoaded', { name })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
   // Subtitles that came with an online source: the default one (or the only one) turned on.
-  void (async () => { const subs = src.subtitles ?? []; for (const sb of subs.slice(0, 12)) { try { const r = await request(sb.url, { binary: true }); if (r.status >= 400) continue; const tr = await addTrackFromBytes(sb.name, Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)), sb.lang); if (tr && !current && (sb.isDefault || subs.length === 1)) void useTrack(tr); } catch { /* one missing */ } } })();
+  void (async () => { const subs = src.subtitles ?? []; for (const sb of subs.slice(0, 12)) { try { const r = await request(sb.url, { binary: true }); if (r.status >= 400) continue; const tr = await addTrackFromBytes(sb.name, Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)), sb.lang); if (tr) offer(tr, !!sb.isDefault || subs.length === 1); } catch { /* one missing */ } } })();
   // Subtitles beside a local file (same base name) are offered first.
-  void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr && !current && (mem?.sub === tr.id || list.length === 1)) void useTrack(tr); } } })();
+  void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr) offer(tr, list.length === 1); } } })();
 
   async function subsSheet() {
     const sh = openSheet(t('navSubs'), t('close')); const p = getPrefs();
-    const list = h('div', { class: 'dest-list' }, h('label', { class: 'dest-row' + (!current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: !current, onchange: () => void useTrack(null) }), icon('close'), h('span', { class: 'name' }, t('subsOff'))),
-      ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => void useTrack(tr) }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton('bookmark', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); }))));
+    const list = h('div', { class: 'dest-list' }, h('label', { class: 'dest-row' + (!current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: !current, onchange: () => { chosenByHand = true; void useTrack(null); } }), icon('close'), h('span', { class: 'name' }, t('subsOff'))),
+      ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => { chosenByHand = true; void useTrack(tr); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton('bookmark', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); }))));
     const fileIn = h('input', { type: 'file', accept: '.srt,.ass,.ssa,.vtt,.sub,.txt', hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')));
@@ -322,6 +332,8 @@ export function openPlayer(src: PlayerSource): void {
   // ---- closing
   function close() {
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
+    // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
+    if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
     window.clearInterval(ambTimer); video.pause(); ass?.free(); try { ctx?.close(); } catch { /* ignore */ } video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }

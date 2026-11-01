@@ -46,6 +46,13 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   await p.locator('.pick-files .pick-tools .chip', { hasText: 'Episodes only' }).click(); await p.click('.pick-files .btn.primary'); await p.waitForFunction(() => window.__added.length === 2);
   a = await p.evaluate(() => window.__added[1]); console.log('added:', JSON.stringify(a.files));
   check('episodes only: the three, no sample', JSON.stringify(a.files) === '[0,1,2]');
+  // Held (a right click here): the episode's options.
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.dispatchEvent('.ep-row >> nth=2', 'contextmenu'); await p.waitForSelector('.ep-menu .dest-row');
+  const opts = await p.$$eval('.ep-menu .dest-row', (r) => r.map((x) => x.innerText.trim())); console.log('held:', opts.join(' | '));
+  check('holding an episode opens its options', opts.some((x) => /Watch now/.test(x)) && opts.some((x) => /Mark watched up to episode 3/.test(x)));
+  await p.locator('.ep-menu .dest-row', { hasText: 'Mark watched up to' }).click(); await p.waitForTimeout(300);
+  check('marked watched up to it', (await p.$$('.ep-row.seen')).length === 3);
   check('no page errors', !errors.filter((e) => e !== 'no page errors').length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

@@ -32,7 +32,7 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
   const addSheet = await p.evaluate(() => [document.querySelector('.sheet textarea').value, document.querySelector('.sheet input[type=text]')?.value]);
   console.log('add sheet:', addSheet);
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove())); await p.waitForTimeout(200);
-  await p.click('.fab'); await p.waitForSelector('.fab-item'); await p.locator('.fab-item').last().click(); await p.waitForSelector('.sheet .search-input');
+  await p.click('.fab'); await p.waitForSelector('.fab-item'); await p.click('.fab-item[data-act="globe"]'); await p.waitForSelector('.sheet .search-input');
   await p.fill('.sheet .search-input', 'pawchive.example'); await p.press('.sheet .search-input', 'Enter'); await p.waitForTimeout(300);
   console.log('sheet title:', await p.$eval('.sheet', (e) => e.innerText.slice(0, 60)).catch(() => 'none'));
   const browse = await p.evaluate(() => window.__calls.find((c) => c[0] === 'browse'));
