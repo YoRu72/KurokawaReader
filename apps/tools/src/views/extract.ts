@@ -45,7 +45,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
     sh.body.replaceChildren(summary, plan, list, h('div', { class: 'row' }, h('span', null, t('extractTo'), h('br'), destOut), destPick), ...(inPlaceRow ? [inPlaceRow, verifyRow] : []), h('div', { class: 'row' }, h('span', null, t('existingFiles'), conflicts), pickButton(t('existingFiles'), [['both', t('keepBoth')], ['replace', t('replaceFiles')], ['skip', t('skipFiles')]], replace, (v) => { replace = v; }, t('close'))), delRow);
     const actions: HTMLElement[] = [];
     // An archive holding an app (a split bundle zipped, or an APK inside): installed straight from it.
-    if (files.some((e) => /\.apk$/i.test(e.path)) && !info.resumable) void import('./apk').then((m) => { if (m.canInstallApps()) sh.actions.prepend(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void m.installSheet(path); } }, icon('apps'), t('installApp'))); });
+    if (files.some((e) => /\.(apk|apks|xapk|apkm)$/i.test(e.path)) && !info.resumable) void import('./apk').then((m) => { if (m.canInstallApps()) sh.actions.prepend(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void m.installSheet(path); } }, icon('apps'), t('installApp'))); });
     if (info.resumable) actions.push(h('button', { type: 'button', class: 'btn tonal', onclick: () => void giveUp() }, icon('undo'), t('archiveRestore')));
     else actions.push(h('button', { type: 'button', class: 'btn tonal', onclick: () => void runTest() }, icon('check'), t('archiveTest')));
     actions.push(h('button', { type: 'button', class: 'btn primary', onclick: () => void start() }, icon('archive'), info.resumable ? t('extractContinue') : t('extractNow')));
