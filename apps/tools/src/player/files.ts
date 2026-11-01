@@ -9,8 +9,8 @@ export async function localFileUrl(path: string): Promise<string | null> {
   return null;
 }
 export async function siblingFiles(path: string): Promise<string[]> {
-  const d = window.kurokawaTools as unknown as Desk | undefined; if (d?.siblings) return d.siblings(path).catch(() => []);
-  const p = ktPlugin() as unknown as Plug | null; if (p?.siblings) return (await p.siblings({ path }).catch(() => ({ paths: [] }))).paths;
+  const d = window.kurokawaTools as unknown as Desk | undefined; if (d?.siblings) return (await d.siblings(path).catch(() => [])) ?? [];
+  const p = ktPlugin() as unknown as Plug | null; if (p?.siblings) return (await p.siblings({ path }).catch(() => ({ paths: [] }))).paths ?? [];
   return [];
 }
 /** A local file's bytes: through the desktop bridge, or fetched from the phone's stream server. */

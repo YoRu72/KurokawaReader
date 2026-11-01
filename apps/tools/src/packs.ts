@@ -50,45 +50,34 @@ async function missing(names: PackName[], st: Status): Promise<PackName[]> {
 }
 export const packLabel = (n: PackName): string => (n === 'python' ? t('packPython') : t('packFfmpeg'));
 
-/** Makes sure the packs are here, asking first (with their size) and showing the download. True when they are. */
+/** The packs among `names` that have to be fetched, with where from and how big (null: nothing to fetch). */
+export async function packsToFetch(names: PackName[]): Promise<{ n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[]> {
+  const st = await status(); if (!st) return [];
+  const need = await missing(names.filter((n) => packNames().includes(n)), st); if (!need.length) return [];
+  return Promise.all(need.map(async (n) => ({ n, e: await entryFor(n, st) })));
+}
+let runningPack: PackName | null = null;
+export function cancelPack(): void { if (!runningPack) return; const d = desk(); if (d) void d.packCancel(runningPack); else void plug()?.packCancel({ name: runningPack }); }
+/** Downloads the packs one after another; `progress(i, done, total)` for the i-th. */
+export async function fetchPacks(list: { n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[], progress: (i: number, done: number, total: number) => void): Promise<void> {
+  const d = desk(); let i = 0;
+  const onP = (p: Prog) => { const k = list.findIndex((x) => x.n === p.name); if (k >= 0) progress(k, p.done, p.total || list[k].e.size); };
+  const off: { remove(): void } | (() => void) = d ? d.onPackProgress(onP) : await listen<Prog>(plug()! as never, 'packProgress', onP);
+  try {
+    for (const r of list) {
+      runningPack = r.n; progress(i, 0, r.e.size);
+      if (d) await d.packInstall({ name: r.n, url: r.e.url, sha256: r.e.sha256, version: r.e.version }); else await plug()!.packInstall({ name: r.n, url: r.e.url, sha256: r.e.sha256, version: r.e.version });
+      progress(i, r.e.size, r.e.size); i++;
+    }
+  } finally { runningPack = null; if (typeof off === 'function') off(); else off.remove(); }
+}
+/** Makes sure the packs are here: the download card offers them (with their size) and shows them coming. */
 export async function ensurePacks(names: PackName[], why: string): Promise<boolean> {
-  const st = await status(); if (!st) return true;
-  names = names.filter((n) => packNames().includes(n));
-  let need = await missing(names, st); if (!need.length) return true;
-  let entries: { n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[];
-  try { entries = await Promise.all(need.map(async (n) => ({ n, e: await entryFor(n, st) }))); }
-  catch (e) { toast(t('packUnavailable', { why: String((e as Error).message ?? e) }), 'error', 7000); return false; }
-  const total = entries.reduce((s, x) => s + x.e.size, 0);
-  return new Promise<boolean>((resolve) => {
-    let done = false; const finish = (v: boolean) => { if (done) return; done = true; resolve(v); };
-    const sh = openSheet(t('packTitle'), t('close'), { stack: true });
-    // (Closed by its × or a tap outside: answered «no».)
-    const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); finish(false); } }); mo.observe(document.body, { childList: true, subtree: true });
-    const rows = entries.map(({ n, e }) => { const bar = h('div', { class: 'task-bar' }, h('i', { style: { width: '0%' } })); const line = h('small', { class: 'src' }, formatBytes(e.size)); return { n, e, bar, line, el: h('div', { class: 'pack-row' }, icon(n === 'python' ? 'puzzle' : 'film'), h('div', { class: 'grow' }, h('b', null, packLabel(n)), line, bar)) }; });
-    sh.body.append(h('p', null, why), h('p', { class: 'hint' }, t('packWhy', { size: formatBytes(total) })), ...rows.map((r) => r.el));
-    const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('packDownload', { size: formatBytes(total) })) as HTMLButtonElement;
-    const cancel = h('button', { type: 'button', class: 'btn tonal' }, t('cancel')) as HTMLButtonElement;
-    sh.actions.append(cancel, go);
-    let running: PackName | null = null;
-    cancel.addEventListener('click', () => { if (running) { const d = desk(); if (d) void d.packCancel(running); else void plug()?.packCancel({ name: running }); } sh.close(); finish(false); });
-    go.addEventListener('click', async () => {
-      go.disabled = true; let off: { remove(): void } | (() => void) | null = null;
-      const onP = (p: Prog) => { const r = rows.find((x) => x.n === p.name); if (!r) return; const f = p.total ? p.done / p.total : 0; (r.bar.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`; r.line.textContent = `${formatBytes(p.done)} / ${formatBytes(p.total || r.e.size)} · ${localDigits(Math.round(f * 100))}%`; };
-      try {
-        const d = desk(); off = d ? d.onPackProgress(onP) : await listen<Prog>(plug()! as never, 'packProgress', onP);
-        for (const r of rows) {
-          running = r.n; r.line.textContent = t('packStarting');
-          if (d) await d.packInstall({ name: r.n, url: r.e.url, sha256: r.e.sha256, version: r.e.version }); else await plug()!.packInstall({ name: r.n, url: r.e.url, sha256: r.e.sha256, version: r.e.version });
-          (r.bar.firstChild as HTMLElement).style.width = '100%'; r.line.textContent = t('packReady'); r.el.classList.add('done');
-        }
-        running = null; toast(t('packInstalled', { what: rows.map((r) => packLabel(r.n)).join(' + ') })); sh.close(); finish(true);
-      } catch (e) {
-        running = null; const m = String((e as Error).message ?? e);
-        sh.body.append(h('p', { class: 'plan-note bad' }, /cancel/i.test(m) ? t('cancelled') : /checksum/i.test(m) ? t('packChecksum') : t('packFailed', { why: m })));
-        go.disabled = false; go.lastChild!.textContent = t('retry');
-      } finally { if (typeof off === 'function') off(); else off?.remove(); }
-    });
-  });
+  let list: Awaited<ReturnType<typeof packsToFetch>>;
+  try { list = await packsToFetch(names); } catch (e) { toast(t('packUnavailable', { why: String((e as Error).message ?? e) }), 'error', 7000); return false; }
+  if (!list.length) return true;
+  const { getCard } = await import('./ui/getCard');
+  return getCard({ icon: 'download', title: list.map((x) => packLabel(x.n)).join(' + '), why: `${why} ${t('packWhyShort')}`, steps: list.map((x) => ({ label: packLabel(x.n), size: x.e.size })), run: (p) => fetchPacks(list, p), cancel: cancelPack });
 }
 export async function removePack(n: PackName): Promise<void> { const d = desk(); if (d) await d.packRemove(n); else await plug()?.packRemove({ name: n }); }
 

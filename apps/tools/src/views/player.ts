@@ -16,8 +16,9 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
   const how = canPlayExternally() ? await chooseHow() : 'app'; if (!how) return;
   if (how === 'external' && (await external(url, name, opts.localPath))) return;
   if (!getSettings().addons.includes('player')) {
-    try { const { install } = await import('../addons'); await install('player'); toast(t('playerAddonAdded')); }
-    catch { bare(url, name); return; }   // (offline the first time: the system's own controls)
+    // (Offered in the download card, with its ffmpeg; declined or offline: the system's own controls this time.)
+    const { needAddon } = await import('../addons/need');
+    if (!(await needAddon('player', t('addonWhyPlayer')))) { bare(url, name); return; }
   }
   const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts });
 }

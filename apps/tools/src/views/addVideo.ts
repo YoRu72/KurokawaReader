@@ -67,7 +67,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
   const offerAddon = () => {
     el.hidden = false;
     el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoYtdlpMissingLong'))),
-      h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { install } = await import('../addons'); await install(VIDEO_ADDON); const u = url; url = null; check(u); } catch (er) { toast(String((er as Error).message ?? er), 'error'); b.disabled = false; } } }, t('videoAddIt')),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; const { needAddon } = await import('../addons/need'); if (await needAddon(VIDEO_ADDON, t('addonWhyVideo'))) { const u = url; url = null; check(u); } else b.disabled = false; } }, t('videoAddIt')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => { document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()); void import('../router').then((r) => r.navigate('/settings/addons')); } }, t('videoOpenAddons'))));
   };
   const check = (u: string | null) => {

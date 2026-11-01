@@ -250,3 +250,23 @@ html.pc .fab-item { flex-direction: row-reverse; }
 html.pc .select-bar { bottom: 20px; inset-inline-start: 104px; }
 .select-bar .grow { font-weight: 600; padding-inline: 6px; }
 .selecting ~ .fab, .downloads-view.selecting .fab { display: none; }
+
+/* The download card (an add-on or a pack offered, then its progress) — as the updater's */
+.get-card { position: fixed; inset-inline: 12px; bottom: calc(92px + var(--safe-bottom, 0px)); z-index: 80; max-width: 460px; margin-inline: auto; padding: 14px 14px 10px; border-radius: 24px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); animation: get-in var(--dur-med, .28s) var(--ease-spring, ease-out); }
+html.pc .get-card { inset-inline: auto 20px; bottom: 20px; width: 420px; }
+.get-card.leaving { opacity: 0; transform: translateY(10px); transition: opacity .18s, transform .18s; }
+.get-head { display: flex; gap: 12px; align-items: flex-start; }
+.get-head b { display: block; font-size: 15px; } .get-head small { display: block; color: var(--md-on-surface-variant); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.get-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 14px; background: var(--md-primary-container); color: var(--md-on-primary-container); flex: none; }
+.get-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.get-steps { display: grid; gap: 6px; margin: 10px 0 0; }
+.get-step { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 13px; }
+.get-step small { color: var(--md-on-surface-variant); font-variant-numeric: tabular-nums; }
+.get-step .task-bar { grid-column: 1 / -1; height: 4px; display: none; }
+.get-card.running .get-step .task-bar, .get-card.ready .get-step .task-bar { display: block; }
+.get-step.done small { color: var(--md-primary); }
+.get-card > .task-bar { margin-top: 10px; }
+.get-status { margin: 8px 0 0; font-size: 12.5px; color: var(--md-error); }
+.get-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.get-card.ready .get-ic { background: var(--md-primary); color: var(--md-on-primary); }
+@keyframes get-in { from { opacity: 0; transform: translateY(16px) scale(.98); } }
