@@ -113,7 +113,7 @@ final class KrDownloader {
      */
     static Result fetch(URL url, File out, int maxConnections, Opener opener, AtomicBoolean cancelled, AtomicLong got, Result res, Runnable tick, Opts opt) throws Exception {
         if (opt.cookies != null) cookieSink = opt.cookies;
-        if (opt.state == null) { opt.state = File.createTempFile("kt", ".state"); opt.state.delete(); opt.state.deleteOnExit(); }
+        if (opt.state == null) { opt.state = File.createTempFile("kt-download-", ".state", out.getAbsoluteFile().getParentFile()); opt.state.delete(); opt.state.deleteOnExit(); }
         State prev = out.exists() ? State.read(opt.state) : null;
         // A one-byte range asked first: the file's size, whether it can be cut, and where the redirects end
         // (GitHub → a signed storage address: asked there directly afterwards, a round trip less per chunk).

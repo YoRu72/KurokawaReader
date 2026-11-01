@@ -41,6 +41,11 @@ public class T {
     KrDownloader.fetch(u, out, 4, op, cancel, got, r, () -> {}, opt);
     boolean ok3 = Arrays.equals(java.nio.file.Files.readAllBytes(out.toPath()), data);
     System.out.println("run3 match=" + ok3);
-    s.stop(0); System.exit(ok2 && ok3 && first.get() > (4 << 20) ? 0 : 1);
+    // 4: the plain call (no progress file given — the in-app updater's): a temporary one is made for it.
+    File out4 = new File(dir, "plain.part"); out4.delete(); limit = 8; got.set(0);
+    KrDownloader.fetch(u, out4, 4, op, new AtomicBoolean(), got, new KrDownloader.Result(), () -> {});
+    boolean ok4 = Arrays.equals(java.nio.file.Files.readAllBytes(out4.toPath()), data);
+    System.out.println("run4 plain match=" + ok4);
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && first.get() > (4 << 20) ? 0 : 1);
   }
 }
