@@ -1,12 +1,12 @@
 // The phone's engine: the app's own plugin (KtPlugin.java — libtorrent for torrents, the multi-connection
 // downloader for files), in a foreground service, with a local stream for playing while a file comes.
 import type { AddOptions, Engine, Limits, Task, TaskSource, TorrentInfo } from './types';
-import { ktPlugin, type KtPlugin } from '../native';
+import { ktPlugin, listen, type KtPlugin } from '../native';
 
 export class NativeEngine implements Engine {
   readonly id = 'native' as const;
   readonly can = { torrents: true, http: true, stream: true, limits: true, pickFiles: true, pause: true, seeding: true };
-  private subs = new Set<(t: Task[]) => void>(); private sub: { remove(): void } | null = null;
+  private subs = new Set<(t: Task[]) => void>(); private sub: { remove(): void } | null = null; private subbing = false;
   constructor(private p: KtPlugin) {}
   static here(): NativeEngine | null { const p = ktPlugin(); return p ? new NativeEngine(p) : null; }
   async list() { return (await this.p.list()).tasks as Task[]; }
@@ -22,7 +22,7 @@ export class NativeEngine implements Engine {
   open(id: string, fileIndex?: number) { return this.p.open({ id, fileIndex }); }
   onChange(fn: (tasks: Task[]) => void): () => void {
     this.subs.add(fn);
-    if (!this.sub) void this.p.addListener('tasksChanged', ((ev: { tasks: Task[] }) => { for (const f of this.subs) f(ev.tasks); }) as never).then((s) => { this.sub = s; });
+    if (!this.sub && !this.subbing) { this.subbing = true; void listen<{ tasks: Task[] }>(this.p as never, 'tasksChanged', (ev) => { for (const f of this.subs) f(ev.tasks); }).then((s) => { this.sub = s; }).catch((e) => { this.subbing = false; console.warn('[tools] tasksChanged', e); }); }
     void this.list().then((t) => fn(t)).catch(() => undefined);
     return () => { this.subs.delete(fn); };
   }
