@@ -10,7 +10,7 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
   await p.addInitScript((lang) => {
     localStorage.setItem('kr.lang', lang); window.__calls = []; const listeners = {};
     const now = Date.now(); const mk = (id, name, state, extra = {}) => ({ id, kind: 'http', name, source: { url: `https://x/${name}` }, dir: '/sdcard/Download', state, done: state === 'done' ? 5e8 : 1e8, total: 5e8, downSpeed: 0, upSpeed: 0, files: [], addedAt: now - 9e5, engine: 'native', ...extra });
-    window.__tasks = [mk('a', 'expired.zip', 'failed', { error: 'HTTP 403' }), mk('b', 'movie.mkv', 'done'), mk('c', 'gone.iso', 'done')];
+    window.__tasks = [mk('a', 'expired.zip', 'failed', { error: 'HTTP 403' }), mk('b', 'movie.mkv', 'done'), mk('c', 'gone.iso', 'done'), mk('d', 'waiting.bin', 'queued')];
     const emit = () => (listeners.tasksChanged || []).forEach((f) => f({ tasks: window.__tasks }));
     const plugin = new Proxy({
       addListener: (ev, fn) => { (listeners[ev] = listeners[ev] || []).push(fn); return { remove() {} }; }, list: async () => ({ tasks: window.__tasks }),
@@ -51,6 +51,12 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
   await p.locator('.trash-row', { hasText: 'gone.iso' }).locator('button').click(); await p.waitForTimeout(400);
   const back = await p.evaluate(() => window.__calls.find((c) => c[0] === 'add' && c[1].name === 'gone.iso')); console.log('restored:', !!back, await p.$$eval('.trash-row', (r) => r.length));
   await p.keyboard.press('Escape');
+  // Queue: moved up; the list goes to queue order
+  await card('waiting.bin').locator('button[aria-label]').last().click(); await p.waitForSelector('.sheet .move-row');
+  await p.locator('.sheet .move-row button').nth(1).click(); await p.waitForTimeout(300);
+  const moved = await p.evaluate(() => window.__calls.find((c) => c[0] === 'move')); const sortNow = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings') || localStorage.getItem('kr.tools.settings') || '{}').sort);
+  console.log('move:', JSON.stringify(moved), 'sort:', sortNow);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   // Settings → Connection
   await p.goto(base + '#/settings/connection'); await p.waitForSelector('#connection'); await p.waitForTimeout(400);
   const conn = (await p.$eval('#connection', (e) => e.innerText)).replace(/\s+/g, ' '); console.log('connection:', conn.slice(0, 260));
@@ -58,7 +64,7 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
   await p.fill('#connection input[type=number] >> nth=0', '9'); await p.press('#connection input[type=number] >> nth=0', 'Tab'); await p.waitForTimeout(300);
   const last = await p.evaluate(() => window.__calls.filter((c) => c[0] === 'configure' && c[1] && c[1].net).pop()); console.log('configure:', JSON.stringify(last && last[1]));
   await p.screenshot({ path: path.join(__dirname, `shot-connection-${lang}.png`), fullPage: false });
-  const pass = net >= 1 && setUrl && setUrl[1].url.includes('fresh.example.com') && setUrl[1].id === 'a' && again.join(',') === 'remove+files,add' && missing === 1 && trash.some((x) => x.includes('gone.iso')) && back && last && last[1].net.retries === 9 && /cdn\.example\.com/.test(conn);
+  const pass = moved && moved[1].how === -1 && moved[1].id === 'd' && net >= 1 && setUrl && setUrl[1].url.includes('fresh.example.com') && setUrl[1].id === 'a' && again.join(',') === 'remove+files,add' && missing === 1 && trash.some((x) => x.includes('gone.iso')) && back && last && last[1].net.retries === 9 && /cdn\.example\.com/.test(conn);
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : pass ? 'all passed' : 'FAILED');
   await br.close(); web.close(); process.exit(errors.length || !pass ? 1 : 0);
 });

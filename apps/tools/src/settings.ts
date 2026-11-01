@@ -53,7 +53,7 @@ export interface Settings {
   /** Categories (Prism's): the user's own, folders per category, how the list is sorted. */
   categories: { id: string; name: string; icon: string; exts: string[]; dir?: string }[];
   useCategoryFolders: boolean;
-  sort: 'added' | 'name' | 'size' | 'state' | 'progress' | 'speed' | 'eta';
+  sort: 'queue' | 'added' | 'name' | 'size' | 'state' | 'progress' | 'speed' | 'eta';
   /** The Downloads page's options (filters, order, look): see views/downloadsOptions.ts. */
   dl?: import('./views/downloadsOptions').DlPrefs;
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */

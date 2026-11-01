@@ -92,6 +92,7 @@ ipcMain.handle('kt:resume', (_e, id) => (isVideoId(id) ? videos.resume(id) : E()
 ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, !!del) : E().remove(id, !!del)));
 ipcMain.handle('kt:setFiles', (_e, id, p) => E().setFiles(id, p));
 ipcMain.handle('kt:exists', (_e, ps) => (Array.isArray(ps) ? ps : []).map((p) => { try { return require('node:fs').existsSync(String(p)); } catch { return false; } }));
+ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => E().configure(o));

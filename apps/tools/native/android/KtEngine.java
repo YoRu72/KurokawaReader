@@ -177,7 +177,7 @@ final class KtEngine {
         if (files != null) { x.priorities = new int[0]; List<Integer> want = new ArrayList<>(); for (int i = 0; i < files.length(); i++) want.add(files.getInt(i)); x.priorities = new int[Math.max(0, max(want) + 1)]; for (int i : want) x.priorities[i] = 1; }
         if (o.has("video") && x.source.has("url")) { x.kind = "video"; JSONObject v = o.getJSONObject("video"); if (x.meta == null) x.meta = new JSONObject(); x.meta.put("kind", "video"); for (java.util.Iterator<String> it = v.keys(); it.hasNext(); ) { String k = it.next(); x.meta.put(k, v.get(k)); } if (x.name == null) x.name = v.optString("title", x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (!x.paused) startVideo(x); else x.state = "paused"; }
         else if (x.source.has("magnet") || x.source.has("torrent")) { x.kind = "torrent"; addTorrent(x); }
-        else if (x.source.has("url")) { x.kind = "http"; if (x.name == null) x.name = nameFromUrl(x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (!x.paused) startHttp(x); else x.state = "paused"; }
+        else if (x.source.has("url")) { x.kind = "http"; if (x.name == null) x.name = nameFromUrl(x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (x.paused) x.state = "paused"; else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); }
         else throw new IllegalArgumentException("source");
         persist(); tell(true);
         return json(x);
@@ -220,8 +220,8 @@ final class KtEngine {
     }
     private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = x.th.torrentFile(); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
 
-    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); }
-    void resume(String id) throws Exception { Task x = task(id); if (x == null) return; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else startHttp(x); persist(); tell(true); }
+    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
+    void resume(String id) throws Exception { Task x = task(id); if (x == null) return; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
     void remove(String id, boolean deleteFiles) {
         Task x; synchronized (this) { x = tasks.remove(id); } if (x == null) return;
         if (x.th != null && x.th.isValid() && session != null) { if (deleteFiles) session.remove(x.th, SessionHandle.DELETE_FILES); else session.remove(x.th); }
@@ -231,6 +231,7 @@ final class KtEngine {
         if (deleteFiles && x.httpOut != null && !"video".equals(x.kind)) { x.httpOut.delete(); new File(x.httpOut.getPath() + ".part").delete(); }
         new File(stateDir, id + ".http").delete(); new File(stateDir, id + ".fastresume").delete(); new File(stateDir, id + ".torrent").delete();
         persist(); tell(true); KtService.maybeStop(ctx, this);
+        if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); });
     }
     void setFiles(String id, int[] prios) { Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x); persist(); tell(true); }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
@@ -250,7 +251,7 @@ final class KtEngine {
         if (o.has("dht")) dht = o.optBoolean("dht", true); if (o.has("lsd")) lsd = o.optBoolean("lsd", true); if (o.has("upnp")) upnp = o.optBoolean("upnp", true); if (o.has("natpmp")) natpmp = o.optBoolean("natpmp", true);
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
-        if (o.has("maxActive")) maxActive = Math.max(1, o.optInt("maxActive", 3));
+        if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
         if (session != null && session.isRunning()) {
             SettingsPack sp = new SettingsPack(); sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);
             if (o.has("listenPort")) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), listenPort > 0 ? "0.0.0.0:" + listenPort + ",[::]:" + listenPort : "0.0.0.0:6881,[::]:6881");
@@ -318,10 +319,23 @@ final class KtEngine {
                 state.delete();
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0;
             } catch (Exception e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
-            persist(); tell(true); KtService.maybeStop(ctx, KtEngine.this);
+            persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         }, "kt-http-" + x.id);
         x.httpThread.start();
         KtService.ensure(ctx);
+    }
+    /* ---------- the queue (Prism's): no more file downloads at once than set; the rest wait in their order ---------- */
+    private int busyHttp() { int n = 0; for (Task t : snapshot()) if ("http".equals(t.kind) && "downloading".equals(t.state)) n++; return n; }
+    /** The next waiting ones started, in the list's order, while there is room. */
+    private void pumpQueue() { for (Task t : snapshot()) { if (busyHttp() >= maxActive) break; if ("http".equals(t.kind) && "queued".equals(t.state) && !t.paused) startHttp(t); } }
+    /** A download moved in the list: -1 up, +1 down, -2 to the top, +2 to the bottom (what waits starts in this order). */
+    void move(String id, int how) {
+        synchronized (this) {
+            List<String> ids = new ArrayList<>(tasks.keySet()); int i = ids.indexOf(id); if (i < 0) return;
+            ids.remove(i); int to = how == -2 ? 0 : how == 2 ? ids.size() : Math.max(0, Math.min(ids.size(), i + how)); ids.add(to, id);
+            Map<String, Task> copy = new LinkedHashMap<>(tasks); tasks.clear(); for (String k : ids) tasks.put(k, copy.get(k));
+        }
+        persist(); tell(true);
     }
     private static String hostOf(String url) { try { return new URL(url).getHost().toLowerCase(java.util.Locale.ROOT); } catch (Exception e) { return ""; } }
     /** «name (2).ext»: the first name not taken in `dir`. */

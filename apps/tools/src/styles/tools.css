@@ -384,3 +384,4 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .trash-row .grow { display: grid; gap: 2px; min-width: 0; } .trash-row .result-title { overflow-wrap: anywhere; }
 .wide-input { width: 100%; box-sizing: border-box; margin: 4px 0 8px; }
 #connection .row > span > small, #models .row > span > small { display: block; margin-top: 2px; font-weight: 400; line-height: 1.4; }
+.move-row { display: flex; align-items: center; gap: 2px; padding: 6px 12px; } .move-row .grow { font-size: 14px; }

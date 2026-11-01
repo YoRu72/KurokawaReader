@@ -91,6 +91,7 @@ export class Aria2Engine implements Engine {
     void deleteFiles; delete this.keep[id]; this.save(); this.poke();
   }
   setFiles(id: string, priorities: (0 | 1 | 2)[]) { return this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }).then(() => this.poke()); }
+  async move(id: string, how: -2 | -1 | 1 | 2): Promise<void> { await this.rpc.call('changePosition', id, how === -2 || how === 2 ? 0 : how, how === -2 ? 'POS_SET' : how === 2 ? 'POS_END' : 'POS_CUR'); this.poke(); }
   async setUrl(id: string, url: string): Promise<void> {
     const st = await this.rpc.call<{ status: string; files?: { uris?: { uri: string }[] }[] }>('tellStatus', id);
     if (!['active', 'waiting', 'paused'].includes(st.status)) throw new Error(st.status);

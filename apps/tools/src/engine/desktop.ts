@@ -19,6 +19,7 @@ export interface DesktopBridge {
   setFiles(id: string, priorities: number[]): Promise<void>;
   setLimits(l: Limits): Promise<void>;
   setUrl?(id: string, url: string): Promise<string>;
+  move?(id: string, how: number): Promise<void>;
   torrentInfo(source: TaskSource): Promise<TorrentInfo>;
   open(id: string, fileIndex?: number): Promise<void>;
   defaultDir(): Promise<string>;
@@ -47,6 +48,7 @@ export class DesktopEngine implements Engine {
   remove(id: string, del: boolean) { return this.b.remove(id, del); }
   setFiles(id: string, p: (0 | 1 | 2)[]) { return this.b.setFiles(id, p); }
   setLimits(l: Limits) { return this.b.setLimits(l); }
+  async move(id: string, how: -2 | -1 | 1 | 2) { if (this.b.move) await this.b.move(id, how); }
   async setUrl(id: string, url: string) { if (!this.b.setUrl) throw new Error('not here'); await this.b.setUrl(id, url); }
   torrentInfo(s: TaskSource) { return this.b.torrentInfo(s); }
   open(id: string, i?: number) { return this.b.open(id, i); }

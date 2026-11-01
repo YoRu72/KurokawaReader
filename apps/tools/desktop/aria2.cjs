@@ -108,6 +108,8 @@ class Aria2Engine {
     return this.task(st);
   }
   /** A new address for a download whose link ran out: the same file, gone on from where it stopped (its .aria2 file). */
+  /** Moved in aria2's waiting queue (only what waits has a place there). */
+  async move(id, how) { await this.rpc.call('changePosition', id, how === -2 || how === 2 ? 0 : how, how === -2 ? 'POS_SET' : how === 2 ? 'POS_END' : 'POS_CUR'); this.tick(); }
   async setUrl(id, url) {
     const st = await this.rpc.call('tellStatus', id);
     if (st.bittorrent) throw new Error('not a file download');
