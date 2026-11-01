@@ -12,6 +12,8 @@ export interface GetCardOptions {
   run(progress: (i: number, done: number, total: number) => void): Promise<void>;
   /** Stops a running download (Cancel). */
   cancel?(): void;
+  /** Already asked for (an «Add it» pressed): the download starts at once, the card only shows it. */
+  start?: boolean;
 }
 let current: { el: HTMLElement; finish: (v: boolean) => void } | null = null;
 
@@ -55,6 +57,6 @@ export function getCard(o: GetCardOptions): Promise<boolean> {
         get.disabled = false; get.lastChild!.textContent = t('retry'); later.textContent = t('notNow'); el.classList.remove('running');
       }
     });
-    get.focus();
+    if (o.start) get.click(); else get.focus();
   });
 }

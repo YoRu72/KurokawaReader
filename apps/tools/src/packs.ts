@@ -72,12 +72,12 @@ export async function fetchPacks(list: { n: PackName; e: Awaited<ReturnType<type
   } finally { runningPack = null; if (typeof off === 'function') off(); else off.remove(); }
 }
 /** Makes sure the packs are here: the download card offers them (with their size) and shows them coming. */
-export async function ensurePacks(names: PackName[], why: string): Promise<boolean> {
+export async function ensurePacks(names: PackName[], why: string, opts: { start?: boolean } = {}): Promise<boolean> {
   let list: Awaited<ReturnType<typeof packsToFetch>>;
   try { list = await packsToFetch(names); } catch (e) { toast(t('packUnavailable', { why: String((e as Error).message ?? e) }), 'error', 7000); return false; }
   if (!list.length) return true;
   const { getCard } = await import('./ui/getCard');
-  return getCard({ icon: 'download', title: list.map((x) => packLabel(x.n)).join(' + '), why: `${why} ${t('packWhyShort')}`, steps: list.map((x) => ({ label: packLabel(x.n), size: x.e.size })), run: (p) => fetchPacks(list, p), cancel: cancelPack });
+  return getCard({ icon: 'download', title: list.map((x) => packLabel(x.n)).join(' + '), why: `${why} ${t('packWhyShort')}`, steps: list.map((x) => ({ label: packLabel(x.n), size: x.e.size })), run: (p) => fetchPacks(list, p), cancel: cancelPack, start: opts.start });
 }
 export async function removePack(n: PackName): Promise<void> { const d = desk(); if (d) await d.packRemove(n); else await plug()?.packRemove({ name: n }); }
 

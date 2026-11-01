@@ -10,7 +10,7 @@ import { loadIndex, install, installed, nameOf, type AddonEntry } from '../addon
 const ICON: Record<string, string> = { video: 'film', player: 'play', archives: 'archive', anime: 'tv', subtitles: 'subtitles', debrid: 'cloud', 'torrent-search': 'search' };
 
 /** True once the add-on is here (it already was, or it was just installed); false when declined. */
-export async function needAddon(id: string, why: string): Promise<boolean> {
+export async function needAddon(id: string, why: string, opts: { start?: boolean } = {}): Promise<boolean> {
   if (installed(id)) return true;
   let e: AddonEntry | undefined;
   try { e = (await loadIndex()).addons.find((a) => a.id === id); } catch (er) { toast(String((er as Error).message ?? er), 'error'); return false; }
@@ -26,7 +26,7 @@ export async function needAddon(id: string, why: string): Promise<boolean> {
       if (packs.length) await fetchPacks(packs, (i, d, tt) => progress(i + 1, d, tt));
       progress(0, 0, 0); await install(id); progress(0, 1, 1);
     },
-    cancel: cancelPack,
+    cancel: cancelPack, start: opts.start,
   });
   if (ok) toast(t('addonInstalledToast', { name }));
   return ok;
