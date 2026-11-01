@@ -72,15 +72,13 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     filesBox.hidden = false; filesBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('fetchingMetadata')}`));
     try {
       const got = await eng.torrentInfo(srcs[0]); if (my !== metaToken) return;
-      info = got; chosen = new Set(got.files.map((f) => f.index)); drawFiles();
+      info = got; const pf = await import('./pickFiles'); const fs = pf.guess(got); chosen = new Set(pf.defaultPick(fs)); drawFiles(fs, pf.fileChooser);
     } catch { if (my === metaToken) filesBox.hidden = true; }
   };
-  const drawFiles = () => {
+  // (Each file's episode read from its name; extras — creditless openings, previews, samples — left unticked.)
+  const drawFiles = (fs: import('./pickFiles').FileGuess[], chooser: typeof import('./pickFiles').fileChooser) => {
     if (!info) return;
-    const total = info.files.filter((f) => chosen.has(f.index)).reduce((a, f) => a + f.size, 0);
-    const head = h('div', { class: 'add-files-head' }, h('b', { dir: 'auto' }, info.name), h('small', { class: 'src' }, `${t('selectedFiles', { n: localDigits(chosen.size), total: localDigits(info.files.length) })} · ${formatBytes(total)}`),
-      h('button', { type: 'button', class: 'btn text small', onclick: () => { chosen = chosen.size === info!.files.length ? new Set() : new Set(info!.files.map((f) => f.index)); drawFiles(); } }, t('allFiles')));
-    filesBox.replaceChildren(head, h('div', { class: 'file-rows' }, ...info.files.map((f) => h('label', { class: 'check-row file-row' }, h('input', { type: 'checkbox', checked: chosen.has(f.index), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(f.index); else chosen.delete(f.index); drawFiles(); } }), h('span', { class: 'grow', dir: 'auto' }, f.path), h('small', { class: 'src' }, formatBytes(f.size))))));
+    filesBox.replaceChildren(h('div', { class: 'add-files-head' }, h('b', { dir: 'auto' }, info.name)), chooser(fs, chosen, () => undefined));
   };
   // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
   const sources = (): TaskSource[] => { const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
@@ -108,6 +106,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       for (const src of srcs) {
         if (srcs.length > 1 && src.url && videoEnabled() && isVideoHost(src.url)) { const tk = await eng.add({ source: src, dir: videoDir, paused: paused.checked, video: { ...preferredFormat(), container: preferredFormat().audioOnly ? undefined : getSettings().videoContainer, embedThumb: getSettings().videoEmbedThumb, sponsorblock: getSettings().videoSponsor } }); toast(t('taskAdded', { name: tk.name || src.url })); continue; }
         const videoish = !!src.magnet || !!src.torrent || isVideo(src.url ?? '');
+        if (info && srcs.length === 1 && !chosen.size) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }
         const files = info && srcs.length === 1 && chosen.size < info.files.length ? [...chosen] : undefined;
         const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
         const wait = later.checked && !(await import('../downloads/prism')).inWindow();

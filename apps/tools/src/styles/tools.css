@@ -419,3 +419,23 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .kt-kv dd .sel.open { display: block; -webkit-line-clamp: unset; }
 @media (max-width: 560px) { .kt-kv-row { grid-template-columns: 1fr; gap: 2px; align-items: start; } }
 .kt-log li, .kt-log div { overflow-wrap: anywhere; }
+
+/* The files of a batch to pick from (the picker sheet and the Add sheet). */
+.result-wrap { display: flex; align-items: center; gap: 2px; }
+.result-wrap > .result-row { flex: 1; min-width: 0; }
+.result-files { flex: none; }
+.file-chooser .pick-tools { margin: 4px 0 8px; }
+.file-chooser .file-rows { max-height: min(52vh, 460px); overflow-y: auto; overscroll-behavior: contain; border-radius: 14px; background: var(--md-surface-container-low, transparent); padding: 0 6px; }
+.pick-row { min-height: 44px; }
+.pick-row .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.pick-row .pick-name { overflow-wrap: anywhere; line-height: 1.35; }
+.pick-row .src { overflow-wrap: anywhere; }
+.pick-row .pick-size { flex: none; white-space: nowrap; }
+.pick-row.extra .pick-name { opacity: .62; }
+.pick-row.on .pick-name { font-weight: 600; }
+.pick-range { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; }
+.pick-range .num-small { width: 5.5em; padding: 6px 10px; border-radius: 10px; }
+.pick-files .hint { margin-top: 0; }
+.file-chooser .file-rows > * { flex: none; }
+.pick-range input.num-small { width: 4.5em; min-height: 0; height: 36px; padding: 0 10px; font-size: 14px; box-sizing: border-box; }
+.pick-range .btn { min-height: 36px; }
