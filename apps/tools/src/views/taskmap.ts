@@ -9,7 +9,7 @@ import { t, formatBytes, localDigits, formatDate } from '../i18n';
 import type { Task } from '../engine/types';
 
 const SPECTRUM = ['#5ac8fa', '#64d2a0', '#ffb340', '#bf8cff', '#ff6b6b', '#40c8c0', '#ffd60a', '#9aa7b8'];
-const colourOf = (i: number) => SPECTRUM[i % SPECTRUM.length];
+const colourOf = (i: number) => (i < 0 ? 'var(--md-outline)' : SPECTRUM[i % SPECTRUM.length]); // (-1: done before a resume)
 export interface TaskHistory { speeds: number[]; ups: number[]; at: number; log: { t: number; text: string }[]; lastState?: string; lastConn?: number; startedAt?: number }
 const histories = new Map<string, TaskHistory>();
 const CAP = 120;
