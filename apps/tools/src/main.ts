@@ -143,7 +143,7 @@ else {
   void import('./downloads/done').then((m) => m.startDoneWatch());
   void import('./downloads/trash').then((m) => m.startTrash());
   void import('./browser').then((m) => m.startBrowserEvents());
-  setTimeout(() => void import('./ui/crash').then((m) => m.showLastCrash()), 1500);
+  void import('./ui/crash').then((m) => m.showLastCrash());
   void import('./downloads/net').then((m) => m.applyNet());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
   if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());

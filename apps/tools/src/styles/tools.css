@@ -412,3 +412,10 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .usage-bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--md-surface-container-highest); margin: 4px 0 8px; } .usage-bar i { background: var(--c); }
 .usage-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13.5px; } .usage-row .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; } .usage-row.total { border-top: 1px solid var(--md-outline-variant); margin-top: 4px; padding-top: 6px; }
 .bottom-nav[data-count="6"] .nav-label { font-size: 10.5px; } .bottom-nav[data-count="6"] .nav-item { min-width: 0; padding-inline: 2px; }
+/* Download details: long values (a magnet, an address, a path) kept inside the screen */
+.task-view, .task-detail { overflow-x: hidden; } .task-detail .card { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.kt-url { min-width: 0; max-width: 100%; } .kt-url .sel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.kt-kv dd .sel { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.kt-kv dd .sel.open { display: block; -webkit-line-clamp: unset; }
+@media (max-width: 560px) { .kt-kv-row { grid-template-columns: 1fr; gap: 2px; align-items: start; } }
+.kt-log li, .kt-log div { overflow-wrap: anywhere; }
