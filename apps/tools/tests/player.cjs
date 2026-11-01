@@ -85,6 +85,22 @@ const serve = () => http.createServer((req, res) => {
   await p.mouse.move(bar.x, bar.y); await p.mouse.down(); await p.mouse.move(bar.x + 30, bar.y, { steps: 3 }); await p.waitForTimeout(600);
   const pv = await p.$eval('.kt-preview', (e) => ({ shown: !e.hidden, label: e.textContent })).catch(() => ({ shown: false })); await p.mouse.up();
   console.log('preview:', JSON.stringify(pv)); check('a preview over the bar while dragging', pv.shown && /\d:\d\d/.test(pv.label));
+  // Your own buttons: +85 s on the bar.
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Your own buttons' }).click(); await p.locator('.sheet .btn.primary', { hasText: 'Add a button' }).click(); await p.waitForTimeout(100);
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove())); await seek(0); await p.evaluate(() => document.querySelector('.kt-player').classList.remove('hide-ui'));
+  const cb = await p.$eval('.kt-custom .kt-chip', (e) => e.textContent).catch(() => ''); await p.click('.kt-custom .kt-chip'); await p.waitForTimeout(150);
+  console.log('custom:', cb, (await T()).toFixed(1)); check('a button of your own on the bar, doing its job', cb === '+85s' && (await T()) > 10);
+  // The clip sheet: A at 2 s, B at 5 s; the length shown, A moved a second on, a GIF's options.
+  await seek(2); await p.waitForTimeout(80); await p.keyboard.press('a'); await seek(5); await p.waitForTimeout(80); await p.keyboard.press('a');
+  check('A and B on the bar, to be dragged', (await p.$$('.kt-seek .kt-mark:not([hidden])')).length === 2);
+  await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Cut a clip' }).click(); await p.waitForSelector('.sheet .cut-track');
+  const len1 = await p.$eval('.sheet .cut-badge', (e) => e.textContent); await p.locator('.sheet .cut-end >> nth=0').locator('.chip', { hasText: '+1s' }).click();
+  const len2 = await p.$eval('.sheet .cut-badge', (e) => e.textContent); const aVal = await p.$eval('.sheet .cut-end >> nth=0 >> input', (e) => e.value); console.log('clip:', len1, '→', len2, 'A', aVal);
+  check('the range\'s length, and A nudged a second on', /00:03\.000/.test(len1) && /00:02\.000/.test(len2) && /00:00:03\.000/.test(aVal));
+  await p.locator('.sheet .cut-opts .row', { hasText: 'What to make' }).locator('.pick-btn').click(); await p.locator('.sheet .dest-row', { hasText: 'GIF' }).last().click(); await p.waitForTimeout(100);
+  check('a GIF: its width and frame rate offered', /Width/.test(await p.$eval('.sheet .cut-opts', (e) => e.textContent)));
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
   // The preferences panel.
   await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Player settings' }).click(); await p.waitForSelector('.sheet .pp-group');
   const groups = await p.$$eval('.sheet .pp-group > summary', (e) => e.map((x) => x.textContent)); console.log('groups:', groups.join(' | '));

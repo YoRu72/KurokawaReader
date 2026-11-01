@@ -48,6 +48,10 @@ export interface Settings {
   subLangs: string[];
   /** Settings shown as one list, or with a bar of tabs above: all, the app's own, each add-on's. */
   settingsLayout: 'tabs' | 'list';
+  /** The Videos tab (the Player add-on's library: the phone's videos, the recent ones, media servers). */
+  videosTab?: boolean;
+  /** Media servers (Jellyfin, WebDAV) the library browses. */
+  mediaServers?: { id: string; type: 'jellyfin' | 'webdav'; name: string; url: string; user: string; pass?: string; token?: string; userId?: string }[];
   /** Archives: unpack subtitle archives as they arrive; unpack every downloaded archive. */
   autoUnpackSubs: boolean;
   autoUnpackAll: boolean;

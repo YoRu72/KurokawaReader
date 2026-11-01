@@ -56,6 +56,8 @@ export interface Task {
   /** What added it: a search add-on, a page, the user — for the list's groups and the anime add-on's tracking. */
   /** The ranges the connections are fetching (plain files): what the details page draws. */
   segments?: { start: number; pos: number; end: number; speed?: number; active: boolean; worker: number }[];
+  /** A torrent's pieces in a hundred stretches (a digit 0–9 each: how much of it is here), and the pieces here of all. */
+  pieceMap?: string; numPieces?: number; havePieces?: number;
   meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number;
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
     hf?: string; sha256?: string };

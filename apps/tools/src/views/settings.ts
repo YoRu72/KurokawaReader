@@ -237,7 +237,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const plat = nativePlatform();
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
       row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
-      ...(s.addons.includes('player') ? fontRows(plat === 'desktop') : [])) : null;
+      ...(s.addons.includes('player') ? [toggle(t('videosTabToggle'), s.videosTab !== false, (v) => updateSettings({ videosTab: v }), t('videosTabHint')), ...fontRows(plat === 'desktop')] : [])) : null;
     // The player's own preferences (REX Player's groups), with the Player add-on.
     const playerPrefs = s.addons.includes('player') ? (() => { const box = card('playerprefs', t('playerSettings'), h('p', { class: 'hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => box.append(m.playerPrefsPanel())); return box; })() : null;
     // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.

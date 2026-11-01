@@ -67,6 +67,9 @@ final class KtEngine {
         int peers, seeds, connections; java.util.List<KrDownloader.Seg> segs;
         boolean sequential, paused;
         int limitDown, limitUp;   // this torrent's own speed limits (bytes/s; 0 = none)
+        /** A torrent's pieces seen from afar (one digit 0–9 for each of 100 stretches: how much of it is here), how
+         *  many pieces there are and are here, and when that was last read. */
+        String pieceMap; int numPieces, havePieces; long mapAt;
         int[] priorities; // per file: 0 skip, 1 normal, 2 high (null = all normal)
         // torrent
         TorrentHandle th; String magnet; byte[] torrentBytes;
@@ -336,6 +339,18 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.mixed_mode_algorithm.swigValue(), settings_pack.bandwidth_mixed_algo_t.prefer_tcp.swigValue());
         sp.setInteger(settings_pack.int_types.recv_socket_buffer_size.swigValue(), 1 << 20);
         sp.setInteger(settings_pack.int_types.send_socket_buffer_size.swigValue(), 1 << 20);
+        // (More requests kept with each peer — ten seconds' worth instead of three — so a fast or far peer is never
+        // left waiting between them; pieces taken next to each other, so the disk writes in long runs; a peer that
+        // went away tried again sooner; whole pieces asked of fast peers, so pieces finish instead of all being
+        // half-filled at once.)
+        sp.setInteger(settings_pack.int_types.request_queue_time.swigValue(), 10);
+        sp.setBoolean(settings_pack.bool_types.piece_extent_affinity.swigValue(), true);
+        sp.setInteger(settings_pack.int_types.min_reconnect_time.swigValue(), 10);
+        sp.setInteger(settings_pack.int_types.whole_pieces_threshold.swigValue(), 30);
+        sp.setInteger(settings_pack.int_types.max_failcount.swigValue(), 5);
+        sp.setInteger(settings_pack.int_types.peer_timeout.swigValue(), 60);
+        sp.setInteger(settings_pack.int_types.inactivity_timeout.swigValue(), 240);
+        sp.setInteger(settings_pack.int_types.unchoke_slots_limit.swigValue(), 16);
     }
     /** The DHT's nodes kept for the next start. */
     void saveDht() {
@@ -535,7 +550,16 @@ final class KtEngine {
             if (x.th == null || !x.th.isValid()) continue;
             try {
                 TorrentStatus st = x.th.status();
-                x.done = st.totalWantedDone(); x.total = st.totalWanted() > 0 ? st.totalWanted() : st.total(); x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.seeds = st.numSeeds(); x.peers = Math.max(0, st.numPeers() - x.seeds);   // (libtorrent's peers count the seeds too)
+                x.total = st.totalWanted() > 0 ? st.totalWanted() : st.total();
+                // (libtorrent counts a piece only once it is whole and checked; with many peers each filling its own
+                // piece, the count stood still at 0 B for long stretches. The blocks already in — 16 KiB each — of the
+                // pieces under way are counted too, so the progress moves as the bytes come.)
+                long partial = 0; java.util.Map<Integer, Float> part = new java.util.HashMap<>();
+                boolean active = !x.paused && st.state() == TorrentStatus.State.DOWNLOADING;
+                if (active) { try { for (org.libtorrent4j.PartialPieceInfo pp : x.th.getDownloadQueue()) { int got = pp.finished() + pp.writing(); partial += (long) got * 16384; if (pp.blocksInPiece() > 0) part.put(pp.pieceIndex(), got / (float) pp.blocksInPiece()); } } catch (Throwable ignored) {} }
+                x.done = Math.min(x.total > 0 ? x.total : Long.MAX_VALUE, st.totalWantedDone() + partial);
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - x.mapAt > (active ? 1500 : 15000)) { x.mapAt = nowMs; try { pieceMap(x, part); } catch (Throwable ignored) {} } x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.seeds = st.numSeeds(); x.peers = Math.max(0, st.numPeers() - x.seeds);   // (libtorrent's peers count the seeds too)
                 if (x.name == null || x.name.isEmpty() || "magnet".equals(x.name)) { String n = st.name(); if (n != null && !n.isEmpty()) x.name = n; }
                 if (x.paused) x.state = "paused";
                 else if (st.errorCode() != null && st.errorCode().isError()) { x.state = "failed"; x.error = st.errorCode().getMessage(); }
@@ -548,13 +572,22 @@ final class KtEngine {
             } catch (Exception ignored) {}
         }
     }
+    /** The pieces in a hundred stretches, each a digit for how much of it is here (partly filled pieces counted by
+     *  their blocks); the count of pieces here. */
+    private void pieceMap(Task x, java.util.Map<Integer, Float> part) {
+        TorrentStatus ps = x.th.status(TorrentHandle.QUERY_PIECES); org.libtorrent4j.PieceIndexBitfield bf = ps.pieces(); int n = bf.size(); if (n <= 0) return;
+        int buckets = Math.min(100, n); float[] fill = new float[buckets]; int[] count = new int[buckets]; int have = 0;
+        for (int i = 0; i < n; i++) { int b = (int) ((long) i * buckets / n); count[b]++; if (bf.getBit(i)) { fill[b] += 1; have++; } else { Float f = part.get(i); if (f != null) fill[b] += f; } }
+        StringBuilder sb = new StringBuilder(buckets); for (int b = 0; b < buckets; b++) { float f = count[b] > 0 ? fill[b] / count[b] : 0; sb.append((char) ('0' + Math.min(9, (int) Math.ceil(f * 9 - 0.0001)))); }
+        x.pieceMap = sb.toString(); x.numPieces = n; x.havePieces = have;
+    }
     JSONObject json(Task x) {
         JSONObject o = new JSONObject();
         try {
             o.put("id", x.id); o.put("kind", x.kind); o.put("name", x.name == null ? "" : x.name); o.put("source", x.source); o.put("dir", x.dir); o.put("state", x.state);
             o.put("done", x.done); o.put("total", x.total); o.put("downSpeed", x.downSpeed); o.put("upSpeed", x.upSpeed);
             if (x.downSpeed > 0 && x.total > x.done) o.put("eta", (x.total - x.done) / x.downSpeed);
-            if ("torrent".equals(x.kind)) { o.put("peers", x.peers); o.put("seeds", x.seeds); if (x.infoHash != null) o.put("infoHash", x.infoHash); } else { o.put("connections", x.connections);
+            if ("torrent".equals(x.kind)) { o.put("peers", x.peers); o.put("seeds", x.seeds); if (x.pieceMap != null) { o.put("pieceMap", x.pieceMap); o.put("numPieces", x.numPieces); o.put("havePieces", x.havePieces); } if (x.infoHash != null) o.put("infoHash", x.infoHash); } else { o.put("connections", x.connections);
                 if (x.segs != null && "downloading".equals(x.state)) { JSONArray sa = new JSONArray(); synchronized (x.segs) { for (KrDownloader.Seg sg : x.segs) { JSONObject so = new JSONObject(); so.put("start", sg.start); so.put("pos", sg.pos); so.put("end", sg.end); so.put("speed", (long) sg.speed); so.put("active", sg.active); so.put("worker", sg.worker); sa.put(so); } } o.put("segments", sa); } }
             o.put("files", files(x)); o.put("sequential", x.sequential); if (x.limitDown > 0) o.put("limitDown", x.limitDown); if (x.limitUp > 0) o.put("limitUp", x.limitUp); if (x.error != null) o.put("error", x.error);
             o.put("addedAt", x.addedAt); if (x.doneAt > 0) o.put("doneAt", x.doneAt); if (x.meta != null) o.put("meta", x.meta); o.put("engine", "native");

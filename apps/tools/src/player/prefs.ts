@@ -27,6 +27,8 @@ export interface PlayerPrefs {
   eqOn: boolean; eq: EqBands; eqPreamp: number; eqPreset: string; normalize: boolean; mono: boolean; balance: number; audioDelay: number;
   /** Video (VLC): rotation, mirroring, cropping; the filter preset chosen. */
   rotate: 0 | 90 | 180 | 270; flipH: boolean; flipV: boolean; crop: string; filterPreset: string;
+  /** REX Player's custom buttons: your own on the bar — seek by, a speed, a time to jump to, A/B, a screenshot, the next subtitle or audio track. */
+  customButtons: { act: 'seek' | 'speed' | 'jump' | 'ab' | 'shot' | 'sub' | 'audio' | 'subline'; v?: number }[];
 }
 export const DEFAULT_FILTERS: PlayerPrefs['filters'] = { brightness: 100, contrast: 100, saturation: 100, hue: 0, gamma: 100, sharpness: 0, temperature: 0 };
 export const DEFAULT_PREFS: PlayerPrefs = {
@@ -42,6 +44,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,
   rotate: 0, flipH: false, flipV: false, crop: '', filterPreset: '',
+  customButtons: [],
 };
 const KEY = 'kt.player'; const MEM = 'kt.player.memory';
 let prefs: PlayerPrefs = load();

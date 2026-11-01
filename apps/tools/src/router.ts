@@ -10,7 +10,8 @@ export type Route =
   | { name: 'animeEntry'; id: number }
   | { name: 'subs'; q?: string }
   | { name: 'tv'; tab?: string; q?: string }
-  | { name: 'tvTitle'; type: 'movie' | 'series'; id: string; season?: number };
+  | { name: 'tvTitle'; type: 'movie' | 'series'; id: string; season?: number }
+  | { name: 'videos'; tab?: string; folder?: string; srv?: string; p?: string };
 
 const listeners = new Set<(r: Route) => void>();
 export function parseRoute(hash = location.hash): Route {
@@ -24,6 +25,7 @@ export function parseRoute(hash = location.hash): Route {
   const an = /^\/anime\/(\d+)/.exec(p); if (an) return { name: 'animeEntry', id: Number(an[1]) };
   if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };
+  if (p.startsWith('/videos')) return { name: 'videos', tab: sp.get('tab') ?? undefined, folder: sp.get('folder') ?? undefined, srv: sp.get('srv') ?? undefined, p: sp.get('p') ?? undefined };
   if (p.startsWith('/tv')) return { name: 'tv', tab: sp.get('tab') ?? undefined, q: sp.get('q') ?? undefined };
   if (p.startsWith('/anime')) return { name: 'anime', tab: sp.get('tab') ?? undefined, q: sp.get('q') ?? undefined, genre: sp.get('genre') ?? undefined, tag: sp.get('tag') ?? undefined };
   const st = /^\/settings(?:\/([^/]+))?/.exec(p); if (st) return { name: 'settings', section: st[1] };
@@ -41,7 +43,7 @@ export function navigate(path: string, replace = false): void {
 /** The part of the app a place belongs to (the tab it lives under). */
 export function sectionOf(path: string): string {
   const p = path.split('?')[0];
-  if (p.startsWith('/anime')) return 'anime'; if (p.startsWith('/tv')) return 'tv'; if (p.startsWith('/subs')) return 'subs';
+  if (p.startsWith('/anime')) return 'anime'; if (p.startsWith('/tv')) return 'tv'; if (p.startsWith('/videos')) return 'videos'; if (p.startsWith('/subs')) return 'subs';
   if (p.startsWith('/settings') || p.startsWith('/addons')) return 'settings'; if (p.startsWith('/search')) return 'search';
   return 'downloads';
 }
