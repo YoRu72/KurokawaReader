@@ -178,3 +178,42 @@ input.good { outline: 2px solid var(--md-primary); } input.bad { outline: 2px so
 .more-options { display: flex; flex-direction: column; gap: 10px; }
 .more-options > summary { cursor: pointer; font-weight: 600; padding: 6px 0; color: var(--md-on-surface-variant); }
 .more-options[open] > summary { color: var(--md-primary); }
+
+/* The + menu (as Prism and other download managers have it): ways to add, one tap each. */
+.fab-menu-wrap { position: fixed; inset: 0; z-index: 60; }
+.fab-scrim { position: absolute; inset: 0; background: color-mix(in srgb, var(--md-scrim, #000) 32%, transparent); animation: fade-in var(--dur-short, .15s) ease-out; }
+.fab-menu { position: absolute; inset-inline-end: 16px; bottom: calc(156px + var(--safe-bottom, 0px)); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+html.pc .fab-menu { bottom: auto; top: 92px; inset-inline-end: auto; inset-inline-start: 92px; align-items: flex-start; }
+.fab-item { all: unset; cursor: pointer; display: flex; align-items: center; gap: 12px; animation: fab-in var(--dur-med, .25s) var(--ease-spring, ease-out) both; }
+html.pc .fab-item { flex-direction: row-reverse; }
+.fab-item:nth-child(2) { animation-delay: 30ms; } .fab-item:nth-child(3) { animation-delay: 60ms; } .fab-item:nth-child(4) { animation-delay: 90ms; } .fab-item:nth-child(5) { animation-delay: 120ms; }
+.fab-item-label { display: grid; gap: 1px; padding: 8px 14px; border-radius: 14px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-2); text-align: start; max-width: min(70vw, 300px); }
+.fab-item-label b { font-weight: 600; font-size: 14px; }
+.fab-item-label small { color: var(--md-on-surface-variant); font-size: 12px; }
+.fab-item-ic { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); box-shadow: var(--el-2); flex: none; }
+.fab-item-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.fab-item:focus-visible .fab-item-ic, .fab-item:hover .fab-item-ic { background: var(--md-primary); color: var(--md-on-primary); }
+.fab.open, .rail-fab.open { z-index: 61; }
+.fab.open svg, .rail-fab.open svg { transform: rotate(45deg); }
+.fab svg { transition: transform var(--dur-med, .25s) var(--ease-spring, ease-out); }
+@keyframes fab-in { from { opacity: 0; transform: translateY(12px) scale(.9); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fab-item, .fab-scrim { animation: none; } }
+
+/* yt-dlp ready, in the Add sheet */
+.video-ready { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12.5px; color: var(--md-primary); }
+.video-ready svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; }
+
+/* Watch with: the in-app player or another app */
+.watch-choices { display: grid; gap: 10px; margin: 4px 0 12px; }
+.watch-choice { all: unset; cursor: pointer; display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 20px; background: var(--md-surface-container-high); }
+.watch-choice:hover, .watch-choice:focus-visible { background: var(--md-secondary-container); }
+.watch-choice b { display: block; font-size: 15px; } .watch-choice small { display: block; color: var(--md-on-surface-variant); font-size: 12.5px; margin-top: 2px; }
+.watch-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--md-primary-container); color: var(--md-on-primary-container); flex: none; }
+.watch-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Packs: a component being fetched */
+.pack-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.pack-row > svg { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.pack-row b { display: block; } .pack-row small { display: block; margin: 2px 0 6px; }
+.pack-row.done small { color: var(--md-primary); }

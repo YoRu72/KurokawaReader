@@ -77,7 +77,11 @@ export async function anyServer(p: ProviderEntry, ep: StreamEpisode, prefer?: st
 export async function playableUrl(src: StreamSource, headers: Record<string, string>): Promise<string> {
   const needs = Object.keys(headers).length > 0; const hls = src.type === 'm3u8';
   const d = window.kurokawaTools as unknown as { proxyUrl?: (o: { url: string; headers: Record<string, string> }) => Promise<string> } | undefined;
-  if (d?.proxyUrl) return needs || hls ? d.proxyUrl({ url: src.url, headers }) : src.url;
+  if (d?.proxyUrl) {
+    // (HLS is turned into MP4 by ffmpeg on the computer.)
+    if (hls) { const { ensurePacks } = await import('../packs'); const { t } = await import('../i18n'); if (!(await ensurePacks(['ffmpeg'], t('packWhyStream')))) throw new Error(t('cancelled')); }
+    return needs || hls ? d.proxyUrl({ url: src.url, headers }) : src.url;
+  }
   const p = ktPlugin() as unknown as { proxyUrl?: (o: { url: string; headers: Record<string, string> }) => Promise<{ url: string }> } | null;
   if (p?.proxyUrl && needs) return (await p.proxyUrl({ url: src.url, headers })).url;
   return src.url;

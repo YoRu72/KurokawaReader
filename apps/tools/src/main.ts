@@ -40,7 +40,7 @@ function buildNav(): HTMLElement {
   const items = DESTS().map(([name, ic, key, go]) => h('button', { type: 'button', class: pc ? 'rail-item' : 'nav-item', 'data-dest': name, onclick: go, title: t(key as 'navDownloads') },
     h('span', { class: pc ? 'rail-pill' : 'nav-pill' }, icon(ic)), h('span', { class: pc ? 'rail-label' : 'nav-label' }, t(key as 'navDownloads'))));
   if (pc) return h('nav', { class: 'nav-rail', 'aria-label': t('appName') }, h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' })),
-    h('button', { type: 'button', class: 'rail-fab', title: t('addDownload'), 'aria-label': t('addDownload'), onclick: () => void import('./views/add').then((m) => m.addSheet()) }, icon('plus')),
+    h('button', { type: 'button', class: 'rail-fab', title: t('addDownload'), 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./views/fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus')),
     h('div', { class: 'rail-items' }, ...items.slice(0, -1)), h('div', { class: 'rail-end' }, items[items.length - 1]));
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }

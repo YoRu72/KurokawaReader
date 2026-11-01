@@ -20,7 +20,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       videoReady: async () => true, videoInfo: async (o) => { await new Promise((r) => setTimeout(r, 150)); if (/youtube/.test(o.url)) return raw; throw new Error('Unsupported URL'); }, videoVersion: async () => ({ version: '2026.10.10', ready: true }), videoUpdate: async () => ({ version: '2026.10.22', updated: true }) };
   }, lang);
   const base = `http://127.0.0.1:${port}/`;
-  await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.waitForSelector('.sheet');
+  await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet');
   await p.fill('.add-input', 'https://www.youtube.com/watch?v=abc'); await p.waitForSelector('.video-card.offer', { timeout: 4000 });
   console.log('offer:', await p.$eval('.video-card.offer', (e) => e.innerText.replace(/\n+/g, ' | ')));
   await p.click('.video-card.offer .btn'); await p.waitForSelector('.video-choices', { timeout: 6000 });
@@ -30,7 +30,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__added.length === 1);
   console.log('added:', JSON.stringify(await p.evaluate(() => window.__added[0])));
   // A file link: no panel, an ordinary task.
-  await p.click('.fab'); await p.waitForSelector('.sheet'); await p.fill('.add-input', 'https://example.com/files/linux.iso'); await p.waitForTimeout(900);
+  await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet'); await p.fill('.add-input', 'https://example.com/files/linux.iso'); await p.waitForTimeout(900);
   console.log('file panel hidden:', await p.$eval('.video-panel', (e) => e.hidden));
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__added.length === 2);
   console.log('file added:', JSON.stringify(await p.evaluate(() => window.__added[1])));

@@ -13,7 +13,8 @@ import { videoEnabled, isVideoHost } from '../video/ytdlp';
 
 const toBase64 = (buf: ArrayBuffer): string => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); };
 
-export function addSheet(initial = ''): void {
+/** The Add sheet; `pickTorrent` opens the file picker at once, `video` says a video page is wanted (from the + menu). */
+export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boolean } = {}): void {
   const eng = getEngine();
   const sh = openSheet(t('addTitle'), t('close'));
   sh.el.classList.add('add-sheet');
@@ -109,5 +110,6 @@ export function addSheet(initial = ''): void {
       sh.close();
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; }
   });
-  setTimeout(() => ta.focus(), 60);
+  if (how.video) ta.placeholder = t('fabVideoHint');
+  if (how.pickTorrent) fileIn.click(); else setTimeout(() => ta.focus(), 60);
 }

@@ -23,10 +23,14 @@ final class KtVideo {
 
     static synchronized void init(Context ctx) throws Exception {
         if (inited) return;
+        // (Python and ffmpeg are packs downloaded with the Video add-on; without Python nothing runs.)
+        if (KtPacks.installed(ctx, "python") == null) throw new IllegalStateException("pack:python");
         YoutubeDL.getInstance().init(ctx);
-        try { com.yausername.ffmpeg.FFmpeg.getInstance().init(ctx); } catch (Throwable e) { Log.w(TAG, "ffmpeg module: " + e); }
+        if (KtPacks.installed(ctx, "ffmpeg") != null) { try { com.yausername.ffmpeg.FFmpeg.getInstance().init(ctx); } catch (Throwable e) { Log.w(TAG, "ffmpeg module: " + e); } }
         inited = true;
     }
+    /** After a pack comes or goes: initialised again on next use. */
+    static synchronized void reset() { inited = false; }
     static void update(Context ctx) { try { init(ctx); YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.STABLE.INSTANCE); } catch (Throwable e) { Log.w(TAG, "update: " + e); } }
     static String version(Context ctx) { try { init(ctx); return YoutubeDL.getInstance().version(ctx); } catch (Throwable e) { return null; } }
 

@@ -164,7 +164,14 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         toggle(t('videoEmbedThumb'), s.videoEmbedThumb, (v) => updateSettings({ videoEmbedThumb: v })),
         toggle(t('videoSponsor'), s.videoSponsor, (v) => updateSettings({ videoSponsor: v })));
     }
-    return [general, downloads, video, archives, privacy, aria2, addons, anime, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    // The player: how videos are watched (another app, or the in-app player of the Player add-on).
+    const plat = nativePlatform();
+    const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
+      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close')))) : null;
+    // Storage: the packs (Python, ffmpeg) fetched for add-ons, with their sizes, removable.
+    const packsBox = h('div'); void import('../packs').then((m) => { const c = m.packsCard(); if (c) packsBox.replaceChildren(c); });
+    const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), packsBox) : null;
+    return [general, downloads, player, video, archives, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

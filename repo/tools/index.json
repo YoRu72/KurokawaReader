@@ -538,6 +538,37 @@
       "platforms": [
         "android",
         "desktop"
+      ],
+      "packs": [
+        "python",
+        "ffmpeg"
+      ]
+    },
+    {
+      "id": "player",
+      "kind": "player",
+      "name": "Player",
+      "names": {
+        "ar": "المشغّل",
+        "ja": "プレーヤー",
+        "ko": "플레이어",
+        "zh": "播放器"
+      },
+      "description": "The in-app player, for when you would rather not hand a video to another app: subtitles with their styles (ASS), a second subtitle line, gestures for seeking, volume and brightness, openings and endings skipped (AniSkip and chapters), picture filters, a sleep timer, clips cut to a file, and anime episodes marked watched on AniList. It comes with ffmpeg (on Android about 35 MB, on a computer about 30 MB), which also does Convert, Make smaller and chapters. Without it, videos open in the app you pick (VLC, MX Player, mpv…).",
+      "descriptions": {
+        "ar": "المشغّل داخل التطبيق، لمن لا يريد تسليم الفيديو إلى تطبيق آخر: ترجمات بتنسيقها (ASS) وسطر ترجمة ثانٍ، وإيماءات للتقديم والصوت والسطوع، وتخطّي الشارة والخاتمة (AniSkip والفصول)، ومرشِّحات للصورة، ومؤقِّت للنوم، واقتطاع مقاطع إلى ملف، وتسجيل ما شاهدتَه من حلقات الأنمي في AniList. ويأتي معه ffmpeg (نحو ٣٥ م.ب على أندرويد، ونحو ٣٠ م.ب على الحاسوب)، وبه يكون التحويل وتصغير الحجم والفصول. ومن دونه يُفتح الفيديو في التطبيق الذي تختاره (VLC وMX Player وmpv…).",
+        "ja": "動画をほかのアプリに渡したくないときのためのアプリ内プレーヤー：書式付き字幕（ASS）と二行目の字幕、シーク・音量・明るさのジェスチャー、OP/ED のスキップ（AniSkip とチャプター）、画質フィルター、スリープタイマー、クリップの切り出し、AniList への視聴済み記録。ffmpeg（Android で約 35 MB、PC で約 30 MB）が付属し、変換・サイズ縮小・チャプターにも使われます。これがない場合は、選んだアプリ（VLC、MX Player、mpv など）で開きます。",
+        "ko": "동영상을 다른 앱에 넘기고 싶지 않을 때 쓰는 앱 안 플레이어: 서식 있는 자막(ASS)과 두 번째 자막 줄, 탐색·볼륨·밝기 제스처, 오프닝·엔딩 건너뛰기(AniSkip과 챕터), 화면 필터, 수면 타이머, 클립 잘라내기, AniList 시청 기록. ffmpeg(안드로이드 약 35MB, 컴퓨터 약 30MB)가 함께 오며 변환·크기 줄이기·챕터에도 쓰입니다. 없으면 고른 앱(VLC, MX Player, mpv 등)에서 열립니다.",
+        "zh": "不想把视频交给其他应用时使用的应用内播放器：带样式的字幕（ASS）与第二行字幕、拖动/音量/亮度手势、跳过片头片尾（AniSkip 与章节）、画面滤镜、睡眠定时、剪辑导出，以及在 AniList 标记已看。附带 ffmpeg（安卓约 35 MB，电脑约 30 MB），也用于转换、缩小文件和章节。没有它时，视频会在你选择的应用（VLC、MX Player、mpv 等）中打开。"
+      },
+      "version": "1.0.0",
+      "platforms": [
+        "android",
+        "desktop",
+        "web"
+      ],
+      "packs": [
+        "ffmpeg"
       ]
     },
     {

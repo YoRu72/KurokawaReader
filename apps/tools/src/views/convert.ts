@@ -45,6 +45,7 @@ export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'c
   sh.body.append(h('p', { class: 'src', dir: 'ltr' }, name), h('span', { class: 'label' }, mode === 'convert' ? t('convertTo') : t('shrinkTo')), choose, h('p', { class: 'hint' }, t('convertBeside')));
   draw(); sh.actions.append(go);
   go.addEventListener('click', async () => {
+    if (!(await (await import('../packs')).ensurePacks(['ffmpeg'], t('packWhyConvert')))) return;
     const args: string[] = ['-y', '-hide_banner', '-nostdin', '-i', path]; let ext = pick; let tag = mode === 'convert' ? '' : ' (small)';
     if (mode === 'convert') {
       if (pick === 'mp4') args.push(...(android ? ['-c:v', 'h264_mediacodec', '-b:v', '6M'] : ['-c:v', 'libx264', '-crf', '21', '-preset', 'medium']), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');

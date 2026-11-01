@@ -17,7 +17,8 @@
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.0.0",
+    "ffmpeg-static": "^5.2.0"
   },
   "build": {
     "appId": "app.kurokawa.tools",
@@ -44,7 +45,8 @@
       "archive.cjs",
       "ffmpeg.cjs",
       "ytdlp.cjs",
-      "streamproxy.cjs"
+      "streamproxy.cjs",
+      "packs.cjs"
     ],
     "extraResources": [
       {
@@ -70,7 +72,11 @@
           ]
         }
       ],
-      "icon": "icon.ico"
+      "icon": "icon.ico",
+      "files": [
+        "!node_modules/7zip-bin/{linux,mac}/**",
+        "!node_modules/7zip-bin/win/{ia32,arm64}/**"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -93,14 +99,21 @@
         "zip"
       ],
       "icon": "icon.png",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "files": [
+        "!node_modules/7zip-bin/{linux,win}/**"
+      ]
     },
     "linux": {
       "target": [
         "AppImage"
       ],
       "icon": "icon.png",
-      "category": "Network"
+      "category": "Network",
+      "files": [
+        "!node_modules/7zip-bin/{mac,win}/**",
+        "!node_modules/7zip-bin/linux/{ia32,arm,arm64}/**"
+      ]
     },
     "protocols": [
       {
@@ -138,12 +151,10 @@
     ],
     "compression": "maximum",
     "asarUnpack": [
-      "node_modules/7zip-bin/**",
-      "node_modules/ffmpeg-static/**"
+      "node_modules/7zip-bin/**"
     ]
   },
   "dependencies": {
-    "7zip-bin": "^5.2.0",
-    "ffmpeg-static": "^5.2.0"
+    "7zip-bin": "^5.2.0"
   }
 }

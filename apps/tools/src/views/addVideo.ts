@@ -56,6 +56,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
     const meta = [i.uploader, dur(i.duration), i.site].filter(Boolean).join(' · ');
     const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
     el.replaceChildren(...[
+      h('p', { class: 'video-ready' }, icon('check'), t('videoYtdlpReadyShort')),
       h('div', { class: 'video-card' },
         i.thumbnail ? h('img', { class: 'video-thumb', src: i.thumbnail, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('span', { class: 'video-thumb none' }, icon('film')),
         h('div', { class: 'video-text' }, h('b', { dir: 'auto' }, i.title), meta ? h('small', { class: 'src', dir: 'auto' }, meta) : null, i.live ? h('span', { class: 'badge live' }, t('videoLive')) : null)),
@@ -65,8 +66,9 @@ export function videoPanel(onChange: () => void): VideoPanel {
   };
   const offerAddon = () => {
     el.hidden = false;
-    el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoPageNeedsAddon'))),
-      h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { install } = await import('../addons'); await install(VIDEO_ADDON); const u = url; url = null; check(u); } catch (er) { toast(String((er as Error).message ?? er), 'error'); b.disabled = false; } } }, t('videoAddIt'))));
+    el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoYtdlpMissingLong'))),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { install } = await import('../addons'); await install(VIDEO_ADDON); const u = url; url = null; check(u); } catch (er) { toast(String((er as Error).message ?? er), 'error'); b.disabled = false; } } }, t('videoAddIt')),
+      h('button', { type: 'button', class: 'btn text small', onclick: () => { document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()); void import('../router').then((r) => r.navigate('/settings/addons')); } }, t('videoOpenAddons'))));
   };
   const check = (u: string | null) => {
     if (u === url) return; url = u; info = null; chosen = null; const my = ++token;

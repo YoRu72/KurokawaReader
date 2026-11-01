@@ -22,7 +22,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const chips = h('div', { class: 'chips filter-chips' });
   const problem = platformEngineProblem();
   const note = problem ? h('p', { class: 'hint engine-note' }, icon('info'), t('engineUnavailable', { why: problem })) : null;
-  const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t('addDownload'), onclick: () => addSheet() }, icon('plus'), h('span', null, t('addDownload')));
+  const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus'), h('span', null, t('addDownload')));
   const title = h('div', { class: 'title' }, h('span', null, t('navDownloads')), h('small', { class: 'count' }));
   const actions = h('div', { class: 'topbar-actions' },
     iconButton('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch((e) => toast(String(e.message ?? e), 'error'))),
@@ -91,7 +91,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (ACTIVE.includes(x.state) && eng.can.pause) acts.append(iconButton('pause', t('pause'), (e) => { e.stopPropagation(); void eng.pause(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'paused') acts.append(iconButton('play', t('resume'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'failed') acts.append(iconButton('refresh', t('retry'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch(() => eng.remove(x.id, false).then(() => eng.add({ source: x.source, dir: x.dir, name: x.name, meta: x.meta }))).catch((er) => toast(String(er.message ?? er), 'error')); }));
-    if (x.state === 'done' && isVideo(displayName(x)) && getSettings().addons.includes('player')) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
+    if (x.state === 'done' && isVideo(displayName(x))) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
     else if (x.state === 'done' && eng.open) acts.append(iconButton('play', t('open'), (e) => { e.stopPropagation(); void eng.open!(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
     acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(x); }));
   };

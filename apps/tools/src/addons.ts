@@ -26,6 +26,8 @@ export interface AddonEntry {
   icon?: string;
   /** Fields the user fills in for this add-on (a debrid key, a choice), shown in its settings. */
   settings?: AddonSetting[];
+  /** Native parts it needs, fetched when it is installed (Python and ffmpeg; see packs.ts). */
+  packs?: ('python' | 'ffmpeg')[];
 }
 export interface AddonSetting { id: string; label: string; labels?: Record<string, string>; type: 'text' | 'password' | 'number' | 'select' | 'toggle'; options?: string[]; value?: string | number | boolean }
 export interface AddonIndex { kurokawa: 'addons'; app: 'tools'; addons: AddonEntry[] }
@@ -50,6 +52,10 @@ export const installed = (id: string): boolean => getSettings().addons.includes(
 export async function install(id: string): Promise<void> {
   const ix = await loadIndex();
   const e = ix.addons.find((a) => a.id === id); if (!e) throw new Error(id);
+  if (e.packs?.length) {
+    const { ensurePacks, packsHere } = await import('./packs'); const { t, getLang } = await import('./i18n');
+    if (packsHere() && !(await ensurePacks(e.packs, t('packWhyAddon', { name: nameOf(e, getLang()) })))) throw new Error(t('cancelled'));
+  }
   const ids = [id, ...(e.children ?? [])];
   for (const k of ids) {
     const a = ix.addons.find((x) => x.id === k); if (!a) continue;
@@ -66,6 +72,12 @@ export async function uninstall(id: string): Promise<void> {
   const ids = [id, ...(e?.children ?? [])];
   for (const k of ids) { await db.deleteFile(`addon:${k}`).catch(() => undefined); await db.deleteMeta(`addon-manifest:${k}`).catch(() => undefined); await db.deleteMeta(`addon-version:${k}`).catch(() => undefined); }
   updateSettings({ addons: getSettings().addons.filter((x) => !ids.includes(x)) });
+  // Packs no other installed add-on needs are removed with it (Convert asks for ffmpeg again when it is used).
+  if (e?.packs?.length && ix) {
+    const still = new Set(getSettings().addons.flatMap((a) => ix.addons.find((x) => x.id === a)?.packs ?? []));
+    const { removePack, packsHere, status } = await import('./packs');
+    if (packsHere()) { const st = await status().catch(() => null); for (const n of e.packs) if (!still.has(n) && st?.[n]?.version) await removePack(n).catch(() => undefined); }
+  }
 }
 /** Installed add-ons whose repository version moved on. */
 export async function updatesAvailable(): Promise<string[]> {

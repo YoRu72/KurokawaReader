@@ -25,7 +25,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
     if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ downloadDir: '/dl', addonSettings: { debrid: { preferred: 'realdebrid', realdebridKey: 'RDKEY' } } }));
   });
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row'); await p.click('.addon-row:has-text("Debrid") .btn'); await p.waitForSelector('.toast');
-  await p.goto(`http://127.0.0.1:${port}/#/`); await p.reload(); await p.waitForSelector('.fab'); await p.click('.fab'); await p.waitForSelector('.sheet textarea');
+  await p.goto(`http://127.0.0.1:${port}/#/`); await p.reload(); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet textarea');
   await p.waitForSelector('.debrid-row:not([hidden])'); console.log('debrid row:', await p.$eval('.debrid-row span', (e) => e.textContent));
   await p.fill('.sheet textarea', 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Show.S01'); await p.click('.debrid-row input'); await p.click('.sheet .btn.primary'); await p.waitForSelector('.toast');
   console.log('toast:', await p.$eval('.toast', (e) => e.textContent));
