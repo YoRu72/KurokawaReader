@@ -369,3 +369,13 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .video-part-range { display: inline-flex; align-items: center; gap: 6px; }
 .video-part-range input { width: 5.5em; text-align: center; font-variant-numeric: tabular-nums; }
 .av-line.ok { color: #2fb350 !important; } .av-line.bad { color: var(--md-error) !important; font-weight: 600; } .av-line.busy { opacity: .8; }
+/* AI models (Hugging Face) */
+.models-q { display: flex; gap: 8px; margin-bottom: 10px; } .models-q .search-input { flex: 1; min-width: 0; }
+.models-head { display: grid; gap: 4px; margin-bottom: 8px; } .models-head b { font-size: 15px; overflow-wrap: anywhere; }
+.models-files .file-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 10px; font-size: 13px; }
+.models-files .file-row.on { background: var(--md-surface-container-high); }
+.models-files .file-row .grow { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 12px; }
+.sha-mark svg { width: 12px; height: 12px; color: #2fb350; fill: none; stroke: currentColor; stroke-width: 2.6; }
+.models-total { font-weight: 600; margin: 8px 0 4px; }
+.models-dest { display: flex; gap: 8px; align-items: center; font-size: 12.5px; } .models-dest svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; flex: none; }
+.hf-offer { display: flex; align-items: center; gap: 10px; } .hf-offer svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }

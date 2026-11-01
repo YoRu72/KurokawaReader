@@ -20,7 +20,8 @@ export function fabMenu(anchor: HTMLElement): void {
     item('copy', t('fabClipboard'), null, () => void fromClipboard()),
     ...(eng.can.torrents ? [item('file', t('pickTorrentFile'), null, () => addSheet('', { pickTorrent: true }))] : []),
     videoItem,
-    item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))));
+    item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))),
+    item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())));
   const scrim = h('div', { class: 'fab-scrim', onclick: close });
   open = h('div', { class: 'fab-menu-wrap' }, scrim, menu);
   document.body.append(open); anchor.classList.add('open'); anchor.setAttribute('aria-expanded', 'true');
