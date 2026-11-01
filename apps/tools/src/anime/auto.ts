@@ -40,7 +40,7 @@ export async function downloadedEpisodes(anilistId: number): Promise<Map<number,
   for (const x of tasks) { const m = x.meta as { anilistId?: number; episode?: number } | undefined; if (m?.anilistId === anilistId && m.episode) out.set(m.episode, x); }
   return out;
 }
-async function addFor(a: al.Anime, r: TorrentResult, ep: number): Promise<void> {
+export async function addFor(a: al.Anime, r: TorrentResult, ep: number): Promise<void> {
   const source = r.url ? { url: r.url } : { magnet: magnetOf(r) };
   const meta = { anilistId: a.id, title: a.title, episode: ep || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx } as Task['meta'];
   if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); await sendToDebrid(source, { meta }); return; }
@@ -75,6 +75,30 @@ export async function downloadRange(a: al.Anime, o: RangeOptions, onEach: (ep: n
   return added;
 }
 
+/** Senpwai's review: each episode's releases that fit, best first, before anything is added. «clear» when the
+ *  best one is the only one, or a confirmed match well ahead of the next. */
+export interface PlanItem { ep: number; state: 'pick' | 'have' | 'filler' | 'none'; options: TorrentResult[]; pick?: TorrentResult; clear: boolean }
+export async function planRange(a: al.Anime, o: RangeOptions, onEach: (it: PlanItem) => void, stop: () => boolean): Promise<PlanItem[]> {
+  const have = o.skipHave ? await downloadedEpisodes(a.id) : new Map<number, Task>();
+  const disk = o.skipHave ? await import('./library').then((l) => l.filesFor(a.id)).catch(() => new Map()) : new Map();
+  const fillers = o.skipFillers ? await fillersOf(a).catch(() => new Set<number>()) : new Set<number>();
+  const out: PlanItem[] = [];
+  for (let ep = o.from; ep <= o.to && !stop(); ep++) {
+    let it: PlanItem;
+    if (have.has(ep) || disk.has(ep)) it = { ep, state: 'have', options: [], clear: true };
+    else if (fillers.has(ep)) it = { ep, state: 'filler', options: [], clear: true };
+    else {
+      const rs = await searchAll(await buildQuery(a, ep), () => undefined).catch(() => [] as TorrentResult[]);
+      const fit = rank(rs.filter((r) => pickFor([r], ep, { ...o.choices, group: '' })), o.choices.resolution);
+      const best = pickFor(rs, ep, o.choices) ?? fit[0];
+      const options = best ? [best, ...fit.filter((x) => x !== best)].slice(0, 8) : [];
+      const second = options[1];
+      it = { ep, state: best ? 'pick' : 'none', options, pick: best ?? undefined, clear: !!best && (options.length === 1 || (best.accuracy === 'high' && (!second || second.accuracy !== 'high' || best.seeders >= second.seeders * 3))) };
+    }
+    out.push(it); onEach(it);
+  }
+  return out;
+}
 /** The rules checked: every aired episode past the last one fetched is looked for and added. */
 let checking = false;
 export async function checkRules(quiet = true): Promise<number> {

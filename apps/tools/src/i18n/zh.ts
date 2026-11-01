@@ -83,4 +83,5 @@ export const zh: Partial<Strings> = {
   animeLibrary: "媒体库", continueWatching: "继续观看", libraryAddDir: "添加文件夹", libraryAddDirAsk: "要加入媒体库的文件夹：", libraryCount: "作品：{shows} · 文件：{files}", libraryEmpty: "下载文件夹中还没有动画。", libraryFiles: "文件：{n}", libraryMatch: "匹配", libraryMissing: "缺少：{n}", libraryOnDisk: "本机：{n}", libraryRescan: "重新扫描", libraryScanning: "正在读取文件夹…", libraryMatching: "正在 AniList 上匹配作品…", libraryShows: "作品", libraryUnmatched: "未匹配", missedSequels: "错过的续作", noSequels: "没有等你看的续作。", sequelOf: "{title} 的续作", hideSpoilers: "隐藏剧透", hideSpoilersHint: "当前集之后的剧集隐藏标题和图片。", onDisk: "本机",
   torrentProxy: "种子也走代理", torrentProxyHint: "“连接”中设置的代理，也用于节点和 Tracker。", bindIface: "网络接口", bindIfaceHint: "把种子限定在一个接口（VPN 的 tun0、wg0…）；断开时不发出任何流量。", bindAny: "任意", anonymousMode: "匿名模式", anonymousHint: "向节点和 Tracker 透露更少的应用信息。",
   usageTitle: "下载占用", usageDownloads: "全部下载", usageFree: "可用空间", usagePacks: "附加组件包",
+  reviewPicks: "添加前检查所选", reviewUnsure: "不确定", reviewChange: "更换", reviewFinding: "正在查找每集的版本…", reviewAdd: "添加 {n}", reviewCountdown: "所选都很明确：{n} 秒后添加（点列表可停止）。",
 };

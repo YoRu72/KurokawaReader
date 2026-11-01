@@ -83,4 +83,5 @@ export const ja: Partial<Strings> = {
   animeLibrary: "ライブラリ", continueWatching: "続きを見る", libraryAddDir: "フォルダを追加", libraryAddDirAsk: "ライブラリに追加するフォルダ：", libraryCount: "作品：{shows} · ファイル：{files}", libraryEmpty: "ダウンロードフォルダにアニメがまだありません。", libraryFiles: "ファイル：{n}", libraryMatch: "照合", libraryMissing: "不足：{n}", libraryOnDisk: "端末内：{n}", libraryRescan: "再スキャン", libraryScanning: "フォルダを読み込み中…", libraryMatching: "AniList で作品を照合中…", libraryShows: "作品", libraryUnmatched: "未照合", missedSequels: "見逃した続編", noSequels: "待っている続編はありません。", sequelOf: "{title} の続編", hideSpoilers: "ネタバレを隠す", hideSpoilersHint: "今の話より先のエピソードはタイトルと画像を隠します。", onDisk: "端末内",
   torrentProxy: "トレントもプロキシ経由", torrentProxyHint: "「接続」のプロキシをピアとトラッカーにも使います。", bindIface: "ネットワークインターフェース", bindIfaceHint: "トレントを1つ（VPNの tun0, wg0…）に限定。切れたら通信しません。", bindAny: "指定なし", anonymousMode: "匿名モード", anonymousHint: "ピアやトラッカーにアプリの情報をあまり送りません。",
   usageTitle: "ダウンロードの使用量", usageDownloads: "すべてのダウンロード", usageFree: "空き容量", usagePacks: "アドオンのパック",
+  reviewPicks: "追加前に選択を確認", reviewUnsure: "不確か", reviewChange: "変更", reviewFinding: "各話のリリースを探しています…", reviewAdd: "{n} を追加", reviewCountdown: "すべて明確です：{n} 秒後に追加します（一覧を押すと停止）。",
 };

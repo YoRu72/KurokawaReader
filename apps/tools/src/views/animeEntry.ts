@@ -4,7 +4,7 @@
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, localDigits, countEpisodes, formatBytes, dateLocale, countResults } from '../i18n';
 import { back, navigate } from '../router';
-import { getSettings } from '../settings';
+import { getSettings, updateSettings } from '../settings';
 import { getEngine } from '../engine';
 import * as al from '../anilist';
 import type { Anime, AlEntry } from '../anilist';
@@ -176,11 +176,11 @@ function rangeSheet(a: Anime, from: number, to: number): void {
   const sh = openSheet(`${titleOf(a)} · ${t('autoRange')}`, t('close'));
   const r0 = ruleOf(a.id); const c = { resolution: r0?.resolution ?? getSettings().animeQuality, group: r0?.group ?? '', dub: r0?.dub ?? 'any', require: r0?.require ?? '', avoid: r0?.avoid ?? '' } as Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'>;
   const num = (label: string, v: number, set: (n: number) => void) => h('label', { class: 'num-field' }, h('span', null, label), h('input', { type: 'number', min: '1', value: String(v), inputmode: 'numeric', onchange: (e: Event) => set(Math.max(1, Number((e.target as HTMLInputElement).value) || 1)) }));
-  let skipFillers = false, skipHave = true, preferBatch = a.status === 'FINISHED', keep = false;
+  let skipFillers = false, skipHave = true, preferBatch = a.status === 'FINISHED', keep = false, review = getSettings().animeReview ?? true;
   const sw = (label: string, on: boolean, set: (v: boolean) => void) => h('label', { class: 'row switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }));
   sh.body.append(h('div', { class: 'num-row' }, num(t('fromEpisode'), from, (n) => { from = n; }), num(t('toEpisode'), to, (n) => { to = n; })), ...choiceFields(c),
     sw(t('skipFillers'), skipFillers, (v) => { skipFillers = v; }), sw(t('skipDownloaded'), skipHave, (v) => { skipHave = v; }), sw(t('preferBatch'), preferBatch, (v) => { preferBatch = v; }),
-    ...(a.status === 'RELEASING' ? [sw(t('autoKeep'), keep, (v) => { keep = v; })] : []));
+    ...(a.status === 'RELEASING' ? [sw(t('autoKeep'), keep, (v) => { keep = v; })] : []), sw(t('reviewPicks'), review, (v) => { review = v; updateSettings({ animeReview: v }); }));
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('autoRangeStart')) as HTMLButtonElement;
   sh.actions.append(go);
   go.addEventListener('click', async () => {
@@ -189,6 +189,7 @@ function rangeSheet(a: Anime, from: number, to: number): void {
     sh.body.replaceChildren(h('p', { class: 'src' }, `${t('episodeN', { n: from })} – ${t('episodeN', { n: to })}`), log);
     sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { stopped = true; } }, t('stop')));
     if (keep) { saveRule({ anilistId: a.id, title: titleOf(a), cover: a.cover, ...c, next: to + 1, enabled: true }); startAuto(); }
+    if (review && !(preferBatch && to - from >= 3)) { await reviewRange(sh, log, a, { from, to, choices: c, skipFillers, skipHave, preferBatch }, () => stopped); return; }
     const n = await downloadRange(a, { from, to, choices: c, skipFillers, skipHave, preferBatch }, (ep, state, title) => {
       log.prepend(h('div', { class: 'range-row s-' + state }, h('b', null, localDigits(ep)), h('span', { class: 'grow', dir: 'auto' }, state === 'added' || state === 'batch' ? title ?? '' : t(state === 'have' ? 'downloaded' : state === 'filler' ? 'filler' : 'autoNone'))));
     }, () => stopped);
@@ -234,4 +235,40 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
     }
     row('magnet', t('epChoose'), t('epChooseHint'), () => void torrentSheet(a, n));
   })();
+}
+
+/** Senpwai's review: every episode's pick shown before anything is added — changeable from the releases that fit —
+ *  and, when every pick is clear, added by itself after a short countdown (which can be stopped). */
+async function reviewRange(sh: ReturnType<typeof openSheet>, log: HTMLElement, a: Anime, o: Parameters<typeof downloadRange>[1], stopped: () => boolean): Promise<void> {
+  const { planRange, addFor } = await import('../anime/auto');
+  const rowOf = new Map<number, HTMLElement>();
+  const label = (r: TorrentResult) => { const p = parseFilename(r.title); return [r.resolution ?? p.resolution ?? '', r.size ? formatBytes(r.size) : '', `↑${localDigits(r.seeders)}`, p.group ?? r.group ?? '', r.provider].filter(Boolean).join(' · '); };
+  const draw = (it: import('../anime/auto').PlanItem) => {
+    const el = h('div', { class: 'range-row review s-' + (it.state === 'pick' ? (it.clear ? 'added' : 'unsure') : it.state) },
+      h('b', null, localDigits(it.ep)),
+      h('span', { class: 'grow' }, h('span', { dir: 'auto' }, it.pick ? it.pick.title : t(it.state === 'have' ? 'downloaded' : it.state === 'filler' ? 'filler' : 'autoNone')), it.pick ? h('small', { class: 'src' }, `${label(it.pick)}${it.clear ? '' : ` · ${t('reviewUnsure')}`}`) : null),
+      it.options.length > 1 ? h('button', { type: 'button', class: 'btn text small', onclick: () => { const s2 = openSheet(`${t('episodeN', { n: it.ep })}`, t('close'), { stack: true }); s2.body.append(...it.options.map((r) => h('button', { type: 'button', class: 'result-row' + (r === it.pick ? ' best' : ''), onclick: () => { it.pick = r; it.clear = true; s2.close(); const nel = draw(it); rowOf.get(it.ep)?.replaceWith(nel); rowOf.set(it.ep, nel); } }, icon('magnet'), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title), h('small', { class: 'src' }, label(r)))))); } }, t('reviewChange')) : null);
+    return el;
+  };
+  log.replaceChildren(h('p', { class: 'hint' }, t('reviewFinding')));
+  const plan = await planRange(a, o, (it) => { const el = draw(it); rowOf.set(it.ep, el); log.append(el); }, stopped);
+  log.querySelector('.hint')?.remove();
+  const picks = () => plan.filter((x) => x.state === 'pick' && x.pick);
+  let timer = 0;
+  const addAll = async () => {
+    window.clearInterval(timer); let n = 0; sh.actions.replaceChildren(h('div', { class: 'spinner small' }));
+    for (const it of picks()) { try { await addFor(a, it.pick!, it.ep); n++; } catch { /* next */ } }
+    toast(t('autoRangeDone', { n: countEpisodes(n) })); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); navigate('/'); } }, t('done')));
+  };
+  const add = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('reviewAdd', { n: countEpisodes(picks().length) })) as HTMLButtonElement;
+  add.addEventListener('click', () => void addAll());
+  sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { window.clearInterval(timer); sh.close(); } }, t('cancel')), add);
+  if (!picks().length) { add.disabled = true; return; }
+  // Every pick clear: added after ten seconds unless stopped or changed (Senpwai's countdown).
+  if (plan.every((x) => x.state !== 'pick' || x.clear)) {
+    let left = 10; const note = h('p', { class: 'hint review-count' }); log.prepend(note);
+    const tick = () => { note.textContent = t('reviewCountdown', { n: localDigits(left) }); if (left-- <= 0) void addAll(); };
+    tick(); timer = window.setInterval(tick, 1000);
+    log.addEventListener('click', () => { window.clearInterval(timer); note.remove(); }, { once: true });
+  }
 }

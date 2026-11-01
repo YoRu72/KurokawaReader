@@ -44,6 +44,14 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const epRows = await p.$$eval('.ep-sheet .dest-row', (r) => r.map((x) => x.innerText.split('\n')[0]));
   console.log('episode sheet:', epRows.join(' | '));
   if (!epRows.some((x) => /Watch now/.test(x)) || !epRows.some((x) => /Choose a release/.test(x))) errors.push('episode sheet');
+  // A range reviewed before adding (Senpwai's): episodes 4–5, each with its pick.
+  await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.locator('.anime-episodes .btn.primary').first().click(); await p.waitForSelector('.sheet .num-row');
+  await p.fill('.sheet .num-row input >> nth=0', '4'); await p.dispatchEvent('.sheet .num-row input >> nth=0', 'change'); await p.fill('.sheet .num-row input >> nth=1', '5'); await p.dispatchEvent('.sheet .num-row input >> nth=1', 'change');
+  await p.click('.sheet .btn.primary'); await p.waitForSelector('.range-row.review', { timeout: 30000 }); await p.waitForTimeout(4000);
+  const review = await p.$$eval('.range-row.review', (r) => r.map((x) => x.innerText.replace(/\s+/g, ' ').slice(0, 90)));
+  console.log('review:', review.join(' || '), '| actions:', await p.$eval('.sheet .sheet-actions, .sheet .actions', (e) => e.innerText.replace(/\s+/g, ' ')).catch(() => '?'));
+  if (review.length !== 2) errors.push('review');
   // Search by genre and tag: the filters sheet, a genre and a tag (and one left out), results asked with them.
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
   await p.goto(`http://127.0.0.1:${port}/#/anime?tab=search`); await p.waitForSelector('.anime-filter-btn'); await p.waitForTimeout(500);

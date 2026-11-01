@@ -238,3 +238,4 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .cont-card img { width: 52px; height: 74px; object-fit: cover; border-radius: 8px; } .cont-card .grow { display: grid; gap: 2px; min-width: 0; } .cont-card .anime-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cont-card svg { width: 22px; height: 22px; fill: none; stroke: var(--md-primary); stroke-width: 2; flex: none; }
 .mini-cover { width: 34px; height: 48px; object-fit: cover; border-radius: 6px; }
+.range-row.s-unsure b { color: var(--md-tertiary, #e0a33a); } .range-row.review .grow { display: grid; gap: 2px; min-width: 0; } .review-count { font-weight: 600; }
