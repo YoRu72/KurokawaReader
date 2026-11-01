@@ -114,10 +114,14 @@ export function attachTranslator(host: TranslatorHost): Translator {
   const textOf = (el: HTMLElement) => (keepStyle() ? styledText(el) : plainOf(el));
   const sourceOf = (el: HTMLElement) => { if (!originals.has(el)) return textOf(el); const d = document.createElement('div'); d.innerHTML = originals.get(el)!; return keepStyle() ? styledText(d) : (d.innerText ?? d.textContent ?? '').trim(); };
   const translations = new WeakMap<HTMLElement, string>();
+  // (Each paragraph's own direction as the book set it, put back exactly: removing it let a paragraph take its
+  // chapter's direction — Japanese laid out right to left, its full stops at the start of the lines.)
+  const dirs = new WeakMap<HTMLElement, string | null>();
+  const ownDir = (el: HTMLElement) => { const d = dirs.get(el); if (d) return d; const x = plainOfText(originals.get(el) ?? ''); return x ? (isRtlText(x) ? 'rtl' : 'ltr') : 'auto'; };
   const eligible = (el: HTMLElement) => { if (SKIP.has(el.tagName) || el.querySelector('img, table, svg')) return false; const x = originals.has(el) ? sourceOf(el) : plainOf(el); if (x.length < 2) return false; if (furi()) return /[\u4e00-\u9fff]/.test(x); return !(getSettings().aiSkipSame !== false && inTargetScript(x.replace(/<[^>]+>/g, ''), getSettings().aiTarget)); };
 
   function apply(el: HTMLElement, translated: string) {
-    if (!originals.has(el)) originals.set(el, el.innerHTML);
+    if (!originals.has(el)) { originals.set(el, el.innerHTML); dirs.set(el, el.getAttribute('dir')); }
     if (getSettings().aiTask === 'furigana') {
       // Only ruby markup may come back; everything else is escaped.
       const safe = translated.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
@@ -130,7 +134,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const dir = isRtlText(translated.replace(/<[^>]+>/g, '')) ? 'rtl' : 'ltr';
     if (getSettings().aiDisplay === 'bilingual') {
       // Both: the original as it was (dimmed), the translation under it in a line of its own.
-      el.innerHTML = originals.get(el)!; el.removeAttribute('dir');
+      el.innerHTML = originals.get(el)!; el.setAttribute('dir', ownDir(el));
       const orig = h('span', { class: 'kr-tr-orig' }); orig.append(...Array.from(el.childNodes)); el.append(orig);
       el.append(h('span', { class: 'kr-tr-line', dir }, styledNodes(translated)));
       el.classList.add('kr-translated', 'kr-bilingual');
@@ -145,7 +149,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
   function restore(el: HTMLElement) {
     const o = originals.get(el);
     if (o === undefined) return;
-    el.innerHTML = o; el.classList.remove('kr-translated', 'kr-furigana', 'kr-bilingual'); el.removeAttribute('dir'); originals.delete(el); translations.delete(el);
+    const d = ownDir(el); el.innerHTML = o; el.classList.remove('kr-translated', 'kr-furigana', 'kr-bilingual'); el.setAttribute('dir', d); originals.delete(el); translations.delete(el); dirs.delete(el);
   }
   function restoreAll() { for (const { el } of host.blocks()) restore(el); }
 
@@ -237,7 +241,16 @@ export function attachTranslator(host: TranslatorHost): Translator {
       if (!c[key]) items.push({ bookId: ch.bookId, text, key, el, chapter: ch.label, all: ch.blocks });
     }
     const total = items.length; let finished = 0, failed = 0;
-    const paintAhead = () => { if (status) status.textContent = t('translatingAhead', { n: finished, total }); if (bar) bar.style.width = total ? `${Math.round((finished / total) * 100)}%` : '100%'; };
+    // (A range or the whole book goes on as a job: in the background, out of the reader too, its progress in a
+    // notification — the book read meanwhile. Stopped from the jobs list or the sheet.)
+    const job: { report?: (pct: number, text?: string) => void; finish?: (how: 'ok' | 'cancel' | 'fail') => void } = {};
+    if (!quiet && total) {
+      const title = host.bookTitle?.(chapters[0]?.bookId ?? '') ?? t('aiTranslate');
+      const ended = new Promise<'ok' | 'cancel' | 'fail'>((res) => { job.finish = res; });
+      void import('../jobs').then(({ runJob }) => runJob(t('trJobTitle', { book: title }), async (rep) => { job.report = rep; rep(0, t('trJobProgress', { n: localDigits(0), total: localDigits(total) })); const how = await ended; if (how === 'fail') throw new Error(t('trJobFailed')); return how === 'ok' ? { blob: new Blob([]), name: title } : null; }, () => false,
+        { quiet: true, cancel: () => { aheadGen++; aheadBusy = false; job.finish?.('cancel'); }, doneText: () => t('trJobDone', { book: title, n: localDigits(finished) }) })).catch(() => undefined);
+    }
+    const paintAhead = () => { job.report?.(total ? (finished / total) * 100 : 100, t('trJobProgress', { n: localDigits(finished), total: localDigits(total) })); if (status) status.textContent = t('translatingAhead', { n: finished, total }); if (bar) bar.style.width = total ? `${Math.round((finished / total) * 100)}%` : '100%'; };
     paintAhead();
     if (!total) { if (status) status.textContent = t('alreadyTranslated'); if (!quiet) aheadBusy = false; onDone(); return; }
     const batches = batchesOf(items);
@@ -256,6 +269,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     };
     await Promise.all(Array.from({ length: quiet ? 1 : Math.max(parallel(), 2) }, () => worker()));
     if (!quiet) aheadBusy = false;
+    job.finish?.(gen !== aheadGen ? 'cancel' : finished > 0 ? 'ok' : failed ? 'fail' : 'ok');
     if (gen !== aheadGen) return;
     if (quiet) return;
     if (status) status.textContent = failed ? t('translateAheadPartial', { n: finished, total }) : t('translateAheadDone', { n: finished });
@@ -352,6 +366,12 @@ export function attachTranslator(host: TranslatorHost): Translator {
     if (on) void run(); else { generation++; running = false; restoreAll(); }
     paint();
   }
+  function clearCache() { void (async () => { for (const { bookId } of host.blocks()) { bySource.set(bookId, {}); void db.setMeta(`trs:${bookId}`, {}); caches.set(bookId, {}); await db.setMeta(`tr:${bookId}`, {}); } restoreAll(); if (on) void run(); toast(t('done')); })(); }
+  function moreSheet() {
+    const sh = openSheet(t('aiTranslate'), t('close')); sh.body.style.fontFamily = 'var(--font-ui)';
+    const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label));
+    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('trSuggestTerms'), () => void suggestSheet()), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
+  }
   function buildPill() {
     toggleBtn = h('button', { type: 'button', class: 'tr-toggle', 'aria-label': t('aiTranslate'), onclick: () => setOn(!on) }, icon('translate')) as HTMLButtonElement;
     status = h('span', { class: 'tr-status' });
@@ -359,9 +379,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
       toggleBtn, status,
       h('button', { type: 'button', class: 'tr-mode', title: t('trBilingual'), 'aria-label': t('trBilingual'), onclick: () => { updateSettings({ aiDisplay: getSettings().aiDisplay === 'bilingual' ? 'replace' : 'bilingual' }); reapply(); paint(); toast(getSettings().aiDisplay === 'bilingual' ? t('trShownBoth') : t('trShownReplace')); } }, icon('eye')),
       h('button', { type: 'button', title: t('retranslate'), 'aria-label': t('retranslate'), onclick: () => { if (!on) setOn(true); else void run(true); } }, icon('rotate')),
-      h('button', { type: 'button', title: t('clearTranslationCache'), 'aria-label': t('clearTranslationCache'), onclick: async () => { for (const { bookId } of host.blocks()) { bySource.set(bookId, {}); void db.setMeta(`trs:${bookId}`, {}); caches.set(bookId, {}); await db.setMeta(`tr:${bookId}`, {}); } restoreAll(); if (on) void run(); toast(t('done')); } }, icon('trash')),
-      h('button', { type: 'button', title: t('translateAhead'), 'aria-label': t('translateAhead'), onclick: () => aheadSheet() }, icon('books')),
-      h('button', { type: 'button', title: t('customize'), 'aria-label': t('customize'), onclick: () => settingsSheet() }, icon('settings')),
+      // (The rest in one menu, so the bar fits a phone's width: translating ahead, names for the glossary, clearing.)
+      h('button', { type: 'button', title: t('more'), 'aria-label': t('more'), onclick: () => moreSheet() }, icon('more')),
       h('button', { type: 'button', title: t('close'), 'aria-label': t('close'), onclick: () => { setOn(false); pill?.remove(); pill = null; } }, icon('close')),
     );
     host.root.appendChild(pill);

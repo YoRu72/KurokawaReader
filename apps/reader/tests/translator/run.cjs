@@ -13,10 +13,11 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await new Promise((r) => server.listen(0, r)); const port = server.address().port;
   const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], locale: 'en' }); const p = await ctx.newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
-  const asked = []; let broke = false; let limited = 0; let daily = false;
+  const asked = []; let broke = false; let limited = 0; let daily = false; let slow = false;
   await p.route('https://ai.test/v1/chat/completions', async (r) => {
     // Gemini's «too many requests», the first time: the minute's limit (wait a second), then the answer.
     if (limited === 0 || daily) { limited++; const quotaId = daily ? 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' : 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'; return r.fulfill({ status: 429, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId, quotaValue: '60' }] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '1s' }] } }) }); }
+    if (slow) await new Promise((res) => setTimeout(res, 400));
     const body = JSON.parse(r.request().postData()); const system = body.messages[0].content; const user = body.messages[1].content; asked.push({ system, user });
     let content;
     if (/translation glossary/.test(system)) content = JSON.stringify([{ from: 'Lin Feng', to: 'لين فنغ', kind: 'person' }]);
@@ -51,7 +52,7 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.click('.tr-pill .tr-mode'); await p.waitForTimeout(200);
   ok('back to the translation alone', !(await p.$('.kr-chapter .kr-tr-orig')));
   // Names for the glossary.
-  await p.click('.tr-pill button[aria-label="Customise"]').catch(async () => { await p.locator('.tr-pill button').nth(6).click(); });
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Customise' }).click();
   await p.waitForSelector('.tr-options'); await p.locator('.tr-options button', { hasText: 'Find names' }).click();
   await p.waitForSelector('.tr-term'); await p.locator('.sheet button', { hasText: 'Add for this book' }).click(); await p.waitForTimeout(300);
   const gl = await p.evaluate(() => JSON.parse(localStorage.getItem('kr.glossary') || '[]')); console.log('glossary:', JSON.stringify(gl));
@@ -75,6 +76,19 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.click('.tr-pill button[aria-label="Translate the chapter again"]'); await p.waitForSelector('.toast', { timeout: 15000 });
   const tx = await p.$eval('.toast', (e) => e.textContent); console.log('daily:', tx, limited - before);
   ok('the day\'s quota: said plainly, not asked again and again', /free quota/.test(tx) && limited - before <= 3);
+  // The bar fits the screen; turned off, every paragraph keeps the direction the book gave it.
+  ok('the bar within the screen', await p.$eval('.tr-pill', (e) => e.getBoundingClientRect().right <= innerWidth + 1 && e.getBoundingClientRect().left >= -1));
+  daily = false; slow = true;
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Clear' }).click(); await p.waitForTimeout(300);
+  await p.click('.tr-pill .tr-toggle'); await p.waitForTimeout(300);
+  const dirs = await p.$$eval('.kr-chapter p', (e) => e.map((x) => x.getAttribute('dir'))); console.log('directions after:', dirs.join(','));
+  ok('turned off: the paragraphs\' own directions back (none taken from the chapter)', dirs.every((d) => d === 'ltr' || d === 'rtl') && dirs.filter((d) => d === 'rtl').length === 1);
+  // The whole book as a job: on in the background, its progress where jobs are shown.
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translate ahead' }).click();
+  await p.locator('.sheet button', { hasText: 'Translate the whole book' }).click(); await p.keyboard.press('Escape');
+  await p.waitForSelector('.job-chip', { timeout: 8000 }); const chip = await p.$eval('.job-chip', (e) => e.textContent); console.log('job:', chip);
+  ok('the whole book goes on as a job, its progress shown', /Translating «Gate Story»/.test(chip) && /Paragraphs: \d/.test(chip));
+  await p.waitForSelector('.job-chip', { state: 'detached', timeout: 20000 }); ok('the job ends by itself', true);
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close();
   console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);

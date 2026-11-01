@@ -7,7 +7,7 @@ import { t, formatBytes, localDigits } from './i18n';
 import { getSettings, updateSettings } from './settings';
 
 export type JobOut = { blob: Blob; name: string };
-type Job = { id: number; title: string; pct: number; text?: string; state: 'running' | 'done' | 'failed'; out?: JobOut; error?: string; watched: () => boolean; seen?: boolean; quiet?: boolean };
+type Job = { id: number; title: string; pct: number; text?: string; state: 'running' | 'done' | 'failed'; out?: JobOut; error?: string; watched: () => boolean; seen?: boolean; quiet?: boolean; cancel?: () => void; doneText?: () => string };
 
 const jobs: Job[] = [];
 let seq = 0;
@@ -47,7 +47,7 @@ function noteProgress(j: Job): void {
 }
 function noteDone(j: Job): void {
   const others = jobs.some((x) => x.state === 'running');
-  const text = j.state === 'done' ? (j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error ?? ''}`;
+  const text = j.state === 'done' ? (j.doneText ? j.doneText() : j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error ?? ''}`;
   const a = android();
   // (Seen in the app as it ends: nothing to announce, the service only stops.)
   const quiet = j.watched() && document.visibilityState === 'visible';
@@ -64,9 +64,9 @@ function noteDone(j: Job): void {
  * Run `work` as a job. `watched` says whether its own sheet is still showing it (then the result is shown there;
  * otherwise a toast and the jobs sheet offer it). Resolves with what the work returns.
  */
-export async function runJob(title: string, work: (report: (pct: number, text?: string) => void) => Promise<JobOut | null>, watched: () => boolean = () => false, opts: { quiet?: boolean } = {}): Promise<JobOut | null> {
+export async function runJob(title: string, work: (report: (pct: number, text?: string) => void) => Promise<JobOut | null>, watched: () => boolean = () => false, opts: { quiet?: boolean; cancel?: () => void; doneText?: () => string } = {}): Promise<JobOut | null> {
   // (`quiet`: a download into the library — nothing to save or share after; its line says how fast it goes.)
-  const j: Job = { id: ++seq, title, pct: 0, state: 'running', watched, quiet: opts.quiet };
+  const j: Job = { id: ++seq, title, pct: 0, state: 'running', watched, quiet: opts.quiet, cancel: opts.cancel, doneText: opts.doneText };
   jobs.unshift(j);
   // (Finished files are held in memory to be saved or shared: only the last few are kept — a phone has little.)
   let kept = 0;
@@ -131,6 +131,7 @@ export function jobsSheet(): void {
     list.replaceChildren(...(jobs.length ? jobs.map((j) => h('div', { class: 'job-row' },
       h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? (j.text || `${localDigits(Math.round(j.pct))}%`) : j.state === 'done' ? h('span', null, h('bdi', null, j.out!.name), ' · ', h('bdi', null, formatBytes(j.out!.blob.size))) : t('convertFailed'))),
       j.state === 'running' ? h('div', { class: 'progress-bar' }, h('span', { style: { width: `${j.pct}%` } })) : null,
+      j.state === 'running' && j.cancel ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } }, h('button', { class: 'btn small', type: 'button', onclick: () => j.cancel!() }, icon('close'), t('cancel'))) : null,
       j.state === 'done' && !j.quiet ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => void import('./ui/share').then((m) => m.shareFile(j.out!.blob, j.out!.name, j.out!.name)) }, icon('external'), t('shareFile')),
         h('button', { class: 'btn small', type: 'button', onclick: () => void import('./ui/share').then((m) => m.downloadBlob(j.out!.blob, j.out!.name)) }, icon('download'), t('saveFile')),

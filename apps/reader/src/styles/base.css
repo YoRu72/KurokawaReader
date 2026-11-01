@@ -1987,3 +1987,9 @@ html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
 .api-model.on { border-color: var(--md-primary); }
 .api-model .grow { display: flex; flex-direction: column; min-width: 0; }
 .api-model b { overflow-wrap: anywhere; font-weight: 600; }
+
+/* The translator's bar fits the screen: its status shortens (…) before a button is pushed off the edge. */
+.tr-pill { max-width: calc(100vw - 20px); box-sizing: border-box; }
+.tr-pill > button { flex: none; }
+.tr-pill .tr-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 420px) { .tr-pill button { width: 36px; height: 36px; } .tr-pill .tr-status { padding: 0 6px; font-size: 13px; } }
