@@ -11,7 +11,7 @@
 import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText, localDigits, getLang } from '../i18n';
 import { db } from '../db';
-import { translateBatch, translationKey, aiReady, suggestTerms, langName, type TrContext } from '../ai';
+import { translateBatch, translationKey, aiReady, suggestTerms, langName, hash, onAiWait, type TrContext } from '../ai';
 import { terms, saveTerms } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
 import { aiSettingsSheet } from './aisettings';
@@ -70,7 +70,8 @@ export function inTargetScript(text: string, target: string): boolean {
   return false;
 }
 
-export function attachTranslator(host: TranslatorHost): { toggleUi(): void; dispose(): void } {
+export type Translator = { toggleUi(): void; dispose(): void; hasTranslations(bookIds: string[]): Promise<boolean>; load(bookIds: string[]): Promise<void>; pairOf(el: HTMLElement, bookId: string): { orig: string; tr?: string }; target(): string };
+export function attachTranslator(host: TranslatorHost): Translator {
   let on = false;
   let pill: HTMLElement | null = null;
   let running = false, generation = 0;
@@ -85,10 +86,25 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
     if (!c) { c = (await db.getMeta<Record<string, string>>(`tr:${bookId}`)) ?? {}; caches.set(bookId, c); }
     return c;
   }
+  // A second record of each book's translations, by the original text alone (not by the model or the
+  // instructions that made them): what the search across languages reads, whatever the settings are now.
+  const bySource = new Map<string, Record<string, string>>();
+  async function sourceIndex(bookId: string): Promise<Record<string, string>> {
+    let c = bySource.get(bookId);
+    if (!c) { c = (await db.getMeta<Record<string, string>>(`trs:${bookId}`)) ?? {}; bySource.set(bookId, c); }
+    return c;
+  }
+  const srcKey = (plain: string) => hash(plain.replace(/\s+/g, ' ').trim());
+  const plainOfText = (x: string) => { const d = document.createElement('div'); d.innerHTML = x; return (d.textContent ?? '').replace(/\s+/g, ' ').trim(); };
+  async function remember(bookId: string, key: string, sourceText: string, tr: string) {
+    const c = await cache(bookId); c[key] = tr;
+    (await sourceIndex(bookId))[srcKey(plainOfText(sourceText))] = tr;
+    scheduleSave(bookId);
+  }
   function scheduleSave(bookId: string) {
     dirty.add(bookId);
     window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => { for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); dirty.clear(); }, 800);
+    saveTimer = window.setTimeout(() => { for (const id of dirty) { void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); if (bySource.has(id)) void db.setMeta(`trs:${id}`, bySource.get(id)!); } dirty.clear(); }, 800);
   }
 
   const plainOf = (el: HTMLElement) => (el.innerText ?? el.textContent ?? '').replace(/\s+\n/g, '\n').trim();
@@ -141,10 +157,12 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
     return { book: host.bookTitle?.(bookId), chapter: ch?.label, before };
   }
   const parallel = () => Math.max(1, Math.min(6, Math.round(getSettings().aiParallel ?? 2)));
-  /** Batches of about 2,500 characters (twelve paragraphs at most), kept in reading order within a batch. */
+  /** Batches of about 2,500 characters (twelve paragraphs at most) — for Gemini and Claude, which take long
+   *  inputs well and whose free tiers count requests, 6,000 and thirty: fewer requests for a chapter. */
   function batchesOf<T extends { text: string }>(items: T[]): T[][] {
+    const big = ['gemini', 'anthropic', 'openrouter'].includes(getSettings().aiProvider); const maxC = big ? 6000 : 2500, maxN = big ? 30 : 12;
     const out: T[][] = []; let cur: T[] = []; let size = 0;
-    for (const it of items) { if (cur.length && (size + it.text.length > 2500 || cur.length >= 12)) { out.push(cur); cur = []; size = 0; } cur.push(it); size += it.text.length; }
+    for (const it of items) { if (cur.length && (size + it.text.length > maxC || cur.length >= maxN)) { out.push(cur); cur = []; size = 0; } cur.push(it); size += it.text.length; }
     if (cur.length) out.push(cur); return out;
   }
 
@@ -183,10 +201,10 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
           if (gen !== generation || !on) return;
           for (let i = 0; i < batch.length; i++) {
             const tr = out[i]?.trim(); if (!tr) continue;
-            const c = await cache(batch[i].bookId); c[batch[i].key] = tr; scheduleSave(batch[i].bookId);
+            await remember(batch[i].bookId, batch[i].key, batch[i].text, tr);
             apply(batch[i].el, tr); done++;
           }
-        } catch (err) { failed++; console.warn('[kurokawa] translate failed', err); if (failed === 1) toast(String((err as Error).message ?? err), 'error', 5000); if (failed > 3) break; }
+        } catch (err) { failed++; console.warn('[kurokawa] translate failed', err); if (failed === 1) toast(String((err as Error).message ?? err), 'error', 6000); if (failed > 3 || (err as Error).name === 'QuotaError') { batches.length = 0; break; } }
         paint();
       }
     };
@@ -230,9 +248,9 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
           const first = batch[0]; const i = first.all.indexOf(first.el); const before = first.all.slice(Math.max(0, i - 2), i).map((e) => plainOf(e)).filter((x) => x.length > 1);
           const out = await translateBatch(batch.map((x) => x.text), first.bookId, { book: host.bookTitle?.(first.bookId), chapter: first.chapter, before });
           if (gen !== aheadGen) return;
-          for (let i = 0; i < batch.length; i++) { const tr = out[i]?.trim(); if (!tr) continue; const c = await cache(batch[i].bookId); c[batch[i].key] = tr; scheduleSave(batch[i].bookId); }
+          for (let i = 0; i < batch.length; i++) { const tr = out[i]?.trim(); if (!tr) continue; await remember(batch[i].bookId, batch[i].key, batch[i].text, tr); }
           finished += batch.length;
-        } catch (err) { failed++; console.warn('[kurokawa] translate-ahead failed', err); if (failed === 1 && !quiet) toast(String((err as Error).message ?? err), 'error', 5000); if (failed > 3) { batches.length = 0; } }
+        } catch (err) { failed++; console.warn('[kurokawa] translate-ahead failed', err); if (failed === 1 && !quiet) toast(String((err as Error).message ?? err), 'error', 6000); if (failed > 3 || (err as Error).name === 'QuotaError') { batches.length = 0; } }
         paintAhead();
       }
     };
@@ -319,8 +337,11 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
 
   /* ---------- pill ---------- */
   let status: HTMLElement, toggleBtn: HTMLButtonElement;
+  // (Waiting for the provider's per-minute limit: said on the bar, not as an error — it goes on by itself.)
+  let waitSec = 0; const offWait = onAiWait((sec) => { waitSec = sec; paint(); });
   function paint() {
     if (!pill) return;
+    if (waitSec > 0 && on) { status.textContent = t('trWaitingLimit', { s: localDigits(waitSec) }); return; }
     toggleBtn.setAttribute('aria-pressed', String(on));
     toggleBtn.classList.toggle('on', on);
     pill.querySelector('.tr-mode')?.classList.toggle('on', getSettings().aiDisplay === 'bilingual');
@@ -338,7 +359,7 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
       toggleBtn, status,
       h('button', { type: 'button', class: 'tr-mode', title: t('trBilingual'), 'aria-label': t('trBilingual'), onclick: () => { updateSettings({ aiDisplay: getSettings().aiDisplay === 'bilingual' ? 'replace' : 'bilingual' }); reapply(); paint(); toast(getSettings().aiDisplay === 'bilingual' ? t('trShownBoth') : t('trShownReplace')); } }, icon('eye')),
       h('button', { type: 'button', title: t('retranslate'), 'aria-label': t('retranslate'), onclick: () => { if (!on) setOn(true); else void run(true); } }, icon('rotate')),
-      h('button', { type: 'button', title: t('clearTranslationCache'), 'aria-label': t('clearTranslationCache'), onclick: async () => { for (const { bookId } of host.blocks()) { caches.set(bookId, {}); await db.setMeta(`tr:${bookId}`, {}); } restoreAll(); if (on) void run(); toast(t('done')); } }, icon('trash')),
+      h('button', { type: 'button', title: t('clearTranslationCache'), 'aria-label': t('clearTranslationCache'), onclick: async () => { for (const { bookId } of host.blocks()) { bySource.set(bookId, {}); void db.setMeta(`trs:${bookId}`, {}); caches.set(bookId, {}); await db.setMeta(`tr:${bookId}`, {}); } restoreAll(); if (on) void run(); toast(t('done')); } }, icon('trash')),
       h('button', { type: 'button', title: t('translateAhead'), 'aria-label': t('translateAhead'), onclick: () => aheadSheet() }, icon('books')),
       h('button', { type: 'button', title: t('customize'), 'aria-label': t('customize'), onclick: () => settingsSheet() }, icon('settings')),
       h('button', { type: 'button', title: t('close'), 'aria-label': t('close'), onclick: () => { setOn(false); pill?.remove(); pill = null; } }, icon('close')),
@@ -350,8 +371,21 @@ export function attachTranslator(host: TranslatorHost): { toggleUi(): void; disp
   host.onChapterChange(() => { if (on) void run(); });
 
   return {
+    /** Whether any of these books has translations kept (the search then offers both languages). */
+    async hasTranslations(bookIds: string[]) { for (const id of bookIds) { if (Object.keys(await sourceIndex(id)).length || Object.keys(await cache(id)).length) return true; } return false; },
+    /** Loads the books' translations, for pairOf. */
+    async load(bookIds: string[]) { for (const id of bookIds) { await sourceIndex(id); await cache(id); } },
+    /** A paragraph's original text and its translation when there is one (shown now, or kept from before). */
+    pairOf(el: HTMLElement, bookId: string): { orig: string; tr?: string } {
+      const orig = originals.has(el) ? plainOfText(originals.get(el)!) : plainOf(el).replace(/\s+/g, ' ').trim();
+      if (!orig || furi()) return { orig };
+      const shown = translations.get(el);
+      const tr = shown ?? bySource.get(bookId)?.[srcKey(orig)] ?? caches.get(bookId)?.[translationKey(sourceOf(el))];
+      return { orig, tr: tr ? plainOfText(tr) : undefined };
+    },
+    target: () => getSettings().aiTarget,
     toggleUi() { if (pill) { setOn(false); pill.remove(); pill = null; return; } buildPill(); if (aiReady()) setOn(true); else settingsSheet(); },
-    dispose() { generation++; pill?.remove(); pill = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
+    dispose() { offWait(); generation++; pill?.remove(); pill = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
   };
 
   function settingsSheet() { aiSettingsSheet(() => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, h('div', null, optionControls(), aheadControls())); }

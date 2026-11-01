@@ -4,6 +4,7 @@
 import { REPO } from './repo';
 import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp } from './glossary';
 import { getSettings } from './settings';
+import { t } from './i18n';
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
 
@@ -75,19 +76,53 @@ export function hash(str: string): string {
 
 const FORMAT = 'You will receive a JSON array of strings (paragraphs). Return ONLY a JSON array of strings of exactly the same length, where item i is the translation of item i. Keep line breaks inside an item. No prose, no code fences.';
 
-/** A busy or limited provider (429, 5xx) is asked again — after the wait it names, else a little longer each
- *  time — up to three more times; anything else fails at once. */
+/** The pace the provider allows: requests spaced so that no more than its per-minute limit go out (learnt from
+ *  its own answer — Gemini's free tier names it: 10 or 15 a minute for its Flash models), shared by every request
+ *  of the app (translating, translating ahead, names for the glossary). */
+const pace = { gap: 0, nextAt: 0, until: 0 };
+const waiters = new Set<(seconds: number) => void>();
+/** Told when requests wait for the provider's per-minute limit (the seconds left), and 0 when they go on. */
+export function onAiWait(fn: (seconds: number) => void): () => void { waiters.add(fn); return () => waiters.delete(fn); }
+const tellWait = (sec: number) => waiters.forEach((f) => { try { f(sec); } catch { /* one listener */ } });
+async function paced(): Promise<void> {
+  const now = Date.now(); const at = Math.max(now, pace.nextAt, pace.until); pace.nextAt = at + pace.gap;
+  if (at - now > 400) { tellWait(Math.ceil((at - now) / 1000)); await new Promise((r) => setTimeout(r, at - now)); tellWait(0); }
+}
+/** The day's quota used up (not the minute's): nothing to wait for today. */
+export class QuotaError extends Error { constructor(msg: string) { super(msg); this.name = 'QuotaError'; } }
+/** A provider's «too many requests», read: how long it says to wait, the limit it names, and whether it is the
+ *  minute's (wait and go on) or the day's (stop). Gemini puts these in its JSON (RetryInfo, QuotaFailure). */
+function readLimit(body: string, header?: string | null): { wait?: number; perMinute?: number; daily: boolean } {
+  let wait = Number(header) || undefined; let perMinute: number | undefined; let daily = false;
+  try {
+    const j = JSON.parse(body) as { error?: { details?: { '@type'?: string; retryDelay?: string; violations?: { quotaId?: string; quotaValue?: string }[] }[] } };
+    for (const d of j.error?.details ?? []) {
+      if (d.retryDelay) { const m = /([\d.]+)s/.exec(d.retryDelay); if (m) wait = Number(m[1]); }
+      for (const v of d.violations ?? []) { const id = v.quotaId ?? ''; if (/PerDay/i.test(id)) daily = true; else if (/PerMinute/i.test(id) && Number(v.quotaValue)) perMinute = Math.min(perMinute ?? Infinity, Number(v.quotaValue)); }
+    }
+  } catch { /* not JSON */ }
+  return { wait, perMinute, daily };
+}
+/** A busy or limited provider (429, 5xx) is waited for and asked again — as long as it says to wait, up to six
+ *  times — and from then on requests are spaced to its per-minute limit; the day's quota used up stops at once;
+ *  anything else fails at once. */
 async function chat(system: string, user: string, json = true): Promise<string> {
   for (let attempt = 0; ; attempt++) {
+    await paced();
     try { return await chatOnce(system, user, json); }
     catch (e) {
-      const m = /\b(429|500|502|503|504|529)\b/.exec(String((e as Error)?.message ?? '')); const wait = (e as { retryAfter?: number }).retryAfter;
-      if (!m || attempt >= 3) throw e;
-      await new Promise((r) => setTimeout(r, Math.min(30000, wait ? wait * 1000 : 1500 * 2 ** attempt)));
+      const st = (e as { status?: number }).status ?? Number(/\b(429|500|502|503|504|529)\b/.exec(String((e as Error)?.message ?? ''))?.[1] ?? 0);
+      if (!st || ![429, 500, 502, 503, 504, 529].includes(st)) throw e;
+      const lim = (e as { limit?: ReturnType<typeof readLimit> }).limit ?? { daily: false };
+      if (lim.daily) throw new QuotaError(t('aiDailyQuota'));
+      if (st === 429) { const rpm = lim.perMinute ?? 10; pace.gap = Math.max(pace.gap, Math.ceil(60000 / rpm * 1.05)); }
+      if (attempt >= 6) throw st === 429 ? Object.assign(new Error(t('aiRateLimited')), { status: 429 }) : e;
+      const waitMs = Math.min(65000, lim.wait ? lim.wait * 1000 + 500 : 2000 * 2 ** Math.min(attempt, 4));
+      pace.until = Math.max(pace.until, Date.now() + waitMs);
     }
   }
 }
-const failure = async (who: string, r: Response) => Object.assign(new Error(`${who} ${r.status}: ${(await r.text()).slice(0, 200)}`), { retryAfter: Number(r.headers.get('retry-after')) || undefined });
+const failure = async (who: string, r: Response) => { const body = await r.text(); return Object.assign(new Error(`${who} ${r.status}: ${body.slice(0, 200)}`), { status: r.status, limit: readLimit(body, r.headers.get('retry-after')) }); };
 async function chatOnce(system: string, user: string, json = true): Promise<string> {
   const s = getSettings();
   if (s.aiProvider === 'local') {
