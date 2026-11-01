@@ -126,7 +126,7 @@ export function infoList(x: Task, extra: [string, string][] = []): HTMLElement {
     ...extra.map(([k, v]) => [k, v] as [string, string]),
   ];
   return h('dl', { class: 'kt-kv' }, ...rows.filter((r): r is [string, string, boolean?] => !!r).map(([k, v, copy]) => h('div', { class: 'kt-kv-row' }, h('dt', null, k),
-    h('dd', { dir: copy ? 'ltr' : 'auto', class: copy ? 'mono' : '' }, h('span', { class: 'sel' }, v), copy ? h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyField', { f: k }), onclick: () => void navigator.clipboard?.writeText(v).then(() => toast(t('copied'))) }, icon('copy')) : null))));
+    h('dd', { dir: copy ? 'ltr' : 'auto', class: copy ? 'mono' : '' }, h('span', { class: 'sel', onclick: (e: Event) => (e.currentTarget as HTMLElement).classList.toggle('open') }, v), copy ? h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyField', { f: k }), onclick: () => void navigator.clipboard?.writeText(v).then(() => toast(t('copied'))) }, icon('copy')) : null))));
 }
 export function logList(hst: TaskHistory): HTMLElement {
   return h('div', { class: 'task-log' }, ...hst.log.slice(-12).reverse().map((l) => h('div', { class: 'log-row' }, h('small', { class: 'src', dir: 'ltr' }, new Date(l.t).toLocaleTimeString()), h('span', null, l.text))));

@@ -36,10 +36,21 @@ export function episodeFile(x: Task, ep: number): number {
 
 let running: { stop(): void } | null = null;
 export async function watchEpisode(a: Anime, ep: number, title: string): Promise<void> {
+  return watchWith({
+    title,
+    have: async () => (await downloadedEpisodes(a.id)).get(ep),
+    find: async () => bestRelease(a, ep, await searchAll(await buildQuery(a, ep), () => undefined)),
+    meta: (best) => ({ anilistId: a.id, title, episode: ep || undefined, cover: a.cover, provider: best.provider, hash: best.hash, fileIdx: best.fileIdx }),
+    pick: (x) => episodeFile(x, ep),
+  });
+}
+/** The watcher itself, for anime and for films and series: a download already there, or the release `find`
+ *  gives added to play in order (only its one file when it names one), then played as soon as its files are known. */
+export async function watchWith(o: { title: string; have?: () => Promise<Task | undefined>; find: () => Promise<TorrentResult | null>; meta: (r: TorrentResult) => Task['meta']; pick: (x: Task, r?: TorrentResult) => number }): Promise<void> {
   running?.stop();
-  const eng = getEngine();
+  const eng = getEngine(); const title = o.title;
   if (!eng.streamUrl) { toast(t('watchNeedsApp'), 'error', 5000); return; }
-  let stopped = false; let taskId = ''; let off: (() => void) | null = null;
+  let stopped = false; let taskId = ''; let off: (() => void) | null = null; let chosen: TorrentResult | undefined;
   const line = h('small', null, t('watchFinding')); const bar = h('div', { class: 'task-bar thin' }, h('i', { style: { width: '8%' } }));
   const stop = () => { stopped = true; off?.(); el.classList.add('leaving'); setTimeout(() => el.remove(), 180); if (running === me) running = null; };
   const me = { stop }; running = me;
@@ -50,24 +61,18 @@ export async function watchEpisode(a: Anime, ep: number, title: string): Promise
   document.body.append(el);
   const setBar = (p: number) => { (bar.firstChild as HTMLElement).style.width = `${Math.max(4, Math.min(100, p))}%`; };
   try {
-    // Already among the downloads: played from there.
-    const have = (await downloadedEpisodes(a.id)).get(ep);
-    let task: Task | undefined = have;
+    let task: Task | undefined = await o.have?.();
     if (!task) {
-      const q = await buildQuery(a, ep); if (stopped) return;
-      const rs = await searchAll(q, () => undefined); if (stopped) return;
-      const best = bestRelease(a, ep, rs);
+      const best = await o.find(); if (stopped) return;
       if (!best) { line.textContent = t('watchNone'); setTimeout(stop, 4000); return; }
-      line.textContent = best.title; setBar(25);
-      const meta = { anilistId: a.id, title, episode: ep || undefined, cover: a.cover, provider: best.provider, hash: best.hash, fileIdx: best.fileIdx };
-      task = await eng.add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, meta });
+      chosen = best; line.textContent = best.title; setBar(25);
+      task = await eng.add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: o.meta(best) });
     }
     taskId = task.id;
-    // Its details (the files) in: the episode's file chosen and played while it comes.
     const ready = (x: Task) => x.files.length > 0 && (x.kind !== 'torrent' || x.state !== 'metadata');
     const go = async (x: Task) => {
       off?.(); off = null; if (stopped) return;
-      const fi = episodeFile(x, ep);
+      const fi = chosen?.fileIdx !== undefined && x.files.some((f) => f.index === chosen!.fileIdx) ? chosen.fileIdx : o.pick(x, chosen);
       if (x.kind === 'torrent' && x.files.length > 1 && eng.setFiles) await eng.setFiles(x.id, x.files.map((f) => (f.index === fi ? 2 : 0) as 0 | 1 | 2)).catch(() => undefined);
       setBar(100); line.textContent = t('watchOpening');
       const { playTaskFile } = await import('../views/player'); await playTaskFile(x, fi); stop();

@@ -111,7 +111,7 @@ final class KtEngine {
         if (listenPort > 0) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), "0.0.0.0:" + listenPort + ",[::]:" + listenPort);
         session.addListener(new AlertListener() {
             @Override public int[] types() { return new int[]{ AlertType.ADD_TORRENT.swig(), AlertType.METADATA_RECEIVED.swig(), AlertType.TORRENT_FINISHED.swig(), AlertType.SAVE_RESUME_DATA.swig(), AlertType.TORRENT_ERROR.swig(), AlertType.STATE_UPDATE.swig() }; }
-            @Override public void alert(Alert<?> a) { try { onAlert(a); } catch (Exception e) { Log.w(TAG, "alert", e); } }
+            @Override public void alert(Alert<?> a) { try { onAlert(a); } catch (Throwable e) { Log.w(TAG, "alert", e); } }
         });
         session.start(new SessionParams(sp));
         startTicker();
@@ -150,9 +150,9 @@ final class KtEngine {
         ticker = new Thread(() -> {
             while (session != null && session.isRunning()) {
                 try { Thread.sleep(700); } catch (InterruptedException e) { return; }
-                try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Exception ignored) {}
+                try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Throwable ignored) {}
                 // (Resume data saved now and then, so a kill loses little.)
-                if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT);
+                try { if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } catch (Throwable ignored) {}
             }
         }, "kt-ticker");
         ticker.setDaemon(true); ticker.start();
@@ -343,7 +343,7 @@ final class KtEngine {
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0;
-            } catch (Exception e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
+            } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         }, "kt-http-" + x.id);
         x.httpThread.start();
