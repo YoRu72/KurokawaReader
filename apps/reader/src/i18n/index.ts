@@ -246,6 +246,10 @@ export function countHours(n: number): string {
 }
 
 /** "8 connections" — in Arabic: اتصال واحد · اتصالان · ٣–١٠ اتصالات · ١١–٩٩ اتصالًا · ١٠٠ اتصالٍ. */
+export function countVersions(n: number): string {
+  if (current === 'ar') return arCount(n, { one: 'إصدار واحد', two: 'إصداران', few: 'إصدارات', many: 'إصدارًا', hundred: 'إصدارٍ' });
+  return `${n} ${n === 1 ? 'version' : 'versions'}`;
+}
 export function countConnections(n: number): string {
   if (current !== 'ar') return `${n} ${n === 1 ? 'connection' : 'connections'}`;
   return arCount(n, { one: 'اتصال واحد', two: 'اتصالان', few: 'اتصالات', many: 'اتصالًا', hundred: 'اتصالٍ' });

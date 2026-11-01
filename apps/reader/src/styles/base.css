@@ -1939,3 +1939,12 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .plan-row.good b { color: var(--md-primary); } .plan-row.bad b { color: var(--md-error); }
 .plan-note { margin: 4px 0 0; font-size: 13px; } .plan-note.bad, .extract-progress .src.bad { color: var(--md-error); }
 .entry-details summary { cursor: pointer; font-size: 13px; color: var(--md-on-surface-variant); padding: 4px 0; }
+
+/* The update dialog: each version's notes folded under its number, the newest open. */
+.upd-versions { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.upd-version { border-radius: 14px; background: var(--md-surface-container); padding: 6px 12px; }
+.upd-version > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; min-height: 34px; list-style: none; }
+.upd-version > summary::-webkit-details-marker { display: none; }
+.upd-version > summary small { color: var(--md-on-surface-variant); font-size: 12.5px; }
+.upd-version .upd-notes { margin: 4px 0 8px; max-height: none; }
+.upd-title small { text-transform: none; letter-spacing: 0; font-weight: 500; }

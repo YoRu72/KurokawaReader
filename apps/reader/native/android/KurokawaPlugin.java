@@ -373,6 +373,21 @@ public class KurokawaPlugin extends Plugin {
         }).start();
     }
 
+    @PluginMethod
+    public void hashFile(PluginCall call) {
+        // A downloaded update's SHA-256, to check it against the one GitHub states for the release's file.
+        String path = call.getString("path", ""); if (path.startsWith("file://")) path = path.substring(7);
+        final File f = new File(path);
+        new Thread(() -> {
+            try {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256"); byte[] b = new byte[1 << 16];
+                try (java.io.InputStream in = new java.io.FileInputStream(f)) { int n; while ((n = in.read(b)) > 0) md.update(b, 0, n); }
+                StringBuilder sb = new StringBuilder(); for (byte x : md.digest()) sb.append(String.format("%02x", x));
+                JSObject r = new JSObject(); r.put("sha256", sb.toString()); r.put("size", f.length()); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        }).start();
+    }
+
     /** A file downloaded earlier into the cache (an update not installed yet), when it is there whole: its
      *  path, else nothing. `prune`: the other APKs there are removed (older updates). */
     @PluginMethod
@@ -423,7 +438,7 @@ public class KurokawaPlugin extends Plugin {
         String p = call.getString("path", "");
         if (p.startsWith("file://")) p = p.substring(7);
         File f = new File(p);
-        boolean ok = f.getAbsolutePath().startsWith(new File(getContext().getFilesDir(), "downloads").getAbsolutePath()) && f.delete();
+        boolean ok = (f.getAbsolutePath().startsWith(new File(getContext().getFilesDir(), "downloads").getAbsolutePath()) || f.getAbsolutePath().startsWith(new File(getContext().getCacheDir(), "kr-update").getAbsolutePath())) && f.delete();
         JSObject r = new JSObject(); r.put("deleted", ok); call.resolve(r);
     }
 

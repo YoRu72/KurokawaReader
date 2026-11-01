@@ -479,3 +479,15 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .settings-view .settings-tabs .chip { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 16px; border-radius: 20px; }
 .settings-view .settings-tabs .chip svg { width: 18px; height: 18px; }
 .settings-view .settings-tabs .chip.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }
+
+/* The update sheet: each version's notes folded under its number, the newest open; a bar that runs while unsure. */
+.upd-versions { display: flex; flex-direction: column; gap: 6px; max-height: 42vh; overflow: auto; margin-bottom: 12px; }
+.upd-version { border-radius: 14px; background: var(--md-surface-container); padding: 6px 12px; }
+.upd-version > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; min-height: 36px; align-items: center; list-style: none; }
+.upd-version > summary::-webkit-details-marker { display: none; }
+.upd-version .upd-notes { margin: 4px 0 8px; }
+.upd-file { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.upd-file svg { width: 18px; height: 18px; }
+.task-bar.indet i { width: 35% !important; animation: kt-indet 1.2s ease-in-out infinite; }
+@keyframes kt-indet { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
+html[dir='rtl'] .task-bar.indet i { animation-direction: reverse; }

@@ -11,7 +11,7 @@ import { getEngine } from '../engine';
 import { animeSettingsCard, anilistCard } from './animeSettings';
 import { tvSettingsCard } from './tvSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
-import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
+import { updateRows } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
 
 /** A language's own name (the Subtitles add-on's list, else the browser's names). */
@@ -170,9 +170,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const otherApps = card('apps', t('otherApps'), h('p', { class: 'hint' }, t('otherAppsHint')), readerBox);
     void drawOtherApp(readerBox.querySelector('.app-actions') as HTMLElement);
     // Updates
-    const updStatus = h('p', { class: 'src' }, lastChecked() ? t('lastChecked', { d: new Date(lastChecked()).toLocaleString(dateLocale()) }) : '');
-    const updates = card('updates', t('updates'), row(t('version', { v: APP_VERSION }), h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; updStatus.textContent = t('checking'); try { const rel = await checkForUpdate(true); if (rel) { showUpdateSheet(rel); updStatus.textContent = t('updateAvailable', { v: rel.version }); } else updStatus.textContent = t('upToDate'); } catch { updStatus.textContent = t('updateFailed'); } b.disabled = false; } }, icon('refresh'), t('checkUpdates'))),
-      toggle(t('autoCheck'), s.autoUpdateCheck, (v) => updateSettings({ autoUpdateCheck: v })), updStatus);
+    const updates = card('updates', t('updates'), ...updateRows(row, toggle, (label, opts, value, set) => row(label, pickButton(label, opts, value, (v) => { set(v); rerender(); }, t('close')))));
     const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));

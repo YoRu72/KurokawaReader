@@ -23,6 +23,8 @@ export interface Settings {
   /** A remote aria2 (JSON-RPC) used for every download. */
   aria2: { url: string; secret: string; use: boolean };
   autoUpdateCheck: boolean;
+  /** How often updates are looked for, and (Android) whether a new version is fetched by itself, then offered. */
+  updateEvery?: 'launch' | 'daily' | 'weekly'; updateAutoDownload?: boolean;
   updateChannel: 'stable' | 'beta';
   notifyDone: boolean;
   notifyFailed: boolean;
