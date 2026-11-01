@@ -368,7 +368,7 @@
       "descriptions": {
         "ar": "subdl.com — الأفلام والمسلسلات بمعرّف IMDb؛ مفتاح مجاني من حسابك في SubDL."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "subs/subdl.mjs",
       "icon": "subtitles",
       "settings": [
@@ -387,19 +387,19 @@
       "kind": "subtitle-source",
       "parent": "subtitles",
       "name": "OpenSubtitles",
-      "description": "opensubtitles.com — the largest library; a free consumer API key (opensubtitles.com/consumers).",
+      "description": "opensubtitles.com — the largest library; works without a key, and with your free API key (opensubtitles.com/consumers) if you add one.",
       "descriptions": {
-        "ar": "opensubtitles.com — أكبر مكتبة؛ مفتاح مجاني من opensubtitles.com/consumers."
+        "ar": "opensubtitles.com — أكبر مكتبة؛ تعمل بلا مفتاح، وبمفتاحك المجّاني (opensubtitles.com/consumers) إن أضفته."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "subs/opensubtitles.mjs",
       "icon": "subtitles",
       "settings": [
         {
           "id": "apiKey",
-          "label": "OpenSubtitles API key",
+          "label": "OpenSubtitles API key (optional)",
           "labels": {
-            "ar": "مفتاح واجهة OpenSubtitles"
+            "ar": "مفتاح واجهة OpenSubtitles (اختياري)"
           },
           "type": "password"
         }
@@ -410,23 +410,13 @@
       "kind": "subtitle-source",
       "parent": "subtitles",
       "name": "SubSource",
-      "description": "subsource.net — films and series; an API key from your account.",
+      "description": "subsource.net — films, series and anime; no key needed.",
       "descriptions": {
-        "ar": "subsource.net — الأفلام والمسلسلات؛ مفتاح من حسابك."
+        "ar": "subsource.net — الأفلام والمسلسلات والأنمي؛ بلا مفتاح."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "subs/subsource.mjs",
-      "icon": "subtitles",
-      "settings": [
-        {
-          "id": "apiKey",
-          "label": "SubSource API key",
-          "labels": {
-            "ar": "مفتاح واجهة SubSource"
-          },
-          "type": "password"
-        }
-      ]
+      "icon": "subtitles"
     },
     {
       "id": "subs-gestdown",
@@ -450,7 +440,7 @@
       "descriptions": {
         "ar": "podnapisi.net — الأفلام والمسلسلات بلغات كثيرة؛ بلا مفتاح."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "subs/podnapisi.mjs",
       "icon": "subtitles"
     },
@@ -476,7 +466,7 @@
       "descriptions": {
         "ar": "ترجمات مستخرجة من إصدارات الأنمي (للأنمي فقط)؛ بلا مفتاح."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "subs/animetosho.mjs",
       "icon": "subtitles"
     },
@@ -489,7 +479,7 @@
       "descriptions": {
         "ar": "jimaku.cc — ترجمات الأنمي اليابانية بمعرّف AniList؛ مفتاح مجاني من حسابك."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "subs/jimaku.mjs",
       "icon": "subtitles",
       "settings": [

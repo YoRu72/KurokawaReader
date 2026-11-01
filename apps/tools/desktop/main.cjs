@@ -110,6 +110,9 @@ ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, 
 ipcMain.handle('kt:setFiles', (_e, id, p) => E().setFiles(id, p));
 ipcMain.handle('kt:exists', (_e, ps) => (Array.isArray(ps) ? ps : []).map((p) => { try { return require('node:fs').existsSync(String(p)); } catch { return false; } }));
 ipcMain.handle('kt:mini', (_e, o) => { const a = o && o.action; if (a === 'open') openMini(); else if (a === 'close') closeMini(); else if (a === 'main') { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } } else if (a === 'auto') { try { const s = loadState(); s.miniOnMinimize = !!o.on; fs.writeFileSync(statePath(), JSON.stringify(s)); } catch { /* ignore */ } } return { open: !!mini }; });
+// A site opened in a window of the app's own session (the one its requests use), for the user to pass the
+// site's browser check by hand; resolves when the window is closed.
+ipcMain.handle('kt:siteWindow', (_e, o) => new Promise((resolve) => { const u = String(o && o.url || ''); if (!/^https:\/\//.test(u)) { resolve(false); return; } const w = new BrowserWindow({ width: 520, height: 720, parent: win || undefined, title: String(o.title || ''), autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); w.on('closed', () => resolve(true)); w.loadURL(u); }));
 ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));

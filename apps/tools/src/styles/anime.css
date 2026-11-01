@@ -216,3 +216,4 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .bars { display: flex; flex-direction: column; gap: 6px; }
 .bar-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .bar-row i { display: block; height: 8px; border-radius: 4px; background: var(--md-primary); }
+.provider-chips .chip.needs { color: var(--md-tertiary, var(--md-primary)); cursor: pointer; border: 1px dashed currentColor; } .provider-chips .chip.needs svg, .provider-chips .chip.failed svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; margin-inline-end: 4px; }

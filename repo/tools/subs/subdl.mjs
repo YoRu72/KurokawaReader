@@ -1,7 +1,7 @@
 // SubDL (api.subdl.com): by IMDb id or name, season and episode; needs the user's free API key.
 export default {
   async search(q, ctx) {
-    const key = ctx.settings.apiKey; if (!key) throw new Error('SubDL needs an API key (free at subdl.com)');
+    const key = ctx.settings.apiKey; if (!key) { const e = new Error('SubDL needs an API key (free at subdl.com)'); e.code = 'key'; e.site = 'https://subdl.com/panel/api'; throw e; }
     const p = new URLSearchParams({ api_key: key, languages: q.languages.map((l) => l.toUpperCase()).join(','), subs_per_page: '30' });
     if (q.imdbId) p.set('imdb_id', q.imdbId); else p.set('film_name', q.title);
     if (q.kind !== 'movie') { p.set('type', 'tv'); if (q.season) p.set('season_number', String(q.season)); if (q.episode) p.set('episode_number', String(q.episode)); } else p.set('type', 'movie');

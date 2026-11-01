@@ -2,7 +2,7 @@
 const BASE = 'https://jimaku.cc/api';
 export default {
   async search(q, ctx) {
-    if (!q.anilistId) return []; const key = ctx.settings.apiKey; if (!key) throw new Error('Jimaku needs an API key (free at jimaku.cc)');
+    if (!q.anilistId) return []; const key = ctx.settings.apiKey; if (!key) { const e = new Error('Jimaku needs an API key (free at jimaku.cc)'); e.code = 'key'; e.site = 'https://jimaku.cc/account'; throw e; }
     const h = { Authorization: key };
     const r = await q.fetch(`${BASE}/entries/search?anilist_id=${q.anilistId}`, { headers: h }); if (!r.ok) throw new Error(`Jimaku: HTTP ${r.status}`);
     const out = [];

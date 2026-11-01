@@ -255,8 +255,10 @@ async function drawOtherApp(box: HTMLElement): Promise<void> {
 }
 
 /** The settings of installed add-ons that have any: a field per declared setting, saved as typed. */
-function addonSettingsSheet(list: AddonEntry[], lang: string): void {
+export function addonSettingsSheet(list: AddonEntry[], lang: string, opts: { note?: Node; done?: () => void } = {}): void {
   const sh = openSheet(t('addonSettings'), t('close'));
+  if (opts.note) sh.body.append(opts.note);
+  if (opts.done) sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); opts.done!(); } }, icon('search'), t('searchAgain')));
   for (const a of list) {
     const cur = addonSettings(a);
     sh.body.append(h('h4', { dir: 'auto' }, nameOf(a, lang)));
