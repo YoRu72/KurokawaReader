@@ -94,7 +94,7 @@ function mountInner(route: Route): void {
     case 'settings': current = lazyView(() => import('./views/settings').then((m) => m.settingsView(route.section))); break;
     case 'addons': current = lazyView(() => import('./views/settings').then((m) => m.settingsView('addons'))); break;
     case 'subs': current = lazyView(() => import('./views/subs').then((m) => m.subsView(route.q))); break;
-    case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q))); break;
+    case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q, route.genre || route.tag ? { q: '', genres: route.genre ? [route.genre] : [], tags: route.tag ? [route.tag] : [], notTags: [], formats: [], status: undefined, season: undefined, year: undefined, minScore: undefined } : undefined))); break;
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q))); break;
     case 'add': {

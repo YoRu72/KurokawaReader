@@ -12,7 +12,7 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { const rel = r.request().url().split('/main/repo/')[1]; const f = path.join(REPO, rel); if (!fs.existsSync(f)) return r.fulfill({ status: 404 }); r.fulfill({ body: fs.readFileSync(f), contentType: /\.mjs$/.test(f) ? 'text/plain' : (MIME[path.extname(f)] || 'application/octet-stream') }); });  // (GitHub serves .mjs as text/plain)
-  await p.route('https://graphql.anilist.co/**', (r) => { const q = JSON.parse(r.request().postData() || '{}').query; const data = /Media\(id/.test(q) ? { Media: MEDIA(1, 1) } : /airingSchedules/.test(q) ? { Page: { pageInfo: { hasNextPage: false }, airingSchedules: [{ airingAt: Math.floor(Date.now() / 1000) + 3600, episode: 6, media: MEDIA(1, 1) }] } } : { Page: { pageInfo: { hasNextPage: false }, media: [MEDIA(1, 1), MEDIA(2, 2), MEDIA(3, 3)] } }; r.fulfill({ json: { data } }); });
+  await p.route('https://graphql.anilist.co/**', (r) => { const body = JSON.parse(r.request().postData() || '{}'); const q = body.query; (globalThis.__al ??= []).push(body); const data = /GenreCollection/.test(q) ? { GenreCollection: ['Action', 'Drama', 'Fantasy'], MediaTagCollection: [{ name: 'Isekai', category: 'Setting', isAdult: false }, { name: 'Magic', category: 'Theme', isAdult: false }] } : /Media\(id/.test(q) ? { Media: MEDIA(1, 1) } : /airingSchedules/.test(q) ? { Page: { pageInfo: { hasNextPage: false }, airingSchedules: [{ airingAt: Math.floor(Date.now() / 1000) + 3600, episode: 6, media: MEDIA(1, 1) }] } } : { Page: { pageInfo: { hasNextPage: false }, media: [MEDIA(1, 1), MEDIA(2, 2), MEDIA(3, 3)] } }; r.fulfill({ json: { data } }); });
   await p.route('https://arm.haglund.dev/**', (r) => r.fulfill({ json: { anidb: 17617, kitsu: 46474, imdb: 'tt22248376' } }));
   await p.route('https://nyaa.si/**', (r) => r.fulfill({ contentType: 'application/xml', body: `<rss><channel><item><title>[SubsPlease] Sousou no Frieren - 05 (1080p) [AAAA].mkv</title><nyaa:infoHash>0123456789abcdef0123456789abcdef01234567</nyaa:infoHash><nyaa:size>1.3 GiB</nyaa:size><nyaa:seeders>900</nyaa:seeders><nyaa:leechers>20</nyaa:leechers><pubDate>Fri, 31 Oct 2026 10:00:00 -0000</pubDate></item><item><title>[Judas] Sousou no Frieren (Season 1) [1080p] (Batch)</title><nyaa:infoHash>89abcdef0123456789abcdef0123456789abcdef</nyaa:infoHash><nyaa:size>20 GiB</nyaa:size><nyaa:seeders>300</nyaa:seeders><nyaa:leechers>5</nyaa:leechers><pubDate>Fri, 31 Oct 2026 10:00:00 -0000</pubDate></item><item><title>[X] Sousou no Frieren - 04 (720p).mkv</title><nyaa:infoHash>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</nyaa:infoHash><nyaa:size>500 MiB</nyaa:size><nyaa:seeders>10</nyaa:seeders><nyaa:leechers>1</nyaa:leechers><pubDate>Fri, 31 Oct 2026 10:00:00 -0000</pubDate></item></channel></rss>` }));
   await p.route('https://torrentio.strem.fun/**', (r) => r.fulfill({ json: { streams: [{ name: 'Torrentio\n1080p', title: 'Frieren 05 [Erai]\n👤 120 💾 1.1 GB ⚙️ NyaaSi', infoHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', sources: ['tracker:udp://x/announce'] }] } }));
@@ -44,6 +44,19 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const epRows = await p.$$eval('.ep-sheet .dest-row', (r) => r.map((x) => x.innerText.split('\n')[0]));
   console.log('episode sheet:', epRows.join(' | '));
   if (!epRows.some((x) => /Watch now/.test(x)) || !epRows.some((x) => /Choose a release/.test(x))) errors.push('episode sheet');
+  // Search by genre and tag: the filters sheet, a genre and a tag (and one left out), results asked with them.
+  await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.goto(`http://127.0.0.1:${port}/#/anime?tab=search`); await p.waitForSelector('.anime-filter-btn'); await p.waitForTimeout(500);
+  await p.click('.anime-filter-btn'); await p.waitForSelector('.anime-filters .chip'); await p.waitForTimeout(300);
+  await p.locator('.anime-filters .chip', { hasText: 'Fantasy' }).click(); await p.locator('.anime-filters details', { hasText: 'Setting' }).locator('summary').click();
+  await p.locator('.anime-filters .chip', { hasText: 'Isekai' }).click(); await p.locator('.anime-filters details', { hasText: 'Theme' }).locator('summary').click();
+  await p.locator('.anime-filters .chip', { hasText: 'Magic' }).click(); await p.locator('.anime-filters .chip', { hasText: 'Magic' }).click();
+  await p.screenshot({ path: path.join(__dirname, 'shot-anime-filters-en.png') });
+  await p.click('.anime-filters ~ * .btn.primary, .sheet .btn.primary'); await p.waitForTimeout(900);
+  const asked = (globalThis.__al || []).filter((b) => /tag_in/.test(b.query)).pop();
+  const activeChips = await p.$$eval('.anime-active .chip', (r) => r.map((x) => x.innerText.trim()));
+  console.log('search vars:', JSON.stringify(asked && asked.variables), 'active:', activeChips.join(' | '), 'cards:', await p.$$eval('.anime-grid .anime-card, .anime-grid > *', (r) => r.length));
+  if (!asked || JSON.stringify(asked.variables.genres) !== '["Fantasy"]' || JSON.stringify(asked.variables.tags) !== '["Isekai"]' || JSON.stringify(asked.variables.notTags) !== '["Magic"]') errors.push('tag search');
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); repo.close(); process.exit(errors.length ? 1 : 0);
 })();

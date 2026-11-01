@@ -1,7 +1,7 @@
 // The Anime tab (shown once the Anime add-on is installed): searching AniList, the season chart with countdowns
 // (AniChart's page), the week's airing schedule (LiveChart's), and the user's own watching list — each card
 // leading to the show's page, where episodes are found as torrents and progress is tracked.
-import { h, icon, iconButton, toast, debounce } from '../ui/dom';
+import { h, icon, iconButton, openSheet, toast, debounce } from '../ui/dom';
 import { t, localDigits, countEpisodes, dateLocale, getLang, countDays, countHours, countMinutes } from '../i18n';
 import { navigate } from '../router';
 import { getSettings } from '../settings';
@@ -37,7 +37,7 @@ export function animeCard(a: Anime, extra?: HTMLElement | null): HTMLElement {
 }
 export const fmtFormat = (f: string): string => ({ TV: 'TV', TV_SHORT: t('formatShort'), MOVIE: t('formatMovie'), SPECIAL: t('formatSpecial'), OVA: 'OVA', ONA: 'ONA', MUSIC: t('formatMusic') } as Record<string, string>)[f] ?? f;
 
-export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?: () => void } {
+export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.SearchFilters>): HTMLElement & { dispose?: () => void } {
   let current: AnimeTab = tab ?? ((localStorage.getItem(TAB_KEY) as AnimeTab | null) ?? (al.linked() ? 'list' : 'season'));
   const body = h('div', { class: 'body anime-body' });
   const chips = h('div', { class: 'chips filter-chips' });
@@ -54,13 +54,35 @@ export function animeView(tab?: AnimeTab, q?: string): HTMLElement & { dispose?:
   const draw = () => {
     drawChips(); window.clearInterval(timer); const my = ++token; body.replaceChildren();
     if (current === 'search') {
-      const input = h('input', { type: 'search', class: 'search-input', placeholder: t('animeSearchHint'), value: q ?? '', autofocus: true, enterkeyhint: 'search' }) as HTMLInputElement;
-      const results = h('div');
-      let runs = 0;
-      const run = async () => { const s = input.value.trim(); const mine = ++runs; if (!s) { results.replaceChildren(); return; } results.replaceChildren(spinner()); try { const r = await al.search(s, { adult: getSettings().animeAdult }); if (my !== token || mine !== runs) return; results.replaceChildren(r.length ? grid(r) : h('p', { class: 'empty small' }, t('noResults'))); } catch (e) { if (mine === runs) results.replaceChildren(fail(e)); } };
-      input.addEventListener('input', debounce(run, 450));
-      body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input), results);
-      if (q) void run(); setTimeout(() => input.focus(), 50);
+      // Words, and AniList's filters (genres, tags, format, status, season, year, sort): any alone browses by it.
+      const f = searchFilters(); if (q !== undefined && !preset) f.q = q; if (preset) { Object.assign(f, preset); preset = undefined; }
+      const input = h('input', { type: 'search', class: 'search-input', placeholder: t('animeSearchHint'), value: f.q ?? '', enterkeyhint: 'search' }) as HTMLInputElement;
+      const results = h('div'); const active = h('div', { class: 'chip-row wrap anime-active' });
+      const fbtn = h('button', { type: 'button', class: 'btn tonal small anime-filter-btn', onclick: () => filterSheet(f, () => { saveFilters(f); drawActive(); void run(); }) }, icon('filter'), t('animeFilters')) as HTMLButtonElement;
+      let runs = 0; let page = 1; let all: Anime[] = [];
+      const drawActive = () => {
+        const n = (f.genres?.length ?? 0) + (f.tags?.length ?? 0) + (f.notTags?.length ?? 0) + (f.formats?.length ?? 0) + (f.status ? 1 : 0) + (f.season ? 1 : 0) + (f.year ? 1 : 0) + (f.minScore ? 1 : 0);
+        fbtn.lastChild!.textContent = n ? `${t('animeFilters')} · ${localDigits(n)}` : t('animeFilters');
+        const x = (label: string, rm: () => void, cls = '') => h('button', { type: 'button', class: 'chip small on ' + cls, onclick: () => { rm(); saveFilters(f); drawActive(); void run(); } }, h('span', { dir: 'auto' }, label), icon('close'));
+        active.replaceChildren(...(f.genres ?? []).map((g) => x(g, () => { f.genres = f.genres!.filter((y) => y !== g); })), ...(f.tags ?? []).map((g) => x(`#${g}`, () => { f.tags = f.tags!.filter((y) => y !== g); })), ...(f.notTags ?? []).map((g) => x(`−${g}`, () => { f.notTags = f.notTags!.filter((y) => y !== g); }, 'not')),
+          ...(f.formats ?? []).map((g) => x(fmtFormat(g), () => { f.formats = f.formats!.filter((y) => y !== g); })), ...(f.status ? [x(t(STATUS_LABEL[f.status] as 'animeAired'), () => { f.status = undefined; })] : []),
+          ...(f.season ? [x(seasonName(f.season), () => { f.season = undefined; })] : []), ...(f.year ? [x(localDigits(f.year), () => { f.year = undefined; })] : []), ...(f.minScore ? [x(`≥ ${localDigits(f.minScore)}%`, () => { f.minScore = undefined; })] : []),
+          ...(n ? [h('button', { type: 'button', class: 'chip small text', onclick: () => { Object.assign(f, { genres: [], tags: [], notTags: [], formats: [], status: undefined, season: undefined, year: undefined, minScore: undefined }); saveFilters(f); drawActive(); void run(); } }, t('clearAll'))] : []));
+      };
+      const more = h('button', { type: 'button', class: 'btn tonal small anime-more', hidden: true, onclick: () => void run(true) }, t('loadMore')) as HTMLButtonElement;
+      const run = async (next = false) => {
+        f.q = input.value.trim(); saveFilters(f); const mine = ++runs;
+        const any = f.q || f.genres?.length || f.tags?.length || f.formats?.length || f.status || f.season || f.year || f.minScore;
+        if (!any) { results.replaceChildren(h('p', { class: 'hint' }, t('animeSearchStart'))); more.hidden = true; void tagSuggestions(results, (g) => { f.genres = [...new Set([...(f.genres ?? []), g])]; saveFilters(f); drawActive(); void run(); }); return; }
+        if (!next) { page = 1; all = []; results.replaceChildren(spinner()); } else { page++; more.disabled = true; }
+        try {
+          const r = await al.searchBy({ ...f, adult: getSettings().animeAdult }, page); if (my !== token || mine !== runs) return;
+          all = all.concat(r.media); results.replaceChildren(all.length ? grid(all) : h('p', { class: 'empty small' }, t('noResults')), more); more.hidden = !r.hasNext; more.disabled = false;
+        } catch (e) { if (mine === runs) results.replaceChildren(fail(e)); }
+      };
+      input.addEventListener('input', debounce(() => void run(), 400));
+      body.append(h('form', { class: 'search-form row', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input, fbtn), active, results);
+      drawActive(); void run(); setTimeout(() => input.focus(), 50);
     } else if (current === 'season') {
       let at = al.seasonOf(); let adult = getSettings().animeAdult; let leftovers = false; let sort = 'POPULARITY_DESC';
       const head = h('div', { class: 'season-head' }); const list = h('div');
@@ -181,3 +203,49 @@ function diaryYear(acts: Awaited<ReturnType<typeof guide.activities>>): HTMLElem
   };
   draw(); return box;
 }
+
+/* ---------- the search's filters ---------- */
+const FKEY = 'kt.anime.search';
+function searchFilters(): al.SearchFilters { try { return { genres: [], tags: [], notTags: [], formats: [], ...(JSON.parse(localStorage.getItem(FKEY) ?? '{}') as al.SearchFilters) }; } catch { return { genres: [], tags: [], notTags: [], formats: [] }; } }
+function saveFilters(f: al.SearchFilters): void { try { localStorage.setItem(FKEY, JSON.stringify(f)); } catch { /* full */ } }
+const STATUS_LABEL: Record<string, string> = { RELEASING: 'animeStatusReleasing', FINISHED: 'animeStatusFinished', NOT_YET_RELEASED: 'animeNotYet', HIATUS: 'animeStatusHiatus' };
+const SORTS: [string, string][] = [['POPULARITY_DESC', 'sortPopular'], ['SCORE_DESC', 'sortScore'], ['TRENDING_DESC', 'sortTrending'], ['START_DATE_DESC', 'sortNewest'], ['FAVOURITES_DESC', 'sortFavourites'], ['TITLE_ROMAJI', 'sortTitle']];
+/** Genres to start from when nothing is asked yet. */
+async function tagSuggestions(out: HTMLElement, pick: (g: string) => void): Promise<void> {
+  try { const { genres } = await al.genresAndTags(); if (!out.isConnected) return; out.append(h('div', { class: 'chip-row wrap genre-start' }, ...genres.map((g) => h('button', { type: 'button', class: 'chip', onclick: () => pick(g) }, g)))); } catch { /* offline */ }
+}
+/** The filters sheet: genres, tags (by category, searchable; a tap includes, a second leaves out, a third clears),
+ *  format, status, season and year, minimum score, sort. */
+function filterSheet(f: al.SearchFilters, done: () => void): void {
+  const sh = openSheet(t('animeFilters'), t('close')); sh.el.classList.add('anime-filters');
+  const sec = (title: string, ...kids: Node[]) => h('section', { class: 'af-sec' }, h('h4', null, title), ...kids);
+  const toggle = (list: 'genres' | 'formats', v: string, label: string) => { const b = h('button', { type: 'button', class: 'chip small' + (f[list]?.includes(v) ? ' on' : ''), onclick: () => { const l = new Set(f[list] ?? []); if (l.has(v)) l.delete(v); else l.add(v); f[list] = [...l]; b.classList.toggle('on', l.has(v)); } }, label); return b; };
+  const genres = h('div', { class: 'chip-row wrap' }, h('div', { class: 'spinner small' }));
+  const tagQ = h('input', { type: 'search', class: 'search-input small', placeholder: t('animeTagSearch') }) as HTMLInputElement;
+  const tags = h('div', { class: 'af-tags' });
+  let allTags: al.AlTag[] = [];
+  const tagChip = (tg: al.AlTag) => { const st = () => (f.tags?.includes(tg.name) ? 'on' : f.notTags?.includes(tg.name) ? 'not' : ''); const b = h('button', { type: 'button', class: 'chip small ' + st(), title: tg.description ?? '', onclick: () => { const cur = st(); f.tags = (f.tags ?? []).filter((x) => x !== tg.name); f.notTags = (f.notTags ?? []).filter((x) => x !== tg.name); if (cur === '') f.tags.push(tg.name); else if (cur === 'on') f.notTags.push(tg.name); b.className = 'chip small ' + st(); } }, tg.name); return b; };
+  const drawTags = () => {
+    const needle = tagQ.value.trim().toLowerCase(); const adult = getSettings().animeAdult;
+    const list = allTags.filter((x) => (adult || !x.isAdult) && (!needle || x.name.toLowerCase().includes(needle) || x.category.toLowerCase().includes(needle)));
+    const cats = new Map<string, al.AlTag[]>(); for (const x of list) (cats.get(x.category) ?? cats.set(x.category, []).get(x.category)!).push(x);
+    tags.replaceChildren(...[...cats].map(([c, xs]) => h('details', { class: 'af-cat', open: !!needle || xs.some((x) => f.tags?.includes(x.name) || f.notTags?.includes(x.name)) }, h('summary', null, c, h('small', { class: 'src' }, ` ${localDigits(xs.length)}`)), h('div', { class: 'chip-row wrap' }, ...xs.map(tagChip)))));
+  };
+  tagQ.addEventListener('input', drawTags);
+  void al.genresAndTags().then(({ genres: gs, tags: ts }) => { genres.replaceChildren(...gs.map((g) => toggle('genres', g, g))); allTags = ts; drawTags(); }).catch((e) => genres.replaceChildren(h('small', { class: 'src' }, String((e as Error).message ?? e))));
+  const formats = h('div', { class: 'chip-row wrap' }, ...['TV', 'TV_SHORT', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'].map((x) => toggle('formats', x, fmtFormat(x))));
+  const one = <K extends 'status' | 'season' | 'sort'>(k: K, opts: [string, string][]) => { const row = h('div', { class: 'chip-row wrap' }); const draw = () => row.replaceChildren(...opts.map(([v, l]) => h('button', { type: 'button', class: 'chip small' + ((f[k] ?? '') === v ? ' on' : ''), onclick: () => { (f as Record<string, unknown>)[k] = (f[k] ?? '') === v && k !== 'sort' ? undefined : v || undefined; draw(); } }, l))); draw(); return row; };
+  const year = h('input', { type: 'number', min: '1940', max: String(new Date().getFullYear() + 2), value: f.year ? String(f.year) : '', placeholder: t('animeYear'), inputmode: 'numeric', class: 'num-small', onchange: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); f.year = v >= 1940 ? v : undefined; } });
+  const score = h('input', { type: 'range', min: '0', max: '90', step: '5', value: String(f.minScore ?? 0) }) as HTMLInputElement; const scoreOut = h('output', null, f.minScore ? `≥ ${localDigits(f.minScore)}%` : t('animeAny'));
+  score.addEventListener('input', () => { const v = Number(score.value); f.minScore = v || undefined; scoreOut.textContent = v ? `≥ ${localDigits(v)}%` : t('animeAny'); });
+  sh.body.append(
+    sec(t('animeSort'), one('sort', SORTS.map(([v, l]) => [v, t(l as 'sortPopular')]))),
+    sec(t('animeGenres'), genres),
+    sec(t('animeTags'), h('p', { class: 'hint' }, t('animeTagsHint')), tagQ, tags),
+    sec(t('animeFormat'), formats),
+    sec(t('animeStatus'), one('status', Object.entries(STATUS_LABEL).map(([v, l]) => [v, t(l as 'animeAired')]))),
+    sec(t('animeSeasonYear'), one('season', al.SEASONS.map((x) => [x, seasonName(x)])), year),
+    sec(t('animeMinScore'), h('div', { class: 'score-row' }, score, scoreOut)));
+  sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); done(); } }, icon('search'), t('animeShowResults')));
+}
+

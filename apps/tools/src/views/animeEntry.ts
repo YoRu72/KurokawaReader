@@ -33,7 +33,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       h('div', { class: 'anime-head-row' }, h('div', { class: 'anime-cover big' }, a.cover ? h('img', { src: a.cover, alt: '' }) : icon('film')),
         h('div', { class: 'anime-head-text' }, h('h2', { dir: 'auto' }, titleOf(a)), a.titleNative && a.titleNative !== titleOf(a) ? h('p', { class: 'src', dir: 'auto' }, a.titleNative) : null, h('p', { class: 'anime-facts' }, facts),
           a.nextAiring ? h('p', { class: 'anime-next', dataset: { at: String(a.nextAiring.airingAt), ep: String(a.nextAiring.episode) } }, icon('clock'), h('span', { class: 'until' }, t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - now) }))) : null,
-          h('div', { class: 'chips' }, ...a.genres.slice(0, 6).map((g) => h('span', { class: 'chip small' }, g))))));
+          h('div', { class: 'chips' }, ...a.genres.slice(0, 6).map((g) => h('button', { type: 'button', class: 'chip small', onclick: () => navigate(`/anime?tab=search&genre=${encodeURIComponent(g)}`) }, g))))));
     // The list entry
     const e = a.entry;
     const track = h('section', { class: 'card anime-track' }, h('h3', null, t('tracking')),

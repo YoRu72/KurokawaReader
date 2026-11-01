@@ -224,3 +224,10 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .ep-sheet-prog { display: grid; gap: 4px; margin: 0 0 8px; }
 .ep-sheet .dest-row .grow { display: grid; gap: 2px; text-align: start; } .ep-sheet .dest-row.primary { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: 14px; }
 .watch-card .task-bar { margin-top: 8px; }
+/* Anime search: filters */
+.anime-filter-btn { flex: none; } .anime-active { margin: 4px 0 8px; } .anime-active .chip svg { width: 13px; height: 13px; margin-inline-start: 4px; fill: none; stroke: currentColor; stroke-width: 2.4; }
+.chip.not, .anime-active .chip.not { background: color-mix(in srgb, var(--md-error) 18%, transparent); color: var(--md-error); text-decoration: line-through; }
+.anime-filters .af-sec { margin-bottom: 14px; } .anime-filters h4 { margin: 0 0 6px; font-size: 13px; color: var(--md-on-surface-variant); }
+.anime-filters .af-cat summary { cursor: pointer; padding: 6px 0; font-weight: 600; } .anime-filters .af-tags { max-height: 46vh; overflow: auto; }
+.anime-filters .search-input.small { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.anime-filters .num-small { width: 7em; margin-top: 6px; } .anime-more { display: block; margin: 12px auto; } .genre-start { margin-top: 8px; }
