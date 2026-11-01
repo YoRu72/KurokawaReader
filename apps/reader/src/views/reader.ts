@@ -173,6 +173,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     chapters: () => units().map((u, i) => ({ label: chapterTitle(u) || `${localDigits(i + 1)}`, bookId: u.doc.book.id, blocks: u.doc.allBlocks.filter((b) => u.el === b || u.el.contains(b)) })),
     currentChapter: () => Math.max(0, currentUnitIndex()),
     onChapterChange: (fn) => chapterListeners.push(fn),
+    bookTitle: (id) => docs.find((d) => d.book.id === id)?.book.title,
   });
   onDispose(() => translator.dispose());
   const settings = getSettings();

@@ -1,0 +1,60 @@
+// node tests/translator/run.cjs: the AI translator against a stand-in provider (an OpenAI-compatible endpoint
+// answered here): italics come through, the Arabic paragraph is not sent, each batch carries the book, the chapter
+// and the lines before; a reply of the wrong length is asked for again in halves; the next chapter is translated
+// ahead; «show the original too» puts the translation under the dimmed original; names proposed for the glossary
+// are added to it.
+const { chromium, devices } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const { execFileSync } = require('child_process');
+const DIST = path.resolve(__dirname, '../../dist'); const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.png': 'image/png' };
+const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
+const out = process.argv[2] || path.join(require('os').tmpdir(), 'kr-translator'); fs.mkdirSync(out, { recursive: true });
+const book = path.join(out, 'gate.epub'); execFileSync('python3', [path.join(__dirname, 'make.py'), book]);
+let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); if (!c) fails++; };
+(async () => {
+  await new Promise((r) => server.listen(0, r)); const port = server.address().port;
+  const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], locale: 'en' }); const p = await ctx.newPage();
+  const errors = []; p.on('pageerror', (e) => errors.push(e.message));
+  const asked = []; let broke = false;
+  await p.route('https://ai.test/v1/chat/completions', async (r) => {
+    const body = JSON.parse(r.request().postData()); const system = body.messages[0].content; const user = body.messages[1].content; asked.push({ system, user });
+    let content;
+    if (/translation glossary/.test(system)) content = JSON.stringify([{ from: 'Lin Feng', to: 'لين فنغ', kind: 'person' }]);
+    else { const items = JSON.parse(user); const tr = items.map((x) => `AR(${x})`); content = JSON.stringify(!broke && items.length > 1 ? (broke = true, tr.slice(1)) : tr); }
+    await r.fulfill({ headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify({ choices: [{ message: { content } }] }) });
+  });
+  await p.route('https://ai.test/**', (r) => r.request().method() === 'OPTIONS' ? r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, GET' } }) : r.fallback());
+  await p.goto(`http://localhost:${port}/`);
+  await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, { aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate' }); localStorage.setItem('kr.visual', JSON.stringify(v)); });
+  await p.reload(); await p.waitForSelector('.library-view');
+  await p.setInputFiles('input[type=file]', [book]); await p.waitForSelector('.book-card', { timeout: 60000 }); await p.waitForTimeout(1200);
+  const id = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result[0].id); }; }));
+  await p.evaluate((i) => { location.hash = `#/read/${i}`; }, id); await p.waitForSelector('.kr-chapter', { timeout: 30000 }); await p.waitForTimeout(1500);
+  // Open the translator (the toolbar's button, else the reader's command).
+  const btn = await p.$('button[aria-label="AI chapter translation"]');
+  if (btn) await btn.click({ force: true }); else await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' })));
+  await p.waitForSelector('.tr-pill', { timeout: 10000 });
+  await p.waitForFunction(() => document.querySelectorAll('.kr-chapter .kr-translated').length >= 2, null, { timeout: 15000 });
+  const first = await p.$eval('.kr-chapter p.kr-translated', (e) => e.innerHTML); console.log('first:', first);
+  ok('italics come through the translation', /<i>old gate<\/i>/.test(first) && /^AR\(/.test(first.replace(/<[^>]+>/g, '')));
+  ok('the Arabic paragraph is left as it is', await p.evaluate(() => { const ar = [...document.querySelectorAll('.kr-chapter p')].find((x) => /مرحبًا/.test(x.textContent)); return !!ar && !ar.classList.contains('kr-translated'); }));
+  ok('never sent', !asked.some((a) => /مرحبًا/.test(a.user)));
+  const firstAsk = asked.find((a) => /Lin Feng/.test(a.user)); console.log('system:', firstAsk?.system.split('\n').filter((l) => /Book|Chapter|tags/.test(l)).join(' | '));
+  ok('the book and the chapter given as context, the tags explained', !!firstAsk && /Book: Gate Story/.test(firstAsk.system) && /Chapter:/.test(firstAsk.system) && /<i>/.test(firstAsk.system));
+  ok('a reply of the wrong length asked for again in halves', broke && asked.filter((a) => !/glossary/.test(a.system)).length >= 3);
+  await p.waitForFunction(() => true); await p.waitForTimeout(1500);
+  ok('the next chapter translated ahead', asked.some((a) => /The road went on/.test(a.user)));
+  // Both shown.
+  await p.click('.tr-pill .tr-mode'); await p.waitForTimeout(300);
+  const both = await p.$eval('.kr-chapter p.kr-translated', (e) => ({ orig: e.querySelector('.kr-tr-orig')?.textContent, line: e.querySelector('.kr-tr-line')?.textContent }));
+  console.log('both:', JSON.stringify(both)); ok('the original dimmed above, the translation under it', /Lin Feng looked/.test(both.orig || '') && /^AR\(/.test(both.line || ''));
+  await p.click('.tr-pill .tr-mode'); await p.waitForTimeout(200);
+  ok('back to the translation alone', !(await p.$('.kr-chapter .kr-tr-orig')));
+  // Names for the glossary.
+  await p.click('.tr-pill button[aria-label="Customise"]').catch(async () => { await p.locator('.tr-pill button').nth(6).click(); });
+  await p.waitForSelector('.tr-options'); await p.locator('.tr-options button', { hasText: 'Find names' }).click();
+  await p.waitForSelector('.tr-term'); await p.locator('.sheet button', { hasText: 'Add for this book' }).click(); await p.waitForTimeout(300);
+  const gl = await p.evaluate(() => JSON.parse(localStorage.getItem('kr.glossary') || '[]')); console.log('glossary:', JSON.stringify(gl));
+  ok('a proposed name added to this book\'s glossary', gl.some((x) => x.from === 'Lin Feng' && x.to === 'لين فنغ' && x.book));
+  ok('no page errors', !errors.length); if (errors.length) console.log(errors);
+  await b.close(); server.close();
+  console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
+})().catch((e) => { console.error(e); process.exit(1); });

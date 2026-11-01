@@ -1948,3 +1948,16 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .upd-version > summary small { color: var(--md-on-surface-variant); font-size: 12.5px; }
 .upd-version .upd-notes { margin: 4px 0 8px; max-height: none; }
 .upd-title small { text-transform: none; letter-spacing: 0; font-weight: 500; }
+
+/* The translator: both shown — the original dimmed, the translation under it on a line of its own. */
+.kr-bilingual > .kr-tr-orig { opacity: .6; }
+.kr-bilingual > .kr-tr-line { display: block; margin-top: .35em; }
+.tr-pill .tr-mode.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.tr-options .tr-opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.tr-options .tr-opt .label { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.tr-options .tr-opt .hint { font-size: 12.5px; opacity: .8; }
+.tr-terms { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.tr-term { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1.2fr); align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; background: var(--md-surface-container); }
+.tr-term-from { font-weight: 600; overflow-wrap: anywhere; }
+.tr-term .tr-term-to { min-height: 36px; padding: 0 10px; }
+html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
