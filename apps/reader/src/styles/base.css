@@ -1961,3 +1961,9 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .tr-term-from { font-weight: 600; overflow-wrap: anywhere; }
 .tr-term .tr-term-to { min-height: 36px; padding: 0 10px; }
 html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
+
+/* The search across languages: the original above, the translation under it (the words found marked in either). */
+.search-langs { margin: 8px 0 2px; }
+.pair-hit .ctx.orig { opacity: .92; }
+.pair-hit .ctx.trl { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--md-outline-variant); color: var(--md-on-surface); }
+.pair-hit .ctx.trl.none { opacity: .55; font-style: italic; }

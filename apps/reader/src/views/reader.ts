@@ -57,6 +57,9 @@ interface OpenDoc {
 }
 
 interface SearchHit { bookId: string; label: string; pct: number; before: string; match: string; after: string; range: Range }
+/** A hit of the search across languages: the paragraph, its original and its translation, and where the words
+ *  were found in either. */
+interface PairHit { bookId: string; label: string; pct: number; block: HTMLElement; orig: string; tr?: string; inOrig: [number, number] | null; inTr: [number, number] | null }
 
 export function readerView(ids: string[]): HTMLElement {
   const root = h('div', { class: 'view reader-view' });
@@ -1089,6 +1092,32 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   const yieldToPage = (): Promise<void> => new Promise((r) => { const sch = (window as Window & { scheduler?: { yield?(): Promise<void> } }).scheduler; if (sch?.yield) void sch.yield().then(r); else setTimeout(r, 0); });
   /** Run `query` through the book, calling `onHits` with each slice's hits; resolves to all of them. */
+  /** The search across languages (a book translated, wholly or in part): each paragraph's original and its
+   *  translation looked through — one, the other or both, as chosen. */
+  async function searchPairs(query: string, mode: 'both' | 'orig' | 'tr', onHits?: (hits: PairHit[]) => void, live?: () => boolean): Promise<PairHit[]> {
+    const q = normalizeForSearch(query.trim()).text; const hits: PairHit[] = []; if (!q) return hits;
+    await translator.load(docs.map((d) => d.book.id));
+    const find = (text: string): [number, number] | null => { const n = normalizeForSearch(text); const at = n.text.indexOf(q); if (at < 0) return null; return [n.map[at], n.map[Math.min(n.map.length - 1, at + q.length)]]; };
+    let since = performance.now();
+    for (const doc of docs) {
+      const all = doc.allBlocks.length ? doc.allBlocks : doc.blocks; let batch: PairHit[] = [];
+      for (let bi = 0; bi < all.length && hits.length < 500; bi++) {
+        const block = all[bi]; if (block.tagName === 'IMG') continue;
+        const p = translator.pairOf(block, doc.book.id); if (!p.orig) continue;
+        const inOrig = mode !== 'tr' ? find(p.orig) : null; const inTr = mode !== 'orig' && p.tr ? find(p.tr) : null;
+        if (!inOrig && !inTr) continue;
+        const hit: PairHit = { bookId: doc.book.id, label: labelFor(doc, bi), pct: all.length ? (bi / all.length) * 100 : 0, block, orig: p.orig, tr: p.tr, inOrig, inTr };
+        hits.push(hit); batch.push(hit);
+        if (performance.now() - since > 12) { if (batch.length) { onHits?.(batch); batch = []; } await yieldToPage(); since = performance.now(); if (live && !live()) return hits; }
+      }
+      if (batch.length) onHits?.(batch);
+    }
+    return hits;
+  }
+  function goToPair(hit: PairHit): void {
+    back.remember(); revealElement(hit.block);
+    requestAnimationFrame(() => { const sr = scroll.getBoundingClientRect(); const r = hit.block.getBoundingClientRect(); scroll.scrollTop += r.top - sr.top - sr.height * 0.3; hit.block.classList.add('kr-flash'); setTimeout(() => hit.block.classList.remove('kr-flash'), 1600); scheduleSave(); });
+  }
   async function searchFlow(query: string, onHits?: (hits: SearchHit[]) => void, live?: () => boolean): Promise<SearchHit[]> {
     const q = normalizeForSearch(query.trim());
     const hits: SearchHit[] = [];
@@ -1172,7 +1201,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const input = h('input', { type: 'search', placeholder: t('searchPlaceholder'), value: initial, 'aria-label': t('searchInBook'), style: { width: '100%' } }) as HTMLInputElement;
       const count = h('div', { style: { color: 'var(--text-dim)', fontSize: '13px', margin: '10px 0' } });
       const list = h('ul', { class: 'plain-list' });
-      body.append(input, count, list);
+      // (A book translated, wholly or in part: the search can look in the original, the translation, or both —
+      // each hit shown with the original above and the translation under it.)
+      let langMode: 'both' | 'orig' | 'tr' | null = null;
+      const langs = h('div', { class: 'segmented small search-langs', role: 'radiogroup', hidden: true });
+      const drawLangs = () => { const tg = (() => { try { return new Intl.DisplayNames([getLang()], { type: 'language' }).of(translator.target()) ?? translator.target(); } catch { return translator.target(); } })();
+        langs.replaceChildren(...([['both', t('searchBothLangs')], ['orig', t('searchOriginal')], ['tr', tg]] as ['both' | 'orig' | 'tr', string][]).map(([k, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(langMode === k), onclick: () => { langMode = k; try { localStorage.setItem('kr.searchLang', k); } catch { /* */ } drawLangs(); void run(); } }, l))); };
+      void translator.hasTranslations(docs.map((d) => d.book.id)).then((yes) => { if (!yes) return; langMode = (localStorage.getItem('kr.searchLang') as 'both' | null) ?? 'both'; langs.hidden = false; drawLangs(); if (input.value.trim().length >= 2) void run(); });
+      body.append(input, langs, count, list);
       let timer: number | undefined; let runId = 0;
       // The hits are listed a few dozen at a time, the next batch as the list is scrolled near its end: five
       // hundred lines of shaped text at once held the page for half a second.
@@ -1207,6 +1243,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           else more.hidden = false;
           count.textContent = `${t('resultsCount', { n })}…`;
         };
+        if (langMode) {
+          const piece = (text: string, at: [number, number] | null, cls: string) => { if (!at) return h('span', { class: cls, dir: 'auto' }, text.length > 160 ? `${text.slice(0, 160)}…` : text); const [s0, e0] = at; return h('span', { class: cls, dir: 'auto' }, (s0 > 70 ? '…' : '') + text.slice(Math.max(0, s0 - 70), s0), h('mark', null, text.slice(s0, e0)), text.slice(e0, e0 + 90) + (e0 + 90 < text.length ? '…' : '')); };
+          const prow = (hit: PairHit) => h('li', { class: 'hit pair-hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { if (window.innerWidth < 900) panel.close(); goToPair(hit); } },
+            h('span', { class: 'meta', dir: 'auto' }, hit.label, h('b', { class: 'hit-pct' }, localDigits(hit.pct.toFixed(1)) + '%')),
+            piece(hit.orig, hit.inOrig, 'ctx orig'), hit.tr ? piece(hit.tr, hit.inTr, 'ctx trl') : h('span', { class: 'ctx trl none' }, t('searchNotTranslated'))));
+          let m = 0; const hits2 = await searchPairs(q, langMode, (hs) => { if (id !== runId) return; m += hs.length; more.before(...hs.slice(0, Math.max(0, 300 - list.children.length)).map(prow)); count.textContent = `${t('resultsCount', { n: m })}…`; }, () => id === runId);
+          if (id !== runId) return;
+          count.textContent = hits2.length ? t('resultsCount', { n: hits2.length }) : t('noResults'); return;
+        }
         const hits = await searchFlow(q, show, () => id === runId);
         if (id !== runId) return;
         count.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');

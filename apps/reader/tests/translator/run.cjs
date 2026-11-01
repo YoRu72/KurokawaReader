@@ -13,8 +13,10 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await new Promise((r) => server.listen(0, r)); const port = server.address().port;
   const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], locale: 'en' }); const p = await ctx.newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
-  const asked = []; let broke = false;
+  const asked = []; let broke = false; let limited = 0; let daily = false;
   await p.route('https://ai.test/v1/chat/completions', async (r) => {
+    // Gemini's «too many requests», the first time: the minute's limit (wait a second), then the answer.
+    if (limited === 0 || daily) { limited++; const quotaId = daily ? 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' : 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'; return r.fulfill({ status: 429, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId, quotaValue: '60' }] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '1s' }] } }) }); }
     const body = JSON.parse(r.request().postData()); const system = body.messages[0].content; const user = body.messages[1].content; asked.push({ system, user });
     let content;
     if (/translation glossary/.test(system)) content = JSON.stringify([{ from: 'Lin Feng', to: 'لين فنغ', kind: 'person' }]);
@@ -54,6 +56,25 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.waitForSelector('.tr-term'); await p.locator('.sheet button', { hasText: 'Add for this book' }).click(); await p.waitForTimeout(300);
   const gl = await p.evaluate(() => JSON.parse(localStorage.getItem('kr.glossary') || '[]')); console.log('glossary:', JSON.stringify(gl));
   ok('a proposed name added to this book\'s glossary', gl.some((x) => x.from === 'Lin Feng' && x.to === 'لين فنغ' && x.book));
+  ok('the minute\'s limit waited out, no error shown', limited === 1 && !(await p.$('.toast.error')));
+  // The search across languages: the words found in the original, the translation under it; then in the translation.
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'search' }))); await p.waitForSelector('.search-langs:not([hidden])', { timeout: 8000 });
+  const langs = await p.$$eval('.search-langs button', (e) => e.map((x) => x.textContent)); console.log('search in:', langs.join(' | '));
+  ok('a book with translations: the search offers both languages', langs.length === 3 && /Both/.test(langs[0]) && /Original/.test(langs[1]));
+  await p.fill('input[type=search]', 'old gate'); await p.waitForSelector('.pair-hit', { timeout: 8000 });
+  const hit = await p.$eval('.pair-hit', (e) => ({ o: e.querySelector('.ctx.orig')?.textContent, t: e.querySelector('.ctx.trl')?.textContent, mark: e.querySelector('.ctx.orig mark')?.textContent })); console.log('hit:', JSON.stringify(hit));
+  ok('found in the original, the translation under it', /Lin Feng looked/.test(hit.o) && /^AR\(/.test(hit.t) && hit.mark === 'old gate');
+  await p.click('.search-langs button >> nth=2'); await p.fill('input[type=search]', 'AR(Then'); await p.waitForTimeout(700);
+  const hits2 = await p.$$eval('.pair-hit .ctx.trl mark', (e) => e.map((x) => x.textContent)); console.log('in the translation:', hits2.join(' | '));
+  ok('searched in the translation alone', hits2.length === 1 && hits2[0] === 'AR(Then');
+  await p.fill('input[type=search]', 'old gate'); await p.waitForTimeout(700);
+  ok('the original\'s words not found when only the translation is searched', (await p.$$('.pair-hit .ctx.orig mark')).length === 0);
+  // The day's quota used up: said plainly, once, and nothing more asked.
+  daily = true; const before = limited; await p.evaluate(() => document.querySelectorAll('.panel, .sheet, .sheet-scrim').forEach((e) => e.remove()));
+  await p.click('.tr-pill button[aria-label="Translate the chapter again"]'); await p.waitForSelector('.toast', { timeout: 15000 });
+  const tx = await p.$eval('.toast', (e) => e.textContent); console.log('daily:', tx, limited - before);
+  ok('the day\'s quota: said plainly, not asked again and again', /free quota/.test(tx) && limited - before <= 3);
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close();
   console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
