@@ -20,7 +20,7 @@ export async function checkFollows(quiet = true): Promise<number> {
         const rs = await streams('series', `${f.id}:${v.season}:${v.episode}`).catch(() => []);
         const best = bestOf(rs, { ...tvPrefs(), quality: (f.quality || tvPrefs().quality) as '1080' });
         if (!best) break;
-        await getEngine().add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: { imdbId: f.id, title: m.name, season: v.season, episode: v.episode, cover: m.poster, provider: best.provider, hash: best.hash, fileIdx: best.fileIdx } });
+        await getEngine().add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: !!best.url, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: { imdbId: f.id, title: m.name, season: v.season, episode: v.episode, cover: m.poster, provider: best.provider, hash: best.hash, fileIdx: best.fileIdx } });
         n++; toast(t('tvAutoAdded', { title: m.name, s: v.season, e: v.episode }));
         next = { ...next, season: v.season, episode: v.episode + 1 };
       }

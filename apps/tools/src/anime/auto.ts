@@ -49,7 +49,7 @@ export async function addFor(a: al.Anime, r: TorrentResult, ep: number, eps?: nu
   const want = eps ?? (ep ? [ep] : []);
   let files: number[] | undefined = !r.url && r.fileIdx !== undefined && want.length <= 1 ? [r.fileIdx] : undefined;
   if (!files && !r.url && want.length && (r.type === 'batch' || parseFilename(r.title).batch || !!eps)) files = (await import('../views/pickFiles').then((m) => m.smartFiles(source, want)).catch(() => null)) ?? undefined;
-  await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: true, files, meta });
+  await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
 }
 
 export interface RangeOptions { from: number; to: number; choices: Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'>; skipFillers: boolean; skipHave: boolean; preferBatch: boolean }

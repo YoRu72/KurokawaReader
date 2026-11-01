@@ -81,6 +81,9 @@ final class KtEngine {
     private final Map<String, Task> byHash = new ConcurrentHashMap<>();
     private volatile boolean seedAfterDone = false;
     /* Senpwai's torrent options: peer discovery, encryption, and when seeding stops (0 = never). */
+    /** Public trackers added to every public torrent (the page refreshes the list daily; this one until then). */
+    static final String[] TRACKERS = { "udp://tracker.opentrackr.org:1337/announce", "udp://open.demonii.com:1337/announce", "udp://open.stealth.si:80/announce", "udp://tracker.torrent.eu.org:451/announce", "udp://exodus.desync.com:6969/announce", "udp://explodie.org:6969/announce", "udp://tracker.qu.ax:6969/announce", "udp://opentracker.io:6969/announce", "udp://tracker.dler.org:6969/announce", "udp://tracker.tiny-vps.com:6969/announce", "udp://tracker-udp.gbitt.info:80/announce", "udp://tracker.0x7c0.com:6969/announce", "http://tracker.opentrackr.org:1337/announce", "http://nyaa.tracker.wf:7777/announce" };
+    private volatile String[] extraTrackers = TRACKERS; private volatile boolean addTrackers = true;
     private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
     /* Prism's connection settings: the name the app gives servers, tries per chunk, how long to wait, a proxy,
@@ -107,18 +110,21 @@ final class KtEngine {
         applyNet(sp);
         sp.setString(settings_pack.string_types.user_agent.swigValue(), "KurokawaTools/0.1 libtorrent/2.0");
         sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);
-        sp.connectionsLimit(200);
+        sp.connectionsLimit(500);
+        tune(sp);
         if (listenPort > 0) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), "0.0.0.0:" + listenPort + ",[::]:" + listenPort);
         session.addListener(new AlertListener() {
             @Override public int[] types() { return new int[]{ AlertType.ADD_TORRENT.swig(), AlertType.METADATA_RECEIVED.swig(), AlertType.TORRENT_FINISHED.swig(), AlertType.SAVE_RESUME_DATA.swig(), AlertType.TORRENT_ERROR.swig(), AlertType.STATE_UPDATE.swig() }; }
             @Override public void alert(Alert<?> a) { try { onAlert(a); } catch (Throwable e) { Log.w(TAG, "alert", e); } }
         });
-        // Files read and written with ordinary calls, not memory-mapped (libtorrent 2's default): a mapped file on
-        // the phone's shared storage (/storage/emulated/0, a FUSE filesystem) faults when a page cannot be read or
-        // written, and that fault ends the whole app — it closed by itself a moment into «Checking» a torrent
-        // (SIGSEGV, Android 13, realme RMX3491).
+        // libtorrent's own disk access (memory-mapped, on its own threads) — fast. The simple one (posix) does every
+        // read, write and check on the network's thread, so peers wait while a big torrent is checked: it is only a
+        // choice in Settings («Simple disk access»), for a phone whose storage misbehaves with the fast one.
         SessionParams params = new SessionParams(sp);
-        try { params.setPosixDiskIO(); } catch (Throwable e) { Log.w(TAG, "posix disk io", e); }
+        boolean simpleDisk = false; try { simpleDisk = ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getBoolean("simpleDisk", false); } catch (Throwable ignored) {}
+        if (simpleDisk) try { params.setPosixDiskIO(); } catch (Throwable e) { Log.w(TAG, "posix disk io", e); }
+        // (The DHT's table of nodes from last time: peers are asked at once instead of the DHT starting cold.)
+        try { File st = new File(stateDir, "dht.dat"); if (st.length() > 0) { SessionParams old = new SessionParams(java.nio.file.Files.readAllBytes(st.toPath())); params.swig().setDht_state(old.swig().getDht_state()); } } catch (Throwable e) { Log.w(TAG, "dht state", e); }
         session.start(params);
         startTicker();
         return session;
@@ -162,6 +168,7 @@ final class KtEngine {
                 // (A torrent whose handle could not be had when it was added: asked of the session again.)
                 try { for (Task x : snapshot()) if ("torrent".equals(x.kind) && x.th == null && x.infoHash != null && !x.infoHash.isEmpty()) { TorrentHandle h = session.find(org.libtorrent4j.Sha1Hash.parseHex(x.infoHash)); if (h != null) { x.th = h; if (x.paused) h.pause(); } } } catch (Throwable ignored) {}
                 try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Throwable ignored) {}
+                try { if (System.currentTimeMillis() % 600000 < 700) saveDht(); } catch (Throwable ignored) {}
                 // (Resume data saved now and then, so a kill loses little.)
                 try { if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } catch (Throwable ignored) {}
             }
@@ -213,6 +220,16 @@ final class KtEngine {
         }
         File res = new File(stateDir, x.id + ".fastresume");
         if (res.exists()) { try { byte[] rd = java.nio.file.Files.readAllBytes(res.toPath()); error_code ec = new error_code(); add_torrent_params rp = libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(rd), ec); if (!ec.failed()) { AddTorrentParams q = new AddTorrentParams(rp); if (x.torrentBytes != null) q.setTorrentInfo(TorrentInfo.bdecode(x.torrentBytes)); p = q; } } catch (Exception e) { Log.w(TAG, "fastresume", e); } }
+        // (Public trackers added — never to a private torrent, whose tracker alone may know of it.)
+        try {
+            TorrentInfo pti = p.getTorrentInfo(); boolean priv = pti != null && pti.isPrivate();
+            if (addTrackers && !priv) {
+                java.util.List<String> tr = new java.util.ArrayList<>(p.getTrackers()); java.util.List<Integer> tiers = new java.util.ArrayList<>(p.getTrackerTiers());
+                while (tiers.size() < tr.size()) tiers.add(0); int next = 0; for (int t : tiers) next = Math.max(next, t + 1);
+                java.util.Set<String> have = new java.util.HashSet<>(tr); for (String u : extraTrackers) if (u != null && !u.isEmpty() && have.add(u)) { tr.add(u); tiers.add(next); }
+                p.setTrackers(tr); p.setTrackerTiers(tiers);
+            }
+        } catch (Throwable e) { Log.w(TAG, "trackers", e); }
         p.setSavePath(x.dir);
         p.setFlags(p.getFlags().or_(TorrentFlags.AUTO_MANAGED).or_(TorrentFlags.UPDATE_SUBSCRIBE).or_(TorrentFlags.DUPLICATE_IS_ERROR));
         if (x.sequential) p.setFlags(p.getFlags().or_(TorrentFlags.SEQUENTIAL_DOWNLOAD));
@@ -247,6 +264,34 @@ final class KtEngine {
     void setFiles(String id, int[] prios) { Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x); persist(); tell(true); }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
     void setLimits(long down, long up) { SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
+    /** Finding peers fast and keeping them busy (what Flud and qBittorrent change from libtorrent's cautious defaults):
+     *  every tracker announced to at once, more connection attempts a second and a bigger boost for a new torrent,
+     *  a shorter wait on peers that do not answer, deeper request queues, and more threads for the disk. */
+    private void tune(SettingsPack sp) {
+        sp.setBoolean(settings_pack.bool_types.announce_to_all_trackers.swigValue(), true);
+        sp.setBoolean(settings_pack.bool_types.announce_to_all_tiers.swigValue(), true);
+        sp.setInteger(settings_pack.int_types.connection_speed.swigValue(), 100);
+        sp.setInteger(settings_pack.int_types.torrent_connect_boost.swigValue(), 100);
+        sp.setInteger(settings_pack.int_types.peer_connect_timeout.swigValue(), 7);
+        sp.setInteger(settings_pack.int_types.max_out_request_queue.swigValue(), 1500);
+        sp.setInteger(settings_pack.int_types.max_allowed_in_request_queue.swigValue(), 2000);
+        sp.setInteger(settings_pack.int_types.send_buffer_watermark.swigValue(), 3 * 1024 * 1024);
+        sp.setInteger(settings_pack.int_types.send_buffer_watermark_factor.swigValue(), 150);
+        sp.setInteger(settings_pack.int_types.aio_threads.swigValue(), 8);
+        sp.setInteger(settings_pack.int_types.hashing_threads.swigValue(), Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2)));
+        sp.setInteger(settings_pack.int_types.active_limit.swigValue(), 60);
+        sp.setInteger(settings_pack.int_types.dht_upload_rate_limit.swigValue(), 50000);
+        sp.setInteger(settings_pack.int_types.max_peerlist_size.swigValue(), 4000);
+        sp.setBoolean(settings_pack.bool_types.smooth_connects.swigValue(), false);
+    }
+    /** The DHT's nodes kept for the next start. */
+    void saveDht() {
+        try { SessionManager s = session; if (s == null || !s.isRunning()) return;
+            org.libtorrent4j.swig.session_params sp = s.swig().session_state(org.libtorrent4j.swig.session_handle.save_dht_state);
+            byte[] b = Vectors.byte_vector2bytes(org.libtorrent4j.swig.session_params.write_session_params_buf(sp, org.libtorrent4j.swig.session_handle.save_dht_state));
+            if (b.length > 0) { File tmp = new File(stateDir, "dht.dat.tmp"); try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(b); } tmp.renameTo(new File(stateDir, "dht.dat")); }
+        } catch (Throwable e) { Log.w(TAG, "save dht", e); }
+    }
     private void applyNet(SettingsPack sp) {
         sp.setBoolean(settings_pack.bool_types.enable_dht.swigValue(), dht);
         sp.setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), lsd);
@@ -277,6 +322,9 @@ final class KtEngine {
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
+        if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", false)).apply(); } catch (Throwable ignored) {}   // (from the next start)
+        if (o.has("addTrackers")) addTrackers = o.optBoolean("addTrackers", true);
+        if (o.has("trackers")) { JSONArray a = o.optJSONArray("trackers"); if (a != null && a.length() > 0) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) { String u = a.optString(i, "").trim(); if (u.matches("(?i)^(udp|https?|wss?)://\\S+$")) l.add(u); } if (!l.isEmpty()) extraTrackers = l.toArray(new String[0]); } }
         if (o.has("torrentProxy")) torrentProxy = o.optBoolean("torrentProxy"); if (o.has("bindIface")) bindIface = o.optString("bindIface", "").trim(); if (o.has("anonymous")) anonymous = o.optBoolean("anonymous");
         if (session != null && session.isRunning()) {
             SettingsPack sp = new SettingsPack(); sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);

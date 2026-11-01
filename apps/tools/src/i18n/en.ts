@@ -116,6 +116,8 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   errCut: "the server closed the connection. Some sites check visitors first: open the link once in the app's browser (its check passes there and the download reuses it), or try again later.",
   avTurnOff: "Turn off", avTurnedOff: "Antivirus checks turned off (Settings › Antivirus turns them back on)",
   apkReading: "Reading what it installs…", apkUnlock: "Open it", apkChooseApp: "This archive holds more than one app. Which one do you want to install?", apkSplitFolder: "An app in parts (split APKs)", apkBundle: "A bundle (split APKs)", apkFromArchive: "Installed straight from the archive: nothing is extracted, so no extra room is needed for a copy.", apkLowSpace: "The phone may not have room: installing takes about {need}, and {free} is free.", apkDeleteAfterArchive: "Delete the archive once installed",
+  addTrackers: "Add public trackers", addTrackersHint: "Well-known public trackers (refreshed daily) are added to every public torrent, so peers and a magnet's details are found much sooner. Never added to private torrents.",
+  simpleDisk: "Simple disk access", simpleDiskHint: "Slower: reads, writes and checks on one thread. Only for storage that misbehaves with the fast way. Applies from the next start.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

@@ -125,7 +125,7 @@ async function addRelease(m: TvMeta, r: TvRelease, v?: TvEpisode, choose = false
     const got = await pickFiles(source, r.title, v ? [v.episode] : [], v?.season); if (got === null) return false;
     files = got === 'all' ? undefined : got;
   }
-  const tk = await getEngine().add({ source, name: r.url ? (r.file ?? r.title) : undefined, sequential: true, files, meta: metaOf(m, r, v) });
+  const tk = await getEngine().add({ source, name: r.url ? (r.file ?? r.title) : undefined, sequential: !!r.url, files, meta: metaOf(m, r, v) });
   toast(t('taskAdded', { name: tk.name || r.title })); return true;
 }
 /** Every release Torrentio has for a film or an episode: filtered by quality, ordered as asked, one tap to add. */

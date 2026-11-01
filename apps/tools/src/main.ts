@@ -145,6 +145,8 @@ else {
   void import('./browser').then((m) => m.startBrowserEvents());
   void import('./ui/crash').then((m) => m.showLastCrash());
   void import('./downloads/net').then((m) => m.applyNet());
+  // (Public trackers for torrents, refreshed daily, handed to the phone's engine.)
+  void import('./downloads/trackers').then((m) => m.startTrackers());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
   if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
   onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });

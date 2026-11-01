@@ -59,7 +59,7 @@ export interface Settings {
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
   clipboardWatch: boolean;
   /** Torrent options (Senpwai's): peer discovery, encryption, when seeding stops (0 = never). */
-  torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
+  torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; addTrackers?: boolean; simpleDisk?: boolean; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
   /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */
   doh: string; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
@@ -96,7 +96,7 @@ export interface Settings {
 const KEY = 'kt.settings';
 const DEFAULTS: Settings = {
   uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff',
-  downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: true,
+  downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: false,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
