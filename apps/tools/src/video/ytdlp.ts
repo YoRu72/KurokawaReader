@@ -29,8 +29,10 @@ const cache = new Map<string, Promise<PageInfo>>();
 export function pageInfo(url: string, playlist = false): Promise<PageInfo> {
   const key = `${playlist ? 'p' : 'v'}|${url}`; const hit = cache.get(key); if (hit) return hit;
   const p = (async () => {
-    const d = desk(); if (d?.videoInfo) { await d.videoReady?.(); return normalise(await d.videoInfo({ url, playlist })); }
-    const k = plug(); if (k) return normalise(JSON.parse((await k.videoInfo({ url, playlist })).json));
+    const { ensurePacks, withPacks } = await import('../packs'); const { t } = await import('../i18n');
+    // (yt-dlp needs Python and ffmpeg on a phone; on a computer ffmpeg only merges, so declining it is no stop.)
+    const d = desk(); if (d?.videoInfo) { await ensurePacks(['ffmpeg'], t('packWhyVideo')); await d.videoReady?.(); return normalise(await d.videoInfo({ url, playlist })); }
+    const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist }))).json));
     throw new Error('yt-dlp');
   })();
   cache.set(key, p); p.catch(() => cache.delete(key));

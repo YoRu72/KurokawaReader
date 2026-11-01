@@ -11,6 +11,7 @@ const Archive = require('./archive.cjs');
 const Ffmpeg = require('./ffmpeg.cjs');
 const Ytdlp = require('./ytdlp.cjs');
 const StreamProxy = require('./streamproxy.cjs');
+const Packs = require('./packs.cjs');
 let videos = null; let lastAria = [];
 const allTasks = () => [...lastAria, ...(videos ? videos.list() : [])];
 const isVideoId = (id) => typeof id === 'string' && id.startsWith('v') && videos && videos.list().some((t) => t.id === id);
@@ -160,6 +161,10 @@ ipcMain.handle('kt:videoUpdate', async () => Ytdlp.update(true));
 ipcMain.handle('kt:isVideoHost', (_e, u) => { try { return Ytdlp.VIDEO_HOSTS.test(new URL(String(u)).hostname); } catch { return false; } });
 
 /* ---------- the player: ffmpeg for clips, files beside a video, a file's bytes ---------- */
+ipcMain.handle('kt:packStatus', () => Packs.status());
+ipcMain.handle('kt:packInstall', async (e, o) => { await Packs.install(o, (p) => e.sender.send('kt:packProgress', p)); });
+ipcMain.handle('kt:packCancel', (_e, n) => Packs.cancel(String(n)));
+ipcMain.handle('kt:packRemove', (_e, n) => Packs.remove(String(n)));
 ipcMain.handle('kt:ffmpegAvailable', () => Ffmpeg.available());
 ipcMain.handle('kt:ffmpeg', (e, o) => { let last = 0; return Ffmpeg.run(String(o.id), (o.args || []).map(String), (p) => { const now = Date.now(); if (now - last < 300 && !p.done) return; last = now; e.sender.send('kt:ffmpegProgress', { id: o.id, ...p }); }); });
 ipcMain.handle('kt:ffmpegCancel', (_e, id) => Ffmpeg.cancel(String(id)));

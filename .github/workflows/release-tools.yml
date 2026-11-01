@@ -39,7 +39,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npm install --no-save playwright && node tests/desktop-files.cjs && node tests/native-stub.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
+      - run: npm install --no-save playwright && node tests/desktop-files.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
       - name: Package web build
         run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
@@ -96,8 +96,10 @@ jobs:
           mkdir -p out; V=${{ needs.version.outputs.v }}
           for f in android/app/build/outputs/apk/release/*.apk; do base=$(basename "$f"); abi=$(echo "$base" | sed -E 's/app-(.*)-release.*\.apk/\1/'); cp "$f" "out/KurokawaTools-$V-$abi.apk"; done
           ls -la out
+      - name: Packs (Python and ffmpeg, downloaded by the app when an add-on needs them)
+        run: python3 scripts/packs.py out && ls -la out
       - uses: actions/upload-artifact@v4
-        with: { name: android, path: apps/tools/out/*.apk }
+        with: { name: android, path: "apps/tools/out/*" }
 
   windows:
     needs: version
@@ -118,6 +120,7 @@ jobs:
           npm install
           node fetch-aria2.mjs
           npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
+          node ffmpeg-pack.cjs
           ls -la out
       - name: Report failure
         if: failure()
@@ -131,6 +134,8 @@ jobs:
           name: windows
           path: |
             apps/tools/desktop/out/*.exe
+            apps/tools/desktop/out/KurokawaTools-pack-*.gz
+            apps/tools/desktop/out/*.packpart.json
 
   macos:
     needs: version
@@ -151,6 +156,7 @@ jobs:
           npm install
           node fetch-aria2.mjs
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
+          node ffmpeg-pack.cjs x64
           ls -la out
       - name: Report failure
         if: failure()
@@ -163,6 +169,8 @@ jobs:
           name: macos
           path: |
             apps/tools/desktop/out/*.dmg
+            apps/tools/desktop/out/KurokawaTools-pack-*.gz
+            apps/tools/desktop/out/*.packpart.json
 
   linux:
     needs: version
@@ -183,6 +191,7 @@ jobs:
           npm install
           node fetch-aria2.mjs
           npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee $RUNNER_TEMP/linux-build.log | tail -n 60
+          node ffmpeg-pack.cjs
           ls -la out
       - name: Report failure
         if: failure()
@@ -195,6 +204,8 @@ jobs:
           name: linux
           path: |
             apps/tools/desktop/out/*.AppImage
+            apps/tools/desktop/out/KurokawaTools-pack-*.gz
+            apps/tools/desktop/out/*.packpart.json
 
   release:
     name: Publish release
@@ -206,6 +217,17 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
+      - name: Packs file (Android's, with the desktop's ffmpeg merged in)
+        run: |
+          python3 - <<'PY'
+          import glob, json, os
+          path = 'artifacts/android/KurokawaTools-packs.json'
+          m = json.load(open(path))
+          for part in glob.glob('artifacts/*/*.packpart.json'):
+              m['packs'].setdefault('ffmpeg', {}).update(json.load(open(part))); os.remove(part)
+          json.dump(m, open(path, 'w'), indent=1)
+          print(sorted(m['packs']['ffmpeg']))
+          PY
       - name: Release notes
         run: |
           V=${{ needs.version.outputs.v }}
@@ -226,6 +248,7 @@ jobs:
             echo "| Windows | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
             echo "| macOS | \`*-mac-universal.dmg\` (unsigned: right-click → Open the first time; torrents need \`brew install aria2\`) |"
             echo "| Linux | \`*-linux-x64.AppImage\` (chmod +x, then run) |"
+            echo "| Android packs | \`KurokawaTools-pack-*.zip\` — Python and ffmpeg, downloaded by the app itself when an add-on needs them; nothing to install by hand |"
             echo "| Web | \`KurokawaTools-web.zip\` — or https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/tools/ (downloads through the browser; torrents through a remote aria2) |"
           } > notes.md
       - uses: softprops/action-gh-release@v2

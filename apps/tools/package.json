@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Kurokawa Tools — downloads, torrents, streaming and the tools around them, with the Kurokawa add-ons.",
   "private": true,
   "type": "module",
@@ -20,8 +20,7 @@
     "esbuild": ">=0.25.0",
     "typescript": ">=5.6.0",
     "@capacitor/cli": "^6.1.0",
-    "@capacitor/android": "^6.1.0",
-    "typescript-js-api": "npm:typescript@6.0.3"
+    "@capacitor/android": "^6.1.0"
   },
   "license": "MIT"
 }

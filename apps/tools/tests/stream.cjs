@@ -56,6 +56,9 @@ class Provider {
     if (u.pathname === '/subs/en.vtt') return r.fulfill({ headers: cors, contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello from the stream\n' });
     return r.fulfill({ status: 404, headers: cors, body: '' });
   });
+  // (The add-on index from this checkout: the Player add-on is installed when Play is first pressed.)
+  const REPO = path.join(__dirname, '..', '..', '..', 'repo');
+  await p.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { const f = path.join(REPO, r.request().url().split('/main/repo/')[1].split('?')[0]); if (!fs.existsSync(f)) return r.fulfill({ status: 404, body: '' }); r.fulfill({ body: fs.readFileSync(f), contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' } }); });
   await p.route('https://graphql.anilist.co/**', (r) => r.fulfill({ json: { data: { Media: MEDIA, Page: { pageInfo: { hasNextPage: false }, media: [MEDIA], airingSchedules: [] } } } }));
   await p.route(/arm\.haglund\.dev|api\.ani\.zip|animefillerlist/, (r) => r.fulfill({ status: 404, body: '' }));
   const lang = process.argv[2] || 'en'; const L = lang === 'ar' ? { watch: 'شاهد على الشبكة', matched: /العمل المطابِق: Sousou no Frieren(?! 2nd)/, subs: /الترجمات: English/ } : { watch: 'Watch online', matched: /Matched: Sousou no Frieren(?! 2nd)/, subs: /Subtitles: English/ };

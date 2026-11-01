@@ -39,6 +39,7 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
   const go = h('button', { type: 'button', class: 'btn primary', onclick: () => void run() }, icon('scroll'), t('cutExport')); sh.actions.append(go);
   async function run() {
     if (!(b > a)) { toast(t('cutBadRange'), 'error'); return; }
+    if (!(await (await import('../packs')).ensurePacks(['ffmpeg'], t('packWhyClip')))) return;
     go.disabled = true; const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src', dir: 'ltr' }, t('cutPreparing'));
     sh.body.replaceChildren(h('div', { class: 'extract-progress' }, h('span', null, t('cutExporting')), bar, line));
     const id = `cut-${Date.now()}`; sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => void (desk() ? desk()!.ffmpegCancel(id) : plug()!.ffmpegCancel({ id })) }, t('cancel')));

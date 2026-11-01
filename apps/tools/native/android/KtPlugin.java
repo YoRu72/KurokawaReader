@@ -335,18 +335,29 @@ public class KtPlugin extends Plugin {
         try { File dir = new File(getContext().getCacheDir(), "clip"); new File(dir, "fonts").mkdirs(); File f = new File(dir, call.getString("name", "clip.txt").replaceAll("[\\\\/]", "_")); try (java.io.Writer w = new java.io.OutputStreamWriter(new java.io.FileOutputStream(f), java.nio.charset.StandardCharsets.UTF_8)) { w.write(call.getString("text", "")); } JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r); }
         catch (Exception e) { call.reject(e.getMessage()); }
     }
-    private final java.util.Map<String, Long> ffJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Process> ffJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    /** ffmpeg as a program (yt-dlp's, from the ffmpeg pack): the arguments as given, progress read from `-progress pipe:1`. */
     @PluginMethod public void ffmpeg(PluginCall call) {
         final String id = call.getString("id", ""); final java.util.List<String> args = new java.util.ArrayList<>();
         try { JSArray a = call.getArray("args"); for (int i = 0; i < a.length(); i++) args.add(a.getString(i)); } catch (Exception e) { call.reject("args"); return; }
-        final long[] last = { 0 };
-        com.arthenica.ffmpegkit.FFmpegSession s = com.arthenica.ffmpegkit.FFmpegKit.executeWithArgumentsAsync(args.toArray(new String[0]), session -> {
-            ffJobs.remove(id); JSObject r = new JSObject(); r.put("code", session.getReturnCode() != null ? session.getReturnCode().getValue() : 1); String log = session.getAllLogsAsString(); r.put("log", log.length() > 20000 ? log.substring(log.length() - 20000) : log); call.resolve(r);
-        }, log -> {}, st -> {
-            long now = System.currentTimeMillis(); if (now - last[0] < 300) return; last[0] = now;
-            JSObject ev = new JSObject(); ev.put("id", id); ev.put("time", st.getTime() / 1000.0); ev.put("size", st.getSize()); ev.put("speed", st.getSpeed()); notifyListeners("ffmpegProgress", ev);
+        bg.execute(() -> {
+            Process p;
+            try { p = KtPacks.command(getContext(), KtPacks.ffmpegBin(getContext()), args).start(); } catch (Exception e) { call.reject(e.getMessage()); return; }
+            ffJobs.put(id, p); final StringBuilder log = new StringBuilder();
+            Thread err = new Thread(() -> { try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getErrorStream()))) { for (String l; (l = r.readLine()) != null; ) { synchronized (log) { log.append(l).append('\n'); if (log.length() > 40000) log.delete(0, log.length() - 20000); } } } catch (Exception ignored) {} });
+            err.start();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+                double time = 0; long size = 0; double speed = 0; long last = 0;
+                for (String l; (l = r.readLine()) != null; ) {
+                    int eq = l.indexOf('='); if (eq < 0) continue; String k = l.substring(0, eq), v = l.substring(eq + 1).trim();
+                    try { if (k.equals("out_time_us") || k.equals("out_time_ms")) time = Long.parseLong(v) / 1e6; else if (k.equals("total_size")) size = Long.parseLong(v); else if (k.equals("speed")) speed = Double.parseDouble(v.replace("x", "")); } catch (Exception ignored) {}
+                    if (k.equals("progress")) { long now = System.currentTimeMillis(); if (now - last >= 300) { last = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("time", time); ev.put("size", size); ev.put("speed", speed); notifyListeners("ffmpegProgress", ev); } }
+                }
+            } catch (Exception ignored) {}
+            int code; try { code = p.waitFor(); err.join(2000); } catch (InterruptedException e) { code = 255; }
+            ffJobs.remove(id);
+            JSObject res = new JSObject(); res.put("code", code); synchronized (log) { res.put("log", log.length() > 20000 ? log.substring(log.length() - 20000) : log.toString()); } call.resolve(res);
         });
-        ffJobs.put(id, s.getSessionId());
     }
     /* ---------- yt-dlp (the video add-on): what a page offers, its version, and updating it ---------- */
     @PluginMethod public void videoInfo(PluginCall call) {
@@ -355,10 +366,33 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void videoVersion(PluginCall call) { bg.execute(() -> { JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); r.put("ready", v != null); call.resolve(r); }); }
     @PluginMethod public void videoUpdate(PluginCall call) { bg.execute(() -> { KtVideo.update(getContext()); JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); call.resolve(r); }); }
-    @PluginMethod public void ffmpegCancel(PluginCall call) { Long sid = ffJobs.get(call.getString("id", "")); if (sid != null) com.arthenica.ffmpegkit.FFmpegKit.cancel(sid); call.resolve(); }
+    @PluginMethod public void ffmpegCancel(PluginCall call) { Process p = ffJobs.remove(call.getString("id", "")); if (p != null) p.destroy(); call.resolve(); }
     @PluginMethod public void ffprobe(PluginCall call) {
-        bg.execute(() -> { try { com.arthenica.ffmpegkit.MediaInformationSession s = com.arthenica.ffmpegkit.FFprobeKit.getMediaInformation(call.getString("path", "")); com.arthenica.ffmpegkit.MediaInformation mi = s.getMediaInformation(); JSObject r = new JSObject(); r.put("json", mi != null && mi.getAllProperties() != null ? mi.getAllProperties().toString() : "{}"); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage()); } });
+        bg.execute(() -> {
+            try {
+                java.util.List<String> a = java.util.Arrays.asList("-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", call.getString("path", ""));
+                Process p = KtPacks.command(getContext(), KtPacks.ffprobeBin(getContext()), a).redirectErrorStream(false).start();
+                java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream(); try (java.io.InputStream in = p.getInputStream()) { byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0) b.write(buf, 0, n); }
+                p.waitFor(); JSObject r = new JSObject(); String j = b.toString("UTF-8").trim(); r.put("json", j.isEmpty() ? "{}" : j); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage()); }
+        });
     }
+    /* ---------- packs: the heavy native parts, downloaded when an add-on needs them ---------- */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> packJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void packStatus(PluginCall call) {
+        bg.execute(() -> { JSObject r = new JSObject(); for (String n : new String[] { "python", "ffmpeg" }) { JSObject o = new JSObject(); String v = KtPacks.installed(getContext(), n); o.put("version", v == null ? JSObject.NULL : v); o.put("size", v == null ? 0 : KtPacks.sizeOnDisk(getContext(), n)); r.put(n, o); } r.put("abi", android.os.Build.SUPPORTED_ABIS[0]); call.resolve(r); });
+    }
+    @PluginMethod public void packInstall(PluginCall call) {
+        final String name = call.getString("name", ""); final String url = call.getString("url", ""); final String sha = call.getString("sha256", ""); final String ver = call.getString("version", "1");
+        final java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean(false); packJobs.put(name, cancel);
+        bg.execute(() -> {
+            try { KtPacks.install(getContext(), name, url, sha, ver, (d, t) -> { JSObject ev = new JSObject(); ev.put("name", name); ev.put("done", d); ev.put("total", t); notifyListeners("packProgress", ev); }, cancel); call.resolve(); }
+            catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+            finally { packJobs.remove(name); }
+        });
+    }
+    @PluginMethod public void packCancel(PluginCall call) { java.util.concurrent.atomic.AtomicBoolean c = packJobs.get(call.getString("name", "")); if (c != null) c.set(true); call.resolve(); }
+    @PluginMethod public void packRemove(PluginCall call) { bg.execute(() -> { KtPacks.remove(getContext(), call.getString("name", "")); call.resolve(); }); }
 
     /* ---------- requests for the add-ons (past the page's CORS), with the WebView's identity and cookies ---------- */
     @PluginMethod public void httpRequest(PluginCall call) {

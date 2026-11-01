@@ -1,14 +1,55 @@
-// Playing a video: the full player (the Player add-on) when installed — controls, gestures, subtitles, clips —
-// else the browser's own <video> with its controls; a file the browser cannot decode is handed to the system.
-import { h, iconButton, toast } from '../ui/dom';
+// Playing a video: in another app (VLC, MX Player, mpv… on a phone; the system's player on a computer) or in the
+// app's own player — the Player add-on, installed on the spot the first time it is chosen. Which one is asked each
+// time until a choice is remembered (Settings → Player). The web has only the in-app way.
+import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t } from '../i18n';
-import { openExternal } from '../native';
-import { getSettings } from '../settings';
+import { openExternal, ktPlugin, nativePlatform, openFolder } from '../native';
+import { getSettings, updateSettings } from '../settings';
 import { getEngine, isVideo } from '../engine';
 import type { Task } from '../engine/types';
 
-export async function openPlayer(url: string, name: string, opts: { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[] } = {}): Promise<void> {
-  if (getSettings().addons.includes('player')) { const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts }); return; }
+type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[] };
+export type PlayWith = 'ask' | 'app' | 'external';
+export const canPlayExternally = (): boolean => { const p = nativePlatform(); return p === 'android' || p === 'desktop'; };
+
+export async function openPlayer(url: string, name: string, opts: PlayOpts = {}): Promise<void> {
+  const how = canPlayExternally() ? await chooseHow() : 'app'; if (!how) return;
+  if (how === 'external' && (await external(url, name, opts.localPath))) return;
+  if (!getSettings().addons.includes('player')) {
+    try { const { install } = await import('../addons'); await install('player'); toast(t('playerAddonAdded')); }
+    catch { bare(url, name); return; }   // (offline the first time: the system's own controls)
+  }
+  const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts });
+}
+/** The question, unless a choice is remembered: another app, or the in-app player (with what it brings). */
+function chooseHow(): Promise<'app' | 'external' | null> {
+  const pref = getSettings().playerWith; if (pref === 'app' || pref === 'external') return Promise.resolve(pref);
+  return new Promise((resolve) => {
+    let done = false; const answer = (v: 'app' | 'external' | null) => { if (done) return; done = true; if (v && remember.checked) updateSettings({ playerWith: v }); sh.close(); resolve(v); };
+    const sh = openSheet(t('watchWith'), t('close'), { stack: true });
+    const has = getSettings().addons.includes('player'); const android = nativePlatform() === 'android';
+    const remember = h('input', { type: 'checkbox' }) as HTMLInputElement;
+    const choice = (ic: string, title: string, sub: string, v: 'app' | 'external') => h('button', { type: 'button', class: 'watch-choice', onclick: () => answer(v) }, h('span', { class: 'watch-ic' }, icon(ic)), h('span', { class: 'grow' }, h('b', null, title), h('small', null, sub)));
+    sh.body.append(h('div', { class: 'watch-choices' },
+      choice('play', t('watchInApp'), has ? t('watchInAppHint') : `${t('watchInAppHint')} · ${t('watchInAppGet')}`, 'app'),
+      choice('external', t('watchExternal'), android ? t('watchExternalHintAndroid') : t('watchExternalHintDesktop'), 'external')),
+      h('label', { class: 'row switch-row' }, h('span', null, t('watchRemember')), remember), h('p', { class: 'hint' }, t('watchChangeLater')));
+    const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); if (!done) { done = true; resolve(null); } } }); mo.observe(document.body, { childList: true, subtree: true });
+  });
+}
+/** Handed to another app: the phone's chooser (the file itself, or the local stream while it comes), or the
+ *  computer's default player for a file. False when there is no way, so the in-app player takes it. */
+async function external(url: string, name: string, localPath?: string): Promise<boolean> {
+  const p = ktPlugin() as unknown as { openWith?(o: { url?: string; path?: string; mime: string; title: string }): Promise<void> } | null;
+  try {
+    if (p?.openWith) { await p.openWith({ url: localPath ? undefined : url, path: localPath, mime: 'video/*', title: name }); return true; }
+    if (localPath && (await openFolder(localPath))) return true;
+    if (window.kurokawaTools) { await openExternal(url); return true; }
+  } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  return false;
+}
+/** The browser's own <video> (when the Player add-on cannot be fetched). */
+function bare(url: string, name: string): void {
   const video = h('video', { src: url, controls: true, autoplay: true, playsinline: true, class: 'kt-video' }) as HTMLVideoElement;
   const root = h('div', { class: 'player-view', role: 'dialog', 'aria-label': name },
     h('div', { class: 'player-bar' }, iconButton('back', t('back'), close), h('span', { class: 'grow', dir: 'auto' }, name)), video);
