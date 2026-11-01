@@ -91,6 +91,13 @@ const kpi = (k: string, v: string) => h('div', { class: 'kt-kpi' }, h('div', { c
 /** The whole file: every connection's range in its colour, filled as far as it got; the live ones with a head. */
 export function fileMap(x: Task): HTMLElement | null {
   const total = x.total; if (!total) return null;
+  // A torrent: its pieces, as qBittorrent and Flud draw them — each stretch as full as what of it is here.
+  if (x.kind === 'torrent') {
+    if (!x.pieceMap) return null;
+    const bar = h('div', { class: 'kt-piecebar', role: 'img', 'aria-label': t('pieceMapLabel', { have: localDigits(x.havePieces ?? 0), n: localDigits(x.numPieces ?? 0) }) },
+      ...Array.from(x.pieceMap).map((d) => h('i', { style: { opacity: d === '0' ? '0' : String(0.25 + (Number(d) / 9) * 0.75) } })));
+    return h('div', { class: 'kt-map' }, h('span', null, t('pieceMapTitle')), bar, h('span', { class: 'kt-num' }, t('pieceMapCount', { have: localDigits(x.havePieces ?? 0), n: localDigits(x.numPieces ?? 0) })));
+  }
   const segs = x.segments ?? [];
   const bar = h('div', { class: 'kt-segbar', role: 'img', 'aria-label': countSegments(segs.length || 1) });
   if (!segs.length) bar.append(h('span', { class: 'kt-seg', style: { insetInlineStart: '0', width: '100%' } }, h('b', { style: { width: `${(x.done / total) * 100}%`, background: colourOf(0) } })));

@@ -280,3 +280,19 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .sheet .chips + .field, .sheet .chips + label.field { margin-top: 6px; }
 .kt-eq { height: 190px; }
 .kt-eq-band input[type=range] { accent-color: var(--md-primary); }
+/* A and B: easy to take hold of on the bar (a wide grip around a thin line). */
+.kt-seek .kt-mark { top: -6px; height: 28px; width: 18px; margin-inline-start: -9px; background: transparent; cursor: ew-resize; touch-action: none; z-index: 2; }
+.kt-seek .kt-mark::after { content: ''; position: absolute; left: 7px; top: 6px; width: 4px; height: 16px; border-radius: 2px; background: #ffd54f; }
+.kt-seek .kt-mark.b::after { background: #4fc3f7; }
+/* The clip sheet: the range on its strip, A and B with their nudges. */
+.cut-head { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.cut-track { position: relative; height: 36px; margin: 10px 14px 4px; border-radius: 10px; background: var(--md-surface-container-highest); touch-action: none; }
+.cut-range { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--md-primary) 45%, transparent); border-radius: 8px; }
+.cut-h { position: absolute; top: -4px; width: 26px; height: 44px; margin-left: -13px; border-radius: 9px; display: grid; place-items: center; font: 800 12px var(--font-ui); color: #000; background: #ffd54f; cursor: ew-resize; touch-action: none; box-shadow: 0 2px 6px rgb(0 0 0 / .35); }
+.cut-h.b { background: #4fc3f7; }
+.cut-badge { font: 700 14px var(--font-ui); padding: 4px 10px; border-radius: 999px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.cut-end { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; padding: 8px 0; border-top: 1px solid var(--md-outline-variant); }
+.cut-tag { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: #ffd54f; color: #000; font-weight: 800; }
+.cut-tag.b { background: #4fc3f7; }
+.cut-time { width: 9.5em; height: 38px; min-height: 0; padding: 0 10px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.cut-nudges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }

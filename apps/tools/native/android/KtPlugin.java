@@ -369,6 +369,47 @@ public class KtPlugin extends Plugin {
     private static boolean deleteTree(File f) { if (f.isDirectory()) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); } return f.delete(); }
     @PluginMethod public void roots(PluginCall call) { JSArray a = new JSArray(); a.put(engine().defaultDir().getAbsolutePath()); for (File f : getContext().getExternalFilesDirs(null)) if (f != null) a.put(f.getAbsolutePath()); JSObject r = new JSObject(); r.put("roots", a); call.resolve(r); }
 
+    /* ---------- the video library (REX Player's): the phone's videos, from Android's media index ---------- */
+    private static String mediaPerm() { return Build.VERSION.SDK_INT >= 33 ? "android.permission.READ_MEDIA_VIDEO" : "android.permission.READ_EXTERNAL_STORAGE"; }
+    /** Whether the app may read the phone's videos (all of them, or only those picked — Android 14's choice); asked
+     *  when `ask` is set (the system's own dialog; its answer read again by the page). */
+    @PluginMethod public void mediaAccess(PluginCall call) {
+        android.content.Context c = getContext(); boolean all = c.checkSelfPermission(mediaPerm()) == PackageManager.PERMISSION_GRANTED;
+        boolean some = Build.VERSION.SDK_INT >= 34 && c.checkSelfPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED") == PackageManager.PERMISSION_GRANTED;
+        if (!all && Boolean.TRUE.equals(call.getBoolean("ask", false)) && getActivity() != null) {
+            String[] want = Build.VERSION.SDK_INT >= 34 ? new String[] { mediaPerm(), "android.permission.READ_MEDIA_VISUAL_USER_SELECTED" } : new String[] { mediaPerm() };
+            getActivity().requestPermissions(want, 4711);
+        }
+        JSObject r = new JSObject(); r.put("granted", all); r.put("partial", !all && some); call.resolve(r);
+    }
+    /** The phone's videos (newest first): path, name, folder, length, size, picture size, when changed. */
+    @PluginMethod public void mediaVideos(PluginCall call) {
+        bg.execute(() -> {
+            JSArray out = new JSArray();
+            String[] cols = { android.provider.MediaStore.Video.Media._ID, android.provider.MediaStore.Video.Media.DATA, android.provider.MediaStore.Video.Media.DISPLAY_NAME, android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME, android.provider.MediaStore.Video.Media.DURATION, android.provider.MediaStore.Video.Media.SIZE, android.provider.MediaStore.Video.Media.WIDTH, android.provider.MediaStore.Video.Media.HEIGHT, android.provider.MediaStore.Video.Media.DATE_MODIFIED };
+            try (android.database.Cursor cu = getContext().getContentResolver().query(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cols, null, null, android.provider.MediaStore.Video.Media.DATE_MODIFIED + " DESC")) {
+                if (cu != null) while (cu.moveToNext() && out.length() < 20000) {
+                    JSObject o = new JSObject(); o.put("id", cu.getLong(0)); o.put("path", cu.getString(1)); o.put("name", cu.getString(2)); o.put("folder", cu.getString(3)); o.put("duration", cu.getLong(4)); o.put("size", cu.getLong(5)); o.put("width", cu.getInt(6)); o.put("height", cu.getInt(7)); o.put("mtime", cu.getLong(8) * 1000); out.put(o);
+                }
+                JSObject r = new JSObject(); r.put("videos", out); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** A video's small picture (Android's own thumbnail), as a data: URL. */
+    @PluginMethod public void videoThumb(PluginCall call) {
+        final long id = call.getLong("id", 0L);
+        bg.execute(() -> {
+            try {
+                Uri u = android.content.ContentUris.withAppendedId(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id); android.graphics.Bitmap b;
+                if (Build.VERSION.SDK_INT >= 29) b = getContext().getContentResolver().loadThumbnail(u, new android.util.Size(320, 180), null);
+                else b = android.provider.MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, android.provider.MediaStore.Video.Thumbnails.MINI_KIND, null);
+                if (b == null) { call.reject("none"); return; }
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, bo);
+                JSObject r = new JSObject(); r.put("url", "data:image/jpeg;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
     @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }

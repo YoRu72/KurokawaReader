@@ -18,7 +18,7 @@
 //   And: openings/endings skipped (AniSkip, chapters), the episode marked watched on AniList, the A/B range cut to
 //   a file through ffmpeg, another player.
 import { getSettings } from '../settings';
-import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
 import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
@@ -67,12 +67,17 @@ export function openPlayer(src: PlayerSource): void {
   const abBtn = h('button', { type: 'button', class: 'kt-chip', onclick: () => abPress() }, 'A/B');
   const aspectBtn = h('button', { type: 'button', class: 'kt-chip', onclick: () => cycleAspect() }, t('aspectFit'));
   const skipBtn = h('button', { type: 'button', class: 'kt-chip', title: t('skipAhead'), onclick: () => seekBy(getPrefs().skipAmount) }, `+${localDigits(P.skipAmount)}`);
+  // Your own buttons (REX Player's custom buttons), before the built-in ones.
+  const customBox = h('span', { class: 'kt-custom' });
+  const customLabel = (b: PlayerPrefs['customButtons'][number]) => (b.act === 'seek' ? `${(b.v ?? 0) > 0 ? '+' : '−'}${localDigits(Math.abs(b.v ?? 0))}s` : b.act === 'speed' ? `${localDigits(b.v ?? 1)}×` : b.act === 'jump' ? `→${fmtTime(b.v ?? 0)}` : b.act === 'ab' ? 'A/B' : b.act === 'shot' ? '📷' : b.act === 'sub' ? 'CC' : b.act === 'audio' ? '♪' : '⇥CC');
+  const runCustom = (b: PlayerPrefs['customButtons'][number]) => { if (b.act === 'seek') seekBy(b.v ?? 10); else if (b.act === 'speed') { setSpeed(speed === (b.v ?? 1) ? 1 : (b.v ?? 1)); flashText(`${localDigits(speed)}×`); } else if (b.act === 'jump') seekTo(b.v ?? 0); else if (b.act === 'ab') abPress(); else if (b.act === 'shot') screenshot(); else if (b.act === 'sub') cycleSub(); else if (b.act === 'audio') cycleAudio(); else subLine(1); };
+  const drawCustom = () => customBox.replaceChildren(...getPrefs().customButtons.map((b) => h('button', { type: 'button', class: 'kt-chip', onclick: () => runCustom(b) }, customLabel(b))));
   // The floating «Skip opening» button, shown while an opening/ending/recap is on screen.
   const skipOp = h('button', { type: 'button', class: 'kt-skip-op', hidden: true }) as HTMLButtonElement;
   const bottom = h('div', { class: 'kt-bottom' },
     h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
     h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('undo', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null,
-      h('span', { class: 'grow' }), skipBtn, speedBtn, abBtn, aspectBtn, iconButton('camera', t('screenshot'), () => screenshot()), 'pictureInPictureEnabled' in document ? iconButton('mini', t('pip'), () => void pip()) : null, iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
+      h('span', { class: 'grow' }), customBox, skipBtn, speedBtn, abBtn, aspectBtn, iconButton('camera', t('screenshot'), () => screenshot()), 'pictureInPictureEnabled' in document ? iconButton('mini', t('pip'), () => void pip()) : null, iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
   const centre = h('div', { class: 'kt-centre' }, h('div', { class: 'kt-flash' })); const flash = centre.firstChild as HTMLElement;
   const ripple = h('div', { class: 'kt-ripple', hidden: true });
   const unlockBtn = iconButton('lock', t('unlock'), () => lock(false)); unlockBtn.classList.add('kt-unlock'); unlockBtn.hidden = true;
@@ -176,6 +181,15 @@ export function openPlayer(src: PlayerSource): void {
   const endScrub = () => { scrubbing = false; preview?.hide(); };
   bar.addEventListener('pointerup', endScrub); bar.addEventListener('pointercancel', endScrub); bar.addEventListener('pointerleave', () => { if (!scrubbing) preview?.hide(); });
   bar.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') seekBy(5); else if (e.key === 'ArrowLeft') seekBy(-5); });
+  // A and B dragged along the bar (the frame shown as they move); a long press on «A/B» opens the clip sheet.
+  for (const which of ['a', 'b'] as const) {
+    const mk = bar.querySelector(`.kt-mark.${which}`) as HTMLElement;
+    mk.addEventListener('pointerdown', (e) => { if (locked) return; e.stopPropagation(); e.preventDefault(); mk.setPointerCapture(e.pointerId); video.pause();
+      const mv = (ev: PointerEvent) => { if (!video.duration) return; const v = fracAt(ev.clientX) * video.duration; if (which === 'a' && abB !== null) abA = Math.min(v, abB - 0.2); else if (which === 'a') abA = v; else if (abA !== null) abB = Math.max(v, abA + 0.2); seekTo(which === 'a' ? abA! : abB!); flashText(`${which.toUpperCase()} ${fmtTime(which === 'a' ? abA! : abB!)}`); drawMarks(); };
+      const up = () => { mk.removeEventListener('pointermove', mv); mk.removeEventListener('pointerup', up); mk.removeEventListener('pointercancel', up); };
+      mk.addEventListener('pointermove', mv); mk.addEventListener('pointerup', up); mk.addEventListener('pointercancel', up); });
+  }
+  onLongPress(abBtn, () => void cutSheet());
 
   // ---- gestures on the stage
   let tapTimer = 0; let lastTap = 0; let lastTapZone = -1; let pressTimer = 0; let pressing = false; let heldSpeed = 0; let gesture: 'none' | 'seek' | 'volume' | 'bright' | 'pinch' = 'none'; let start = { x: 0, y: 0, t: 0, vol: 1, br: 1 }; const pts = new Map<number, { x: number; y: number }>(); let pinchStart = 0; let zoomStart = 1; let moved = false;
@@ -293,7 +307,7 @@ export function openPlayer(src: PlayerSource): void {
     st.setProperty('--sub-outline', p.subOutline); st.setProperty('--sub-outline-w', `${p.subOutlineWidth}px`); st.setProperty('--sub-bg-a', String(p.subBgOpacity / 100)); st.setProperty('--sub2-pos', `${p.sub2Pos}%`); st.setProperty('--sub2-size', `${p.sub2Size}%`);
     root.classList.toggle('sub-bold', p.subBold); root.classList.toggle('sub-italic', p.subItalic); root.dataset.subBg = p.subBackground;
   }
-  applySubStyle();
+  applySubStyle(); drawCustom();
   const nudgeSub = (d: number) => { subDelay = Math.round((subDelay + d) * 100) / 100; ass?.setOffset(-subDelay); remember(key, { subDelay }); flashText(t('subDelayNow', { s: subDelay.toFixed(1) })); };
   /** The line before or after the one on screen (REX Player's subtitle seek; mpv's Ctrl+arrows). */
   function subLine(dir: number) {
@@ -477,9 +491,22 @@ export function openPlayer(src: PlayerSource): void {
       row('heart', getPrefs().ambient ? t('ambientOff') : t('ambientOn'), () => { updatePrefs({ ambient: !getPrefs().ambient }); ambientTick(); }),
       ...(remote && !video.disableRemotePlayback ? [row('tv', t('castTo'), () => void cast())] : []),
       ...(canOpenWith() ? [row('external', t('openWithPlayer'), () => void openWith())] : []),
+      row('plus', t('customButtons'), () => customSheet(), getPrefs().customButtons.length ? localDigits(getPrefs().customButtons.length) : undefined),
       row('info', t('mediaInfo'), () => infoSheet()),
       row('external', t('openWithSystem'), () => void import('../native').then((n) => n.openExternal(src.localPath ? `file://${src.localPath}` : src.url))),
       row('settings', t('playerSettings'), () => playerSettingsSheet())));
+  }
+  function customSheet() {
+    const sh = openSheet(t('customButtons'), t('close')); const list = h('div', { class: 'dest-list' });
+    const acts: [PlayerPrefs['customButtons'][number]['act'], string][] = [['seek', t('cbSeek')], ['speed', t('cbSpeed')], ['jump', t('cbJump')], ['ab', t('cbAb')], ['shot', t('screenshot')], ['sub', t('cbSub')], ['audio', t('cbAudio')], ['subline', t('subNextLine')]];
+    const draw = () => list.replaceChildren(...(getPrefs().customButtons.length ? getPrefs().customButtons.map((b, i) => h('div', { class: 'dest-row' }, h('b', { class: 'kt-chip' }, customLabel(b)), h('span', { class: 'grow' }, acts.find((a) => a[0] === b.act)?.[1] ?? b.act), iconButton('trash', t('delete'), () => { const l = [...getPrefs().customButtons]; l.splice(i, 1); updatePrefs({ customButtons: l }); draw(); drawCustom(); }))) : [h('p', { class: 'src' }, t('cbNone'))]));
+    let act: PlayerPrefs['customButtons'][number]['act'] = 'seek';
+    const val = h('input', { type: 'text', dir: 'ltr', value: '85', style: { width: '7em' } }) as HTMLInputElement;
+    const hint = h('small', { class: 'src' }, t('cbSeekHint'));
+    const pick = pickButton(t('cbAction'), acts, act, (v) => { act = v; val.hidden = !['seek', 'speed', 'jump'].includes(v); val.value = v === 'seek' ? '85' : v === 'speed' ? '1.5' : v === 'jump' ? fmtTime(video.currentTime).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))) : ''; hint.textContent = v === 'seek' ? t('cbSeekHint') : v === 'speed' ? t('cbSpeedHint') : v === 'jump' ? t('cbJumpHint') : ''; }, t('close'));
+    draw();
+    sh.body.append(list, h('h4', null, t('cbAdd')), h('div', { class: 'row' }, h('span', null, t('cbAction')), pick), h('div', { class: 'row' }, h('span', null, t('cbValue'), hint), val));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { let v: number | undefined; if (act === 'seek' || act === 'speed') v = Number(val.value.replace(',', '.')); else if (act === 'jump') v = parseTime(val.value) ?? undefined; if (['seek', 'speed', 'jump'].includes(act) && (v === undefined || !isFinite(v) || (act === 'speed' && (v <= 0 || v > 8)))) { toast(t('cbBad'), 'error'); return; } updatePrefs({ customButtons: [...getPrefs().customButtons, { act, v }].slice(0, 8) }); draw(); drawCustom(); } }, icon('plus'), t('cbAdd')));
   }
   function sleepSheet() { const sh = openSheet(t('sleepTimer'), t('close')); sh.body.append(h('div', { class: 'chips' }, ...[0, 5, 10, 15, 30, 45, 60, 90, 120].map((m) => h('button', { type: 'button', class: 'chip', onclick: () => { sleepAt = m ? Date.now() + m * 60000 : 0; toast(m ? t('sleepTimerSet', { n: m }) : t('sleepTimerOff')); sh.close(); } }, m ? t('minutesN', { n: m }) : t('sleepTimerOff'))), h('button', { type: 'button', class: 'chip', onclick: () => { sleepAt = Date.now() + Math.max(1, (video.duration - video.currentTime) / speed) * 1000; toast(t('sleepTimerEnd')); sh.close(); } }, t('sleepTimerEnd')))); }
   function infoSheet() {
@@ -508,7 +535,7 @@ export function openPlayer(src: PlayerSource): void {
       if (keys.includes('pitchCorrection')) video.preservesPitch = getPrefs().pitchCorrection;
     })));
   }
-  async function cutSheet() { const { cutClipSheet } = await import('./cut'); await cutClipSheet({ src, a: abA ?? Math.max(0, video.currentTime - 30), b: abB ?? video.currentTime, duration: video.duration, subtitle: current ? { name: current.name, ass: current.ass, cues: current.cues, delay: subDelay } : undefined, video }); }
+  async function cutSheet() { const { cutClipSheet } = await import('./cut'); await cutClipSheet({ src, a: abA ?? Math.max(0, video.currentTime - 30), b: abB ?? video.currentTime, duration: video.duration, subtitle: current ? { name: current.name, ass: current.ass, cues: current.cues, delay: subDelay } : undefined, video, fps: fps || undefined, setRange: (x, y) => { abA = x; abB = y; abBtn.classList.add('on'); drawMarks(); } }); }
 
   // ---- REX Player's extras: the ambient glow, chapters, skipping openings (AniSkip), another player
   // The ambient glow: the picture's average colour spilled around it, a few times a second.
