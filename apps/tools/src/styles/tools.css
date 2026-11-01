@@ -360,3 +360,8 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .get-actions.wrap { flex-wrap: wrap; align-items: center; }
 .get-actions .grow { flex: 1; }
 .done-card .icon-btn { margin: -6px -6px 0 0; }
+/* Prism's drop zone */
+.drop-veil { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; background: color-mix(in srgb, var(--md-scrim, #000) 40%, transparent); pointer-events: none; animation: fade-in .15s ease-out; }
+.drop-box { display: grid; justify-items: center; gap: 8px; padding: 40px 56px; border-radius: 28px; border: 2px dashed var(--md-primary); background: var(--md-surface-container-high); color: var(--md-on-surface); text-align: center; }
+.drop-box svg { width: 40px; height: 40px; color: var(--md-primary); fill: none; stroke: currentColor; stroke-width: 2; }
+.drop-box b { font-size: 18px; } .drop-box small { color: var(--md-on-surface-variant); }

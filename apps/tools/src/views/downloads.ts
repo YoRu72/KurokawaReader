@@ -62,14 +62,8 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       free >= 0 ? h('span', { class: 'sb' }, t('sbFree', { size: formatBytes(free) })) : null].filter((n): n is HTMLElement => !!n));
     if (Date.now() - freeAt > 60000) { freeAt = Date.now(); void import('../archives').then((m) => m.freeSpaceAt(getSettings().downloadDir || '')).then((f) => { if (f !== free) { free = f; drawStatus(); } }).catch(() => undefined); }
   };
-  const LIM_KEY = 'kt.lastLimit';
-  const toggleLimiter = () => {
-    const s = getSettings(); const eng = getEngine();
-    let l: typeof s.limits;
-    if (s.limits.down) { try { localStorage.setItem(LIM_KEY, String(s.limits.down)); } catch { /* none */ } l = { ...s.limits, down: 0 }; }
-    else { let v = 2 * 1048576; try { v = Number(localStorage.getItem(LIM_KEY)) || v; } catch { /* none */ } l = { ...s.limits, down: v }; }
-    updateSettings({ limits: l }); void eng.setLimits?.(l); toast(l.down ? t('sbLimit', { v: t('perSecond', { n: formatBytes(l.down) }) }) : t('sbLimitOff')); drawStatus();
-  };
+  const toggleLimiter = () => { void import('../ui/dropzone').then((m) => m.toggleLimiter()); };
+  const onLimits = () => drawStatus(); window.addEventListener('kt:limits', onLimits);
   const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, searchRow, chips, statusBar, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
 
   const FILTERS: [string, string][] = [['all', t('filterAll')], ['active', t('filterActive')], ['done', t('filterDone')], ['failed', t('filterFailed')]];
@@ -181,7 +175,19 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   let off = getEngine().onChange((ts) => { tasks = ts; draw(); });
   const offEngine = onEngineChange((e) => { off(); off = e.onChange((ts) => { tasks = ts; draw(); }); });
   draw();
-  root.dispose = () => { off(); offEngine(); };
+  // Keys (Prism's): F search, A select all, Delete remove the selected, Space pause/resume them, Escape leave.
+  const onKey = (e: KeyboardEvent) => {
+    if (!root.isConnected || document.querySelector('.sheet')) return;
+    const el = e.target as HTMLElement; if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) { if (e.key === 'Escape' && el === searchIn) { searchIn.value = ''; query = ''; searchRow.hidden = true; draw(); } return; }
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRow.hidden = false; searchIn.focus(); }
+    else if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); if (!selecting) setSelecting(true); for (const x of shown()) picked.add(x.id); draw(); }
+    else if (e.key === 'Escape' && selecting) setSelecting(false);
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && selecting && picked.size) { e.preventDefault(); void Promise.all([...picked].map((id) => getEngine().remove(id, false))).then(() => { toast(t('tasksRemoved', { n: countItems(picked.size) })); setSelecting(false); }); }
+    else if (e.key === ' ' && selecting && picked.size) { e.preventDefault(); const eng = getEngine(); void Promise.all(tasks.filter((x) => picked.has(x.id)).map((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve()))); }
+  };
+  window.addEventListener('keydown', onKey);
+  root.dispose = () => { off(); offEngine(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
   return root;
 }
 /** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */

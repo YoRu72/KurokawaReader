@@ -109,6 +109,7 @@ setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() =>
 void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
 if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
 void import('./downloads/done').then((m) => m.startDoneWatch());
+void import('./ui/dropzone').then((m) => m.startDropAndKeys());
 if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
 onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
 onRoute(mount);
