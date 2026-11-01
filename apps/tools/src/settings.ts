@@ -59,7 +59,7 @@ export interface Settings {
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
   clipboardWatch: boolean;
   /** Torrent options (Senpwai's): peer discovery, encryption, when seeding stops (0 = never). */
-  torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; addTrackers?: boolean; simpleDisk?: boolean; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
+  torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; addTrackers?: boolean; simpleDisk?: boolean; connsPerTorrent?: number; connsTotal?: number; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
   /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */
   doh: string; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
@@ -74,6 +74,8 @@ export interface Settings {
   animeLibraryDirs?: string[];
   /** Hayase's «hide spoilers»: episodes past the one you are on keep their titles and pictures hidden. */
   animeHideSpoilers?: boolean;
+  /** Halfway through an episode, the next one starts downloading. */
+  animePreloadNext?: boolean;
   /** Senpwai's review of the picks before a range is added. */
   animeReview?: boolean;
   /** The TV & Movies add-on: Torrentio's options, and the series followed. */

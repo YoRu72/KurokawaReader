@@ -2,6 +2,7 @@
 // state, the meter (the percentage large, done of the whole, speed, time left, connections), the file map, then
 // the connections at work beside the speed chart (Now · Average · Peak · Time left); its files (each to download,
 // skip or put first), Info, the log; and what can be done with it.
+import { swarmCard } from './swarm';
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t } from '../i18n';
 import { getEngine, displayName, isVideo } from '../engine';
@@ -50,10 +51,13 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,
       speedChart(hst, x));
     body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, errorText(x.error), (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : null) : h('span'), acts),
-      panel, files ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
+      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
+  // (The swarm's card: made once and kept across redraws — it refreshes itself.)
+  let swarm: ReturnType<typeof swarmCard> | undefined;
+  function swarmEl(): HTMLElement | null { if (swarm === undefined) swarm = swarmCard(id, eng); return swarm?.el ?? null; }
   const off = eng.onChange((ts) => { const found = ts.find((x) => x.id === id); if (!found) { if (task) back('/'); return; } task = found; draw(); });
-  root.dispose = () => off();
+  root.dispose = () => { off(); swarm?.dispose(); };
   return root;
 }
 /** A download's error in words: «page» is the site's page sent instead of the file (its check, a sign-in). */

@@ -34,6 +34,18 @@ export function episodeFile(x: Task, ep: number): number {
   return [...vids].sort((p, q) => q.size - p.size)[0].index;
 }
 
+/** The next episode, fetched while this one plays (its best release, only its file from a batch): ready by
+ *  the time it is wanted. Nothing done when it has not aired, is already here, or is coming. */
+const preloaded = new Set<string>();
+export async function preloadNext(anilistId: number, ep: number): Promise<void> {
+  const key = `${anilistId}:${ep + 1}`; if (preloaded.has(key)) return; preloaded.add(key);
+  const al = await import('../anilist'); const a = await al.media(anilistId);
+  const aired = a.nextAiring ? a.nextAiring.episode - 1 : a.episodes ?? 0; if (aired && ep + 1 > aired) return;
+  if ((await downloadedEpisodes(anilistId)).has(ep + 1)) return;
+  const best = bestRelease(a, ep + 1, await searchAll(await buildQuery(a, ep + 1), () => undefined)); if (!best) return;
+  const { addFor } = await import('./auto'); await addFor(a, best, ep + 1);
+  const { toast } = await import('../ui/dom'); const { t } = await import('../i18n'); toast(t('preloadedNext', { n: ep + 1 }));
+}
 let running: { stop(): void } | null = null;
 export async function watchEpisode(a: Anime, ep: number, title: string): Promise<void> {
   return watchWith({

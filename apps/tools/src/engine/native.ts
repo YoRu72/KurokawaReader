@@ -1,6 +1,6 @@
 // The phone's engine: the app's own plugin (KtPlugin.java — libtorrent for torrents, the multi-connection
 // downloader for files), in a foreground service, with a local stream for playing while a file comes.
-import type { AddOptions, Engine, Limits, Task, TaskSource, TorrentInfo } from './types';
+import type { AddOptions, Engine, Limits, Task, TaskSource, TorrentDetail, TorrentInfo } from './types';
 import { ktPlugin, listen, type KtPlugin } from '../native';
 
 export class NativeEngine implements Engine {
@@ -16,6 +16,10 @@ export class NativeEngine implements Engine {
   remove(id: string, deleteFiles: boolean) { return this.p.remove({ id, deleteFiles }); }
   setFiles(id: string, priorities: (0 | 1 | 2)[]) { return this.p.setFiles({ id, priorities }); }
   setSequential(id: string, on: boolean) { return this.p.setSequential({ id, on }); }
+  async torrentDetail(id: string) { return (await this.p.torrentDetail({ id })) as TorrentDetail; }
+  recheck(id: string) { return this.p.recheck({ id }); }
+  reannounce(id: string) { return this.p.reannounce({ id }); }
+  setTaskLimits(id: string, down: number, up: number) { return this.p.setTaskLimits({ id, down, up }); }
   setLimits(l: Limits) { return this.p.setLimits(l); }
   setUrl(id: string, url: string) { return this.p.setUrl({ id, url }); }
   move(id: string, how: -2 | -1 | 1 | 2) { return this.p.move({ id, how }); }
