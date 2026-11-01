@@ -237,6 +237,33 @@ async function renderChapter(pkg: Package, item: ManifestItem, index: number, ct
     if (!zipFile(pkg.zip, path)) { e.removeAttribute(attr); return; }
     pool.lazy(pkg.zip, path, e, attr);
   };
+  // Pictures in the forms books give them, made plain <img> so each is shown, found, tapped and saved alike:
+  // the largest candidate of a srcset (an <img> with no src, or a <picture>'s <source>); an <object>/<embed> of an
+  // image; and a page illustration wrapped in SVG (one <image> and nothing drawn beside it — the usual way
+  // light novels place a full-page picture).
+  const best = (set: string | null): string | null => {
+    if (!set) return null; let pick: string | null = null, score = -1;
+    for (const part of set.split(',')) { const [u, d] = part.trim().split(/\s+/); if (!u) continue; const n = d ? parseFloat(d) * (/w$/i.test(d) ? 1 : 1000) : 1; if (n > score) { score = n; pick = u; } }
+    return pick;
+  };
+  doc.querySelectorAll('picture').forEach((pic) => {
+    const img = pic.querySelector('img'); const src = img?.getAttribute('src') || best(pic.querySelector('source[srcset]')?.getAttribute('srcset') ?? null);
+    if (!src) return; const out = img ?? doc.createElement('img'); out.setAttribute('src', src); out.removeAttribute('srcset'); pic.replaceWith(out);
+  });
+  doc.querySelectorAll('img[srcset]').forEach((img) => { if (!img.getAttribute('src')) { const u = best(img.getAttribute('srcset')); if (u) img.setAttribute('src', u); } img.removeAttribute('srcset'); });
+  doc.querySelectorAll('object[data], embed[src]').forEach((o) => {
+    const u = o.getAttribute('data') ?? o.getAttribute('src') ?? ''; const type = o.getAttribute('type') ?? '';
+    if (!/^image\//i.test(type) && !/\.(png|jpe?g|gif|webp|avif|bmp|svg)(\?|#|$)/i.test(u)) return;
+    const img = doc.createElement('img'); img.setAttribute('src', u); img.setAttribute('alt', (o.getAttribute('title') ?? o.textContent ?? '').trim()); o.replaceWith(img);
+  });
+  doc.querySelectorAll('svg').forEach((svg) => {
+    const imgs = svg.querySelectorAll('image'); if (imgs.length !== 1) return;
+    if (svg.querySelector('text, path, rect, circle, ellipse, line, polyline, polygon, use, foreignObject')) return;
+    const im = imgs[0]; const u = im.getAttribute('xlink:href') ?? im.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ?? im.getAttribute('href'); if (!u) return;
+    const img = doc.createElement('img'); img.setAttribute('src', u); img.setAttribute('alt', svg.getAttribute('aria-label') ?? im.getAttribute('alt') ?? ''); img.className = 'kr-svgpage';
+    const id = svg.getAttribute('id') ?? im.getAttribute('id'); if (id) img.id = id;
+    svg.replaceWith(img);
+  });
   doc.querySelectorAll('img').forEach((e) => lazyImg(e, 'src'));
   doc.querySelectorAll('image').forEach((e) => { fix(e, 'xlink:href'); fix(e, 'href'); });
   doc.querySelectorAll('source, video, audio').forEach((e) => fix(e, 'src'));
