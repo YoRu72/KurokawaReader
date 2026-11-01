@@ -239,3 +239,38 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .cont-card svg { width: 22px; height: 22px; fill: none; stroke: var(--md-primary); stroke-width: 2; flex: none; }
 .mini-cover { width: 34px; height: 48px; object-fit: cover; border-radius: 6px; }
 .range-row.s-unsure b { color: var(--md-tertiary, #e0a33a); } .range-row.review .grow { display: grid; gap: 2px; min-width: 0; } .review-count { font-weight: 600; }
+
+/* The player, round 3 (REX Player and VLC): subtitle outline and opacity, a second track on top, the seek
+   ripple, previews over the bar, bookmarks on it, a clock, the equaliser, «sound only». */
+.kt-player { --sub-outline: #000; --sub-outline-w: 2px; --sub-bg-a: .6; --sub2-pos: 10%; --sub2-size: 85%; }
+.kt-player[data-sub-bg='shadow'] .kt-cue { text-shadow: 0 0 var(--sub-outline-w) var(--sub-outline), 0 0 calc(var(--sub-outline-w) * 1.5) var(--sub-outline), 0 2px 3px rgb(0 0 0 / .8); }
+.kt-player[data-sub-bg='none'] .kt-cue { text-shadow: none; -webkit-text-stroke: calc(var(--sub-outline-w) * .6) var(--sub-outline); paint-order: stroke fill; }
+.kt-player[data-sub-bg='box'] .kt-cue { background: rgb(0 0 0 / var(--sub-bg-a)); }
+.kt-player.sub-italic .kt-cue { font-style: italic; }
+.kt-player.has-sub2 .kt-subs.top { top: var(--sub2-pos); }
+.kt-player.has-sub2 .kt-subs.top .kt-cue { font-size: calc(22px * var(--sub-size) / 100 * var(--sub2-size) / 100); opacity: .92; }
+.kt-subs .kt-cue { pointer-events: auto; }
+.kt-clock { font: 600 14px var(--font-ui); opacity: .85; padding: 0 6px; }
+.kt-ripple { position: absolute; top: 0; bottom: 0; width: 34%; display: flex; align-items: center; justify-content: center; font: 700 20px var(--font-ui); color: #fff; background: radial-gradient(circle at center, rgb(255 255 255 / .18), transparent 70%); pointer-events: none; z-index: 3; animation: kt-ripple .5s ease-out; }
+.kt-ripple.left { left: 0; border-radius: 0 50% 50% 0; } .kt-ripple.right { right: 0; border-radius: 50% 0 0 50%; }
+@keyframes kt-ripple { from { opacity: .3; } to { opacity: 1; } }
+.kt-bottom .kt-row:first-child { position: relative; }
+.kt-preview { position: absolute; bottom: calc(100% + 10px); width: 192px; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; z-index: 4; }
+.kt-preview canvas { width: 192px; height: auto; border-radius: 10px; border: 2px solid rgb(255 255 255 / .85); background: #000; box-shadow: 0 6px 18px rgb(0 0 0 / .5); }
+.kt-preview b { font: 700 13px var(--font-ui); background: rgb(0 0 0 / .65); padding: 2px 8px; border-radius: 8px; }
+.kt-seek .kt-bm { position: absolute; top: -3px; bottom: -3px; width: 3px; border-radius: 2px; background: #ffd54f; transform: translateX(-50%); pointer-events: none; }
+.kt-player.picture-off .kt-video { opacity: 0; }
+.kt-player.picture-off .kt-stage::after { content: '♪'; position: absolute; inset: 0; display: grid; place-items: center; font-size: 72px; opacity: .25; }
+.kt-player.holding .kt-flash { opacity: 1; }
+.kt-eq { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; height: 170px; margin: 8px 0 14px; direction: ltr; }
+.kt-eq-band { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.kt-eq-band input[type=range] { writing-mode: vertical-lr; direction: rtl; width: 28px; flex: 1; min-height: 0; }
+.kt-eq-band small { font-size: 11px; opacity: .8; }
+.pp-panel { display: flex; flex-direction: column; gap: 8px; }
+.pp-group { border-radius: 16px; background: var(--md-surface-container); padding: 6px 14px 4px; }
+.pp-group > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; list-style: none; }
+.pp-group > summary::-webkit-details-marker { display: none; }
+.pp-group .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; flex-wrap: wrap; }
+.pp-group .row > span { flex: 1 1 10em; min-width: 0; }
+.pp-group .row small { display: block; font-size: 12.5px; opacity: .8; }
+.dest-row .plain { all: unset; display: flex; align-items: center; gap: 10px; cursor: pointer; flex: 1; min-width: 0; }

@@ -238,6 +238,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
       row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
       ...(s.addons.includes('player') ? fontRows(plat === 'desktop') : [])) : null;
+    // The player's own preferences (REX Player's groups), with the Player add-on.
+    const playerPrefs = s.addons.includes('player') ? (() => { const box = card('playerprefs', t('playerSettings'), h('p', { class: 'hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => box.append(m.playerPrefsPanel())); return box; })() : null;
     // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.
     const sp = (s.sounds ?? {}) as Partial<import('../downloads/done').SoundPrefs>; const SP = { on: true, complete: 'classic', failed: true, allDone: true, volume: 0.7, card: true, ...sp };
     const setSp = (o: Partial<typeof SP>) => { updateSettings({ sounds: { ...SP, ...o } }); };
@@ -283,7 +285,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
-    return [general, anilist, episodes, downloads, connection, sounds, player, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
