@@ -56,7 +56,7 @@ public class MainActivity extends BridgeActivity {
         try {
             android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(android.content.Context.ACTIVITY_SERVICE);
             java.util.List<android.app.ApplicationExitInfo> l = am.getHistoricalProcessExitReasons(c.getPackageName(), 0, 5);
-            android.content.SharedPreferences sp = c.getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); long seen = sp.getLong("exitSeen", 0); long newest = seen;
+            android.content.SharedPreferences sp = c.getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); long seen = sp.getLong("exitSeen", 0); long newest = seen; long prevStart = sp.getLong("startAt", 0), newestBad = 0; boolean quick = false;
             String[] names = { "unknown", "exit self", "signaled", "low memory", "crash", "native crash", "not responding (ANR)", "initialization failure", "permission change", "excessive resource use", "user requested", "user stopped", "dependency died", "other", "freezer", "package state change", "package updated" };
             StringBuilder sb = new StringBuilder();
             for (android.app.ApplicationExitInfo x : l) {
@@ -64,16 +64,25 @@ public class MainActivity extends BridgeActivity {
                 boolean bad = why == android.app.ApplicationExitInfo.REASON_CRASH || why == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE || why == android.app.ApplicationExitInfo.REASON_ANR || why == android.app.ApplicationExitInfo.REASON_LOW_MEMORY || why == android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE || why == android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE || why == android.app.ApplicationExitInfo.REASON_SIGNALED;
                 if (!bad) continue;
                 sb.append("android says: ").append(why < names.length ? names[why] : String.valueOf(why)).append(" at ").append(new java.util.Date(at)).append(x.getDescription() != null ? " — " + x.getDescription() : "").append(" (process ").append(x.getProcessName()).append(", status ").append(x.getStatus()).append(")\n");
-                // (A native crash's or an ANR's trace: its readable lines — the signal, the abort message, the frames.)
+                // (A native crash: Android's record of it read properly — the thread that crashed with its frames, the
+                // other threads by name, the last log lines; an ANR's trace is text, its first lines kept.)
                 if (why == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE || why == android.app.ApplicationExitInfo.REASON_ANR) {
                     try (java.io.InputStream in = x.getTraceInputStream()) {
-                        if (in != null) { byte[] b = new byte[200_000]; int n = 0, r; while (n < b.length && (r = in.read(b, n, b.length - n)) > 0) n += r;
-                            StringBuilder run = new StringBuilder(); int lines = 0;
-                            for (int i = 0; i < n && lines < 60; i++) { int ch = b[i] & 0xff; if (ch >= 32 && ch < 127) run.append((char) ch); else { if (run.length() >= 6 && !run.toString().matches("[A-Za-z0-9+/=]{30,}")) { sb.append("  ").append(run).append('\n'); lines++; } run.setLength(0); } }
+                        if (in != null) {
+                            byte[] b = KtTombstone.all(in, 4_000_000); String r = why == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ? KtTombstone.read(b, b.length) : null;
+                            if (r != null) sb.append(r).append('\n');
+                            else { String text = new String(b, 0, Math.min(b.length, 12000), java.nio.charset.StandardCharsets.UTF_8); String[] ls = text.split("\n"); for (int k = 0; k < Math.min(120, ls.length); k++) sb.append("  ").append(ls[k].replaceAll("[\\p{Cntrl}&&[^\\t]]", "")).append('\n'); }
                         }
                     } catch (Throwable ignored) {}
                 }
+                // (The app ending this way within a minute and a half of starting: counted; twice in a row, the next
+                // start keeps the torrents paused, so the app can be opened and the cause told apart.)
+                if (at - prevStart < 90_000 && prevStart > 0 && at >= newestBad) { newestBad = at; quick = true; }
             }
+            int count = quick ? sp.getInt("quickCrashes", 0) + 1 : (newest != seen ? 0 : sp.getInt("quickCrashes", 0));
+            android.content.SharedPreferences.Editor ed = sp.edit().putInt("quickCrashes", count >= 2 ? 0 : count).putLong("startAt", System.currentTimeMillis());
+            if (count >= 2) { ed.putBoolean("safeStart", true); sb.append("\nThe app closed shortly after starting twice in a row: this time the torrents are kept paused. Resume them one by one from Downloads — if the app closes again right after one is resumed, that torrent's download is what ends it.\n"); }
+            ed.apply();
             if (newest != seen) sp.edit().putLong("exitSeen", newest).apply();
             if (sb.length() > 0) note(c, sb.toString().trim());
         } catch (Throwable ignored) {}
