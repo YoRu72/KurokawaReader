@@ -46,6 +46,10 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.fill('.sheet textarea', 'magnet:?xt=urn:btih:' + 'b'.repeat(40)); await p.waitForSelector('.file-chooser .pick-row');
   await p.click('.pick-tools .chip:has-text("None")'); await p.click('.sheet .btn.primary'); await p.waitForSelector('.toast:has-text("No file")');
   check('nothing ticked is refused', (await p.evaluate(() => window.__added.length)) === 1);
+  // The + button tapped again while its menu is open closes it (it once threw «Cannot access … before initialization»).
+  await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.click('.fab'); await p.waitForSelector('.fab-menu'); await p.evaluate(() => document.querySelector('.fab').click()); await p.waitForTimeout(200);
+  check('the + button closes its menu', !(await p.$('.fab-menu')));
   check('no page errors', !errors.filter((e) => e !== 'no page errors').length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

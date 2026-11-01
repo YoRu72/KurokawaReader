@@ -17,7 +17,8 @@ export function parseRoute(hash = location.hash): Route {
   const path = hash.replace(/^#/, '') || '/';
   const [p, qs] = path.split('?'); const sp = new URLSearchParams(qs ?? '');
   const task = /^\/task\/([^/]+)/.exec(p); if (task) return { name: 'task', id: decodeURIComponent(task[1]) };
-  if (p.startsWith('/add')) return { name: 'add', u: sp.get('u') ?? undefined };
+  // (#/open?u= is how Android hands over a magnet, a .torrent or a shared link — also while the app is open.)
+  if (p.startsWith('/add') || p === '/open') return { name: 'add', u: sp.get('u') ?? undefined };
   if (p.startsWith('/search')) return { name: 'search', q: sp.get('q') ?? undefined, addon: sp.get('addon') ?? undefined };
   if (p.startsWith('/addons')) return { name: 'addons' };
   const an = /^\/anime\/(\d+)/.exec(p); if (an) return { name: 'animeEntry', id: Number(an[1]) };
