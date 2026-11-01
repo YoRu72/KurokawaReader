@@ -1967,3 +1967,23 @@ html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
 .pair-hit .ctx.orig { opacity: .92; }
 .pair-hit .ctx.trl { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--md-outline-variant); color: var(--md-on-surface); }
 .pair-hit .ctx.trl.none { opacity: .55; font-style: italic; }
+
+/* Custom APIs: each kept one as a card (picked by its radio), a service's models with their badges. */
+.custom-apis { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 12px; }
+.api-card { border-radius: 16px; background: var(--md-surface-container); padding: 8px 12px; border: 2px solid transparent; }
+.api-card.on { border-color: var(--md-primary); }
+.api-pick { display: flex; gap: 10px; align-items: flex-start; }
+.api-pick .grow { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.api-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.api-badge { font: 600 11.5px var(--font-ui); padding: 2px 7px; border-radius: 999px; background: var(--md-surface-container-highest); color: var(--md-on-surface-variant); }
+.api-badge.free { background: color-mix(in srgb, #2e7d32 30%, transparent); color: var(--md-on-surface); }
+.api-badge.paid { background: color-mix(in srgb, var(--md-tertiary, #b58) 25%, transparent); color: var(--md-on-surface); }
+.api-badge.off { background: color-mix(in srgb, var(--md-error) 25%, transparent); }
+.api-found { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.api-service { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.api-service svg { width: 18px; height: 18px; color: var(--md-primary); }
+.api-models { display: flex; flex-direction: column; gap: 4px; max-height: 42vh; overflow: auto; }
+.api-model { display: flex; align-items: center; gap: 10px; text-align: start; padding: 8px 10px; border-radius: 12px; background: var(--md-surface-container); border: 2px solid transparent; color: inherit; font: inherit; }
+.api-model.on { border-color: var(--md-primary); }
+.api-model .grow { display: flex; flex-direction: column; min-width: 0; }
+.api-model b { overflow-wrap: anywhere; font-weight: 600; }
