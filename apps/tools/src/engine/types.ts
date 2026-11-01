@@ -102,6 +102,8 @@ export interface Engine {
   setFiles?(id: string, priorities: (0 | 1 | 2)[]): Promise<void>;
   setSequential?(id: string, on: boolean): Promise<void>;
   setLimits?(l: Limits): Promise<void>;
+  /** A new address for a file download whose link ran out: the same file, gone on from where it stopped. */
+  setUrl?(id: string, url: string): Promise<void>;
   /** The metadata of a magnet or .torrent, without adding it. */
   torrentInfo?(source: TaskSource): Promise<TorrentInfo>;
   /** A local address the file can be played from while it comes (range requests served from the pieces). */

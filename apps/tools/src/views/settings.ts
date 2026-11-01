@@ -68,6 +68,19 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const eng = getEngine();
     const dirLabel = h('span', { class: 'src', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
     const canPick = !!(window.kurokawaTools?.pickDir || ktPlugin());
+    // Connection (Prism's): the name given to servers, tries, how long to wait, a proxy, a file already there.
+    const NET = { uaMode: 'app' as const, ua: '', retries: 5, timeout: 60, proxy: '', conflict: 'rename' as const, ...(s.net ?? {}) };
+    const setNet = (o: Partial<typeof NET>) => { const n = { ...NET, ...(getSettings().net ?? {}), ...o }; updateSettings({ net: n }); void import('../downloads/net').then((m) => m.applyNet(n)); };
+    const hostsLine = h('small', { class: 'src' });
+    const connection = eng.can.http && eng.id !== 'browser' ? card('connection', t('netSection'), h('p', { class: 'hint' }, t('netHint')),
+      row(t('netUa'), pickButton(t('netUa'), [['app', t('netUaApp')], ['browser', t('netUaBrowser')], ['custom', t('netUaCustom')]], NET.uaMode, (v) => { setNet({ uaMode: v }); rerender(); }, t('close'))),
+      NET.uaMode === 'custom' ? h('input', { type: 'text', dir: 'ltr', class: 'wide-input', value: NET.ua, placeholder: 'Mozilla/5.0 …', onchange: (e: Event) => setNet({ ua: (e.target as HTMLInputElement).value }) }) : null,
+      row(t('netRetries'), numberField(NET.retries, (v) => setNet({ retries: Math.max(0, Math.min(30, v)) }), { min: 0, max: 30 }), t('netRetriesHint')),
+      row(t('netTimeout'), numberField(NET.timeout, (v) => setNet({ timeout: Math.max(5, Math.min(600, v)) }), { min: 5, max: 600, width: '6em' }), t('netTimeoutHint')),
+      row(t('netProxy'), h('input', { type: 'text', dir: 'ltr', value: NET.proxy, placeholder: 'socks5://127.0.0.1:9050', autocomplete: 'off', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); void import('../downloads/net').then((m) => { if (!m.validProxy(v)) { toast(t('netProxyBad'), 'error'); return; } setNet({ proxy: v }); }); } }), t('netProxyHint')),
+      row(t('netConflict'), pickButton(t('netConflict'), [['rename', t('netConflictRename'), t('netConflictRenameHint')], ['overwrite', t('netConflictOverwrite')], ['skip', t('netConflictSkip')]], NET.conflict, (v) => setNet({ conflict: v }), t('close'))),
+      eng.id === 'native' ? h('div', { class: 'row' }, h('span', null, t('netHosts'), hostsLine), h('button', { type: 'button', class: 'btn text small', onclick: () => { void ktPlugin()?.configure({ forgetHosts: true }).then(() => { hostsLine.textContent = ''; toast(t('netHostsForgot')); }); } }, t('netHostsForget'))) : null) : null;
+    if (connection && eng.id === 'native') void (ktPlugin() as unknown as { hosts?(): Promise<{ hosts: Record<string, number> }> } | null)?.hosts?.().then((r) => { const e = Object.entries(r.hosts ?? {}); hostsLine.textContent = e.length ? ' ' + e.slice(0, 4).map(([k, v]) => `${k} ≤ ${localDigits(v)}`).join(' · ') + (e.length > 4 ? ' …' : '') : ' ' + t('netHostsNone'); }).catch(() => undefined);
     const downloads = card('downloads', t('downloadsSection'),
       row(t('downloadFolder'), canPick ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); rerender(); toast(t('folderPicked', { dir: d })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('folder'), t('changeFolder')) : h('span'), s.downloadDir || t('defaultFolder')),
       row(t('maxActive'), numberField(s.maxActive, (v) => { updateSettings({ maxActive: Math.max(1, Math.min(10, v)) }); void (window.kurokawaTools?.configure?.({ maxConnections: v }) ?? ktPlugin()?.configure({ maxActive: v })); }, { min: 1, max: 10 })),
@@ -205,7 +218,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // Storage: the packs (Python, ffmpeg) fetched for add-ons, with their sizes, removable.
     const packsBox = h('div'); void import('../packs').then((m) => { const c = m.packsCard(); if (c) packsBox.replaceChildren(c); });
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), packsBox) : null;
-    return [general, downloads, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, downloads, connection, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

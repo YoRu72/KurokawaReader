@@ -51,6 +51,7 @@ class Aria2Engine {
     const c = this.config; if (!c.seed) args.push('--seed-time=0'); else args.push(`--seed-ratio=${c.seedRatio > 0 ? c.seedRatio : '0.0'}`, ...(c.seedMinutes > 0 ? [`--seed-time=${c.seedMinutes}`] : []));
     if (c.dht === false) args.push('--enable-dht=false', '--enable-dht6=false'); if (c.lsd === false) args.push('--bt-enable-lpd=false'); else args.push('--bt-enable-lpd=true');
     if (c.enc === 'forced') args.push('--bt-require-crypto=true', '--bt-min-crypto-level=arc4');
+    args.push(...Object.entries(netOptions(c.net)).map(([k, v]) => `--${k}=${v}`));
     this.proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     this.proc.stderr.on('data', (d) => console.warn('[aria2c]', String(d).trim()));
     this.proc.on('exit', (code) => { console.warn('[aria2c] exited', code); this.available = false; this.reason = `aria2c exited (${code})`; this.proc = null; });
@@ -99,10 +100,27 @@ class Aria2Engine {
     if (o.files?.length) opts['select-file'] = o.files.map((i) => i + 1).join(',');
     if (o.sequential) opts['bt-prioritize-piece'] = 'head=16M,tail=4M';
     if (o.source.headers) opts.header = Object.entries(o.source.headers).map(([k, v]) => `${k}: ${v}`);
+    // A file of that name there already, with «Skip» chosen: not downloaded again.
+    if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(o.dir || this.defaultDir, o.name))) throw new Error('exists');
     const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [o.source.magnet || o.source.url], opts);
     this.keep[gid] = { name: o.name, source: o.source, addedAt: Date.now(), meta: o.meta }; this.saveKeep();
     const st = await this.rpc.call('tellStatus', gid); this.tick();
     return this.task(st);
+  }
+  /** A new address for a download whose link ran out: the same file, gone on from where it stopped (its .aria2 file). */
+  async setUrl(id, url) {
+    const st = await this.rpc.call('tellStatus', id);
+    if (st.bittorrent) throw new Error('not a file download');
+    if (['active', 'waiting', 'paused'].includes(st.status)) {
+      const old = (st.files?.[0]?.uris || []).map((u) => u.uri).filter((u, i, a) => a.indexOf(u) === i);
+      await this.rpc.call('changeUri', id, 1, old, [url]); if (st.status === 'paused') await this.rpc.call('unpause', id).catch(() => {}); this.keep[id] = { ...(this.keep[id] || {}), source: { ...(this.keep[id]?.source || {}), url } }; this.saveKeep(); this.tick(); return id;
+    }
+    // (Stopped with an error: added again over the same file, which aria2 continues.)
+    const f = st.files?.[0]?.path || ''; const k = this.keep[id] || {};
+    const opts = { dir: st.dir, continue: 'true' }; if (f) opts.out = path.basename(f); if (k.source?.headers) opts.header = Object.entries(k.source.headers).map(([a, b]) => `${a}: ${b}`);
+    const gid = await this.rpc.call('addUri', [url], opts);
+    await this.rpc.call('removeDownloadResult', id).catch(() => {});
+    this.keep[gid] = { ...k, source: { ...(k.source || {}), url } }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
   }
   async pause(id) { await this.rpc.call('pause', id); this.tick(); }
   async resume(id) { await this.rpc.call('unpause', id); this.tick(); }
@@ -115,7 +133,7 @@ class Aria2Engine {
   }
   async setFiles(id, priorities) { await this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }); this.tick(); }
   async setLimits(l) { await this.rpc.call('changeGlobalOption', { 'max-overall-download-limit': String(l.down || 0), 'max-overall-upload-limit': String(l.up || 0) }); }
-  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.maxConnections) await this.rpc.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
+  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.net) await this.rpc.call('changeGlobalOption', netOptions(o.net)).catch(() => {}); if (o.maxConnections) await this.rpc.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
   async torrentInfo(source) {
     const gid = source.torrent ? await this.rpc.call('addTorrent', source.torrent, [], { pause: 'true' }) : await this.rpc.call('addUri', [source.magnet], { 'bt-metadata-only': 'true', 'bt-save-metadata': 'false' });
     const until = Date.now() + 60000;
@@ -139,4 +157,15 @@ class Aria2Engine {
     catch { this.timer = setTimeout(() => this.loop(), 4000); }
   }
 }
-module.exports = { Aria2Engine };
+/** Prism's connection settings as aria2 options: the name given to servers, tries, how long to wait, a proxy,
+ *  what to do with a file already there. */
+function netOptions(n) {
+  n = n || {}; const o = {};
+  o['user-agent'] = String(n.ua || '').trim() || 'KurokawaTools/0.1 aria2';
+  o['max-tries'] = String(Math.max(0, Math.min(30, Number(n.retries ?? 5))));
+  const t = Math.max(5, Math.min(600, Number(n.timeout ?? 60))); o.timeout = String(t); o['connect-timeout'] = String(Math.min(30, t));
+  o['all-proxy'] = String(n.proxy || '').trim();
+  const c = n.conflict || 'rename'; o['auto-file-renaming'] = c === 'rename' ? 'true' : 'false'; o['allow-overwrite'] = c === 'overwrite' ? 'true' : 'false';
+  return o;
+}
+module.exports = { Aria2Engine, netOptions };

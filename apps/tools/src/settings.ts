@@ -66,6 +66,7 @@ export interface Settings {
   playerWith: 'ask' | 'app' | 'external';
   /** Sounds and the «Download complete» card (downloads/done.ts). */
   sounds?: import('./downloads/done').SoundPrefs;
+  net?: Partial<import('./downloads/net').NetPrefs>;
   /** The antivirus check after a download (the computer): which scanner, a command of one's own, which kinds of file. */
   /** Hugging Face: the server (or a mirror), the access token, the models folder. */
   hf?: import('./hf/hf').HfPrefs;
