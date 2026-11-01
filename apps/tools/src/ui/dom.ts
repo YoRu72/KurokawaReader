@@ -228,3 +228,15 @@ export function pickButton<T extends string>(title: string, options: [T, string,
   btn.addEventListener('click', () => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); btn.dispatchEvent(new Event('change', { bubbles: true })); }, closeLabel));
   return btn;
 }
+
+/** A long press (half a second held, or a right click) on `el`: `fn` called, and the tap that follows the press
+ *  swallowed so the element's own tap does not also run. */
+export function onLongPress(el: HTMLElement, fn: (e: Event) => void): void {
+  let timer = 0; let fired = false; let x = 0, y = 0;
+  const cancel = () => { clearTimeout(timer); timer = 0; };
+  el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; fired = false; x = e.clientX; y = e.clientY; cancel(); timer = window.setTimeout(() => { fired = true; try { navigator.vibrate?.(12); } catch { /* none */ } fn(e); }, 500); });
+  el.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - x, e.clientY - y) > 10) cancel(); });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave'] as const) el.addEventListener(ev, cancel);
+  el.addEventListener('click', (e) => { if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; } }, true);
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!fired) fn(e); fired = false; });
+}

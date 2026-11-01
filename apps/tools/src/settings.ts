@@ -76,6 +76,8 @@ export interface Settings {
   animeHideSpoilers?: boolean;
   /** Halfway through an episode, the next one starts downloading. */
   animePreloadNext?: boolean;
+  /** Episodes downloaded to be watched: kept, deleted once watched, or deleted some days after. */
+  episodeCache?: { mode: 'keep' | 'watched' | 'days'; days: number };
   /** Senpwai's review of the picks before a range is added. */
   animeReview?: boolean;
   /** The TV & Movies add-on: Torrentio's options, and the series followed. */

@@ -8,12 +8,14 @@ import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
 import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
-import { animeSettingsCard } from './animeSettings';
+import { animeSettingsCard, anilistCard } from './animeSettings';
 import { tvSettingsCard } from './tvSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
 
+/** A language's own name (the Subtitles add-on's list, else the browser's names). */
+const langName = (code: string): string => { try { return new Intl.DisplayNames([code], { type: 'language' }).of(code) ?? code; } catch { return code; } };
 const card = (id: string, title: string, ...kids: (Node | null)[]) => h('section', { class: 'card', id }, h('h3', null, title), ...kids);
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
@@ -151,6 +153,28 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
+    const anilist = s.addons.includes('anime') ? anilistCard(rerender) : null;
+    // Watched episodes (Hayase's storage choices): kept, let go once watched, or some days after; the room they
+    // take, and the watched ones or all of them deleted at once.
+    const episodes = s.addons.includes('anime') || s.addons.includes('tv') ? (() => {
+      const ec = { mode: 'keep' as 'keep' | 'watched' | 'days', days: 7, ...(s.episodeCache ?? {}) };
+      const use = h('p', { class: 'src' }, '…');
+      const refresh = () => void import('../downloads/episodeCache').then(async (m) => { const u = await m.usage(); use.textContent = t('episodesUsage', { n: localDigits(u.episodes), size: formatBytes(u.bytes), w: localDigits(u.watched), wsize: formatBytes(u.watchedBytes) }); });
+      const del = (onlyWatched: boolean) => h('button', { type: 'button', class: 'btn tonal small' + (onlyWatched ? '' : ' danger'), onclick: async () => { if (!confirm(onlyWatched ? t('episodesDeleteWatchedAsk') : t('episodesDeleteAllAsk'))) return; const m = await import('../downloads/episodeCache'); const n = await m.deleteEpisodes(onlyWatched); toast(t('episodesDeleted', { n: localDigits(n) })); refresh(); } }, icon('trash'), onlyWatched ? t('episodesDeleteWatched') : t('episodesDeleteAll'));
+      refresh();
+      return card('episodes', t('episodesTitle'), h('p', { class: 'hint' }, t('episodesHint')),
+        row(t('episodesAfter'), pickButton(t('episodesAfter'), [['keep', t('episodesKeep')], ['watched', t('episodesWhenWatched')], ['days', t('episodesAfterDays')]], ec.mode, (v) => { updateSettings({ episodeCache: { ...ec, mode: v as 'keep' } }); rerender(); }, t('close'))),
+        ec.mode === 'days' ? row(t('episodesDays'), numberField(ec.days, (v) => updateSettings({ episodeCache: { ...ec, days: Math.max(1, Math.min(365, v)) } }), { min: 1, max: 365 })) : null,
+        use, h('div', { class: 'row-actions wrap' }, del(true), del(false)));
+    })() : null;
+    // Subtitle languages (with the Subtitles or Player add-on): the order they are wanted in — the first is
+    // the one searched first and the one the player shows by itself; a tap puts a language first.
+    const subLangs = s.addons.includes('subtitles') || s.addons.includes('player') ? (() => {
+      const box = h('div', { class: 'chips lang-chips' });
+      const draw = () => { const l = getSettings().subLangs; box.replaceChildren(...l.map((code, i) => h('button', { type: 'button', class: 'chip small' + (i === 0 ? ' on' : ''), title: t('subLangFirst'), onclick: () => { updateSettings({ subLangs: [code, ...l.filter((x) => x !== code)] }); draw(); } }, i === 0 ? icon('star') : null, langName(code)))); };
+      draw();
+      return card('sublangs', t('subLangsTitle'), h('p', { class: 'hint' }, t('subLangsHint')), box, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./subs').then((m) => m.langSheet(() => draw())) }, icon('pen'), t('subLangsChange'))));
+    })() : null;
     const tvCard = s.addons.includes('tv') ? tvSettingsCard(rerender) : null;
     // Privacy (from the reader): DNS over HTTPS — sites blocked by the network's resolver reached through another —
     // and screenshots blocked; the Arabic digits; a backup of the settings.
@@ -237,7 +261,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
-    return [general, downloads, connection, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, downloads, connection, sounds, player, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

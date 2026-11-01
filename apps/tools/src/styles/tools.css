@@ -466,3 +466,8 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .kt-swarm .swarm-limit-row { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 4px; }
 .kt-swarm .swarm-limit { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .kt-swarm .swarm-limit input { width: 6em; height: 38px; padding: 0 10px; border-radius: 10px; box-sizing: border-box; text-align: center; }
+/* The download's head: its text as wide as the card, never as wide as its longest line (a magnet is thousands of
+   pixels long); the page never scrolls sideways. */
+.kt-hero > .grow { align-self: stretch; width: 100%; min-width: 0; max-width: 100%; }
+.kt-hero .kt-name { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.task-detail { overflow-x: hidden; }

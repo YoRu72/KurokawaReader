@@ -1,7 +1,7 @@
 // A film's or a series' page: its picture, facts and summary, the cast, the trailer; the watchlist and «follow»
 // (new episodes fetched as they air); a series' seasons and episodes — each marked seen or not, tapped to watch
 // now (the best release from Torrentio, played while it comes), download it, or choose a release; a film the same.
-import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet , onLongPress } from '../ui/dom';
 import { t, localDigits, formatBytes, dateLocale } from '../i18n';
 import { back, navigate } from '../router';
 import { getEngine } from '../engine';
@@ -63,13 +63,16 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
         h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn text small', onclick: () => { const all = eps.filter((v) => cm.aired(v)); const allSeen = all.every((v) => lib.isSeen(epKey(mm, v))); for (const v of all) lib.setSeen(epKey(mm, v), !allSeen); draw(); } }, icon('check'), t('tvSeasonSeen'))),
         ...eps.map((v) => {
           const aired = cm.aired(v); const seen = lib.isSeen(epKey(mm, v)); const got = tasks.find((x) => x.meta?.season === v.season && x.meta?.episode === v.episode);
-          return h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { se: `${v.season}:${v.episode}` }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined, onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(mm, v, got); } },
+          const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { se: `${v.season}:${v.episode}` }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined, onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(mm, v, got); } },
             v.thumbnail ? h('img', { class: 'ep-thumb', src: v.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(v.episode)),
             h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, `${localDigits(v.episode)}. ${v.name || t('episodeN', { n: v.episode })}`, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null),
               h('small', { class: 'src' }, v.released ? (aired ? df.format(new Date(v.released)) : `${t('animeNotYet')} · ${df.format(new Date(v.released))}`) : ''),
               got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' }, h('i', { style: { width: `${got.total ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
             aired ? iconButton('play', t('epWatchNow'), () => void watch(mm, v)) : null,
             aired ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => { lib.setSeen(epKey(mm, v), !seen); draw(); }) : null);
+          // (Held: the episode's options, its download deleted among them.)
+          if (aired) onLongPress(rowEl, () => episodeMenu(mm, v, got, seen, eps, () => draw()));
+          return rowEl;
         }));
     }
     body.replaceChildren(...[head, main, syn].filter((x): x is HTMLElement => !!x));
@@ -127,6 +130,23 @@ async function addRelease(m: TvMeta, r: TvRelease, v?: TvEpisode, choose = false
   }
   const tk = await getEngine().add({ source, name: r.url ? (r.file ?? r.title) : undefined, sequential: !!r.url, files, meta: metaOf(m, r, v) });
   toast(t('taskAdded', { name: tk.name || r.title })); return true;
+}
+/** One episode, held: watch, download, choose a release, mark it (or every one up to it) seen or not, its
+ *  download's details, and its download deleted (files and all). */
+function episodeMenu(m: TvMeta, v: TvEpisode, got: Task | undefined, seen: boolean, season: TvEpisode[], changed: () => void): void {
+  const sh = openSheet(titleOf(m, v), t('close')); sh.el.classList.add('ep-menu');
+  const row = (ic: string, label: string, fn: () => void, cls = '') => sh.body.append(h('button', { type: 'button', class: 'dest-row' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow', dir: 'auto' }, label)));
+  if (v.name) sh.body.append(h('p', { class: 'src', dir: 'auto' }, v.name));
+  row('play', got?.state === 'done' ? t('play') : t('epWatchNow'), () => void watch(m, v));
+  if (!got) row('download', t('epDownloadBest'), () => void downloadBest(m, v));
+  row('magnet', t('epChoose'), () => void releasesSheet(m, v));
+  row(seen ? 'circle' : 'check', seen ? t('epMarkUnseen') : t('animeMarkSeen'), () => { lib.setSeen(epKey(m, v), !seen); changed(); });
+  if (!seen && v.episode > 1) row('check', t('epMarkUpTo', { n: localDigits(v.episode) }), () => { for (const x of season) if (x.episode <= v.episode && cm.aired(x)) lib.setSeen(epKey(m, x), true); changed(); });
+  if (got) {
+    row('info', t('details'), () => navigate(`/task/${encodeURIComponent(got.id)}`));
+    row('trash', t('epDeleteDownload'), () => { const c = openSheet(t('epDeleteDownload'), t('close'), { stack: true }); c.body.append(h('p', null, t('epDeleteAsk', { n: localDigits(v.episode) })), h('p', { class: 'src', dir: 'auto' }, got.name));
+      c.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => c.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { c.close(); await getEngine().remove(got.id, true).catch((er) => toast(String((er as Error).message ?? er), 'error')); void import('../downloads/episodeCache').then((x) => x.forget(got.id)); toast(t('epDeleted', { n: localDigits(v.episode) })); changed(); } }, icon('trash'), t('epDeleteYes'))); }, ' danger');
+  }
 }
 /** Every release Torrentio has for a film or an episode: filtered by quality, ordered as asked, one tap to add. */
 async function releasesSheet(m: TvMeta, v?: TvEpisode): Promise<void> {

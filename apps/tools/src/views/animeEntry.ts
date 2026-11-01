@@ -1,7 +1,7 @@
 // One show: its cover and facts, the synopsis, the list entry (status, progress, score — written to AniList,
 // kept and sent later when offline), relations, and the episodes — each found as a torrent through the
 // providers and added as a download (in order, so it can play while it comes); a batch for the whole show.
-import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
 import { t, localDigits, countEpisodes, formatBytes, dateLocale, countResults } from '../i18n';
 import { back, navigate } from '../router';
 import { getSettings, updateSettings } from '../settings';
@@ -62,7 +62,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       // (Hayase's «hide spoilers»: past the next episode, no title and no picture.)
       const spoil = !!s.animeHideSpoilers && n > (e?.progress ?? 0) + 1;
       const epTitle = (!spoil && st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '')) || t('episodeN', { n }); const onDisk = !got ? disk.get(n) : undefined;
-      eps.push(h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { ep: String(n) }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined,
+      const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { ep: String(n) }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined,
         onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(a!, n, epTitle, st?.thumbnail, () => draw()); } },
         st?.thumbnail && !spoil ? h('img', { class: 'ep-thumb', src: st.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(n, 'prose')),
         h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, epTitle, onDisk ? h('span', { class: 'ep-badge have' }, t('onDisk')) : null, filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet')),
@@ -70,7 +70,10 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
         onDisk ? iconButton('play', t('play'), () => void import('./anime').then((m) => m.playLocal(a!, n, onDisk.path, onDisk.name))) :
         got && got.state === 'done' ? iconButton('play', t('play'), () => void import('./player').then((m) => m.playTaskFile(got, got.files.length > 1 ? Math.max(0, got.files.findIndex((f) => /\.(mkv|mp4|webm|avi|mov|m4v)$/i.test(f.path))) : 0))) : aired ? iconButton('download', t('animeFindTorrents'), () => torrentSheet(a!, n)) : null,
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
-        al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) })) : null));
+        al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) })) : null);
+      // (Held: the episode's options — Hayase's — among them deleting its download.)
+      if (aired) onLongPress(rowEl, () => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw()));
+      eps.push(rowEl);
     }
     const rule = ruleOf(a.id);
     const epsSec = h('section', { class: 'card anime-episodes' }, h('div', { class: 'card-head' }, h('h3', null, t('episodes')), h('div', { class: 'grow' }), h('button', { type: 'button', class: 'btn tonal small', onclick: () => torrentSheet(a!, 0) }, icon('magnet'), a.format === 'MOVIE' ? t('animeFindTorrents') : t('animeBatch'))),
@@ -215,6 +218,23 @@ function ruleSheet(a: Anime, next: number, changed: () => void): void {
   sh.body.append(h('p', { class: 'hint' }, t('autoHint')), h('label', { class: 'num-field' }, h('span', null, t('fromEpisode')), from), ...choiceFields(c));
   sh.actions.append(...(ruleOf(a.id) ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => { dropRule(a.id); toast(t('autoOff')); sh.close(); changed(); } }, icon('trash'), t('autoStop'))] : []),
     h('button', { type: 'button', class: 'btn primary', onclick: async () => { saveRule({ ...c, enabled: true }); startAuto(); sh.close(); changed(); toast(t('autoOn')); await checkRules(false); } }, icon('bell'), t('autoSave')));
+}
+
+/** One episode, held: what can be done with it — watch, download, choose a release, mark it (or every one up to
+ *  it) seen or not, its download's details, and its download deleted (files and all). */
+function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, seen: boolean, setProgress: ((to: number) => void) | null, changed: () => void): void {
+  const sh = openSheet(`${titleOf(a)} · ${t('episodeN', { n })}`, t('close')); sh.el.classList.add('ep-menu');
+  const row = (ic: string, label: string, fn: () => void, cls = '') => sh.body.append(h('button', { type: 'button', class: 'dest-row' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow', dir: 'auto' }, label)));
+  sh.body.append(h('p', { class: 'src', dir: 'auto' }, title));
+  row('play', got?.state === 'done' ? t('play') : t('epWatchNow'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${titleOf(a)} · ${t('episodeN', { n })}`)));
+  if (!got) row('download', t('epDownloadBest'), () => void (async () => { const { buildQuery, searchAll } = await import('../anime/providers'); const { bestRelease } = await import('../anime/watch'); toast(t('watchFinding')); const best = bestRelease(a, n, await searchAll(await buildQuery(a, n), () => undefined)); if (!best) { toast(t('watchNone'), 'error'); return; } const { addFor } = await import('../anime/auto'); await addFor({ ...a, title: titleOf(a) } as Anime, best, n); toast(t('taskAdded', { name: best.title })); changed(); })());
+  row('magnet', t('epChoose'), () => void torrentSheet(a, n));
+  if (setProgress) { row(seen ? 'circle' : 'check', seen ? t('epMarkUnseen') : t('animeMarkSeen'), () => setProgress(seen ? n - 1 : n)); if (!seen && n > 1) row('check', t('epMarkUpTo', { n: localDigits(n) }), () => setProgress(n)); }
+  if (got) {
+    row('info', t('details'), () => navigate(`/task/${encodeURIComponent(got.id)}`));
+    row('trash', t('epDeleteDownload'), () => { const c = openSheet(t('epDeleteDownload'), t('close'), { stack: true }); c.body.append(h('p', null, t('epDeleteAsk', { n: localDigits(n) })), h('p', { class: 'src', dir: 'auto' }, got.name));
+      c.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => c.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { c.close(); await getEngine().remove(got.id, true).catch((er) => toast(String((er as Error).message ?? er), 'error')); void import('../downloads/episodeCache').then((m) => m.forget(got.id)); toast(t('epDeleted', { n: localDigits(n) })); changed(); } }, icon('trash'), t('epDeleteYes'))); }, ' danger');
+  }
 }
 
 /** One episode, tapped: watch it now (the best release, played while it comes), online through a streaming

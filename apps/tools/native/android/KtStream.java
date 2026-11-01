@@ -137,8 +137,11 @@ final class KtStream {
         PeerRequest pr = fs.mapFile(index, pos, 1); int piece = pr.piece();
         if (th.havePiece(piece)) return;
         int last = Math.min(ti.numPieces() - 1, fs.mapFile(index, end, 1).piece());
-        // (The window ahead: this piece now, the next ones soon after — a sequential download from here.)
-        for (int k = piece; k <= Math.min(last, piece + 8); k++) { if (!th.havePiece(k)) { th.piecePriority(k, Priority.TOP_PRIORITY); th.setPieceDeadline(k, (k - piece) * 1000); } }
+        // (The window ahead, as the player reads: this piece now, then about 24 MB after it on deadlines that
+        // grow with the distance — the next minute or so of a 1080p video, kept coming without a gap.)
+        int ahead = Math.max(8, (int) ((24L << 20) / Math.max(1, ti.pieceLength())));
+        for (int k = piece; k <= Math.min(last, piece + ahead); k++) { if (!th.havePiece(k)) { th.piecePriority(k, Priority.TOP_PRIORITY); th.setPieceDeadline(k, (k - piece) * 250); } }
+        engine.streaming(th);
         long until = System.currentTimeMillis() + 120000;
         while (!th.havePiece(piece)) { if (System.currentTimeMillis() > until || !th.isValid()) throw new InterruptedException("timeout"); Thread.sleep(150); }
     }

@@ -16,7 +16,7 @@ let closeOpen: (() => void) | null = null;
 export function fabMenu(anchor: HTMLElement): void {
   if (open) { closeOpen?.(); return; }
   const eng = getEngine(); const installer = canInstallApps() ? { installSheet } : null;
-  const item = (ic: string, label: string, sub: string | null, run: () => void) => h('button', { type: 'button', class: 'fab-item', role: 'menuitem', onclick: () => { close(); run(); } }, h('span', { class: 'fab-item-label' }, h('b', null, label), sub ? h('small', null, sub) : null), h('span', { class: 'fab-item-ic' }, icon(ic)));
+  const item = (ic: string, label: string, sub: string | null, run: () => void) => h('button', { type: 'button', class: 'fab-item', role: 'menuitem', 'data-act': ic, onclick: () => { close(); run(); } }, h('span', { class: 'fab-item-label' }, h('b', null, label), sub ? h('small', null, sub) : null), h('span', { class: 'fab-item-ic' }, icon(ic)));
   const ytdlp = h('small', null, videoEnabled() ? t('videoYtdlpChecking') : videoSupported() ? t('videoYtdlpMissing') : t('videoYtdlpNotHere'));
   const videoItem = item('film', t('fabVideo'), null, () => void videoEntry());
   videoItem.querySelector('.fab-item-label')!.append(ytdlp);

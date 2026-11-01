@@ -5,7 +5,7 @@
 // and Now · Average · Peak · Time left beneath), a sparkline for the list, an Info list whose values copy with a
 // tap, and a log of what happened.
 import { h, icon, toast } from '../ui/dom';
-import { t, formatBytes, localDigits, formatDate } from '../i18n';
+import { countSegments, t, formatBytes, localDigits, formatDate } from '../i18n';
 import type { Task } from '../engine/types';
 
 const SPECTRUM = ['#5ac8fa', '#64d2a0', '#ffb340', '#bf8cff', '#ff6b6b', '#40c8c0', '#ffd60a', '#9aa7b8'];
@@ -92,11 +92,11 @@ const kpi = (k: string, v: string) => h('div', { class: 'kt-kpi' }, h('div', { c
 export function fileMap(x: Task): HTMLElement | null {
   const total = x.total; if (!total) return null;
   const segs = x.segments ?? [];
-  const bar = h('div', { class: 'kt-segbar', role: 'img', 'aria-label': t('segmentsN', { n: localDigits(segs.length || 1) }) });
+  const bar = h('div', { class: 'kt-segbar', role: 'img', 'aria-label': countSegments(segs.length || 1) });
   if (!segs.length) bar.append(h('span', { class: 'kt-seg', style: { insetInlineStart: '0', width: '100%' } }, h('b', { style: { width: `${(x.done / total) * 100}%`, background: colourOf(0) } })));
   segs.forEach((s, i) => { const span = Math.max(1, s.end - s.start); const f = Math.min(1, (s.pos - s.start) / span);
     bar.append(h('span', { class: 'kt-seg' + (s.active && s.pos < s.end ? ' active' : ''), style: { left: `${(s.start / total) * 100}%`, width: `${(span / total) * 100}%` } }, h('b', { style: { width: `${f * 100}%`, background: colourOf(s.worker ?? i) } }))); });
-  return h('div', { class: 'kt-map' }, h('span', null, t('fileMapTitle')), bar, h('span', { class: 'kt-num' }, t('segmentsN', { n: localDigits(segs.length || 1) })));
+  return h('div', { class: 'kt-map' }, h('span', null, t('fileMapTitle')), bar, h('span', { class: 'kt-num' }, countSegments(segs.length || 1)));
 }
 /** One lane for each connection at work: its number, how far into its range, the range, its speed. */
 export function lanes(x: Task, max = 12): HTMLElement {
