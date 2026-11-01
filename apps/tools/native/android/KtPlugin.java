@@ -253,6 +253,17 @@ public class KtPlugin extends Plugin {
 
     /* ---------- archives: what is inside, taking it out (in place when asked), making one ---------- */
     private final java.util.Map<String, AtomicBoolean> archiveJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    /** A picked document's own file, when it lives on the phone's storage and the app may read it directly. */
+    private static File realFile(Uri u) {
+        try {
+            if ("file".equals(u.getScheme())) { File f = new File(u.getPath()); return f.canRead() ? f : null; }
+            if (!"com.android.externalstorage.documents".equals(u.getAuthority()) && !"com.android.providers.downloads.documents".equals(u.getAuthority())) return null;
+            String id = android.provider.DocumentsContract.getDocumentId(u); File f = null;
+            if ("com.android.externalstorage.documents".equals(u.getAuthority())) { int c = id.indexOf(':'); String vol = c > 0 ? id.substring(0, c) : "primary"; String rel = c >= 0 ? id.substring(c + 1) : ""; f = "primary".equalsIgnoreCase(vol) ? new File(android.os.Environment.getExternalStorageDirectory(), rel) : new File("/storage/" + vol, rel); }
+            else if ("com.android.providers.downloads.documents".equals(u.getAuthority()) && id.startsWith("raw:")) f = new File(id.substring(4));
+            return f != null && f.isFile() && f.canRead() ? f : null;
+        } catch (Throwable e) { return null; }
+    }
     private static File fileOf(String p) { if (p.startsWith("file://")) p = Uri.parse(p).getPath(); return new File(p); }
     @PluginMethod public void archiveList(PluginCall call) {
         bg.execute(() -> { try { File f = fileOf(call.getString("path", "")); JSObject r = new JSObject(new org.json.JSONObject(KtArchive.list(f, call.getString("password", null)).toString()).toString()); r.put("resumable", KtArchive.hasJournal(f)); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } });
@@ -317,6 +328,9 @@ public class KtPlugin extends Plugin {
                 JSArray paths = new JSArray();
                 for (Uri u : uris) {
                     String name = "file"; try (android.database.Cursor c = getContext().getContentResolver().query(u, null, null, null, null)) { if (c != null && c.moveToFirst()) { int ix = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME); if (ix >= 0) name = c.getString(ix); } }
+                    // (A file the app can read where it is — shared storage, with the access it has — is used there: an
+                    // archive or an app is read in place, the HatchZip way, not copied first.)
+                    File real = realFile(u); if (real != null) { paths.put(real.getAbsolutePath()); continue; }
                     File dir = new File(engine().defaultDir(), "Archives"); dir.mkdirs(); File out = new File(dir, name);
                     // (A file already in the app's folders is used where it is; anything else is copied in.)
                     try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u); java.io.OutputStream os = new java.io.FileOutputStream(out)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) os.write(b, 0, n); }

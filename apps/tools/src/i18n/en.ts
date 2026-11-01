@@ -118,6 +118,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   apkReading: "Reading what it installs…", apkUnlock: "Open it", apkChooseApp: "This archive holds more than one app. Which one do you want to install?", apkSplitFolder: "An app in parts (split APKs)", apkBundle: "A bundle (split APKs)", apkFromArchive: "Installed straight from the archive: nothing is extracted, so no extra room is needed for a copy.", apkLowSpace: "The phone may not have room: installing takes about {need}, and {free} is free.", apkDeleteAfterArchive: "Delete the archive once installed",
   addTrackers: "Add public trackers", addTrackersHint: "Well-known public trackers (refreshed daily) are added to every public torrent, so peers and a magnet's details are found much sooner. Never added to private torrents.",
   simpleDisk: "Simple disk access", simpleDiskHint: "Slower: reads, writes and checks on one thread. Only for storage that misbehaves with the fast way. Applies from the next start.",
+  installAnApp: "Install an app", installAnAppHint: "An APK, a bundle (.apks, .xapk, .apkm) or an archive with one inside",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

@@ -6,14 +6,16 @@ import { h, icon, toast } from '../ui/dom';
 import { t } from '../i18n';
 import { getEngine, parseSources } from '../engine';
 import { addSheet } from './add';
+import { canInstallApps, installSheet } from './apk';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
 
 let open: HTMLElement | null = null;
+
 /** The open menu's own closing (the button tapped again closes the menu it opened, not a new one's). */
 let closeOpen: (() => void) | null = null;
 export function fabMenu(anchor: HTMLElement): void {
   if (open) { closeOpen?.(); return; }
-  const eng = getEngine();
+  const eng = getEngine(); const installer = canInstallApps() ? { installSheet } : null;
   const item = (ic: string, label: string, sub: string | null, run: () => void) => h('button', { type: 'button', class: 'fab-item', role: 'menuitem', onclick: () => { close(); run(); } }, h('span', { class: 'fab-item-label' }, h('b', null, label), sub ? h('small', null, sub) : null), h('span', { class: 'fab-item-ic' }, icon(ic)));
   const ytdlp = h('small', null, videoEnabled() ? t('videoYtdlpChecking') : videoSupported() ? t('videoYtdlpMissing') : t('videoYtdlpNotHere'));
   const videoItem = item('film', t('fabVideo'), null, () => void videoEntry());
@@ -25,7 +27,9 @@ export function fabMenu(anchor: HTMLElement): void {
     videoItem,
     item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))),
     item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())),
-    ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []));
+    ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []),
+    // (An app from the phone: an APK, a bundle, or an archive with one inside — the installer reads it.)
+    ...(installer ? [item('apps', t('installAnApp'), t('installAnAppHint'), () => void (async () => { const { pickFiles } = await import('../archives'); const [f] = (await pickFiles(false).catch(() => [] as string[])) ?? []; if (f) await installer.installSheet(f); })())] : []));
   const scrim = h('div', { class: 'fab-scrim', onclick: close });
   open = h('div', { class: 'fab-menu-wrap' }, scrim, menu);
   document.body.append(open); anchor.classList.add('open'); anchor.setAttribute('aria-expanded', 'true');
