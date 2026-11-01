@@ -30,6 +30,7 @@ export interface Anime {
   links?: { site: string; url: string; type?: string }[];
   relations?: { relation: string; id: number; title: string; format?: string }[];
   entry?: AlEntry;
+  sequels?: { id: number; title: string; status: string; onList: boolean }[];
 }
 
 export function token(): string { try { return localStorage.getItem(TOKEN_KEY) ?? ''; } catch { return ''; } }
@@ -88,6 +89,50 @@ const FULL = `${CARD} duration endDate { year month day } bannerImage descriptio
 export async function search(q: string, opts: { adult?: boolean; page?: number } = {}): Promise<Anime[]> {
   const d = await gql<{ Page: { media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean) { Page(page: $page, perPage: 20) { media(search: $q, type: ANIME, sort: SEARCH_MATCH, isAdult: $adult) { ${CARD} } } }`, { q, page: opts.page ?? 1, adult: opts.adult ? undefined : false });
   return d.Page.media.map(toAnime);
+}
+/** AniList's search with its filters (Hayase's and Senpwai's): words, genres, tags (all must match; some can be
+ *  left out), format, status, season and year, sort — any of them alone browses by it. Answers are kept a few
+ *  minutes, so going back and forth costs no request. */
+export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean }
+const searchCache = new Map<string, { at: number; v: { media: Anime[]; hasNext: boolean } }>();
+export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Anime[]; hasNext: boolean }> {
+  const v: Record<string, unknown> = { page, adult: f.adult ? undefined : false, sort: [f.sort || (f.q ? 'SEARCH_MATCH' : 'POPULARITY_DESC')] };
+  if (f.q?.trim()) v.q = f.q.trim(); if (f.genres?.length) v.genres = f.genres; if (f.tags?.length) v.tags = f.tags; if (f.notTags?.length) v.notTags = f.notTags;
+  if (f.formats?.length) v.formats = f.formats; if (f.status) v.status = f.status; if (f.season) v.season = f.season; if (f.year) v.year = f.year; if (f.minScore) v.minScore = f.minScore; if (f.onList !== undefined) v.onList = f.onList;
+  const key = JSON.stringify(v); const had = searchCache.get(key); if (had && Date.now() - had.at < 5 * 60000) return had.v;
+  const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList) { ${CARD} } } }`, v);
+  const out = { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage };
+  searchCache.set(key, { at: Date.now(), v: out }); if (searchCache.size > 60) searchCache.delete(searchCache.keys().next().value!);
+  return out;
+}
+/** Several shows at once (the library's covers). */
+export async function mediaMany(ids: number[]): Promise<Anime[]> {
+  const out: Anime[] = [];
+  for (let i = 0; i < ids.length; i += 50) { const d = await gql<{ Page: { media: Raw[] } }>(`query ($ids: [Int]) { Page(perPage: 50) { media(id_in: $ids, type: ANIME) { ${CARD} relations { edges { relationType(version: 2) node { id type status format title { userPreferred romaji } mediaListEntry { status } } } } } } }`, { ids: ids.slice(i, i + 50) }); out.push(...d.Page.media.map((m) => { const a = toAnime(m); a.sequels = ((m as unknown as { relations?: { edges: { relationType: string; node: { id: number; type: string; status: string; format?: string; title: { userPreferred?: string; romaji?: string }; mediaListEntry?: { status: string } | null } }[] } }).relations?.edges ?? []).filter((e) => e.relationType === 'SEQUEL' && e.node.type === 'ANIME').map((e) => ({ id: e.node.id, title: e.node.title.userPreferred || e.node.title.romaji || '', status: e.node.status, onList: !!e.node.mediaListEntry })); return a; })); }
+  return out;
+}
+/** Finished shows whose sequel you have not started (Seanime's «missed sequels»): the sequels, released or airing. */
+export async function missedSequels(): Promise<{ from: Anime; sequel: { id: number; title: string; status: string } }[]> {
+  const u = user(); if (!u) return [];
+  const d = await gql<{ MediaListCollection: { lists: { entries: { media: { id: number } }[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME, status_in: [COMPLETED]) { lists { entries { media { id } } } } }', { user: u.id });
+  const ids = [...new Set(d.MediaListCollection.lists.flatMap((l) => l.entries.map((e) => e.media.id)))];
+  const shows = await mediaMany(ids.slice(0, 300));
+  const out: { from: Anime; sequel: { id: number; title: string; status: string } }[] = []; const seen = new Set<number>();
+  for (const a of shows) for (const s of a.sequels ?? []) if (!s.onList && s.status !== 'NOT_YET_RELEASED' && s.status !== 'CANCELLED' && !seen.has(s.id)) { seen.add(s.id); out.push({ from: a, sequel: s }); }
+  return out;
+}
+export interface AlTag { name: string; category: string; description?: string; isAdult: boolean }
+let tagsP: Promise<{ genres: string[]; tags: AlTag[] }> | null = null;
+/** AniList's genres and tags (kept for the session, and a week on the device). */
+export function genresAndTags(): Promise<{ genres: string[]; tags: AlTag[] }> {
+  tagsP ??= (async () => {
+    try { const c = JSON.parse(localStorage.getItem('kt.al.tags') ?? 'null') as { at: number; genres: string[]; tags: AlTag[] } | null; if (c && Date.now() - c.at < 7 * 86400000 && c.tags.length) return c; } catch { /* none */ }
+    const d = await gql<{ GenreCollection: string[]; MediaTagCollection: AlTag[] }>('query { GenreCollection MediaTagCollection { name category description isAdult } }', {}, false);
+    const v = { genres: d.GenreCollection.filter((g) => g !== 'Hentai'), tags: d.MediaTagCollection };
+    try { localStorage.setItem('kt.al.tags', JSON.stringify({ at: Date.now(), ...v })); } catch { /* full */ }
+    return v;
+  })().catch((e) => { tagsP = null; throw e; });
+  return tagsP;
 }
 export async function media(id: number): Promise<Anime> {
   const d = await gql<{ Media: Raw }>(`query ($id: Int) { Media(id: $id, type: ANIME) { ${FULL} } }`, { id });

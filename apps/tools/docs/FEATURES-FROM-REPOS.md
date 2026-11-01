@@ -53,10 +53,15 @@ Status: [x] done · [~] partly · [ ] to do. Kept current as each batch lands.
 - [x] Episode range download (from–to) with resolution and sub/dub preference, saved per show
 - [x] Track airing shows and fetch new episodes automatically with the saved choices; notification
 - [x] Skip fillers (animefillerlist)
-- [~] Episodes already downloaded are marked and skipped (from the downloads); a disk scan still to do
-- [ ] Review uncertain matches before queueing
-- [ ] Torrent options: seed ratio/time limits, encryption, DHT/LSD/UPnP/NAT-PMP, proxy, bind to a VPN interface
-- [ ] Storage usage
+- [x] Episodes already downloaded are marked and skipped (from the downloads and from a scan of the disk — the library)
+- [x] Review the picks before queueing (change any; a countdown when all are clear)
+- [x] Torrent options: seed ratio/time limits, encryption, DHT/LSD/UPnP/NAT-PMP, proxy, bind to a VPN interface, anonymous mode
+- [x] Storage usage (by kind, free space, packs)
+
+## Hayase (hayase-app/interface)
+- [x] Watch an episode now: the best release by quality and the lookup preference (quality / size / seeders), played while it downloads
+- [x] Search by genres and tags (required or left out), format, status, season, year, score, sort
+- [x] Hide spoilers; filler list (filler-scrape) first; HEVC left out where it cannot play
 
 ## Seanime (5rahim/seanime and the community repos)
 - [x] Torrent providers (Seanime and Hayase extensions), debrid
@@ -64,11 +69,11 @@ Status: [x] done · [~] partly · [ ] to do. Kept current as each batch lands.
 - [x] Online streaming extensions (`onlinestream-provider`): watch or download episodes over HTTP/HLS — match kept per show, server fallback, subtitles, headers through a local proxy (HLS remuxed by ffmpeg on the desktop); TypeScript payloads compiled with the TypeScript compiler; `CryptoJS` (AES/MD5), `Buffer`, goquery-style `Doc`/`LoadDoc` shimmed. Not possible: `ChromeDP` (a headless browser)
 - [x] Stremio add-ons (any manifest URL with streams) as providers
 - [x] Auto Downloader: rules per show (group, resolution, terms), checked on a schedule
-- [ ] Local anime library (match files to shows), Continue watching / Up next
-- [ ] Missed episodes in the schedule
-- [ ] Season guide: For you (by your taste from AniList), top-10 tiers, list status tints, + Plan
-- [ ] Anime diary: calendar/heatmap of watched episodes, unfinished shows, year in review
-- [ ] Open AniList / MyAnimeList links in the app
+- [x] Local anime library (files matched to shows, by hand when needed), Continue watching, missing episodes
+- [x] Missed episodes (episodes ready on My list; missing ones in the library); missed sequels
+- [x] Season guide: For you (by your taste from AniList), top-10 tiers, list status tints, + Plan
+- [x] Anime diary: calendar/heatmap of watched episodes, unfinished shows, year in review
+- [x] Open AniList / MyAnimeList links in the app
 
 ## The owner's own asks (this round)
 - [x] Torrent search: covers and titles matched on AniList and IMDb (as OTL in the reader), results grouped under them

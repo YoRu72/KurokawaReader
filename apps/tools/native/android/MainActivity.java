@@ -7,6 +7,7 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     @Override public void onCreate(Bundle savedInstanceState) {
+        catchCrashes(getApplicationContext());
         registerPlugin(KtPlugin.class);
         super.onCreate(savedInstanceState);
         handOver(getIntent());
@@ -28,6 +29,19 @@ public class MainActivity extends BridgeActivity {
         if (u == null) return;
         final String link = u;
         if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/open?u='+encodeURIComponent(" + org.json.JSONObject.quote(link) + ")", null), 400);
+    }
+    private static boolean catching = false;
+    /** A crash written down (when, which thread, the stack) before the app goes, for the page to show next time. */
+    static void catchCrashes(android.content.Context c) {
+        if (catching) return; catching = true;
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        final java.io.File f = new java.io.File(new java.io.File(c.getFilesDir(), "kt"), "crash.txt");
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try { f.getParentFile().mkdirs(); java.io.StringWriter sw = new java.io.StringWriter(); e.printStackTrace(new java.io.PrintWriter(sw));
+                String head = "time: " + new java.util.Date() + "\nthread: " + t.getName() + "\nandroid: " + android.os.Build.VERSION.RELEASE + " (" + android.os.Build.VERSION.SDK_INT + ") " + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + "\n\n";
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(f)) { o.write((head + sw).getBytes(java.nio.charset.StandardCharsets.UTF_8)); } } catch (Throwable ignored) {}
+            if (prev != null) prev.uncaughtException(t, e);
+        });
     }
     /** A .torrent file as a data: URL the page turns into a task. */
     private String readTorrent(Uri uri) {

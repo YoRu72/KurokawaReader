@@ -72,9 +72,9 @@ function loadJassub(): Promise<JassubCtor | null> {
   jassub ??= (async () => { try { const r = await fetch('assets/jassub/jassub.es.js', { method: 'HEAD' }); if (!r.ok) return null; const m = (await import(/* @vite-ignore */ new URL('assets/jassub/jassub.es.js', document.baseURI).href)) as { default: JassubCtor }; return m.default; } catch { return null; } })();
   return jassub;
 }
-export async function createAssRenderer(video: HTMLVideoElement, canvas: HTMLCanvasElement, content: string, fonts: string[]): Promise<AssRenderer | null> {
+export async function createAssRenderer(video: HTMLVideoElement, canvas: HTMLCanvasElement, content: string, fonts: string[], extra: Record<string, string> = {}): Promise<AssRenderer | null> {
   const J = await loadJassub(); if (!J) return null;
   const base = new URL('assets/jassub/', document.baseURI).href;
-  const r = new J({ video, canvas, subContent: content, workerUrl: `${base}jassub-worker.js`, wasmUrl: `${base}jassub-worker.wasm`, fonts, fallbackFont: 'liberation sans', availableFonts: { 'liberation sans': `${base}default.woff2` }, prescaleFactor: 0.8, dropAllAnimations: false });
+  const r = new J({ video, canvas, subContent: content, workerUrl: `${base}jassub-worker.js`, wasmUrl: `${base}jassub-worker.wasm`, fonts, fallbackFont: 'liberation sans', availableFonts: { 'liberation sans': `${base}default.woff2`, ...extra }, prescaleFactor: 0.8, dropAllAnimations: false });
   return { setTrack: (c) => r.setTrack(c), free: () => r.destroy(), setOffset: (s) => { r.timeOffset = s; }, resize: () => r.resize() };
 }

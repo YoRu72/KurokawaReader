@@ -25,7 +25,7 @@ final class KrDownloader {
     interface Opener { HttpURLConnection open(URL url) throws IOException; }
 
     /** What is learnt as the download goes (read by the progress reports while it runs). */
-    static final class Result { volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
+    static final class Result { volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
     /** One range a connection is fetching (or fetched): what the details page draws as the file map and the lanes. */
     static final class Seg { final long start, end; volatile long pos; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
         void advance(long p) { pos = p; long now = System.currentTimeMillis(); if (now - lastT >= 500) { double inst = (p - lastPos) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + inst * 0.4; lastT = now; lastPos = p; } } }
@@ -33,7 +33,20 @@ final class KrDownloader {
     private KrDownloader() {}
 
     /** What the engine sets: how many times a chunk is tried again, and where the progress is kept between runs. */
-    static final class Opts { int retries = 5; File state; }
+    static final class Opts { int retries = 5; File state; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName; }
+    /** Where Set-Cookie headers go (the engine's: Android's cookie store, shared with its web views). */
+    static volatile java.util.function.BiConsumer<URL, java.util.List<String>> cookieSink;
+    /** A web page sent where a file was expected (a site's check, a sign-in, an error page). */
+    static final class WebPage extends IOException { WebPage() { super("page"); } }
+    /** The file's name from a Content-Disposition header (filename*=UTF-8''… first, then filename="…"). */
+    static String dispositionName(String cd) {
+        if (cd == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("filename\\*\\s*=\\s*([^']*)'[^']*'([^;]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(cd);
+        if (m.find()) try { return java.net.URLDecoder.decode(m.group(2).trim().replace("+", "%2B"), m.group(1).isEmpty() ? "UTF-8" : m.group(1)); } catch (Exception ignored) {}
+        m = java.util.regex.Pattern.compile("filename\\s*=\\s*\"([^\"]+)\"|filename\\s*=\\s*([^;]+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(cd);
+        if (m.find()) { String n = m.group(1) != null ? m.group(1) : m.group(2).trim(); return n.isEmpty() ? null : n; }
+        return null;
+    }
     /** An answer with an unwanted status (kept, so a refusal can be told from a fault). */
     static final class Status extends IOException { final int code; Status(int c) { super("HTTP " + c); code = c; } }
 
@@ -49,6 +62,7 @@ final class KrDownloader {
             if (ifRange != null && !ifRange.isEmpty()) c.setRequestProperty("If-Range", ifRange);
             c.setRequestProperty("Accept-Encoding", "identity");
             int code = c.getResponseCode();
+            if (cookieSink != null) { java.util.List<String> set = c.getHeaderFields().get("Set-Cookie"); if (set != null && !set.isEmpty()) try { cookieSink.accept(url, set); } catch (Exception ignored) {} }
             String loc = code >= 300 && code < 400 ? c.getHeaderField("Location") : null;
             if (loc == null) { if (at != null) at[0] = c.getURL() != null && c.getURL().getHost().equals(url.getHost()) ? c.getURL() : url; return c; }
             c.disconnect();
@@ -98,6 +112,7 @@ final class KrDownloader {
      * chunk goes back to the others, and `res.refused` tells the engine to ask fewer of this server next time.
      */
     static Result fetch(URL url, File out, int maxConnections, Opener opener, AtomicBoolean cancelled, AtomicLong got, Result res, Runnable tick, Opts opt) throws Exception {
+        if (opt.cookies != null) cookieSink = opt.cookies;
         if (opt.state == null) { opt.state = File.createTempFile("kt", ".state"); opt.state.delete(); opt.state.deleteOnExit(); }
         State prev = out.exists() ? State.read(opt.state) : null;
         // A one-byte range asked first: the file's size, whether it can be cut, and where the redirects end
@@ -106,6 +121,13 @@ final class KrDownloader {
         HttpURLConnection probe = follow(url, opener, "bytes=0-0", at, prev != null ? prev.validator : null);
         int code = probe.getResponseCode();
         res.finalUrl = at[0];
+        res.fileName = dispositionName(probe.getHeaderField("Content-Disposition")); res.mime = probe.getContentType();
+        // (A page in the file's place — a site's check or sign-in — said so, not saved under the file's name.)
+        String ct = res.mime == null ? "" : res.mime.toLowerCase(java.util.Locale.ROOT);
+        if ((ct.startsWith("text/html") || ct.startsWith("application/xhtml")) && opt.expectName != null && !opt.expectName.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(html?|xhtml|php|aspx?)$") && (code == 200 || code == 206 || code == 403 || code == 503 || code == 429)) {
+            long len = -1; try { len = Long.parseLong(probe.getHeaderField("Content-Length")); } catch (Exception ignored) {}
+            if (len < 2_000_000) { probe.disconnect(); throw new WebPage(); }
+        }
         String cr = probe.getHeaderField("Content-Range");
         if (code == 206 && cr != null && cr.contains("/")) try { res.total = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) {}
         res.ranged = code == 206 && res.total > 0;

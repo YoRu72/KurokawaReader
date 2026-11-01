@@ -40,7 +40,7 @@ export async function downloadedEpisodes(anilistId: number): Promise<Map<number,
   for (const x of tasks) { const m = x.meta as { anilistId?: number; episode?: number } | undefined; if (m?.anilistId === anilistId && m.episode) out.set(m.episode, x); }
   return out;
 }
-async function addFor(a: al.Anime, r: TorrentResult, ep: number): Promise<void> {
+export async function addFor(a: al.Anime, r: TorrentResult, ep: number): Promise<void> {
   const source = r.url ? { url: r.url } : { magnet: magnetOf(r) };
   const meta = { anilistId: a.id, title: a.title, episode: ep || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx } as Task['meta'];
   if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); await sendToDebrid(source, { meta }); return; }
@@ -52,6 +52,9 @@ export interface RangeOptions { from: number; to: number; choices: Pick<AutoRule
  *  per episode; reports each episode as it is settled. */
 export async function downloadRange(a: al.Anime, o: RangeOptions, onEach: (ep: number, state: 'added' | 'have' | 'filler' | 'none' | 'batch', title?: string) => void, stop: () => boolean): Promise<number> {
   const have = o.skipHave ? await downloadedEpisodes(a.id) : new Map<number, Task>();
+  // (Episodes found on the disk by the library count as had — Senpwai's scan of what is already there.)
+  const disk = o.skipHave ? await import('./library').then((l) => l.filesFor(a.id)).catch(() => new Map()) : new Map();
+  for (const ep of disk.keys()) if (!have.has(ep)) have.set(ep, { id: '', state: 'done' } as Task);
   const fillers = o.skipFillers ? await fillersOf(a).catch(() => new Set<number>()) : new Set<number>();
   let added = 0;
   if (o.preferBatch && o.to - o.from >= 3) {
@@ -72,6 +75,30 @@ export async function downloadRange(a: al.Anime, o: RangeOptions, onEach: (ep: n
   return added;
 }
 
+/** Senpwai's review: each episode's releases that fit, best first, before anything is added. «clear» when the
+ *  best one is the only one, or a confirmed match well ahead of the next. */
+export interface PlanItem { ep: number; state: 'pick' | 'have' | 'filler' | 'none'; options: TorrentResult[]; pick?: TorrentResult; clear: boolean }
+export async function planRange(a: al.Anime, o: RangeOptions, onEach: (it: PlanItem) => void, stop: () => boolean): Promise<PlanItem[]> {
+  const have = o.skipHave ? await downloadedEpisodes(a.id) : new Map<number, Task>();
+  const disk = o.skipHave ? await import('./library').then((l) => l.filesFor(a.id)).catch(() => new Map()) : new Map();
+  const fillers = o.skipFillers ? await fillersOf(a).catch(() => new Set<number>()) : new Set<number>();
+  const out: PlanItem[] = [];
+  for (let ep = o.from; ep <= o.to && !stop(); ep++) {
+    let it: PlanItem;
+    if (have.has(ep) || disk.has(ep)) it = { ep, state: 'have', options: [], clear: true };
+    else if (fillers.has(ep)) it = { ep, state: 'filler', options: [], clear: true };
+    else {
+      const rs = await searchAll(await buildQuery(a, ep), () => undefined).catch(() => [] as TorrentResult[]);
+      const fit = rank(rs.filter((r) => pickFor([r], ep, { ...o.choices, group: '' })), o.choices.resolution);
+      const best = pickFor(rs, ep, o.choices) ?? fit[0];
+      const options = best ? [best, ...fit.filter((x) => x !== best)].slice(0, 8) : [];
+      const second = options[1];
+      it = { ep, state: best ? 'pick' : 'none', options, pick: best ?? undefined, clear: !!best && (options.length === 1 || (best.accuracy === 'high' && (!second || second.accuracy !== 'high' || best.seeders >= second.seeders * 3))) };
+    }
+    out.push(it); onEach(it);
+  }
+  return out;
+}
 /** The rules checked: every aired episode past the last one fetched is looked for and added. */
 let checking = false;
 export async function checkRules(quiet = true): Promise<number> {
@@ -107,6 +134,8 @@ let index: Promise<{ title: string; path: string }[]> | null = null;
 export async function fillersOf(a: al.Anime): Promise<Set<number>> {
   let cache: FCache = {}; try { cache = JSON.parse(localStorage.getItem(FKEY) ?? '{}') as FCache; } catch { /* none */ }
   const had = cache[a.id]; if (had && Date.now() - had.at < 7 * 86400000) return new Set(had.eps);
+  // Hayase's list first (by AniList id, one small file for every show), then animefillerlist.com by title.
+  try { const r = await request('https://raw.githubusercontent.com/ThaUnknown/filler-scrape/master/filler.json'); if (r.status === 200) { const j = JSON.parse(r.body) as Record<string, number[]>; const eps = j[String(a.id)]; if (eps?.length) { cache[a.id] = { at: Date.now(), eps }; try { localStorage.setItem(FKEY, JSON.stringify(cache)); } catch { /* full */ } return new Set(eps); } } } catch { /* the other list */ }
   const titles = al.titlesOf(a); if (titles.some((x) => (parseFilename(x).season ?? 1) > 1)) return new Set();
   index ??= (async () => { const r = await request('https://www.animefillerlist.com/shows'); if (r.status !== 200) throw new Error(`HTTP ${r.status}`); const doc = new DOMParser().parseFromString(r.body, 'text/html'); return Array.from(doc.querySelectorAll('#ShowList li a[href]')).map((x) => ({ title: (x.textContent ?? '').trim(), path: x.getAttribute('href') ?? '' })).filter((x) => x.title && x.path); })();
   const shows = await index.catch((e) => { index = null; throw e; });

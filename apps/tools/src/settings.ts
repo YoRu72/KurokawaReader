@@ -59,7 +59,7 @@ export interface Settings {
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
   clipboardWatch: boolean;
   /** Torrent options (Senpwai's): peer discovery, encryption, when seeding stops (0 = never). */
-  torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number };
+  torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
   /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */
   doh: string; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
@@ -68,6 +68,16 @@ export interface Settings {
   sounds?: import('./downloads/done').SoundPrefs;
   net?: Partial<import('./downloads/net').NetPrefs>;
   miniAuto?: boolean;
+  /** A folder of fonts for styled subtitles (the Player add-on). */
+  playerFontsDir?: string;
+  /** More folders for the anime library. */
+  animeLibraryDirs?: string[];
+  /** Hayase's «hide spoilers»: episodes past the one you are on keep their titles and pictures hidden. */
+  animeHideSpoilers?: boolean;
+  /** Senpwai's review of the picks before a range is added. */
+  animeReview?: boolean;
+  /** Hayase's lookup preference: among equally good releases, the best quality, the smallest, or the most seeded. */
+  animeLookup?: 'quality' | 'size' | 'seeders';
   /** The antivirus check after a download (the computer): which scanner, a command of one's own, which kinds of file. */
   /** Hugging Face: the server (or a mirror), the access token, the models folder. */
   hf?: import('./hf/hf').HfPrefs;

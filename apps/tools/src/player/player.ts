@@ -171,7 +171,7 @@ export function openPlayer(src: PlayerSource): void {
   applySubStyle();
   async function useTrack(tr: SubTrack | null) {
     current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last;
-    if (tr?.ass && !getPrefs().subAssOverride) { ass = await createAssRenderer(video, assCanvas, tr.ass, []); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
+    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, [], own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
   function cycleSub() { if (!tracks.length) { void subsSheet(); return; } const i = current ? tracks.indexOf(current) : -1; const nx = tracks[i + 1] ?? null; void useTrack(nx); flashText(nx ? nx.name : t('subsOff')); }

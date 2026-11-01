@@ -22,7 +22,7 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
   }, lang);
   await p.goto(`http://127.0.0.1:${web.address().port}/`); await p.waitForSelector('.fab'); await p.waitForTimeout(500);
-  await p.click('.fab'); await p.waitForSelector('.fab-item'); const items = await p.$$('.fab-item'); await items[items.length - 1].click();
+  await p.click('.fab'); await p.waitForSelector('.fab-item'); await p.locator('.fab-item', { hasText: /AI models|النماذج الذكية/ }).click();
   await p.waitForSelector('.models-sheet .result-row'); const hits = (await p.$eval('.models-sheet', (e) => e.innerText)).replace(/\s+/g, ' '); console.log('trending:', hits.slice(0, 160));
   await p.click('.models-sheet .result-row >> nth=0'); await p.waitForSelector('.models-files .file-row');
   const ticked = await p.$$eval('.models-files .file-row.on', (r) => r.map((x) => x.innerText.split('\n')[0].trim())); console.log('ticked:', ticked.join(', '));

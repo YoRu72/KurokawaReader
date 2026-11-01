@@ -96,7 +96,10 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('details', { class: 'more-options' }, h('summary', null, t('torrentOptions')),
           ...(s.seedAfterDone ? [row(t('seedRatio'), numberField(tor.seedRatio, (v) => set({ seedRatio: Math.max(0, v) }), { min: 0, max: 100, step: 0.1, width: '6em' }), t('zeroUnlimited')), row(t('seedMinutes'), numberField(tor.seedMinutes, (v) => set({ seedMinutes: Math.max(0, v) }), { min: 0, max: 100000, width: '6em' }), t('zeroUnlimited'))] : []),
           row(t('encryption'), pickButton(t('encryption'), [['enabled', t('encEnabled')], ['forced', t('encForced')], ['disabled', t('encDisabled')]], tor.enc, (v) => set({ enc: v }), t('close'))),
-          toggle('DHT', tor.dht, (v) => set({ dht: v })), toggle(t('lsdLabel'), tor.lsd, (v) => set({ lsd: v })), toggle('UPnP', tor.upnp, (v) => set({ upnp: v })), toggle('NAT-PMP', tor.natpmp, (v) => set({ natpmp: v })))]; })() : []),
+          toggle('DHT', tor.dht, (v) => set({ dht: v })), toggle(t('lsdLabel'), tor.lsd, (v) => set({ lsd: v })), toggle('UPnP', tor.upnp, (v) => set({ upnp: v })), toggle('NAT-PMP', tor.natpmp, (v) => set({ natpmp: v })),
+          toggle(t('torrentProxy'), !!tor.torrentProxy, (v) => set({ torrentProxy: v }), t('torrentProxyHint')),
+          row(t('bindIface'), (() => { const b = pickButton(t('bindIface'), [['', t('bindAny')], ...(tor.bindIface ? [[tor.bindIface, tor.bindIface] as [string, string]] : [])], tor.bindIface ?? '', (v) => set({ bindIface: v }), t('close')); void (ktPlugin() as unknown as { interfaces?(): Promise<{ interfaces: { name: string; vpn: boolean }[] }> } | null)?.interfaces?.().then((r) => { const nb = pickButton(t('bindIface'), [['', t('bindAny')], ...r.interfaces.map((x) => [x.name, x.vpn ? `${x.name} · VPN` : x.name] as [string, string])], getSettings().torrent.bindIface ?? '', (v) => set({ bindIface: v }), t('close')); b.replaceWith(nb); }).catch(() => undefined); return b; })(), t('bindIfaceHint')),
+          toggle(t('anonymousMode'), !!tor.anonymous, (v) => set({ anonymous: v }), t('anonymousHint')))]; })() : []),
       toggle(t('clipboardWatch'), s.clipboardWatch, (v) => updateSettings({ clipboardWatch: v }), t('clipboardWatchHint')),
       toggle(t('scheduleOn'), s.schedule.enabled, (v) => { updateSettings({ schedule: { ...getSettings().schedule, enabled: v } }); rerender(); void import('../downloads/prism').then((m) => m.startScheduler()); }, t('scheduleHint')),
       ...(s.schedule.enabled ? [h('div', { class: 'row' }, h('span', null, t('scheduleHours')), h('span', { class: 'row-actions', dir: 'ltr' }, h('input', { type: 'time', value: s.schedule.start, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, start: (e.target as HTMLInputElement).value } }) }), ' – ', h('input', { type: 'time', value: s.schedule.stop, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, stop: (e.target as HTMLInputElement).value } }) }))),
@@ -185,7 +188,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // The player: how videos are watched (another app, or the in-app player of the Player add-on).
     const plat = nativePlatform();
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
-      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close')))) : null;
+      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
+      ...(s.addons.includes('player') ? fontRows(plat === 'desktop') : [])) : null;
     // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.
     const sp = (s.sounds ?? {}) as Partial<import('../downloads/done').SoundPrefs>; const SP = { on: true, complete: 'classic', failed: true, allDone: true, volume: 0.7, card: true, ...sp };
     const setSp = (o: Partial<typeof SP>) => { updateSettings({ sounds: { ...SP, ...o } }); };
@@ -218,7 +222,19 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./models').then((m) => m.modelsSheet()) }, icon('search'), t('hfBrowse'))));
     // Storage: the packs (Python, ffmpeg) fetched for add-ons, with their sizes, removable.
     const packsBox = h('div'); void import('../packs').then((m) => { const c = m.packsCard(); if (c) packsBox.replaceChildren(c); });
-    const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), packsBox) : null;
+    // Senpwai's storage view: what the downloads take, by kind, and what is left on the disk.
+    const usage = h('div', { class: 'usage' }, h('div', { class: 'spinner small' }));
+    void (async () => {
+      const ts = await getEngine().list().catch(() => []); const { categoryOf, categoryName } = await import('../downloads/categories'); const { displayName } = await import('../engine');
+      const by = new Map<string, { label: string; size: number; n: number }>(); let total = 0;
+      for (const x of ts) { const size = x.state === 'done' || x.state === 'seeding' ? x.total || x.done : x.done; if (!size) continue; const c = categoryOf(displayName(x), x.kind); const k = c.id; const e = by.get(k) ?? { label: categoryName(c), size: 0, n: 0 }; e.size += size; e.n++; by.set(k, e); total += size; }
+      const free = await import('../archives').then((m) => m.freeSpaceAt(getSettings().downloadDir || '')).catch(() => -1);
+      const rows = [...by.values()].sort((a, b) => b.size - a.size);
+      usage.replaceChildren(h('div', { class: 'usage-bar' }, ...rows.map((r, i) => h('i', { style: { width: `${total ? (r.size / Math.max(total, total + Math.max(0, free))) * 100 : 0}%`, '--c': `var(--cat-${i % 6})` }, title: r.label }))),
+        ...rows.map((r, i) => h('div', { class: 'usage-row' }, h('span', { class: 'dot', style: { '--c': `var(--cat-${i % 6})` } }), h('span', { class: 'grow' }, r.label, h('small', { class: 'src' }, ` · ${localDigits(r.n)}`)), h('b', null, formatBytes(r.size)))),
+        h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
+    })();
+    const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     return [general, downloads, connection, sounds, player, video, models, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
@@ -255,8 +271,10 @@ async function drawOtherApp(box: HTMLElement): Promise<void> {
 }
 
 /** The settings of installed add-ons that have any: a field per declared setting, saved as typed. */
-function addonSettingsSheet(list: AddonEntry[], lang: string): void {
+export function addonSettingsSheet(list: AddonEntry[], lang: string, opts: { note?: Node; done?: () => void } = {}): void {
   const sh = openSheet(t('addonSettings'), t('close'));
+  if (opts.note) sh.body.append(opts.note);
+  if (opts.done) sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); opts.done!(); } }, icon('search'), t('searchAgain')));
   for (const a of list) {
     const cur = addonSettings(a);
     sh.body.append(h('h4', { dir: 'auto' }, nameOf(a, lang)));
@@ -269,3 +287,25 @@ function addonSettingsSheet(list: AddonEntry[], lang: string): void {
     }
   }
 }
+
+/** The Player add-on's fonts for styled subtitles: a folder (the computer's, or one the phone lets the app read)
+ *  and fonts added to the app itself; how many there are, and the list to remove from. */
+function fontRows(desktop: boolean): HTMLElement[] {
+  const info = h('small', { class: 'src' });
+  const count = async () => { const f = await import('../player/fonts'); const lib = await f.library(); const dir = getSettings().playerFontsDir ? await f.folderFonts().catch(() => []) : []; info.textContent = t('fontsCount', { app: localDigits(lib.length), dir: localDigits(dir.length) }); };
+  void count();
+  const dirIn = h('input', { type: 'text', dir: 'ltr', value: getSettings().playerFontsDir ?? '', placeholder: desktop ? 'C:\\Windows\\Fonts' : '/storage/emulated/0/Fonts', onchange: (e: Event) => { updateSettings({ playerFontsDir: (e.target as HTMLInputElement).value.trim() || undefined }); info.textContent = '…'; void count(); } }) as HTMLInputElement;
+  const pick = desktop ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const d = window.kurokawaTools as unknown as { pickDir?(): Promise<string | null> } | undefined; const p = await d?.pickDir?.(); if (p) { dirIn.value = p; updateSettings({ playerFontsDir: p }); info.textContent = '…'; void count(); } } }, icon('folder'), t('chooseFolder')) : null;
+  const file = h('input', { type: 'file', multiple: true, accept: '.ttf,.otf,.ttc,.otc,.woff,.woff2', hidden: true, onchange: async (e: Event) => { const fs = Array.from((e.target as HTMLInputElement).files ?? []); if (!fs.length) return; const n = await (await import('../player/fonts')).addFonts(fs); toast(t('fontsAdded', { n: localDigits(n) })); void count(); } }) as HTMLInputElement;
+  const manage = async () => {
+    const f = await import('../player/fonts'); const sh = openSheet(t('fontsTitle'), t('close'));
+    const draw = async () => { const lib = await f.library(); sh.body.replaceChildren(...(lib.length ? lib.map((x) => h('div', { class: 'dest-row' }, icon('type'), h('span', { class: 'grow' }, h('span', { dir: 'auto' }, x.families[0] ?? x.file), h('small', { class: 'src', dir: 'ltr' }, ` ${x.file} · ${formatBytes(x.size)}`)), iconButton('trash', t('remove'), () => void f.removeFont(x.id).then(draw).then(count)))) : [h('p', { class: 'empty small' }, t('fontsNone'))])); };
+    void draw();
+  };
+  return [
+    h('p', { class: 'hint' }, t('fontsHint')),
+    row(t('fontsDir'), h('div', { class: 'row-inline' }, dirIn, pick), desktop ? '' : t('fontsDirPhone')),
+    h('div', { class: 'row-actions' }, file, h('button', { type: 'button', class: 'btn tonal small', onclick: () => file.click() }, icon('plus'), t('fontsAdd')), h('button', { type: 'button', class: 'btn text small', onclick: () => void manage() }, icon('list'), t('fontsManage')), info),
+  ];
+}
+

@@ -14,7 +14,7 @@ import { videoEnabled, isVideoHost } from '../video/ytdlp';
 const toBase64 = (buf: ArrayBuffer): string => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); };
 
 /** The Add sheet; `pickTorrent` opens the file picker at once, `video` says a video page is wanted (from the + menu). */
-export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boolean; torrent?: File } = {}): void {
+export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boolean; torrent?: File; headers?: Record<string, string>; name?: string } = {}): void {
   const eng = getEngine();
   const sh = openSheet(t('addTitle'), t('close'));
   sh.el.classList.add('add-sheet');
@@ -33,7 +33,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
   let dirChosen = false;
   const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
-  const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName') }) as HTMLInputElement;
+  const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: how.name ?? '' }) as HTMLInputElement;
   const seq = h('input', { type: 'checkbox', checked: s.sequentialVideo }) as HTMLInputElement;
   const paused = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const later = h('input', { type: 'checkbox' }) as HTMLInputElement;
@@ -82,7 +82,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       h('button', { type: 'button', class: 'btn text small', onclick: () => { chosen = chosen.size === info!.files.length ? new Set() : new Set(info!.files.map((f) => f.index)); drawFiles(); } }, t('allFiles')));
     filesBox.replaceChildren(head, h('div', { class: 'file-rows' }, ...info.files.map((f) => h('label', { class: 'check-row file-row' }, h('input', { type: 'checkbox', checked: chosen.has(f.index), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(f.index); else chosen.delete(f.index); drawFiles(); } }), h('span', { class: 'grow', dir: 'auto' }, f.path), h('small', { class: 'src' }, formatBytes(f.size))))));
   };
-  const sources = (): TaskSource[] => { const out = parseSources(ta.value); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
+  // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
+  const sources = (): TaskSource[] => { const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
   let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => void metadata(), 600); });
   if (initial) void metadata();
   go.addEventListener('click', async () => {

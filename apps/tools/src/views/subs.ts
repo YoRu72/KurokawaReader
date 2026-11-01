@@ -6,6 +6,8 @@ import { t, localDigits, formatBytes, countResults, getLang } from '../i18n';
 import { navigate } from '../router';
 import { getSettings, updateSettings } from '../settings';
 import { getEngine } from '../engine';
+import { ktPlugin, openExternal } from '../native';
+import type { AddonEntry } from '../addons';
 import { lookup, enrich, parseRef, type TitleCard } from '../subs/lookup';
 import { searchSubtitles, subtitleSources, queryFor, rankSubs, resolveLink, type SubResult, type SubQuery } from '../subs/search';
 
@@ -60,7 +62,7 @@ export function subsView(q?: string): HTMLElement & { dispose?: () => void } {
     await searchSubtitles(query, (a, res) => {
       if (my !== token) return;
       const chip = status.querySelector<HTMLElement>(`[data-id="${CSS.escape(a.id)}"]`);
-      if (chip) { chip.classList.remove('busy'); chip.querySelector('.spinner')?.remove(); if (res instanceof Error) { chip.classList.add('failed'); chip.title = res.message; chip.prepend(icon('alert')); chip.onclick = () => toast(res.message, 'error', 5000); } else chip.append(h('small', null, ` ${countResults(res.length)}`)); }
+      if (chip) { chip.classList.remove('busy'); chip.querySelector('.spinner')?.remove(); if (res instanceof Error) problemChip(chip, a, res, () => void run()); else chip.append(h('small', null, ` ${countResults(res.length)}`)); }
       if (!(res instanceof Error)) all = all.concat(res); redraw();
     });
   };
@@ -92,3 +94,26 @@ export function langSheet(done: () => void): void {
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); done(); } }, t('done')));
   void getLang;
 }
+
+/** A source that did not answer, shown for what it needs: its key (asked for there and then), a browser check
+ *  passed once in the site's own window (the app then shares that window's cookies), or else the error. */
+function problemChip(chip: HTMLElement, a: AddonEntry, e: Error & { code?: string; site?: string }, again: () => void): void {
+  chip.title = e.message;
+  if (e.code === 'key') {
+    chip.classList.add('needs'); chip.prepend(icon('key')); chip.append(h('small', null, ` ${t('subsNeedsKey')}`));
+    chip.onclick = () => void import('./settings').then((m) => m.addonSettingsSheet([a], getLang(), { note: h('p', { class: 'hint' }, t('subsKeyHint', { name: a.name }), ' ', e.site ? h('a', { href: e.site, target: '_blank', rel: 'noopener' }, e.site.replace(/^https?:\/\//, '')) : ''), done: again }));
+  } else if (e.code === 'check' && e.site) {
+    chip.classList.add('needs'); chip.prepend(icon('shield')); chip.append(h('small', null, ` ${t('subsCheck')}`));
+    chip.onclick = () => void siteCheck(e.site!, a.name).then(again);
+  } else { chip.classList.add('failed'); chip.prepend(icon('alert')); chip.onclick = () => toast(e.message, 'error', 6000); }
+}
+/** The site opened in the app's own window (the phone's WebView, or a window of the computer app sharing its
+ *  cookies) for the user to pass its check; resolves when the window is closed. */
+async function siteCheck(url: string, name: string): Promise<void> {
+  const d = window.kurokawaTools as unknown as { siteWindow?(o: { url: string; title: string }): Promise<void> } | undefined;
+  if (d?.siteWindow) { await d.siteWindow({ url, title: name }); return; }
+  const p = ktPlugin() as unknown as { captureUrl?(o: { url: string; marker: string; title: string }): Promise<{ url: string | null }> } | null;
+  if (p?.captureUrl) { toast(t('subsCheckHint')); await p.captureUrl({ url, marker: '\u0000never', title: name }); return; }
+  void openExternal(url);
+}
+

@@ -25,6 +25,8 @@ public class KtService extends Service {
     static final String CH_DONE = "kt_done";
     static final int NOTE_RUN = 8301;
     private static boolean running = false;
+    /** startForeground() done in this run; a stop asked before it waits for it (stopping first crashes the app). */
+    private static volatile boolean foreground = false, stopWhenStarted = false;
     private static int doneSeq = 8400;
 
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -32,11 +34,23 @@ public class KtService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         channels(this);
         Notification n = note(this, ar(this) ? "التنزيلات جارية" : "Downloads in progress", "", 0, true);
-        if (Build.VERSION.SDK_INT >= 34) startForeground(NOTE_RUN, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); else startForeground(NOTE_RUN, n);
+        // Android 14+: «special use» has no daily time limit (Android 15 stops «data sync» after six hours a day,
+        // and a service that cannot start in the foreground any more would bring the app down with it).
+        try {
+            if (Build.VERSION.SDK_INT >= 34) { try { startForeground(NOTE_RUN, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE); } catch (RuntimeException e) { startForeground(NOTE_RUN, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); } }
+            else startForeground(NOTE_RUN, n);
+            foreground = true;
+        } catch (RuntimeException e) { running = false; foreground = false; stopSelf(); return START_NOT_STICKY; }
         running = true;
+        if (stopWhenStarted) { stopWhenStarted = false; stop(this); }
         return START_NOT_STICKY;
     }
-    @Override public void onDestroy() { running = false; super.onDestroy(); }
+    /** Android 15's time limit reached for this kind of service: stopped at once (not stopping crashes the app); the
+     *  downloads go on while the app is open. */
+    public void onTimeout(int startId, int fgsType) { stop(this); }
+    public void onTimeout(int startId) { stop(this); }
+    private static void stop(Service s) { try { if (Build.VERSION.SDK_INT >= 24) s.stopForeground(STOP_FOREGROUND_REMOVE); else s.stopForeground(true); } catch (Exception ignored) {} running = false; foreground = false; s.stopSelf(); }
+    @Override public void onDestroy() { running = false; foreground = false; super.onDestroy(); }
 
     static boolean ar(Context c) { @SuppressWarnings("deprecation") String l = c.getResources().getConfiguration().locale.getLanguage(); return "ar".equals(l); }
 
@@ -59,6 +73,7 @@ public class KtService extends Service {
 
     /** Started when a download begins (once). */
     static void ensure(Context c) {
+        stopWhenStarted = false;
         if (running) return;
         try { Intent i = new Intent(c, KtService.class); if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i); running = true; } catch (Exception ignored) { /* background start not allowed: the download still runs while the app lives */ }
     }
@@ -77,8 +92,9 @@ public class KtService extends Service {
     static String human(long b) { if (b < 1024) return b + " B"; if (b < 1048576) return String.format(java.util.Locale.US, "%.0f KB", b / 1024.0); if (b < 1073741824L) return String.format(java.util.Locale.US, "%.1f MB", b / 1048576.0); return String.format(java.util.Locale.US, "%.2f GB", b / 1073741824.0); }
     /** Stopped once nothing is under way (the notification goes); a finished one said in its own notification. */
     static void maybeStop(Context c, KtEngine e) {
-        if (e.anyActive()) return;
-        if (running) { try { c.stopService(new Intent(c, KtService.class)); } catch (Exception ignored) {} running = false; try { NotificationManagerCompat.from(c).cancel(NOTE_RUN); } catch (Exception ignored) {} }
+        if (e == null || e.anyActive()) return;
+        if (running && !foreground) { stopWhenStarted = true; return; }
+        if (running) { try { c.stopService(new Intent(c, KtService.class)); } catch (Exception ignored) {} running = false; foreground = false; try { NotificationManagerCompat.from(c).cancel(NOTE_RUN); } catch (Exception ignored) {} }
     }
     static void finished(Context c, String name, boolean ok, String error) {
         channels(c);

@@ -70,7 +70,7 @@ final class KtEngine {
         // torrent
         TorrentHandle th; String magnet; byte[] torrentBytes;
         // http
-        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot;
+        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName;
     }
 
     private final Context ctx;
@@ -86,7 +86,7 @@ final class KtEngine {
     /* Prism's connection settings: the name the app gives servers, tries per chunk, how long to wait, a proxy,
        and what to do when the file is there already. Plus what each server was found to accept. */
     static final String APP_UA = "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1";
-    private volatile String ua = APP_UA, proxy = "", conflict = "rename"; private volatile int retries = 5, timeoutS = 60;
+    private volatile String ua = APP_UA, proxy = "", conflict = "rename", bindIface = ""; private volatile int retries = 5, timeoutS = 60; private volatile boolean torrentProxy = false, anonymous = false;
     private final Map<String, Integer> hostLimit = new ConcurrentHashMap<>();
     private Thread ticker;
     private volatile long lastTell = 0;
@@ -129,10 +129,10 @@ final class KtEngine {
             tell(true);
         } else if (t == AlertType.METADATA_RECEIVED) {
             TorrentHandle th = ((MetadataReceivedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
-            if (x != null) { TorrentInfo ti = th.torrentFile(); if (ti != null) { x.name = ti.name(); x.total = ti.totalSize(); if (x.priorities != null) applyPriorities(x); } th.saveResumeData(); persist(); tell(true); }
+            if (x != null) { TorrentInfo ti = th.torrentFile(); if (ti != null) { x.name = ti.name(); x.total = ti.totalSize(); if (x.priorities != null) applyPriorities(x); } th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); persist(); tell(true); }
         } else if (t == AlertType.TORRENT_FINISHED) {
             TorrentHandle th = ((TorrentFinishedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
-            if (x != null) { if (x.doneAt == 0) x.doneAt = System.currentTimeMillis(); th.saveResumeData(); if (!seedAfterDone) th.pause(); persist(); tell(true); }
+            if (x != null) { if (x.doneAt == 0) x.doneAt = System.currentTimeMillis(); th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); if (!seedAfterDone) th.pause(); persist(); tell(true); }
         } else if (t == AlertType.SAVE_RESUME_DATA) {
             SaveResumeDataAlert sa = (SaveResumeDataAlert) a; Task x = byHash.get(sa.handle().infoHash().toHex());
             if (x != null) { try { byte[] data = AddTorrentParams.writeResumeDataBuf(sa.params()); try (FileOutputStream fo = new FileOutputStream(new File(stateDir, x.id + ".fastresume"))) { fo.write(data); } } catch (Exception e) { Log.w(TAG, "resume", e); } }
@@ -152,7 +152,7 @@ final class KtEngine {
                 try { Thread.sleep(700); } catch (InterruptedException e) { return; }
                 try { if (anyTorrentActive()) session.postTorrentUpdates(); else tell(false); } catch (Exception ignored) {}
                 // (Resume data saved now and then, so a kill loses little.)
-                if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData();
+                if (System.currentTimeMillis() % 30000 < 700) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.needSaveResumeData()) x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT);
             }
         }, "kt-ticker");
         ticker.setDaemon(true); ticker.start();
@@ -177,7 +177,7 @@ final class KtEngine {
         if (files != null) { x.priorities = new int[0]; List<Integer> want = new ArrayList<>(); for (int i = 0; i < files.length(); i++) want.add(files.getInt(i)); x.priorities = new int[Math.max(0, max(want) + 1)]; for (int i : want) x.priorities[i] = 1; }
         if (o.has("video") && x.source.has("url")) { x.kind = "video"; JSONObject v = o.getJSONObject("video"); if (x.meta == null) x.meta = new JSONObject(); x.meta.put("kind", "video"); for (java.util.Iterator<String> it = v.keys(); it.hasNext(); ) { String k = it.next(); x.meta.put(k, v.get(k)); } if (x.name == null) x.name = v.optString("title", x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (!x.paused) startVideo(x); else x.state = "paused"; }
         else if (x.source.has("magnet") || x.source.has("torrent")) { x.kind = "torrent"; addTorrent(x); }
-        else if (x.source.has("url")) { x.kind = "http"; if (x.name == null) x.name = nameFromUrl(x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (x.paused) x.state = "paused"; else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); }
+        else if (x.source.has("url")) { x.kind = "http"; if (x.name == null) { x.name = nameFromUrl(x.source.getString("url")); x.autoName = true; } synchronized (this) { tasks.put(x.id, x); } if (x.paused) x.state = "paused"; else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); }
         else throw new IllegalArgumentException("source");
         persist(); tell(true);
         return json(x);
@@ -220,7 +220,7 @@ final class KtEngine {
     }
     private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = x.th.torrentFile(); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
 
-    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
+    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
     void resume(String id) throws Exception { Task x = task(id); if (x == null) return; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
     void remove(String id, boolean deleteFiles) {
         Task x; synchronized (this) { x = tasks.remove(id); } if (x == null) return;
@@ -245,6 +245,18 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.out_enc_policy.swigValue(), pol); sp.setInteger(settings_pack.int_types.in_enc_policy.swigValue(), pol);
         sp.setInteger(settings_pack.int_types.share_ratio_limit.swigValue(), seedRatio > 0 ? (int) Math.round(seedRatio * 100) : 1000000);
         sp.setInteger(settings_pack.int_types.seed_time_limit.swigValue(), seedMinutes > 0 ? seedMinutes * 60 : Integer.MAX_VALUE);
+        // Senpwai's: the Connection proxy for torrents too (peers, trackers, names), a network interface to keep to
+        // (a VPN's: tun0, wg0…), anonymous mode.
+        java.net.Proxy px = torrentProxy ? proxyOf(proxy) : null;
+        if (px != null && px.address() instanceof java.net.InetSocketAddress) {
+            java.net.InetSocketAddress ad = (java.net.InetSocketAddress) px.address();
+            sp.setInteger(settings_pack.int_types.proxy_type.swigValue(), px.type() == java.net.Proxy.Type.SOCKS ? settings_pack.proxy_type_t.socks5.swigValue() : settings_pack.proxy_type_t.http.swigValue());
+            sp.setString(settings_pack.string_types.proxy_hostname.swigValue(), ad.getHostString()); sp.setInteger(settings_pack.int_types.proxy_port.swigValue(), ad.getPort());
+            sp.setBoolean(settings_pack.bool_types.proxy_peer_connections.swigValue(), true); sp.setBoolean(settings_pack.bool_types.proxy_tracker_connections.swigValue(), true); sp.setBoolean(settings_pack.bool_types.proxy_hostnames.swigValue(), true);
+        } else sp.setInteger(settings_pack.int_types.proxy_type.swigValue(), settings_pack.proxy_type_t.none.swigValue());
+        sp.setString(settings_pack.string_types.outgoing_interfaces.swigValue(), bindIface);
+        if (!bindIface.isEmpty()) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), bindIface + ":" + (listenPort > 0 ? listenPort : 6881));
+        sp.setBoolean(settings_pack.bool_types.anonymous_mode.swigValue(), anonymous);
     }
     void configure(JSONObject o) {
         if (o.has("seed")) seedAfterDone = o.optBoolean("seed");
@@ -252,15 +264,16 @@ final class KtEngine {
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
+        if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
+        if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
+        if (o.has("torrentProxy")) torrentProxy = o.optBoolean("torrentProxy"); if (o.has("bindIface")) bindIface = o.optString("bindIface", "").trim(); if (o.has("anonymous")) anonymous = o.optBoolean("anonymous");
         if (session != null && session.isRunning()) {
             SettingsPack sp = new SettingsPack(); sp.activeDownloads(maxActive); sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), seedAfterDone ? 5 : 0);
             if (o.has("listenPort")) sp.setString(settings_pack.string_types.listen_interfaces.swigValue(), listenPort > 0 ? "0.0.0.0:" + listenPort + ",[::]:" + listenPort : "0.0.0.0:6881,[::]:6881");
             applyNet(sp); session.applySettings(sp);
             if (o.has("seed")) for (Task x : snapshot()) if (x.th != null && x.th.isValid() && x.th.status().isFinished()) { if (seedAfterDone) x.th.resume(); else x.th.pause(); }
         }
-        if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
-        if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
-        try { JSONObject cfg = new JSONObject(); cfg.put("ua", ua); cfg.put("retries", retries); cfg.put("timeout", timeoutS); cfg.put("proxy", proxy); cfg.put("conflict", conflict); cfg.put("seed", seedAfterDone); cfg.put("listenPort", listenPort); cfg.put("maxActive", maxActive); cfg.put("dht", dht); cfg.put("lsd", lsd); cfg.put("upnp", upnp); cfg.put("natpmp", natpmp); cfg.put("enc", enc); cfg.put("seedRatio", seedRatio); cfg.put("seedMinutes", seedMinutes); write(new File(stateDir, "config.json"), cfg.toString()); } catch (Exception ignored) {}
+        try { JSONObject cfg = new JSONObject(); cfg.put("ua", ua); cfg.put("torrentProxy", torrentProxy); cfg.put("bindIface", bindIface); cfg.put("anonymous", anonymous); cfg.put("retries", retries); cfg.put("timeout", timeoutS); cfg.put("proxy", proxy); cfg.put("conflict", conflict); cfg.put("seed", seedAfterDone); cfg.put("listenPort", listenPort); cfg.put("maxActive", maxActive); cfg.put("dht", dht); cfg.put("lsd", lsd); cfg.put("upnp", upnp); cfg.put("natpmp", natpmp); cfg.put("enc", enc); cfg.put("seedRatio", seedRatio); cfg.put("seedMinutes", seedMinutes); write(new File(stateDir, "config.json"), cfg.toString()); } catch (Exception ignored) {}
     }
 
     /** A magnet's (or .torrent's) metadata without keeping it: name, size, files. */
@@ -308,8 +321,20 @@ final class KtEngine {
                 x.httpOut = new File(dir, safe);
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
-                final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = retries; opt.state = state;
-                KrDownloader.Result r = KrDownloader.fetch(new URL(url), part, lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim)), u -> open(u, headers), x.cancel, x.got, info, () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } }, opt);
+                final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = retries; opt.state = state; opt.expectName = safe;
+                opt.cookies = (u, set) -> { try { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(u.toString(), c); } catch (Throwable ignored) {} };
+                final int conns = lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim));
+                final Runnable tick = () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } };
+                KrDownloader.Result r;
+                try { r = KrDownloader.fetch(new URL(url), part, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                catch (IOException e) {
+                    // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
+                    // tried once more by the network's own DNS.)
+                    if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || x.cancel.get()) throw e;
+                    r = KrDownloader.fetch(new URL(url), part, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt);
+                }
+                // (The name the server gives — Content-Disposition — when the user gave none and the link's was a code.)
+                if (x.autoName && r.fileName != null) { String n = r.fileName.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); if (want.exists() && !"overwrite".equals(conflict)) n = freeName(dir, n); x.name = n; x.httpOut = new File(dir, n); } x.autoName = false; }
                 // (A server that refused connections: asked no more than it accepted next time.)
                 if (r.refused && !host.isEmpty()) { hostLimit.put(host, Math.max(1, r.connections)); saveHosts(); }
                 if (x.cancel.get()) { x.downSpeed = 0; x.done = x.got.get(); persist(); return; }
@@ -318,7 +343,7 @@ final class KtEngine {
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0;
-            } catch (Exception e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
+            } catch (Exception e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         }, "kt-http-" + x.id);
         x.httpThread.start();
@@ -352,9 +377,11 @@ final class KtEngine {
         if (x.cancel != null) x.cancel.set(true); if (x.httpThread != null) x.httpThread.join(5000);
         x.source.put("url", url); x.paused = false; x.error = null; persist(); startHttp(x); tell(true);
     }
-    private HttpURLConnection open(URL u, JSONObject headers) throws IOException {
+    private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
         java.net.Proxy px = proxyOf(proxy);
-        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : KrDoh.open(u);
+        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
+        // (The cookies the site set — here or in the app's browser, where a site's check is passed.)
+        try { String ck = android.webkit.CookieManager.getInstance().getCookie(u.toString()); if (ck != null && !ck.isEmpty() && (headers == null || (!headers.has("Cookie") && !headers.has("cookie")))) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) {}
         c.setConnectTimeout(Math.min(30000, timeoutS * 1000)); c.setReadTimeout(timeoutS * 1000); c.setInstanceFollowRedirects(false);
         c.setRequestProperty("User-Agent", ua);
         if (headers != null) { Iterator<String> it = headers.keys(); while (it.hasNext()) { String k = it.next(); c.setRequestProperty(k, headers.optString(k)); } }
@@ -367,7 +394,16 @@ final class KtEngine {
             s = s.replaceFirst("^[a-zA-Z0-9]+://", ""); int c = s.lastIndexOf(':'); String h = c > 0 ? s.substring(0, c) : s; int port = c > 0 ? Integer.parseInt(s.substring(c + 1).replaceAll("/.*$", "")) : (t == java.net.Proxy.Type.SOCKS ? 1080 : 8080);
             return new java.net.Proxy(t, java.net.InetSocketAddress.createUnresolved(h, port)); } catch (Exception e) { return null; }
     }
-    static String nameFromUrl(String url) { try { String p = new URL(url).getPath(); String n = p.substring(p.lastIndexOf('/') + 1); n = java.net.URLDecoder.decode(n, "UTF-8"); return n.isEmpty() ? "download" : n; } catch (Exception e) { return "download"; } }
+    static String nameFromUrl(String url) {
+        try {
+            URL u = new URL(url); String p = u.getPath(); String n = java.net.URLDecoder.decode(p.substring(p.lastIndexOf('/') + 1).replace("+", "%2B"), "UTF-8");
+            // (A name in the query — ?f=, ?filename=, ?name=, ?file=, ?title= — with an extension: that one.)
+            String q = u.getRawQuery();
+            if (q != null) for (String kv : q.split("&")) { int i = kv.indexOf('='); if (i <= 0) continue; String k = kv.substring(0, i).toLowerCase(java.util.Locale.ROOT); if (!(k.equals("f") || k.equals("filename") || k.equals("name") || k.equals("file") || k.equals("title") || k.equals("fn") || k.equals("response-content-disposition"))) continue;
+                String v = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"); if (k.equals("response-content-disposition")) { String d = KrDownloader.dispositionName(v); if (d == null) continue; v = d; } v = v.replaceAll(".*[\\\\/]", "").trim(); if (v.matches(".+\\.[A-Za-z0-9]{1,5}")) return v; }
+            return n.isEmpty() ? "download" : n;
+        } catch (Exception e) { return "download"; }
+    }
 
     /* ---------- what the page sees ---------- */
     boolean anyActive() { for (Task x : snapshot()) if ("downloading".equals(x.state) || "metadata".equals(x.state) || "checking".equals(x.state) || ("seeding".equals(x.state) && seedAfterDone)) return true; return false; }
@@ -441,19 +477,22 @@ final class KtEngine {
         try {
             JSONArray arr = new JSONArray();
             for (Task x : tasks.values()) { JSONObject o = json(x); o.put("priorities", x.priorities == null ? JSONObject.NULL : new JSONArray(toList(x.priorities))); o.put("paused", x.paused); o.put("connections", x.wantConnections); o.put("files", JSONObject.NULL); if ("video".equals(x.kind) && x.httpOut != null) o.put("file", x.httpOut.getName()); arr.put(o); }
-            write(new File(stateDir, "tasks.json"), arr.toString());
+            // (The list as it was kept beside the new one: read back if the new one is ever cut short.)
+            File cur = new File(stateDir, "tasks.json"); if (cur.length() > 2) { try { java.nio.file.Files.copy(cur.toPath(), new File(stateDir, "tasks.json.bak").toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING); } catch (Exception ignored) {} }
+            write(cur, arr.toString());
         } catch (Exception e) { Log.w(TAG, "persist", e); }
     }
     private static List<Integer> toList(int[] a) { List<Integer> l = new ArrayList<>(); for (int v : a) l.add(v); return l; }
     private static void write(File f, String s) throws IOException { File tmp = new File(f.getPath() + ".tmp"); try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(s.getBytes(StandardCharsets.UTF_8)); } if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f); } }
     private void load() {
-        try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); dht = c.optBoolean("dht", true); lsd = c.optBoolean("lsd", true); upnp = c.optBoolean("upnp", true); natpmp = c.optBoolean("natpmp", true); enc = c.optString("enc", "enabled"); seedRatio = c.optDouble("seedRatio", 0); seedMinutes = c.optInt("seedMinutes", 0); ua = c.optString("ua", APP_UA); retries = c.optInt("retries", 5); timeoutS = c.optInt("timeout", 60); proxy = c.optString("proxy", ""); conflict = c.optString("conflict", "rename"); } } catch (Exception ignored) {}
+        try { File cfg = new File(stateDir, "config.json"); if (cfg.exists()) { JSONObject c = new JSONObject(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)); seedAfterDone = c.optBoolean("seed", false); listenPort = c.optInt("listenPort", 0); maxActive = c.optInt("maxActive", 3); dht = c.optBoolean("dht", true); lsd = c.optBoolean("lsd", true); upnp = c.optBoolean("upnp", true); natpmp = c.optBoolean("natpmp", true); enc = c.optString("enc", "enabled"); seedRatio = c.optDouble("seedRatio", 0); seedMinutes = c.optInt("seedMinutes", 0); ua = c.optString("ua", APP_UA); torrentProxy = c.optBoolean("torrentProxy", false); bindIface = c.optString("bindIface", ""); anonymous = c.optBoolean("anonymous", false); retries = c.optInt("retries", 5); timeoutS = c.optInt("timeout", 60); proxy = c.optString("proxy", ""); conflict = c.optString("conflict", "rename"); } } catch (Exception ignored) {}
         try { File hf = new File(stateDir, "hosts.json"); if (hf.exists()) { JSONObject h = new JSONObject(new String(java.nio.file.Files.readAllBytes(hf.toPath()), StandardCharsets.UTF_8)); for (Iterator<String> it = h.keys(); it.hasNext(); ) { String k = it.next(); hostLimit.put(k, h.optInt(k, 8)); } } } catch (Exception ignored) {}
-        File f = new File(stateDir, "tasks.json"); if (!f.exists()) return;
+        File f = new File(stateDir, "tasks.json"), bak = new File(stateDir, "tasks.json.bak"); if (!f.exists() && !bak.exists()) return;
         try {
-            JSONArray arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+            // (The last good copy when this one cannot be read — a write cut short.)
+            JSONArray arr; try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); } catch (Exception e) { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(bak.toPath()), StandardCharsets.UTF_8)); }
             boolean any = false;
-            for (int i = 0; i < arr.length(); i++) {
+            for (int i = 0; i < arr.length(); i++) { try {
                 JSONObject o = arr.getJSONObject(i); Task x = new Task();
                 x.id = o.getString("id"); x.kind = o.getString("kind"); x.name = o.optString("name"); x.source = o.optJSONObject("source"); if (x.source == null) x.source = new JSONObject(); x.dir = o.optString("dir"); x.state = o.optString("state", "paused");
                 x.done = o.optLong("done"); x.total = o.optLong("total"); x.addedAt = o.optLong("addedAt", System.currentTimeMillis()); x.doneAt = o.optLong("doneAt"); x.meta = o.optJSONObject("meta"); x.sequential = o.optBoolean("sequential"); x.paused = o.optBoolean("paused"); x.infoHash = o.optString("infoHash", null); x.error = o.optString("error", null); x.wantConnections = o.optInt("connections", 8);
@@ -465,7 +504,7 @@ final class KtEngine {
                     File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) { try { x.source.put("torrent", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(tf.toPath()), android.util.Base64.NO_WRAP)); } catch (Exception ignored) {} }
                     if (!"done".equals(x.state) || seedAfterDone) { any = true; }
                 }
-            }
+            } catch (Exception e) { Log.w(TAG, "load one", e); } }
             if (any) { for (Task x : snapshot()) if ("torrent".equals(x.kind) && (!"done".equals(x.state) || seedAfterDone)) { try { if ("done".equals(x.state)) x.paused = !seedAfterDone; addTorrent(x); } catch (Exception e) { x.state = "failed"; x.error = e.getMessage(); } } }
         } catch (Exception e) { Log.w(TAG, "load", e); }
     }
