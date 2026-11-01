@@ -56,7 +56,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   // A Hugging Face model's page: offered to the model window, where its files can be picked.
   const hfBox = h('div', { class: 'plan-note hf-offer', hidden: true });
   const peekHf = (u: string | null) => void import('../hf/hf').then((HF) => {
-    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; return; }
+    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || !S.socialOf(u)) return; hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
   sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, debridRow, opts);
