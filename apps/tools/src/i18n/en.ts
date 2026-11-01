@@ -112,6 +112,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   pickHint: "This release holds several files. The ones you want are ticked; change them as you like.", pickFilesTitle: "Choose the files", pickExtra: "Extra", pickSub: "Subtitles", pickThisEp: "Episode {n} only", pickTheseEps: "These episodes", pickEpisodes: "Episodes only", pickAll: "All", pickNone: "None", pickRange: "Choose", pickNoList: "The list of files could not be read (no peers answered). The whole release can still be downloaded.", pickWhole: "Download it whole", pickNoneChosen: "No file is chosen.",
   grabSocial: "Reading the post…", grabSocialNone: "This post has no photos or videos.", grabSocialFailed: "The post could not be read: {error}", grabNeedsVideo: "Some of these are video streams: install the Video add-on to download them.", grabPasteHint: "A page's address, or a post on X, Bluesky or Reddit",
   socialOffer: "A post: its photos and videos can be listed at full quality.", socialOpen: "Show them",
+  grabYtdlp: "Find the page's video with the Video add-on", grabYtdlpHint: "For players that load their video by script (thousands of sites).",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

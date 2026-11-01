@@ -108,4 +108,5 @@ export const ar: Partial<Strings> = {
   pickHint: "في هذا الإصدار ملفات عدّة، وقد عُلِّم ما تريده منها؛ فغيِّره كما تشاء.", pickFilesTitle: "اختر الملفات", pickExtra: "مُلحَق", pickSub: "ترجمة", pickThisEp: "الحلقة {n} وحدها", pickTheseEps: "هذه الحلقات", pickEpisodes: "الحلقات وحدها", pickAll: "الكل", pickNone: "لا شيء", pickRange: "اختر", pickNoList: "تعذّرت قراءة قائمة الملفات (لم يُجِب أحد من الأقران)، ويمكن تنزيل الإصدار كاملًا.", pickWhole: "نزّله كاملًا", pickNoneChosen: "لم يُختَر أيّ ملف.",
   grabSocial: "يُقرأ المنشور…", grabSocialNone: "ليس في هذا المنشور صور ولا مقاطع.", grabSocialFailed: "تعذّرت قراءة المنشور: {error}", grabNeedsVideo: "بعض هذه مقاطع مبثوثة، فثبِّت إضافة الفيديو لتنزيلها.", grabPasteHint: "عنوان صفحة، أو منشور على X أو Bluesky أو Reddit",
   socialOffer: "هذا منشور، ويمكن عرض صوره ومقاطعه بأعلى جودة.", socialOpen: "اعرضها",
+  grabYtdlp: "ابحث عن مقطع الصفحة بإضافة الفيديو", grabYtdlpHint: "للمشغّلات التي تحمّل مقطعها ببرمجة الصفحة (في آلاف المواقع).",
 };

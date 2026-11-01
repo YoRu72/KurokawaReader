@@ -46,6 +46,25 @@ export function followable(href: string, startUrl: string, below: boolean): bool
   if (/\.(css|js|json|xml|rss|ico|woff2?|ttf)(\?|$)/i.test(a.pathname)) return false;
   return !below || a.pathname.startsWith(b.pathname.replace(/[^/]*$/, ''));
 }
+/** The media a page's HTML names without running it: <video>/<audio> and their sources, og:video and
+ *  twitter:player:stream, JSON-LD contentUrl, and media addresses in its scripts (escaped «\/» too). */
+export function mediaInHtml(doc: Document, html: string, page: string): Link[] {
+  const out: Link[] = []; const s = new Set<string>(); const title = doc.title.trim();
+  const add = (raw: string | null | undefined, text: string, kind: 'video' | 'music') => {
+    if (!raw) return; let u: string;
+    try { u = new URL(raw.replace(/\\\//g, '/').replace(/\\u0026/gi, '&').replace(/&amp;/g, '&'), page).href; } catch { return; }
+    if (!/^https?:/i.test(u) || s.has(u)) return; s.add(u); out.push({ href: u, text, kind });
+  };
+  for (const v of Array.from(doc.querySelectorAll('video, audio'))) { const k = v.tagName === 'AUDIO' ? 'music' : 'video'; add(v.getAttribute('src'), v.getAttribute('title') ?? title, k); for (const x of Array.from(v.querySelectorAll('source[src]'))) add(x.getAttribute('src'), title, k); }
+  for (const m of Array.from(doc.querySelectorAll('meta[property^="og:video"], meta[name^="og:video"], meta[property="og:audio"], meta[name="twitter:player:stream"], meta[itemprop="contentUrl"], link[rel="video_src"]'))) {
+    const u = m.getAttribute('content') ?? m.getAttribute('href') ?? ''; const p = m.getAttribute('property') ?? m.getAttribute('name') ?? '';
+    if (/:(type|width|height|duration|tag|release_date)$/.test(p) || !/^(https?:)?\/\//i.test(u)) continue; add(u, title, /audio/.test(p) ? 'music' : 'video');
+  }
+  for (const sc of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) for (const m of sc.textContent?.match(/"contentUrl"\s*:\s*"[^"]+"/g) ?? []) add(m.replace(/^[^:]*:\s*"/, '').replace(/"$/, ''), title, 'video');
+  for (const u of (html.match(/https?:(?:\\?\/){2}[^"'\s<>()\\]+(?:\\\/[^"'\s<>()\\]+)*?\.(?:m3u8|mpd|mp4|webm|mkv|m4v|mov|mp3|m4a|flac)(?:\?[^"'\s<>()]*)?/gi) ?? []).slice(0, 300)) add(u, '', /\.(mp3|m4a|flac)(\?|$)/i.test(u) ? 'music' : 'video');
+  return out;
+}
+
 /** A link found: on a page, or a post's media (with the name to save it under, a thumbnail, and whether it is a
  *  stream for the Video add-on). */
 type Link = { href: string; text: string; kind?: string; name?: string; thumb?: string; viaVideo?: boolean };
@@ -84,6 +103,9 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
       let r; try { r = await request(page); if (r.status >= 400) throw new Error(`HTTP ${r.status}`); } catch (e) { if (read === 1) firstErr = e; continue; }
       if (r.headers['content-type'] && !/html|xml|text/i.test(r.headers['content-type'])) continue;
       const doc = new DOMParser().parseFromString(r.body, 'text/html');
+      // (The videos a plain read can see: the page's own players, its sharing tags, its structured data, and media
+      // addresses written in its scripts — the same reading the app's browser does, without running the page.)
+      if (d === 0) for (const m of mediaInHtml(doc, r.body, page)) if (!seen.has(m.href)) { seen.add(m.href); links.push(m); }
       for (const el of Array.from(doc.querySelectorAll('a[href], source[src], video[src], audio[src], img[src]'))) {
         const raw = el.getAttribute('href') ?? el.getAttribute('src') ?? ''; let href: string;
         try { href = raw.startsWith('magnet:') ? raw : new URL(raw, page).href; } catch { continue; }
@@ -100,6 +122,9 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     const want = kind; fromPage(links); if (want && links.some((x) => kindL(x) === want)) { kind = want; chosen.clear(); for (const x of shown()) chosen.add(x.href); draw(); }
     if (!links.length && canBrowse()) list.replaceChildren(h('div', { class: 'empty small' }, h('p', null, t('grabNothing')), h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); openBrowser(u); } }, icon('globe'), t('grabInBrowser'))));
     if (read > 1) list.prepend(h('p', { class: 'hint' }, t('grabRead', { n: localDigits(read), files: localDigits(links.length) })));
+    // (A video the page plays by script, from a site yt-dlp knows: the Video add-on finds it where a read cannot.)
+    const vid = await import('../video/ytdlp');
+    if (vid.videoEnabled()) list.prepend(h('button', { type: 'button', class: 'dest-row grab-ytdlp', onclick: () => { sh.close(); void import('../views/add').then((m) => m.addSheet(u)); } }, icon('film'), h('span', { class: 'grow' }, h('span', null, t('grabYtdlp')), h('small', { class: 'src' }, t('grabYtdlpHint')))));
   };
   /** The kinds found, with «All» first and the links that are none of them (pages) under «Other». */
   const kindOf = (href: string) => KINDS.find((k) => k[2].test(href))?.[0] ?? 'other';
@@ -134,7 +159,8 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     for (const href of chosen) {
       const l = links.find((x) => x.href === href);
       try {
-        if (l?.viaVideo) { if (!vid.videoEnabled()) { noVideo++; continue; } await getEngine().add({ source: { url: href }, video: { ...preferredFormat(), embedThumb: getSettings().videoEmbedThumb } }); n++; continue; }
+        // (A stream's playlist or manifest — HLS, DASH — is a list of pieces, not the video: yt-dlp joins them.)
+        if (l?.viaVideo || /\.(m3u8|mpd)(\?|#|$)/i.test(href)) { if (!vid.videoEnabled()) { noVideo++; continue; } await getEngine().add({ source: { url: href }, video: { ...preferredFormat(), title: l?.text || undefined, embedThumb: getSettings().videoEmbedThumb, ...(pre && !l?.viaVideo ? { headers: hdrs } : {}) } }); n++; continue; }
         const [src] = parseSources(href); if (src) { await getEngine().add({ source: src.url && pre ? { ...src, headers: hdrs } : src, name: l?.name, connections: 8 }); n++; }
       } catch { /* the next */ }
     }
