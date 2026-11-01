@@ -25,6 +25,14 @@ final class KrDownloader {
     interface Opener { HttpURLConnection open(URL url) throws IOException; }
 
     /** What is learnt as the download goes (read by the progress reports while it runs). */
+    /** A connection cut by the server (not a timeout, not a refused address). */
+    static boolean cut(Throwable e) {
+        for (Throwable x = e; x != null; x = x.getCause()) {
+            String m = String.valueOf(x.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            if (x instanceof javax.net.ssl.SSLException || (x instanceof java.net.SocketException && !(x instanceof java.net.ConnectException)) || m.contains("connection reset") || m.contains("closed early") || m.contains("unexpected end of stream") || m.contains("broken pipe")) return true;
+        }
+        return false;
+    }
     static final class Result { volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
     /** One range a connection is fetching (or fetched): what the details page draws as the file map and the lanes. */
     static final class Seg { final long start, end; volatile long pos; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
@@ -224,6 +232,9 @@ final class KrDownloader {
                                 pos += wrote[0];
                                 if (c != null) c.disconnect();
                                 int sc = e instanceof Status ? ((Status) e).code : 0;
+                                // (A connection the server cuts — reset, closed mid-handshake — as protected sites do to
+                                // a client opening many at once: refused like a 429, when others are still going.)
+                                if (sc == 0 && cut(e) && alive.get() > 1) sc = 429;
                                 // A server refusing one connection too many: this one stops, its chunk to the others.
                                 if ((sc == 429 || sc == 503) && alive.decrementAndGet() >= 1) { gone[0] = true; back.add(new long[]{ idx, pos }); res.refused = true; res.connections = alive.get(); leave = true; break; } else if (sc == 429 || sc == 503) alive.incrementAndGet();
                                 if (attempt >= opt.retries) throw e;

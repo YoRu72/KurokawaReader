@@ -113,6 +113,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   grabSocial: "Reading the post…", grabSocialNone: "This post has no photos or videos.", grabSocialFailed: "The post could not be read: {error}", grabNeedsVideo: "Some of these are video streams: install the Video add-on to download them.", grabPasteHint: "A page's address, or a post on X, Bluesky or Reddit",
   socialOffer: "A post: its photos and videos can be listed at full quality.", socialOpen: "Show them",
   grabYtdlp: "Find the page's video with the Video add-on", grabYtdlpHint: "For players that load their video by script (thousands of sites).",
+  errCut: "the server closed the connection. Some sites check visitors first: open the link once in the app's browser (its check passes there and the download reuses it), or try again later.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };
