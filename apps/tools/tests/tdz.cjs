@@ -2,7 +2,8 @@
 // once threw).
 // Finds functions that read a let/const of their enclosing block and are called (directly, not from another
 // nested function) earlier in that block than the variable's declaration — a temporal-dead-zone error at run time.
-const ROOT = require('path').join(__dirname, '..'); process.argv[2] = ROOT; const ts = require(require.resolve('typescript', { paths: [ROOT, process.cwd()] })); let found = 0; const fs = require('fs'); const path = require('path');
+const ROOT = require('path').join(__dirname, '..'); process.argv[2] = ROOT; // (The parser of TypeScript 6 — TypeScript 7, the native one, has no JavaScript API: CI installs it as ts-api.)
+const ts = ['ts-api', 'typescript'].map((n) => { try { return require(require.resolve(n, { paths: [ROOT, process.cwd()] })); } catch { return null; } }).find((x) => x && x.createSourceFile); if (!ts) { console.log('no TypeScript parser: npm install --no-save ts-api@npm:typescript@6'); process.exit(1); } let found = 0; const fs = require('fs'); const path = require('path');
 const files = []; (function walk(d) { for (const f of fs.readdirSync(d)) { const p = path.join(d, f); if (fs.statSync(p).isDirectory()) walk(p); else if (/\.ts$/.test(f)) files.push(p); } })(process.argv[2] + '/src');
 for (const file of files) {
   const sf = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
