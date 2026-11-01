@@ -111,10 +111,6 @@ try {
 await fs.mkdir(pkgDir, { recursive: true });
 for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
-// --- the launcher icon (its own, not the template's; drawn by native/icon/render.cjs): adaptive layers, the themed
-// (monochrome) layer of Android 13, and the older launchers' icons ---
-await fs.cp(path.join(root, 'native/android/res'), path.join(app, 'src/main/res'), { recursive: true, force: true });
-
 // --- gradle: libtorrent4j, ABI splits, signing, version ---
 const gradlePath = path.join(app, 'build.gradle');
 let gradle = await fs.readFile(gradlePath, 'utf8');
