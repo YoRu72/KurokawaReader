@@ -4,6 +4,7 @@
 // by the app (SRT/VTT/ASS text, or libass when bundled) with size / colour / position / delay, subtitles found
 // through the Subtitles add-on for the episode being watched, the position remembered, the episode marked
 // watched on AniList near its end, and the A/B range cut to a file (with the subtitles burnt in) through ffmpeg.
+import { getSettings } from '../settings';
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
@@ -75,6 +76,8 @@ export function openPlayer(src: PlayerSource): void {
     drawSubs(c);
     if (Math.floor(c) % 5 === 0) remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay });
     if (d && P.markWatched && !watchedSent && c / d * 100 >= P.watchedAt) markWatched(false);
+    // (Halfway through an episode: the next one's best release starts coming — Seanime's and Hayase's preload.)
+    if (d && !preloadSent && c / d >= 0.5) { preloadSent = true; const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode && getSettings().animePreloadNext !== false) void import('../anime/watch').then((w) => w.preloadNext(m.anilistId!, m.episode!)).catch(() => undefined); }
     if (sleepAt && Date.now() >= sleepAt) { video.pause(); sleepAt = 0; toast(t('sleepTimerDone')); }
   }
   function drawBuffer() { const d = video.duration; if (!d) return; let end = 0; for (let i = 0; i < video.buffered.length; i++) if (video.buffered.start(i) <= video.currentTime + 0.1 && video.buffered.end(i) > end) end = video.buffered.end(i); (bar.querySelector('.kt-buf') as HTMLElement).style.width = `${(end / d) * 100}%`; }
@@ -83,6 +86,7 @@ export function openPlayer(src: PlayerSource): void {
   const seekBy = (dt: number) => { video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + dt)); flashText(`${dt > 0 ? '+' : '−'}${localDigits(Math.abs(Math.round(dt)))}s`); };
   const frameStep = (n: number) => { video.pause(); video.currentTime = Math.max(0, video.currentTime + n / 30); };
   function flashText(s: string, long = false) { flash.textContent = s; flash.classList.add('on'); window.clearTimeout((flash as HTMLElement & { _t?: number })._t); (flash as HTMLElement & { _t?: number })._t = window.setTimeout(() => flash.classList.remove('on'), long ? 1400 : 700); }
+  let preloadSent = false;
   function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); if (m?.imdbId) void import('../tv/library').then((l) => l.markWatched(m.imdbId!, m.season, m.episode)); void end; }
   function askResume(pos: number) { const sh = openSheet(t('resumeTitle'), t('close')); sh.body.append(h('p', null, t('resumeBody', { t: fmtTime(pos) }))); sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); } }, t('resumeFromStart')), h('button', { type: 'button', class: 'btn primary', onclick: () => { video.currentTime = pos; sh.close(); } }, t('resumeContinue'))); }
   function neighbour(dir: number) { const list = src.playlist ?? []; const i = list.findIndex((x) => x.url === src.url); const nx = getPrefs().shuffle && dir > 0 && list.length > 1 ? list.filter((x) => x.url !== src.url)[Math.floor(Math.random() * (list.length - 1))] : list[i + dir]; if (!nx) { toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); return; } close(); openPlayer({ ...nx, playlist: list }); }

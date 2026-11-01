@@ -85,6 +85,7 @@ export interface AddOptions {
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }
 
+export interface TorrentDetail { peers?: { ip: string; client: string; down: number; up: number; progress: number; total: number; utp: boolean }[]; trackers?: { url: string; tier: number; state: 'working' | 'updating' | 'failing' | 'waiting'; message: string; fails: number }[]; seeds?: number; peersConnected?: number; seedsInSwarm?: number; peersInSwarm?: number; ratio?: number; limitDown?: number; limitUp?: number }
 /** One torrent's metadata, fetched before the download is added (to pick files, to see the size). */
 export interface TorrentInfo { name: string; infoHash: string; total: number; files: { index: number; path: string; size: number }[] }
 
@@ -101,6 +102,14 @@ export interface Engine {
   remove(id: string, deleteFiles: boolean): Promise<void>;
   setFiles?(id: string, priorities: (0 | 1 | 2)[]): Promise<void>;
   setSequential?(id: string, on: boolean): Promise<void>;
+  /** A torrent up close: its peers, trackers, swarm counts and own limits. */
+  torrentDetail?(id: string): Promise<TorrentDetail>;
+  /** Its files checked again against their hashes. */
+  recheck?(id: string): Promise<void>;
+  /** Every tracker and the DHT asked for peers now. */
+  reannounce?(id: string): Promise<void>;
+  /** This download's own speed limits (bytes/s; 0 = none). */
+  setTaskLimits?(id: string, down: number, up: number): Promise<void>;
   setLimits?(l: Limits): Promise<void>;
   /** A new address for a file download whose link ran out: the same file, gone on from where it stopped. */
   setUrl?(id: string, url: string): Promise<void>;

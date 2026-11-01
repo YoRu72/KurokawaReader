@@ -119,6 +119,9 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   addTrackers: "Add public trackers", addTrackersHint: "Well-known public trackers (refreshed daily) are added to every public torrent, so peers and a magnet's details are found much sooner. Never added to private torrents.",
   simpleDisk: "Simple disk access", simpleDiskHint: "Slower: reads, writes and checks on one thread. Only for storage that misbehaves with the fast way. Applies from the next start.",
   installAnApp: "Install an app", installAnAppHint: "An APK, a bundle (.apks, .xapk, .apkm) or an archive with one inside",
+  swarmTitle: "Swarm", swarmRecheck: "Check the files again", swarmRechecking: "Checking the files…", swarmReannounce: "Find peers now", swarmAnnounced: "Asked every tracker and the DHT for peers", swarmPeers: "Peers", swarmTrackers: "Trackers", swarmNoPeers: "No peers connected yet.", swarmSeeds: "{n} seeds of {of}", swarmPeersN: "{n} peers of {of}", swarmRatio: "Ratio {r}", swarmLimitsHint: "This download's own limits (0 = no limit)", swarmTr_working: "Working", swarmTr_updating: "Asking…", swarmTr_failing: "Not answering", swarmTr_waiting: "Waiting",
+  connsPerTorrent: "Connections per torrent", connsPerTorrentHint: "Peers one torrent may connect to at once (Hayase's 80). 0 = no limit.", connsTotal: "Connections in all", connsTotalHint: "For every torrent together.",
+  preloadedNext: "Episode {n} is coming, ready for when this one ends", animePreloadNext: "Fetch the next episode while watching", animePreloadNextHint: "Halfway through an episode, the next one's best release starts downloading (only its file from a batch).",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

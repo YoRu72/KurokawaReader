@@ -115,4 +115,7 @@ export const ar: Partial<Strings> = {
   addTrackers: "أضف متتبّعات عامة", addTrackersHint: "تُضاف متتبّعات عامة معروفة (تُحدَّث كل يوم) إلى كل تورنت عام، فيُعثَر على الأقران وتفاصيل الرابط المغناطيسي أسرع بكثير. ولا تُضاف إلى التورنتات الخاصة.",
   simpleDisk: "وصول بسيط إلى التخزين", simpleDiskHint: "أبطأ: القراءة والكتابة والفحص على خيط واحد، ولا يُلجأ إليه إلا لتخزين يضطرب مع الطريقة السريعة. ويسري من التشغيل التالي.",
   installAnApp: "ثبّت تطبيقًا", installAnAppHint: "ملف APK، أو حزمة (.apks و.xapk و.apkm)، أو أرشيف فيه أحدها",
+  swarmTitle: "السرب", swarmRecheck: "افحص الملفات من جديد", swarmRechecking: "تُفحَص الملفات…", swarmReannounce: "ابحث عن أقران الآن", swarmAnnounced: "سُئلت المتتبّعات كلها وDHT عن أقران", swarmPeers: "الأقران", swarmTrackers: "المتتبّعات", swarmNoPeers: "لم يتصل أيّ قرين بعد.", swarmSeeds: "{n} من {of} باذرًا", swarmPeersN: "{n} من {of} قرينًا", swarmRatio: "النسبة {r}", swarmLimitsHint: "حدّا هذا التنزيل وحده (0 = بلا حدّ)", swarmTr_working: "يعمل", swarmTr_updating: "يُسأل…", swarmTr_failing: "لا يجيب", swarmTr_waiting: "ينتظر",
+  connsPerTorrent: "الاتصالات لكل تورنت", connsPerTorrentHint: "عدد الأقران الذين يتصل بهم التورنت الواحد معًا (80 كما في Hayase)، و0 = بلا حدّ.", connsTotal: "الاتصالات جميعًا", connsTotalHint: "للتورنتات كلها معًا.",
+  preloadedNext: "تُنزَّل الحلقة {n} لتكون جاهزة حين تنتهي هذه", animePreloadNext: "نزّل الحلقة التالية في أثناء المشاهدة", animePreloadNextHint: "في منتصف الحلقة يبدأ تنزيل أفضل إصدار للحلقة التالية (ملفها وحده من الحزمة).",
 };

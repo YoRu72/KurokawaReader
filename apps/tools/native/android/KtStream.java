@@ -33,6 +33,7 @@ final class KtStream {
             Thread t = new Thread(() -> { while (!server.isClosed()) { try { Socket s = server.accept(); new Thread(() -> serve(s), "kt-stream").start(); } catch (IOException e) { break; } } }, "kt-stream-accept");
             t.setDaemon(true); t.start();
         }
+        if (!taskId.isEmpty()) engine.prepareStream(taskId, fileIndex);
         return "http://127.0.0.1:" + port + "/" + taskId + "/" + fileIndex;
     }
     /** A local file's URL on this server. */

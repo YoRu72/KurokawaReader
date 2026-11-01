@@ -86,6 +86,10 @@ public class KtPlugin extends Plugin {
         try { if (f.exists()) { text = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8).trim(); f.delete(); } } catch (Exception ignored) {}
         r.put("text", text == null || text.isEmpty() ? null : text); call.resolve(r);
     }
+    @PluginMethod public void torrentDetail(PluginCall call) { run(call, () -> call.resolve(new JSObject(engine().torrentDetail(call.getString("id", "")).toString()))); }
+    @PluginMethod public void recheck(PluginCall call) { run(call, () -> { engine().recheck(call.getString("id", "")); call.resolve(); }); }
+    @PluginMethod public void reannounce(PluginCall call) { run(call, () -> { engine().reannounce(call.getString("id", "")); call.resolve(); }); }
+    @PluginMethod public void setTaskLimits(PluginCall call) { run(call, () -> { engine().setTaskLimits(call.getString("id", ""), call.getInt("down", 0), call.getInt("up", 0)); call.resolve(); }); }
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
     @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { engine().setUrl(call.getString("id", ""), call.getString("url", "")); call.resolve(); }); }
     @PluginMethod public void hosts(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("hosts", engine().hosts()); call.resolve(r); }); }
