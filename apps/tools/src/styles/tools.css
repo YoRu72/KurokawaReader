@@ -471,3 +471,11 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .kt-hero > .grow { align-self: stretch; width: 100%; min-width: 0; max-width: 100%; }
 .kt-hero .kt-name { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .task-detail { overflow-x: hidden; }
+
+/* Settings' bar of tabs: every setting, the app's own, each add-on's — one row that scrolls sideways. */
+.settings-view .settings-tabs { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 10px; margin-bottom: 4px; }
+.settings-view .settings-tabs::-webkit-scrollbar { display: none; }
+.settings-view .settings-tabs[hidden] { display: none; }
+.settings-view .settings-tabs .chip { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 16px; border-radius: 20px; }
+.settings-view .settings-tabs .chip svg { width: 18px; height: 18px; }
+.settings-view .settings-tabs .chip.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }

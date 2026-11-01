@@ -44,6 +44,8 @@ export interface Settings {
   animeTitleLang: 'preferred' | 'romaji' | 'english' | 'native';
   /** Subtitles: the languages wanted, in order. */
   subLangs: string[];
+  /** Settings shown as one list, or with a bar of tabs above: all, the app's own, each add-on's. */
+  settingsLayout: 'tabs' | 'list';
   /** Archives: unpack subtitle archives as they arrive; unpack every downloaded archive. */
   autoUnpackSubs: boolean;
   autoUnpackAll: boolean;
@@ -104,7 +106,7 @@ const DEFAULTS: Settings = {
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
-  subLangs: [], autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
+  subLangs: [], settingsLayout: 'tabs', autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
   categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, torrent: { dht: true, lsd: true, upnp: true, natpmp: true, enc: 'enabled', seedRatio: 0, seedMinutes: 0 }, doh: 'off', secureScreen: false, playerWith: 'ask', archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
 };
 
