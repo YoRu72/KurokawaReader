@@ -2,7 +2,7 @@
 // video at its best MP4 and photos at their original size, a Bluesky post's four photos — named after the post —,
 // and the Add sheet offering the post's media when such a link is pasted.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
-const DIST = path.join(__dirname, '..', 'dist'); const FX = path.join(__dirname, 'fixtures');
+const DIST = path.join(__dirname, '..', 'dist'); const FX = path.join(__dirname, 'data');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 const serve = (root) => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(root, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const PHOTOS = { code: 200, message: 'OK', tweet: { id: '1700000000000000001', text: 'Two photos', author: { screen_name: 'someone' }, media: { all: [
