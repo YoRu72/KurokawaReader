@@ -252,6 +252,14 @@ public class KtPlugin extends Plugin {
         final String pw = call.getString("password", null), sel = call.getString("select", null); final JSArray parts = call.getArray("parts", null);
         bg.execute(() -> { try { KtApk.install(getContext(), id, f, del, pw, sel, parts, (ev) -> { try { notifyListeners("apkInstall", new JSObject(ev.toString())); } catch (Exception ignored) {} }); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } });
     }
+    /** The system's page to uninstall an app (asked of the person; nothing is removed without them). */
+    @PluginMethod public void uninstallApp(PluginCall call) { try { Intent i = new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + call.getString("pkg", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }
+    /** An app's page in the system's settings. */
+    @PluginMethod public void appDetails(PluginCall call) { try { Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + call.getString("pkg", ""))); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }
+    /** Whether an app is installed now (after the uninstall page closes), and its version. */
+    @PluginMethod public void appInstalled(PluginCall call) { JSObject r = new JSObject(); try { android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(call.getString("pkg", ""), 0); r.put("installed", true); r.put("version", p.versionName); } catch (Exception e) { r.put("installed", false); } call.resolve(r); }
+    /** A bundle's game data put where the game reads it (see KtApk.copyObb). */
+    @PluginMethod public void apkObb(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String pkg = call.getString("pkg", ""); bg.execute(() -> { try { call.resolve(new JSObject(KtApk.copyObb(getContext(), f, pkg).toString())); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void launchApp(PluginCall call) { Intent i = getContext().getPackageManager().getLaunchIntentForPackage(call.getString("pkg", "")); if (i == null) { call.reject("notLaunchable"); return; } i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); call.resolve(); }
     @PluginMethod public void canInstall(PluginCall call) { JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r); }
 

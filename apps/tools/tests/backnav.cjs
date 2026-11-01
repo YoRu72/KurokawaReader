@@ -13,7 +13,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
     localStorage.setItem('kr.lang', 'en'); window.__min = 0;
     const task = { id: 'b', kind: 'http', name: 'Show 04.mkv', source: { url: 'https://x/a.mkv' }, dir: '/sdcard/Download', state: 'done', done: 1, total: 1, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), engine: 'native' };
     const api = { addListener: () => Promise.resolve({ remove() {} }), list: async () => ({ tasks: [task] }) };
-    const App = { addListener: async (ev, fn) => { if (ev === 'backButton') window.__back = fn; return { remove() {} }; }, minimizeApp: async () => { window.__min++; }, exitApp: async () => { window.__exit = true; } };
+    const App = { addListener: (ev, fn) => { if (ev === 'backButton') window.__back = fn; return { remove() {} }; }, minimizeApp: () => { window.__min++; }, exitApp: async () => { window.__exit = true; } };
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) }), App }, PluginHeaders: [] };
   });
   const hash = () => p.evaluate(() => location.hash || '#/');

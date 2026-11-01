@@ -75,7 +75,20 @@ export function hash(str: string): string {
 
 const FORMAT = 'You will receive a JSON array of strings (paragraphs). Return ONLY a JSON array of strings of exactly the same length, where item i is the translation of item i. Keep line breaks inside an item. No prose, no code fences.';
 
+/** A busy or limited provider (429, 5xx) is asked again — after the wait it names, else a little longer each
+ *  time — up to three more times; anything else fails at once. */
 async function chat(system: string, user: string, json = true): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await chatOnce(system, user, json); }
+    catch (e) {
+      const m = /\b(429|500|502|503|504|529)\b/.exec(String((e as Error)?.message ?? '')); const wait = (e as { retryAfter?: number }).retryAfter;
+      if (!m || attempt >= 3) throw e;
+      await new Promise((r) => setTimeout(r, Math.min(30000, wait ? wait * 1000 : 1500 * 2 ** attempt)));
+    }
+  }
+}
+const failure = async (who: string, r: Response) => Object.assign(new Error(`${who} ${r.status}: ${(await r.text()).slice(0, 200)}`), { retryAfter: Number(r.headers.get('retry-after')) || undefined });
+async function chatOnce(system: string, user: string, json = true): Promise<string> {
   const s = getSettings();
   if (s.aiProvider === 'local') {
     const L = await import('./localai');
@@ -92,7 +105,7 @@ async function chat(system: string, user: string, json = true): Promise<string> 
         method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctl.signal,
         body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature: 0.2, ...(json ? { responseMimeType: 'application/json' } : {}) } }),
       });
-      if (!r.ok) throw new Error(`Gemini ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      if (!r.ok) throw await failure('Gemini', r);
       const j = await r.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
       return j.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
     }
@@ -102,7 +115,7 @@ async function chat(system: string, user: string, json = true): Promise<string> 
         headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({ model, max_tokens: 8192, temperature: 0.2, system, messages: [{ role: 'user', content: user }] }),
       });
-      if (!r.ok) throw new Error(`Anthropic ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      if (!r.ok) throw await failure('Anthropic', r);
       const j = await r.json() as { content?: { type: string; text?: string }[] };
       return j.content?.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('') ?? '';
     }
@@ -114,7 +127,7 @@ async function chat(system: string, user: string, json = true): Promise<string> 
       method: 'POST', headers, signal: ctl.signal,
       body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
     });
-    if (!r.ok) throw new Error(`${providerInfo().label} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    if (!r.ok) throw await failure(providerInfo().label, r);
     const j = await r.json() as { choices?: { message?: { content?: string } }[] };
     return j.choices?.[0]?.message?.content ?? '';
   } finally { clearTimeout(timeout); }
@@ -133,13 +146,25 @@ function parseArray(raw: string, n: number): string[] {
   throw new Error('bad translation format');
 }
 
-/** Translate several paragraphs in one request. */
-export async function translateBatch(texts: string[], bookId?: string): Promise<string[]> {
+/** What surrounds a passage, given to the model so a name, a tone or a pronoun carries on from one batch to the
+ *  next: the book, the chapter, and the paragraphs just before (not to be translated). */
+export interface TrContext { book?: string; chapter?: string; before?: string[] }
+const STYLE = 'Some items hold inline tags <i>, <b>, <em>, <strong>, <u>, <sup>, <sub>: keep each tag around the words that render the tagged words, and add no other tags.';
+function contextLines(c?: TrContext): string {
+  if (!c) return '';
+  const lines = [c.book ? `Book: ${c.book}` : '', c.chapter ? `Chapter: ${c.chapter}` : '', c.before?.length ? `The text just before (for continuity only — do not translate it, do not include it):\n${c.before.map((x) => `> ${x.slice(0, 600)}`).join('\n')}` : ''].filter(Boolean);
+  return lines.length ? `Context:\n${lines.join('\n')}` : '';
+}
+
+/** Translate several paragraphs in one request. A reply that does not hold one translation per paragraph is
+ *  asked for again in halves (down to single paragraphs), so one bad answer costs a batch's half, not all of it. */
+export async function translateBatch(texts: string[], bookId?: string, ctx?: TrContext): Promise<string[]> {
   if (!texts.length) return [];
   const s = getSettings();
   // (The reader's glossary: the terms these paragraphs hold, given with them, and put right after.)
   const gl = s.aiTask === 'furigana' ? [] : termsIn(texts, bookId);
-  const prompt = [effectivePrompt(), glossaryPrompt(gl)].filter(Boolean).join('\n\n');
+  const styled = s.aiTask !== 'furigana' && texts.some((x) => /<(i|b|em|strong|u|sup|sub)>/.test(x));
+  const prompt = [effectivePrompt(), glossaryPrompt(gl), styled ? STYLE : '', s.aiContext !== false && s.aiTask !== 'furigana' ? contextLines(ctx) : ''].filter(Boolean).join('\n\n');
   const fix = (out: string[]) => (gl.length ? out.map((x) => applyGlossary(x, gl)) : out);
   // A small model on the device does better with one paragraph at a time and plain text back.
   if (s.aiProvider === 'local' && s.localEngine === 'device') {
@@ -148,8 +173,28 @@ export async function translateBatch(texts: string[], bookId?: string): Promise<
     return fix(out);
   }
   const system = `${prompt}\n\n${FORMAT}`;
-  const raw = await chat(system, JSON.stringify(texts));
-  return fix(parseArray(raw, texts.length));
+  const ask = async (part: string[]): Promise<string[]> => {
+    const raw = await chat(system, JSON.stringify(part));
+    try { return parseArray(raw, part.length); }
+    catch (e) {
+      if (part.length === 1) throw e;
+      const mid = Math.ceil(part.length / 2);
+      return [...await ask(part.slice(0, mid)), ...await ask(part.slice(mid))];
+    }
+  };
+  return fix(await ask(texts));
+}
+
+/** Names and terms a passage holds (people, places, sects, techniques, titles), each with a rendering in the
+ *  target language — offered to the reader for the book's glossary. */
+export async function suggestTerms(texts: string[], known: string[]): Promise<{ from: string; to: string; kind?: string }[]> {
+  const s = getSettings(); const lang = langName(s.aiTarget);
+  const system = `You build a translation glossary. From the text, list the proper names and recurring special terms (people, places, organisations, sects, techniques, titles, invented words) — at most 40, the most frequent first — each with its rendering in ${lang} as a careful translator would fix it for the whole book (transliterate names; translate meaningful titles). Skip these, already in the glossary: ${JSON.stringify(known.slice(0, 200))}. Return ONLY a JSON array of objects {"from": original, "to": rendering, "kind": "person|place|group|term"}. No prose.`;
+  const raw = await chat(system, texts.join('\n\n').slice(0, 24000));
+  let txt = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''); const a = txt.indexOf('['), b = txt.lastIndexOf(']'); if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
+  const arr = JSON.parse(txt) as { from?: string; to?: string; kind?: string }[];
+  const seen = new Set(known.map((x) => x.toLowerCase()));
+  return arr.filter((x) => x && typeof x.from === 'string' && typeof x.to === 'string' && x.from.trim() && x.to.trim() && !seen.has(x.from.trim().toLowerCase())).map((x) => ({ from: x.from!.trim(), to: x.to!.trim(), kind: x.kind }));
 }
 
 export async function translateOne(text: string): Promise<string> { return (await translateBatch([text]))[0]; }

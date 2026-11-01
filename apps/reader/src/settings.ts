@@ -159,6 +159,10 @@ export interface VisualSettings {
   aiPromptPrefill: boolean;   // show the built-in instructions in the box, ready to be extended
   aiTarget: string;           // target language code
   aiTask: 'translate' | 'furigana';  // what the chapter pass does
+  /** The translator: the translation in place of the text or under it; the book, the chapter and the lines
+   *  before given as context; italics and bold kept; paragraphs already in the target script left; requests at
+   *  once; the next chapter translated ahead while this one is read. */
+  aiDisplay?: 'replace' | 'bilingual'; aiContext?: boolean; aiKeepStyle?: boolean; aiSkipSame?: boolean; aiParallel?: number; aiPrefetch?: boolean;
   furigana: boolean;
   autoReadings: boolean;      // show furigana / pinyin as soon as CJK text is selected          // show ruby readings in Japanese books
   aiTtsModel: string;

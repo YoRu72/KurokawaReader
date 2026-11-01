@@ -163,9 +163,12 @@ else {
   // round and round between two of them —: the open sheet first, then up a level, then the downloads; only from
   // the downloads' top does the app go to the background.)
   if (window.Capacitor?.isNativePlatform?.() && window.Capacitor.getPlatform?.() === 'android') {
-    type AppPlugin = { addListener(ev: 'backButton', fn: () => void): Promise<unknown>; minimizeApp(): Promise<void>; exitApp(): Promise<void> };
-    const App = (window.Capacitor.Plugins?.App ?? window.Capacitor.registerPlugin?.('App')) as AppPlugin | undefined;
-    if (App) void App.addListener('backButton', () => { if (!goBack()) void App.minimizeApp().catch(() => App.exitApp()); }).catch(() => undefined);
+    // (The bridge's own App object answers addListener with a plain handle, not a promise — «….catch is not a
+    // function» —, so every answer is taken through Promise.resolve, the registered plugin first.)
+    type AppPlugin = { addListener(ev: 'backButton', fn: () => void): unknown; minimizeApp(): unknown; exitApp(): unknown };
+    const App = (window.Capacitor.registerPlugin?.('App') ?? window.Capacitor.Plugins?.App) as AppPlugin | undefined;
+    const call = (f: () => unknown) => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
+    if (App) void call(() => App.addListener('backButton', () => { if (!goBack()) void call(() => App.minimizeApp()).catch(() => call(() => App.exitApp())).catch(() => undefined); })).catch(() => undefined);
   }
   // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });

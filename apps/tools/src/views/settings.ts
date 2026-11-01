@@ -11,7 +11,7 @@ import { getEngine } from '../engine';
 import { animeSettingsCard, anilistCard } from './animeSettings';
 import { tvSettingsCard } from './tvSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
-import { checkForUpdate, showUpdateSheet, lastChecked } from '../updates';
+import { updateRows } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
 
 /** A language's own name (the Subtitles add-on's list, else the browser's names). */
@@ -30,7 +30,30 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   const open = new Set<string>(section ? [section] : ['updates']);
   const search = h('input', { type: 'search', class: 'settings-search', placeholder: t('searchSettings'), 'aria-label': t('searchSettings') }) as HTMLInputElement;
   const nav = h('div', { class: 'folder-chips settings-nav', role: 'tablist' });
-  const head = h('div', { class: 'settings-head' }, search, nav);
+  // The bar of tabs (when chosen): every setting, the app's own, then each installed add-on's — its cards and
+  // its sources' options together, on a page of their own.
+  let tab = 'all'; let index: Awaited<ReturnType<typeof loadIndex>> | null = null;
+  const tabsBar = h('div', { class: 'settings-tabs', role: 'tablist' });
+  const head = h('div', { class: 'settings-head' }, tabsBar, search, nav);
+  void loadIndex().then((ix) => { index = ix; if (getSettings().settingsLayout === 'tabs') rerender(); }).catch(() => undefined);
+  const drawTabs = (all: HTMLElement[]) => {
+    const s = getSettings(); tabsBar.hidden = s.settingsLayout !== 'tabs'; if (tabsBar.hidden) { tab = 'all'; return; }
+    const lang = getLang(); const ids = new Set(all.map((c) => c.id));
+    const mine = addonTabs(s.addons, index, ids);
+    if (tab !== 'all' && tab !== 'app' && !mine.some((m) => m.id === tab)) tab = 'all';
+    const btn = (id: string, label: string, ic?: string) => h('button', { type: 'button', role: 'tab', class: 'chip' + (tab === id ? ' on' : ''), 'aria-selected': String(tab === id), onclick: () => { tab = id; search.value = ''; rerender(); body.scrollTop = 0; } }, ic ? icon(ic) : null, h('span', null, label));
+    tabsBar.replaceChildren(btn('all', t('settingsAll'), 'list'), btn('app', t('settingsApp'), 'settings'), ...mine.map((m) => btn(m.id, m.entry ? nameOf(m.entry, lang) : m.id, m.entry?.icon ?? 'puzzle')));
+    tabsBar.querySelector('.chip.on')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+  };
+  const inTab = (all: HTMLElement[]): HTMLElement[] => {
+    const s = getSettings(); if (s.settingsLayout !== 'tabs' || tab === 'all') return all;
+    const ids = new Set(all.map((c) => c.id)); const mine = addonTabs(s.addons, index, ids);
+    if (tab === 'app') { const owned = new Set(mine.flatMap((m) => m.cards)); return all.filter((c) => !owned.has(c.id)); }
+    const m = mine.find((x) => x.id === tab); if (!m) return all;
+    const out = all.filter((c) => m.cards.includes(c.id)); m.cards.forEach((id) => open.add(id));
+    if (m.sources.length) { const box = card(`src-${m.id}`, t('addonSourcesSettings')); addonFields(box, m.sources, getLang()); open.add(box.id); out.push(box); }
+    return out;
+  };
   const decorate = () => {
     nav.replaceChildren();
     for (const card of Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'))) {
@@ -55,7 +78,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     }
   };
   search.addEventListener('input', applySearch);
-  const rerender = () => { body.replaceChildren(head, ...sections()); decorate(); };
+  const rerender = () => { const all = sections(); drawTabs(all); body.replaceChildren(head, ...inTab(all)); decorate(); };
 
   const sections = (): HTMLElement[] => {
     const s = getSettings();
@@ -63,6 +86,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const general = card('general', t('general'),
       row(t('language'), pickButton(t('language'), langOpts, getLangPref(), (v) => { setLangPref(v as 'system'); }, t('close'))),
       row(t('direction'), pickButton(t('direction'), [['auto', t('dirAuto')], ['ltr', t('dirLtr')], ['rtl', t('dirRtl')]], getDirPref(), (v) => { setDirPref(v as DirPref); rerender(); }, t('close'))),
+      row(t('settingsLayout'), pickButton(t('settingsLayout'), [['tabs', t('settingsLayoutTabs')], ['list', t('settingsLayoutList')]], s.settingsLayout ?? 'tabs', (v) => { updateSettings({ settingsLayout: v as 'tabs' }); tab = 'all'; rerender(); }, t('close')), t('settingsLayoutHint')),
       row(t('uiScale'), pickButton(t('uiScale'), [['75', '75%'], ['85', '85%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['125', '125%']], String(s.uiScale), (v) => { updateSettings({ uiScale: Number(v) }); rerender(); }, t('close')), t('uiScaleHint')),
       row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close'))),
       row(t('darkTone'), pickButton(t('darkTone'), [['default', t('darkToneDefault')], ['grey', t('darkToneGrey')], ['black', t('darkToneBlack')]], s.darkTone, (v) => { updateSettings({ darkTone: v as DarkTone }); rerender(); }, t('close'))),
@@ -146,9 +170,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const otherApps = card('apps', t('otherApps'), h('p', { class: 'hint' }, t('otherAppsHint')), readerBox);
     void drawOtherApp(readerBox.querySelector('.app-actions') as HTMLElement);
     // Updates
-    const updStatus = h('p', { class: 'src' }, lastChecked() ? t('lastChecked', { d: new Date(lastChecked()).toLocaleString(dateLocale()) }) : '');
-    const updates = card('updates', t('updates'), row(t('version', { v: APP_VERSION }), h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; updStatus.textContent = t('checking'); try { const rel = await checkForUpdate(true); if (rel) { showUpdateSheet(rel); updStatus.textContent = t('updateAvailable', { v: rel.version }); } else updStatus.textContent = t('upToDate'); } catch { updStatus.textContent = t('updateFailed'); } b.disabled = false; } }, icon('refresh'), t('checkUpdates'))),
-      toggle(t('autoCheck'), s.autoUpdateCheck, (v) => updateSettings({ autoUpdateCheck: v })), updStatus);
+    const updates = card('updates', t('updates'), ...updateRows(row, toggle, (label, opts, value, set) => row(label, pickButton(label, opts, value, (v) => { set(v); rerender(); }, t('close')))));
     const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
@@ -216,6 +238,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
       row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
       ...(s.addons.includes('player') ? fontRows(plat === 'desktop') : [])) : null;
+    // The player's own preferences (REX Player's groups), with the Player add-on.
+    const playerPrefs = s.addons.includes('player') ? (() => { const box = card('playerprefs', t('playerSettings'), h('p', { class: 'hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => box.append(m.playerPrefsPanel())); return box; })() : null;
     // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.
     const sp = (s.sounds ?? {}) as Partial<import('../downloads/done').SoundPrefs>; const SP = { on: true, complete: 'classic', failed: true, allDone: true, volume: 0.7, card: true, ...sp };
     const setSp = (o: Partial<typeof SP>) => { updateSettings({ sounds: { ...SP, ...o } }); };
@@ -261,7 +285,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
-    return [general, anilist, episodes, downloads, connection, sounds, player, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
@@ -301,6 +325,11 @@ export function addonSettingsSheet(list: AddonEntry[], lang: string, opts: { not
   const sh = openSheet(t('addonSettings'), t('close'));
   if (opts.note) sh.body.append(opts.note);
   if (opts.done) sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); opts.done!(); } }, icon('search'), t('searchAgain')));
+  addonFields(sh.body, list, lang);
+}
+/** The options of add-ons (each under its name), saved as they change — in a sheet, or on an add-on's tab. */
+export function addonFields(into: HTMLElement, list: AddonEntry[], lang: string): void {
+  const sh = { body: into };
   for (const a of list) {
     const cur = addonSettings(a);
     sh.body.append(h('h4', { dir: 'auto' }, nameOf(a, lang)));
@@ -335,3 +364,19 @@ function fontRows(desktop: boolean): HTMLElement[] {
   ];
 }
 
+
+/** Which settings cards belong to which add-on (a card may belong to two: AniList to Anime and to TV & Movies). */
+const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes'], tv: ['tv', 'anilist', 'episodes'], player: ['playerprefs', 'player', 'sublangs'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'] };
+/** The installed add-ons that have something to set: their cards here, and their (and their sources') options. */
+export function addonTabs(addons: string[], index: { addons: AddonEntry[] } | null, cardIds: Set<string>): { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] {
+  const out: { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] = [];
+  const parents = index ? index.addons.filter((a) => !a.parent && addons.includes(a.id)) : addons.map((id) => ({ id } as AddonEntry));
+  for (const a of parents) {
+    const entry = index?.addons.find((x) => x.id === a.id);
+    const cards = (ADDON_CARDS[a.id] ?? []).filter((c) => cardIds.has(c));
+    const kids = (entry?.children ?? []).map((id) => index!.addons.find((x) => x.id === id)).filter(Boolean) as AddonEntry[];
+    const sources = entry ? [entry, ...kids].filter((x) => x.settings?.length && addons.includes(x.id)) : [];
+    if (cards.length || sources.length) out.push({ id: a.id, entry, cards, sources });
+  }
+  return out;
+}

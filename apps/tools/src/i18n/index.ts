@@ -198,6 +198,10 @@ export function countConnections(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'اتصال واحد', two: 'اتصالان', few: 'اتصالات', many: 'اتصالًا', hundred: 'اتصالٍ' });
   return cjkCount(n, 'connection') ?? enCount(n, 'connection', 'connections');
 }
+export function countVersions(n: number): string {
+  if (current === 'ar') return arCount(n, { one: 'إصدار واحد', two: 'إصداران', few: 'إصدارات', many: 'إصدارًا', hundred: 'إصدارٍ' });
+  return cjkCount(n, 'item') ?? enCount(n, 'version', 'versions');
+}
 export function countSegments(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'مقطع واحد', two: 'مقطعان', few: 'مقاطع', many: 'مقطعًا', hundred: 'مقطعٍ' });
   if (current === 'en') return enCount(n, 'segment', 'segments');

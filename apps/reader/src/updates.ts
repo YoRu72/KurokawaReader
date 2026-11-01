@@ -2,9 +2,10 @@
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
 import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
-import { t, getLang, dateLocale, countConnections } from './i18n';
+import { t, getLang, dateLocale, countConnections, countVersions } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
+import { listReleases, newerThan, whatsNew, sha256Of, versionChange, type FetchText, type Rel } from './updateCore';
 
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
 /** The hosted web app and the AltStore/SideStore source (published by the release workflow to GitHub Pages). */
@@ -15,8 +16,8 @@ const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const API_ALL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour
 
-export interface ReleaseInfo { version: string; url: string; notes: string; publishedAt?: string; assets: { name: string; url: string; size: number }[] }
-export interface Progress { pct: number; got: number; total: number; speed: number; connections?: number }
+export interface ReleaseInfo { version: string; url: string; notes: string; publishedAt?: string; assets: { name: string; url: string; size: number; digest?: string }[] }
+export interface Progress { pct: number; got: number; total: number; speed: number; connections?: number; verifying?: boolean; retry?: number }
 
 function cmp(a: string, b: string): number {
   const pa = a.replace(/^v/, '').split('.').map(Number), pb = b.replace(/^v/, '').split('.').map(Number);
@@ -24,26 +25,31 @@ function cmp(a: string, b: string): number {
   return 0;
 }
 
-type RawRelease = { tag_name: string; html_url: string; body?: string; published_at?: string; prerelease?: boolean; draft?: boolean; assets: { name: string; browser_download_url: string; size: number }[] };
+/** GitHub's API straight; its Atom feed (no CORS) through the app's own HTTP when the API cannot be had. */
+const fetchText: FetchText = async (url, accept) => {
+  if (url.startsWith('https://api.github.com/')) { try { const r = await fetch(url, { headers: accept ? { accept } : undefined, cache: 'no-store' }); return { status: r.status, body: await r.text() }; } catch { /* through the app below */ } }
+  const { localHttp } = await import('./localai'); return localHttp(url, { headers: accept ? { accept } : {}, timeoutMs: 30000 });
+};
+const toInfo = (r: Rel): ReleaseInfo => ({ version: r.version, url: r.url, notes: r.notes, publishedAt: r.publishedAt, assets: r.assets });
+/** The releases since this build, newest first (their notes shown together in the dialog). */
+let since: ReleaseInfo[] = [];
+/** This app's releases (tags v…, never Tools' tools-v…), newest first; the beta channel takes pre-releases too. */
+export async function readerReleases(beta = getSettings().updateChannel === 'beta'): Promise<ReleaseInfo[]> {
+  return (await listReleases({ repo: REPO, prefix: 'v', appName: 'KurokawaReader', prereleases: beta, fetchText })).map(toInfo);
+}
 export async function fetchLatest(): Promise<ReleaseInfo> {
-  // The beta channel takes pre-releases too: the newest release of either kind.
-  const beta = getSettings().updateChannel === 'beta';
-  const r = await fetch(beta ? API_ALL : API, { headers: { accept: 'application/vnd.github+json' }, cache: 'no-store' });
-  if (!r.ok) throw new Error(String(r.status));
-  const raw = (await r.json()) as RawRelease | RawRelease[];
-  const j = Array.isArray(raw) ? raw.filter((x) => !x.draft).sort((a, b) => cmp(b.tag_name, a.tag_name))[0] : raw;
-  if (!j) throw new Error('no release');
+  const all = await readerReleases();
   localStorage.setItem('kr.update.lastCheck', String(Date.now()));
-  return { version: j.tag_name.replace(/^v/, ''), url: j.html_url, notes: j.body ?? '', publishedAt: j.published_at, assets: j.assets.map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })) };
+  since = newerThan(all.map((x) => ({ ...x, tag: `v${x.version}`, prerelease: false })), APP_VERSION).map(toInfo);
+  const j = all[0]; if (!j) throw new Error('no release');
+  return j;
 }
 
 /** The newest release of another Kurokawa app in the same repository, by its tag prefix (`tools-v`). */
 export async function fetchLatestOf(prefix: string): Promise<ReleaseInfo> {
-  const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { accept: 'application/vnd.github+json' }, cache: 'no-store' });
-  if (!r.ok) throw new Error(String(r.status));
-  const all = ((await r.json()) as RawRelease[]).filter((x) => !x.draft && x.tag_name.startsWith(prefix)).sort((a, b) => cmp(b.tag_name.slice(prefix.length), a.tag_name.slice(prefix.length)));
+  const all = await listReleases({ repo: REPO, prefix, appName: prefix === 'tools-v' ? 'KurokawaTools' : 'KurokawaReader', prereleases: true, fetchText });
   const j = all[0]; if (!j) throw new Error('no release');
-  return { version: j.tag_name.slice(prefix.length), url: j.html_url, notes: j.body ?? '', publishedAt: j.published_at, assets: j.assets.map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })) };
+  return toInfo(j);
 }
 export function lastChecked(): number { return Number(localStorage.getItem('kr.update.lastCheck') ?? 0); }
 
@@ -56,7 +62,15 @@ export async function checkForUpdate(ignoreSkipped = false): Promise<ReleaseInfo
 }
 
 /** Start-up check (respects the setting, the interval and connectivity). */
+let autoTimer = 0;
 export function scheduleAutoCheck(): void {
+  afterUpdate();
+  window.clearInterval(autoTimer);
+  // (The app left open for days: looked at again every six hours.)
+  autoTimer = window.setInterval(() => autoCheck(), 6 * 3600000);
+  autoCheck();
+}
+function autoCheck(): void {
   const s = getSettings();
   if (!s.autoUpdateCheck || !navigator.onLine) return;
   const every = s.updateEvery === 'weekly' ? 7 * 86400000 : s.updateEvery === 'daily' ? 86400000 : CHECK_EVERY_MS;
@@ -66,6 +80,11 @@ export function scheduleAutoCheck(): void {
   const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { downloadUpdate?(o: { beta: boolean }): Promise<'downloaded' | 'none' | 'unsupported'> }) | undefined;
   if (s.updateAutoDownload && d?.downloadUpdate) {
     setTimeout(() => { void d.downloadUpdate!({ beta: s.updateChannel === 'beta' }).then((r) => { localStorage.setItem('kr.update.lastCheck', String(Date.now())); if (r === 'downloaded') offerRestart(); else if (r === 'unsupported') void checkForUpdate().then((rel) => rel && showUpdateSheet(rel)).catch(() => undefined); }).catch(() => undefined); }, 15000);
+    return;
+  }
+  // Android, with background updates on: the update is fetched (and checked) first, then offered ready to install.
+  if (s.updateAutoDownload && nativePlatform() === 'android') {
+    setTimeout(() => { void checkForUpdate().then(async (rel) => { if (!rel) return; const a = await suitableAsset(rel); const p = androidPlugins(); if (!a || !p) { showUpdateSheet(rel); return; } try { await fetchApk(p.kr as AndroidDl, a, () => undefined); offerReady(rel); } catch { showUpdateSheet(rel); } }).catch(() => undefined); }, 15000);
     return;
   }
   setTimeout(() => { checkForUpdate().then((rel) => { if (!rel) return; showUpdateSheet(rel); void import('./ui/pcshell').then((m) => m.railUpdate(() => showUpdateSheet(rel))); }).catch(() => undefined); }, 3000);
@@ -79,6 +98,32 @@ export function offerRestart(): void {
     h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('later'), onclick: () => el.remove() }, icon('close')));
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 60000);
+}
+
+/** Android: the update fetched in the background — one tap opens the dialog, which installs it at once. */
+function offerReady(rel: ReleaseInfo): void {
+  const el = h('div', { class: 'toast update-toast', role: 'status' }, h('span', null, t('updateFetchedShort', { v: rel.version })),
+    h('button', { type: 'button', class: 'btn small primary', onclick: () => { el.remove(); showUpdateSheet(rel); } }, icon('check'), t('installNow')),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('later'), onclick: () => el.remove() }, icon('close')));
+  document.body.appendChild(el); setTimeout(() => el.remove(), 60000);
+}
+/** The first start after an update: said once, with the notes of the versions it brought. */
+function afterUpdate(): void {
+  const before = versionChange('kr.update.ran', APP_VERSION); if (!before) return;
+  setTimeout(() => {
+    const el = h('div', { class: 'toast update-toast', role: 'status' }, h('span', null, t('updatedTo', { v: APP_VERSION })),
+      h('button', { type: 'button', class: 'btn small tonal', onclick: async () => { el.remove(); try { const all = await readerReleases(true); const got = all.filter((r) => cmp(r.version, before) > 0 && cmp(r.version, APP_VERSION) <= 0); const sh = openSheet(t('whatsNewIn', { v: APP_VERSION }), t('close')); sh.body.append(got.length ? versionNotes(got) : h('p', null, t('updNoNotes'))); } catch { toast(t('updateFailed')); } } }, icon('info'), t('whatsNew')),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('close'), onclick: () => el.remove() }, icon('close')));
+    document.body.appendChild(el); setTimeout(() => el.remove(), 20000);
+  }, 2500);
+}
+/** The notes of several versions, each under its number (the newest open, the others folded). */
+export function versionNotes(list: ReleaseInfo[]): HTMLElement {
+  return h('div', { class: 'upd-versions' }, ...list.slice(0, 15).map((r, i) => {
+    const items = whatsNew(r.notes);
+    return h('details', { class: 'upd-version', open: i === 0 }, h('summary', null, h('b', { dir: 'ltr' }, r.version), r.publishedAt ? h('small', null, new Date(r.publishedAt).toLocaleDateString(dateLocale())) : null),
+      items.length ? h('ul', { class: 'upd-notes' }, ...items.map((l) => h('li', { dir: 'auto' }, l))) : h('p', null, t('updNoNotes')));
+  }));
 }
 
 function offerUpdate(rel: ReleaseInfo): void {
@@ -149,6 +194,7 @@ type AndroidDl = AndroidPlugin & {
   downloadFile?(o: { url: string; name: string; id?: string; connections?: number }): Promise<{ path: string; size: number }>;
   cancelDownload?(o: { id: string }): Promise<void>;
   cachedFile?(o: { name: string; size?: number; prune?: boolean }): Promise<{ path?: string; size?: number }>;
+  hashFile?(o: { path: string }): Promise<{ sha256: string; size: number }>; deleteDownload?(o: { path: string }): Promise<unknown>;
   addListener?(ev: string, fn: (d: Progress & { id?: string }) => void): Promise<{ remove(): void }>;
 };
 /** An update fetched before and not installed (the installer was dismissed): kept whole in the cache. */
@@ -163,7 +209,8 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
   if (!updateRun || updateRun.name !== asset.name) {
     const id = `kr-update:${asset.name}`;
     const subs = new Set<(p: Progress) => void>();
-    const run: UpdateRun = { name: asset.name, done: null as unknown as Promise<string>, last: null, subs, cancel: () => void kr.cancelDownload?.({ id }).catch(() => undefined) };
+    let cancelled = false;
+    const run: UpdateRun = { name: asset.name, done: null as unknown as Promise<string>, last: null, subs, cancel: () => { cancelled = true; void kr.cancelDownload?.({ id }).catch(() => undefined); } };
     run.done = (async () => {
       const sub = await kr.addListener?.('downloadProgress', (d) => {
         if (d.id !== id) return;
@@ -174,8 +221,20 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
         run.last = p; for (const fn of subs) fn(p);
       });
       try {
-        if (kr.downloadFile) return (await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 8 })).path;
-        throw new Error('native');
+        if (!kr.downloadFile) throw new Error('native');
+        // Three tries (a dropped connection), then the file checked against the SHA-256 GitHub states for it.
+        for (let attempt = 1; ; attempt++) {
+          try {
+            const r = await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 8 });
+            const want = sha256Of(asset);
+            if (want && kr.hashFile) { for (const fn of subs) fn({ ...(run.last ?? { pct: 100, got: r.size, total: r.size, speed: 0 }), pct: 100, verifying: true }); const got = await kr.hashFile({ path: r.path }); if (got.sha256.toLowerCase() !== want) { void kr.deleteDownload?.({ path: r.path }).catch(() => undefined); throw Object.assign(new Error(t('updateDamaged')), { damaged: true }); } }
+            return r.path;
+          } catch (e) {
+            if (cancelled || /cancel/i.test(String((e as Error)?.message ?? e)) || (e as { damaged?: boolean }).damaged || attempt >= 3) throw e;
+            for (const fn of subs) fn({ ...(run.last ?? { pct: 0, got: 0, total: asset.size, speed: 0 }), retry: attempt + 1 });
+            await new Promise((r) => setTimeout(r, 1500 * attempt));
+          }
+        }
       } finally { sub?.remove(); }
     })();
     updateRun = run;
@@ -256,9 +315,9 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
         h('span', { class: 'upd-chip', dir: 'ltr' }, APP_VERSION), h('span', { class: 'upd-arrow' }, icon('arrowRight')), h('span', { class: 'upd-chip new', dir: 'ltr' }, rel.version),
         date ? h('span', { class: 'upd-date' }, date) : null))));
   // What's new: bullet lines from the release notes (the install table is left out).
-  const section = /## What's new\s*([\s\S]*?)(?:\n## |$)/.exec(rel.notes)?.[1] ?? '';
-  const lines = section.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('-') || l.startsWith('*')).slice(0, 30);
-  if (lines.length) s.body.append(h('section', { class: 'upd-card' }, h('h4', { class: 'upd-title' }, t('whatsNew')), h('ul', { class: 'upd-notes' }, ...lines.map((l) => h('li', { dir: 'auto' }, l.replace(/^[-*•]\s*/, '').replace(/\*\*/g, ''))))));
+  // (Every version since the one running, each under its number — the newest open.)
+  const list = since.length && since[0].version === rel.version ? since : [rel];
+  s.body.append(h('section', { class: 'upd-card' }, h('h4', { class: 'upd-title' }, t('whatsNew'), list.length > 1 ? h('small', null, ` · ${t('updateVersionsSince', { n: countVersions(list.length) })}`) : null), versionNotes(list)));
   // The download: the file, a wavy progress indicator, and its numbers.
   const fileName = h('span', { class: 'upd-file-name', dir: 'ltr' });
   const fileSize = h('span', { class: 'upd-file-size' });
@@ -291,6 +350,8 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   const setPct = (pct: number) => { wave.style.setProperty('--p', `${pct}%`); wave.setAttribute('aria-valuenow', String(pct)); };
   const onProgress = (p: Progress) => {
     wave.hidden = false; dl.classList.add('busy');
+    if (p.verifying) { wave.classList.add('indet'); status.textContent = t('updateVerifying'); return; }
+    if (p.retry) { wave.classList.add('indet'); status.textContent = t('updateRetrying', { n: p.retry }); return; }
     wave.classList.toggle('indet', !p.total && !p.pct);
     setPct(p.pct);
     const parts = [p.total || p.pct ? `${p.pct}%` : ''];
@@ -353,5 +414,6 @@ export function renderUpdateCard(container: HTMLElement): void {
   container.append(h('p', null, `${t('version')} ${APP_VERSION}`), h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } }, btn, h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, cb, h('i')), h('span', null, t('autoCheck')))), status,
     h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateChannel')), channel),
     h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateEvery')), every),
+    ...(nativePlatform() === 'android' ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownloadAndroid'))), h('p', { class: 'hint' }, t('updateAutoDownloadAndroidHint'))] : []),
     ...(desk?.downloadUpdate ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownload'))), h('p', { class: 'hint' }, t('updateAutoDownloadHint'))] : []));
 }
