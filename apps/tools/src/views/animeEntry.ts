@@ -162,7 +162,7 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
         const got = await pickFiles(source, r.title, episode ? [episode] : []); if (got === null) return;
         files = got === 'all' ? undefined : got;
       }
-      const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: true, files, meta });
+      const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
       toast(t('taskAdded', { name: tk.name || r.title })); sh.close(); navigate('/');
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
