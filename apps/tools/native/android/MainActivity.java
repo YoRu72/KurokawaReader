@@ -62,7 +62,13 @@ public class MainActivity extends BridgeActivity {
             for (android.app.ApplicationExitInfo x : l) {
                 int why = x.getReason(); long at = x.getTimestamp(); if (at <= seen) continue; newest = Math.max(newest, at);
                 boolean bad = why == android.app.ApplicationExitInfo.REASON_CRASH || why == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE || why == android.app.ApplicationExitInfo.REASON_ANR || why == android.app.ApplicationExitInfo.REASON_LOW_MEMORY || why == android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE || why == android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE || why == android.app.ApplicationExitInfo.REASON_SIGNALED;
+                // (Signals: only a crash's — a bad memory read, an abort, a bus or arithmetic fault, an illegal
+                // instruction. SIGINT, SIGTERM, SIGKILL and SIGHUP are sent from outside: Android or the phone's power
+                // manager closing the app, an update replacing it, the app swiped away. Not crashes: not told, not counted.)
+                if (why == android.app.ApplicationExitInfo.REASON_SIGNALED) { int sig = x.getStatus(); if (sig != 4 && sig != 5 && sig != 6 && sig != 7 && sig != 8 && sig != 11 && sig != 31) bad = false; }
                 if (!bad) continue;
+                // (Low memory and heavy use are Android's choice, not the app ending by itself: told, not counted.)
+                boolean counts = why != android.app.ApplicationExitInfo.REASON_LOW_MEMORY && why != android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE;
                 sb.append("android says: ").append(why < names.length ? names[why] : String.valueOf(why)).append(" at ").append(new java.util.Date(at)).append(x.getDescription() != null ? " — " + x.getDescription() : "").append(" (process ").append(x.getProcessName()).append(", status ").append(x.getStatus()).append(")\n");
                 // (A native crash: Android's record of it read properly — the thread that crashed with its frames, the
                 // other threads by name, the last log lines; an ANR's trace is text, its first lines kept.)
@@ -77,7 +83,7 @@ public class MainActivity extends BridgeActivity {
                 }
                 // (The app ending this way within a minute and a half of starting: counted; twice in a row, the next
                 // start keeps the torrents paused, so the app can be opened and the cause told apart.)
-                if (at - prevStart < 90_000 && prevStart > 0 && at >= newestBad) { newestBad = at; quick = true; }
+                if (counts && at - prevStart < 90_000 && prevStart > 0 && at >= newestBad) { newestBad = at; quick = true; }
             }
             int count = quick ? sp.getInt("quickCrashes", 0) + 1 : (newest != seen ? 0 : sp.getInt("quickCrashes", 0));
             android.content.SharedPreferences.Editor ed = sp.edit().putInt("quickCrashes", count >= 2 ? 0 : count).putLong("startAt", System.currentTimeMillis());
