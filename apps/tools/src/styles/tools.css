@@ -385,3 +385,8 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .wide-input { width: 100%; box-sizing: border-box; margin: 4px 0 8px; }
 #connection .row > span > small, #models .row > span > small { display: block; margin-top: 2px; font-weight: 400; line-height: 1.4; }
 .move-row { display: flex; align-items: center; gap: 2px; padding: 6px 12px; } .move-row .grow { font-size: 14px; }
+/* Grabber projects */
+.grab-projects { margin-bottom: 8px; align-items: center; } .grab-projects .label { margin-inline-end: 4px; }
+.chip.proj { display: inline-flex; align-items: center; gap: 0; padding: 0; overflow: hidden; }
+.chip.proj button { all: unset; cursor: pointer; padding: 6px 10px; font-size: 12.5px; } .chip.proj .proj-x { padding: 6px 8px 6px 2px; display: inline-flex; }
+.chip.proj .proj-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; }

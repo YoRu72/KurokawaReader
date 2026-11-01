@@ -32,23 +32,62 @@ export async function verifySheet(path: string): Promise<void> {
 
 /* ---------- the grabber ---------- */
 const KINDS: [string, string, RegExp][] = [['video', 'catVideo', /\.(mkv|mp4|m4v|webm|avi|mov|ts|wmv|flv)(\?|$)/i], ['music', 'catMusic', /\.(mp3|m4a|flac|ogg|opus|wav|aac)(\?|$)/i], ['compressed', 'catCompressed', /\.(zip|7z|rar|tar|gz|xz|bz2|iso)(\?|$)/i], ['documents', 'catDocuments', /\.(pdf|epub|docx?|xlsx?|pptx?|txt|cbz|cbr|mobi|azw3)(\?|$)/i], ['images', 'catImages', /\.(jpe?g|png|gif|webp|avif|svg)(\?|$)/i], ['programs', 'catPrograms', /\.(apk|apks|xapk|exe|msi|dmg|appimage|deb|rpm)(\?|$)/i], ['torrents', 'grabTorrents', /^magnet:|\.torrent(\?|$)/i]];
-export async function grabberSheet(start = ''): Promise<void> {
+/** A grabber project (Prism's): a page, how deep to follow its links, the kind of file wanted — kept to run again. */
+export interface GrabProject { url: string; depth: number; below: boolean; kind: string; at: number }
+const PKEY = 'kt.grab.projects';
+export const grabProjects = (): GrabProject[] => { try { return JSON.parse(localStorage.getItem(PKEY) ?? '[]') as GrabProject[]; } catch { return []; } };
+const saveProjects = (l: GrabProject[]) => { try { localStorage.setItem(PKEY, JSON.stringify(l.slice(0, 20))); } catch { /* full */ } };
+const FILE_RE = new RegExp(KINDS.map((k) => k[2].source).join('|'), 'i');
+/** A page worth following: the same site, under the start's folder if asked, not a file. */
+export function followable(href: string, startUrl: string, below: boolean): boolean {
+  let a: URL, b: URL; try { a = new URL(href); b = new URL(startUrl); } catch { return false; }
+  if (!/^https?:$/.test(a.protocol) || a.host !== b.host || FILE_RE.test(href)) return false;
+  if (/\.(css|js|json|xml|rss|ico|woff2?|ttf)(\?|$)/i.test(a.pathname)) return false;
+  return !below || a.pathname.startsWith(b.pathname.replace(/[^/]*$/, ''));
+}
+export async function grabberSheet(start = '', project?: GrabProject): Promise<void> {
   const sh = openSheet(t('grabTitle'), t('close'));
-  const url = h('input', { type: 'url', dir: 'ltr', value: start, placeholder: 'https://…', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
-  const chips = h('div', { class: 'chip-row wrap' }); const list = h('div', { class: 'grab-list' }); let links: { href: string; text: string }[] = []; let kind = ''; const chosen = new Set<string>();
+  const url = h('input', { type: 'url', dir: 'ltr', value: project?.url ?? start, placeholder: 'https://…', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
+  let depth = project?.depth ?? 0; let below = project?.below ?? true;
+  const depthPick = h('div', { class: 'chip-row' }, h('span', { class: 'label' }, t('grabDepth')), ...[0, 1, 2, 3].map((d) => h('button', { type: 'button', class: 'chip small' + (d === depth ? ' on' : ''), 'data-d': String(d), onclick: (e: Event) => { depth = d; for (const c of Array.from((e.currentTarget as HTMLElement).parentElement!.querySelectorAll('.chip'))) c.classList.toggle('on', c === e.currentTarget); belowRow.hidden = depth === 0; } }, d === 0 ? t('grabDepth0') : localDigits(d))));
+  const belowBox = h('input', { type: 'checkbox', checked: below, onchange: (e: Event) => { below = (e.target as HTMLInputElement).checked; } });
+  const belowRow = h('label', { class: 'check-row small', hidden: depth === 0 }, belowBox, h('span', null, t('grabBelow')));
+  const projRow = h('div', { class: 'chip-row wrap grab-projects' });
+  const chips = h('div', { class: 'chip-row wrap' }); const list = h('div', { class: 'grab-list' }); let links: { href: string; text: string }[] = []; let kind = project?.kind ?? ''; const chosen = new Set<string>();
   const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('download'), t('grabAdd')) as HTMLButtonElement;
-  sh.body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void load(); } }, url), chips, list); sh.actions.append(go);
+  const keep = h('button', { type: 'button', class: 'btn text', disabled: true, onclick: () => { const u = url.value.trim(); saveProjects([{ url: u, depth, below, kind, at: Date.now() }, ...grabProjects().filter((x) => x.url !== u)]); drawProjects(); toast(t('grabKept')); } }, icon('star'), t('grabKeep')) as HTMLButtonElement;
+  const drawProjects = () => { const ps = grabProjects(); projRow.hidden = !ps.length; projRow.replaceChildren(h('span', { class: 'label' }, t('grabProjects')), ...ps.map((x) => h('span', { class: 'chip small proj' }, h('button', { type: 'button', class: 'proj-go', dir: 'ltr', title: x.url, onclick: () => { url.value = x.url; depth = x.depth; below = x.below; kind = x.kind; belowBox.checked = below; belowRow.hidden = depth === 0; for (const c of Array.from(depthPick.querySelectorAll('.chip'))) c.classList.toggle('on', (c as HTMLElement).dataset.d === String(depth)); void load(); } }, (() => { try { const u = new URL(x.url); return u.host + (u.pathname.length > 1 ? u.pathname.replace(/\/$/, '').slice(-24) : ''); } catch { return x.url; } })()), h('button', { type: 'button', class: 'proj-x', 'aria-label': t('remove'), onclick: () => { saveProjects(grabProjects().filter((p) => p.url !== x.url)); drawProjects(); } }, icon('close'))))); };
+  sh.body.append(projRow, h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void load(); } }, url), depthPick, belowRow, chips, list); sh.actions.append(keep, go);
+  drawProjects();
   const load = async () => {
-    const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return; list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' })));
-    try {
-      const r = await request(u); if (r.status >= 400) throw new Error(`HTTP ${r.status}`);
-      const doc = new DOMParser().parseFromString(r.body, 'text/html'); const seen = new Set<string>(); links = [];
-      for (const el of Array.from(doc.querySelectorAll('a[href], source[src], video[src], audio[src], img[src]'))) { const raw = el.getAttribute('href') ?? el.getAttribute('src') ?? ''; let href: string; try { href = raw.startsWith('magnet:') ? raw : new URL(raw, u).href; } catch { continue; } if (seen.has(href) || /^(javascript|mailto|tel):/i.test(href) || href.split('#')[0] === u) continue; seen.add(href); links.push({ href, text: (el.textContent ?? '').trim() || decodeURIComponent(href.split('?')[0].split('/').pop() ?? href) }); }
-      const counts = KINDS.map(([k, label, re]) => [k, label, links.filter((x) => re.test(x.href)).length] as const).filter((x) => x[2] > 0);
-      kind = counts[0]?.[0] ?? ''; drawChips(counts); draw();
-    } catch (e) { list.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
+    const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return;
+    const status = h('small', { class: 'src' }); list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), status));
+    const pages: [string, number][] = [[u, 0]]; const visited = new Set<string>([u.split('#')[0]]); const seen = new Set<string>(); links = []; let read = 0; let firstErr: unknown = null;
+    const MAX_PAGES = 60;
+    while (pages.length && read < MAX_PAGES && sh.el.isConnected) {
+      const [page, d] = pages.shift()!; read++; status.textContent = ` ${t('grabReading', { n: localDigits(read), files: localDigits(links.length) })}`;
+      let r; try { r = await request(page); if (r.status >= 400) throw new Error(`HTTP ${r.status}`); } catch (e) { if (read === 1) firstErr = e; continue; }
+      if (r.headers['content-type'] && !/html|xml|text/i.test(r.headers['content-type'])) continue;
+      const doc = new DOMParser().parseFromString(r.body, 'text/html');
+      for (const el of Array.from(doc.querySelectorAll('a[href], source[src], video[src], audio[src], img[src]'))) {
+        const raw = el.getAttribute('href') ?? el.getAttribute('src') ?? ''; let href: string;
+        try { href = raw.startsWith('magnet:') ? raw : new URL(raw, page).href; } catch { continue; }
+        if (/^(javascript|mailto|tel|data):/i.test(href)) continue;
+        const bare = href.split('#')[0];
+        if (depth > d && el.tagName === 'A' && followable(bare, u, below) && !visited.has(bare)) { visited.add(bare); pages.push([bare, d + 1]); }
+        if (seen.has(bare) || bare === page.split('#')[0]) continue;
+        // (Pages followed are not offered as files; with no depth, everything the page links to is, as before.)
+        if (depth > 0 && !FILE_RE.test(bare)) continue;
+        seen.add(bare); links.push({ href: bare, text: (el.textContent ?? '').trim() || decodeURIComponent(bare.split('?')[0].split('/').pop() ?? bare) });
+      }
+    }
+    if (firstErr && !links.length) { list.replaceChildren(h('p', { class: 'empty small' }, String((firstErr as Error).message ?? firstErr))); return; }
+    const counts = KINDS.map(([k, label, re]) => [k, label, links.filter((x) => re.test(x.href)).length] as const).filter((x) => x[2] > 0);
+    if (!counts.some((c) => c[0] === kind)) kind = counts[0]?.[0] ?? '';
+    keep.disabled = false; drawChips(counts); draw();
+    if (read > 1) list.prepend(h('p', { class: 'hint' }, t('grabRead', { n: localDigits(read), files: localDigits(links.length) })));
   };
-  const drawChips = (counts: readonly (readonly [string, string, number])[]) => chips.replaceChildren(...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)), h('button', { type: 'button', class: 'chip small' + (kind === '' ? ' on' : ''), onclick: () => { kind = ''; chosen.clear(); drawChips(counts); draw(); } }, `${t('grabAll')} · ${localDigits(links.length)}`));
+  const drawChips = (counts: readonly (readonly [string, string, number])[]) => chips.replaceChildren(...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)));
   const shown = () => (kind ? links.filter((x) => KINDS.find((k) => k[0] === kind)![2].test(x.href)) : links);
   const draw = () => {
     const xs = shown(); if (kind) xs.forEach((x) => chosen.add(x.href));
