@@ -16,8 +16,8 @@ const srv = http.createServer((q, r) => { let p = q.url.split('?')[0]; if (p ===
   console.log('initial:', (await names()).join(' | '));
   await p.click('.opt-badge'); await p.waitForSelector('.lib-sheet-panel'); console.log('filter tab:', (await p.$eval('.lib-sheet-panel', (e) => e.innerText)).replace(/\n+/g, ' / '));
   await p.click('.lib-opt:has-text("' + (lang === 'ar' ? 'روابط مباشرة' : 'Direct links') + '")'); const R = {}; R.direct = (await names()).join(' | '); console.log('direct only:', R.direct, '| badge', await p.$eval('.opt-badge', (e) => e.dataset.n));
-  await p.click('.lib-sheet-tabs button >> nth=1'); await p.click('.lib-opt >> nth=1'); R.name = (await names()).join(' | '); console.log('by name:', R.name);
-  await p.click('.lib-opt >> nth=1'); R.rev = (await names()).join(' | '); console.log('by name again (reversed):', R.rev);
+  await p.click('.lib-sheet-tabs button >> nth=1'); await p.click('.lib-opt >> nth=2'); R.name = (await names()).join(' | '); console.log('by name:', R.name);
+  await p.click('.lib-opt >> nth=2'); R.rev = (await names()).join(' | '); console.log('by name again (reversed):', R.rev);
   await p.click('.lib-sheet-tabs button >> nth=2'); await p.click('.lib-opt >> nth=2'); await p.click('.lib-opt >> nth=4');
   await p.screenshot({ path: path.join(__dirname, `shot-dlopts-sheet-${lang}.png`) });
   await p.click('.sheet-head button'); console.log('minimal, grouped by state:', (await names()).join(' | '), '| look', await p.$eval('.task-list', (e) => e.className));

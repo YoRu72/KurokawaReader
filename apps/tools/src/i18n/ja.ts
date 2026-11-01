@@ -72,4 +72,5 @@ export const ja: Partial<Strings> = {
   notHere: "ここでは確認できません。",
   sortQueue: "キュー順", queuePlace: "キュー内の位置", moveTop: "先頭へ", moveUp: "上へ", moveDown: "下へ", moveBottom: "末尾へ", sortedQueue: "一覧をキュー順にしました。",
   grabDepth: "リンクをたどる", grabDepth0: "このページのみ", grabBelow: "このフォルダ以下のページのみ", grabKept: "保存しました：上の「プロジェクト」にあります。", grabKeep: "プロジェクトとして保存", grabProjects: "プロジェクト", grabReading: "読んだページ：{n} · 見つかったファイル：{files}", grabRead: "{n} ページを読み、{files} 個のファイルが見つかりました。",
+  miniOpen: "ミニウィンドウ", miniMain: "アプリに戻る", miniActive: "{n} 件ダウンロード中、{q} 件待機", miniIdle: "ダウンロード中のものはありません。", miniMore: "ほか {n} 件", miniAuto: "アプリを最小化したらミニウィンドウ", miniAutoHint: "速度とダウンロード中の項目を表示する、常に手前の小さなウィンドウ。",
 };

@@ -97,37 +97,42 @@ await window.kurokawaTools?.ready?.();
 registerNativePlugins();
 applyDocumentLang();
 applyChrome();
-placeNav();
-wirePcBack();
-onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles').sort().join(); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
-if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
-if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
-if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
-setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
-// The privacy choices made once are applied at every start (DoH, screenshots blocked).
-{ const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
-void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
-if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
-void import('./downloads/done').then((m) => m.startDoneWatch());
-void import('./downloads/trash').then((m) => m.startTrash());
-void import('./downloads/net').then((m) => m.applyNet());
-void import('./ui/dropzone').then((m) => m.startDropAndKeys());
-if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
-onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
-onRoute(mount);
-mount(parseRoute());
-scheduleAutoCheck();
-document.documentElement.dataset.platform = nativePlatform();
+// Prism's mini window (the computer): only the speed and what is downloading, nothing else started.
+const MINI = location.hash.startsWith('#/mini');
+if (MINI) { document.documentElement.classList.add('mini'); const { miniView } = await import('./views/mini'); app.replaceChildren(miniView()); }
+else {
+  placeNav();
+  wirePcBack();
+  onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles').sort().join(); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
+  if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
+  if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
+  if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
+  setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
+  // The privacy choices made once are applied at every start (DoH, screenshots blocked).
+  { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
+  void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
+  if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
+  void import('./downloads/done').then((m) => m.startDoneWatch());
+  void import('./downloads/trash').then((m) => m.startTrash());
+  void import('./downloads/net').then((m) => m.applyNet());
+  void import('./ui/dropzone').then((m) => m.startDropAndKeys());
+  if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
+  onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
+  onRoute(mount);
+  mount(parseRoute());
+  scheduleAutoCheck();
+  document.documentElement.dataset.platform = nativePlatform();
 
-// Android's back: the native side asks the page (through the plugin's `backButton` event when present).
-window.addEventListener('kt:back', () => { if (!goBack()) (window.Capacitor?.Plugins?.App as { exitApp?(): void } | undefined)?.exitApp?.(); });
-// Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
-window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
-if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }
+  // Android's back: the native side asks the page (through the plugin's `backButton` event when present).
+  window.addEventListener('kt:back', () => { if (!goBack()) (window.Capacitor?.Plugins?.App as { exitApp?(): void } | undefined)?.exitApp?.(); });
+  // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
+  window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
+  if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }
 
-if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => undefined); });
-} else if (isNative()) {
-  void navigator.serviceWorker?.getRegistrations?.().then((regs) => regs.forEach((r) => void r.unregister())).catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => undefined); });
+  } else if (isNative()) {
+    void navigator.serviceWorker?.getRegistrations?.().then((regs) => regs.forEach((r) => void r.unregister())).catch(() => {});
+  }
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.__ktInstallPrompt = e as unknown as { prompt(): Promise<void> }; });
 }
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.__ktInstallPrompt = e as unknown as { prompt(): Promise<void> }; });

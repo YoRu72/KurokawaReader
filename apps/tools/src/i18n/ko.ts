@@ -72,4 +72,5 @@ export const ko: Partial<Strings> = {
   notHere: "여기서는 확인할 수 없습니다.",
   sortQueue: "대기열 순서", queuePlace: "대기열 위치", moveTop: "맨 위로", moveUp: "위로", moveDown: "아래로", moveBottom: "맨 아래로", sortedQueue: "목록을 대기열 순서로 정렬했습니다.",
   grabDepth: "링크 따라가기", grabDepth0: "이 페이지만", grabBelow: "이 폴더 아래 페이지만", grabKept: "저장했습니다: 위쪽 “프로젝트”에 있습니다.", grabKeep: "프로젝트로 저장", grabProjects: "프로젝트", grabReading: "읽은 페이지: {n} · 찾은 파일: {files}", grabRead: "페이지 {n}개를 읽고 파일 {files}개를 찾았습니다.",
+  miniOpen: "미니 창", miniMain: "앱으로 돌아가기", miniActive: "{n}개 받는 중, {q}개 대기", miniIdle: "받는 중인 항목이 없습니다.", miniMore: "외 {n}개", miniAuto: "앱을 최소화하면 미니 창", miniAutoHint: "다른 창 위에 뜨는 작은 창으로 속도와 받는 중인 항목을 보여 줍니다.",
 };

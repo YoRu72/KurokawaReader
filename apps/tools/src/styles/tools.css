@@ -390,3 +390,18 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .chip.proj { display: inline-flex; align-items: center; gap: 0; padding: 0; overflow: hidden; }
 .chip.proj button { all: unset; cursor: pointer; padding: 6px 10px; font-size: 12.5px; } .chip.proj .proj-x { padding: 6px 8px 6px 2px; display: inline-flex; }
 .chip.proj .proj-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; }
+/* Prism's mini window */
+html.mini, html.mini body { background: var(--md-surface-container-low); overflow: hidden; }
+html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
+.mini-view { display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; padding: 8px 10px 10px; gap: 6px; font-size: 13px; user-select: none; }
+.mini-head { display: flex; align-items: center; gap: 6px; -webkit-app-region: drag; }
+.mini-head button { -webkit-app-region: no-drag; }
+.mini-ic { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: var(--md-primary-container); color: var(--md-on-primary-container); flex: none; }
+.mini-ic svg, .mini-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mini-nums { display: grid; line-height: 1.2; min-width: 0; } .mini-speed { font-size: 15px; font-variant-numeric: tabular-nums; }
+.mini-btn { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--md-on-surface-variant); }
+.mini-btn:hover { background: var(--md-surface-container-high); } .mini-btn:disabled { opacity: .4; cursor: default; }
+.mini-rows { display: grid; gap: 6px; overflow: hidden; }
+.mini-line { display: flex; gap: 8px; align-items: baseline; } .mini-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mini-bar { height: 4px; border-radius: 2px; background: var(--md-surface-container-highest); overflow: hidden; } .mini-bar i { display: block; height: 100%; background: var(--md-primary); border-radius: 2px; transition: width .4s; }
+.mini-idle { margin: 6px 0 0; color: var(--md-on-surface-variant); } .mini-more { text-align: center; }

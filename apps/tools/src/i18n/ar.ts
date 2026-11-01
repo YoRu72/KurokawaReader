@@ -91,4 +91,5 @@ export const ar: Partial<Strings> = {
   notHere: "لا يمكن التحقّق من هذا هنا.",
   sortQueue: "ترتيب الطابور", queuePlace: "موضعه في الطابور", moveTop: "إلى الأعلى", moveUp: "ارفعه", moveDown: "أنزله", moveBottom: "إلى الأسفل", sortedQueue: "صارت القائمة مرتَّبةً بترتيب الطابور.",
   grabDepth: "تتبُّع الروابط", grabDepth0: "هذه الصفحة وحدها", grabBelow: "الصفحات التي تحت هذا المجلد وحدها", grabKept: "حُفظ، وتجده في «المشاريع» أعلى النافذة.", grabKeep: "احفظه مشروعًا", grabProjects: "المشاريع", grabReading: "الصفحات المقروءة: {n} · الملفات الموجودة: {files}", grabRead: "قُرئت الصفحات ({n})، ووُجدت الملفات ({files}).",
+  miniOpen: "النافذة المصغَّرة", miniMain: "عُد إلى التطبيق", miniActive: "يُنزَّل: {n} · ينتظر: {q}", miniIdle: "لا شيء يُنزَّل الآن.", miniMore: "وغيرها: {n}", miniAuto: "النافذة المصغَّرة عند تصغير التطبيق", miniAutoHint: "نافذة صغيرة فوق النوافذ الأخرى، فيها السرعة وما يُنزَّل.",
 };

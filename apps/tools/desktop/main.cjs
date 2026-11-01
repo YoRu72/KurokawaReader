@@ -28,8 +28,22 @@ const pendingLinks = [];
 
 const statePath = () => path.join(app.getPath('userData'), 'window-state.json');
 function loadState() { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; } }
-function saveState() { if (!win) return; try { const b = win.getNormalBounds(); fs.writeFileSync(statePath(), JSON.stringify({ ...b, maximized: win.isMaximized() })); } catch { /* ignore */ } }
-function send(channel, payload) { if (win && !win.webContents.isLoading()) win.webContents.send(channel, payload); }
+function saveState() { if (!win) return; try { const b = win.getNormalBounds(); fs.writeFileSync(statePath(), JSON.stringify({ ...loadState(), ...b, maximized: win.isMaximized() })); } catch { /* ignore */ } }
+function send(channel, payload) { if (win && !win.webContents.isLoading()) win.webContents.send(channel, payload); if (channel === 'kt:tasks' && mini && !mini.webContents.isLoading()) mini.webContents.send(channel, payload); }
+/* ---------- Prism's mini window: small, on top of the others, the speed and what is downloading ---------- */
+let mini = null;
+function miniPath() { return path.join(app.getPath('userData'), 'mini-state.json'); }
+function openMini() {
+  if (mini) { mini.show(); mini.focus(); return; }
+  let st = {}; try { st = JSON.parse(fs.readFileSync(miniPath(), 'utf8')); } catch { /* first time */ }
+  mini = new BrowserWindow({ width: 320, height: 200, x: st.x, y: st.y, minWidth: 260, minHeight: 120, frame: false, resizable: true, alwaysOnTop: true, skipTaskbar: true, fullscreenable: false, maximizable: false, minimizable: false, backgroundColor: '#17181a', title: 'Kurokawa Tools',
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
+  mini.setAlwaysOnTop(true, 'floating'); mini.setVisibleOnAllWorkspaces?.(true);
+  mini.loadURL('app://kurokawa/index.html#/mini');
+  const keep = () => { try { const b = mini.getBounds(); fs.writeFileSync(miniPath(), JSON.stringify({ x: b.x, y: b.y })); } catch { /* ignore */ } };
+  mini.on('move', keep); mini.on('closed', () => { mini = null; });
+}
+function closeMini() { if (mini) mini.close(); }
 
 function createWindow() {
   const st = loadState();
@@ -44,7 +58,10 @@ function createWindow() {
   win.loadURL('app://kurokawa/index.html');
   if (st.maximized) win.maximize();
   win.on('resize', saveState); win.on('move', saveState); win.on('close', saveState);
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; closeMini(); });
+  // (The mini window when the main one is put away, if chosen.)
+  win.on('minimize', () => { if (loadState().miniOnMinimize) openMini(); });
+  win.on('restore', () => { if (loadState().miniOnMinimize) closeMini(); });
 }
 function flushLinks() { while (pendingLinks.length && win && !win.webContents.isLoading()) send('kt:open', pendingLinks.shift()); }
 /** A magnet, a link, or a .torrent file (read as a data: URL) from the command line or the system. */
@@ -92,6 +109,7 @@ ipcMain.handle('kt:resume', (_e, id) => (isVideoId(id) ? videos.resume(id) : E()
 ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, !!del) : E().remove(id, !!del)));
 ipcMain.handle('kt:setFiles', (_e, id, p) => E().setFiles(id, p));
 ipcMain.handle('kt:exists', (_e, ps) => (Array.isArray(ps) ? ps : []).map((p) => { try { return require('node:fs').existsSync(String(p)); } catch { return false; } }));
+ipcMain.handle('kt:mini', (_e, o) => { const a = o && o.action; if (a === 'open') openMini(); else if (a === 'close') closeMini(); else if (a === 'main') { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } } else if (a === 'auto') { try { const s = loadState(); s.miniOnMinimize = !!o.on; fs.writeFileSync(statePath(), JSON.stringify(s)); } catch { /* ignore */ } } return { open: !!mini }; });
 ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));

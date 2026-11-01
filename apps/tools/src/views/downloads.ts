@@ -35,6 +35,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     row('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch(err));
     row('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch(err));
     row('trash', t('clearDone'), () => void Promise.all(tasks.filter((x) => x.state === 'done' || x.state === 'failed').map((x) => getEngine().remove(x.id, false))).then((r) => toast(t('tasksRemoved', { n: countItems(r.length) }))).catch(err));
+    { const mb = window.kurokawaTools as unknown as { mini?(o: { action: string }): Promise<unknown> } | undefined; if (mb?.mini) row('mini', t('miniOpen'), () => void mb.mini!({ action: 'open' })); }
     row('folder', t('removeMissing'), () => void removeMissing(tasks).catch(err));
     row('history', t('trashTitle'), () => void import('./trash').then((m) => m.trashSheet()));
     if (getSettings().addons.includes('debrid')) row('cloud', t('cloud'), () => void import('./cloud').then((m) => m.cloudSheet()));

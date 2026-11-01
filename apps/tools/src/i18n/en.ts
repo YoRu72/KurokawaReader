@@ -95,6 +95,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   notHere: "This cannot be checked here.",
   sortQueue: "Queue order", queuePlace: "Place in the queue", moveTop: "To the top", moveUp: "Up", moveDown: "Down", moveBottom: "To the bottom", sortedQueue: "The list is now in queue order.",
   grabDepth: "Follow links", grabDepth0: "This page only", grabBelow: "Only pages under this folder", grabKept: "Kept: it is under Projects at the top.", grabKeep: "Keep as a project", grabProjects: "Projects", grabReading: "Pages read: {n} · files found: {files}", grabRead: "Read {n} pages; {files} files found.",
+  miniOpen: "Mini window", miniMain: "Back to the app", miniActive: "{n} downloading, {q} waiting", miniIdle: "Nothing is downloading.", miniMore: "and {n} more", miniAuto: "The mini window when the app is minimized", miniAutoHint: "A small window above the others with the speed and what is downloading.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

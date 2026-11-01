@@ -72,4 +72,5 @@ export const zh: Partial<Strings> = {
   notHere: "此处无法检查。",
   sortQueue: "队列顺序", queuePlace: "在队列中的位置", moveTop: "移到顶部", moveUp: "上移", moveDown: "下移", moveBottom: "移到底部", sortedQueue: "列表已按队列顺序排列。",
   grabDepth: "跟随链接", grabDepth0: "仅此页面", grabBelow: "仅此文件夹下的页面", grabKept: "已保存：在顶部的“项目”中。", grabKeep: "保存为项目", grabProjects: "项目", grabReading: "已读页面：{n} · 找到文件：{files}", grabRead: "读取了 {n} 个页面，找到 {files} 个文件。",
+  miniOpen: "迷你窗口", miniMain: "返回应用", miniActive: "{n} 个下载中，{q} 个等待", miniIdle: "没有正在下载的内容。", miniMore: "还有 {n} 个", miniAuto: "应用最小化时显示迷你窗口", miniAutoHint: "置于其他窗口之上的小窗口，显示速度和正在下载的内容。",
 };
