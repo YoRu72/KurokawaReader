@@ -511,6 +511,10 @@ final class KtEngine {
                     if (!"done".equals(x.state) || seedAfterDone) { any = true; }
                 }
             } catch (Exception e) { Log.w(TAG, "load one", e); } }
+            // (A safe start, after the app closed twice right after starting: the torrents kept paused and the torrent
+            // engine not started at all — resuming one starts it, so the one that ends the app is told apart.)
+            boolean safe = false; try { android.content.SharedPreferences sp = ctx.getSharedPreferences("kt", Context.MODE_PRIVATE); safe = sp.getBoolean("safeStart", false); if (safe) sp.edit().putBoolean("safeStart", false).apply(); } catch (Throwable ignored) {}
+            if (safe) { for (Task x : snapshot()) if ("torrent".equals(x.kind) && !"done".equals(x.state)) { x.paused = true; x.state = "paused"; } any = false; persist(); }
             if (any) { for (Task x : snapshot()) if ("torrent".equals(x.kind) && (!"done".equals(x.state) || seedAfterDone)) { try { if ("done".equals(x.state)) x.paused = !seedAfterDone; addTorrent(x); } catch (Exception e) { x.state = "failed"; x.error = e.getMessage(); } } }
         } catch (Exception e) { Log.w(TAG, "load", e); }
     }
