@@ -114,6 +114,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   socialOffer: "A post: its photos and videos can be listed at full quality.", socialOpen: "Show them",
   grabYtdlp: "Find the page's video with the Video add-on", grabYtdlpHint: "For players that load their video by script (thousands of sites).",
   errCut: "the server closed the connection. Some sites check visitors first: open the link once in the app's browser (its check passes there and the download reuses it), or try again later.",
+  avTurnOff: "Turn off", avTurnedOff: "Antivirus checks turned off (Settings › Antivirus turns them back on)",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

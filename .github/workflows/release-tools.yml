@@ -39,7 +39,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npm install --no-save playwright && node tests/desktop-files.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
+      - run: npm install --no-save playwright && node tests/desktop-files.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
       - name: Package web build
         run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
