@@ -147,7 +147,9 @@ export interface VisualSettings {
   cardLook: 'comfortable' | 'compact' | 'cover' | 'list';
   showQuote: boolean;      // a line from the reader's highlights on the library page, a new one each day
   // AI (chapter translation, AI voices)
-  aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
+  aiProvider: 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'opencode' | 'custom' | 'local';
+  /** Custom APIs kept (any OpenAI-, Anthropic- or Gemini-style service), and the one in use. */
+  aiCustomApis?: { id: string; name: string; style: 'openai' | 'anthropic' | 'gemini'; base: string; key: string; model: string; headers?: string }[]; aiCustomId?: string;
   localEngine: 'device' | 'server';
   localModel: string;
   localServer: string;

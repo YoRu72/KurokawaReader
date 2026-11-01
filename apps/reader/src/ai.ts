@@ -6,7 +6,18 @@ import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp } from './glossar
 import { getSettings } from './settings';
 import { t } from './i18n';
 
-export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom' | 'local';
+export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'opencode' | 'custom' | 'local';
+/** How a service is spoken to: OpenAI's chat completions (most services and local servers), Anthropic's
+ *  messages, or Gemini's generateContent. */
+export type ApiStyle = 'openai' | 'anthropic' | 'gemini';
+export interface CustomApi { id: string; name: string; style: ApiStyle; base: string; key: string; model: string; headers?: string; service?: string; priceIn?: number; priceOut?: number; context?: number; free?: boolean }
+/** Tokens used, by model: in all and today (requests, tokens in and out) — what the services count and bill. */
+export type Usage = { req: number; in: number; out: number; day: string; dReq: number; dIn: number; dOut: number };
+const today = () => new Date().toISOString().slice(0, 10);
+export function usageOf(model: string): Usage { try { const u = (JSON.parse(localStorage.getItem('kr.aiUsage') ?? '{}') as Record<string, Usage>)[model]; if (!u) return { req: 0, in: 0, out: 0, day: today(), dReq: 0, dIn: 0, dOut: 0 }; return u.day === today() ? u : { ...u, day: today(), dReq: 0, dIn: 0, dOut: 0 }; } catch { return { req: 0, in: 0, out: 0, day: today(), dReq: 0, dIn: 0, dOut: 0 }; } }
+function noteUsage(model: string, tin: number, tout: number): void {
+  try { const all = JSON.parse(localStorage.getItem('kr.aiUsage') ?? '{}') as Record<string, Usage>; const u = usageOf(model); all[model] = { req: u.req + 1, in: u.in + tin, out: u.out + tout, day: today(), dReq: u.dReq + 1, dIn: u.dIn + tin, dOut: u.dOut + tout }; localStorage.setItem('kr.aiUsage', JSON.stringify(all)); } catch { /* full */ }
+}
 
 export const DEFAULT_PROMPT_AR = 'ترجم النصّ ترجمةً سليمةً صحيحةً غير حرفية إلى العربية الفصيحة، ملتزمًا قواعد النحو والصرف كما قرّرها ابن مالك في ألفيته: صحّة الإعراب، وسلامة التراكيب، وحسن اختيار اللفظ، مع الحفاظ على المعنى والنبرة. لا تشرح ولا تعلّق؛ أخرج الترجمة وحدها.';
 export const DEFAULT_PROMPT_EN = 'Translate the text into natural, accurate, idiomatic {lang}. Preserve meaning and tone; do not explain or comment — output only the translation.';
@@ -32,15 +43,44 @@ export const PROVIDERS: { id: AiProvider; label: string; model: string; baseUrl:
   { id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', label: 'Anthropic Claude', model: 'claude-haiku-4-5', baseUrl: 'https://api.anthropic.com/v1', keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openrouter', label: 'OpenRouter', model: 'google/gemini-3.5-flash', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys' },
-  { id: 'custom', label: 'OpenAI-compatible (custom URL)', model: 'gpt-4o-mini', baseUrl: 'http://localhost:11434/v1', keyUrl: '' },
+  { id: 'opencode', label: 'OpenCode Zen', model: '', baseUrl: 'https://opencode.ai/zen/v1', keyUrl: 'https://opencode.ai/zen' },
+  { id: 'custom', label: 'Custom API', model: 'gpt-4o-mini', baseUrl: 'http://localhost:11434/v1', keyUrl: '' },
   { id: 'local', label: 'Local model (on this device or your computer)', model: '', baseUrl: '', keyUrl: '' },
 ];
 
 export function providerInfo(id: AiProvider = getSettings().aiProvider) { return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0]; }
-export function aiReady(): boolean { const s = getSettings(); if (s.aiProvider === 'local') return localReadyCached(); return !!s.aiKey || s.aiProvider === 'custom'; }
+export function aiReady(): boolean { const s = getSettings(); if (s.aiProvider === 'local') return localReadyCached(); const c = conn(); return s.aiProvider === 'custom' ? !!c.base && !!c.model : !!c.key; }
+/** The custom APIs set up (several may be kept; one is in use). */
+export const customApis = (): CustomApi[] => getSettings().aiCustomApis ?? [];
+export const activeCustom = (): CustomApi | undefined => { const l = customApis(); return l.find((x) => x.id === getSettings().aiCustomId) ?? l[0]; };
+/** What the requests go to now: the way of speaking, the address, the key, the model, extra headers. */
+export function conn(): { style: ApiStyle; base: string; key: string; model: string; headers: Record<string, string>; label: string; viaApp: boolean } {
+  const s = getSettings();
+  if (trying || s.aiProvider === 'custom') {
+    const c = trying ?? activeCustom();
+    if (c) { let hd: Record<string, string> = {}; try { hd = c.headers?.trim() ? JSON.parse(c.headers) as Record<string, string> : {}; } catch { /* bad JSON: none */ } return { style: c.style, base: c.base.trim().replace(/\/+$/, ''), key: c.key.trim(), model: c.model.trim(), headers: hd, label: c.name || 'Custom API', viaApp: true }; }
+    return { style: 'openai', base: (s.aiBaseUrl.trim() || providerInfo().baseUrl).replace(/\/+$/, ''), key: s.aiKey.trim(), model: s.aiModel.trim() || 'gpt-4o-mini', headers: {}, label: 'Custom API', viaApp: true };
+  }
+  const style: ApiStyle = s.aiProvider === 'gemini' ? 'gemini' : s.aiProvider === 'anthropic' ? 'anthropic' : 'openai';
+  const headers: Record<string, string> = s.aiProvider === 'openrouter' ? { 'HTTP-Referer': `https://github.com/${REPO}`, 'X-Title': 'KurokawaReader' } : {};
+  return { style, base: effectiveBaseUrl(), key: s.aiKey.trim(), model: s.aiModel.trim() || providerInfo().model, headers, label: providerInfo().label, viaApp: s.aiProvider === 'opencode' };
+}
+type Sent = { ok: boolean; status: number; text: string; retryAfter?: string | null };
+/** A request to the service: straight from the page, or — for services that do not allow pages to call them
+ *  (OpenCode, many custom ones) — through the app's own connection when there is one. */
+async function send(url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }, viaApp: boolean): Promise<Sent> {
+  const native = (window as unknown as { kurokawaDesktop?: { http?: unknown }; Capacitor?: { isNativePlatform?(): boolean } });
+  if (viaApp && (native.kurokawaDesktop?.http || native.Capacitor?.isNativePlatform?.())) {
+    const { localHttp } = await import('./localai'); const r = await localHttp(url, { method: init.method, headers: init.headers, body: init.body, timeoutMs: 90000 });
+    return { ok: r.status >= 200 && r.status < 300, status: r.status, text: r.body };
+  }
+  const r = await fetch(url, { method: init.method, headers: init.headers, body: init.body, signal: init.signal });
+  return { ok: r.ok, status: r.status, text: await r.text(), retryAfter: r.headers.get('retry-after') };
+}
 export function effectiveModel(): string {
   const s = getSettings();
   if (s.aiProvider === 'local') return s.localEngine === 'server' ? s.localServerModel || 'local' : s.localModel || 'local';
+  if (s.aiProvider === 'custom') return conn().model || 'custom';
   return s.aiModel.trim() || providerInfo().model;
 }
 // (Whether a local model is set up, read without loading the local engine's module.)
@@ -122,49 +162,50 @@ async function chat(system: string, user: string, json = true): Promise<string> 
     }
   }
 }
-const failure = async (who: string, r: Response) => { const body = await r.text(); return Object.assign(new Error(`${who} ${r.status}: ${body.slice(0, 200)}`), { status: r.status, limit: readLimit(body, r.headers.get('retry-after')) }); };
+const failure = (who: string, r: Sent) => Object.assign(new Error(`${who} ${r.status}: ${r.text.slice(0, 200)}`), { status: r.status, limit: readLimit(r.text, r.retryAfter) });
 async function chatOnce(system: string, user: string, json = true): Promise<string> {
   const s = getSettings();
-  if (s.aiProvider === 'local') {
+  if (s.aiProvider === 'local' && !trying) {
     const L = await import('./localai');
     return s.localEngine === 'server' ? L.serverChat(system, user, json) : L.deviceChat(system, user);
   }
-  const key = s.aiKey.trim();
-  const model = effectiveModel();
-  const base = effectiveBaseUrl();
+  const c = conn(); const { key, model, base } = c;
   const ctl = new AbortController();
   const timeout = setTimeout(() => ctl.abort(), 90000);
   try {
-    if (s.aiProvider === 'gemini') {
-      const r = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctl.signal,
+    if (c.style === 'gemini') {
+      const r = await send(`${base}/models/${encodeURIComponent(model)}:generateContent${key ? `?key=${encodeURIComponent(key)}` : ''}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', ...c.headers }, signal: ctl.signal,
         body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature: 0.2, ...(json ? { responseMimeType: 'application/json' } : {}) } }),
-      });
-      if (!r.ok) throw await failure('Gemini', r);
-      const j = await r.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      }, c.viaApp);
+      if (!r.ok) throw failure(c.label, r);
+      const j = JSON.parse(r.text) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } };
+      noteUsage(model, j.usageMetadata?.promptTokenCount ?? 0, j.usageMetadata?.candidatesTokenCount ?? 0);
       return j.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
     }
-    if (s.aiProvider === 'anthropic') {
-      const r = await fetch(`${base}/messages`, {
+    if (c.style === 'anthropic') {
+      const r = await send(`${base}/messages`, {
         method: 'POST', signal: ctl.signal,
-        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: { 'content-type': 'application/json', 'x-api-key': key, ...(s.aiProvider === 'custom' && key ? { authorization: `Bearer ${key}` } : {}), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', ...c.headers },
         body: JSON.stringify({ model, max_tokens: 8192, temperature: 0.2, system, messages: [{ role: 'user', content: user }] }),
-      });
-      if (!r.ok) throw await failure('Anthropic', r);
-      const j = await r.json() as { content?: { type: string; text?: string }[] };
-      return j.content?.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('') ?? '';
+      }, c.viaApp);
+      if (!r.ok) throw failure(c.label, r);
+      const j = JSON.parse(r.text) as { content?: { type: string; text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number } };
+      noteUsage(model, j.usage?.input_tokens ?? 0, j.usage?.output_tokens ?? 0);
+      return j.content?.filter((x) => x.type === 'text').map((x) => x.text ?? '').join('') ?? '';
     }
-    // OpenAI and compatible
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    // OpenAI and compatible (OpenRouter, OpenCode, local servers, most custom APIs)
+    const headers: Record<string, string> = { 'content-type': 'application/json', ...c.headers };
     if (key) headers.authorization = `Bearer ${key}`;
-    if (s.aiProvider === 'openrouter') { headers['HTTP-Referer'] = `https://github.com/${REPO}`; headers['X-Title'] = 'KurokawaReader'; }
-    const r = await fetch(`${base}/chat/completions`, {
+    const r = await send(`${base}/chat/completions`, {
       method: 'POST', headers, signal: ctl.signal,
       body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
-    });
-    if (!r.ok) throw await failure(providerInfo().label, r);
-    const j = await r.json() as { choices?: { message?: { content?: string } }[] };
-    return j.choices?.[0]?.message?.content ?? '';
+    }, c.viaApp);
+    if (!r.ok) throw failure(c.label, r);
+    const j = JSON.parse(r.text) as { choices?: { message?: { content?: string | { text?: string }[] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+    noteUsage(model, j.usage?.prompt_tokens ?? 0, j.usage?.completion_tokens ?? 0);
+    const content = j.choices?.[0]?.message?.content;
+    return Array.isArray(content) ? content.map((x) => x.text ?? '').join('') : content ?? '';
   } finally { clearTimeout(timeout); }
 }
 
@@ -236,29 +277,24 @@ export async function translateOne(text: string): Promise<string> { return (awai
 
 /** The provider's model list for the current key (text-generation models, newest-looking first). */
 export async function listModels(): Promise<string[]> {
-  const s = getSettings();
-  const key = s.aiKey.trim();
-  const base = effectiveBaseUrl();
+  const c = conn(); const { key, base } = c;
   const ctl = new AbortController(); const timeout = setTimeout(() => ctl.abort(), 20000);
   try {
     let names: string[] = [];
-    if (s.aiProvider === 'gemini') {
-      const r = await fetch(`${base}/models?pageSize=200&key=${encodeURIComponent(key)}`, { signal: ctl.signal });
-      if (!r.ok) throw new Error(`Gemini ${r.status}: ${(await r.text()).slice(0, 200)}`);
-      const j = await r.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+    if (c.style === 'gemini') {
+      const r = await send(`${base}/models?pageSize=200${key ? `&key=${encodeURIComponent(key)}` : ''}`, { method: 'GET', headers: { ...c.headers }, signal: ctl.signal }, c.viaApp);
+      if (!r.ok) throw new Error(`${c.label} ${r.status}: ${r.text.slice(0, 200)}`);
+      const j = JSON.parse(r.text) as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
       names = (j.models ?? []).filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent')).map((m) => m.name.replace(/^models\//, ''));
-    } else if (s.aiProvider === 'anthropic') {
-      const r = await fetch(`${base}/models?limit=100`, { signal: ctl.signal, headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } });
-      if (!r.ok) throw new Error(`Anthropic ${r.status}: ${(await r.text()).slice(0, 200)}`);
-      const j = await r.json() as { data?: { id: string }[] };
-      names = (j.data ?? []).map((m) => m.id);
+    } else if (c.style === 'anthropic') {
+      const r = await send(`${base}/models?limit=100`, { method: 'GET', signal: ctl.signal, headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', ...c.headers } }, c.viaApp);
+      if (!r.ok) throw new Error(`${c.label} ${r.status}: ${r.text.slice(0, 200)}`);
+      names = ((JSON.parse(r.text) as { data?: { id: string }[] }).data ?? []).map((m) => m.id);
     } else {
-      const headers: Record<string, string> = {};
-      if (key) headers.authorization = `Bearer ${key}`;
-      const r = await fetch(`${base}/models`, { signal: ctl.signal, headers });
-      if (!r.ok) throw new Error(`${providerInfo().label} ${r.status}: ${(await r.text()).slice(0, 200)}`);
-      const j = await r.json() as { data?: { id: string }[] };
-      names = (j.data ?? []).map((m) => m.id);
+      const headers: Record<string, string> = { ...c.headers }; if (key) headers.authorization = `Bearer ${key}`;
+      const r = await send(`${base}/models`, { method: 'GET', signal: ctl.signal, headers }, c.viaApp);
+      if (!r.ok) throw new Error(`${c.label} ${r.status}: ${r.text.slice(0, 200)}`);
+      names = ((JSON.parse(r.text) as { data?: { id: string }[] }).data ?? []).map((m) => m.id);
     }
     // Chat models first; embeddings, audio, image and vision-only models are noise here.
     const noise = /embed|tts|whisper|audio|image|imagen|veo|vision-only|moderation|realtime|transcribe|dall-e|aqa/i;
@@ -311,3 +347,14 @@ export async function aiSpeak(text: string): Promise<Blob> {
   if (!r.ok) throw new Error(`TTS ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.blob();
 }
+
+/** A request through a custom API to see that it answers: how long it took, or why it did not (nothing saved). */
+let trying: CustomApi | null = null;
+export async function testApi(c: CustomApi): Promise<{ ok: boolean; ms: number; why?: string }> {
+  const t0 = performance.now(); trying = c;
+  try { const out = await chatOnce('Reply with the single word OK.', 'OK?', false); return { ok: !!out.trim(), ms: performance.now() - t0 }; }
+  catch (e) { return { ok: false, ms: performance.now() - t0, why: String((e as Error).message ?? e) }; }
+  finally { trying = null; }
+}
+/** A GET through the app's own connection where there is one (services that do not allow pages to call them). */
+export async function appGet(url: string, headers: Record<string, string>): Promise<{ status: number; body: string }> { const r = await send(url, { method: 'GET', headers }, true); return { status: r.status, body: r.text }; }
