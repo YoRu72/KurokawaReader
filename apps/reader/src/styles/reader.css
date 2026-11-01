@@ -493,3 +493,5 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 
 /* While the pen is on, the viewer's own bar steps aside: the ink bar is the one in use. */
 .reader-view.inking .pdf-bar { opacity: 0; pointer-events: none; transition: opacity var(--dur-short, .15s); }
+/* A page illustration that came wrapped in SVG: a whole page, as the book meant it. */
+.kr-chapter img.kr-svgpage { display: block; margin: 0 auto; max-width: 100%; max-height: calc(100dvh - 96px); width: auto; height: auto; object-fit: contain; }

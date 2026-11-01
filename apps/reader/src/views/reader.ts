@@ -241,7 +241,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         d.blocks = chapterMode() && d.chapters.length > 1 ? d.allBlocks.filter((b) => d.chapters[d.chapter]?.contains(b)) : d.allBlocks;
         allImages = docs.flatMap((x) => x.render?.images ?? []);
       }); }
-      const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img'));
+      const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img, svg, image, video'));
       doc.chapters = sections.length > 1 ? sections : [doc.render.element];
       doc.chapter = 0;
       doc.blocks = doc.allBlocks;
@@ -821,10 +821,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   /* ---------- links & taps ---------- */
   flow.addEventListener('click', (e) => {
-    const a = (e.target as HTMLElement).closest('a[data-kr-anchor]') as HTMLElement | null;
-    if (a) { e.preventDefault(); back.remember(); scrollToAnchor(a.dataset.krAnchor!); return; }
+    // A picture first — even one inside a link (books often link their pictures), unless it is a small one in a
+    // line of text (a footnote's mark): tapped, it opens on its own, to look closer, save, copy or share.
     const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
-    if (img && allImages.length && getSettings().pictureZoom) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { showGallery(idx); return; } }
+    const linkOf = (e.target as HTMLElement).closest('a[data-kr-anchor]') as HTMLElement | null;
+    const small = !!img && (img.classList.contains('inline') || img.getBoundingClientRect().width < 64);
+    if (img && allImages.length && getSettings().pictureZoom && !(linkOf && small)) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); showGallery(idx); return; } }
+    if (linkOf) { e.preventDefault(); back.remember(); scrollToAnchor(linkOf.dataset.krAnchor!); return; }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
     // Tap zones on touch screens (nine of them, each given its action in the options; by default the lower
