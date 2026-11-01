@@ -39,7 +39,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npm install --no-save playwright && node tests/desktop-files.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
+      - run: npm install --no-save playwright && node tests/desktop-files.cjs && node tests/native-stub.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs
       - name: Package web build
         run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
       - uses: actions/upload-artifact@v4

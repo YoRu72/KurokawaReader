@@ -42,6 +42,13 @@ export function ktPlugin(): KtPlugin | null {
   return p ?? null;
 }
 
+/** A listener on a native plugin. Capacitor's bridge gives the handle back either as a promise or directly,
+ *  depending on how the plugin was registered: both are taken. */
+export async function listen<T>(p: { addListener(ev: string, fn: (d: T) => void): unknown; removeAllListeners?(): unknown }, ev: string, fn: (d: T) => void): Promise<{ remove(): void }> {
+  const h = (await Promise.resolve(p.addListener(ev, fn))) as { remove?: () => unknown } | undefined;
+  return { remove: () => { try { if (h && typeof h.remove === 'function') void Promise.resolve(h.remove()).catch(() => undefined); } catch { /* gone */ } } };
+}
+
 /** Opens a link outside the app (the browser, the system). */
 export async function openExternal(url: string): Promise<void> {
   if (window.kurokawaTools?.openExternal) { await window.kurokawaTools.openExternal(url); return; }
