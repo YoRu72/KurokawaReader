@@ -113,7 +113,13 @@ final class KtEngine {
             @Override public int[] types() { return new int[]{ AlertType.ADD_TORRENT.swig(), AlertType.METADATA_RECEIVED.swig(), AlertType.TORRENT_FINISHED.swig(), AlertType.SAVE_RESUME_DATA.swig(), AlertType.TORRENT_ERROR.swig(), AlertType.STATE_UPDATE.swig() }; }
             @Override public void alert(Alert<?> a) { try { onAlert(a); } catch (Throwable e) { Log.w(TAG, "alert", e); } }
         });
-        session.start(new SessionParams(sp));
+        // Files read and written with ordinary calls, not memory-mapped (libtorrent 2's default): a mapped file on
+        // the phone's shared storage (/storage/emulated/0, a FUSE filesystem) faults when a page cannot be read or
+        // written, and that fault ends the whole app — it closed by itself a moment into «Checking» a torrent
+        // (SIGSEGV, Android 13, realme RMX3491).
+        SessionParams params = new SessionParams(sp);
+        try { params.setPosixDiskIO(); } catch (Throwable e) { Log.w(TAG, "posix disk io", e); }
+        session.start(params);
         startTicker();
         return session;
     }

@@ -9,8 +9,10 @@ import { addSheet } from './add';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
 
 let open: HTMLElement | null = null;
+/** The open menu's own closing (the button tapped again closes the menu it opened, not a new one's). */
+let closeOpen: (() => void) | null = null;
 export function fabMenu(anchor: HTMLElement): void {
-  if (open) { close(); return; }
+  if (open) { closeOpen?.(); return; }
   const eng = getEngine();
   const item = (ic: string, label: string, sub: string | null, run: () => void) => h('button', { type: 'button', class: 'fab-item', role: 'menuitem', onclick: () => { close(); run(); } }, h('span', { class: 'fab-item-label' }, h('b', null, label), sub ? h('small', null, sub) : null), h('span', { class: 'fab-item-ic' }, icon(ic)));
   const ytdlp = h('small', null, videoEnabled() ? t('videoYtdlpChecking') : videoSupported() ? t('videoYtdlpMissing') : t('videoYtdlpNotHere'));
@@ -28,10 +30,10 @@ export function fabMenu(anchor: HTMLElement): void {
   open = h('div', { class: 'fab-menu-wrap' }, scrim, menu);
   document.body.append(open); anchor.classList.add('open'); anchor.setAttribute('aria-expanded', 'true');
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-  window.addEventListener('keydown', onKey);
+  window.addEventListener('keydown', onKey); closeOpen = close;
   (menu.firstElementChild as HTMLElement | null)?.focus();
   if (videoEnabled()) void videoVersion().then((v) => { ytdlp.textContent = v ? t('videoYtdlpReady', { v }) : t('videoYtdlpFirstUse'); });
-  function close() { open?.remove(); open = null; anchor.classList.remove('open'); anchor.setAttribute('aria-expanded', 'false'); window.removeEventListener('keydown', onKey); }
+  function close() { open?.remove(); open = null; closeOpen = null; anchor.classList.remove('open'); anchor.setAttribute('aria-expanded', 'false'); window.removeEventListener('keydown', onKey); }
 }
 async function fromClipboard(): Promise<void> {
   let text = '';

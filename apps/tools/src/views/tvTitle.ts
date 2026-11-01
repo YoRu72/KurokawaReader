@@ -114,9 +114,19 @@ async function downloadBest(m: TvMeta, v?: TvEpisode): Promise<void> {
   try { const best = bestOf(await streams(m.type, idOf(m, v))); if (!best) { toast(t('watchNone'), 'error', 5000); void releasesSheet(m, v); return; } await addRelease(m, best, v); }
   catch (e) { toast(String((e as Error).message ?? e), 'error', 6000); }
 }
-async function addRelease(m: TvMeta, r: TvRelease, v?: TvEpisode): Promise<void> {
-  const tk = await getEngine().add({ source: r.url ? { url: r.url } : { magnet: magnetOf(r) }, name: r.url ? (r.file ?? r.title) : undefined, sequential: true, files: !r.url && r.fileIdx !== undefined ? [r.fileIdx] : undefined, meta: metaOf(m, r, v) });
-  toast(t('taskAdded', { name: tk.name || r.title }));
+const canPick = () => !!getEngine().torrentInfo && getEngine().can.pickFiles;
+/** A release added: only the episode's file of a season pack (Torrentio names it); `choose` shows the pack's
+ *  files to tick first. False when the choice was cancelled. */
+async function addRelease(m: TvMeta, r: TvRelease, v?: TvEpisode, choose = false): Promise<boolean> {
+  const source = r.url ? { url: r.url } : { magnet: magnetOf(r) };
+  let files = !r.url && r.fileIdx !== undefined ? [r.fileIdx] : undefined;
+  if (choose && !r.url) {
+    const { pickFiles } = await import('./pickFiles');
+    const got = await pickFiles(source, r.title, v ? [v.episode] : [], v?.season); if (got === null) return false;
+    files = got === 'all' ? undefined : got;
+  }
+  const tk = await getEngine().add({ source, name: r.url ? (r.file ?? r.title) : undefined, sequential: true, files, meta: metaOf(m, r, v) });
+  toast(t('taskAdded', { name: tk.name || r.title })); return true;
 }
 /** Every release Torrentio has for a film or an episode: filtered by quality, ordered as asked, one tap to add. */
 async function releasesSheet(m: TvMeta, v?: TvEpisode): Promise<void> {
@@ -129,8 +139,12 @@ async function releasesSheet(m: TvMeta, v?: TvEpisode): Promise<void> {
       h('button', { type: 'button', class: 'chip small', onclick: () => { sort = sort === 'best' ? 'seeds' : sort === 'seeds' ? 'size' : 'best'; redraw(); } }, icon('sort'), t(sort === 'best' ? 'sortBest' : sort === 'seeds' ? 'sortSeeds' : 'sortSize')));
     let rs = all.filter((r) => !qual || r.resolution === qual);
     if (sort === 'seeds') rs = [...rs].sort((a, b) => b.seeders - a.seeders); else if (sort === 'size') rs = [...rs].sort((a, b) => b.size - a.size);
-    list.replaceChildren(...(rs.length ? rs.slice(0, 120).map((r) => h('button', { type: 'button', class: 'result-row' + (r.cached ? ' best' : ''), onclick: () => void addRelease(m, r, v).then(() => sh.close()).catch((e) => toast(String((e as Error).message ?? e), 'error')) },
-      icon(r.url ? 'link' : 'magnet'), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.file ?? r.title), h('small', { class: 'src' }, label(r)), r.file && r.file !== r.title ? h('small', { class: 'src' }, r.title) : null, r.languages ? h('small', { class: 'src' }, r.languages) : null))) : [h('p', { class: 'empty small' }, t('noResults'))]));
+    const go = (r: TvRelease, choose: boolean) => void addRelease(m, r, v, choose).then((ok) => { if (ok) sh.close(); }).catch((e) => toast(String((e as Error).message ?? e), 'error'));
+    list.replaceChildren(...(rs.length ? rs.slice(0, 120).map((r) => {
+      const main = h('button', { type: 'button', class: 'result-row' + (r.cached ? ' best' : ''), onclick: () => go(r, false) },
+        icon(r.url ? 'link' : 'magnet'), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.file ?? r.title), h('small', { class: 'src' }, label(r)), r.file && r.file !== r.title ? h('small', { class: 'src' }, r.title) : null, r.languages ? h('small', { class: 'src' }, r.languages) : null));
+      return r.url || !canPick() ? main : h('div', { class: 'result-wrap' }, main, h('button', { type: 'button', class: 'icon-btn result-files', title: t('pickFilesTitle'), 'aria-label': t('pickFilesTitle'), onclick: () => go(r, true) }, icon('list')));
+    }) : [h('p', { class: 'empty small' }, t('noResults'))]));
   };
   try { all = await streams(m.type, idOf(m, v)); redraw(); } catch (e) { list.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
 }

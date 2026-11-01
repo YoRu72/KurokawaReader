@@ -88,7 +88,8 @@ public class KtBrowserActivity extends Activity {
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
                 String u = r.getUrl().toString();
-                if (u.matches("(?i)^https?://[^#]*\\.(m3u8|mpd|mp4|mkv|webm|m4v|mov|mp3|m4a|flac|ogg|opus|zip|7z|rar|apk|pdf|epub)(\\?.*)?$")) synchronized (media) { if (media.size() < 400) media.put(u, r.getRequestHeaders() != null ? r.getRequestHeaders().get("Referer") : null); }
+                String kind = mediaKind(u, r.getRequestHeaders());
+                if (kind != null) synchronized (media) { if (media.size() < 400 && !media.containsKey(u)) media.put(u, kind); }
                 return super.shouldInterceptRequest(v, r);
             }
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); }
@@ -108,6 +109,28 @@ public class KtBrowserActivity extends Activity {
         wv.loadUrl(u);
     }
 
+    private static final java.util.regex.Pattern FILE_EXT = java.util.regex.Pattern.compile("(?i)^https?://[^#?]*\\.(m3u8|mpd|mp4|mkv|webm|m4v|mov|mp3|m4a|flac|ogg|opus|zip|7z|rar|apk|pdf|epub)(\\?.*)?$");
+    private static final java.util.regex.Pattern AUDIO_EXT = java.util.regex.Pattern.compile("(?i)^https?://[^#?]*\\.(mp3|m4a|flac|ogg|opus|aac|wav)(\\?.*)?$");
+    private static final java.util.regex.Pattern MANIFEST = java.util.regex.Pattern.compile("(?i)(\\.m3u8|\\.mpd|/manifest(\\.|/|\\?|$)|[?&](mime|type|format)=(video|audio|m3u8|hls|dash)|/videoplayback\\?|/hls/[^?]*master|/playlist\\.m3u)");
+    private static final java.util.regex.Pattern SEGMENT = java.util.regex.Pattern.compile("(?i)(\\.(ts|m4s|aac|vtt|webvtt|key)(\\?|$)|[/_-](seg|segment|chunk|frag|fragment|init)[-_]?\\d*\\.(m4s|mp4|m4v|m4a|ts)(\\?|$)|[?&]range=\\d)");
+    /** Whether a request is a medium (and which: «video», «music», or «» for a file): a file by its extension, a
+     *  player's playlist or manifest by its address, or what a <video> or <audio> element asks for — the browser
+     *  asks for those in ranges («Range: bytes=…»), which images and pages never are. The pieces of a stream
+     *  (segments) are left out: its playlist stands for them. */
+    static String mediaKind(String u, Map<String, String> headers) {
+        if (!u.startsWith("http")) return null;
+        if (SEGMENT.matcher(u).find() && !MANIFEST.matcher(u).find()) return null;
+        if (AUDIO_EXT.matcher(u).matches()) return "music";
+        if (FILE_EXT.matcher(u).matches()) return u.matches("(?i)^[^?#]*\\.(zip|7z|rar|apk|pdf|epub)(\\?.*)?$") ? "" : "video";
+        if (MANIFEST.matcher(u).find()) return "video";
+        String range = null, accept = null, dest = null;
+        if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) { String k = e.getKey() == null ? "" : e.getKey().toLowerCase(java.util.Locale.ROOT); if (k.equals("range")) range = e.getValue(); else if (k.equals("accept")) accept = e.getValue(); else if (k.equals("sec-fetch-dest")) dest = e.getValue(); }
+        if ("video".equals(dest)) return "video"; if ("audio".equals(dest)) return "music";
+        if (accept != null && accept.matches("(?i).*\\b(video|audio)/.*")) return accept.toLowerCase(java.util.Locale.ROOT).contains("video") ? "video" : "music";
+        if (range != null && range.startsWith("bytes=") && !u.matches("(?i)^[^?#]*\\.(jpe?g|png|gif|webp|avif|svg|ico|css|js|json|woff2?|ttf|html?)(\\?.*)?$")) return "video";
+        return null;
+    }
+
     /** One link to the app's Add sheet (the browser closes; the page is there to come back to). */
     private void hand(String url, String name, String referer) {
         try {
@@ -119,19 +142,16 @@ public class KtBrowserActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
+    /** The page's own reading of what it offers (native/grab.js, put here by native/embed-grab.mjs). */
+    static final String GRAB_JS = "(function () {\nvar o = [], s = {};\nfunction add(u, t, k) {\nif (!u || typeof u !== 'string') return;\ntry { u = new URL(u.replace(/\\\\\\//g, '/').replace(/\\\\u0026/gi, '&').replace(/&amp;/g, '&'), location.href).href; } catch (x) { return; }\nif (s[u] || !/^(https?:|magnet:)/i.test(u)) return;\ns[u] = 1; o.push({ href: u, text: (t || '').trim().slice(0, 200), kind: k || '' });\n}\nvar media = /\\.(m3u8|mpd|mp4|mkv|webm|m4v|mov)(\\?|#|$)/i, audio = /\\.(mp3|m4a|flac|ogg|opus|aac|wav)(\\?|#|$)/i;\nvar title = document.title;\ndocument.querySelectorAll('video, audio').forEach(function (v) {\nvar k = v.tagName === 'AUDIO' ? 'music' : 'video', name = v.getAttribute('title') || v.getAttribute('aria-label') || title;\nif (v.currentSrc && !/^blob:/.test(v.currentSrc)) add(v.currentSrc, name, k);\nif (v.src && !/^blob:/.test(v.src)) add(v.src, name, k);\nv.querySelectorAll('source[src]').forEach(function (x) { add(x.src, name, k); });\n});\ndocument.querySelectorAll('a[href]').forEach(function (a) { add(a.href, a.textContent || a.title || a.getAttribute('download'), media.test(a.href) ? 'video' : audio.test(a.href) ? 'music' : 'a'); });\ndocument.querySelectorAll('source[src], img[src], iframe[src], track[src], embed[src], object[data]').forEach(function (e) { add(e.currentSrc || e.src || e.data, e.alt || e.title || '', e.tagName.toLowerCase()); });\ndocument.querySelectorAll('[data-src], [data-href], [data-url], [data-file], [data-video], [data-video-src], [data-hls], [data-mp4]').forEach(function (e) {\nvar d = e.dataset, u = d.video || d.videoSrc || d.hls || d.mp4 || d.src || d.href || d.url || d.file;\nadd(u, e.textContent || e.title, d.video || d.videoSrc || d.hls || d.mp4 || media.test(u || '') ? 'video' : 'data');\n});\ndocument.querySelectorAll('meta[property^=\"og:video\"], meta[name^=\"og:video\"], meta[property=\"og:audio\"], meta[name=\"twitter:player:stream\"], meta[itemprop=\"contentUrl\"], link[rel=\"video_src\"]').forEach(function (m) {\nvar u = m.getAttribute('content') || m.getAttribute('href') || '', p = (m.getAttribute('property') || m.getAttribute('name') || '');\nif (/:(type|width|height|duration|tag|release_date)$/.test(p) || !/^(https?:)?\\/\\//i.test(u)) return;\nadd(u, title, /audio/.test(p) ? 'music' : 'video');\n});\ndocument.querySelectorAll('script[type=\"application/ld+json\"]').forEach(function (sc) {\n(sc.textContent.match(/\"(contentUrl|embedUrl)\"\\s*:\\s*\"[^\"]+\"/g) || []).forEach(function (m) { add(m.replace(/^[^:]*:\\s*\"/, '').replace(/\"$/, ''), title, 'video'); });\n});\ntry {\nvar html = document.documentElement.innerHTML;\n(html.match(/https?:(?:\\\\?\\/){2}[^\"'\\s<>()\\\\]+(?:\\\\\\/[^\"'\\s<>()\\\\]+)*?\\.(?:m3u8|mpd|mp4|webm|mkv|m4v|mov|mp3|m4a|flac)(?:\\?[^\"'\\s<>()]*)?/gi) || []).slice(0, 300).forEach(function (u) { add(u, '', audio.test(u) ? 'music' : 'video'); });\n} catch (x) {}\ntry {\nperformance.getEntriesByType('resource').forEach(function (r) {\nif (media.test(r.name) || r.initiatorType === 'video' || /\\.m3u8|\\.mpd|\\/manifest|videoplayback/i.test(r.name)) { if (!/\\.(ts|m4s)(\\?|$)/i.test(r.name)) add(r.name, '', 'video'); }\nelse if (audio.test(r.name) || r.initiatorType === 'audio') add(r.name, '', 'music');\nelse if (/\\.(zip|7z|rar|apk|pdf|epub)(\\?|$)/i.test(r.name)) add(r.name, '', 'media');\n});\n} catch (x) {}\nreturn { url: location.href, title: title, links: o.slice(0, 3000) };\n})()";
     /** What the page links to and shows (after its scripts ran), and the media it loaded: to the app to pick from. */
     private void grab() {
-        String js = "(function(){var o=[],s={};function add(u,t,k){if(!u||s[u])return;if(!/^(https?:|magnet:)/i.test(u))return;s[u]=1;o.push({href:u,text:(t||'').trim().slice(0,200),kind:k||''});}"
-            + "document.querySelectorAll('a[href]').forEach(function(a){add(a.href,a.textContent||a.title||a.getAttribute('download'),'a');});"
-            + "document.querySelectorAll('video[src],audio[src],source[src],img[src],iframe[src],track[src],embed[src],object[data]').forEach(function(e){add(e.currentSrc||e.src||e.data,e.alt||e.title||'',e.tagName.toLowerCase());});"
-            + "document.querySelectorAll('[data-src],[data-href],[data-url],[data-file]').forEach(function(e){var u=e.dataset.src||e.dataset.href||e.dataset.url||e.dataset.file;try{add(new URL(u,location.href).href,e.textContent,'data');}catch(x){}});"
-            + "try{performance.getEntriesByType('resource').forEach(function(r){if(/\\.(m3u8|mpd|mp4|mkv|webm|m4v|mov|mp3|m4a|flac|ogg|opus|zip|7z|rar|apk|pdf|epub)(\\?|$)/i.test(r.name))add(r.name,'','media');});}catch(x){}"
-            + "return JSON.stringify({url:location.href,title:document.title,links:o.slice(0,3000)});})()";
+        String js = "JSON.stringify(" + GRAB_JS + ")";
         wv.evaluateJavascript(js, (res) -> {
             try {
                 JSONObject page = new JSONObject(new JSONArray("[" + res + "]").getString(0));
                 JSONArray links = page.getJSONArray("links");
-                synchronized (media) { for (Map.Entry<String, String> e : media.entrySet()) { JSONObject l = new JSONObject(); l.put("href", e.getKey()); l.put("text", ""); l.put("kind", "media"); links.put(l); } }
+                synchronized (media) { for (Map.Entry<String, String> e : media.entrySet()) { JSONObject l = new JSONObject(); l.put("href", e.getKey()); l.put("text", ""); l.put("kind", e.getValue() == null || e.getValue().isEmpty() ? "media" : e.getValue()); links.put(l); } }
                 JSONObject o = new JSONObject(); o.put("kind", "links"); o.put("url", page.optString("url")); o.put("title", page.optString("title")); o.put("links", links); o.put("ua", wv.getSettings().getUserAgentString());
                 KtPlugin.browserEvent(o);
                 finish();

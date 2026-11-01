@@ -46,15 +46,37 @@ export function followable(href: string, startUrl: string, below: boolean): bool
   if (/\.(css|js|json|xml|rss|ico|woff2?|ttf)(\?|$)/i.test(a.pathname)) return false;
   return !below || a.pathname.startsWith(b.pathname.replace(/[^/]*$/, ''));
 }
+/** The media a page's HTML names without running it: <video>/<audio> and their sources, og:video and
+ *  twitter:player:stream, JSON-LD contentUrl, and media addresses in its scripts (escaped «\/» too). */
+export function mediaInHtml(doc: Document, html: string, page: string): Link[] {
+  const out: Link[] = []; const s = new Set<string>(); const title = doc.title.trim();
+  const add = (raw: string | null | undefined, text: string, kind: 'video' | 'music') => {
+    if (!raw) return; let u: string;
+    try { u = new URL(raw.replace(/\\\//g, '/').replace(/\\u0026/gi, '&').replace(/&amp;/g, '&'), page).href; } catch { return; }
+    if (!/^https?:/i.test(u) || s.has(u)) return; s.add(u); out.push({ href: u, text, kind });
+  };
+  for (const v of Array.from(doc.querySelectorAll('video, audio'))) { const k = v.tagName === 'AUDIO' ? 'music' : 'video'; add(v.getAttribute('src'), v.getAttribute('title') ?? title, k); for (const x of Array.from(v.querySelectorAll('source[src]'))) add(x.getAttribute('src'), title, k); }
+  for (const m of Array.from(doc.querySelectorAll('meta[property^="og:video"], meta[name^="og:video"], meta[property="og:audio"], meta[name="twitter:player:stream"], meta[itemprop="contentUrl"], link[rel="video_src"]'))) {
+    const u = m.getAttribute('content') ?? m.getAttribute('href') ?? ''; const p = m.getAttribute('property') ?? m.getAttribute('name') ?? '';
+    if (/:(type|width|height|duration|tag|release_date)$/.test(p) || !/^(https?:)?\/\//i.test(u)) continue; add(u, title, /audio/.test(p) ? 'music' : 'video');
+  }
+  for (const sc of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) for (const m of sc.textContent?.match(/"contentUrl"\s*:\s*"[^"]+"/g) ?? []) add(m.replace(/^[^:]*:\s*"/, '').replace(/"$/, ''), title, 'video');
+  for (const u of (html.match(/https?:(?:\\?\/){2}[^"'\s<>()\\]+(?:\\\/[^"'\s<>()\\]+)*?\.(?:m3u8|mpd|mp4|webm|mkv|m4v|mov|mp3|m4a|flac)(?:\?[^"'\s<>()]*)?/gi) ?? []).slice(0, 300)) add(u, '', /\.(mp3|m4a|flac)(\?|$)/i.test(u) ? 'music' : 'video');
+  return out;
+}
+
+/** A link found: on a page, or a post's media (with the name to save it under, a thumbnail, and whether it is a
+ *  stream for the Video add-on). */
+type Link = { href: string; text: string; kind?: string; name?: string; thumb?: string; viaVideo?: boolean };
 export async function grabberSheet(start = '', project?: GrabProject, pre?: { links: { href: string; text: string; kind?: string }[]; title?: string; ua?: string }): Promise<void> {
   const sh = openSheet(t('grabTitle'), t('close'));
-  const url = h('input', { type: 'url', dir: 'ltr', value: project?.url ?? start, placeholder: 'https://…', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
+  const url = h('input', { type: 'url', dir: 'ltr', value: project?.url ?? start, placeholder: t('grabPasteHint'), title: t('grabPasteHint'), spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
   let depth = project?.depth ?? 0; let below = project?.below ?? true;
   const depthPick = h('div', { class: 'chip-row' }, h('span', { class: 'label' }, t('grabDepth')), ...[0, 1, 2, 3].map((d) => h('button', { type: 'button', class: 'chip small' + (d === depth ? ' on' : ''), 'data-d': String(d), onclick: (e: Event) => { depth = d; for (const c of Array.from((e.currentTarget as HTMLElement).parentElement!.querySelectorAll('.chip'))) c.classList.toggle('on', c === e.currentTarget); belowRow.hidden = depth === 0; } }, d === 0 ? t('grabDepth0') : localDigits(d))));
   const belowBox = h('input', { type: 'checkbox', checked: below, onchange: (e: Event) => { below = (e.target as HTMLInputElement).checked; } });
   const belowRow = h('label', { class: 'check-row small', hidden: depth === 0 }, belowBox, h('span', null, t('grabBelow')));
   const projRow = h('div', { class: 'chip-row wrap grab-projects' });
-  const chips = h('div', { class: 'chip-row wrap' }); const list = h('div', { class: 'grab-list' }); let links: { href: string; text: string }[] = []; let kind = project?.kind ?? ''; const chosen = new Set<string>();
+  const chips = h('div', { class: 'chip-row wrap' }); const list = h('div', { class: 'grab-list' }); let links: Link[] = []; let kind = project?.kind ?? ''; const chosen = new Set<string>();
   const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('download'), t('grabAdd')) as HTMLButtonElement;
   const keep = h('button', { type: 'button', class: 'btn text', disabled: true, onclick: () => { const u = url.value.trim(); saveProjects([{ url: u, depth, below, kind, at: Date.now() }, ...grabProjects().filter((x) => x.url !== u)]); drawProjects(); toast(t('grabKept')); } }, icon('star'), t('grabKeep')) as HTMLButtonElement;
   const drawProjects = () => { const ps = grabProjects(); projRow.hidden = !ps.length; projRow.replaceChildren(h('span', { class: 'label' }, t('grabProjects')), ...ps.map((x) => h('span', { class: 'chip small proj' }, h('button', { type: 'button', class: 'proj-go', dir: 'ltr', title: x.url, onclick: () => { url.value = x.url; depth = x.depth; below = x.below; kind = x.kind; belowBox.checked = below; belowRow.hidden = depth === 0; for (const c of Array.from(depthPick.querySelectorAll('.chip'))) c.classList.toggle('on', (c as HTMLElement).dataset.d === String(depth)); void load(); } }, (() => { try { const u = new URL(x.url); return u.host + (u.pathname.length > 1 ? u.pathname.replace(/\/$/, '').slice(-24) : ''); } catch { return x.url; } })()), h('button', { type: 'button', class: 'proj-x', 'aria-label': t('remove'), onclick: () => { saveProjects(grabProjects().filter((p) => p.url !== x.url)); drawProjects(); } }, icon('close'))))); };
@@ -64,6 +86,16 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   const load = async () => {
     const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return;
     const status = h('small', { class: 'src' }); list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), status));
+    // (A post on X, Bluesky or Reddit: its media read from the site's API, at full quality — no page to crawl.)
+    const social = await import('./social'); const isPost = !!social.socialOf(u); depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    if (isPost) {
+      status.textContent = ` ${t('grabSocial')}`;
+      try { const post = (await social.socialPost(u))!; if (!post.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+        fromPage(post.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb, viaVideo: x.viaVideo })));
+        list.prepend(h('p', { class: 'hint', dir: 'auto' }, [post.author, post.title].filter(Boolean).join(' · ')));
+      } catch (e) { list.replaceChildren(h('div', { class: 'empty small' }, h('p', null, t('grabSocialFailed', { error: String((e as Error).message ?? e) })), ...(canBrowse() ? [h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); openBrowser(u); } }, icon('globe'), t('grabInBrowser'))] : []))); }
+      return;
+    }
     const pages: [string, number][] = [[u, 0]]; const visited = new Set<string>([u.split('#')[0]]); const seen = new Set<string>(); links = []; let read = 0; let firstErr: unknown = null;
     const MAX_PAGES = 60;
     while (pages.length && read < MAX_PAGES && sh.el.isConnected) {
@@ -71,6 +103,9 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
       let r; try { r = await request(page); if (r.status >= 400) throw new Error(`HTTP ${r.status}`); } catch (e) { if (read === 1) firstErr = e; continue; }
       if (r.headers['content-type'] && !/html|xml|text/i.test(r.headers['content-type'])) continue;
       const doc = new DOMParser().parseFromString(r.body, 'text/html');
+      // (The videos a plain read can see: the page's own players, its sharing tags, its structured data, and media
+      // addresses written in its scripts — the same reading the app's browser does, without running the page.)
+      if (d === 0) for (const m of mediaInHtml(doc, r.body, page)) if (!seen.has(m.href)) { seen.add(m.href); links.push(m); }
       for (const el of Array.from(doc.querySelectorAll('a[href], source[src], video[src], audio[src], img[src]'))) {
         const raw = el.getAttribute('href') ?? el.getAttribute('src') ?? ''; let href: string;
         try { href = raw.startsWith('magnet:') ? raw : new URL(raw, page).href; } catch { continue; }
@@ -84,35 +119,53 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
       }
     }
     if (firstErr && !links.length) { list.replaceChildren(h('p', { class: 'empty small' }, String((firstErr as Error).message ?? firstErr))); return; }
-    const want = kind; fromPage(links); if (want && links.some((x) => kindOf(x.href) === want)) { kind = want; chosen.clear(); for (const x of shown()) chosen.add(x.href); draw(); }
+    const want = kind; fromPage(links); if (want && links.some((x) => kindL(x) === want)) { kind = want; chosen.clear(); for (const x of shown()) chosen.add(x.href); draw(); }
     if (!links.length && canBrowse()) list.replaceChildren(h('div', { class: 'empty small' }, h('p', null, t('grabNothing')), h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); openBrowser(u); } }, icon('globe'), t('grabInBrowser'))));
     if (read > 1) list.prepend(h('p', { class: 'hint' }, t('grabRead', { n: localDigits(read), files: localDigits(links.length) })));
+    // (A video the page plays by script, from a site yt-dlp knows: the Video add-on finds it where a read cannot.)
+    const vid = await import('../video/ytdlp');
+    if (vid.videoEnabled()) list.prepend(h('button', { type: 'button', class: 'dest-row grab-ytdlp', onclick: () => { sh.close(); void import('../views/add').then((m) => m.addSheet(u)); } }, icon('film'), h('span', { class: 'grow' }, h('span', null, t('grabYtdlp')), h('small', { class: 'src' }, t('grabYtdlpHint')))));
   };
   /** The kinds found, with «All» first and the links that are none of them (pages) under «Other». */
   const kindOf = (href: string) => KINDS.find((k) => k[2].test(href))?.[0] ?? 'other';
+  const kindL = (x: Link) => x.kind ?? kindOf(x.href);
   const drawChips = (counts: readonly (readonly [string, string, number])[]) => chips.replaceChildren(
     h('button', { type: 'button', class: 'chip small' + (kind === '' ? ' on' : ''), onclick: () => { kind = ''; drawChips(counts); draw(); } }, `${t('allFiles')} · ${localDigits(links.length)}`),
     ...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); for (const x of shown()) chosen.add(x.href); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)));
-  const shown = () => (kind ? links.filter((x) => kindOf(x.href) === kind) : links);
+  const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links);
   const host = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
   const sync = () => { go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) }); };
   const draw = () => {
     const xs = shown();
     list.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: () => { const all = xs.every((x) => chosen.has(x.href)); xs.forEach((x) => (all ? chosen.delete(x.href) : chosen.add(x.href))); draw(); } }, t('allFiles')),
-      ...xs.slice(0, 600).map((x) => { const nm = decodeURIComponent(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
+      ...xs.slice(0, 600).map((x) => { const nm = x.name ?? decodeURIComponent(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
+        x.thumb ? h('img', { class: 'grab-thumb', src: x.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
         h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href)].filter(Boolean).join(' · ')))); }));
     sync();
   };
-  const fromPage = (ls: { href: string; text: string }[]) => {
+  const fromPage = (ls: Link[]) => {
     const seen = new Set<string>(); links = [];
-    for (const l of ls) { const bare = l.href.startsWith('magnet:') ? l.href : l.href.split('#')[0]; if (seen.has(bare) || /^(javascript|mailto|tel|data):/i.test(bare)) continue; seen.add(bare); links.push({ href: bare, text: (l.text ?? '').trim() }); }
-    const counts = [...KINDS.map(([k, label]) => [k, label, links.filter((x) => kindOf(x.href) === k).length] as const), ['other', 'grabOther', links.filter((x) => kindOf(x.href) === 'other').length] as const].filter((x) => x[2] > 0);
+    for (const l of ls) { const bare = l.href.startsWith('magnet:') ? l.href : l.href.split('#')[0]; if (seen.has(bare) || /^(javascript|mailto|tel|data):/i.test(bare)) continue; seen.add(bare); links.push({ ...l, href: bare, text: (l.text ?? '').trim(), kind: l.kind && KINDS.some((k) => k[0] === l.kind) ? l.kind : undefined }); }
+    const counts = [...KINDS.map(([k, label]) => [k, label, links.filter((x) => kindL(x) === k).length] as const), ['other', 'grabOther', links.filter((x) => kindL(x) === 'other').length] as const].filter((x) => x[2] > 0);
     kind = counts.find((c) => c[0] !== 'other')?.[0] ?? ''; chosen.clear(); for (const x of shown()) chosen.add(x.href);
     keep.disabled = false; drawChips(counts); draw();
   };
   // Links handed by a page opened in the app's browser (its scripts ran: what a plain read misses is there).
   const hdrs: Record<string, string> = {}; if (pre?.ua) hdrs['User-Agent'] = pre.ua; if (pre && start) hdrs.Referer = start;
-  go.addEventListener('click', async () => { go.disabled = true; let n = 0; for (const href of chosen) { try { const [src] = parseSources(href); if (src) { await getEngine().add({ source: src.url && pre ? { ...src, headers: hdrs } : src, connections: 8 }); n++; } } catch { /* the next */ } } toast(t('grabAdded', { n: countFiles(n) })); sh.close(); });
+  // (A post's media keep the names given them; a stream — a Bluesky or Reddit video — goes to the Video add-on.)
+  go.addEventListener('click', async () => {
+    go.disabled = true; let n = 0; let noVideo = 0;
+    const vid = await import('../video/ytdlp'); const { preferredFormat } = await import('../views/addVideo');
+    for (const href of chosen) {
+      const l = links.find((x) => x.href === href);
+      try {
+        // (A stream's playlist or manifest — HLS, DASH — is a list of pieces, not the video: yt-dlp joins them.)
+        if (l?.viaVideo || /\.(m3u8|mpd)(\?|#|$)/i.test(href)) { if (!vid.videoEnabled()) { noVideo++; continue; } await getEngine().add({ source: { url: href }, video: { ...preferredFormat(), title: l?.text || undefined, embedThumb: getSettings().videoEmbedThumb, ...(pre && !l?.viaVideo ? { headers: hdrs } : {}) } }); n++; continue; }
+        const [src] = parseSources(href); if (src) { await getEngine().add({ source: src.url && pre ? { ...src, headers: hdrs } : src, name: l?.name, connections: 8 }); n++; }
+      } catch { /* the next */ }
+    }
+    toast(t('grabAdded', { n: countFiles(n) })); if (noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close();
+  });
   if (pre) { if (pre.title) sh.body.prepend(h('p', { class: 'hint', dir: 'auto' }, pre.title)); fromPage(pre.links); }
   else if (start) void load();
 }

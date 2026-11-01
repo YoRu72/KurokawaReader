@@ -419,3 +419,35 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .kt-kv dd .sel.open { display: block; -webkit-line-clamp: unset; }
 @media (max-width: 560px) { .kt-kv-row { grid-template-columns: 1fr; gap: 2px; align-items: start; } }
 .kt-log li, .kt-log div { overflow-wrap: anywhere; }
+
+/* The files of a batch to pick from (the picker sheet and the Add sheet). */
+.result-wrap { display: flex; align-items: center; gap: 2px; }
+.result-wrap > .result-row { flex: 1; min-width: 0; }
+.result-files { flex: none; }
+.file-chooser .pick-tools { margin: 4px 0 8px; }
+.file-chooser .file-rows { max-height: min(52vh, 460px); overflow-y: auto; overscroll-behavior: contain; border-radius: 14px; background: var(--md-surface-container-low, transparent); padding: 0 6px; }
+.pick-row { min-height: 44px; }
+.pick-row .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.pick-row .pick-name { overflow-wrap: anywhere; line-height: 1.35; }
+.pick-row .src { overflow-wrap: anywhere; }
+.pick-row .pick-size { flex: none; white-space: nowrap; }
+.pick-row.extra .pick-name { opacity: .62; }
+.pick-row.on .pick-name { font-weight: 600; }
+.pick-range { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; }
+.pick-range .num-small { width: 5.5em; padding: 6px 10px; border-radius: 10px; }
+.pick-files .hint { margin-top: 0; }
+.file-chooser .file-rows > * { flex: none; }
+.pick-range input.num-small { width: 4.5em; min-height: 0; height: 36px; padding: 0 10px; font-size: 14px; box-sizing: border-box; }
+.pick-range .btn { min-height: 36px; }
+
+/* Settings rows: the label above its hint (never run together), the control kept to its size beside them. */
+.settings-view .row > span, .settings-view .switch-row > span { flex: 1 1 auto; min-width: 0; }
+.settings-view .row > span > small, .settings-view .switch-row > span > small { display: block; margin-top: 3px; font-weight: 400; font-size: 12.5px; line-height: 1.4; opacity: .85; }
+.settings-view .row > input[type=number], .settings-view .row > .num-wrap input[type=number] { flex: none; width: 5.5em; max-width: 34vw; height: 40px; min-height: 0; padding: 0 12px; border-radius: 12px; text-align: center; box-sizing: border-box; font-size: 15px; }
+.settings-view .row > input[type=text], .settings-view .row > input[type=url], .settings-view .row > input[type=password] { flex: 1 1 100%; min-width: 0; height: 40px; min-height: 0; border-radius: 12px; box-sizing: border-box; }
+/* The search and the section chips stay over the page as it scrolls, on a solid ground (nothing shows above or under them). */
+.settings-view .settings-head { top: -8px; background: var(--md-surface); box-shadow: 0 6px 8px -8px rgb(0 0 0 / .45); padding-bottom: 8px; }
+.settings-view .card > .row:not([hidden]), .settings-view .card details > .row:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; min-height: 44px; }
+.settings-view .card .row > span:first-child { flex: 1 1 11em; }
+.settings-view .card .row > :not(span):last-child { margin-inline-start: auto; }
+.grab-row .grab-thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 10px; flex: none; background: var(--md-surface-container-high); }

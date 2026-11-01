@@ -40,11 +40,16 @@ export async function downloadedEpisodes(anilistId: number): Promise<Map<number,
   for (const x of tasks) { const m = x.meta as { anilistId?: number; episode?: number } | undefined; if (m?.anilistId === anilistId && m.episode) out.set(m.episode, x); }
   return out;
 }
-export async function addFor(a: al.Anime, r: TorrentResult, ep: number): Promise<void> {
+/** A release added for an episode (or `eps`, a batch's wanted ones): from a batch, only those episodes' files
+ *  (read from its list first), not the whole of it. */
+export async function addFor(a: al.Anime, r: TorrentResult, ep: number, eps?: number[]): Promise<void> {
   const source = r.url ? { url: r.url } : { magnet: magnetOf(r) };
-  const meta = { anilistId: a.id, title: a.title, episode: ep || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx } as Task['meta'];
+  const meta = { anilistId: a.id, title: a.title, episode: ep || undefined, batch: (!ep && !!eps) || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx } as Task['meta'];
   if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); await sendToDebrid(source, { meta }); return; }
-  await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: true, meta });
+  const want = eps ?? (ep ? [ep] : []);
+  let files: number[] | undefined = !r.url && r.fileIdx !== undefined && want.length <= 1 ? [r.fileIdx] : undefined;
+  if (!files && !r.url && want.length && (r.type === 'batch' || parseFilename(r.title).batch || !!eps)) files = (await import('../views/pickFiles').then((m) => m.smartFiles(source, want)).catch(() => null)) ?? undefined;
+  await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: true, files, meta });
 }
 
 export interface RangeOptions { from: number; to: number; choices: Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'>; skipFillers: boolean; skipHave: boolean; preferBatch: boolean }
@@ -60,7 +65,7 @@ export async function downloadRange(a: al.Anime, o: RangeOptions, onEach: (ep: n
   if (o.preferBatch && o.to - o.from >= 3) {
     const q = await buildQuery(a, 0); const all = await searchAll(q, () => undefined);
     const batch = rank(all.filter((r) => { const p = parseFilename(r.title); return (p.batch || r.type === 'batch') && (p.episode === undefined || (p.episode <= o.from && (p.episodeEnd ?? 9999) >= o.to)); }).filter((r) => pickFor([r], 0, o.choices)), o.choices.resolution)[0];
-    if (batch) { await addFor(a, batch, 0); for (let ep = o.from; ep <= o.to; ep++) onEach(ep, 'batch', batch.title); return 1; }
+    if (batch) { const eps: number[] = []; for (let ep = o.from; ep <= o.to; ep++) if (!have.has(ep) && !fillers.has(ep)) eps.push(ep); if (!eps.length) { for (let ep = o.from; ep <= o.to; ep++) onEach(ep, have.has(ep) ? 'have' : 'filler'); return 0; } await addFor(a, batch, 0, eps); for (let ep = o.from; ep <= o.to; ep++) onEach(ep, have.has(ep) ? 'have' : fillers.has(ep) ? 'filler' : 'batch', batch.title); return 1; }
   }
   for (let ep = o.from; ep <= o.to; ep++) {
     if (stop()) break;
