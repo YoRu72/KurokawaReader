@@ -127,6 +127,7 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "com.github.junrar:junrar:7.5.5"
     implementation "net.lingala.zip4j:zip4j:2.11.5"
     implementation "io.github.junkfood02.youtubedl-android:library:0.18.1"
+    implementation "io.github.junkfood02.youtubedl-android:common:0.18.1"   // (its unzip, used for the packs; the library has it only at run time)
     implementation "io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1"`);
 // One ffmpeg (yt-dlp's) for everything. Its libraries and Python's — 34 MB and 14 MB a device — are not in the
 // APK: they are packs (KtPacks.java) downloaded when an add-on needs them, built from the same bundles by the
