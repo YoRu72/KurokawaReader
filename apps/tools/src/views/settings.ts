@@ -186,10 +186,18 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         toggle(t('soundAllDone'), SP.allDone, (v) => { setSp({ allDone: v }); if (v) playIt('queue'); }),
         row(t('soundVolume'), vol)] : []),
       toggle(t('doneCardSetting'), SP.card, (v) => setSp({ card: v }), t('doneCardHint')));
+    // The antivirus check after a download (Prism's): on a computer.
+    const AV = { on: false, kind: 'auto' as const, command: '', args: '{file}', extensions: '', ...(s.av ?? {}) } as NonNullable<typeof s.av>;
+    const setAv = (o: Partial<typeof AV>) => updateSettings({ av: { ...AV, ...o } });
+    const avBox = nativePlatform() === 'desktop' ? card('antivirus', t('avSection'), h('p', { class: 'hint' }, t('avHint')),
+      toggle(t('avOn'), AV.on, (v) => { setAv({ on: v, extensions: AV.extensions || 'exe msi zip rar 7z apk dmg pkg deb rpm appimage bat cmd ps1 jar iso' }); rerender(); }),
+      ...(AV.on ? [row(t('avScanner'), pickButton(t('avScanner'), [['auto', t('avAuto')], ['defender', 'Microsoft Defender'], ['clamav', 'ClamAV'], ['custom', t('avCustom')]], AV.kind, (v) => { setAv({ kind: v as 'auto' }); rerender(); }, t('close'))),
+        ...(AV.kind === 'custom' ? [row(t('avCommand'), h('input', { type: 'text', dir: 'ltr', value: AV.command, placeholder: '/usr/bin/clamdscan', onchange: (e: Event) => setAv({ command: (e.target as HTMLInputElement).value }) })), row(t('avArgs'), h('input', { type: 'text', dir: 'ltr', value: AV.args, placeholder: '--no-summary {file}', onchange: (e: Event) => setAv({ args: (e.target as HTMLInputElement).value }) }), t('avArgsHint'))] : []),
+        row(t('avExtensions'), h('input', { type: 'text', dir: 'ltr', value: AV.extensions, onchange: (e: Event) => setAv({ extensions: (e.target as HTMLInputElement).value }) }), t('avExtensionsHint'))] : [])) : null;
     // Storage: the packs (Python, ffmpeg) fetched for add-ons, with their sizes, removable.
     const packsBox = h('div'); void import('../packs').then((m) => { const c = m.packsCard(); if (c) packsBox.replaceChildren(c); });
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), packsBox) : null;
-    return [general, downloads, sounds, player, video, archives, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, downloads, sounds, player, video, archives, avBox, privacy, aria2, addons, anime, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);

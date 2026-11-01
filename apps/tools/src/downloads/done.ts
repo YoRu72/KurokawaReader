@@ -31,7 +31,7 @@ export function startDoneWatch(): void {
     if (!first) for (const x of ts) {
       const was = seen.get(x.id);
       if (was && was !== x.state) {
-        if (x.state === 'done' || (x.state === 'seeding' && was !== 'done' && was !== 'paused')) { if (p.on) playSound('complete'); if (p.card) doneCard(x); notify(x); }
+        if (x.state === 'done' || (x.state === 'seeding' && was !== 'done' && was !== 'paused')) { if (p.on) playSound('complete'); if (p.card) doneCard(x); notify(x); void scanDone(x); }
         else if (x.state === 'failed') { if (p.on && p.failed) playSound('failed'); }
       }
     }
@@ -77,4 +77,20 @@ export function doneCard(x: Task): void {
   document.body.append(el);
   timer = window.setTimeout(close, 14000);
   el.addEventListener('pointerenter', () => window.clearTimeout(timer)); el.addEventListener('focusin', () => window.clearTimeout(timer));
+}
+
+/* ---------- the antivirus check (Prism's), on a computer ---------- */
+export const AV_EXTS = 'exe msi zip rar 7z apk dmg pkg deb rpm appimage bat cmd ps1 jar iso';
+type AvResult = { result: 'clean' | 'infected' | 'error' | 'skipped'; detail?: string; scanner?: string };
+async function scanDone(x: Task): Promise<void> {
+  const av = getSettings().av; const d = window.kurokawaTools as unknown as { avScan?(o: { file: string; cfg: unknown }): Promise<AvResult> } | undefined;
+  if (!av?.on || !d?.avScan || !x.dir) return;
+  const name = displayName(x); const file = `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? x.name : name}`;
+  const line = (cls: string, text: string) => { const card = document.querySelector('.done-card .get-head .grow'); if (card) { card.querySelector('.av-line')?.remove(); card.append(h('small', { class: `av-line ${cls}` }, text)); } };
+  line('busy', t('avScanning'));
+  const r = await d.avScan({ file, cfg: { ...av, extensions: av.extensions.split(/[\s,]+/).filter(Boolean) } }).catch((e) => ({ result: 'error', detail: String((e as Error).message ?? e) }) as AvResult);
+  if (r.result === 'clean') line('ok', t('avClean'));
+  else if (r.result === 'infected') { line('bad', t('avThreat')); toast(t('avThreatToast', { name }), 'error', 15000); playSound('failed'); }
+  else if (r.result === 'error') line('bad', r.detail === 'no-scanner' ? t('avNoScanner') : t('avError', { why: (r.detail ?? '').split('\n')[0] }));
+  else document.querySelector('.done-card .av-line')?.remove();
 }

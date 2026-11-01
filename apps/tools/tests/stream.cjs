@@ -74,7 +74,9 @@ class Provider {
   const ok = L.matched.test(sheet) && /1080p|١٠٨٠p/.test(sheet) && /720p|٧٢٠p/.test(sheet) && /beta/.test(sheet) && L.subs.test(sheet);
   console.log('requests:', seen.join(' '));
   await p.waitForTimeout(600); await p.screenshot({ path: path.join(__dirname, `shot-stream-${lang}.png`) });
-  await p.locator('.stream-row').first().locator('.btn.primary').click(); await p.waitForSelector('video.kt-video');
+  await p.locator('.stream-row').first().locator('.btn.primary').click();
+  // (The Player add-on is offered in the download card the first time.)
+  await p.waitForSelector('.get-card'); await p.click('.get-card .btn.primary'); await p.waitForSelector('video.kt-video');
   const src = await p.$eval('video.kt-video', (v) => v.getAttribute('src') || v.src);
   await p.waitForTimeout(1500); const subsLoaded = await p.evaluate(() => document.body.innerText.includes('Hello') || !!document.querySelector('.toast'));
   console.log('player src:', src, '| subtitle fetched:', seen.includes('/subs/en.vtt'), subsLoaded);

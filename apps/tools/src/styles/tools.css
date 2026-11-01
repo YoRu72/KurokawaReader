@@ -368,3 +368,4 @@ html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: 
 .video-part { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .video-part-range { display: inline-flex; align-items: center; gap: 6px; }
 .video-part-range input { width: 5.5em; text-align: center; font-variant-numeric: tabular-nums; }
+.av-line.ok { color: #2fb350 !important; } .av-line.bad { color: var(--md-error) !important; font-weight: 600; } .av-line.busy { opacity: .8; }

@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('kurokawaTools', {
   videoInfo: (o) => call('kt:videoInfo', o), videoReady: () => call('kt:videoReady'), isVideoHost: (u) => call('kt:isVideoHost', u), videoVersion: () => call('kt:videoVersion'), videoUpdate: () => call('kt:videoUpdate'),
   listDir: (p) => call('kt:listDir', p), deletePath: (p) => call('kt:deletePath', p), roots: () => call('kt:roots'),
   ffmpegAvailable: () => call('kt:ffmpegAvailable'), ffmpeg: (o) => call('kt:ffmpeg', o), ffmpegCancel: (id) => call('kt:ffmpegCancel', id), ffprobe: (p) => call('kt:ffprobe', p), writeTemp: (name, text) => call('kt:writeTemp', { name, text }), siblings: (p) => call('kt:siblings', p), fileUrl: (p) => call('kt:fileUrl', p),
+  avScan: (o) => call('kt:avScan', o), avAvailable: () => call('kt:avAvailable'),
   packStatus: () => call('kt:packStatus'), packInstall: (o) => call('kt:packInstall', o), packCancel: (n) => call('kt:packCancel', n), packRemove: (n) => call('kt:packRemove', n),
   onPackProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:packProgress', fn); return () => ipcRenderer.removeListener('kt:packProgress', fn); },
   onFfmpegProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:ffmpegProgress', fn); return () => ipcRenderer.removeListener('kt:ffmpegProgress', fn); },

@@ -32,7 +32,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.evaluate(() => import('./assets/app.js').catch(() => {})); 
   await p.waitForFunction(() => window.__added.length === 2, null, { timeout: 40000 }).catch(() => {});
   console.log('added:', JSON.stringify(await p.evaluate(() => window.__added.map((a) => [a.name, a.dir, a.source.url]))), 'polls', polls);
-  await p.click('.topbar-actions button[aria-label="Cloud"]'); await p.waitForSelector('.cloud-box h4'); console.log('cloud:', await p.$eval('.cloud-box', (e) => e.innerText.replace(/\n+/g, ' | ').slice(0, 200)));
+  await p.click('.topbar-actions button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Cloud")'); await p.waitForSelector('.cloud-box h4'); console.log('cloud:', await p.$eval('.cloud-box', (e) => e.innerText.replace(/\n+/g, ' | ').slice(0, 200)));
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); process.exit(errors.length ? 1 : 0);
 })();
