@@ -268,7 +268,14 @@ final class KtEngine {
         persist(); tell(true); KtService.maybeStop(ctx, this);
         if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); });
     }
-    void setFiles(String id, int[] prios) { Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x); persist(); tell(true); }
+    void setFiles(String id, int[] prios) {
+        Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x);
+        // (A finished torrent given more files to fetch: woken up again, unless it was paused by hand.)
+        try { if (!x.paused && x.th != null && x.th.isValid()) { long[] prog = x.th.fileProgress(); TorrentInfo ti = x.th.torrentFile(); boolean more = false;
+            if (ti != null) for (int i = 0; i < Math.min(prios.length, ti.numFiles()); i++) if (prios[i] > 0 && prog[i] < ti.files().fileSize(i)) { more = true; break; }
+            if (more && ("done".equals(x.state) || "seeding".equals(x.state) || x.th.status().isFinished())) { x.doneAt = 0; x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = "downloading"; KtService.ensure(ctx); } } } catch (Throwable ignored) {}
+        persist(); tell(true);
+    }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
     void setLimits(long down, long up) { SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
     /** A torrent's own settings on its handle: speed limits, its share of connections. */

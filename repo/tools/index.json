@@ -273,7 +273,7 @@
       "descriptions": {
         "ar": "مزوّدات الأنمي في Torrentio بمعرّف Kitsu؛ ومع مفتاح ديبريد تأتي الروابط محلولة."
       },
-      "version": "0.1.0",
+      "version": "0.1.1",
       "module": "anime/torrentio.mjs",
       "icon": "magnet",
       "settings": [
@@ -327,7 +327,7 @@
       "descriptions": {
         "ar": "خلاصة AnimeTosho، بمعرّف AniDB حين يُعرف."
       },
-      "version": "0.1.0",
+      "version": "0.1.1",
       "module": "anime/animetosho.mjs",
       "icon": "magnet"
     },

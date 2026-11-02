@@ -128,7 +128,8 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
   await syncBuiltins().catch(() => undefined);
   const ps = (await providers()).filter((p) => p.enabled && p.role !== 'stream');
   if (!ps.length) { sh.body.append(h('div', { class: 'empty small' }, h('p', null, t('animeNoProviders')), h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); navigate('/settings/anime'); } }, icon('puzzle'), t('animeProviders')))); return; }
-  const status = h('div', { class: 'chips provider-chips' }, ...ps.map((p) => h('span', { class: 'chip small busy', dataset: { id: p.id } }, h('span', { class: 'spinner tiny' }), p.name)));
+  const status = h('div', { class: 'chips provider-chips' });
+  const resetChips = () => status.replaceChildren(...ps.map((p) => h('span', { class: 'chip small busy', dataset: { id: p.id } }, h('span', { class: 'spinner tiny' }), p.name)));
   const list = h('div', { class: 'torrent-list' });
   const want = getSettings().animeQuality;
   const filterOn = h('label', { class: 'switch-row small' }, h('span', { class: 'grow' }, t('animeOnlyMatching')), h('input', { type: 'checkbox', checked: true, onchange: () => redraw() }));
@@ -137,7 +138,11 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
   const drawTools = () => tools.replaceChildren(...['', '2160', '1080', '720', '480'].map((q) => h('button', { type: 'button', class: 'chip small' + (qual === q ? ' on' : ''), onclick: () => { qual = q; drawTools(); redraw(); } }, q ? `${q}p` : t('allQualities'))), h('span', { class: 'chip-sep' }),
     h('button', { type: 'button', class: 'chip small', onclick: () => { sort = sort === 'rank' ? 'seeds' : sort === 'seeds' ? 'size' : 'rank'; drawTools(); redraw(); } }, icon('sort'), t(sort === 'rank' ? 'sortBest' : sort === 'seeds' ? 'sortSeeds' : 'sortSize')));
   drawTools();
-  sh.body.append(status, tools, ...(episode ? [filterOn] : []), list);
+  // (The name the sources are asked for, changeable: when the show's own titles find nothing, any name typed.)
+  const nameIn = h('input', { type: 'search', class: 'search-input', dir: 'auto', enterkeyhint: 'search', placeholder: t('searchByName') }) as HTMLInputElement;
+  const altTitles = h('div', { class: 'chip-row wrap alt-titles' });
+  const nameForm = h('form', { class: 'search-form torrent-name', onsubmit: (e: Event) => { e.preventDefault(); void run(nameIn.value.trim()); } }, nameIn, h('button', { type: 'submit', class: 'btn tonal small' }, icon('search'), t('search')));
+  sh.body.append(nameForm, altTitles, status, tools, ...(episode ? [filterOn] : []), list);
   let all: TorrentResult[] = [];
   const row = (r: TorrentResult) => {
     const p = parseFilename(r.title);
@@ -169,13 +174,23 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
       toast(t('taskAdded', { name: tk.name || r.title })); sh.close(); navigate('/');
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
-  const q = await buildQuery(a, episode);
-  await searchAll(q, (p: ProviderEntry, res) => {
-    const chip = status.querySelector<HTMLElement>(`[data-id="${CSS.escape(p.id)}"]`);
-    if (chip) { chip.classList.remove('busy'); chip.querySelector('.spinner')?.remove(); if (res instanceof Error) { chip.classList.add('failed'); chip.title = res.message; chip.prepend(icon('alert')); chip.onclick = () => toast(`${p.name}: ${res.message}`, 'error', 6000); } else chip.append(h('small', null, ` ${countResults(res.length)}`)); }
-    if (!(res instanceof Error)) { all = all.concat(res); redraw(); }
-    else redraw();
-  });
+  const base = await buildQuery(a, episode); let token = 0;
+  nameIn.value = base.titles[0] ?? '';
+  altTitles.replaceChildren(...base.titles.slice(0, 6).map((n) => h('button', { type: 'button', class: 'chip small', dir: 'auto', onclick: () => { nameIn.value = n; void run(n); } }, n)));
+  async function run(name: string): Promise<void> {
+    const my = ++token; all = []; list.replaceChildren(); resetChips();
+    // (The show's own titles at first; a name typed by hand replaces them, and the sources search by it.)
+    const q = name && name !== base.titles[0] ? { ...base, titles: [name, ...base.titles.filter((x) => x !== name)], query: name } : base;
+    await searchAll(q, (p: ProviderEntry, res) => {
+      if (my !== token) return;
+      const chip = status.querySelector<HTMLElement>(`[data-id="${CSS.escape(p.id)}"]`);
+      if (chip) { chip.classList.remove('busy'); chip.querySelector('.spinner')?.remove(); if (res instanceof Error) { chip.classList.add('failed'); chip.title = res.message; chip.prepend(icon('alert')); chip.onclick = () => toast(`${p.name}: ${res.message}`, 'error', 6000); } else chip.append(h('small', null, ` ${countResults(res.length)}`)); }
+      if (!(res instanceof Error)) { all = all.concat(res); redraw(); }
+      else redraw();
+    });
+    if (my === token && !all.length) list.replaceChildren(h('div', { class: 'empty small' }, h('p', null, t('noResultsTryName')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { nameIn.focus(); nameIn.select(); } }, icon('pen'), t('searchByName')), h('button', { type: 'button', class: 'btn text small', onclick: () => { sh.close(); navigate(`/search?q=${encodeURIComponent(`${nameIn.value.trim() || titleOf(a)}${episode ? ` ${String(episode).padStart(2, '0')}` : ''}`)}`); } }, icon('magnet'), t('searchEverywhere'))));
+  }
+  await run('');
 }
 
 /** Episodes from–to in one go, with the show's choices (Senpwai's batch download); optionally kept as a rule. */

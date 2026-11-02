@@ -20,7 +20,17 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row'); await p.click('.addon-row:has-text("Archives") .btn'); await p.waitForSelector('.toast');
   console.log('toast:', await p.$eval('.toast', (e) => e.textContent));
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet');
-  await p.click('.sheet button:has-text("Open an archive")'); await p.waitForSelector('.space-plan .plan-row'); await p.click('.entry-details summary');
+  await p.click('.sheet button:has-text("Open an archive")');
+  // One archive picked: opened to look through — its folder, its files; into the folder; one file ticked and taken out.
+  await p.waitForSelector('.archive-browse .kt-file');
+  const top = await p.$$eval('.archive-browse .kt-file-name', (e) => e.map((x) => x.textContent)); console.log('inside:', top.join(' | '));
+  if (top.join() !== 'a,readme.txt') errors.push('the archive browsed: its folder, then its files');
+  await p.click('.archive-browse .kt-folder'); await p.waitForSelector('.archive-browse .kt-file-name:has-text("film.mkv")');
+  await p.click('.archive-browse .kt-file:has-text("film.mkv") .kt-file-box'); await p.click('.archive-browse .sheet-actions .btn.primary'); await p.waitForFunction(() => window.__extracted);
+  const ex = await p.evaluate(() => window.__extracted); console.log('chosen:', JSON.stringify(ex.only), ex.dest);
+  if (JSON.stringify(ex.only) !== '["a/film.mkv"]' || ex.dest !== '/home/u/Downloads/Kurokawa/show') errors.push('only the chosen file taken out, beside the archive');
+  await p.evaluate(() => { window.__extracted = null; });
+  await p.click('.archive-browse .sheet-actions .btn.tonal'); await p.waitForSelector('.space-plan .plan-row'); await p.click('.entry-details summary');
   console.log('sheet:', (await p.$eval('.sheet', (e) => e.innerText)).replace(/\n+/g, ' | ').slice(0, 400));
   await p.click('.sheet .switch-row:has-text("in place") input').catch(() => {}); console.log('plan:', (await p.$eval('.space-plan', (e) => e.innerText)).replace(/\n+/g, ' | '), '| conflicts:', await p.$eval('.conflicts', (e) => e.textContent));
   await p.screenshot({ path: 'shot-extract.png' });

@@ -1993,3 +1993,43 @@ html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
 .tr-pill > button { flex: none; }
 .tr-pill .tr-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 420px) { .tr-pill button { width: 36px; height: 36px; } .tr-pill .tr-status { padding: 0 6px; font-size: 13px; } }
+/* The translation bar folded away: a small button at the side keeps the translation and brings the bar back. */
+.tr-pill[hidden] { display: none; }
+.tr-mini { position: fixed; inset-inline-end: 14px; bottom: calc(34px + var(--safe-bottom) + 76px); z-index: 41; width: 48px; height: 48px; border-radius: 16px; display: inline-flex; align-items: center; justify-content: center; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); animation: pop2 var(--dur-med) var(--ease-spring); }
+.tr-mini.on { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.tr-mini svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.reader-view.immersive .tr-mini { opacity: 0; pointer-events: none; transform: translateY(160%); }
+/* Out of the way while the search or another panel or sheet is open (it covered the search box). */
+body:has(.panel.open, .sheet) .tr-pill, body:has(.panel.open, .sheet) .tr-mini { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(200%); transition: opacity .15s, transform .2s; }
+body:has(.panel.open, .sheet) .tr-mini { transform: translateY(200%); }
+.search-keep { display: flex; align-items: center; gap: 10px; margin: 10px 2px 2px; font: 13.5px var(--font-ui); color: var(--md-on-surface-variant); cursor: pointer; }
+.search-keep input { width: 20px; height: 20px; accent-color: var(--md-primary); }
+.plain-list .hit.current > button { background: var(--md-secondary-container); }
+/* Stepping through a PDF's search hits over the page. */
+.search-nav { position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--safe-top) + 70px); z-index: 42; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: var(--sh-full); background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); max-width: calc(100vw - 20px); box-sizing: border-box; font: 500 13.5px var(--font-ui); animation: pop2 var(--dur-med) var(--ease-spring); }
+.search-nav-text { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.search-nav-text b { font-variant-numeric: tabular-nums; }
+body:has(.panel.open) .search-nav { opacity: 0; pointer-events: none; }
+/* A job's chip clear of the translation bar and the reader's toolbar: above the bar when it is shown. */
+body:has(.tr-pill:not([hidden])) .job-chip { bottom: calc(34px + var(--safe-bottom) + 72px + 62px); }
+.job-chip b { white-space: nowrap; }
+/* The glossary: names by kind, each changed where it stands. */
+.gloss-sheet .sheet-body { display: flex; flex-direction: column; gap: 10px; }
+.gloss-tabs { flex-wrap: wrap; gap: 6px; } .gloss-tabs small { opacity: .7; }
+.gloss-search { width: 100%; box-sizing: border-box; font: inherit; padding: 10px 16px; border-radius: var(--sh-full); border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.gloss-list { display: flex; flex-direction: column; gap: 8px; }
+.gloss-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container); }
+.gloss-row.fresh { outline: 2px solid var(--md-primary); }
+.gloss-pair { display: flex; align-items: center; gap: 8px; } .gloss-pair input { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.gloss-arrow { color: var(--md-on-surface-variant); flex: none; } [dir='rtl'] .gloss-arrow { transform: scaleX(-1); }
+.gloss-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .gloss-meta .src { margin: 0; flex: 1; }
+.gloss-kind { font: 13px var(--font-ui); padding: 4px 8px; border-radius: 8px; border: 0; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.gloss-badge { font: 600 11px var(--font-ui); padding: 2px 8px; border-radius: 999px; background: var(--md-tertiary-container, var(--md-secondary-container)); color: var(--md-on-tertiary-container, var(--md-on-secondary-container)); }
+.tr-titles .segmented { margin-top: 6px; }
+.tr-pill .tr-save.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+@media (max-width: 420px) { .tr-pill button { width: 36px; height: 36px; } .tr-pill .tr-status { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; } }
+/* The image viewer's bar fits a phone: its buttons share the width (the close one stayed outside it). */
+.lightbox .lb-bar { justify-content: space-between; overflow: hidden; box-sizing: border-box; max-width: calc(100vw - 24px); }
+.lightbox .lb-bar > * { flex: 0 1 auto; min-width: 0; }
+.lightbox .lb-bar .icon-btn, .lightbox .lb-bar button { flex: 0 1 44px; min-width: 32px; width: auto; }
+body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox) .tr-mini { display: none; }

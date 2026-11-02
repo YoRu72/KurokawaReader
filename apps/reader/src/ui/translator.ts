@@ -11,8 +11,8 @@
 import { h, icon, toast, openSheet } from './dom';
 import { t, isRtlText, localDigits, getLang } from '../i18n';
 import { db } from '../db';
-import { translateBatch, translationKey, aiReady, suggestTerms, langName, hash, onAiWait, type TrContext } from '../ai';
-import { terms, saveTerms } from '../glossary';
+import { translateBatch, translationKey, legacyTranslationKey, aiReady, suggestTerms, langName, hash, onAiWait, type TrContext } from '../ai';
+import { terms, saveTerms, type TermKind } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
 import { aiSettingsSheet } from './aisettings';
 
@@ -27,7 +27,9 @@ export interface TranslatorHost {
 }
 
 const SKIP = new Set(['IMG', 'FIGURE', 'TABLE', 'HR', 'SVG', 'VIDEO', 'AUDIO', 'PRE', 'CODE']);
-const KEEP = new Set(['I', 'EM', 'B', 'STRONG', 'U', 'SUP', 'SUB']);
+const KEEP = new Set(['I', 'EM', 'B', 'STRONG', 'U', 'SUP', 'SUB', 'A']);
+/** A heading or a title (what is translated with its original beneath, when chosen). */
+export const isTitle = (el: Element): boolean => /^H[1-6]$/.test(el.tagName) || /(^|[\s_-])(title|heading|chapter-?name)([\s_-]|$)/i.test(el.className || '');
 const escText = (x: string) => x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
 /** A paragraph's text with its italics, bold and the like kept as plain tags (ruby readings and other markup
  *  left out) — what the model is given when styles are kept. */
@@ -38,7 +40,7 @@ export function styledText(el: Element): string {
     if (n.nodeType !== 1) return; const e = n as Element; const tag = e.tagName.toUpperCase();
     if (tag === 'RT' || tag === 'RP' || tag === 'SCRIPT' || tag === 'STYLE') return;
     if (tag === 'BR') { out += '\n'; return; }
-    const keep = KEEP.has(tag) && (e.textContent ?? '').trim();
+    const keep = KEEP.has(tag) && (e.textContent ?? '').trim() && (tag !== 'A' || e.hasAttribute('href'));
     if (keep) out += `<${tag.toLowerCase()}>`; e.childNodes.forEach(walk); if (keep) out += `</${tag.toLowerCase()}>`;
   };
   el.childNodes.forEach(walk);
@@ -70,13 +72,33 @@ export function inTargetScript(text: string, target: string): boolean {
   return false;
 }
 
-export type Translator = { toggleUi(): void; dispose(): void; hasTranslations(bookIds: string[]): Promise<boolean>; load(bookIds: string[]): Promise<void>; pairOf(el: HTMLElement, bookId: string): { orig: string; tr?: string }; target(): string };
+// (The translations of each book, shared by every reader opened on it: a whole-book translation going on in the
+// background after its reader was closed writes into the same record a reader opened again reads and saves.)
+const caches = new Map<string, Record<string, string>>();   // bookId → key → translation
+const bySource = new Map<string, Record<string, string>>();
+/** The whole-book translations going on, by book: one at a time for a book, whichever reader started it. */
+const aheadJobs = new Map<string, { cancel(): void; done: number; total: number }>();
+
+/** The links of the original given back to the translation: the n-th link of the translation takes the n-th
+ *  link's address (and its other attributes); a paragraph that was one link whole, its tags lost by the model,
+ *  becomes that link again — a contents page translated still takes you to each chapter. */
+export function linkUp(out: Element, originalHtml: string): void {
+  const tpl = document.createElement('template'); tpl.innerHTML = originalHtml;
+  const src = Array.from(tpl.content.querySelectorAll('a[href]')); if (!src.length) return;
+  const got = Array.from(out.querySelectorAll('a'));
+  got.forEach((a, i) => { const o = src[Math.min(i, src.length - 1)]; for (const at of Array.from(o.attributes)) a.setAttribute(at.name, at.value); });
+  if (!got.length) {
+    const whole = (tpl.content.textContent ?? '').replace(/\s+/g, ' ').trim(); const only = src.length === 1 && (src[0].textContent ?? '').replace(/\s+/g, ' ').trim() === whole;
+    if (only) { const a = document.createElement('a'); for (const at of Array.from(src[0].attributes)) a.setAttribute(at.name, at.value); a.append(...Array.from(out.childNodes)); out.append(a); }
+  }
+}
+
+export type Translator = { titles(bookId: string, labels: string[]): Promise<Record<string, string>>; toggleUi(): void; dispose(): void; hasTranslations(bookIds: string[]): Promise<boolean>; load(bookIds: string[]): Promise<void>; pairOf(el: HTMLElement, bookId: string): { orig: string; tr?: string }; target(): string };
 export function attachTranslator(host: TranslatorHost): Translator {
-  let on = false;
+  let on = false; let disposed = false;
   let pill: HTMLElement | null = null;
   let running = false, generation = 0;
   const originals = new WeakMap<HTMLElement, string>();
-  const caches = new Map<string, Record<string, string>>();   // bookId → key → translation
   const dirty = new Set<string>();
   let saveTimer = 0;
   let pending = 0, done = 0;
@@ -88,7 +110,6 @@ export function attachTranslator(host: TranslatorHost): Translator {
   }
   // A second record of each book's translations, by the original text alone (not by the model or the
   // instructions that made them): what the search across languages reads, whatever the settings are now.
-  const bySource = new Map<string, Record<string, string>>();
   async function sourceIndex(bookId: string): Promise<Record<string, string>> {
     let c = bySource.get(bookId);
     if (!c) { c = (await db.getMeta<Record<string, string>>(`trs:${bookId}`)) ?? {}; bySource.set(bookId, c); }
@@ -116,12 +137,12 @@ export function attachTranslator(host: TranslatorHost): Translator {
   const translations = new WeakMap<HTMLElement, string>();
   // (Each paragraph's own direction as the book set it, put back exactly: removing it let a paragraph take its
   // chapter's direction — Japanese laid out right to left, its full stops at the start of the lines.)
-  const dirs = new WeakMap<HTMLElement, string | null>();
+  const dirs = new WeakMap<HTMLElement, string | null>(); const langs = new WeakMap<HTMLElement, string | null>();
   const ownDir = (el: HTMLElement) => { const d = dirs.get(el); if (d) return d; const x = plainOfText(originals.get(el) ?? ''); return x ? (isRtlText(x) ? 'rtl' : 'ltr') : 'auto'; };
-  const eligible = (el: HTMLElement) => { if (SKIP.has(el.tagName) || el.querySelector('img, table, svg')) return false; const x = originals.has(el) ? sourceOf(el) : plainOf(el); if (x.length < 2) return false; if (furi()) return /[\u4e00-\u9fff]/.test(x); return !(getSettings().aiSkipSame !== false && inTargetScript(x.replace(/<[^>]+>/g, ''), getSettings().aiTarget)); };
+  const eligible = (el: HTMLElement) => { if (SKIP.has(el.tagName) || el.querySelector('img, table, svg')) return false; if (getSettings().aiTitles === 'original' && isTitle(el)) return false; const x = originals.has(el) ? sourceOf(el) : plainOf(el); if (x.length < 2) return false; if (furi()) return /[\u4e00-\u9fff]/.test(x); return !(getSettings().aiSkipSame !== false && inTargetScript(x.replace(/<[^>]+>/g, ''), getSettings().aiTarget)); };
 
   function apply(el: HTMLElement, translated: string) {
-    if (!originals.has(el)) { originals.set(el, el.innerHTML); dirs.set(el, el.getAttribute('dir')); }
+    if (!originals.has(el)) { originals.set(el, el.innerHTML); dirs.set(el, el.getAttribute('dir')); langs.set(el, el.getAttribute('lang')); }
     if (getSettings().aiTask === 'furigana') {
       // Only ruby markup may come back; everything else is escaped.
       const safe = translated.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
@@ -132,24 +153,35 @@ export function attachTranslator(host: TranslatorHost): Translator {
     }
     translations.set(el, translated);
     const dir = isRtlText(translated.replace(/<[^>]+>/g, '')) ? 'rtl' : 'ltr';
-    if (getSettings().aiDisplay === 'bilingual') {
-      // Both: the original as it was (dimmed), the translation under it in a line of its own.
-      el.innerHTML = originals.get(el)!; el.setAttribute('dir', ownDir(el));
-      const orig = h('span', { class: 'kr-tr-orig' }); orig.append(...Array.from(el.childNodes)); el.append(orig);
-      el.append(h('span', { class: 'kr-tr-line', dir }, styledNodes(translated)));
-      el.classList.add('kr-translated', 'kr-bilingual');
+    const target = getSettings().aiTarget || 'en'; const html = originals.get(el)!;
+    // (The translation marked as in its own language: set in the reader's face for that script — the Arabic
+    // one chosen, not the Japanese book's face.)
+    const out = (cls: string) => { const sp = h('span', { class: `kr-tr-line kr-tr-out ${cls}`, dir, lang: target }, styledNodes(translated)); linkUp(sp, html); return sp; };
+    const backLang = () => { const lg = langs.get(el); if (lg) el.setAttribute('lang', lg); else el.removeAttribute('lang'); };
+    const origPlain = () => h('span', { class: 'kr-tr-sub', dir: ownDir(el), lang: langs.get(el) ?? undefined }, plainOfText(html));
+    if (isTitle(el) && (getSettings().aiTitles ?? 'both') === 'both') {
+      // A title: the translation, and the original under it, smaller.
+      backLang(); el.replaceChildren(out('kr-tr-title'), origPlain()); el.classList.add('kr-translated', 'kr-tr-titled'); el.classList.remove('kr-bilingual'); el.setAttribute('dir', dir);
       return;
     }
-    el.replaceChildren(styledNodes(translated)); el.classList.remove('kr-bilingual');
-    el.classList.add('kr-translated');
-    el.dir = dir;
+    if (getSettings().aiDisplay === 'bilingual') {
+      // Both: the original as it was (dimmed), the translation under it in a line of its own.
+      el.innerHTML = html; el.setAttribute('dir', ownDir(el)); backLang();
+      const orig = h('span', { class: 'kr-tr-orig' }); orig.append(...Array.from(el.childNodes)); el.append(orig);
+      el.append(out(''));
+      el.classList.add('kr-translated', 'kr-bilingual'); el.classList.remove('kr-tr-titled');
+      return;
+    }
+    el.replaceChildren(styledNodes(translated)); linkUp(el, html); el.classList.remove('kr-bilingual', 'kr-tr-titled');
+    el.classList.add('kr-translated', 'kr-tr-out');
+    el.dir = dir; el.lang = target;
   }
   /** The way translations are shown changed: every translated paragraph shown the new way. */
   function reapply() { for (const { el } of host.blocks()) { const tr = translations.get(el); if (tr !== undefined && originals.has(el)) apply(el, tr); } }
   function restore(el: HTMLElement) {
     const o = originals.get(el);
     if (o === undefined) return;
-    const d = ownDir(el); el.innerHTML = o; el.classList.remove('kr-translated', 'kr-furigana', 'kr-bilingual'); el.setAttribute('dir', d); originals.delete(el); translations.delete(el); dirs.delete(el);
+    const d = ownDir(el); const lg = langs.get(el); el.innerHTML = o; el.classList.remove('kr-translated', 'kr-furigana', 'kr-bilingual', 'kr-tr-out', 'kr-tr-titled'); el.setAttribute('dir', d); if (lg) el.setAttribute('lang', lg); else el.removeAttribute('lang'); originals.delete(el); translations.delete(el); dirs.delete(el); langs.delete(el);
   }
   function restoreAll() { for (const { el } of host.blocks()) restore(el); }
 
@@ -170,9 +202,24 @@ export function attachTranslator(host: TranslatorHost): Translator {
     if (cur.length) out.push(cur); return out;
   }
 
+  /** The names of a chapter put in its book's glossary before it is translated (when chosen): the model lists the
+   *  characters, places and terms it holds, those not there yet are added — once for each chapter. */
+  async function autoGlossary(bookId: string, chapterIdx: number, blocks: HTMLElement[], quiet: boolean): Promise<void> {
+    if (!getSettings().aiAutoGlossary || furi() || !aiReady()) return;
+    const k = `glossScan:${bookId}`; const done = (await db.getMeta<number[]>(k)) ?? []; if (done.includes(chapterIdx)) return;
+    const texts = blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1); if (!texts.length) return;
+    try {
+      const known = terms().filter((x) => !x.book || x.book === bookId).map((x) => x.from);
+      const found = await suggestTerms(texts, known);
+      const kind = (x?: string): TermKind => (x === 'person' || x === 'place' || x === 'group' ? x : 'term');
+      if (found.length) { saveTerms([...terms(), ...found.map((f) => ({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, from: f.from, to: f.to, book: bookId, kind: kind(f.kind), auto: true }))]); if (!quiet) toast(t('glossAutoAdded', { n: localDigits(found.length) })); }
+      await db.setMeta(k, [...((await db.getMeta<number[]>(k)) ?? []), chapterIdx]);
+    } catch (e) { console.warn('[kurokawa] auto glossary', e); }
+  }
   /** Translate the shown chapter: cached paragraphs appear at once, the rest in view order. */
   async function run(force = false) {
     const gen = ++generation;
+    { const cur = host.currentChapter(); const ch = host.chapters()[cur]; if (ch && getSettings().aiAutoGlossary && on) { running = true; paint(); await autoGlossary(ch.bookId, cur, ch.blocks, false); running = false; if (gen !== generation) return; } }
     const list = host.blocks().filter((b) => eligible(b.el));
     // visible first, then by distance from the viewport
     const sr = host.scroll.getBoundingClientRect();
@@ -182,14 +229,16 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const todo: { el: HTMLElement; bookId: string; text: string; key: string }[] = [];
     for (const b of list) {
       const text = sourceOf(b.el);
-      const key = translationKey(text);
+      const key = translationKey(text, b.bookId);
       const c = await cache(b.bookId);
-      if (!force && c[key]) { apply(b.el, c[key]); done++; continue; }
+      const had = c[key] ?? c[legacyTranslationKey(text)];
+      if (!force && had) { apply(b.el, had); done++; continue; }
       if (force) restore(b.el);
       todo.push({ el: b.el, bookId: b.bookId, text, key });
     }
     paint();
     if (!todo.length) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { paint(); return; }   // (offline: what is kept is shown, the rest waits)
     if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); settingsSheet(); return; }
     running = true; paint();
     // Batches in view order (the nearest first); within one, the paragraphs in reading order, so the context
@@ -219,7 +268,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
   /** The next chapter translated while this one is read (quietly; nothing shown until it is opened). */
   let prefetched = '';
   async function prefetchNext() {
-    if (getSettings().aiPrefetch === false || aheadBusy) return;
+    if (getSettings().aiPrefetch === false || aheadBusy || [...aheadJobs.keys()].some((id) => host.chapters().some((c) => c.bookId === id))) return;
     const cur = host.currentChapter(); const next = host.chapters()[cur + 1]; if (!next) return;
     const mark = `${next.bookId}:${cur + 1}`; if (prefetched === mark) return; prefetched = mark;
     await translateAhead(cur + 1, cur + 1, null, null, () => undefined, true);
@@ -227,30 +276,34 @@ export function attachTranslator(host: TranslatorHost): Translator {
 
   /* ---------- translate ahead: N chapters, a range, or the whole book ---------- */
   let aheadGen = 0; let aheadBusy = false;
-  async function translateAhead(from: number, to: number, status: HTMLElement | null, bar: HTMLElement | null, onDone: () => void, quiet = false) {
+  async function translateAhead(from: number, to: number, status: HTMLElement | null, bar: HTMLElement | null, onDone: () => void, quiet = false, force = false) {
+    const chapters = host.chapters().slice(from, to + 1); const bookKey = chapters[0]?.bookId ?? '';
+    if (!quiet && aheadJobs.has(bookKey)) { toast(t('trJobAlready'), 'info', 4000); onDone(); return; }
     const gen = quiet ? aheadGen : ++aheadGen; if (!quiet) aheadBusy = true;
-    const chapters = host.chapters().slice(from, to + 1);
     const items: { bookId: string; text: string; key: string; el: HTMLElement; chapter: string; all: HTMLElement[] }[] = [];
     const seen = new Set<string>();
     for (const ch of chapters) for (const el of ch.blocks) {
       if (!eligible(el)) continue;
       const text = sourceOf(el);
-      const key = translationKey(text);
+      const key = translationKey(text, ch.bookId);
       if (seen.has(key)) continue; seen.add(key);
       const c = await cache(ch.bookId);
-      if (!c[key]) items.push({ bookId: ch.bookId, text, key, el, chapter: ch.label, all: ch.blocks });
+      if (force || !(c[key] ?? c[legacyTranslationKey(text)])) items.push({ bookId: ch.bookId, text, key, el, chapter: ch.label, all: ch.blocks });
     }
     const total = items.length; let finished = 0, failed = 0;
     // (A range or the whole book goes on as a job: in the background, out of the reader too, its progress in a
     // notification — the book read meanwhile. Stopped from the jobs list or the sheet.)
     const job: { report?: (pct: number, text?: string) => void; finish?: (how: 'ok' | 'cancel' | 'fail') => void } = {};
+    const stopIt = () => { aheadGen++; aheadBusy = false; aheadJobs.delete(bookKey); job.finish?.('cancel'); };
+    const entry = { cancel: stopIt, done: 0, total };
+    if (!quiet && total) aheadJobs.set(bookKey, entry);
     if (!quiet && total) {
       const title = host.bookTitle?.(chapters[0]?.bookId ?? '') ?? t('aiTranslate');
       const ended = new Promise<'ok' | 'cancel' | 'fail'>((res) => { job.finish = res; });
       void import('../jobs').then(({ runJob }) => runJob(t('trJobTitle', { book: title }), async (rep) => { job.report = rep; rep(0, t('trJobProgress', { n: localDigits(0), total: localDigits(total) })); const how = await ended; if (how === 'fail') throw new Error(t('trJobFailed')); return how === 'ok' ? { blob: new Blob([]), name: title } : null; }, () => false,
-        { quiet: true, cancel: () => { aheadGen++; aheadBusy = false; job.finish?.('cancel'); }, doneText: () => t('trJobDone', { book: title, n: localDigits(finished) }) })).catch(() => undefined);
+        { quiet: true, cancel: () => stopIt(), doneText: () => t('trJobDone', { book: title, n: localDigits(finished) }) })).catch(() => undefined);
     }
-    const paintAhead = () => { job.report?.(total ? (finished / total) * 100 : 100, t('trJobProgress', { n: localDigits(finished), total: localDigits(total) })); if (status) status.textContent = t('translatingAhead', { n: finished, total }); if (bar) bar.style.width = total ? `${Math.round((finished / total) * 100)}%` : '100%'; };
+    const paintAhead = () => { entry.done = finished; job.report?.(total ? (finished / total) * 100 : 100, t('trJobProgress', { n: localDigits(finished), total: localDigits(total) })); if (status) status.textContent = t('translatingAhead', { n: finished, total }); if (bar) bar.style.width = total ? `${Math.round((finished / total) * 100)}%` : '100%'; };
     paintAhead();
     if (!total) { if (status) status.textContent = t('alreadyTranslated'); if (!quiet) aheadBusy = false; onDone(); return; }
     const batches = batchesOf(items);
@@ -258,6 +311,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
       while (batches.length && gen === aheadGen) {
         const batch = batches.shift()!;
         try {
+          if (getSettings().aiAutoGlossary) { for (const x of batch) { const ci = from + chapters.findIndex((c) => c.blocks === x.all); if (ci >= from) await autoGlossary(x.bookId, ci, x.all, true); } for (const x of batch) x.key = translationKey(x.text, x.bookId); if (gen !== aheadGen) return; }
           const first = batch[0]; const i = first.all.indexOf(first.el); const before = first.all.slice(Math.max(0, i - 2), i).map((e) => plainOf(e)).filter((x) => x.length > 1);
           const out = await translateBatch(batch.map((x) => x.text), first.bookId, { book: host.bookTitle?.(first.bookId), chapter: first.chapter, before });
           if (gen !== aheadGen) return;
@@ -268,13 +322,14 @@ export function attachTranslator(host: TranslatorHost): Translator {
       }
     };
     await Promise.all(Array.from({ length: quiet ? 1 : Math.max(parallel(), 2) }, () => worker()));
-    if (!quiet) aheadBusy = false;
+    if (!quiet) { aheadBusy = false; if (aheadJobs.get(bookKey) === entry) aheadJobs.delete(bookKey); }
     job.finish?.(gen !== aheadGen ? 'cancel' : finished > 0 ? 'ok' : failed ? 'fail' : 'ok');
     if (gen !== aheadGen) return;
     if (quiet) return;
     if (status) status.textContent = failed ? t('translateAheadPartial', { n: finished, total }) : t('translateAheadDone', { n: finished });
     onDone();
-    if (on) void run();   // the shown chapter picks up what is now cached
+    if (!quiet && from === 0 && to >= host.chapters().length - 1) void db.setMeta(`trWhole:${bookKey}`, true);
+    if (on && !disposed) void run();   // the shown chapter picks up what is now cached
   }
 
   /** The translate-ahead controls (used in their own sheet and inside the AI settings sheet). */
@@ -288,7 +343,10 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const status = h('p', { class: 'src' }, t('translateAheadBody', { n: chapters.length }));
     const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
     let busy = false;
-    const cancel = h('button', { class: 'btn small', type: 'button', hidden: true, onclick: () => { aheadGen++; busy = false; aheadBusy = false; cancel.hidden = true; status.textContent = t('cancelled'); } }, icon('close'), t('cancel'));
+    const cancel = h('button', { class: 'btn small', type: 'button', hidden: true, onclick: () => { const j = aheadJobs.get(chapters[0]?.bookId ?? ''); if (j) j.cancel(); else aheadGen++; busy = false; aheadBusy = false; cancel.hidden = true; status.textContent = t('cancelled'); } }, icon('close'), t('cancel'));
+    // (A whole-book translation already going on for this book — from this reader or one closed since: its progress, and its Stop.)
+    const running = aheadJobs.get(chapters[0]?.bookId ?? '');
+    if (running) { busy = true; track.hidden = false; cancel.hidden = false; const tick = () => { if (!aheadJobs.has(chapters[0]?.bookId ?? '') || !status.isConnected) { if (status.isConnected && busy) { busy = false; cancel.hidden = true; status.textContent = t('translateAheadDone', { n: running.done }); } return; } status.textContent = t('translatingAhead', { n: running.done, total: running.total }); bar.style.width = `${Math.round((running.done / Math.max(1, running.total)) * 100)}%`; setTimeout(tick, 700); }; setTimeout(tick, 0); }
     const start = (from: number, to: number) => {
       if (busy) return;
       if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
@@ -313,6 +371,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
     return h('div', { class: 'tr-options' },
       h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('trOptions')),
       sw(t('trBilingual'), s.aiDisplay === 'bilingual', (v) => { updateSettings({ aiDisplay: v ? 'bilingual' : 'replace' }); reapply(); paint(); }, t('trBilingualHint')),
+      h('div', { class: 'tr-opt tr-titles' }, h('span', { class: 'label' }, t('trTitles'), h('small', { class: 'hint' }, t('trTitlesHint'))),
+        h('div', { class: 'segmented small', role: 'radiogroup' }, ...([['both', t('trTitlesBoth')], ['translation', t('trTitlesTr')], ['original', t('trTitlesOrig')]] as ['both' | 'translation' | 'original', string][]).map(([k, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String((s.aiTitles ?? 'both') === k), onclick: (e: Event) => { updateSettings({ aiTitles: k }); const g = (e.currentTarget as HTMLElement).parentElement!; g.querySelectorAll('button').forEach((b) => b.setAttribute('aria-checked', String(b === e.currentTarget))); for (const { el } of host.blocks()) if (isTitle(el)) restore(el); if (on) void run(); } }, l)))),
       sw(t('trContext'), s.aiContext !== false, (v) => updateSettings({ aiContext: v }), t('trContextHint')),
       sw(t('trKeepStyle'), s.aiKeepStyle !== false, (v) => updateSettings({ aiKeepStyle: v })),
       sw(t('trSkipSame'), s.aiSkipSame !== false, (v) => updateSettings({ aiSkipSame: v }), t('trSkipSameHint')),
@@ -340,6 +400,26 @@ export function attachTranslator(host: TranslatorHost): Translator {
     } catch (e) { if (sh.el.isConnected) sh.body.replaceChildren(h('p', { class: 'src' }, String((e as Error).message ?? e))); }
   }
 
+  /** The kept translation of a paragraph, shown or not. */
+  function keptOf(el: HTMLElement, bookId: string): string | undefined {
+    const shown = translations.get(el); if (shown) return shown;
+    const src = sourceOf(el); const c = caches.get(bookId);
+    return c?.[translationKey(src, bookId)] ?? c?.[legacyTranslationKey(src)] ?? bySource.get(bookId)?.[srcKey(plainOfText(originals.get(el) ?? el.innerHTML))];
+  }
+  /** Saved with the book: it opens translated every time — from the translations kept on this device, offline
+   *  too — until the translation is turned off; the bar's state (shown or folded away) kept with it. */
+  const keepKey = (id: string) => `trKeep:${id}`;
+  const firstBook = () => host.chapters()[0]?.bookId ?? host.blocks()[0]?.bookId ?? '';
+  async function setKept(v: boolean) { const id = firstBook(); if (!id) return; if (v) await db.setMeta(keepKey(id), { hidden: !!pill?.hidden, on }); else await db.setMeta(keepKey(id), null); }
+  /** The pill's Save: the translation kept with the book (and the device asked to keep the app's storage, so the
+   *  system does not clear it), or no longer. */
+  async function toggleSaved() {
+    const v = !(await isKept()); await setKept(v); if (v && !on) setOn(true);
+    if (v) void navigator.storage?.persist?.().catch(() => undefined);
+    markSaved(v); toast(v ? t('trKept') : t('trNotKept'));
+  }
+  function markSaved(v: boolean) { const b = pill?.querySelector('.tr-save'); if (b) { b.setAttribute('aria-pressed', String(v)); b.classList.toggle('on', v); } }
+  async function isKept(): Promise<boolean> { const id = firstBook(); return !!id && !!(await db.getMeta(keepKey(id))); }
   function aheadSheet() {
     const sh = openSheet(t('translateAhead'), t('close'));
     sh.body.style.fontFamily = 'var(--font-ui)';
@@ -356,13 +436,14 @@ export function attachTranslator(host: TranslatorHost): Translator {
   function paint() {
     if (!pill) return;
     if (waitSec > 0 && on) { status.textContent = t('trWaitingLimit', { s: localDigits(waitSec) }); return; }
+    mini?.classList.toggle('on', on);
     toggleBtn.setAttribute('aria-pressed', String(on));
     toggleBtn.classList.toggle('on', on);
     pill.querySelector('.tr-mode')?.classList.toggle('on', getSettings().aiDisplay === 'bilingual');
     status.textContent = !on ? t('translatorOff') : running ? t('translating') + ` ${localDigits(done)}/${localDigits(pending)}` : pending ? t('translatedCount', { n: done, total: pending }) : t('translatorOn');
   }
   function setOn(v: boolean) {
-    on = v;
+    on = v; void isKept().then((k) => { if (k) void setKept(true); });   // (saved with the book: on or off is kept as it was left)
     if (on) void run(); else { generation++; running = false; restoreAll(); }
     paint();
   }
@@ -370,24 +451,62 @@ export function attachTranslator(host: TranslatorHost): Translator {
   function moreSheet() {
     const sh = openSheet(t('aiTranslate'), t('close')); sh.body.style.fontFamily = 'var(--font-ui)';
     const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label));
-    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('trSuggestTerms'), () => void suggestSheet()), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
+    const autoCb = h('input', { type: 'checkbox', checked: !!getSettings().aiAutoGlossary, onchange: (e: Event) => { updateSettings({ aiAutoGlossary: (e.target as HTMLInputElement).checked }); if ((e.target as HTMLInputElement).checked && on) void run(); } }) as HTMLInputElement;
+    sh.body.append(h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('glossAuto'), h('small', { class: 'hint' }, t('glossAutoHint'))), autoCb));
+    const keepCb = h('input', { type: 'checkbox', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; void setKept(v); markSaved(v); if (v) void navigator.storage?.persist?.().catch(() => undefined); if (v && !on) setOn(true); toast(v ? t('trKept') : t('trNotKept')); } }) as HTMLInputElement;
+    void isKept().then((v) => { keepCb.checked = v; });
+    sh.body.append(h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('trKeepBook'), h('small', { class: 'hint' }, t('trKeepBookHint'))), keepCb));
+    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('trSuggestTerms'), () => void suggestSheet()), row('books', t('glossary'), () => void import('./glossarysheet').then((m) => { const id = host.chapters()[host.currentChapter()]?.bookId; m.glossarySheet(id ? { id, title: host.bookTitle?.(id) ?? '' } : undefined); })), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
+  }
+  // (The bar hidden keeps the translation: it folds into a small button, the bar back at a tap. Turning the
+  // translation off is the bar's first button; its X only hides the bar.)
+  let mini: HTMLElement | null = null;
+  function hidePill() { if (!pill) return; pill.hidden = true; void isKept().then((k) => { if (k) void setKept(true); }); if (!mini) { mini = h('button', { type: 'button', class: 'tr-mini' + (on ? ' on' : ''), title: t('trShowBar'), 'aria-label': t('trShowBar'), onclick: () => showPill() }, icon('translate')); host.root.appendChild(mini); } }
+  function showPill() { mini?.remove(); mini = null; if (pill) { pill.hidden = false; paint(); } else buildPill(); void isKept().then((k) => { if (k) void setKept(true); }); }
+  /** Translated again: this chapter, some chapters, or the whole book (offered as «again» once it was translated whole). */
+  function retrySheet() {
+    const sh = openSheet(t('retranslate'), t('close')); sh.body.style.fontFamily = 'var(--font-ui)';
+    const chapters = host.chapters(); const cur = host.currentChapter(); const bookId = chapters[cur]?.bookId ?? '';
+    const row = (ic: string, label: string, sub: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: fn }, icon(ic), h('span', { class: 'grow' }, h('span', null, label), h('small', { class: 'src', style: { display: 'block', margin: '0' } }, sub)));
+    const status = h('p', { class: 'src' }); const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
+    const go = (from: number, to: number) => { if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; } track.hidden = false; void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, bar, () => undefined, false, true); };
+    const num = (v: number) => h('input', { type: 'number', min: '1', max: String(chapters.length), value: String(v), dir: 'ltr', style: { width: '5.5em' } }) as HTMLInputElement;
+    const fromI = num(cur + 1), toI = num(Math.min(chapters.length, cur + 3));
+    const range = h('div', { class: 'row', hidden: true, style: { gap: '10px', flexWrap: 'wrap', alignItems: 'center' } }, h('span', null, t('fromChapter')), fromI, h('span', null, t('toChapter')), toI,
+      h('button', { type: 'button', class: 'btn small tonal', onclick: () => go(Number(fromI.value) - 1, Number(toI.value) - 1) }, t('retranslate')));
+    const whole = row('books', t('trRedoWhole'), t('trRedoWholeHint', { n: localDigits(chapters.length) }), () => { if (confirm(t('trRedoWholeAsk'))) { sh.close(); void translateAhead(0, chapters.length - 1, null, null, () => undefined, false, true); } });
+    whole.hidden = true; void db.getMeta<boolean>(`trWhole:${bookId}`).then((w) => { whole.hidden = false; if (!w) { whole.querySelector('.grow > span')!.textContent = t('trWholeBook'); } });
+    sh.body.append(h('div', { class: 'dest-list' },
+      row('rotate', t('trRedoChapter'), chapters[cur]?.label ?? '', () => { sh.close(); if (!on) setOn(true); else void run(true); }),
+      row('toc', t('trRedoChapters'), t('trRedoChaptersHint'), () => { range.hidden = !range.hidden; }),
+      whole), range, track, status);
   }
   function buildPill() {
-    toggleBtn = h('button', { type: 'button', class: 'tr-toggle', 'aria-label': t('aiTranslate'), onclick: () => setOn(!on) }, icon('translate')) as HTMLButtonElement;
+    toggleBtn = h('button', { type: 'button', class: 'tr-toggle', 'aria-label': t('trTurnOnOff'), title: t('trTurnOnOff'), onclick: () => setOn(!on) }, icon('translate')) as HTMLButtonElement;
     status = h('span', { class: 'tr-status' });
     pill = h('div', { class: 'tr-pill', role: 'toolbar', 'aria-label': t('aiTranslate') },
       toggleBtn, status,
       h('button', { type: 'button', class: 'tr-mode', title: t('trBilingual'), 'aria-label': t('trBilingual'), onclick: () => { updateSettings({ aiDisplay: getSettings().aiDisplay === 'bilingual' ? 'replace' : 'bilingual' }); reapply(); paint(); toast(getSettings().aiDisplay === 'bilingual' ? t('trShownBoth') : t('trShownReplace')); } }, icon('eye')),
-      h('button', { type: 'button', title: t('retranslate'), 'aria-label': t('retranslate'), onclick: () => { if (!on) setOn(true); else void run(true); } }, icon('rotate')),
+      h('button', { type: 'button', class: 'tr-save', title: t('trKeepBook'), 'aria-label': t('trKeepBook'), 'aria-pressed': 'false', onclick: () => void toggleSaved() }, icon('download')),
+      h('button', { type: 'button', title: t('retranslate'), 'aria-label': t('retranslate'), onclick: () => retrySheet() }, icon('rotate')),
       // (The rest in one menu, so the bar fits a phone's width: translating ahead, names for the glossary, clearing.)
       h('button', { type: 'button', title: t('more'), 'aria-label': t('more'), onclick: () => moreSheet() }, icon('more')),
-      h('button', { type: 'button', title: t('close'), 'aria-label': t('close'), onclick: () => { setOn(false); pill?.remove(); pill = null; } }, icon('close')),
+      h('button', { type: 'button', title: t('trHideBar'), 'aria-label': t('trHideBar'), onclick: () => hidePill() }, icon('chevronDown')),
     );
     host.root.appendChild(pill);
-    paint();
+    paint(); void isKept().then(markSaved);
   }
 
   host.onChapterChange(() => { if (on) void run(); });
+  // (A book saved translated opens translated: once its chapters are there, the kept translations put in.)
+  void (async () => {
+    for (let i = 0; i < 20 && !disposed && !host.chapters().length; i++) await new Promise((r) => setTimeout(r, 300));
+    const id = firstBook(); if (!id || disposed || on) return;
+    const k = await db.getMeta<{ hidden?: boolean; on?: boolean }>(keepKey(id)); if (disposed || on) return;
+    // (Not saved, but chapters of it translated before: the bar is there, the translation a tap away.)
+    if (!k) { if (!pill && aiReady() && (Object.keys(await sourceIndex(id)).length || Object.keys(await cache(id)).length) && !disposed) buildPill(); return; }
+    buildPill(); if (k.hidden || k.on === false) hidePill(); if (k.on !== false) setOn(true); else paint();
+  })();
 
   return {
     /** Whether any of these books has translations kept (the search then offers both languages). */
@@ -399,12 +518,26 @@ export function attachTranslator(host: TranslatorHost): Translator {
       const orig = originals.has(el) ? plainOfText(originals.get(el)!) : plainOf(el).replace(/\s+/g, ' ').trim();
       if (!orig || furi()) return { orig };
       const shown = translations.get(el);
-      const tr = shown ?? bySource.get(bookId)?.[srcKey(orig)] ?? caches.get(bookId)?.[translationKey(sourceOf(el))];
+      const tr = shown ?? bySource.get(bookId)?.[srcKey(orig)] ?? caches.get(bookId)?.[translationKey(sourceOf(el), bookId)] ?? caches.get(bookId)?.[legacyTranslationKey(sourceOf(el))];
       return { orig, tr: tr ? plainOfText(tr) : undefined };
     },
     target: () => getSettings().aiTarget,
-    toggleUi() { if (pill) { setOn(false); pill.remove(); pill = null; return; } buildPill(); if (aiReady()) setOn(true); else settingsSheet(); },
-    dispose() { offWait(); generation++; pill?.remove(); pill = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
+    /** The contents' titles translated (while the translation is on, unless titles are left as they are): those
+     *  kept already at once, the others asked for in one request and kept. */
+    async titles(bookId: string, labels: string[]) {
+      const out: Record<string, string> = {}; if (!on || furi() || getSettings().aiTitles === 'original') return out;
+      const idx = await sourceIndex(bookId); const missing: string[] = [];
+      for (const l of labels) { const tr = idx[srcKey(l)]; if (tr) out[l] = plainOfText(tr); else if (l.trim().length > 1 && !inTargetScript(l, getSettings().aiTarget)) missing.push(l); }
+      if (missing.length && aiReady() && navigator.onLine !== false) {
+        try { const uniq = [...new Set(missing)].slice(0, 200); const got = await translateBatch(uniq, bookId, { book: host.bookTitle?.(bookId) });
+          uniq.forEach((l, i) => { const tr = got[i]?.trim(); if (tr) { idx[srcKey(l)] = tr; out[l] = plainOfText(tr); } }); scheduleSave(bookId);
+        } catch { /* the titles stay as they are */ }
+      }
+      return out;
+    },
+    // (The toolbar's button: the bar shown or hidden — the translation stays; the first time, turned on.)
+    toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); if (aiReady()) setOn(true); else settingsSheet(); },
+    dispose() { disposed = true; offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
   };
 
   function settingsSheet() { aiSettingsSheet(() => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, h('div', null, optionControls(), aheadControls())); }

@@ -46,6 +46,13 @@ import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatf
 import type { HighlightColor } from '../ui/selection';
 import { openSheet } from '../ui/dom';
 
+/** Whether the search keeps the last search (opened again, it shows it); asked by a switch in the search itself. */
+const searchKeep = (): boolean => { try { return localStorage.getItem('kr.searchKeep') !== '0'; } catch { return true; } };
+function keepToggle(onOff: () => void): HTMLElement {
+  const box = h('input', { type: 'checkbox', checked: searchKeep(), onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; try { localStorage.setItem('kr.searchKeep', v ? '1' : '0'); } catch { /* none */ } if (!v) onOff(); } }) as HTMLInputElement;
+  return h('label', { class: 'search-keep' }, box, h('span', null, t('searchKeepLast')));
+}
+
 interface OpenDoc {
   book: Book;
   wrapper: HTMLElement;      // .kr-doc
@@ -1012,6 +1019,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           const lengthOf = (i: number) => { const a = starts[i]; if (a < 0) return 0; let j = i + 1; while (j < starts.length && (starts[j] < 0 || starts[j] <= a)) j++; const b = j < starts.length ? starts[j] : doc.allBlocks.length; return Math.round((cum[b] - cum[a]) / speed); };
           toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.close(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
           body.append(ul);
+          // (The translation on: each title translated, its original beneath.)
+          const labels = toc.map((x) => x.label);
+          void translator.titles(doc.book.id, labels).then((tr) => { if (!Object.keys(tr).length) return; ul.querySelectorAll<HTMLElement>('.toc-label').forEach((sp, i) => { const x = tr[labels[i]]; if (!x) return; const both = (getSettings().aiTitles ?? 'both') === 'both'; sp.replaceChildren(h('span', { dir: 'auto' }, x), ...(both ? [h('span', { class: 'toc-orig', dir: 'auto' }, labels[i])] : [])); }); });
         }
         body.querySelector('.current')?.scrollIntoView({ block: 'center' });
       } },
@@ -1196,7 +1206,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     });
   }
 
+  let lastFlowQ = '';
   function openSearch(initial = ''): void {
+    if (!initial && searchKeep() && lastFlowQ) initial = lastFlowQ;
     panel.open(t('searchInBook'), [{ id: 'search', label: t('search'), render: (body) => {
       const input = h('input', { type: 'search', placeholder: t('searchPlaceholder'), value: initial, 'aria-label': t('searchInBook'), style: { width: '100%' } }) as HTMLInputElement;
       const count = h('div', { style: { color: 'var(--text-dim)', fontSize: '13px', margin: '10px 0' } });
@@ -1208,7 +1220,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const drawLangs = () => { const tg = (() => { try { return new Intl.DisplayNames([getLang()], { type: 'language' }).of(translator.target()) ?? translator.target(); } catch { return translator.target(); } })();
         langs.replaceChildren(...([['both', t('searchBothLangs')], ['orig', t('searchOriginal')], ['tr', tg]] as ['both' | 'orig' | 'tr', string][]).map(([k, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(langMode === k), onclick: () => { langMode = k; try { localStorage.setItem('kr.searchLang', k); } catch { /* */ } drawLangs(); void run(); } }, l))); };
       void translator.hasTranslations(docs.map((d) => d.book.id)).then((yes) => { if (!yes) return; langMode = (localStorage.getItem('kr.searchLang') as 'both' | null) ?? 'both'; langs.hidden = false; drawLangs(); if (input.value.trim().length >= 2) void run(); });
-      body.append(input, langs, count, list);
+      body.append(input, keepToggle(() => { lastFlowQ = ''; }), langs, count, list);
       let timer: number | undefined; let runId = 0;
       // The hits are listed a few dozen at a time, the next batch as the list is scrolled near its end: five
       // hundred lines of shaped text at once held the page for half a second.
@@ -1233,7 +1245,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       io.observe(more); list.append(more); onDispose(() => io.disconnect());
       const run = async () => {
         list.replaceChildren(more); clearSearchMarks(); pending = []; lastBook = ''; n = 0;
-        const q = input.value.trim(); const id = ++runId;
+        const q = input.value.trim(); const id = ++runId; lastFlowQ = q;
         if (q.length < 2) { count.textContent = ''; more.hidden = true; return; }
         count.textContent = t('searching');
         const show = (hits: SearchHit[]) => {
@@ -2046,31 +2058,52 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   }
 
   let searchToken = { cancelled: false };
+  // The last search, kept (unless asked not to): opened again, the panel shows it as it was, without reading the
+  // pages again; and a bar over the page steps through its hits (↑ ↓) without opening the panel each time.
+  let lastQ = ''; let lastHits: PdfSearchHit[] = []; let hitAt = -1; let navBar: HTMLElement | null = null;
+  function closeNav() { navBar?.remove(); navBar = null; }
+  function showHit(i: number) {
+    if (!lastHits.length) return; hitAt = (i + lastHits.length) % lastHits.length; const hit = lastHits[hitAt];
+    void viewer.highlightOnPage(hit.page, lastQ);
+    if (!navBar) {
+      navBar = h('div', { class: 'search-nav', role: 'toolbar', 'aria-label': t('searchInBook') });
+      root.appendChild(navBar);
+    }
+    navBar.replaceChildren(
+      iconButton('search', t('searchInBook'), () => openSearch()),
+      h('span', { class: 'search-nav-text', dir: 'auto' }, h('b', null, `${localDigits(hitAt + 1)} / ${localDigits(lastHits.length)}`), h('span', null, ` · ${t('pageOf', { n: hit.page, total: viewer.total })}`)),
+      iconButton('chevronUp', t('searchPrev'), () => showHit(hitAt - 1)),
+      iconButton('chevronDown', t('searchNext'), () => showHit(hitAt + 1)),
+      iconButton('close', t('close'), () => closeNav()));
+  }
+  onDispose(() => closeNav());
   function openSearch(initial = '') {
+    const keep = searchKeep();
+    if (!initial && keep && lastQ) initial = lastQ;
     panel.open(t('searchInBook'), [{ id: 'search', label: t('search'), render: (body) => {
       const input = h('input', { type: 'search', placeholder: t('searchPlaceholder'), value: initial, style: { width: '100%' }, 'aria-label': t('searchInBook') }) as HTMLInputElement;
       const status = h('div', { style: { color: 'var(--text-dim)', fontSize: '13px', margin: '10px 0' } });
       const list = h('ul', { class: 'plain-list' });
-      body.append(input, status, list);
+      body.append(input, keepToggle(() => { lastQ = ''; lastHits = []; }), status, list);
       let timer: number | undefined;
+      const rowOf = (hit: PdfSearchHit, i: number, q: string) => h('li', { class: 'hit' + (i === hitAt && q === lastQ ? ' current' : '') }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { lastQ = q; showHit(i); if (window.innerWidth < 900) panel.close(); } },
+        h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after)));
       const run = async () => {
         searchToken.cancelled = true; searchToken = { cancelled: false };
         const token = searchToken;
         clear(list);
         const q = input.value.trim();
         if (q.length < 2) { status.textContent = ''; return; }
+        // The same search as last time: its hits as they were.
+        if (q === lastQ && lastHits.length) { lastHits.forEach((hit, i) => list.append(rowOf(hit, i, q))); status.textContent = t('resultsCount', { n: lastHits.length }); list.querySelector('.current')?.scrollIntoView({ block: 'center' }); return; }
         // Pages read before (here, or by the search across books) are not read again.
         if (!viewer.allTexts()) { const stored = await storedPages(book); if (stored) viewer.seedTexts(stored); }
         if (token.cancelled) return;
-        const show = (found: PdfSearchHit[]) => {
-          if (token.cancelled) return;
-          for (const hit of found) {
-            list.append(h('li', { class: 'hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { void viewer.highlightOnPage(hit.page, q); if (window.innerWidth < 900) panel.close(); } },
-              h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after))));
-          }
-        };
+        let k = 0; const got: PdfSearchHit[] = [];
+        const show = (found: PdfSearchHit[]) => { if (token.cancelled) return; for (const hit of found) { got.push(hit); list.append(rowOf(hit, k++, q)); } };
         const hits = await viewer.search(q, (done, total) => { if (!token.cancelled) status.textContent = t('pdfSearching', { n: done, total }); }, token, show);
         if (token.cancelled) return;
+        lastQ = q; lastHits = hits.length ? hits : got; hitAt = -1; closeNav();
         status.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
         const all = viewer.allTexts(); if (all) void storePages(book, all);
       };

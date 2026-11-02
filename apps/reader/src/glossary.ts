@@ -2,7 +2,8 @@
 // "Lin Feng" always «لين فنغ», a sect's name always the same — for every book or for one. The terms a passage
 // holds are handed to the model with it, and a term it left as it was is put right after.
 
-export interface Term { id: string; from: string; to: string; /** a book's id, or every book when absent */ book?: string }
+export type TermKind = 'person' | 'place' | 'group' | 'term';
+export interface Term { id: string; from: string; to: string; /** a book's id, or every book when absent */ book?: string; /** what it names (characters, places…) */ kind?: TermKind; /** added by the translator on its own */ auto?: boolean }
 
 const KEY = 'kr.glossary';
 let cache: Term[] | null = null;
@@ -14,7 +15,8 @@ export function terms(): Term[] {
 export function saveTerms(list: Term[]): void { cache = list; try { if (list.length) localStorage.setItem(KEY, JSON.stringify(list)); else localStorage.removeItem(KEY); } catch { /* full */ } }
 
 /** A short mark of the whole glossary: translations made with another glossary are made again. */
-export function glossaryStamp(): string { const l = terms(); if (!l.length) return ''; let h = 0; const s = JSON.stringify(l.map((x) => [x.from, x.to, x.book ?? ''])); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36); }
+export function glossaryStamp(): string { return glossaryStampOf(terms()); }
+export function glossaryStampOf(l: Term[]): string { if (!l.length) return ''; let h = 0; const s = JSON.stringify(l.map((x) => [x.from, x.to, x.book ?? ''])); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36); }
 
 const lower = (s: string) => s.toLocaleLowerCase();
 /** The terms that apply to a book and appear in the texts (the book's own before the general ones). */

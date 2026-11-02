@@ -72,8 +72,11 @@ function run7z(args, onLine) {
 }
 
 /* ---------- extracting ---------- */
-async function targetFor(dest, name, replace) {
+// (`only`: just these entries and what is under these folders.)
+const wanted = (only, name) => !only || !only.length || only.some((w) => name === w || (w.endsWith('/') && name.startsWith(w)));
+async function targetFor(dest, name, replace, only) {
   if (unsafe(name)) throw new Error('unsafePath ' + name);
+  if (!wanted(only, name)) return null;
   const out = path.resolve(dest, name); if (!out.startsWith(path.resolve(dest) + path.sep)) throw new Error('unsafePath ' + name);
   await fsp.mkdir(path.dirname(out), { recursive: true });
   if (fs.existsSync(out)) { if (replace === 'skip') return null; if (replace === 'both') { const ext = path.extname(out), base = out.slice(0, out.length - ext.length); for (let i = 2; ; i++) { const alt = `${base} (${i})${ext}`; if (!fs.existsSync(alt)) return alt; } } }
@@ -103,7 +106,7 @@ async function extractZip(file, dest, o, pr) {
     for (const it of ix.items) {
       if (pr.stopped()) throw new Error('stopped');
       if (it.dir) { if (unsafe(it.name)) throw new Error('unsafePath'); await fsp.mkdir(path.join(dest, it.name), { recursive: true }); continue; }
-      const out = await targetFor(dest, it.name, o.replace); if (!out) { done += it.usize; continue; }
+      const out = await targetFor(dest, it.name, o.replace, o.only); if (!out) { done += it.usize; continue; }
       cur = it.name; pr.on(done, total, cur); await writeEntry(fd, it, out, ctl); n++;
     }
     pr.on(total, total, '');
@@ -137,7 +140,7 @@ async function extractZipInPlace(file, dest, o, pr) {
       for (let k = i; k < end; k++) {
         const it = items[k];
         if (it.dir) { if (unsafe(it.name)) throw new Error('unsafePath'); await fsp.mkdir(path.join(dest, it.name), { recursive: true }); continue; }
-        const out = await targetFor(dest, it.name, o.replace); if (!out) { done += it.usize; continue; }
+        const out = await targetFor(dest, it.name, o.replace, o.only); if (!out) { done += it.usize; continue; }
         cur = it.name; pr.on(done, total, cur); await writeEntry(fd, it, out, ctl); written.push(out); n++;
       }
       for (const w of written) { const h = await fsp.open(w, 'r+'); try { await h.sync(); } catch { /* fs without fsync */ } finally { await h.close(); } }
@@ -155,7 +158,7 @@ async function writeAtomic(file, text) { await fsp.writeFile(file + '.tmp', text
 async function freeSpace(dir) { try { const s = await fsp.statfs(dir); return Number(s.bavail) * Number(s.bsize); } catch { return Number.MAX_SAFE_INTEGER; } }
 
 async function extract7z(file, dest, o, pr) {
-  const args = ['x', '-y', '-bsp1', '-bb1', `-o${dest}`, o.replace === 'skip' ? '-aos' : o.replace === 'both' ? '-aou' : '-aoa', o.password ? `-p${o.password}` : '-p', file];
+  const args = ['x', '-y', '-bsp1', '-bb1', `-o${dest}`, o.replace === 'skip' ? '-aos' : o.replace === 'both' ? '-aou' : '-aoa', o.password ? `-p${o.password}` : '-p', file, ...(o.only || []).map((w) => w.replace(/\/$/, ''))];
   let n = 0; const p = { proc: null };
   const out = await new Promise((res, rej) => {
     const proc = spawn(sevenZip(), args, { stdio: ['ignore', 'pipe', 'pipe'] }); p.proc = proc; let buf = '', err = '';

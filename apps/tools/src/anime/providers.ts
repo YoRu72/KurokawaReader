@@ -22,6 +22,8 @@ export interface AnimeQuery {
   media: Anime; anilistId: number; anidbAid?: number; anidbEid?: number; kitsuId?: number; imdbId?: string; tmdbId?: number; tvdbId?: number;
   titles: string[]; episode: number; episodeCount?: number; absoluteEpisodeNumber?: number;
   resolution: '' | '2160' | '1080' | '720' | '540' | '480'; exclusions: string[];
+  /** A name typed by hand: the sources search by it instead of telling the show by its ids. */
+  query?: string;
 }
 export interface TorrentResult {
   title: string; link: string; hash: string; size: number; seeders: number; leechers: number; downloads: number;
@@ -249,6 +251,8 @@ export async function buildQuery(media: Anime, episode: number): Promise<AnimeQu
   const ex: string[] = []; try { const v = document.createElement('video'); if (!v.canPlayType('video/mp4; codecs="hvc1"') && !v.canPlayType('video/mp4; codecs="hev1"') && !window.kurokawaTools) ex.push('HEVC', 'x265', 'H.265'); } catch { /* none */ }
   return { media, anilistId: media.id, anidbAid: ids.anidb, kitsuId: ids.kitsu, imdbId: ids.imdb, tmdbId: ids.tmdb, tvdbId: ids.tvdb, titles: titlesOf(media), episode, episodeCount: media.episodes ?? undefined, resolution: s.animeQuality, exclusions: ex };
 }
+// (Some sources — AnimeTosho, the ElfHosted add-ons — take long to answer on a slow day.)
+const TIMEOUT = 35000;
 const withTimeout = <T>(p: Promise<T>, ms: number, what: string): Promise<T> => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what}: timed out`)), ms))]);
 
 /** Runs one provider for a query: `single` for an episode, `batch`/`movie` otherwise (Seanime's `smartSearch`/`search`). */
@@ -261,14 +265,15 @@ export async function runProvider(p: ProviderEntry, q: AnimeQuery): Promise<Torr
     const inst = new (mod as SeanimeClass)();
     const m = { id: q.media.id, idMal: q.media.idMal, status: q.media.status ?? 'NOT_YET_RELEASED', format: q.media.format ?? 'TV', englishTitle: q.media.titleEnglish, romajiTitle: q.media.titleRomaji, episodeCount: q.media.episodes ?? -1, absoluteSeasonOffset: 0, synonyms: q.media.synonyms, isAdult: q.media.isAdult, startDate: q.media.startDate };
     const st = inst.getSettings?.() ?? {};
-    if (st.canSmartSearch && inst.smartSearch) raw = await withTimeout(inst.smartSearch({ media: m, query: '', batch: q.episode === 0 && !isMovie, episodeNumber: q.episode, resolution: q.resolution, anidbAID: q.anidbAid ?? 0, anidbEID: q.anidbEid ?? 0, bestReleases: false }), 20000, p.name);
-    else raw = await withTimeout(inst.search({ media: m, query: `${q.titles[0]}${q.episode ? ` ${String(q.episode).padStart(2, '0')}` : ''}` }), 20000, p.name);
+    if (q.query) raw = await withTimeout(inst.search({ media: m, query: `${q.query}${q.episode ? ` ${String(q.episode).padStart(2, '0')}` : ''}` }), TIMEOUT, p.name);
+    else if (st.canSmartSearch && inst.smartSearch) raw = await withTimeout(inst.smartSearch({ media: m, query: '', batch: q.episode === 0 && !isMovie, episodeNumber: q.episode, resolution: q.resolution, anidbAID: q.anidbAid ?? 0, anidbEID: q.anidbEid ?? 0, bestReleases: false }), TIMEOUT, p.name);
+    else raw = await withTimeout(inst.search({ media: m, query: `${q.titles[0]}${q.episode ? ` ${String(q.episode).padStart(2, '0')}` : ''}` }), TIMEOUT, p.name);
     return raw.map((t) => fromSeanime(t as Record<string, unknown>, p)).filter((x): x is TorrentResult => !!x);
   }
-  const hm = mod as HayaseModule; const fq = { ...q, fetch: addonFetch() };
+  const hm = mod as HayaseModule; const fq = { ...q, ...(q.query ? { anidbAid: undefined, anidbEid: undefined, kitsuId: undefined } : {}), fetch: addonFetch() };
   const fn = q.episode > 0 && !isMovie ? hm.single : isMovie ? hm.movie ?? hm.single : hm.batch ?? hm.single;
   if (!fn) return [];
-  raw = await withTimeout(fn.call(hm, fq, opts), 20000, p.name);
+  raw = await withTimeout(fn.call(hm, fq, opts), TIMEOUT, p.name);
   return (raw as Record<string, unknown>[]).map((t) => sanitize(t, p)).filter((x): x is TorrentResult => !!x);
 }
 /** A Stremio add-on asked for an episode: by Kitsu id when it takes them (anime numbering), else by IMDb id and
@@ -279,7 +284,7 @@ async function runStremio(p: ProviderEntry, q: AnimeQuery): Promise<TorrentResul
   const id = q.kitsuId && (!prefixes.length || prefixes.includes('kitsu')) ? `kitsu:${q.kitsuId}${isMovie ? '' : `:${ep}`}` : q.imdbId ? (isMovie ? q.imdbId : `${q.imdbId}:1:${ep}`) : null;
   if (!id) return [];
   const type = isMovie && !id.startsWith('kitsu:') ? 'movie' : 'series';
-  const r = await withTimeout(request(`${p.code}/stream/${type}/${id}.json`), 20000, p.name); if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
+  const r = await withTimeout(request(`${p.code}/stream/${type}/${id}.json`), TIMEOUT, p.name); if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
   const streams = ((JSON.parse(r.body) as { streams?: { name?: string; title?: string; description?: string; infoHash?: string; fileIdx?: number; url?: string; sources?: string[]; behaviorHints?: { filename?: string; videoSize?: number } }[] }).streams ?? []);
   const out: TorrentResult[] = [];
   for (const st of streams) {

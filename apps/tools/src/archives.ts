@@ -6,7 +6,7 @@ import { uid } from './db';
 
 export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean }
 export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string }
-export interface ExtractOptions { path: string; dest?: string; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; password?: string; verifyFirst?: boolean; keepFree?: number }
+export interface ExtractOptions { path: string; /** A folder, or «cache:» for a look at one file (the app's own cache). */ dest?: string; /** Only these entries (and what is under these folders). */ only?: string[]; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; password?: string; verifyFirst?: boolean; keepFree?: number }
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
 
 type Bridge = { archiveList(o: { path: string; password?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<{ files: number; dest: string }>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };

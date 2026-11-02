@@ -35,7 +35,8 @@ export function fabMenu(anchor: HTMLElement): void {
   document.body.append(open); anchor.classList.add('open'); anchor.setAttribute('aria-expanded', 'true');
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
   window.addEventListener('keydown', onKey); closeOpen = close;
-  (menu.firstElementChild as HTMLElement | null)?.focus();
+  // (Scrolled to its end — the items nearest the button — when it is taller than the screen allows.)
+  menu.scrollTop = menu.scrollHeight; (menu.lastElementChild as HTMLElement | null)?.focus({ preventScroll: true });
   if (videoEnabled()) void videoVersion().then((v) => { ytdlp.textContent = v ? t('videoYtdlpReady', { v }) : t('videoYtdlpFirstUse'); });
   function close() { open?.remove(); open = null; closeOpen = null; anchor.classList.remove('open'); anchor.setAttribute('aria-expanded', 'false'); window.removeEventListener('keydown', onKey); }
 }
