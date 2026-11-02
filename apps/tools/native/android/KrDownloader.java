@@ -35,7 +35,7 @@ final class KrDownloader {
     }
     static final class Result { volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
     /** One range a connection is fetching (or fetched): what the details page draws as the file map and the lanes. */
-    static final class Seg { final long start, end; volatile long pos; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
+    static final class Seg { final long start, end; volatile long pos; /** where this part stops now: brought nearer when an idle connection takes its second half */ volatile long stopAt; int chunk = -1; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; stopAt = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
         void advance(long p) { pos = p; long now = System.currentTimeMillis(); if (now - lastT >= 500) { double inst = (p - lastPos) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + inst * 0.4; lastT = now; lastPos = p; } } }
 
     private KrDownloader() {}
@@ -191,11 +191,15 @@ final class KrDownloader {
         st.write(opt.state);
         res.connections = n;
         final java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger(0);
-        final java.util.concurrent.ConcurrentLinkedQueue<long[]> back = new java.util.concurrent.ConcurrentLinkedQueue<>();   // {chunk, from}: given back by a refused connection
+        final java.util.concurrent.ConcurrentLinkedQueue<long[]> back = new java.util.concurrent.ConcurrentLinkedQueue<>();   // {chunk, from, to}: given back by a refused connection
         final java.util.concurrent.atomic.AtomicInteger alive = new java.util.concurrent.atomic.AtomicInteger(n);
         final AtomicReference<Exception> fail = new AtomicReference<>();
         final URL direct = res.finalUrl;
         final long[] lastSave = { System.currentTimeMillis() };
+        // (A chunk may be shared at the end: how many of its parts are still coming — marked done when none is.)
+        final java.util.concurrent.atomic.AtomicInteger[] parts = new java.util.concurrent.atomic.AtomicInteger[chunks];
+        for (int i = 0; i < chunks; i++) parts[i] = new java.util.concurrent.atomic.AtomicInteger(0);
+        final long MIN_SPLIT = 256L << 10;
         Thread[] workers = new Thread[n];
         for (int i = 0; i < n; i++) {
             final int wid = i;
@@ -203,47 +207,56 @@ final class KrDownloader {
                 final boolean[] gone = { false };
                 try (RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
                     while (fail.get() == null && !cancelled.get()) {
-                        long[] given = back.poll(); int idx; long from;
-                        if (given != null) { idx = (int) given[0]; from = given[1]; }
-                        else { idx = next.getAndIncrement(); while (idx < chunks && st.has(idx)) idx = next.getAndIncrement(); if (idx >= chunks) break; from = (long) idx * chunk; }
-                        long to = Math.min(total, (long) (idx + 1) * chunk) - 1;
+                        long[] given = back.poll(); int idx; long from, toIncl;
+                        if (given != null) { idx = (int) given[0]; from = given[1]; toIncl = given[2]; }
+                        else {
+                            idx = next.getAndIncrement(); while (idx < chunks && st.has(idx)) idx = next.getAndIncrement();
+                            if (idx < chunks) { from = (long) idx * chunk; toIncl = Math.min(total, (long) (idx + 1) * chunk) - 1; parts[idx].incrementAndGet(); }
+                            else {
+                                // The end of the file, the way download accelerators and speed tests keep every
+                                // connection busy: no chunk left, so the part that will take longest is cut in two
+                                // and this connection takes its second half — a slow connection no longer holds
+                                // up the last minutes.
+                                Seg victim = null; double worst = 0;
+                                synchronized (res.segs) { for (Seg sg : res.segs) { if (!sg.active || sg.chunk < 0) continue; long rem = sg.stopAt - sg.pos; if (rem < 2 * MIN_SPLIT) continue; double eta = rem / Math.max(16_384.0, sg.speed); if (eta > worst) { worst = eta; victim = sg; } } }
+                                if (victim == null) break;
+                                synchronized (victim) { long rem = victim.stopAt - victim.pos; if (rem < 2 * MIN_SPLIT || !victim.active) continue; from = victim.pos + rem / 2; toIncl = victim.stopAt - 1; victim.stopAt = from; idx = victim.chunk; parts[idx].incrementAndGet(); }
+                            }
+                        }
+                        final Seg seg = new Seg(from, toIncl + 1, wid); seg.chunk = idx; res.segs.add(seg);
                         long pos = from;
-                        final Seg seg = new Seg(from, to + 1, wid); res.segs.add(seg);
                         boolean leave = false;
-                        for (int attempt = 0; pos <= to && !cancelled.get(); attempt++) {
+                        for (int attempt = 0; pos < seg.stopAt && !cancelled.get(); attempt++) {
                             // (The signed address may have run out: the first address again, redirects and all.)
                             URL u = attempt >= 2 ? url : direct;
                             HttpURLConnection c = null;
                             long[] wrote = new long[1];
                             try {
-                                c = follow(u, opener, "bytes=" + pos + "-" + to);
+                                c = follow(u, opener, "bytes=" + pos + "-" + (seg.stopAt - 1));
                                 int rc = c.getResponseCode();
                                 if (rc != 206) throw new Status(rc);
                                 try (InputStream in = c.getInputStream()) {
-                                    raf.seek(pos);
                                     final long base = pos; final long[] w = wrote;
-                                    copy(in, raf, to - pos + 1, cancelled, got, () -> { seg.advance(base + w[0]); tick.run(); }, wrote);
+                                    copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); tick.run(); }, wrote);
                                 }
                                 pos += wrote[0]; wrote[0] = 0;
                                 // (An answer that ended early without an error is a failed attempt too.)
-                                if (pos <= to && !cancelled.get()) throw new IOException("Connection closed early");
+                                if (pos < seg.stopAt && !cancelled.get()) throw new IOException("Connection closed early");
                             } catch (Exception e) {
                                 // (What came before the break is in the file already: the next attempt goes on from there.)
                                 pos += wrote[0];
                                 if (c != null) c.disconnect();
                                 int sc = e instanceof Status ? ((Status) e).code : 0;
-                                // (A connection the server cuts — reset, closed mid-handshake — as protected sites do to
-                                // a client opening many at once: refused like a 429, when others are still going.)
                                 if (sc == 0 && cut(e) && alive.get() > 1) sc = 429;
-                                // A server refusing one connection too many: this one stops, its chunk to the others.
-                                if ((sc == 429 || sc == 503) && alive.decrementAndGet() >= 1) { gone[0] = true; back.add(new long[]{ idx, pos }); res.refused = true; res.connections = alive.get(); leave = true; break; } else if (sc == 429 || sc == 503) alive.incrementAndGet();
+                                // A server refusing one connection too many: this one stops, its part to the others.
+                                if ((sc == 429 || sc == 503) && alive.decrementAndGet() >= 1) { gone[0] = true; synchronized (seg) { seg.active = false; back.add(new long[]{ idx, pos, seg.stopAt - 1 }); } res.refused = true; res.connections = alive.get(); leave = true; break; } else if (sc == 429 || sc == 503) alive.incrementAndGet();
                                 if (attempt >= opt.retries) throw e;
                                 try { Thread.sleep(Math.min(8000L, 400L * (attempt + 1) * (sc == 429 || sc == 503 ? 3 : 1))); } catch (InterruptedException ie) { throw e; }
-                            }
+                            } finally { if (c != null) c.disconnect(); }
                         }
-                        seg.pos = Math.min(pos, to + 1); seg.active = false; seg.speed = 0;
+                        synchronized (seg) { seg.pos = Math.min(pos, seg.stopAt); seg.active = false; seg.speed = 0; }
                         if (leave) return;
-                        if (pos > to) { st.mark(idx); long now = System.currentTimeMillis(); if (now - lastSave[0] > 1500) { lastSave[0] = now; st.write(opt.state); } }
+                        if (pos >= seg.stopAt && parts[idx].decrementAndGet() == 0) { st.mark(idx); long now = System.currentTimeMillis(); if (now - lastSave[0] > 1500) { lastSave[0] = now; st.write(opt.state); } }
                     }
                 } catch (Exception e) { fail.compareAndSet(null, e); }
                 finally { if (!gone[0]) alive.decrementAndGet(); }
@@ -262,6 +275,17 @@ final class KrDownloader {
         return res;
     }
 
+    /** Copies a part's bytes until its end — which may be brought nearer while it runs (its second half taken by
+     *  another connection): only what is still this part's is written and counted. */
+    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException {
+        byte[] buf = new byte[1 << 17]; int r;
+        while (!cancelled.get()) {
+            long left; synchronized (seg) { left = seg.stopAt - (base + wrote[0]); } if (left <= 0) break;
+            r = in.read(buf, 0, (int) Math.min(buf.length, left)); if (r <= 0) break;
+            synchronized (seg) { long allow = seg.stopAt - (base + wrote[0]); int n = (int) Math.min(r, Math.max(0, allow)); if (n > 0) { raf.seek(base + wrote[0]); raf.write(buf, 0, n); wrote[0] += n; got.addAndGet(n); seg.pos = base + wrote[0]; } if (n < r) break; }
+            tick.run();
+        }
+    }
     /** Copies up to `max` bytes, counting them in `wrote[0]` as they are written. */
     private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException {
         byte[] buf = new byte[1 << 17]; int r;

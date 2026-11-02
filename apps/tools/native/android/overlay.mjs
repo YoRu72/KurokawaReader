@@ -30,7 +30,7 @@ if (!manifest.includes('FOREGROUND_SERVICE_DATA_SYNC')) {
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <application`);
   manifest = manifest.replace('</application>', `    <service android:name=".KtService" android:exported="false" android:foregroundServiceType="dataSync|specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Downloads and torrents the user started, kept going while the app is in the background" /></service>
     <activity android:name=".KtAuthActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
@@ -88,6 +88,7 @@ if (!manifest.includes('android:scheme="magnet"')) {
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
 if (!manifest.includes('android:usesCleartextTraffic')) manifest = manifest.replace('<application', '<application android:usesCleartextTraffic="true"');
+if (!manifest.includes('android:requestLegacyExternalStorage')) manifest = manifest.replace('<application', '<application android:requestLegacyExternalStorage="true"');
 // (The other Kurokawa app is looked for by its package name: Android 11+ must be told.)
 if (!manifest.includes('app.kurokawa.reader')) manifest = manifest.replace('</manifest>', `  <queries>\n    <package android:name="app.kurokawa.reader" />\n    <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>\n  </queries>\n</manifest>`);
 await fs.writeFile(manifestPath, manifest);

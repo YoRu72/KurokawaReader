@@ -44,7 +44,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
       void import('./convert').then((m) => { if (m.canConvert() && m.kindOf(name)) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.convertSheet(fp, 'convert') }, icon('convert'), t('convertTitle')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.convertSheet(fp, 'shrink') }, icon('archive'), t('shrinkTitle'))); });
     }
     if (x.state === 'done' && x.kind !== 'torrent' && x.dir && !x.dir.startsWith('content:') && isArchiveName(name) && canArchive()) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${name}`)) }, icon('folder'), t('archiveBrowse')));
-    acts.append(h('button', { type: 'button', class: 'btn text danger', onclick: () => { if (x.state !== 'done' && !confirm(t('confirmRemoveFiles', { name }))) { void eng.remove(x.id, false).then(() => back('/')); return; } void eng.remove(x.id, x.state !== 'done').then(() => back('/')); } }, icon('trash'), t('removeTask')));
+    acts.append(h('button', { type: 'button', class: 'btn text danger', onclick: () => void import('./downloads').then((m) => m.removeSheet([x], () => back('/'))) }, icon('trash'), t('removeTask')));
     const files = x.files.length > 1 || (x.files.length === 1 && x.kind === 'torrent') ? filesEl(x) : null;
     const panel = h('section', { class: 'card kt-panel' },
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,

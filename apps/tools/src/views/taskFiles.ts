@@ -88,6 +88,7 @@ export function filesCard(task: Task, eng: Engine, opts: { open: boolean; onTogg
         bar(pct(f.done, f.size)),
         h('small', { class: 'src', dir: 'auto' }, `${formatBytes(f.done)} / ${formatBytes(f.size)} · ${status}${dir ? ` · ${dir}` : ''}`)),
       playable ? iconButton('play', t('play'), () => opts.play(f.index)) : null,
+      k !== 'video' && k !== 'archive' && finished(f) && eng.open ? iconButton('external', t('open'), () => void eng.open!(x.id, f.index).catch((er: unknown) => toast(String((er as Error).message ?? er), 'error'))) : null,
       k === 'archive' && finished(f) && opts.browse && localOf(f) ? iconButton('folder', t('archiveBrowse'), () => opts.browse!(localOf(f)!)) : null,
       eng.setFiles && p > 0 && !finished(f) ? iconButton('star', p === 2 ? t('fileNormalAgain') : t('fileFirst'), () => setMany([f], () => (p === 2 ? 1 : 2)), { pressed: p === 2 }) : null,
       box(p > 0, (v) => setMany([f], () => (v ? 1 : 0)), name));
