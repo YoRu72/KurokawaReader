@@ -646,7 +646,7 @@ final class KtEngine {
     }
     private void keepInfo(Task x, TorrentInfo ti) {
         x.info = ti; File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) return;
-        try (FileOutputStream fo = new FileOutputStream(tf)) { fo.write(ti.bencode()); } catch (Throwable e) { Log.w(TAG, "keep torrent", e); }
+        try (FileOutputStream fo = new FileOutputStream(tf)) { org.libtorrent4j.swig.add_torrent_params ap = new org.libtorrent4j.swig.add_torrent_params(); ap.set_ti(ti.swig()); fo.write(org.libtorrent4j.Vectors.byte_vector2bytes(org.libtorrent4j.swig.libtorrent.write_torrent_file_buf_ex(ap))); } catch (Throwable e) { Log.w(TAG, "keep torrent", e); }
     }
     /** Finished downloads in another folder moved to `dest` (the app's folder in Download, by default): their files
      *  renamed there, or copied and the old ones deleted when the two are on different storage; how many moved. */
