@@ -40,7 +40,9 @@ export function unlink(): void { try { localStorage.removeItem(TOKEN_KEY); local
 /** Where the user signs in: AniList shows the token in the address it ends on when the client's redirect is its pin page. */
 /** The sign-in page: the user's own API client, else the app's (see views/anilistLink). */
 export function authUrl(): string { const id = getSettings().anilistClientId.trim() || BUILTIN_CLIENT; return `https://anilist.co/api/v2/oauth/authorize?client_id=${encodeURIComponent(id)}&response_type=token`; }
-export const BUILTIN_CLIENT = '';
+/** The apps' own AniList API client «Kurokawa» (its ID only — public by design for this sign-in; no secret is
+ *  used or kept). Its redirect address is AniList's pin page. */
+export const BUILTIN_CLIENT = '55772';
 
 const later = (m: string) => Object.assign(new Error(m), { later: true });
 export const isLater = (e: unknown): boolean => !!(e as { later?: boolean })?.later;

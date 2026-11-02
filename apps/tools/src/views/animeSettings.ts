@@ -30,7 +30,8 @@ export function anilistCard(rerender: () => void): HTMLElement {
   if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))),
     toggle(t('anilistAutoProgress'), s.anilistAutoProgress, (v) => updateSettings({ anilistAutoProgress: v })));
   // (Not linked: one button — the sign-in, or the short guide that makes the client with you.)
-  else acct.push(h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => void import('./anilistLink').then((m) => m.anilistLinkSheet(rerender)) }, icon('user'), t('anilistLinkTitle'))));
+  else acct.push(h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(rerender)) }, icon('user'), t('anilistSignInWith')),
+    h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./anilistLink').then((m) => m.anilistLinkSheet(rerender)) }, t('anilistOwnClient'))));
   return card('anilist', 'AniList', h('p', { class: 'hint' }, t('anilistCardHint')), ...acct);
 }
 
