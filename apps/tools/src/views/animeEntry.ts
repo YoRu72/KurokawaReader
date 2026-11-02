@@ -9,7 +9,7 @@ import { getEngine } from '../engine';
 import * as al from '../anilist';
 import type { Anime, AlEntry } from '../anilist';
 import { fmtUntil, titleOf, fmtFormat, statusName, tickCountdowns } from './anime';
-import { buildQuery, searchAll, rank, providers, syncBuiltins, magnetOf, type TorrentResult, type ProviderEntry } from '../anime/providers';
+import { buildQuery, searchAll, rank, releaseTags, providers, syncBuiltins, magnetOf, type TorrentResult, type ProviderEntry } from '../anime/providers';
 import { parseFilename, matchesEpisode } from '../anime/anitomy';
 import { ruleOf, saveRule, dropRule, downloadRange, downloadedEpisodes, fillersOf, checkRules, startAuto, type AutoRule } from '../anime/auto';
 import type { Task } from '../engine/types';
@@ -123,8 +123,11 @@ const relName = (r: string): string => ({ PREQUEL: t('relPrequel'), SEQUEL: t('r
 
 /** The torrents of an episode (0: a batch or a movie): every provider asked at once, results ranked, one tap
  *  to download (in order, so it can play as it comes) with the show and episode remembered for tracking. */
-export async function torrentSheet(a: Anime, episode: number): Promise<void> {
+/** A show's releases from every source, to pick one: to download (`mode` «download»), or to watch now (`stream`:
+ *  played while it comes, and remembered — a batch goes on with the next episodes). */
+export async function torrentSheet(a: Anime, episode: number, mode: 'download' | 'stream' = 'download'): Promise<void> {
   const sh = openSheet(episode ? `${titleOf(a)} · ${t('episodeN', { n: episode })}` : titleOf(a), t('close'));
+  if (mode === 'stream') sh.body.append(h('p', { class: 'hint' }, t('chooseToWatchHint')));
   await syncBuiltins().catch(() => undefined);
   const ps = (await providers()).filter((p) => p.enabled && p.role !== 'stream');
   if (!ps.length) { sh.body.append(h('div', { class: 'empty small' }, h('p', null, t('animeNoProviders')), h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); navigate('/settings/anime'); } }, icon('puzzle'), t('animeProviders')))); return; }
@@ -147,7 +150,8 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
   const row = (r: TorrentResult) => {
     const p = parseFilename(r.title);
     const bits = [r.resolution ?? p.resolution ?? '', r.size ? formatBytes(r.size) : '', `↑${localDigits(r.seeders)}`, r.type === 'best' ? t('animeBest') : r.type === 'batch' || p.batch ? t('animeBatch') : '', p.group ?? r.group ?? '', r.provider].filter(Boolean).join(' · ');
-    const main = h('button', { type: 'button', class: `result-row acc-${r.accuracy}` + (r.type === 'best' ? ' best' : ''), onclick: () => void add(r) }, icon(r.url ? 'link' : 'magnet'), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title), h('small', { class: 'src' }, bits)));
+    const tags = releaseTags(r).filter((x) => x.id !== 'res' && x.id !== 'match');
+    const main = h('button', { type: 'button', class: `result-row acc-${r.accuracy}` + (r.type === 'best' ? ' best' : ''), onclick: () => void add(r) }, icon(mode === 'stream' ? 'play' : r.url ? 'link' : 'magnet'), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title), tags.length ? h('span', { class: 'rel-tags', dir: 'ltr' }, ...tags.map((x) => h('span', { class: 'rel-tag' + (x.good ? ' good' : '') + ` t-${x.id}` }, x.label))) : null, h('small', { class: 'src' }, bits)));
     if (r.url || !canPick()) return main;
     return h('div', { class: 'result-wrap' }, main, h('button', { type: 'button', class: 'icon-btn result-files', title: t('pickFilesTitle'), 'aria-label': t('pickFilesTitle'), onclick: () => void add(r, true) }, icon('list')));
   };
@@ -164,6 +168,12 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
     try {
       const source = r.url ? { url: r.url } : { magnet: magnetOf(r) }; const meta = { anilistId: a.id, title: titleOf(a), episode: episode || undefined, batch: !episode || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx };
       if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); const d = await sendToDebrid(source, { meta }); toast(d.kind === 'cloud' ? t('debridSent', { name: d.name }) : t('taskAdded', { name: d.name })); sh.close(); navigate('/'); return; }
+      if (mode === 'stream') {
+        // (Watched now: the file chosen first when asked; played while it comes; the release remembered.)
+        let pick = r;
+        if (choose && !r.url && canPick()) { const { pickFiles } = await import('./pickFiles'); const got = await pickFiles(source, r.title, episode ? [episode] : []); if (got === null) return; if (got !== 'all' && got.length) pick = { ...r, fileIdx: got[0] }; }
+        sh.close(); const w = await import('../anime/watch'); w.rememberPick(a.id, r); await w.watchEpisode(a, episode, `${titleOf(a)}${episode ? ` · ${t('episodeN', { n: episode })}` : ''}`, pick); return;
+      }
       let files: number[] | undefined = !r.url && r.fileIdx !== undefined && episode ? [r.fileIdx] : undefined;
       if (!r.url && canPick() && (choose || ((r.type === 'batch' || parseFilename(r.title).batch || !episode) && files === undefined))) {
         const { pickFiles } = await import('./pickFiles');
@@ -171,6 +181,7 @@ export async function torrentSheet(a: Anime, episode: number): Promise<void> {
         files = got === 'all' ? undefined : got;
       }
       const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
+      void import('../anime/watch').then((w) => w.rememberPick(a.id, r));
       toast(t('taskAdded', { name: tk.name || r.title })); sh.close(); navigate('/');
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
@@ -260,14 +271,19 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
   const row = (ic: string, label: string, hint: string, fn: () => void, primary = false) => sh.body.append(h('button', { type: 'button', class: 'dest-row' + (primary ? ' primary' : ''), onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, h('span', null, label), hint ? h('small', { class: 'src' }, hint) : null)));
   const show = titleOf(a);
   void (async () => {
-    const got = (await downloadedEpisodes(a.id)).get(n);
+    const got = await import('../anime/watch').then((m) => m.taskFor(a.id, n));
     if (got) {
       const pct = got.total ? Math.round((got.done / got.total) * 100) : 0;
       sh.body.append(h('div', { class: 'ep-sheet-prog' }, h('div', { class: 'task-bar' }, h('i', { style: { width: `${got.state === 'done' ? 100 : pct}%` } })), h('small', { class: 'src' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(pct) }))));
-      row('play', got.state === 'done' ? t('play') : t('stream'), got.state === 'done' ? '' : t('epStreamHint'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)), true);
+      row('play', got.state === 'done' ? t('play') : t('stream'), got.state === 'done' ? (got.meta as { episode?: number } | undefined)?.episode === n ? '' : t('epWatchContinue', { name: got.name }) : t('epStreamHint'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)), true);
+      row('magnet', t('epChooseToWatch'), t('epChooseToWatchHint'), () => void torrentSheet(a, n, 'stream'));
       row('info', t('details'), '', () => navigate(`/task/${encodeURIComponent(got.id)}`));
     } else {
-      row('play', t('epWatchNow'), t('epWatchNowHint'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)), true);
+      // (Watch now says what it will play: the batch picked before, gone on in — or the best release found.)
+      const watchRow = h('button', { type: 'button', class: 'dest-row primary', onclick: () => { sh.close(); void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)); } }, icon('play'), h('span', { class: 'grow' }, h('span', null, t('epWatchNow')), h('small', { class: 'src watch-hint', dir: 'auto' }, t('epWatchNowHint'))));
+      sh.body.append(watchRow);
+      void import('../anime/watch').then((m) => m.watchPlan(a, n)).then((plan) => { const hint = watchRow.querySelector('.watch-hint'); if (hint && plan.picked) hint.textContent = t('epWatchContinue', { name: plan.picked.title }); });
+      row('magnet', t('epChooseToWatch'), t('epChooseToWatchHint'), () => void torrentSheet(a, n, 'stream'));
       void import('../anime/stream').then((st) => st.streamProviders()).then((ps) => { if (ps.length && sh.el.isConnected) row('globe', t('streamWatch'), t('epOnlineHint'), () => void import('./animeStream').then((m) => m.streamSheet(a, n))); });
       row('download', t('epDownloadBest'), t('epDownloadBestHint'), () => void (async () => {
         const { buildQuery, searchAll, magnetOf } = await import('../anime/providers'); const { bestRelease } = await import('../anime/watch');

@@ -321,8 +321,40 @@ export async function searchAll(q: AnimeQuery, onEach: (p: ProviderEntry, res: T
   }));
   return all;
 }
-/** Results ordered the Hayase way: best releases, then accuracy, then the wanted resolution, then seeders. */
+/** A release's tags, read from its name (Seanime's and Hayase's badges): SeaDex's best, a batch, the quality, the
+ *  source (BD, web), the video (HEVC, AV1, 10-bit, HDR, remux), the audio (dual, dubbed), subtitles, a fixed v2. */
+export interface ReleaseTag { id: string; label: string; good?: boolean }
+export function releaseTags(r: TorrentResult): ReleaseTag[] {
+  const n = ` ${r.title} `; const p = parseFilename(r.title); const out: ReleaseTag[] = [];
+  const add = (id: string, label: string, good?: boolean) => { if (!out.some((x) => x.id === id)) out.push({ id, label, good }); };
+  if (r.type === 'best') add('best', 'SeaDex', true);
+  const res = r.resolution ?? p.resolution; if (res) add('res', /^2160|4k/i.test(res) ? '4K' : res);
+  if (r.type === 'batch' || p.batch) add('batch', 'Batch');
+  if (/\b(bd|bdrip|blu-?ray|bdremux)\b/i.test(n)) add('bd', 'BD', true); else if (/\bweb(-?dl|-?rip)?\b/i.test(n)) add('web', 'WEB'); else if (/\b(dvd|dvdrip)\b/i.test(n)) add('dvd', 'DVD');
+  if (/\bremux\b/i.test(n)) add('remux', 'Remux', true);
+  if (/\b(hevc|x265|h\.?265)\b/i.test(n)) add('hevc', 'HEVC'); else if (/\bav1\b/i.test(n)) add('av1', 'AV1'); else if (/\b(avc|x264|h\.?264)\b/i.test(n)) add('avc', 'AVC');
+  if (/\b(10.?bit|hi10p?)\b/i.test(n)) add('10bit', '10-bit');
+  if (/\b(hdr|hdr10\+?|dovi|dv)\b/i.test(n)) add('hdr', 'HDR');
+  if (/\b(dual[ ._-]?audio|multi[ ._-]?audio)\b/i.test(n)) add('dual', 'Dual audio', true); else if (/\b(dub|dubbed|eng[ ._-]?dub)\b/i.test(n)) add('dub', 'Dub');
+  if (/\b(multi[ ._-]?subs?)\b/i.test(n)) add('msubs', 'Multi-subs');
+  if (/\b(uncensored|uncen)\b/i.test(n)) add('uncen', 'Uncensored');
+  if (/\bv[2-9]\b/i.test(n)) add('fixed', 'v2', true);
+  if (r.accuracy === 'high') add('match', '✓', true);
+  return out;
+}
+/** How good a release looks beyond its quality (for the ones the choices leave level): SeaDex's best first, then
+ *  Blu-ray and remuxes, a fixed version, 10-bit and dual audio, and the seeders (on a log scale, so a well-seeded
+ *  web release does not lose to a dead Blu-ray). */
+export function releaseScore(r: TorrentResult): number {
+  const tags = new Set(releaseTags(r).map((x) => x.id)); let s = 0;
+  if (tags.has('best')) s += 100; if (tags.has('bd')) s += 6; if (tags.has('remux')) s += 2; if (tags.has('web')) s += 3; if (tags.has('fixed')) s += 1; if (tags.has('10bit')) s += 1; if (tags.has('dual')) s += 1;
+  s += Math.log2(1 + Math.max(0, r.seeders)) * 1.5; if (r.seeders === 0) s -= 20;
+  return s;
+}
+/** Results ordered the Hayase way: best releases, then accuracy, then the wanted resolution, then how good each
+ *  looks (its tags and seeders). */
 export function rank(rs: TorrentResult[], want: string): TorrentResult[] {
   const acc = { high: 2, medium: 1, low: 0 }; const res = (r: TorrentResult) => (want && r.resolution?.startsWith(want) ? 1 : 0);
-  return [...rs].sort((a, b) => (b.type === 'best' ? 1 : 0) - (a.type === 'best' ? 1 : 0) || acc[b.accuracy] - acc[a.accuracy] || res(b) - res(a) || b.seeders - a.seeders);
+  const sc = new Map(rs.map((r) => [r, releaseScore(r)]));
+  return [...rs].sort((a, b) => (b.type === 'best' ? 1 : 0) - (a.type === 'best' ? 1 : 0) || acc[b.accuracy] - acc[a.accuracy] || res(b) - res(a) || sc.get(b)! - sc.get(a)! || b.seeders - a.seeders);
 }
