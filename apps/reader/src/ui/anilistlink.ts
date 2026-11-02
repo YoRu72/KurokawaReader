@@ -22,7 +22,17 @@ async function capture(url: string, marker: string, title: string): Promise<stri
   return m.captureAddress(url, marker, title);
 }
 
-export function anilistLinkSheet(linked: () => void): void {
+/** One tap, as in Hayase and Mihon: AniList's sign-in and «Authorize» in the app's window, the account linked as
+ *  soon as AniList hands the token back. Where no window can be watched (the web), the sheet to paste it. */
+export async function anilistSignIn(linked: () => void): Promise<void> {
+  if (!clientId()) { anilistLinkSheet(linked); return; }
+  const at = await capture(al.authUrl(), 'access_token=', t('anilistSignInWindow'));
+  if (at === undefined) { anilistLinkSheet(linked, true); return; }
+  const token = at ? /access_token=([^&]+)/.exec(at)?.[1] : null;
+  if (!token) { if (at) toast(t('anilistDenied'), 'error', 6000); return; }
+  try { const u = await al.link(decodeURIComponent(token)); toast(t('anilistLinkedAs', { name: u.name })); linked(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error', 6000); }
+}
+export function anilistLinkSheet(linked: () => void, paste = false): void {
   const sh = openSheet(t('anilistLinkTitle'), t('close')); sh.el.classList.add('al-link');
   const linkWith = async (token: string) => { try { const u = await al.link(token.trim()); toast(t('anilistLinkedAs', { name: u.name })); sh.close(); linked(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error', 6000); } };
   const tokenBox = h('textarea', { rows: 3, placeholder: t('anilistTokenPlaceholder'), dir: 'ltr', class: 'al-token' }) as HTMLTextAreaElement;
@@ -55,5 +65,6 @@ export function anilistLinkSheet(linked: () => void): void {
     // (The app's own client: one tap, as in Mihon; a client of one's own still possible below.)
     sh.body.append(h('p', { class: 'hint' }, t('anilistOneTap')), big(), h('details', { class: 'al-own' }, h('summary', null, t('anilistOwnClient')), guide));
   } else sh.body.append(h('p', { class: 'hint' }, t('anilistGuideIntro')), guide);
+  if (paste) { window.open(al.authUrl(), '_blank', 'noopener'); pasteRow.hidden = false; }
   sh.body.append(pasteRow, h('button', { type: 'button', class: 'btn text small al-show-paste', onclick: () => { pasteRow.hidden = !pasteRow.hidden; } }, t('anilistHaveToken')));
 }

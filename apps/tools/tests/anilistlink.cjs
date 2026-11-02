@@ -22,7 +22,13 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   }, lang);
   await p.goto(`http://127.0.0.1:${port}/#/settings`); await p.waitForSelector('#anilist');
   await p.evaluate(() => { const c = document.querySelector('#anilist'); if (c?.classList.contains('collapsed')) c.querySelector('h3')?.click(); });
-  await p.click('#anilist .btn.primary'); await p.waitForSelector('.al-link .al-step');
+  // One tap, as in Hayase: AniList's sign-in and «Authorize» in the app's window with the app's own client.
+  await p.click('#anilist .btn.primary'); await p.waitForSelector('#anilist .track-user', { timeout: 8000 });
+  const first = await p.evaluate(() => window.__opened[0]); console.log('one tap:', first);
+  check('one tap: signed in with the app\'s client, linked', /client_id=55772/.test(first) && /response_type=token/.test(first) && /Keyaru/.test(await p.$eval('#anilist .track-user', (e) => e.textContent)));
+  await p.click('#anilist .track-user button'); await p.waitForSelector('#anilist .btn.text'); await p.evaluate(() => { window.__opened = []; });
+  // A client of one's own: the guide.
+  await p.click('#anilist .btn.text'); await p.waitForSelector('.al-link details'); await p.click('.al-link details summary'); await p.waitForSelector('.al-link .al-step');
   check('the guide: four steps, the redirect address to copy', (await p.$$('.al-step')).length === 4 && /oauth\/pin/.test(await p.$eval('.al-link', (e) => e.textContent)));
   await p.waitForTimeout(700); await p.screenshot({ path: path.join(__dirname, `shot-anilistlink-${lang}.png`) });
   await p.fill('.al-id', 'https://anilist.co/settings/client/27182'); await p.dispatchEvent('.al-id', 'change');

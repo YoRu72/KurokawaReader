@@ -235,7 +235,8 @@ export function settingsView(): HTMLElement {
           h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistAutoProgress')), (() => { const c = h('input', { type: 'checkbox', checked: cur.anilistAutoProgress, onchange: () => updateSettings({ anilistAutoProgress: c.checked }) }) as HTMLInputElement; return c; })()));
       } else {
         // (Not linked: one button — the sign-in, or the short guide that makes the client with you.)
-        parts.push(h('div', null, h('button', { class: 'btn primary small', onclick: () => void import('../ui/anilistlink').then((m) => m.anilistLinkSheet(() => void renderTrack())) }, icon('user'), t('anilistLinkTitle'))));
+        parts.push(h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } }, h('button', { class: 'btn primary small', onclick: () => void import('../ui/anilistlink').then((m) => m.anilistSignIn(() => void renderTrack())) }, icon('user'), t('anilistSignInWith')),
+          h('button', { class: 'btn text small', onclick: () => void import('../ui/anilistlink').then((m) => m.anilistLinkSheet(() => void renderTrack())) }, t('anilistOwnClient'))));
       }
     }
     Array.from(trackCard.children).forEach((c) => { if (!c.matches('h3')) c.remove(); });
