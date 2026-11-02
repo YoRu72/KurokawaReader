@@ -18,7 +18,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   p = await open(['anime', 'subtitles']);
   const ids = await p.$$eval('.settings-view section.card', (c) => c.map((x) => x.id)); console.log('cards:', ids.join(' '));
   check('AniList right after General', ids.indexOf('anilist') === ids.indexOf('general') + 1);
-  check('the AniList card offers to link', await p.$eval('#anilist', (e) => /anilist\.co\/settings\/developer/.test(e.innerHTML) && !!e.querySelector('button')));
+  check('the AniList card offers to link', await p.$eval('#anilist', (e) => !!e.querySelector('button.btn.primary')));
   check('Watched episodes card with the Anime add-on', await p.$eval('#episodes', (e) => /After watching/.test(e.textContent) && /Delete the watched ones/.test(e.textContent)).catch(() => false));
   check('the Anime card no longer repeats the account', !(await p.$eval('#anime', (e) => /anilist\.co\/settings\/developer/.test(e.innerHTML))));
   await p.click('#sublangs h3').catch(() => undefined); await p.waitForTimeout(200);
