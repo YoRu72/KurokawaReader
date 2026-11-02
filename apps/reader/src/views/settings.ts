@@ -234,24 +234,8 @@ export function settingsView(): HTMLElement {
           h('button', { class: 'btn small', onclick: () => { al.unlink(); void renderTrack(); } }, icon('close'), t('anilistUnlink'))),
           h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistAutoProgress')), (() => { const c = h('input', { type: 'checkbox', checked: cur.anilistAutoProgress, onchange: () => updateSettings({ anilistAutoProgress: c.checked }) }) as HTMLInputElement; return c; })()));
       } else {
-        const id = h('input', { type: 'text', value: cur.anilistClientId, placeholder: '12345', inputmode: 'numeric', dir: 'ltr', style: { width: '120px' } }) as HTMLInputElement;
-        id.addEventListener('change', () => updateSettings({ anilistClientId: id.value.trim() }));
-        const tk = h('textarea', { rows: 3, placeholder: t('anilistTokenPlaceholder'), dir: 'ltr', style: { width: '100%', fontFamily: 'monospace', fontSize: '12px' } }) as HTMLTextAreaElement;
-        parts.push(h('p', { class: 'hint' }, t('anilistHowTo'), ' ', h('a', { href: 'https://anilist.co/settings/developer', target: '_blank', rel: 'noopener' }, 'anilist.co/settings/developer')),
-          h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('anilistClientId')), id),
-          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn tonal small', onclick: async () => {
-            updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; }
-            // (In the app's own browser the token is taken from the page AniList ends on: nothing to copy or paste.)
-            const { captureAddress, hasBrowser } = await import('../sources/http');
-            if (!hasBrowser()) { window.open(al.authUrl(), '_blank', 'noopener'); return; }
-            const at = await captureAddress(al.authUrl(), 'access_token=', t('anilistSignInWindow'));
-            const token = at ? /access_token=([^&]+)/.exec(at)?.[1] : null;
-            if (!token) return;
-            try { const user = await al.link(decodeURIComponent(token)); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); }
-            catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); }
-          } }, icon('external'), t('anilistSignIn'))),
-          tk,
-          h('div', null, h('button', { class: 'btn primary small', onclick: async () => { try { const user = await al.link(tk.value); toast(t('anilistLinkedAs', { name: user.name })); void renderTrack(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } } }, icon('check'), t('anilistLink'))));
+        // (Not linked: one button — the sign-in, or the short guide that makes the client with you.)
+        parts.push(h('div', null, h('button', { class: 'btn primary small', onclick: () => void import('../ui/anilistlink').then((m) => m.anilistLinkSheet(() => void renderTrack())) }, icon('user'), t('anilistLinkTitle'))));
       }
     }
     Array.from(trackCard.children).forEach((c) => { if (!c.matches('h3')) c.remove(); });

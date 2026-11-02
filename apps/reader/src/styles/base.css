@@ -2040,3 +2040,15 @@ body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox)
 .gloss-search { height: 44px; padding: 0 16px; }
 .tr-titles .label { text-transform: none; letter-spacing: normal; }
 .gloss-sheet .gloss-search { min-height: 44px; flex: none; }
+/* Linking AniList: the steps, numbered. */
+.al-link .sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.al-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.al-step { display: flex; gap: 12px; align-items: flex-start; }
+.al-n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--md-primary-container); color: var(--md-on-primary-container); font: 700 13px var(--font-ui); }
+.al-step .grow { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.al-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .al-field > span { min-width: 6em; color: var(--md-on-surface-variant); font-size: 13px; }
+.al-field code { padding: 4px 8px; border-radius: 8px; background: var(--md-surface-container-high); font-size: 12.5px; overflow-wrap: anywhere; }
+.al-idrow { display: flex; gap: 8px; align-items: center; } .al-id { flex: 1; min-width: 0; font: inherit; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.al-signin { align-self: flex-start; } .al-token { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; }
+.al-show-paste { align-self: flex-start; }
+.al-link .sheet-body { font-family: var(--font-ui); }

@@ -38,7 +38,9 @@ export function user(): AlUser | null { try { return JSON.parse(localStorage.get
 export const linked = (): boolean => !!token() && !!user();
 export function unlink(): void { try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); } catch { /* private mode */ } }
 /** Where the user signs in: AniList shows the token in the address it ends on when the client's redirect is its pin page. */
-export function authUrl(): string { return `https://anilist.co/api/v2/oauth/authorize?client_id=${encodeURIComponent(getSettings().anilistClientId.trim())}&response_type=token`; }
+/** The sign-in page: the user's own API client, else the app's (see views/anilistLink). */
+export function authUrl(): string { const id = getSettings().anilistClientId.trim() || BUILTIN_CLIENT; return `https://anilist.co/api/v2/oauth/authorize?client_id=${encodeURIComponent(id)}&response_type=token`; }
+export const BUILTIN_CLIENT = '';
 
 const later = (m: string) => Object.assign(new Error(m), { later: true });
 export const isLater = (e: unknown): boolean => !!(e as { later?: boolean })?.later;

@@ -25,8 +25,9 @@ export const linked = (): boolean => !!token() && !!user();
 export function unlink(): void { try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); } catch { /* private mode */ } }
 
 /** Where the reader signs in: AniList shows the token on its own page when the client's redirect is its pin page. */
+export const BUILTIN_CLIENT = '';
 export function authUrl(): string {
-  const id = getSettings().anilistClientId.trim();
+  const id = getSettings().anilistClientId.trim() || BUILTIN_CLIENT;
   return `https://anilist.co/api/v2/oauth/authorize?client_id=${encodeURIComponent(id)}&response_type=token`;
 }
 

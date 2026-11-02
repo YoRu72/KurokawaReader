@@ -29,20 +29,8 @@ export function anilistCard(rerender: () => void): HTMLElement {
   const acct: HTMLElement[] = [];
   if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))),
     toggle(t('anilistAutoProgress'), s.anilistAutoProgress, (v) => updateSettings({ anilistAutoProgress: v })));
-  else {
-    const id = h('input', { type: 'text', value: s.anilistClientId, placeholder: '12345', inputmode: 'numeric', dir: 'ltr', style: { width: '120px' }, onchange: () => updateSettings({ anilistClientId: id.value.trim() }) }) as HTMLInputElement;
-    const tk = h('textarea', { rows: 3, placeholder: t('anilistTokenPlaceholder'), dir: 'ltr', style: { width: '100%', fontFamily: 'monospace', fontSize: '12px' } }) as HTMLTextAreaElement;
-    const linkWith = async (token: string) => { try { const user = await al.link(token); toast(t('anilistLinkedAs', { name: user.name })); rerender(); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } };
-    acct.push(h('p', { class: 'hint' }, t('anilistHowTo'), ' ', h('a', { href: 'https://anilist.co/settings/developer', target: '_blank', rel: 'noopener' }, 'anilist.co/settings/developer')),
-      row(t('anilistClientId'), id),
-      h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
-        updateSettings({ anilistClientId: id.value.trim() }); if (!id.value.trim()) { toast(t('anilistNeedClient'), 'error'); return; }
-        const at = await captureAddress(al.authUrl(), 'access_token=', t('anilistSignInWindow'));
-        if (at === undefined) { window.open(al.authUrl(), '_blank', 'noopener'); return; }
-        const token = at ? /access_token=([^&]+)/.exec(at)?.[1] : null; if (token) await linkWith(decodeURIComponent(token));
-      } }, icon('external'), t('anilistSignIn'))),
-      tk, h('div', null, h('button', { type: 'button', class: 'btn primary small', onclick: () => void linkWith(tk.value) }, icon('check'), t('anilistLink'))));
-  }
+  // (Not linked: one button — the sign-in, or the short guide that makes the client with you.)
+  else acct.push(h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => void import('./anilistLink').then((m) => m.anilistLinkSheet(rerender)) }, icon('user'), t('anilistLinkTitle'))));
   return card('anilist', 'AniList', h('p', { class: 'hint' }, t('anilistCardHint')), ...acct);
 }
 
