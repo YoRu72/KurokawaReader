@@ -10,7 +10,7 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   const b = await chromium.launch(); const p = await (await b.newContext({ viewport: { width: 412, height: 860 }, locale: 'en' })).newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.goto(`http://127.0.0.1:${port}/`); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await p.reload(); await p.waitForSelector('.library-view');
-  await p.setInputFiles('input[type=file]', [path.join(__dirname, 'fixtures/sample.pdf')]); await p.waitForSelector('.book-card', { timeout: 60000 });
+  await p.setInputFiles('input[type=file]', [path.join(__dirname, 'pdfsearch/sample.pdf')]); await p.waitForSelector('.book-card', { timeout: 60000 });
   await p.click('.book-card'); await p.waitForSelector('.pdf-page', { timeout: 30000 }); await p.waitForTimeout(1200);
   await p.keyboard.press('/'); await p.waitForSelector('.panel.open input[type=search]');
   await p.fill('.panel.open input[type=search]', 'line 3:'); await p.waitForSelector('.panel.open .hit', { timeout: 30000 }); await p.waitForTimeout(2500);
