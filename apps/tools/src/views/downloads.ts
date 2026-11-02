@@ -122,8 +122,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       ...(sel.some((x) => ACTIVE.includes(x.state)) && eng.can.pause ? [iconButton('pause', t('pause'), each((x) => (ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve())))] : []),
       ...(sel.some((x) => x.state === 'paused' || x.state === 'failed') ? [iconButton('play', t('resume'), each((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : Promise.resolve())))] : []),
       ...(links ? [iconButton('copy', t('copyLink'), () => void navigator.clipboard?.writeText(links).then(() => toast(t('copied'))))] : []),
-      iconButton('trash', t('removeKeepFiles'), each((x) => eng.remove(x.id, false), t('tasksRemoved', { n: countItems(sel.length) }))),
-      ...(eng.id !== 'aria2' || !getSettings().aria2.use ? [h('button', { type: 'button', class: 'btn text small danger', onclick: () => { if (!confirm(t('dlConfirmRemoveFiles', { n: countItems(sel.length) }))) return; each((x) => eng.remove(x.id, true), t('tasksRemoved', { n: countItems(sel.length) }))(); } }, t('removeWithFiles'))] : []));
+      iconButton('trash', t('removeTask'), () => removeSheet(sel, () => setSelecting(false))));
   };
   const bar = (x: Task) => (x.total ? Math.min(100, (x.done / x.total) * 100) : 0);
   const line2 = (x: Task): string => {
@@ -185,8 +184,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.kind === 'http' && x.state === 'failed' && x.source.url) void import('../browser').then((m) => { if (m.canBrowse()) row('globe', t('openInBrowser'), () => m.openBrowser(x.source.url!)); });
     if (x.kind === 'http' && x.state !== 'done' && eng.setUrl) row('link', t('newUrl'), () => newUrlSheet(x));
     if ((x.kind === 'http' && x.source.url) || (x.kind === 'torrent' && x.source.magnet)) { if (x.state === 'done' || x.state === 'failed' || x.state === 'seeding') row('refresh', t('redownload'), () => { if (!confirm(t('confirmRedownload', { name: displayName(x) }))) return; void (async () => { await eng.remove(x.id, true); await eng.add({ source: x.source, dir: x.dir, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('taskAdded', { name: displayName(x) })); })().catch((er) => toast(String(er.message ?? er), 'error')); }); }
-    row('trash', t('removeKeepFiles'), () => void eng.remove(x.id, false).then(() => toast(t('taskRemoved'))).catch((er) => toast(String(er.message ?? er), 'error')));
-    if (eng.id !== 'aria2' || !getSettings().aria2.use) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { if (!confirm(t('confirmRemoveFiles', { name: displayName(x) }))) return; sh.close(); void eng.remove(x.id, true).then(() => toast(t('taskRemoved'))).catch((er) => toast(String(er.message ?? er), 'error')); } }, icon('trash'), t('removeWithFiles')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); removeSheet([x]); } }, icon('trash'), t('removeTask')));
   };
   let off = getEngine().onChange((ts) => { tasks = ts; draw(); });
   const offEngine = onEngineChange((e) => { off(); off = e.onChange((ts) => { tasks = ts; draw(); }); });
@@ -244,3 +242,19 @@ async function removeMissing(ts: Task[]): Promise<void> {
   toast(t('removedMissing', { n: countItems(gone.length) }));
 }
 
+
+/** Removing downloads, as Flud asks it: from the list only, or — the box ticked — their files deleted from the
+ *  device too (what is half-downloaded as well). */
+export function removeSheet(tasks: Task[], done?: () => void): void {
+  if (!tasks.length) return; const eng = getEngine();
+  const sh = openSheet(tasks.length === 1 ? t('removeTask') : t('removeTasksN', { n: localDigits(tasks.length) }), t('close'), { stack: true });
+  const canDelete = eng.id !== 'aria2' || !getSettings().aria2.use;
+  const box = h('input', { type: 'checkbox', checked: false, disabled: !canDelete }) as HTMLInputElement;
+  sh.body.append(h('p', { dir: 'auto' }, tasks.length === 1 ? displayName(tasks[0]) : t('removeTasksAsk', { n: localDigits(tasks.length) })),
+    h('label', { class: 'row switch-row remove-files' }, h('span', null, t('deleteFromDevice'), h('small', { class: 'src' }, t('deleteFromDeviceHint'))), box));
+  sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => {
+    sh.close(); let n = 0;
+    for (const x of tasks) { try { await eng.remove(x.id, box.checked); n++; } catch (er) { toast(String((er as Error).message ?? er), 'error'); } }
+    toast(box.checked ? t('removedWithFiles', { n: localDigits(n) }) : t('tasksRemoved', { n: countItems(n) })); done?.();
+  } }, icon('trash'), t('remove')));
+}

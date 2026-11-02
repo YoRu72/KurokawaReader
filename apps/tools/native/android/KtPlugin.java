@@ -75,6 +75,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void add(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("task", obj(engine().add(new JSONObject(call.getData().toString())))); call.resolve(r); }); }
     @PluginMethod public void pause(PluginCall call) { run(call, () -> { engine().pause(call.getString("id", "")); call.resolve(); }); }
     @PluginMethod public void resume(PluginCall call) { run(call, () -> { engine().resume(call.getString("id", "")); call.resolve(); }); }
+    @PluginMethod public void moveFinished(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("moved", engine().moveFinished(call.getString("dir", ""))); r.put("dir", engine().defaultDir().getAbsolutePath()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void remove(PluginCall call) { run(call, () -> { engine().remove(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("deleteFiles", false))); call.resolve(); }); }
     @PluginMethod public void setFiles(PluginCall call) { run(call, () -> { JSArray a = call.getArray("priorities"); int[] p = new int[a.length()]; for (int i = 0; i < a.length(); i++) p[i] = a.getInt(i); engine().setFiles(call.getString("id", ""), p); call.resolve(); }); }
     @PluginMethod public void setSequential(PluginCall call) { run(call, () -> { engine().setSequential(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("on", true))); call.resolve(); }); }
@@ -103,8 +104,9 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void open(PluginCall call) {
         run(call, () -> {
             KtEngine.Task x = engine().task(call.getString("id", "")); if (x == null) throw new Exception("notFound");
-            int idx = call.getInt("fileIndex", 0);
-            File f = engine().fileOf(x, Math.max(0, idx));
+            // (No file named: the torrent's main file — the largest chosen and here —, not simply its first.)
+            Integer given = call.getInt("fileIndex"); int idx = given == null ? -2 : given;
+            File f = engine().fileOf(x, idx == -1 ? -2 : idx);
             if (f == null || !f.exists()) { File d = new File(x.dir); f = d.exists() ? d : null; if (f == null) throw new Exception("notFound"); }
             if (idx < 0 || f.isDirectory()) { File d = f.isDirectory() ? f : f.getParentFile(); Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(Uri.parse(d.toURI().toString()), "resource/folder"); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); try { getContext().startActivity(i); } catch (Exception e) { Intent g = new Intent(Intent.ACTION_GET_CONTENT); g.setType("*/*"); g.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(Intent.createChooser(g, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } call.resolve(); return; }
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);

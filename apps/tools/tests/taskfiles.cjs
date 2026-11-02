@@ -21,6 +21,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       addListener: (ev, fn) => { (listeners[ev] = listeners[ev] || []).push(fn); return Promise.resolve({ remove() {} }); },
       list: async () => ({ tasks: [task] }),
       setFiles: async (o) => { window.__calls.push(['setFiles', o.priorities.join('')]); o.priorities.forEach((v, i) => { task.files[i].priority = v; }); window.__emit(); },
+      remove: async (o) => { window.__calls.push(['remove', o.id, o.deleteFiles]); },
       torrentDetail: async () => ({ seeds: 1, peersConnected: 1, seedsInSwarm: 1, peersInSwarm: 1, ratio: 0, limitDown: 0, limitUp: 0, peers: [], trackers: [] }),
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -57,6 +58,11 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   const last = await p.evaluate(() => window.__calls.pop()); console.log('none of the ebooks:', JSON.stringify(last));
   check('None on what is shown: those three left out', last && last[1] === '0001111');
   await p.screenshot({ path: path.join(__dirname, `shot-taskfiles-${lang}.png`), fullPage: true });
+  // Removed the way Flud asks: the files deleted from the device only when the box is ticked.
+  await p.click('.task-detail-actions .btn.danger'); await p.waitForSelector('.remove-files input');
+  await p.check('.remove-files input'); await p.click('.sheet .btn.primary.danger'); await p.waitForTimeout(400);
+  const rm = await p.evaluate(() => window.__calls.find((c) => c[0] === 'remove')); console.log('remove:', JSON.stringify(rm));
+  check('removed with its files from the device, as asked', !!rm && rm[2] === true);
   check('no page errors', !errors.length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

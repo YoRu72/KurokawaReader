@@ -3,7 +3,7 @@
 // again and the file changed on the server: downloaded afresh. Run by downloader.sh.
 import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.atomic.*; import java.security.*;
 public class T {
-  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger();
+  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger();
   public static void main(String[] a) throws Exception {
     data = new byte[20 << 20]; new Random(1).nextBytes(data);
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
@@ -16,7 +16,9 @@ public class T {
         if (range == null || (ir != null && !ir.equals(etag))) { ex.sendResponseHeaders(200, data.length); try (OutputStream o = ex.getResponseBody()) { o.write(data); } served.addAndGet(data.length); return; }
         String[] p = range.substring(6).split("-"); long f = Long.parseLong(p[0]), t = p.length > 1 && !p[1].isEmpty() ? Long.parseLong(p[1]) : data.length - 1;
         ex.getResponseHeaders().add("Content-Range", "bytes " + f + "-" + t + "/" + data.length); ex.sendResponseHeaders(206, t - f + 1);
-        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); Thread.sleep(2); } } catch (InterruptedException e) {}
+        if (slowFirst && f % (1310720) != 0) splits.incrementAndGet();
+        final boolean slow = slowFirst && f == 0;
+        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); Thread.sleep(slow ? 150 : 2); } } catch (InterruptedException e) {}
       } finally { if (!probe) busy.decrementAndGet(); }
     });
     s.start(); URL u = new URL("http://127.0.0.1:" + s.getAddress().getPort() + "/f");
@@ -46,6 +48,11 @@ public class T {
     KrDownloader.fetch(u, out4, 4, op, new AtomicBoolean(), got, new KrDownloader.Result(), () -> {});
     boolean ok4 = Arrays.equals(java.nio.file.Files.readAllBytes(out4.toPath()), data);
     System.out.println("run4 plain match=" + ok4);
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && first.get() > (4 << 20) ? 0 : 1);
+    // 5: one connection very slow (its chunk crawls): at the end its part is cut and the rest taken by the others.
+    File out5 = new File(dir, "slow.part"); out5.delete(); slowFirst = true; got.set(0); long t0 = System.currentTimeMillis();
+    KrDownloader.fetch(u, out5, 4, op, new AtomicBoolean(), got, new KrDownloader.Result(), () -> {});
+    long ms = System.currentTimeMillis() - t0; boolean ok5 = Arrays.equals(java.nio.file.Files.readAllBytes(out5.toPath()), data);
+    System.out.println("run5 slow connection match=" + ok5 + " parts taken over=" + splits.get() + " ms=" + ms + " counted=" + got.get());
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }
