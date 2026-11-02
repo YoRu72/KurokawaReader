@@ -47,18 +47,50 @@ export async function preloadNext(anilistId: number, ep: number): Promise<void> 
   const { toast } = await import('../ui/dom'); const { t } = await import('../i18n'); toast(t('preloadedNext', { n: ep + 1 }));
 }
 let running: { stop(): void } | null = null;
-export async function watchEpisode(a: Anime, ep: number, title: string): Promise<void> {
+/* ---------- the release picked before, for each show (Hayase's «continue»): a batch is used again for the next
+   episodes, its file for each episode found in it ---------- */
+export interface Picked { title: string; hash: string; link: string; provider: string; batch: boolean; at: number }
+const PICK_KEY = 'kt.watchPick';
+const picks = (): Record<string, Picked> => { try { return JSON.parse(localStorage.getItem(PICK_KEY) ?? '{}') as Record<string, Picked>; } catch { return {}; } };
+export function rememberPick(anilistId: number, r: TorrentResult): void {
+  if (r.url || !r.hash) return; const p = parseFilename(r.title);
+  const all = picks(); all[anilistId] = { title: r.title, hash: r.hash, link: magnetOf(r), provider: r.provider, batch: r.type === 'batch' || p.batch || p.episode === undefined, at: Date.now() };
+  try { localStorage.setItem(PICK_KEY, JSON.stringify(all)); } catch { /* full */ }
+}
+export const pickedFor = (anilistId: number): Picked | undefined => picks()[anilistId];
+/** A download of the show that holds this episode: the episode's own, else a batch with its file. */
+export async function taskFor(anilistId: number, ep: number): Promise<Task | undefined> {
+  const own = (await downloadedEpisodes(anilistId)).get(ep); if (own) return own;
+  let tasks: Task[] = []; try { tasks = await getEngine().list(); } catch { /* none */ }
+  return tasks.find((x) => (x.meta as { anilistId?: number } | undefined)?.anilistId === anilistId && x.kind === 'torrent' && x.files.some((f) => isVideo(f.path) && parseFilename(f.path.split('/').pop() ?? f.path).episode === ep));
+}
+/** What «Watch now» will play: a download holding the episode, else the batch picked before (to go on in), else
+ *  nothing known yet (the best release is looked for). */
+export async function watchPlan(a: Anime, ep: number): Promise<{ task?: Task; picked?: Picked }> {
+  const task = await taskFor(a.id, ep); if (task) return { task };
+  const picked = pickedFor(a.id); const r = picked ? parseFilename(picked.title) : undefined; const covers = !!r && (r.episode === undefined || r.episodeEnd === undefined || (ep >= r.episode && ep <= r.episodeEnd));
+  return picked?.batch && covers ? { picked } : {};
+}
+export async function watchEpisode(a: Anime, ep: number, title: string, release?: TorrentResult): Promise<void> {
   return watchWith({
     title,
-    have: async () => (await downloadedEpisodes(a.id)).get(ep),
-    find: async () => bestRelease(a, ep, await searchAll(await buildQuery(a, ep), () => undefined)),
+    have: release ? undefined : async () => taskFor(a.id, ep),
+    find: async () => {
+      if (release) return release;
+      const p = pickedFor(a.id);
+      const range = p ? parseFilename(p.title) : undefined; const covers = !!range && (range.episode === undefined || range.episodeEnd === undefined || (ep >= range.episode && ep <= range.episodeEnd));
+      if (p?.batch && covers) return { title: p.title, link: p.link, hash: p.hash, size: 0, seeders: 0, leechers: 0, downloads: 0, accuracy: 'high', provider: p.provider, type: 'batch' };
+      return bestRelease(a, ep, await searchAll(await buildQuery(a, ep), () => undefined));
+    },
     meta: (best) => ({ anilistId: a.id, title, episode: ep || undefined, cover: a.cover, provider: best.provider, hash: best.hash, fileIdx: best.fileIdx }),
     pick: (x) => episodeFile(x, ep),
+    picked: (r) => rememberPick(a.id, r),
+    choose: () => void import('../views/animeEntry').then((m) => m.torrentSheet(a, ep, 'stream')),
   });
 }
 /** The watcher itself, for anime and for films and series: a download already there, or the release `find`
  *  gives added to play in order (only its one file when it names one), then played as soon as its files are known. */
-export async function watchWith(o: { title: string; have?: () => Promise<Task | undefined>; find: () => Promise<TorrentResult | null>; meta: (r: TorrentResult) => Task['meta']; pick: (x: Task, r?: TorrentResult) => number }): Promise<void> {
+export async function watchWith(o: { title: string; have?: () => Promise<Task | undefined>; find: () => Promise<TorrentResult | null>; meta: (r: TorrentResult) => Task['meta']; pick: (x: Task, r?: TorrentResult) => number; picked?: (r: TorrentResult) => void; choose?: () => void }): Promise<void> {
   running?.stop();
   const eng = getEngine(); const title = o.title;
   if (!eng.streamUrl) { toast(t('watchNeedsApp'), 'error', 5000); return; }
@@ -73,19 +105,25 @@ export async function watchWith(o: { title: string; have?: () => Promise<Task | 
   document.body.append(el);
   const setBar = (p: number) => { (bar.firstChild as HTMLElement).style.width = `${Math.max(4, Math.min(100, p))}%`; };
   try {
-    let task: Task | undefined = await o.have?.();
+    let task: Task | undefined = await o.have?.(); const existing = !!task;
     if (!task) {
       const best = await o.find(); if (stopped) return;
-      if (!best) { line.textContent = t('watchNone'); setTimeout(stop, 4000); return; }
-      chosen = best; line.textContent = best.title; setBar(25);
-      task = await eng.add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: o.meta(best) });
+      // (Nothing found: said, with the way to choose a release by hand — searched by any name.)
+      if (!best) { line.textContent = t('watchNone'); if (o.choose) { el.append(h('button', { type: 'button', class: 'btn tonal small', onclick: () => { stop(); o.choose!(); } }, icon('magnet'), t('watchChoose'))); setTimeout(stop, 15000); } else setTimeout(stop, 4000); return; }
+      chosen = best; line.textContent = best.title; setBar(25); o.picked?.(best);
+      // (The same release already among the downloads — a batch picked before: used, not added again.)
+      const same = best.hash ? (await eng.list().catch(() => [] as Task[])).find((x) => x.kind === 'torrent' && (x.source.magnet ?? '').toLowerCase().includes(best.hash.toLowerCase())) : undefined;
+      if (same) task = same; else task = await eng.add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: o.meta(best) });
     }
     taskId = task.id;
     const ready = (x: Task) => x.files.length > 0 && (x.kind !== 'torrent' || x.state !== 'metadata');
     const go = async (x: Task) => {
       off?.(); off = null; if (stopped) return;
       const fi = chosen?.fileIdx !== undefined && x.files.some((f) => f.index === chosen!.fileIdx) ? chosen.fileIdx : o.pick(x, chosen);
-      if (x.kind === 'torrent' && x.files.length > 1 && eng.setFiles) await eng.setFiles(x.id, x.files.map((f) => (f.index === fi ? 2 : 0) as 0 | 1 | 2)).catch(() => undefined);
+      // (A new release: only the episode's file. One already here, a batch gone on in: this file first, the rest as they were.)
+      const reuse = existing || (x.addedAt && Date.now() - x.addedAt > 30000);
+      if (x.kind === 'torrent' && x.files.length > 1 && eng.setFiles) await eng.setFiles(x.id, x.files.map((f) => (f.index === fi ? 2 : reuse ? (f.priority === 2 ? 1 : f.priority) : 0) as 0 | 1 | 2)).catch(() => undefined);
+      if (x.state === 'paused' && reuse) await eng.resume(x.id).catch(() => undefined);
       setBar(100); line.textContent = t('watchOpening');
       const { playTaskFile } = await import('../views/player'); await playTaskFile(x, fi); stop();
     };

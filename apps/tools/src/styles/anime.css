@@ -312,3 +312,10 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .torrent-name .btn { flex: none; }
 .alt-titles { margin-bottom: 8px; } .alt-titles .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archive-browse .kt-files-list { max-height: none; }
+/* A release's tags (SeaDex's best, the source, the video, the audio…). */
+.rel-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.rel-tag { font: 600 11px/1 var(--font-ui); padding: 4px 7px; border-radius: 6px; background: var(--md-surface-container-highest); color: var(--md-on-surface-variant); }
+.rel-tag.good { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.rel-tag.t-best { background: var(--md-primary); color: var(--md-on-primary); }
+.rel-tag.t-batch { background: var(--md-tertiary-container, var(--md-secondary-container)); color: var(--md-on-tertiary-container, var(--md-on-secondary-container)); }
+.watch-card .btn { margin-top: 8px; }

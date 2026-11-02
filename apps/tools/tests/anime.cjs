@@ -37,6 +37,9 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   console.log('providers:', await p.$$eval('.provider-chips .chip', (e) => e.map((x) => x.textContent.trim())).then((x) => x.join(' | ')));
   console.log('results:', await p.$$eval('.torrent-list .result-row .result-title', (e) => e.map((x) => x.textContent)).then((x) => x.join(' | ')));
   await p.screenshot({ path: 'shot-anime-torrents.png' });
+  // Each release's tags read from its name; SeaDex's best first.
+  const tagRows = await p.$$eval('.torrent-list .result-row', (e) => e.map((x) => [...x.querySelectorAll('.rel-tag')].map((y) => y.textContent).join(',')));
+  console.log('tags:', tagRows.join(' | ')); if (!/SeaDex/.test(tagRows[0] ?? '')) errors.push('the best release first, tagged');
   await p.click('.switch-row.small input'); console.log('unfiltered:', await p.$$eval('.torrent-list .result-row', (e) => e.length));
   // An episode tapped: its sheet with Watch now, Download the best release, Choose a release.
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
@@ -44,6 +47,12 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const epRows = await p.$$eval('.ep-sheet .dest-row', (r) => r.map((x) => x.innerText.split('\n')[0]));
   console.log('episode sheet:', epRows.join(' | '));
   if (!epRows.some((x) => /Watch now/.test(x)) || !epRows.some((x) => /Choose a release/.test(x))) errors.push('episode sheet');
+  // Watching by a release chosen by hand (searched by any name): the sheet in its watching mode; the pick remembered.
+  await p.locator('.ep-sheet .dest-row', { hasText: 'Choose a release to watch' }).click(); await p.waitForSelector('.sheet .torrent-name'); await p.waitForSelector('.torrent-list .result-row', { timeout: 20000 });
+  if (!(await p.$('.sheet .hint'))) errors.push('the watching sheet says what it is for');
+  await p.click('.torrent-list .result-row >> nth=0'); await p.waitForTimeout(600);
+  const picked = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.watchPick') || '{}')); console.log('remembered:', JSON.stringify(picked));
+  if (!Object.values(picked).length) errors.push('the release picked to watch remembered');
   // A range reviewed before adding (Senpwai's): episodes 4–5, each with its pick.
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
   await p.locator('.anime-episodes .btn.primary').first().click(); await p.waitForSelector('.sheet .num-row');
