@@ -28,6 +28,7 @@ import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
 import { Picture, FILTER_PRESETS, CROPS } from './vfx';
 import { SeekPreview } from './thumbs';
+const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i;
 
 export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[];
   /** The show and episode when it is not a download's (an online source): for tracking, AniSkip, subtitles. */
@@ -59,7 +60,7 @@ export function openPlayer(src: PlayerSource): void {
   // ---- chrome
   const title = h('span', { class: 'kt-title grow', dir: 'auto' }, src.name);
   const clock = h('span', { class: 'kt-clock', hidden: !P.showClock });
-  const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), iconButton('more', t('more'), () => moreSheet()));
+  const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), batchFiles().length > 1 ? iconButton('list', t('batchFiles'), () => batchSheet()) : null, iconButton('more', t('more'), () => moreSheet()));
   const timeNow = h('span', { class: 'kt-time' }, '0:00'); const timeEnd = h('button', { type: 'button', class: 'kt-time end', title: t('showRemaining'), onclick: () => { updatePrefs({ showRemaining: !getPrefs().showRemaining }); onTime(); } }, '–:––');
   const bar = h('div', { class: 'kt-seek', role: 'slider', tabindex: '0', 'aria-label': t('seekBar') }, h('div', { class: 'kt-buf' }), h('div', { class: 'kt-played' }), h('div', { class: 'kt-knob' }), h('i', { class: 'kt-mark a', hidden: true }), h('i', { class: 'kt-mark b', hidden: true }));
   const playBtn = iconButton('play', t('play'), () => toggle()); playBtn.classList.add('kt-play');
@@ -473,6 +474,34 @@ export function openPlayer(src: PlayerSource): void {
     sh.body.append(h('div', { class: 'dest-list' }, ...list.map((it, i) => { const seen = memoryOf(it.localPath ?? it.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:')); return h('button', { type: 'button', class: 'dest-row' + (it.url === src.url ? ' on' : ''), onclick: () => { sh.close(); if (it.url !== src.url) playAt(it); } }, h('span', { class: 'ep-num' }, localDigits(i + 1)), h('span', { class: 'name grow', dir: 'auto' }, it.name), seen?.watched ? icon('check') : seen?.pos && seen.duration ? h('small', { class: 'src' }, `${localDigits(Math.round((seen.pos / seen.duration) * 100))}%`) : null); })));
   }
   const repeatName = () => (repeat === 'one' ? t('repeatOne') : repeat === 'all' ? t('repeatAll') : t('repeatOff'));
+  // ---- the other files of a torrent (Hayase's picker): when the file chosen for an episode was the wrong one, any
+  // video of the release played instead — it is fetched first, the one left behind stops downloading.
+  function batchFiles(): Task['files'] {
+    const tk = src.task; if (!tk || tk.kind !== 'torrent') return [];
+    return tk.files.filter((f) => VIDEO_EXT.test(f.path));
+  }
+  function batchSheet() {
+    const tk0 = src.task; if (!tk0) return; const sh = openSheet(t('batchFiles'), t('close'));
+    sh.body.append(h('p', { class: 'hint' }, t('batchFilesHint')));
+    const rows = h('div', { class: 'dest-list' });
+    void Promise.all([import('../views/pickFiles'), import('../engine').then((E) => E.getEngine().list()).catch(() => [] as Task[])]).then(([{ guess }, ts]) => {
+      const tk = ts.find((x) => x.id === tk0.id) ?? tk0; const files = tk.files.filter((f) => VIDEO_EXT.test(f.path));
+      const g = new Map(guess({ name: tk.name, files: files.map((f) => ({ index: f.index, path: f.path, size: f.size })) } as never).map((x) => [x.index, x]));
+      const ordered = [...files].sort((a, b) => (g.get(a.index)?.episode ?? 1e9) - (g.get(b.index)?.episode ?? 1e9) || a.path.localeCompare(b.path, undefined, { numeric: true }));
+      rows.replaceChildren(...ordered.map((f) => { const x = g.get(f.index); const cur = f.index === src.fileIndex; const done = f.size > 0 && f.done >= f.size;
+        const tags = [x?.episode !== undefined ? t('episodeN', { n: localDigits(x.episode) }) : '', x?.extra ? t('pickExtra') : '', formatBytes(f.size), done ? t('fileFinished') : f.done ? `${Math.floor((f.done / f.size) * 100)}%` : ''].filter(Boolean).join(' · ');
+        return h('button', { type: 'button', class: 'dest-row' + (cur ? ' on' : ''), 'aria-current': cur ? 'true' : undefined, onclick: () => { sh.close(); if (!cur) void switchTo(f.index); } }, icon(cur ? 'play' : 'film'), h('span', { class: 'grow' }, h('span', { dir: 'auto', class: 'pick-name' }, f.path.split('/').pop()), h('small', { class: 'src' }, tags)));
+      }));
+    });
+    sh.body.append(rows);
+  }
+  async function switchTo(index: number) {
+    const tk = src.task; if (!tk) return; const { getEngine } = await import('../engine'); const eng = getEngine();
+    const live = (await eng.list().catch(() => [] as Task[])).find((x) => x.id === tk.id) ?? tk;
+    if (eng.setFiles) await eng.setFiles(live.id, live.files.map((f) => (f.index === index ? 2 : f.priority === 2 && f.done < f.size ? 0 : f.priority) as 0 | 1 | 2)).catch(() => undefined);
+    const fresh = (await eng.list().catch(() => [] as Task[])).find((x) => x.id === tk.id) ?? live;
+    close(); const { playTaskFile } = await import('../views/player'); await playTaskFile({ ...fresh, files: fresh.files.map((f) => (f.index === index ? { ...f, priority: 2 as const } : f)) }, index);
+  }
   function moreSheet() {
     const sh = openSheet(src.name, t('close'));
     const row = (ic: string, label: string, fn: () => void, extra?: string) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label), extra ? h('small', { class: 'src' }, extra) : null);
@@ -480,6 +509,7 @@ export function openPlayer(src: PlayerSource): void {
       row('film', t('videoSection'), () => videoSheet(), [rotate ? `${localDigits(rotate)}°` : '', crop ? localDigits(crop) : '', getPrefs().filterPreset ? t(`fx_${getPrefs().filterPreset}` as 'fx_vivid') : ''].filter(Boolean).join(' · ') || undefined),
       row('music', t('audioSection'), () => audioSheet(), getPrefs().eqOn ? t('equalizer') : undefined),
       ...(src.playlist && src.playlist.length > 1 ? [row('list', t('playlist'), () => playlistSheet(), localDigits(src.playlist.length))] : []),
+      ...(batchFiles().length > 1 ? [row('folder', t('batchFiles'), () => batchSheet(), localDigits(batchFiles().length))] : []),
       row('bookmark', t('bookmarks'), () => bookmarksSheet(), marks.length ? localDigits(marks.length) : undefined),
       row('clock', t('jumpToTime'), () => jumpSheet()),
       row('refresh', t('repeatMode'), () => { repeat = repeat === 'off' ? 'one' : repeat === 'one' ? 'all' : 'off'; updatePrefs({ repeat }); toast(repeatName()); }, repeatName()),

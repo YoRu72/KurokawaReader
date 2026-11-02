@@ -282,9 +282,9 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void archiveExtract(PluginCall call) {
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
-        final File f = fileOf(call.getString("path", "")); final File dest = fileOf(call.getString("dest", f.getParent()));
-        final KtArchive.Options o = new KtArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)); o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
-        o.verifyFirst = Boolean.TRUE.equals(call.getBoolean("verifyFirst", false)); Double kf = call.getDouble("keepFree"); if (kf != null && kf >= 0) o.keepFree = kf.longValue();
+        final File f = fileOf(call.getString("path", "")); final String destS = call.getString("dest", f.getParent()); final File dest = "cache:".equals(destS) ? new File(getContext().getCacheDir(), "archive-view") : fileOf(destS);
+        final KtArchive.Options o = new KtArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)) && call.getArray("only") == null; o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
+        o.verifyFirst = Boolean.TRUE.equals(call.getBoolean("verifyFirst", false)); try { com.getcapacitor.JSArray only = call.getArray("only"); if (only != null && only.length() > 0) { o.only = new java.util.HashSet<>(); for (int i = 0; i < only.length(); i++) o.only.add(only.getString(i)); } } catch (Exception ignored) {} Double kf = call.getDouble("keepFree"); if (kf != null && kf >= 0) o.keepFree = kf.longValue();
         bg.execute(() -> {
             final long[] last = { 0 };
             try {

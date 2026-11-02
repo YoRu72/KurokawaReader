@@ -3,6 +3,8 @@
 // the connections at work beside the speed chart (Now · Average · Peak · Time left); its files (each to download,
 // skip or put first), Info, the log; and what can be done with it.
 import { swarmCard } from './swarm';
+import { filesCard, type FilesCard } from './taskFiles';
+import { canArchive, isArchiveName } from '../archives';
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t } from '../i18n';
 import { getEngine, displayName, isVideo } from '../engine';
@@ -41,18 +43,18 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
       acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/prism').then((m) => m.verifySheet(fp)) }, icon('check'), t('verifyTitle')));
       void import('./convert').then((m) => { if (m.canConvert() && m.kindOf(name)) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.convertSheet(fp, 'convert') }, icon('convert'), t('convertTitle')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.convertSheet(fp, 'shrink') }, icon('archive'), t('shrinkTitle'))); });
     }
+    if (x.state === 'done' && x.kind !== 'torrent' && x.dir && !x.dir.startsWith('content:') && isArchiveName(name) && canArchive()) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${name}`)) }, icon('folder'), t('archiveBrowse')));
     acts.append(h('button', { type: 'button', class: 'btn text danger', onclick: () => { if (x.state !== 'done' && !confirm(t('confirmRemoveFiles', { name }))) { void eng.remove(x.id, false).then(() => back('/')); return; } void eng.remove(x.id, x.state !== 'done').then(() => back('/')); } }, icon('trash'), t('removeTask')));
-    const files = x.files.length > 1 || (x.files.length === 1 && x.kind === 'torrent') ? h('details', { class: 'card kt-files', open: filesOpen, ontoggle: (e: Event) => { filesOpen = (e.target as HTMLDetailsElement).open; } }, h('summary', null, h('h3', null, t('filesTitle'))), h('div', { class: 'file-rows' }, ...x.files.map((f) => h('div', { class: 'file-row detail' },
-      h('span', { class: 'grow', dir: 'auto' }, f.path, h('small', { class: 'src' }, ` · ${f.size ? Math.round((f.done / f.size) * 100) : 0}%`)),
-      eng.setFiles ? h('select', { class: 'prio', onchange: (e: Event) => { const v = Number((e.target as HTMLSelectElement).value) as 0 | 1 | 2; const p = x.files.map((g) => (g.index === f.index ? v : g.priority)); void eng.setFiles!(x.id, p).catch((er) => toast(String(er.message ?? er), 'error')); } },
-        ...([[0, t('fileSkip')], [1, t('fileNormal')], [2, t('fileHigh')]] as [number, string][]).map(([v, l]) => h('option', { value: String(v), selected: f.priority === v }, l))) : null,
-      isVideo(f.path) && (eng.streamUrl || x.state === 'done') && f.priority > 0 ? iconButton('film', t('play'), () => void import('./player').then((m) => m.playTaskFile(x, f.index)).catch((er) => toast(String(er.message ?? er), 'error'))) : null)))) : null;
+    const files = x.files.length > 1 || (x.files.length === 1 && x.kind === 'torrent') ? filesEl(x) : null;
     const panel = h('section', { class: 'card kt-panel' },
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,
       speedChart(hst, x));
     body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, errorText(x.error), (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : null) : h('span'), acts),
       panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
+  // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
+  let filesBox: FilesCard | undefined;
+  function filesEl(x: Task): HTMLElement { if (!filesBox) filesBox = filesCard(x, eng, { open: filesOpen, onToggle: (o) => { filesOpen = o; }, browse: (path) => void import('./archiveBrowse').then((m) => m.browseArchive(path)), play: (i) => void import('./player').then((m) => m.playTaskFile(task ?? x, i)).catch((er) => toast(String(er.message ?? er), 'error')) }); else filesBox.update(x); return filesBox.el; }
   // (The swarm's card: made once and kept across redraws — it refreshes itself.)
   let swarm: ReturnType<typeof swarmCard> | undefined;
   function swarmEl(): HTMLElement | null { if (swarm === undefined) swarm = swarmCard(id, eng); return swarm?.el ?? null; }

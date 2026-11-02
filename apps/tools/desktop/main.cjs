@@ -190,7 +190,7 @@ const archiveJobs = new Map();
 ipcMain.handle('kt:archiveList', (_e, o) => Archive.list(String(o.path), o.password));
 ipcMain.handle('kt:archiveExtract', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
-  try { const dest = o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { inPlace: !!o.inPlace, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password, verifyFirst: !!o.verifyFirst, ...(typeof o.keepFree === 'number' && o.keepFree >= 0 ? { keepFree: o.keepFree } : {}) }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
+  try { const dest = o.dest === 'cache:' ? path.join(require('os').tmpdir(), 'kurokawa-archive-view') : o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { only: Array.isArray(o.only) ? o.only.map(String) : undefined, inPlace: !!o.inPlace && !o.only, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password, verifyFirst: !!o.verifyFirst, ...(typeof o.keepFree === 'number' && o.keepFree >= 0 ? { keepFree: o.keepFree } : {}) }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
   finally { if (o.id) archiveJobs.delete(o.id); }
 });
 ipcMain.handle('kt:archiveTest', async (e, o) => {

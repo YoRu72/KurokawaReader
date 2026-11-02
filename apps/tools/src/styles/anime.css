@@ -296,3 +296,19 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .cut-tag.b { background: #4fc3f7; }
 .cut-time { width: 9.5em; height: 38px; min-height: 0; padding: 0 10px; border-radius: 10px; font-variant-numeric: tabular-nums; }
 .cut-nudges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+/* Room between the extension browser's parts (its sources, the search, the filters, the list). */
+.market-sheet .sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.market-sheet .sheet-body > .search-input { flex: none; }
+/* The search and its Filters button: side by side with a gap, or the button under it with room. */
+.search-form.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.search-form.row .search-input { flex: 1 1 220px; min-width: 0; }
+/* The sources' chips line up whatever they hold (a count, a warning, a spinner). */
+.provider-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.provider-chips .chip { display: inline-flex; align-items: center; min-height: 34px; box-sizing: border-box; margin: 0; }
+.provider-chips .chip small { margin-inline-start: 4px; }
+/* A name to search the sources by. */
+.torrent-name { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; }
+.torrent-name .search-input { flex: 1; min-width: 0; height: 44px; }
+.torrent-name .btn { flex: none; }
+.alt-titles { margin-bottom: 8px; } .alt-titles .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-browse .kt-files-list { max-height: none; }

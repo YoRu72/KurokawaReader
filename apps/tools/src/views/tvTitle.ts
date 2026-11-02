@@ -152,8 +152,28 @@ function episodeMenu(m: TvMeta, v: TvEpisode, got: Task | undefined, seen: boole
 async function releasesSheet(m: TvMeta, v?: TvEpisode): Promise<void> {
   const sh = openSheet(titleOf(m, v), t('close'));
   const list = h('div', { class: 'torrent-list' }, h('div', { class: 'center' }, h('div', { class: 'spinner' }))); const tools = h('div', { class: 'chip-row wrap search-tools' });
-  sh.body.append(tools, list);
+  // (Torrentio finds a title by its id; when that brings nothing, or not the release wanted, the search add-ons
+  // are asked by a name typed — the title with its season and episode at first.)
+  const nameIn = h('input', { type: 'search', class: 'search-input', dir: 'auto', enterkeyhint: 'search', value: v ? `${m.name} S${String(v.season).padStart(2, '0')}E${String(v.episode).padStart(2, '0')}` : `${m.name}${m.year ? ` ${String(m.year).slice(0, 4)}` : ''}` }) as HTMLInputElement;
+  const byName = h('small', { class: 'src' });
+  const form = h('form', { class: 'search-form torrent-name', onsubmit: (e: Event) => { e.preventDefault(); void searchName(); } }, nameIn, h('button', { type: 'submit', class: 'btn tonal small' }, icon('search'), t('searchByName')));
+  sh.body.append(form, byName, tools, list);
   let all: TvRelease[] = []; let qual = ''; let sort: 'best' | 'seeds' | 'size' = 'best';
+  const searchName = async () => {
+    const q = nameIn.value.trim(); if (!q) return;
+    const S = await import('../addons/search'); if (!(await S.searchSources()).length) { byName.textContent = t('torrentSearchNoSources'); return; }
+    byName.textContent = t('searching'); let n = 0;
+    await S.runSearch(q, { kind: m.type === 'movie' ? 'movie' : 'series', title: m.name, titles: [m.name], imdb: m.id.startsWith('tt') ? m.id : undefined, season: v?.season, episode: v?.episode }, (_a, res) => {
+      if (res instanceof Error) return;
+      for (const r of res) {
+        const hash = (/btih:([a-z0-9]{32,40})/i.exec(r.magnet ?? '')?.[1] ?? '').toLowerCase(); if (!hash && !r.url) continue;
+        if (all.some((x) => (hash && x.hash === hash) || (r.url && x.url === r.url))) continue;
+        all.push({ title: r.title, link: r.magnet ?? r.url ?? '', hash, size: r.size ?? 0, seeders: r.seeds ?? 0, leechers: r.peers ?? 0, downloads: 0, accuracy: 'medium', provider: r.source, resolution: /\b(2160p|1080p|720p|480p)\b/i.exec(r.title)?.[1]?.toLowerCase() ?? (/\b4k\b/i.test(r.title) ? '2160p' : undefined), url: hash ? undefined : r.url }); n++;
+      }
+      redraw();
+    });
+    byName.textContent = t('foundByName', { n: localDigits(n) });
+  };
   const redraw = () => {
     tools.replaceChildren(...['', '2160p', '1080p', '720p', '480p'].map((q) => h('button', { type: 'button', class: 'chip small' + (qual === q ? ' on' : ''), onclick: () => { qual = q; redraw(); } }, q || t('allQualities'))), h('span', { class: 'chip-sep' }),
       h('button', { type: 'button', class: 'chip small', onclick: () => { sort = sort === 'best' ? 'seeds' : sort === 'seeds' ? 'size' : 'best'; redraw(); } }, icon('sort'), t(sort === 'best' ? 'sortBest' : sort === 'seeds' ? 'sortSeeds' : 'sortSize')));

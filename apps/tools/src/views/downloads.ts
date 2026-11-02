@@ -168,6 +168,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(x.id)}`));
     if (x.state === 'done' && eng.open) { row('play', t('open'), () => void eng.open!(x.id)); row('folder', t('openFolder'), () => void eng.open!(x.id, -1)); }
     if (x.state === 'done' && x.kind !== 'torrent' && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('archive', t('extract'), async () => { if (!getSettings().addons.includes('archives')) { const { needAddon } = await import('../addons/need'); if (!(await needAddon('archives', t('addonWhyArchives')))) return; } void import('./extract').then((m) => m.extractSheet(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)); });
+    if (x.state === 'done' && x.kind !== 'torrent' && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('folder', t('archiveBrowse'), () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)));
     // (An app among what came — a plain download, or a torrent's files —: installed from here; several, one row each.)
     if (x.state === 'done' && x.dir && !x.dir.startsWith('content:')) {
       const base = x.dir.replace(/[\\/]$/, '');

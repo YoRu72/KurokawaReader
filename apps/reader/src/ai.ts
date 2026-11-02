@@ -2,7 +2,7 @@
 // OpenAI-compatible endpoints (OpenRouter, local servers), Anthropic.
 // Keys live in the visual settings (localStorage) and are excluded from backups.
 import { REPO } from './repo';
-import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp } from './glossary';
+import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp, glossaryStampOf } from './glossary';
 import { getSettings } from './settings';
 import { t } from './i18n';
 
@@ -104,7 +104,16 @@ export function langName(code: string): string {
 }
 
 /** A stable key for caching: text + everything that changes the output. */
-export function translationKey(text: string): string {
+/** The key a paragraph's translation is kept under: what made it (provider, model, task, language, instructions)
+ *  and the glossary terms the paragraph itself holds — a name added to the glossary makes again only the
+ *  paragraphs it is in, not the whole book. */
+export function translationKey(text: string, bookId?: string): string {
+  const s = getSettings();
+  const stamp = s.aiTask === 'furigana' ? '' : glossaryStampOf(termsIn([text.replace(/<[^>]+>/g, '')], bookId));
+  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${stamp}|${text}`);
+}
+/** The key as it was before (the whole glossary's mark): translations kept then are still found. */
+export function legacyTranslationKey(text: string): string {
   const s = getSettings();
   return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${s.aiTask === 'furigana' ? '' : glossaryStamp()}|${text}`);
 }

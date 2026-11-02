@@ -145,7 +145,8 @@ public final class KtArchive {
     }
 
     /* ---------- extracting ---------- */
-    public static final class Options { public boolean inPlace, deleteAfter, verifyFirst; public String replace = "replace"; public String password; public long keepFree = 64L << 20; }
+    public static final class Options { public boolean inPlace, deleteAfter, verifyFirst; public String replace = "replace"; public String password; public long keepFree = 64L << 20; /** Only these entries (and what is under these folders); null: all. */ public java.util.Set<String> only; }
+    static boolean wanted(Options o, String name) { if (o.only == null) return true; String n = name.replace('\\', '/'); for (String w : o.only) { if (n.equals(w) || (w.endsWith("/") && n.startsWith(w))) return true; } return false; }
 
     /** Extracts into `dest`; returns the number of files written. */
     public static int extract(File f, File dest, Options o, Progress pr) throws Exception {
@@ -172,6 +173,7 @@ public final class KtArchive {
     /** The file to write for an entry: null when it is to be skipped (exists and replace=skip); `name (2).ext` for keep-both. */
     static File target(File dest, String name, Options o) throws IOException {
         if (unsafe(name)) throw new IOException("unsafePath " + name);
+        if (!wanted(o, name)) return null;
         File out = new File(dest, name); File parent = out.getParentFile(); if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("cannotCreate " + parent);
         if (!out.getCanonicalPath().startsWith(dest.getCanonicalPath() + File.separator)) throw new IOException("unsafePath " + name);
         if (out.exists()) { if ("skip".equals(o.replace)) return null; if ("both".equals(o.replace)) { String base = out.getName(), ext = ""; int dot = base.lastIndexOf('.'); if (dot > 0) { ext = base.substring(dot); base = base.substring(0, dot); } for (int i = 2; ; i++) { File alt = new File(out.getParentFile(), base + " (" + i + ")" + ext); if (!alt.exists()) return alt; } } }
@@ -192,7 +194,7 @@ public final class KtArchive {
             ZipIndex ix = readZip(r); long total = 0; for (ZipItem it : ix.items) total += it.usize;
             for (ZipItem it : ix.items) {
                 if (pr.stopped()) throw new IOException("stopped");
-                if (it.dir) { File d = new File(dest, it.name); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
+                if (it.dir) { if (o.only != null) continue; File d = new File(dest, it.name); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
                 File out = target(dest, it.name, o); if (out == null) { done += it.usize; continue; }
                 pr.on(done, total, it.name);
                 try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total); }

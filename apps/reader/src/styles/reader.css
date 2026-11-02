@@ -495,3 +495,13 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .reader-view.inking .pdf-bar { opacity: 0; pointer-events: none; transition: opacity var(--dur-short, .15s); }
 /* A page illustration that came wrapped in SVG: a whole page, as the book meant it. */
 .kr-chapter img.kr-svgpage { display: block; margin: 0 auto; max-width: 100%; max-height: calc(100dvh - 96px); width: auto; height: auto; object-fit: contain; }
+/* A translation in the reader's face for its own script (the Arabic face chosen — Uthman by default — not the
+   face of the book it came from); a Japanese or Chinese translation keeps the CJK face. */
+.kr-content .kr-tr-out:not(:lang(ja), :lang(zh), :lang(ko)) { font-family: var(--r-font); }
+.kr-content .kr-tr-out[dir='rtl'] { font-family: var(--r-font-rtl); letter-spacing: normal !important; line-height: calc(var(--r-lh) * 1.12); font-variant-ligatures: common-ligatures contextual; font-feature-settings: 'rlig' 1, 'liga' 1, 'calt' 1, 'ccmp' 1, 'mark' 1, 'mkmk' 1, 'curs' 1; }
+.kr-content :is(h1, h2, h3, h4, h5, h6) .kr-tr-out[dir='rtl'], .kr-content :is(h1, h2, h3, h4, h5, h6).kr-tr-out[dir='rtl'] { font-family: var(--r-font-head-rtl); }
+.kr-content :is(h1, h2, h3, h4, h5, h6) .kr-tr-out:not([dir='rtl']):not(:lang(ja), :lang(zh), :lang(ko)) { font-family: var(--r-font-head); }
+/* A title translated: the translation, and the original beneath it, smaller. */
+.kr-tr-titled > .kr-tr-title { display: block; }
+.kr-tr-titled > .kr-tr-sub { display: block; font-size: .62em; font-weight: 400; opacity: .7; margin-top: .3em; line-height: 1.4; }
+.toc-list .toc-orig { display: block; font-size: 12px; opacity: .65; margin-top: 2px; }

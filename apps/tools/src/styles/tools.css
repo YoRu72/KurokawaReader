@@ -528,3 +528,41 @@ html[dir='rtl'] .task-bar.indet i { animation-direction: reverse; }
 .video-dur { position: absolute; inset-inline-end: 4px; bottom: 4px; font: 600 11px var(--font-ui); background: rgb(0 0 0 / .7); color: #fff; padding: 1px 5px; border-radius: 6px; direction: ltr; }
 .video-prog { position: absolute; inset-inline-start: 0; bottom: 0; height: 3px; background: var(--md-primary); }
 .video-row > svg, .video-folder > svg { width: 20px; height: 20px; flex: none; opacity: .7; }
+/* A torrent's files, as a file manager: folders, progress, a box for each. */
+.kt-files summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.kt-files summary h3 { margin: 0; }
+.kt-files-tools { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 6px; }
+.kt-files-search { width: 100%; box-sizing: border-box; font: inherit; padding: 10px 16px; border-radius: 999px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.kt-files-tools .chip-row { flex-wrap: wrap; gap: 6px; }
+.kt-files-tools .chip svg { width: 16px; height: 16px; }
+.kt-files-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; }
+.kt-files-crumbs .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kt-crumb-sep { color: var(--md-on-surface-variant); }
+.kt-file { gap: 12px; padding: 10px 4px; }
+.kt-file-ic { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+.kt-file-ic svg { width: 22px; height: 22px; }
+.kt-folder .kt-file-ic { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.kt-folder { cursor: pointer; border-radius: 12px; }
+.kt-folder:hover { background: var(--md-surface-container-high); }
+.kt-file-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.kt-file-name { overflow-wrap: anywhere; font-weight: 500; }
+.kt-file-bar { display: block; height: 4px; border-radius: 4px; background: var(--md-surface-container-highest); overflow: hidden; }
+.kt-file-bar > span { display: block; height: 100%; background: var(--md-primary); border-radius: inherit; transition: width .3s; }
+.kt-file.off .kt-file-name, .kt-file.off small { opacity: .6; }
+.kt-file.off .kt-file-bar > span { background: var(--md-outline); }
+.kt-file.high .kt-file-ic { background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
+.kt-file-box { flex: none; width: 22px; height: 22px; accent-color: var(--md-primary); }
+.kt-file .icon-btn { flex: none; }
+/* The + menu always fits the screen: it scrolls (from its last item, nearest the button) when the ways to add are
+   more than the height holds — large text, a short phone, landscape — and the hints go on a short screen. */
+.fab-menu { max-height: calc(100dvh - 156px - var(--safe-bottom, 0px) - var(--safe-top, 0px) - 24px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding: 6px 4px; box-sizing: border-box; }
+.fab-menu::-webkit-scrollbar { display: none; }
+html.pc .fab-menu { max-height: calc(100dvh - 116px); }
+.fab-item { flex: none; max-width: 100%; }
+.fab-item-label { min-width: 0; overflow-wrap: anywhere; }
+@media (max-height: 760px) { .fab-menu { gap: 8px; } .fab-item-label small { display: none; } .fab-item-label { padding: 10px 14px; } .fab-item-ic { width: 44px; height: 44px; } }
+.fab-item:nth-child(6) { animation-delay: 150ms; } .fab-item:nth-child(7) { animation-delay: 180ms; } .fab-item:nth-child(8) { animation-delay: 210ms; }
+/* A scrolling chip row runs to the screen's edges, its first chip resting in line with the page. */
+html:not(.pc) .body > .filter-chips { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; }
+.view > .filter-chips { padding-inline: 16px; scroll-padding-inline: 16px; flex: none; }
+html.pc .view > .filter-chips { padding-inline: max(40px, calc((100% - 1100px) / 2 + 40px)); }
