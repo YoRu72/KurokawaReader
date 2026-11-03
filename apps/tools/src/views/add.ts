@@ -33,7 +33,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
   let dirChosen = false;
-  const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
+  const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); if (!(await import('./folderAccess').then((m) => m.ensureFolderAccess(d!)))) { dir.textContent = t('defaultFolder'); return; } dir.textContent = d; dirChosen = true; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
   const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: how.name ?? '' }) as HTMLInputElement;
   const seq = h('input', { type: 'checkbox', checked: s.sequentialVideo }) as HTMLInputElement;
   const paused = h('input', { type: 'checkbox' }) as HTMLInputElement;

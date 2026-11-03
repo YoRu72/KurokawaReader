@@ -44,7 +44,7 @@ export async function suitableAsset(rel: Release): Promise<Asset | undefined> {
 
 type Dl = {
   downloadFile(o: { url: string; name: string; id?: string; connections?: number }): Promise<{ path: string; size: number }>; cancelDownload?(o: { id: string }): Promise<void>;
-  installApk(o: { path: string }): Promise<void>; canInstall?(): Promise<{ granted: boolean }>; exists?(o: { paths: string[] }): Promise<{ exists: boolean[] }>;
+  installApk(o: { path: string }): Promise<void>; apkInstall?(o: { id: string; path: string; deleteAfter?: boolean }): Promise<void>; canInstall?(): Promise<{ granted: boolean }>; exists?(o: { paths: string[] }): Promise<{ exists: boolean[] }>;
   hashFile?(o: { path: string }): Promise<{ sha256: string; size: number }>; deletePath?(o: { path: string }): Promise<void>;
   addListener(ev: string, fn: (d: Progress & { id?: string }) => void): unknown;
 };
@@ -105,7 +105,10 @@ async function permitted(kr: Dl, timeoutMs = 180000): Promise<boolean> {
 
 /** Fetches the asset and starts the install; `onProgress` as it comes. Android and Windows install here;
  *  elsewhere the file is handed to the system / the release page opened. `fetchOnly`: kept for later. */
-export async function fetchAndInstall(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, o: { fetchOnly?: boolean; onPermission?: () => void } = {}): Promise<'installing' | 'opened' | 'fetched'> {
+/** Which installer an update goes through on Android (remembered): the app's own, or Android's. */
+export function installVia(): 'app' | 'system' { try { return localStorage.getItem('kt.update.installer') === 'system' ? 'system' : 'app'; } catch { return 'app'; } }
+export function setInstallVia(v: 'app' | 'system'): void { try { localStorage.setItem('kt.update.installer', v); } catch { /* storage blocked */ } }
+export async function fetchAndInstall(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, o: { fetchOnly?: boolean; onPermission?: () => void; via?: 'app' | 'system' } = {}): Promise<'installing' | 'opened' | 'fetched'> {
   const platform = nativePlatform();
   if (platform === 'android') {
     const kr = ktPlugin() as unknown as Dl | null; if (!kr) throw new Error('native');
@@ -118,13 +121,17 @@ export async function fetchAndInstall(asset: Asset, onProgress: (p: Progress) =>
     }
     if (o.fetchOnly) return 'fetched';
     onProgress({ pct: 100, got: asset.size, total: asset.size, phase: 'install' });
-    try { await kr.installApk({ path }); }
+    // (The app's own installer — Android's install session, its progress here, then Android's confirmation —, or
+    // Android's package installer opened with the file: as chosen in the update sheet.)
+    const via = o.via ?? installVia();
+    const install = () => (via === 'app' && kr.apkInstall ? kr.apkInstall({ id: 'self-update', path: path!, deleteAfter: false }) : kr.installApk({ path: path! }));
+    try { await install(); }
     catch (e) {
       if (!/permission/i.test(String((e as Error)?.message ?? e))) throw e;
       // The system's page to allow installing has been opened: once allowed, the install carries on by itself.
       o.onPermission?.();
       if (!(await permitted(kr))) throw new InstallError('permission');
-      await kr.installApk({ path });
+      await install();
     }
     return 'installing';
   }

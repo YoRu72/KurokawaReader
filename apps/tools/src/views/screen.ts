@@ -19,11 +19,12 @@ export function accelerator(e: { key: string; code: string; ctrlKey: boolean; al
   return [...mods, k].join('+');
 }
 
-type Status = { overlay: boolean; a11y: boolean; a11yLive?: boolean; running: boolean; capture: boolean; notify: boolean; battery: boolean; tile: boolean };
+type Status = { sdk?: number; overlay: boolean; a11y: boolean; a11yLive?: boolean; running: boolean; capture: boolean; notify: boolean; battery: boolean; tile: boolean };
 type Plug = {
   screenStatus?(): Promise<Status>; screenPermission?(o: { what: string }): Promise<void>; screenConfig?(o: { config: Record<string, unknown>; clearFixed?: boolean }): Promise<void>;
   screenStart?(): Promise<void>; screenStop?(): Promise<void>; screenTranslate?(o: { texts: string[]; config?: Record<string, unknown> }): Promise<{ texts: string[] }>;
   screenHistory?(o: { clear?: boolean }): Promise<{ items: { o: string; t: string; at: number }[] }>;
+  screenShortcut?(o: { show?: boolean; pin?: boolean }): Promise<{ shown: boolean; pinned: boolean }>;
 };
 const plug = (): Plug | null => ktPlugin() as unknown as Plug | null;
 
@@ -64,9 +65,18 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     steps.replaceChildren(
       step(s.overlay, t('scrStepOverlay'), t('scrStepOverlayHint'), 'overlay', true),
       step(s.a11y, t('scrStepA11y'), t('scrStepA11yHint'), 'a11y', cfg.read === 'text'),
+      // (Android 13+: an app installed from a file has its accessibility switch «restricted» until it is allowed
+      // in the app's info page — ⋮ → Allow restricted settings.)
+      ...(!s.a11y && (s.sdk ?? 0) >= 33 ? [h('div', { class: 'screen-step', 'data-step': 'restricted' }, h('span', { class: 'screen-step-ic' }, icon('lock')), h('span', { class: 'grow' }, h('b', null, t('scrRestricted')), h('small', { class: 'src' }, t('scrRestrictedHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what: 'app' }) }, t('scrAppInfo')))] : []),
       step(s.notify, t('scrStepNotify'), t('scrStepNotifyHint'), 'app'),
       step(s.battery, t('scrStepBattery'), t('scrStepBatteryHint'), 'battery'),
       ...(s.tile ? [h('div', { class: 'screen-step', 'data-step': 'tile' }, h('span', { class: 'screen-step-ic' }, icon('grid')), h('span', { class: 'grow' }, h('b', null, t('scrStepTile')), h('small', { class: 'src' }, t('scrStepTileHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what: 'tile' }) }, t('scrAddTile')))] : []));
+    // (Translate screen as an app of its own: the app drawer, the phone's sidebar, the home screen.)
+    const sc = await plug()?.screenShortcut?.({}).catch(() => null);
+    if (sc) steps.append(h('div', { class: 'screen-step' + (sc.shown ? ' done' : ''), 'data-step': 'shortcut' }, h('span', { class: 'screen-step-ic' }, icon(sc.shown ? 'check' : 'apps')), h('span', { class: 'grow' }, h('b', null, t('scrStepApp')), h('small', { class: 'src' }, t('scrStepAppHint'))),
+      h('span', { class: 'row-actions wrap' },
+        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'show', onclick: async () => { await plug()?.screenShortcut?.({ show: !sc.shown }); toast(sc.shown ? t('scrAppHidden') : t('scrAppShown')); void refresh(); } }, sc.shown ? t('scrAppHide') : t('scrAppShow')),
+        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'pin', onclick: async () => { const r = await plug()?.screenShortcut?.({ pin: true }); if (r && !r.pinned) toast(t('scrPinNo'), 'error', 4000); void refresh(); } }, t('scrPin')))));
   }
   go.addEventListener('click', async () => {
     if (PC) { set((c) => { c.pcOn = !c.pcOn; }, true); return; }

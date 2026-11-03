@@ -159,7 +159,7 @@ final class KtEngine {
             if (x != null) { try { byte[] data = AddTorrentParams.writeResumeDataBuf(sa.params()); try (FileOutputStream fo = new FileOutputStream(new File(stateDir, x.id + ".fastresume"))) { fo.write(data); } } catch (Exception e) { Log.w(TAG, "resume", e); } }
         } else if (t == AlertType.TORRENT_ERROR) {
             TorrentErrorAlert ea = (TorrentErrorAlert) a; Task x = byHash.get(ea.handle().infoHash().toHex());
-            if (x != null) { x.error = ea.error().getMessage(); tell(true); }
+            if (x != null) { x.error = errOf(ea.error().getMessage()); tell(true); }
         } else if (t == AlertType.STATE_UPDATE) {
             tell(false);
         }
@@ -210,6 +210,7 @@ final class KtEngine {
     private static int max(List<Integer> l) { int m = -1; for (int i : l) m = Math.max(m, i); return m; }
 
     private void addTorrent(Task x) throws Exception {
+        if (!x.dir.startsWith("content:") && !writable(new File(x.dir))) { x.state = "failed"; x.error = "noFolderAccess"; x.paused = true; synchronized (this) { tasks.put(x.id, x); } if (x.infoHash == null && x.source.has("magnet")) { try { x.infoHash = hashOf(AddTorrentParams.parseMagnetUri(x.source.getString("magnet"))); } catch (Exception ignored) {} } return; }
         SessionManager s = session();
         AddTorrentParams p;
         if (x.source.has("torrent")) {
@@ -444,7 +445,7 @@ final class KtEngine {
                 if (out != null) { x.httpOut = out; x.name = out.getName().replaceAll("\\.[^.]+$", ""); if (out.exists()) { x.total = out.length(); } }
                 x.done = x.total; x.downSpeed = 0; x.state = "done"; x.doneAt = System.currentTimeMillis(); scan(x); persist(); tell(true); KtService.maybeStop(ctx, this);
             } catch (Exception e) {
-                if (x.paused) { x.state = "paused"; } else { x.state = "failed"; x.error = e.getMessage(); }
+                if (x.paused) { x.state = "paused"; } else { x.state = "failed"; x.error = errOf(e); }
                 x.downSpeed = 0; persist(); tell(true); KtService.maybeStop(ctx, this);
             }
         });
@@ -456,6 +457,7 @@ final class KtEngine {
         x.httpThread = new Thread(() -> {
             try {
                 File dir = new File(x.dir); dir.mkdirs();
+                if (!writable(dir)) throw new IOException("EPERM");
                 String safe = x.name.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (safe.isEmpty()) safe = "download";
                 File state = new File(stateDir, x.id + ".http");
                 File part = new File(dir, safe + ".part");
@@ -489,7 +491,7 @@ final class KtEngine {
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; scan(x);
-            } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : e.getMessage(); x.done = x.got.get(); } x.downSpeed = 0; }
+            } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         }, "kt-http-" + x.id);
         x.httpThread.start();
@@ -579,7 +581,7 @@ final class KtEngine {
                 if (nowMs - x.mapAt > (active ? 1500 : 15000)) { x.mapAt = nowMs; try { pieceMap(x, part); } catch (Throwable ignored) {} } x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.seeds = st.numSeeds(); x.peers = Math.max(0, st.numPeers() - x.seeds);   // (libtorrent's peers count the seeds too)
                 if (x.name == null || x.name.isEmpty() || "magnet".equals(x.name)) { String n = st.name(); if (n != null && !n.isEmpty()) x.name = n; }
                 if (x.paused) x.state = "paused";
-                else if (st.errorCode() != null && st.errorCode().isError()) { x.state = "failed"; x.error = st.errorCode().getMessage(); }
+                else if (st.errorCode() != null && st.errorCode().isError()) { x.state = "failed"; x.error = errOf(st.errorCode().getMessage()); }
                 else switch (st.state()) {
                     case CHECKING_FILES: case CHECKING_RESUME_DATA: x.state = "checking"; break;
                     case DOWNLOADING_METADATA: x.state = "metadata"; break;
@@ -689,6 +691,15 @@ final class KtEngine {
         } catch (Throwable ignored) {}
     }
     KtStream stream() { return stream; }
+    /** A folder Android does not let the app write to (Android 11+: a folder of its own at the storage's root, or
+     *  outside Download and Documents, without «All files access»): said as «noFolderAccess», which the page offers
+     *  to fix. */
+    static String errOf(Throwable e) { String m = e == null ? null : e.getMessage(); return errOf(m); }
+    static String errOf(String m) { if (m == null) return null; return m.contains("EPERM") || m.contains("EACCES") || m.contains("Operation not permitted") || m.contains("Permission denied") ? "noFolderAccess" : m; }
+    /** Whether files can be made in `dir` (made if missing). */
+    static boolean writable(File dir) {
+        try { if (!dir.isDirectory() && !dir.mkdirs()) return false; File probe = new File(dir, ".kt-probe-" + System.nanoTime()); try (FileOutputStream fo = new FileOutputStream(probe)) { fo.write(1); } return probe.delete() || !probe.exists(); } catch (Throwable e) { return false; }
+    }
     /** Where downloads go when no folder was chosen: the app's own folder in the phone's Download folder
      *  (Download/Kurokawa) — seen by every file manager, kept if the app is removed — when the phone lets the app
      *  write there; else the app's own storage, as before. */
