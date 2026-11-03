@@ -4,6 +4,9 @@
 import { canBrowse } from '../browser';
 import { h, icon, toast } from '../ui/dom';
 import { t } from '../i18n';
+import { nativePlatform } from '../native';
+import { getSettings } from '../settings';
+import { navigate } from '../router';
 import { getEngine, parseSources } from '../engine';
 import { addSheet } from './add';
 import { canInstallApps, installSheet } from './apk';
@@ -28,6 +31,8 @@ export function fabMenu(anchor: HTMLElement): void {
     videoItem,
     item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))),
     item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())),
+    // (Translate on screen, when the add-on is here: its page — the bubble is started from it.)
+    ...(nativePlatform() === 'android' && getSettings().addons.includes('screen') ? [item('translate', t('scrTitle'), t('scrFabHint'), () => navigate('/screen'))] : []),
     ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []),
     // (An app from the phone: an APK, a bundle, or an archive with one inside — the installer reads it.)
     // (On an iPhone or iPad: an iOS app — an IPA — looked into and handed to SideStore, AltStore or TrollStore.)

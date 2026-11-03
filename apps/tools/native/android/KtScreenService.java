@@ -265,7 +265,7 @@ public class KtScreenService extends Service {
         v.setOnTouchListener((view, e) -> {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: start[0] = e.getRawX(); start[1] = e.getRawY(); r.setEmpty(); return true;
-                case MotionEvent.ACTION_MOVE: r.set((int) Math.min(start[0], e.getRawX()), (int) Math.min(start[1], e.getRawY()), (int) Math.max(start[0], e.getRawX()), (int) Math.max(start[1], e.getRawY())); int[] loc = new int[2]; view.getLocationOnScreen(loc); r.offset(-loc[0], -loc[1]); view.invalidate(); return true;
+                case MotionEvent.ACTION_MOVE: r.set((int) Math.min(start[0], e.getRawX()), (int) Math.min(start[1], e.getRawY()), (int) Math.max(start[0], e.getRawX()), (int) Math.max(start[1], e.getRawY())); int[] off = new int[2]; view.getLocationOnScreen(off); r.offset(-off[0], -off[1]); view.invalidate(); return true;
                 case MotionEvent.ACTION_UP: {
                     int[] loc = new int[2]; view.getLocationOnScreen(loc); Rect area = new Rect(r); area.offset(loc[0], loc[1]);
                     remove(picker); picker = null;

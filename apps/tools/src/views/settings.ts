@@ -291,7 +291,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
-    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    // Translate on screen (the add-on, Android): its own page.
+    const screen = plat === 'android' && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
+    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
@@ -372,7 +374,7 @@ function fontRows(desktop: boolean): HTMLElement[] {
 
 
 /** Which settings cards belong to which add-on (a card may belong to two: AniList to Anime and to TV & Movies). */
-const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes'], tv: ['tv', 'anilist', 'episodes'], player: ['playerprefs', 'player', 'sublangs'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'] };
+const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes'], tv: ['tv', 'anilist', 'episodes'], player: ['playerprefs', 'player', 'sublangs'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'], screen: ['screen'] };
 /** The installed add-ons that have something to set: their cards here, and their (and their sources') options. */
 export function addonTabs(addons: string[], index: { addons: AddonEntry[] } | null, cardIds: Set<string>): { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] {
   const out: { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] = [];
