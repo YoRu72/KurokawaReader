@@ -46,8 +46,10 @@ public class KtPlugin extends Plugin {
             // (A finished or failed one, told once in its own notification.)
             try { noteFinished(lastTasks, tasks); } catch (Exception ignored) {}
             lastTasks = tasks;
-            JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(tasks.toString())); } catch (Exception ignored) {}
-            notifyListeners("tasksChanged", ev);
+            // (Not sent to the page while the app is in the background: every second the whole list went to a web view that
+            // was not drawing, piling up on the main thread until Android found the app not responding and closed it —
+            // the downloads with it. Sent once when the app comes back.)
+            if (visible) { JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(tasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); } else behind = true;
             KtService.update(getContext(), tasks);
             KtService.maybeStop(getContext(), engine);
         });
@@ -58,6 +60,9 @@ public class KtPlugin extends Plugin {
         for (int i = 0; i < before.length(); i++) { JSONObject t = before.optJSONObject(i); if (t != null) was.put(t.optString("id"), t.optString("state")); }
         for (int i = 0; i < after.length(); i++) { JSONObject t = after.optJSONObject(i); if (t == null) continue; String st = t.optString("state"); String w = was.get(t.optString("id")); if (w == null || w.equals(st)) continue; if ("done".equals(st) || "seeding".equals(st) && !"seeding".equals(w) && "downloading".equals(w)) KtService.finished(getContext(), t.optString("name"), true, null); else if ("failed".equals(st)) KtService.finished(getContext(), t.optString("name"), false, t.optString("error", null)); }
     }
+    private volatile boolean visible = true, behind = false;
+    @Override protected void handleOnPause() { super.handleOnPause(); visible = false; }
+    @Override protected void handleOnResume() { super.handleOnResume(); visible = true; if (behind) { behind = false; JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(lastTasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); } }
     private static KtPlugin self;
     /** From the app's browser: a link to add, or the links of a page to pick from (event «browser»). */
     static void browserEvent(JSONObject o) { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("browser", JSObject.fromJSONObject(o), true); } catch (Exception ignored) {} }

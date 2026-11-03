@@ -41,7 +41,7 @@ public class KtService extends Service {
             else startForeground(NOTE_RUN, n);
             foreground = true;
         } catch (RuntimeException e) { running = false; foreground = false; stopSelf(); return START_NOT_STICKY; }
-        running = true;
+        running = true; hold(this);
         if (stopWhenStarted) { stopWhenStarted = false; stop(this); }
         return START_NOT_STICKY;
     }
@@ -49,8 +49,19 @@ public class KtService extends Service {
      *  downloads go on while the app is open. */
     public void onTimeout(int startId, int fgsType) { stop(this); }
     public void onTimeout(int startId) { stop(this); }
-    private static void stop(Service s) { try { if (Build.VERSION.SDK_INT >= 24) s.stopForeground(STOP_FOREGROUND_REMOVE); else s.stopForeground(true); } catch (Exception ignored) {} running = false; foreground = false; s.stopSelf(); }
-    @Override public void onDestroy() { running = false; foreground = false; super.onDestroy(); }
+    private static void stop(Service s) { let(); try { if (Build.VERSION.SDK_INT >= 24) s.stopForeground(STOP_FOREGROUND_REMOVE); else s.stopForeground(true); } catch (Exception ignored) {} running = false; foreground = false; s.stopSelf(); }
+    @Override public void onDestroy() { let(); running = false; foreground = false; super.onDestroy(); }
+    // (The phone kept awake enough for the downloads while they run — the CPU, and Wi-Fi at full speed —: with the screen
+    // off, some phones put the network to sleep under a running download. Let go as soon as nothing moves.)
+    private static android.os.PowerManager.WakeLock wake; private static android.net.wifi.WifiManager.WifiLock wifi;
+    private static synchronized void hold(Context c) {
+        try { if (wake == null) { android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(Context.POWER_SERVICE); wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "kurokawa:downloads"); wake.setReferenceCounted(false); } if (!wake.isHeld()) wake.acquire(6 * 3600 * 1000L); } catch (Throwable ignored) {}
+        try { if (wifi == null) { android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) c.getApplicationContext().getSystemService(Context.WIFI_SERVICE); @SuppressWarnings("deprecation") int mode = android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF; wifi = wm.createWifiLock(mode, "kurokawa:downloads"); wifi.setReferenceCounted(false); } if (!wifi.isHeld()) wifi.acquire(); } catch (Throwable ignored) {}
+    }
+    private static synchronized void let() {
+        try { if (wake != null && wake.isHeld()) wake.release(); } catch (Throwable ignored) {}
+        try { if (wifi != null && wifi.isHeld()) wifi.release(); } catch (Throwable ignored) {}
+    }
 
     static boolean ar(Context c) { @SuppressWarnings("deprecation") String l = c.getResources().getConfiguration().locale.getLanguage(); return "ar".equals(l); }
 
@@ -80,7 +91,10 @@ public class KtService extends Service {
     }
     /** The notification brought up to date with the tasks (called by the plugin on each change): how far, how
      *  fast and how long is left — for one download its own; for several, a line for each under the total. */
+    private static long lastNote = 0;
     static void update(Context c, JSONArray tasks) {
+        // (Once a second at most: Android drops faster updates anyway, and each one costs the main thread.)
+        long now = System.currentTimeMillis(); if (now - lastNote < 1000) return; lastNote = now;
         int active = 0; long done = 0, total = 0, speed = 0; String one = null; java.util.List<String> lines = new java.util.ArrayList<>();
         boolean ar = ar(c);
         for (int i = 0; i < tasks.length(); i++) { JSONObject t = tasks.optJSONObject(i); if (t == null) continue; String st = t.optString("state"); if ("downloading".equals(st) || "metadata".equals(st) || "checking".equals(st)) {
@@ -108,7 +122,7 @@ public class KtService extends Service {
     static void maybeStop(Context c, KtEngine e) {
         if (e == null || e.anyActive()) return;
         if (running && !foreground) { stopWhenStarted = true; return; }
-        if (running) { try { c.stopService(new Intent(c, KtService.class)); } catch (Exception ignored) {} running = false; foreground = false; try { NotificationManagerCompat.from(c).cancel(NOTE_RUN); } catch (Exception ignored) {} }
+        if (running) { let(); try { c.stopService(new Intent(c, KtService.class)); } catch (Exception ignored) {} running = false; foreground = false; try { NotificationManagerCompat.from(c).cancel(NOTE_RUN); } catch (Exception ignored) {} }
     }
     static void finished(Context c, String name, boolean ok, String error) {
         channels(c);
