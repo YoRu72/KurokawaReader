@@ -47,3 +47,12 @@ for (const [code, name] of Object.entries(NAMES)) {
   await fs.writeFile(path.join(dir, 'InfoPlist.strings'), `CFBundleDisplayName = "${name}";\nCFBundleName = "${name}";\n`);
 }
 console.log('iOS overlay applied');
+
+// The app's own icon: one 1024 px picture for every size (native/icon/render.cjs draws it).
+try {
+  const set = path.join(root, 'ios/App/App/Assets.xcassets/AppIcon.appiconset');
+  await fs.mkdir(set, { recursive: true });
+  for (const f of await fs.readdir(set)) if (f.endsWith('.png')) await fs.rm(path.join(set, f));
+  await fs.copyFile(path.join(root, 'native/ios/AppIcon-1024.png'), path.join(set, 'AppIcon-1024.png'));
+  await fs.writeFile(path.join(set, 'Contents.json'), JSON.stringify({ images: [{ filename: 'AppIcon-1024.png', idiom: 'universal', platform: 'ios', size: '1024x1024' }], info: { author: 'xcode', version: 1 } }, null, 2));
+} catch (e) { console.warn('icon not set:', e.message); }

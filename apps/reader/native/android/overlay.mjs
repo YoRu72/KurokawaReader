@@ -175,6 +175,8 @@ try {
 
 // Plugin + MainActivity
 await fs.mkdir(pkgDir, { recursive: true });
+// The app's own icon (native/icon/render.cjs draws it): the adaptive layers, the themed layer, the older launchers'.
+await fs.cp(path.join(root, 'native/android/res'), path.join(root, 'android/app/src/main/res'), { recursive: true, force: true });
 await fs.copyFile(path.join(root, 'native/android/KurokawaPlugin.java'), path.join(pkgDir, 'KurokawaPlugin.java'));
 await fs.copyFile(path.join(root, 'native/android/MainActivity.java'), path.join(pkgDir, 'MainActivity.java'));
 await fs.copyFile(path.join(root, 'native/android/KrWebView.java'), path.join(pkgDir, 'KrWebView.java'));

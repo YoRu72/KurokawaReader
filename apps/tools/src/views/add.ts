@@ -38,7 +38,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const seq = h('input', { type: 'checkbox', checked: s.sequentialVideo }) as HTMLInputElement;
   const paused = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const later = h('input', { type: 'checkbox' }) as HTMLInputElement;
-  const conn = h('input', { type: 'number', min: '1', max: '16', value: '16', style: { width: '5em' } }) as HTMLInputElement;
+  const conn = h('input', { type: 'number', min: '1', max: '32', value: '24', style: { width: '5em' } }) as HTMLInputElement;
   const filesBox = h('div', { class: 'add-files', hidden: true });
   let info: TorrentInfo | null = null; let chosen = new Set<number>(); let metaToken = 0;
   const opts = h('details', { class: 'add-options' }, h('summary', null, t('addAdvanced')),

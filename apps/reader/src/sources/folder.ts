@@ -12,7 +12,7 @@ import { t, formatBytes, countVolumes, countSeries, daysAgo, localDigits } from 
 import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFile, type SourcePage, type FilterValues, type SourceFilter, type SourceTag } from './types';
 import { peekFile, peekKnown, thumbOf, recall, remember, known, keyOf, peekKeyOf, imageKeyOf, assumeRanges, type Peek } from './peek';
 import { db } from '../db';
-import { loadTags, tagsNow, wantTags, tagsFor as tagsOfSeries, tagsPending, synopsisOf, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS } from './altags';
+import { loadTags, tagsNow, wantTags, tagsFor as tagsOfSeries, tagsPending, synopsisOf, genresOf, tagsOfAll, originOf as originOfTags, ORIGINS, aliasesOf, seriesByAliases } from './altags';
 import type { Repo } from './repos';
 
 export interface DirEntry { name: string; url: string; dir: boolean; size?: number; date?: string; ext?: string; time?: number }
@@ -678,8 +678,10 @@ export function folderSource(repo: Repo): Source {
       const gen = byGenre(f);
       // (Each series' words made once for the search, not once for every word asked.)
       const hays = new Map<string, string>();
-      const hay = (s: SeriesInfo) => { let v = hays.get(s.rel); if (v === undefined) { const tg = tagsOf(s.rel); v = norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); hays.set(s.rel, v); } return v; };
+      const hay = (s: SeriesInfo) => { let v = hays.get(s.rel); if (v === undefined) { const tg = tagsOf(s.rel); v = norm(`${s.name} ${s.publishers.join(' ')}${tg ? ` ${(tg.names ?? []).join(' ')} ${tg.genres.join(' ')} ${tg.tags.filter((x) => !x.s).map((x) => x.n).join(' ')}` : ''}`); hays.set(s.rel, v); } return v; };
       const series = [...all.values()].filter((s) => inside(s) && pub(s) && gen(s) && words.every((w) => hay(s).includes(w)));
+      // (By the names AniList knows them by — romaji, English, native, synonyms —: a series the folder names otherwise.)
+      if (tagsOn && q.trim().length >= 2) { const lists = await aliasesOf(q.trim()); if (lists.length) { const have = new Set(series.map((x) => x.rel)); const cands = [...all.values()].filter((x) => !have.has(x.rel) && inside(x) && pub(x) && gen(x)); const extra = new Set(seriesByAliases(cands.map((x) => ({ rel: x.rel, name: x.name })), lists)); for (const x of cands) if (extra.has(x.rel)) series.push(x); } }
       const items: SourceBook[] = sortSeries(series, f).map((s) => seriesCard(s, f));
       const vols: Vol[] = [];
       for (const s of all.values()) {

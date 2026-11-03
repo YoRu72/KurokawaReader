@@ -76,7 +76,7 @@ function download(kr: Dl, asset: Asset): NonNullable<typeof running> {
       id = `install:${asset.name}:${attempt}`; let last = 0;
       const sub = await Promise.resolve(kr.addListener('downloadProgress', (d) => { if (d.id !== id) return; const total = d.total > 0 ? d.total : asset.size; const got = Math.max(d.got, last); last = got; tell({ got, total, speed: d.speed, connections: d.connections, pct: total ? Math.min(100, Math.floor((got / total) * 100)) : d.pct, phase: 'download', attempt }); })) as { remove?(): void } | undefined;
       try {
-        const r = await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 8 });
+        const r = await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 16 });
         if (asset.size && r.size && r.size !== asset.size) throw new InstallError('damaged');
         // The file as GitHub states it, or it is not installed.
         const want = sha256Of(asset);

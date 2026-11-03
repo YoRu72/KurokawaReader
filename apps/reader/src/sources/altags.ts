@@ -5,10 +5,10 @@
 // month; a series AniList does not know is remembered as such and not asked again for a week.
 import { localHttp } from '../localai';
 import { db } from '../db';
-import { searchName, buildQuery, pick, type Raw, type Tag } from './altagsmatch';
+import { searchName, buildQuery, pick, match, titlesOf, type Raw, type Tag } from './altagsmatch';
 export { searchName, type Tag };
 
-export interface SeriesTags { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string; /** AniList's cover: the series' own when its volumes give none */ cover?: string }
+export interface SeriesTags { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string; /** AniList's cover: the series' own when its volumes give none */ cover?: string; /** its other names: the folder searched by them too */ names?: string[] }
 type Kept = { v: 2; at: Record<string, number>; tags: Record<string, SeriesTags | null> };
 
 const API = 'https://graphql.anilist.co';
@@ -44,7 +44,8 @@ async function ask(names: string[]): Promise<{ results: (Raw[] | null)[]; others
 interface Line { order: string[]; names: Map<string, string>; waiting: Map<string, ((t: SeriesTags | null) => void)[]>; changed: Set<(rels: string[]) => void>; running: boolean }
 const lines = new Map<string, Line>();
 const lineOf = (repoKey: string): Line => { let l = lines.get(repoKey); if (!l) { l = { order: [], names: new Map(), waiting: new Map(), changed: new Set(), running: false }; lines.set(repoKey, l); } return l; };
-const due = (k: Kept, rel: string) => { const at = k.at[rel]; return !at || Date.now() - at > (k.tags[rel] ? MONTH : WEEK); };
+// (Known before its other names were kept: asked again, behind the rest — what is known meanwhile still used.)
+const due = (k: Kept, rel: string) => { const at = k.at[rel]; const t = k.tags[rel]; return !at || Date.now() - at > (t ? MONTH : WEEK) || (!!t && !t.names); };
 
 /** Series to look up: at the back of the folder's line, or (`front`) at its front — those already known left
  *  out. `changed` is told the series each answer taught something about. */
@@ -160,4 +161,31 @@ export function plainSynopsis(raw: string): string {
   let s = raw.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>\s*/gi, '\n\n').replace(/<[^>]+>/g, '').replace(/~!([\s\S]*?)!~/g, '').replace(/__(.+?)__/g, '$1').replace(/\*\*(.+?)\*\*/g, '$1');
   if (el) { el.innerHTML = s; s = el.value; }
   return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/* ---------- a search by any of a series' names ---------- */
+// (A folder names its series in English — «Mushoku Tensei» is «Jobless Reincarnation» there. What is asked is looked
+// up on AniList, and the folder's series known by any of the names it gives are found too.)
+const asked = new Map<string, Promise<string[][]>>();
+/** The names AniList gives the series a search finds (novels first, then anything printed): one list per series. */
+export function aliasesOf(q: string): Promise<string[][]> {
+  const key = q.trim().toLowerCase(); const had = asked.get(key); if (had) return had;
+  const p = (async () => {
+    try {
+      const FIELDS = 'id title { romaji english native } synonyms';
+      const query = `query ($q: String) { a: Page(perPage: 8) { media(search: $q, type: MANGA, format: NOVEL, sort: SEARCH_MATCH) { ${FIELDS} } } b: Page(perPage: 4) { media(search: $q, type: MANGA, sort: SEARCH_MATCH) { ${FIELDS} } } }`;
+      const r = await localHttp(API, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ query, variables: { q } }), timeoutMs: 15000 });
+      if (r.status >= 400) return [];
+      const j = JSON.parse(r.body) as { data?: { a?: { media?: Raw[] }; b?: { media?: Raw[] } } };
+      return [...(j.data?.a?.media ?? []), ...(j.data?.b?.media ?? [])].map(titlesOf).filter((l) => l.length);
+    } catch { return []; }
+  })();
+  asked.set(key, p); if (asked.size > 100) asked.delete(asked.keys().next().value!);
+  return p;
+}
+/** Of a folder's series (their names), those AniList's names for the search match. */
+export function seriesByAliases(series: { rel: string; name: string }[], lists: string[][]): string[] {
+  const out: string[] = [];
+  for (const s of series) { const nm = searchName(s.name); for (const l of lists) if (match(nm, l, s.name) >= 0.8) { out.push(s.rel); break; } }
+  return out;
 }

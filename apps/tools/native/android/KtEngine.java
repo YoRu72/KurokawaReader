@@ -196,7 +196,7 @@ final class KtEngine {
         x.source = o.getJSONObject("source"); x.meta = o.optJSONObject("meta");
         x.dir = o.optString("dir", ""); if (x.dir.isEmpty()) x.dir = defaultDir().getAbsolutePath();
         x.sequential = o.optBoolean("sequential", false); x.paused = o.optBoolean("paused", false);
-        x.wantConnections = Math.max(1, Math.min(16, o.optInt("connections", 16)));
+        x.wantConnections = Math.max(1, Math.min(32, o.optInt("connections", 24)));
         String name = o.optString("name", ""); if (!name.isEmpty()) x.name = name;
         JSONArray files = o.optJSONArray("files");
         if (files != null) { x.priorities = new int[0]; List<Integer> want = new ArrayList<>(); for (int i = 0; i < files.length(); i++) want.add(files.getInt(i)); x.priorities = new int[Math.max(0, max(want) + 1)]; for (int i : want) x.priorities[i] = 1; }
@@ -369,6 +369,13 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.max_queued_disk_bytes.swigValue(), 16 << 20);
         sp.setInteger(settings_pack.int_types.max_peer_recv_buffer_size.swigValue(), 4 << 20);
         sp.setInteger(settings_pack.int_types.send_not_sent_low_watermark.swigValue(), 512 << 10);
+        // (The DHT found at once on a first start — several well-known nodes, not one —; uploads given to the
+        // peers that give back the most (rate-based: libtorrent's 2 = rate_based_choker, and 1 = fastest_upload
+        // when seeding), which is what keeps them sending; and peers behind one shared address all let in.)
+        sp.setString(settings_pack.string_types.dht_bootstrap_nodes.swigValue(), "dht.libtorrent.org:25401,router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881");
+        sp.setInteger(settings_pack.int_types.choking_algorithm.swigValue(), 2);
+        sp.setInteger(settings_pack.int_types.seed_choking_algorithm.swigValue(), 1);
+        sp.setBoolean(settings_pack.bool_types.allow_multiple_connections_per_ip.swigValue(), true);
     }
     /** The DHT's nodes kept for the next start. */
     void saveDht() {

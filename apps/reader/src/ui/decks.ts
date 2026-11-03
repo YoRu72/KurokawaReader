@@ -60,7 +60,7 @@ async function download(asset: Asset, onProgress: (p: Prog) => void): Promise<{ 
     const k = (window as unknown as { Capacitor: { Plugins: { Kurokawa: { downloadFile(o: { url: string; name: string; persist: boolean; connections: number }): Promise<{ path: string }>; addListener?(ev: string, fn: (p: Prog) => void): Promise<{ remove(): void }> } } } }).Capacitor.Plugins.Kurokawa;
     const sub = await k.addListener?.('downloadProgress', onProgress);
     try {
-      const { path } = await k.downloadFile({ url: asset.url, name: asset.name, persist: true, connections: 8 });
+      const { path } = await k.downloadFile({ url: asset.url, name: asset.name, persist: true, connections: 16 });
       const file = await readContentUri(path, asset.name, 'application/octet-stream') as SourcedFile; file.krSource = { uri: path };
       return { file, path };
     } finally { sub?.remove(); }

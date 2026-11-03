@@ -225,7 +225,7 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
         // Three tries (a dropped connection), then the file checked against the SHA-256 GitHub states for it.
         for (let attempt = 1; ; attempt++) {
           try {
-            const r = await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 8 });
+            const r = await kr.downloadFile({ url: asset.url, name: asset.name, id, connections: 16 });
             const want = sha256Of(asset);
             if (want && kr.hashFile) { for (const fn of subs) fn({ ...(run.last ?? { pct: 100, got: r.size, total: r.size, speed: 0 }), pct: 100, verifying: true }); const got = await kr.hashFile({ path: r.path }); if (got.sha256.toLowerCase() !== want) { void kr.deleteDownload?.({ path: r.path }).catch(() => undefined); throw Object.assign(new Error(t('updateDamaged')), { damaged: true }); } }
             return r.path;

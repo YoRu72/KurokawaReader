@@ -155,7 +155,7 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
       const host = new URL(d.url).host;
       if (!laneOnly.has(host)) {
         try {
-          const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 8 });
+          const { path } = await k.downloadFile({ id: d.id, url: d.url, name: `${d.id}-${safe}`, headers: d.headers, persist: false, connections: 16 });
           const file = await readContentUri(path, d.name, d.mime ?? '');
           void k.deleteDownload?.({ path }).catch(() => undefined);
           // (Looked at before it is kept: a page in the file's place, or a file cut short, is fetched again the

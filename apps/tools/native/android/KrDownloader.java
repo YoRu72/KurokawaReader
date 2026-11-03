@@ -42,7 +42,10 @@ final class KrDownloader {
 
     /** What the engine sets: how many times a chunk is tried again, and where the progress is kept between runs. */
     static final class Opts { int retries = 5; File state; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
-        /** Told the server's name and type as soon as it answers; the .part file to use from then on (null: as it is). */ java.util.function.BiFunction<String, String, File> named; }
+        /** Told the server's name and type as soon as it answers; the .part file to use from then on (null: as it is). */ java.util.function.BiFunction<String, String, File> named;
+        /** Connections added while they help (Ookla's «connection scaling»): a few first, more while the speed still
+         *  rises, none once it holds — a server that limits each connection is filled, one that does not is not
+         *  crowded. Off: all of them at once. */ boolean scale = true; }
     /** `name` with the extension its type calls for when its own says nothing (.bin, none): an APK, a zip… */
     static String withTypeExt(String name, String mime) {
         if (name == null || mime == null) return null; String m = mime.toLowerCase(java.util.Locale.ROOT).replaceAll(";.*", "").trim();
@@ -225,10 +228,10 @@ final class KrDownloader {
         }
         got.set(have);
         st.write(opt.state);
-        res.connections = n;
         final java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger(0);
         final java.util.concurrent.ConcurrentLinkedQueue<long[]> back = new java.util.concurrent.ConcurrentLinkedQueue<>();   // {chunk, from, to}: given back by a refused connection
-        final java.util.concurrent.atomic.AtomicInteger alive = new java.util.concurrent.atomic.AtomicInteger(n);
+        final int first = opt.scale && n > 3 ? Math.max(3, (n + 2) / 4) : n;
+        final java.util.concurrent.atomic.AtomicInteger alive = new java.util.concurrent.atomic.AtomicInteger(first); res.connections = first;
         final AtomicReference<Exception> fail = new AtomicReference<>();
         final URL direct = res.finalUrl;
         final long[] lastSave = { System.currentTimeMillis() };
@@ -301,9 +304,27 @@ final class KrDownloader {
                 } catch (Exception e) { fail.compareAndSet(null, e); }
                 finally { if (!gone[0]) alive.decrementAndGet(); }
             });
-            workers[i].start();
         }
-        for (Thread w : workers) w.join();
+        for (int i = 0; i < first; i++) workers[i].start();
+        // (Scaling, the way speed tests fill a line: every second the speed's quick and slow averages; while the
+        // quick one still climbs past what it was before the last connections were added, as many again are
+        // added — up to all of them; once a step brings nothing, or the server refuses one, no more.)
+        int started = first;
+        if (started < n) {
+            long lastT = System.currentTimeMillis(), lastGot = got.get(); double fast = 0, slow = 0, before = 0; int wait = 1;
+            while (started < n && fail.get() == null && !cancelled.get() && !res.refused) {
+                Thread.sleep(1000);
+                boolean any = false; for (int i = 0; i < started; i++) if (workers[i].isAlive()) { any = true; break; } if (!any) break;
+                long now = System.currentTimeMillis(), g = got.get(); double sp = (g - lastGot) / Math.max(0.001, (now - lastT) / 1000.0); lastT = now; lastGot = g;
+                fast = fast == 0 ? sp : fast * 0.5 + sp * 0.5; slow = slow == 0 ? sp : slow * 0.8 + sp * 0.2;
+                if (--wait > 0) continue;
+                if (before > 0 && fast < before * 1.06) break;   // (the last step brought nothing: the line is full)
+                int add = Math.min(n - started, Math.max(2, started)); before = Math.max(fast, slow);
+                alive.addAndGet(add); for (int i = started; i < started + add; i++) workers[i].start(); started += add; res.connections = started; wait = 2;
+            }
+        }
+        res.connections = Math.min(res.connections, started);
+        for (int i = 0; i < started; i++) workers[i].join();
         st.write(opt.state);
         if (fail.get() != null && !cancelled.get()) throw fail.get();
         // (A chunk given back after the others had finished: a second round, over the connections still accepted.)
