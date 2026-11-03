@@ -60,6 +60,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   check('started', startAt >= 0);
   check('with the settings: DeepL, its key, to Japanese', before && before[1].engine === 'deepl' && before[1].deeplKey === 'abc:fx' && before[1].target === 'ja');
   check('with the bubble\'s words in the app\'s language', before && typeof before[1].labels?.translateScreen === 'string' && (lang !== 'ar' || /[؀-ۿ]/.test(before[1].labels.translateScreen)));
+  check('with the languages for the bubble\'s own list', Array.isArray(before[1].langs) && before[1].langs.length > 10 && before[1].langs[0][0] === 'ar');
   await p.waitForTimeout(700);
   check('the button now closes the bubble', await p.$eval('.screen-go', (e) => e.classList.contains('danger')));
   // 4. AI: a service's address and model filled in; a custom API's own.

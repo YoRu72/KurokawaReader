@@ -51,7 +51,7 @@ final class KtTranslate {
 
     private static final int CACHE = 3000;
     private static final Map<String, String> cache = new LinkedHashMap<String, String>(256, 0.75f, true) { @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > CACHE; } };
-    private static final ExecutorService pool = Executors.newFixedThreadPool(4, (r) -> { Thread t = new Thread(r, "kt-translate"); t.setDaemon(true); return t; });
+    private static final ExecutorService pool = Executors.newFixedThreadPool(8, (r) -> { Thread t = new Thread(r, "kt-translate"); t.setDaemon(true); return t; });
     static void forget() { synchronized (cache) { cache.clear(); } }
 
     /** The translations of `texts`, in order (empty lines and lines with no letters come back as they are). */
