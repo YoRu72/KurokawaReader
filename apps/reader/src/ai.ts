@@ -109,7 +109,7 @@ export function langName(code: string): string {
  *  paragraphs it is in, not the whole book. */
 export function translationKey(text: string, bookId?: string): string {
   const s = getSettings();
-  const stamp = s.aiTask === 'furigana' ? '' : glossaryStampOf(termsIn([text.replace(/<[^>]+>/g, '')], bookId));
+  const stamp = s.aiTask === 'furigana' ? '' : glossaryStampOf(termsIn([text.replace(/<[^>]+>/g, '')], bookId, s.aiTarget));
   return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${stamp}|${text}`);
 }
 /** The key as it was before (the whole glossary's mark): translations kept then are still found. */
@@ -247,7 +247,7 @@ export async function translateBatch(texts: string[], bookId?: string, ctx?: TrC
   if (!texts.length) return [];
   const s = getSettings();
   // (The reader's glossary: the terms these paragraphs hold, given with them, and put right after.)
-  const gl = s.aiTask === 'furigana' ? [] : termsIn(texts, bookId);
+  const gl = s.aiTask === 'furigana' ? [] : termsIn(texts, bookId, s.aiTarget);
   const styled = s.aiTask !== 'furigana' && texts.some((x) => /<(i|b|em|strong|u|sup|sub)>/.test(x));
   const prompt = [effectivePrompt(), glossaryPrompt(gl), styled ? STYLE : '', s.aiContext !== false && s.aiTask !== 'furigana' ? contextLines(ctx) : ''].filter(Boolean).join('\n\n');
   const fix = (out: string[]) => (gl.length ? out.map((x) => applyGlossary(x, gl)) : out);

@@ -877,7 +877,10 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   const form = h('form', { class: 'src-search-row', onsubmit: (e: Event) => { e.preventDefault(); navigate(path(src.id, { q: input.value.trim(), shelf, tags }), true); } },
     input, h('button', { type: 'submit', class: 'icon-btn', 'aria-label': t('search') }, icon('search')));
   const titleEl = h('div', { class: 'title' }, h('span', { dir: 'auto' }, src.name));
-  const body = h('div', { class: 'library-body src-body' }, form, shelfRow, tagRow, status, grid, sentinel);
+  // (Shamela: where to look, at a tap under the search — the books' names and authors, or inside the books' texts,
+  // as the site's own «البحث في الكتب».)
+  const where = src.id === 'shamela' ? h('div', { class: 'segmented small shamela-where', role: 'radiogroup' }, ...([['titles', t('shamelaInTitles')], ['texts', t('shamelaInTexts')]] as [string, string][]).map(([v, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(String(filters.mode ?? 'titles') === v), onclick: () => { filters = { ...filters, mode: v }; saveFilters(src, filters); navigate(`${path(src.id, { q, shelf, tags })}${q || shelf || tags.length ? '&' : '?'}v=${Date.now().toString(36)}`, true); } }, l))) : null;
+  const body = h('div', { class: 'library-body src-body' }, form, ...(where ? [where] : []), shelfRow, tagRow, status, grid, sentinel);
   const topActions = h('div', { class: 'topbar-actions' });
   // Search from the top bar wherever the page is scrolled to (as Mihon's search icon): the search row comes
   // back into view and takes the focus.

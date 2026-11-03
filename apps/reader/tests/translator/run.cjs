@@ -66,6 +66,16 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   const gl = await p.evaluate(() => JSON.parse(localStorage.getItem('kr.glossary') || '[]')); console.log('glossary:', JSON.stringify(gl));
   ok('a proposed name added to this book\'s glossary', gl.some((x) => x.from === 'Lin Feng' && x.to === 'لين فنغ' && x.book));
   ok('the minute\'s limit waited out, no error shown', limited === 1 && !(await p.$('.toast.error')));
+  // Glossary folders: this book's names made a folder (for its other volumes), used by the book; the whole book
+  // read for names as a job — the name it finds again not doubled.
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translation glossary' }).click(); await p.waitForSelector('.gloss-sheet .gloss-row');
+  p.once('dialog', (d) => d.accept('Gate series')); await p.locator('.gloss-folder-bar button').click(); await p.waitForTimeout(300);
+  const g2 = await p.evaluate(() => ({ t: JSON.parse(localStorage.getItem('kr.glossary') || '[]'), f: JSON.parse(localStorage.getItem('kr.glossaryFolders') || '[]'), l: JSON.parse(localStorage.getItem('kr.glossaryLinks') || '{}') })); console.log('folder:', JSON.stringify(g2));
+  ok('the book\'s names made a folder, the book using it', g2.f.length === 1 && g2.f[0].name === 'Gate series' && g2.t.every((x) => x.folder === g2.f[0].id && !x.book) && Object.values(g2.l).some((v) => v.includes(g2.f[0].id)));
+  await p.locator('.gloss-sheet .gloss-scan').click(); await p.waitForSelector('.job-chip', { timeout: 8000 }).catch(() => undefined); await p.waitForFunction(() => !document.querySelector('.job-chip') || /ready|added/i.test(document.querySelector('.job-chip').textContent), null, { timeout: 20000 }).catch(() => undefined); await p.waitForTimeout(800);
+  const g3 = await p.evaluate(() => JSON.parse(localStorage.getItem('kr.glossary') || '[]')); console.log('after the scan:', JSON.stringify(g3.map((x) => [x.from, x.folder ? 'folder' : x.book ? 'book' : 'all'])));
+  ok('the whole book read for names: the one there already not doubled', g3.filter((x) => x.from === 'Lin Feng').length === 1);
   // The search across languages: the words found in the original, the translation under it; then in the translation.
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
   await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'search' }))); await p.waitForSelector('.search-langs:not([hidden])', { timeout: 8000 });
