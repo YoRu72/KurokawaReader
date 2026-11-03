@@ -114,7 +114,7 @@ export interface Engine {
   setTaskLimits?(id: string, down: number, up: number): Promise<void>;
   setLimits?(l: Limits): Promise<void>;
   /** A new address for a file download whose link ran out: the same file, gone on from where it stopped. */
-  setUrl?(id: string, url: string): Promise<void>;
+  setUrl?(id: string, url: string, headers?: Record<string, string>): Promise<void>;
   /** Moved in the queue: -1 up, +1 down, -2 to the top, +2 to the bottom. */
   move?(id: string, how: -2 | -1 | 1 | 2): Promise<void>;
   /** The metadata of a magnet or .torrent, without adding it. */

@@ -21,7 +21,7 @@ export class NativeEngine implements Engine {
   reannounce(id: string) { return this.p.reannounce({ id }); }
   setTaskLimits(id: string, down: number, up: number) { return this.p.setTaskLimits({ id, down, up }); }
   setLimits(l: Limits) { return this.p.setLimits(l); }
-  setUrl(id: string, url: string) { return this.p.setUrl({ id, url }); }
+  setUrl(id: string, url: string, headers?: Record<string, string>) { return this.p.setUrl({ id, url, headers }); }
   move(id: string, how: -2 | -1 | 1 | 2) { return this.p.move({ id, how }); }
   async torrentInfo(source: TaskSource) { return (await this.p.torrentInfo({ source })).info as TorrentInfo; }
   async streamUrl(id: string, fileIndex: number) { return (await this.p.streamUrl({ id, fileIndex })).url; }

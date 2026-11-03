@@ -236,7 +236,7 @@ function nextStart(sch: { start: string; days: number[] }): string | null {
 }
 
 /** A fresh link for a download whose link ran out: the same file, gone on from where it stopped. */
-function newUrlSheet(x: Task): void {
+export function newUrlSheet(x: Task): void {
   const sh = openSheet(t('newUrl'), t('close'));
   const input = h('input', { type: 'url', dir: 'ltr', class: 'wide-input', value: '', placeholder: x.source.url ?? 'https://', autocomplete: 'off' }) as HTMLInputElement;
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('link'), t('newUrlSet')) as HTMLButtonElement;

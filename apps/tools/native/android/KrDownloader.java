@@ -33,7 +33,7 @@ final class KrDownloader {
         }
         return false;
     }
-    static final class Result { volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
+    static final class Result { volatile File out; volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
     /** One range a connection is fetching (or fetched): what the details page draws as the file map and the lanes. */
     static final class Seg { final long start, end; volatile long pos; /** where this part stops now: brought nearer when an idle connection takes its second half */ volatile long stopAt; int chunk = -1; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; stopAt = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
         void advance(long p) { pos = p; long now = System.currentTimeMillis(); if (now - lastT >= 500) { double inst = (p - lastPos) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + inst * 0.4; lastT = now; lastPos = p; } } }
@@ -41,7 +41,17 @@ final class KrDownloader {
     private KrDownloader() {}
 
     /** What the engine sets: how many times a chunk is tried again, and where the progress is kept between runs. */
-    static final class Opts { int retries = 5; File state; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName; }
+    static final class Opts { int retries = 5; File state; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
+        /** Told the server's name and type as soon as it answers; the .part file to use from then on (null: as it is). */ java.util.function.BiFunction<String, String, File> named; }
+    /** `name` with the extension its type calls for when its own says nothing (.bin, none): an APK, a zip… */
+    static String withTypeExt(String name, String mime) {
+        if (name == null || mime == null) return null; String m = mime.toLowerCase(java.util.Locale.ROOT).replaceAll(";.*", "").trim();
+        String ext = m.equals("application/vnd.android.package-archive") ? "apk" : m.equals("application/zip") || m.equals("application/x-zip-compressed") ? "zip" : m.equals("application/x-7z-compressed") ? "7z" : m.equals("application/vnd.rar") || m.equals("application/x-rar-compressed") ? "rar" : m.equals("video/mp4") ? "mp4" : m.equals("video/x-matroska") ? "mkv" : m.equals("application/pdf") ? "pdf" : m.equals("application/epub+zip") ? "epub" : null;
+        if (ext == null) return null;
+        String low = name.toLowerCase(java.util.Locale.ROOT); if (low.endsWith("." + ext)) return null;
+        if (low.endsWith(".bin") || low.endsWith(".dat") || !low.matches(".*\\.[a-z0-9]{1,5}$")) return name.replaceAll("\\.(bin|dat)$", "") + "." + ext;
+        return null;
+    }
     /** Where Set-Cookie headers go (the engine's: Android's cookie store, shared with its web views). */
     static volatile java.util.function.BiConsumer<URL, java.util.List<String>> cookieSink;
     /** A web page sent where a file was expected (a site's check, a sign-in, an error page). */
@@ -145,6 +155,9 @@ final class KrDownloader {
             long len = -1; try { len = Long.parseLong(probe.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             if (len < 2_000_000) { probe.disconnect(); throw new WebPage(); }
         }
+        // (The file's own name, as soon as it is known: the download goes on under it.)
+        if (opt.named != null && (code == 200 || code == 206)) { java.util.function.BiFunction<String, String, File> nm = opt.named; opt.named = null; File to = nm.apply(res.fileName, res.mime);
+            if (to != null && !to.equals(out)) { probe.disconnect(); if (out.exists() && !to.exists()) out.renameTo(to); res.out = to; return fetch(url, to, maxConnections, opener, cancelled, got, res, tick, opt); } }
         String cr = probe.getHeaderField("Content-Range");
         if (code == 206 && cr != null && cr.contains("/")) try { res.total = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) {}
         res.ranged = code == 206 && res.total > 0;
@@ -273,6 +286,8 @@ final class KrDownloader {
                                 if (c != null) c.disconnect();
                                 int sc = e instanceof Status ? ((Status) e).code : 0;
                                 if (sc == 0 && cut(e) && alive.get() > 1) sc = 429;
+                                // (Some storage answers 403 to one connection too many while the others go on: taken as a refusal.)
+                                if ((sc == 403 || sc == 401) && alive.get() > 1 && got.get() > 0) sc = 429;
                                 // A server refusing one connection too many: this one stops, its part to the others.
                                 if ((sc == 429 || sc == 503) && alive.decrementAndGet() >= 1) { gone[0] = true; synchronized (seg) { seg.active = false; back.add(new long[]{ idx, pos, seg.stopAt - 1 }); } res.refused = true; res.connections = alive.get(); leave = true; break; } else if (sc == 429 || sc == 503) alive.incrementAndGet();
                                 if (attempt >= opt.retries) throw e;
