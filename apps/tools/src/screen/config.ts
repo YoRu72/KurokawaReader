@@ -43,7 +43,7 @@ export const SCREEN_LANGS: [string, string][] = [
 export const DEFAULT_SCREEN: ScreenConfig = {
   engine: 'google', source: 'auto', target: 'ar', deeplKey: '',
   ai: { preset: 'gemini', style: 'gemini', base: '', key: '', model: '', prompt: '' },
-  read: 'auto', mode: 'full', display: 'overlay', auto: 'scroll', interval: 3, settle: 0.7, autoStop: 30,
+  read: 'auto', mode: 'full', display: 'overlay', auto: 'scroll', interval: 3, settle: 0.5, autoStop: 30,
   hideAfter: 0, tapClose: true, speak: false, ttsRate: 1, history: true,
   style: { size: 15, bg: '#1E1E1E', bgAlpha: 0.88, fg: '#FFFFFF', smart: true, radius: 6, center: false, outline: false, bold: false, bgMode: 'fill' },
   bubble: { size: 52, alpha: 0.92, color: '#6750A4', dim: true, dimAfter: 4, edge: true },
@@ -64,7 +64,7 @@ export function saveScreen(c: ScreenConfig): void { try { localStorage.setItem(K
 /** The words the bubble shows (its menu, its notes), in the app's language. */
 export function screenLabels(): Record<string, string> {
   const k = ['translate', 'translateScreen', 'region', 'fixed', 'fixedSet', 'fixedChange', 'autoOn', 'autoOff', 'autoStarted', 'autoStopped', 'readAs', 'readText', 'readPicture', 'readAuto', 'list', 'copy', 'copied', 'clear', 'openApp', 'close',
-    'noText', 'needA11y', 'needCapture', 'needOverlay', 'needDeepl', 'captureFailed', 'failed', 'drawFixed', 'drawRegion', 'translations', 'noteTitle', 'noteText', 'channel', 'bubble', 'clipboard', 'quit'];
+    'noText', 'needA11y', 'needCapture', 'needOverlay', 'needDeepl', 'captureFailed', 'failed', 'drawFixed', 'drawRegion', 'translations', 'noteTitle', 'noteText', 'channel', 'bubble', 'clipboard', 'quit', 'smaller', 'bigger', 'textSize', 'ai', 'onlyGoogle'];
   const out: Record<string, string> = {};
   for (const x of k) out[x] = t(`scr_${x}` as 'scr_translate');
   return out;
@@ -73,7 +73,7 @@ export function screenLabels(): Record<string, string> {
 export function nativeConfig(c: ScreenConfig): Record<string, unknown> {
   const p = AI_PRESETS.find((x) => x.id === c.ai.preset) ?? AI_PRESETS[0];
   const ai = { style: c.ai.preset === 'custom' ? c.ai.style : p.style, base: (c.ai.base.trim() || p.base).replace(/\/+$/, ''), key: c.ai.key.trim(), model: c.ai.model.trim() || p.model, prompt: c.ai.prompt, headers: c.ai.preset === 'openrouter' ? { 'HTTP-Referer': 'https://github.com/yoru72/KurokawaReader', 'X-Title': 'Kurokawa Tools' } : {} };
-  return { ...c, ai, labels: screenLabels() };
+  return { ...c, ai, labels: screenLabels(), langs: SCREEN_LANGS };
 }
 /** Whether the chosen translator has what it needs (a key, a model address). */
 export function engineReady(c: ScreenConfig): boolean {

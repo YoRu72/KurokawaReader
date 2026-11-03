@@ -221,18 +221,36 @@ public class KtScreenService extends Service {
     private Rect fullOrFixed() { return "fixed".equals(s(cfg, "mode", "full")) ? fixed() : null; }
     private Rect fixed() { Map<String, Object> f = KtJson.obj(cfg.get("fixed")); SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE); if (sp.contains("fl")) return new Rect(sp.getInt("fl", 0), sp.getInt("ft", 0), sp.getInt("fr", 0), sp.getInt("fb", 0)); return f.isEmpty() ? null : new Rect((int) n(f, "l", 0), (int) n(f, "t", 0), (int) n(f, "r", 0), (int) n(f, "b", 0)); }
 
+    /** The bubble's menu: what it translates with and into (both changed here), then its actions as tiles —
+     *  translate, a region, the fixed region, auto, how the screen is read, the list, copy, clear, the text's size,
+     *  the app, close. */
     private void showMenu() {
         remove(menu); menu = null;
-        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(px(6), px(6), px(6), px(6));
-        GradientDrawable g = new GradientDrawable(); g.setColor(0xF2202124); g.setCornerRadius(px(16)); box.setBackground(g); if (Build.VERSION.SDK_INT >= 21) box.setElevation(px(8));
-        String[][] items = { { "translate", label("translateScreen", "Translate the screen") }, { "region", label("region", "Translate a region") }, { "fixed", fixed() == null ? label("fixedSet", "Set a fixed region") : label("fixed", "Translate the fixed region") }, { "fixedSet", label("fixedChange", "Change the fixed region") },
-            { "auto", autoOn ? label("autoOff", "Stop auto translation") : label("autoOn", "Auto translate") }, { "read", label("readAs", "Read as") + ": " + readLabel() }, { "panel", label("list", "Show as a list") }, { "copy", label("copy", "Copy the translation") }, { "clear", label("clear", "Clear") }, { "app", label("openApp", "Open the app") }, { "close", label("close", "Close") } };
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(px(10), px(10), px(10), px(10));
+        GradientDrawable g = new GradientDrawable(); g.setColor(0xF51E1F22); g.setCornerRadius(px(22)); g.setStroke(px(1), 0x33FFFFFF); box.setBackground(g); if (Build.VERSION.SDK_INT >= 21) box.setElevation(px(10));
+        // The head: engine · language, each a chip that changes it.
+        LinearLayout head = new LinearLayout(this); head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView eng = chip(engineLabel(), (v) -> { cycleEngine(); showMenu(); }); TextView lang = chip("→ " + langLabel(s(cfg, "target", "ar")), (v) -> { remove(menu); menu = null; showLangs(); });
+        head.addView(eng); head.addView(lang); box.addView(head);
+        String[][] items = { { "translate", "文A", label("translateScreen", "Translate the screen") }, { "region", "▭", label("region", "Translate a region") },
+            { "fixed", "▣", fixed() == null ? label("fixedSet", "Set a fixed region") : label("fixed", "Translate the fixed region") }, { "auto", autoOn ? "■" : "▶", autoOn ? label("autoOff", "Stop auto translation") : label("autoOn", "Auto translate") },
+            { "read", "\uD83D\uDC41", label("readAs", "Read as") + ": " + readLabel() }, { "panel", "☰", label("list", "Show as a list") }, { "copy", "⧉", label("copy", "Copy") }, { "clear", "⌫", label("clear", "Clear") },
+            { "smaller", "A−", label("smaller", "Smaller text") }, { "bigger", "A+", label("bigger", "Bigger text") }, { "fixedSet", "✎", label("fixedChange", "Change the fixed region") }, { "app", "⚙", label("openApp", "Open the app") }, { "close", "✕", label("close", "Close") } };
+        LinearLayout row = null; int n = 0;
         for (String[] it : items) {
             if (it[0].equals("fixedSet") && fixed() == null) continue;
             if ((it[0].equals("copy") || it[0].equals("panel")) && shown.isEmpty()) continue;
-            TextView t = new TextView(this); t.setText(it[1]); t.setTextColor(Color.WHITE); t.setTextSize(15); t.setPadding(px(14), px(10), px(14), px(10)); t.setMinWidth(px(200));
+            if (n % 3 == 0) { row = new LinearLayout(this); box.addView(row); } n++;
+            LinearLayout tile = new LinearLayout(this); tile.setOrientation(LinearLayout.VERTICAL); tile.setGravity(Gravity.CENTER); tile.setPadding(px(4), px(8), px(4), px(8));
+            GradientDrawable tg = new GradientDrawable(); tg.setColor(it[0].equals("auto") && autoOn ? 0xFF4A3F8C : 0xFF2B2C31); tg.setCornerRadius(px(14)); tile.setBackground(tg);
+            TextView ic = new TextView(this); ic.setText(it[1]); ic.setTextColor(0xFFE8EAED); ic.setTextSize(18); ic.setGravity(Gravity.CENTER);
+            TextView lb = new TextView(this); lb.setText(it[2]); lb.setTextColor(0xFFBDC1C6); lb.setTextSize(11); lb.setGravity(Gravity.CENTER); lb.setMaxLines(2);
+            tile.addView(ic); tile.addView(lb);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(88), px(74)); lp.setMargins(px(3), px(3), px(3), px(3)); row.addView(tile, lp);
             final String id = it[0];
-            t.setOnClickListener((v) -> { remove(menu); menu = null; switch (id) {
+            tile.setOnClickListener((v) -> {
+                if (id.equals("smaller") || id.equals("bigger")) { Map<String, Object> st = sub("style"); double sz = Math.max(9, Math.min(30, n(st, "size", 15) + (id.equals("bigger") ? 1 : -1))); st.put("size", sz); cfg.put("style", st); save(); if (!shown.isEmpty()) redraw(); toast(label("textSize", "Text size") + ": " + (int) sz); return; }
+                remove(menu); menu = null; switch (id) {
                 case "fixedSet": pick(true); break;
                 case "read": cycleRead(); break;
                 case "copy": copyAll(); break;
@@ -240,14 +258,44 @@ public class KtScreenService extends Service {
                 case "close": stopSelf(); break;
                 default: act(id);
             } });
-            box.addView(t);
         }
+        placeMenu(box);
+    }
+    private TextView chip(String text, View.OnClickListener on) {
+        TextView c = new TextView(this); c.setText(text); c.setTextColor(0xFFE8EAED); c.setTextSize(13); c.setPadding(px(12), px(6), px(12), px(6)); c.setSingleLine(true);
+        GradientDrawable g = new GradientDrawable(); g.setColor(0xFF3C3D43); g.setCornerRadius(px(999)); c.setBackground(g);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(px(3), 0, px(3), px(6)); c.setLayoutParams(lp);
+        c.setOnClickListener(on); return c;
+    }
+    private void placeMenu(View box) {
         box.measure(View.MeasureSpec.makeMeasureSpec(sw, View.MeasureSpec.AT_MOST), View.MeasureSpec.makeMeasureSpec(sh, View.MeasureSpec.AT_MOST));
         WindowManager.LayoutParams p = params(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
         int w = box.getMeasuredWidth(), h = box.getMeasuredHeight();
         p.x = bp.x + bp.width / 2 < sw / 2 ? bp.x + bp.width + px(8) : bp.x - w - px(8); p.x = Math.max(0, Math.min(sw - w, p.x)); p.y = Math.max(px(24), Math.min(sh - h - px(24), bp.y - h / 3));
         box.setOnTouchListener((v, e) -> { if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) { remove(menu); menu = null; return true; } return false; });
         menu = box; try { wm.addView(box, p); } catch (Throwable ignored) {}
+    }
+    private String engineLabel() { String e = s(cfg, "engine", "google"); return "deepl".equals(e) ? "DeepL" : "ai".equals(e) ? label("ai", "AI") : "Google"; }
+    /** Google → DeepL (with a key) → AI (when set) → Google. */
+    private void cycleEngine() {
+        String e = s(cfg, "engine", "google"); boolean deepl = !s(cfg, "deeplKey", "").trim().isEmpty(); Map<String, Object> ai = sub("ai"); boolean hasAi = !s(ai, "key", "").isEmpty() || (!s(ai, "base", "").isEmpty() && !s(ai, "model", "").isEmpty() && !s(ai, "base", "").contains("googleapis") && !s(ai, "base", "").contains("openai.com") && !s(ai, "base", "").contains("anthropic") && !s(ai, "base", "").contains("openrouter"));
+        String next = "google".equals(e) ? (deepl ? "deepl" : hasAi ? "ai" : "google") : "deepl".equals(e) ? (hasAi ? "ai" : "google") : "google";
+        if (next.equals(e)) { toast(label("onlyGoogle", "Add a DeepL key or an AI model in the app to switch")); return; }
+        cfg.put("engine", next); save(); KtTranslate.forget(); toast(engineLabel());
+    }
+    private String langLabel(String code) { for (Object o : KtJson.arr(cfg.get("langs"))) { List<Object> l = KtJson.arr(o); if (l.size() >= 2 && code.equals(l.get(0))) return String.valueOf(l.get(1)); } return code; }
+    /** The language to translate into, chosen from a list by the bubble. */
+    private void showLangs() {
+        ScrollView sv = new ScrollView(this); LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); list.setPadding(px(8), px(8), px(8), px(8)); sv.addView(list);
+        GradientDrawable g = new GradientDrawable(); g.setColor(0xF51E1F22); g.setCornerRadius(px(20)); sv.setBackground(g);
+        String cur = s(cfg, "target", "ar");
+        for (Object o : KtJson.arr(cfg.get("langs"))) { List<Object> l = KtJson.arr(o); if (l.size() < 2) continue; final String code = String.valueOf(l.get(0));
+            TextView t = new TextView(this); t.setText((code.equals(cur) ? "✓  " : "    ") + l.get(1)); t.setTextColor(code.equals(cur) ? 0xFF8AB4F8 : Color.WHITE); t.setTextSize(15); t.setPadding(px(14), px(9), px(14), px(9)); t.setMinWidth(px(200));
+            t.setOnClickListener((v) -> { remove(menu); menu = null; cfg.put("target", code); save(); toast("→ " + langLabel(code)); if (!shown.isEmpty()) translate(lastArea, true); });
+            list.addView(t); }
+        sv.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.min((int) (sh * 0.6), px(44) * Math.max(1, list.getChildCount()) + px(16))));
+        FrameLayout wrap = new FrameLayout(this); wrap.addView(sv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.min((int) (sh * 0.6), px(44) * Math.max(1, list.getChildCount()) + px(16))));
+        placeMenu(wrap);
     }
     private String readLabel() { String r = s(cfg, "read", "auto"); return "text".equals(r) ? label("readText", "Text") : "picture".equals(r) ? label("readPicture", "Picture (OCR)") : label("readAuto", "Text, else picture"); }
     private void cycleRead() { String r = s(cfg, "read", "auto"); String next = "auto".equals(r) ? "text" : "text".equals(r) ? "picture" : "auto"; cfg.put("read", next); save(); toast(label("readAs", "Read as") + ": " + readLabel()); }
@@ -282,36 +330,63 @@ public class KtScreenService extends Service {
 
     /* ---------- auto ---------- */
     private void toggleAuto() {
-        autoOn = !autoOn; ui.removeCallbacks(tick); working(false);
+        autoOn = !autoOn; ui.removeCallbacks(tick); working(false); KtScreenCapture.watcher = null; following = false;
         if (!autoOn) { toast(label("autoStopped", "Auto translation stopped")); return; }
         double mins = n(cfg, "autoStop", 30); autoUntil = mins > 0 ? System.currentTimeMillis() + (long) (mins * 60000) : Long.MAX_VALUE;
         toast(label("autoStarted", "Auto translation on"));
         lastArea = fullOrFixed();
         translate(lastArea, true);
-        if ("interval".equals(s(cfg, "auto", "scroll"))) ui.postDelayed(tick, (long) (n(cfg, "interval", 3) * 1000));
+        if ("interval".equals(s(cfg, "auto", "scroll")) || lastArea != null) ui.postDelayed(tick, (long) (n(cfg, "interval", 3) * 1000));
     }
     private final Runnable tick = new Runnable() { @Override public void run() {
-        if (!autoOn) return; if (System.currentTimeMillis() > autoUntil) { autoOn = false; working(false); return; }
+        if (!autoOn) return; if (System.currentTimeMillis() > autoUntil) { stopAuto(); return; }
         if (!busy) translate(lastArea, true);
         ui.postDelayed(this, (long) (Math.max(1, n(cfg, "interval", 3)) * 1000));
     } };
+    private void stopAuto() { autoOn = false; following = false; KtScreenCapture.watcher = null; ui.removeCallbacks(tick); working(false); }
     private final Runnable settled = () -> { if (autoOn && !busy) translate(lastArea, true); };
-    /** The screen scrolled or changed (from the accessibility service): what is drawn no longer fits — hidden now,
-     *  drawn again once the screen is still (auto), or just cleared. */
-    void screenMoved(boolean scrolled) {
+    /** The screen scrolled or changed (the accessibility service says): the translations moved with it when it says by
+     *  how much, else hidden; read again once the screen is still (auto) — the words met before cost nothing. */
+    void screenMoved(boolean scrolled, int dy) {
         ui.post(() -> {
-            if (scrolled && !shown.isEmpty() && panel == null) hideResults();
-            if (autoOn && !"interval".equals(s(cfg, "auto", "scroll"))) { if (System.currentTimeMillis() > autoUntil) { autoOn = false; working(false); return; } ui.removeCallbacks(settled); ui.postDelayed(settled, (long) (n(cfg, "settle", 0.7) * 1000)); }
+            if (following) return;   // (the picture itself is followed instead)
+            if (scrolled && !shown.isEmpty() && panel == null) { if (dy != 0) { scrollY += dy; placeAll(); } else hideResults(); }
+            if (autoOn && !"interval".equals(s(cfg, "auto", "scroll"))) { if (System.currentTimeMillis() > autoUntil) { stopAuto(); return; } ui.removeCallbacks(settled); ui.postDelayed(settled, (long) (Math.min(n(cfg, "settle", 0.7), 0.4) * 1000)); }
         });
     }
-    void captureStopped() { ui.post(() -> { if (autoOn && "picture".equals(s(cfg, "read", "auto"))) { autoOn = false; working(false); } }); }
+    void captureStopped() { ui.post(() -> { if (autoOn && following) stopAuto(); }); }
+
+    /* ---------- following a page in the picture (auto, read as a picture) ----------
+       The translations are remembered where they are on the page, not on the screen: «scrollY» is how far the page
+       has moved since the first reading, found frame by frame from the picture (KtScreenMotion). A scroll moves every
+       translation with the page at once — those scrolled back into view are there again straight away — and once the
+       page stands still it is read again, and only lines not met before are translated. */
+    private volatile boolean following = false; private volatile int scrollY = 0; private short[][] prevSig; private volatile long movedAt = 0; private volatile boolean needRead = false; private int noMatch = 0;
+    private volatile int[][] masks = new int[0][];
+    private final List<KtScreenA11y.Block> memory = new ArrayList<>();
+    private void startFollowing() {
+        if (following) return; following = true; prevSig = null; noMatch = 0; needRead = false;
+        KtScreenCapture.watcher = new KtScreenCapture.Watcher() {
+            @Override public int[][] masks() { return masks; }
+            @Override public void frame(short[][] sig, long at) {
+                if (!following || reading) { prevSig = null; return; }
+                short[][] prev = prevSig; prevSig = sig; if (prev == null) return;
+                int d = KtScreenMotion.shift(prev, sig, sh);
+                if (d == KtScreenMotion.NONE) { if (++noMatch == 2) { movedAt = at; needRead = true; ui.post(() -> { memory.clear(); scrollY = 0; if (results != null) results.removeAllViews(); shown = new ArrayList<>(); masks = new int[0][]; }); } return; }   // (another page: what was remembered no longer belongs)
+                noMatch = 0;
+                if (d != 0) { scrollY += d; movedAt = at; needRead = true; ui.post(KtScreenService.this::placeAll); return; }
+                if (needRead && at - movedAt > (long) (Math.max(0.25, n(cfg, "settle", 0.7)) * 1000) && !busy && autoOn) { needRead = false; ui.post(() -> { if (autoOn && !busy) translate(null, true); }); }
+            }
+        };
+    }
+    private volatile boolean reading = false;
 
     /* ---------- reading and translating ---------- */
     private void translate(Rect area, boolean quiet) {
         final int my = ++gen; lastArea = area; working(true);
         work.execute(() -> {
             try {
-                List<KtScreenA11y.Block> blocks = new ArrayList<>(); String read = s(cfg, "read", "auto");
+                List<KtScreenA11y.Block> blocks = new ArrayList<>(); String read = s(cfg, "read", "auto"); boolean picture = false; int at = scrollY;
                 if (!"picture".equals(read) && KtScreenA11y.self != null) blocks = KtScreenA11y.read(area);
                 if (blocks.isEmpty() && !"text".equals(read)) {
                     if (!KtScreenCapture.ready()) {
@@ -320,40 +395,58 @@ public class KtScreenService extends Service {
                         ui.post(() -> { try { startActivity(new Intent(this, KtScreenCapture.Consent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)); } catch (Throwable ignored) {} });
                         return;
                     }
+                    reading = true; at = scrollY;
                     long since = hideAll(true);
                     Bitmap shot = KtScreenCapture.grab(since);
-                    hideAll(false);
+                    hideAll(false); reading = false;
                     if (shot == null) { if (!quiet) toast(label("captureFailed", "The screen could not be read")); return; }
-                    blocks = KtScreenOcr.read(shot, area, s(cfg, "source", "auto")); shot.recycle();
+                    blocks = KtScreenOcr.read(shot, area, s(cfg, "source", "auto")); shot.recycle(); picture = true;
                 } else if (blocks.isEmpty() && KtScreenA11y.self == null && !quiet) { toast(label("needA11y", "Turn on the accessibility service")); return; }
                 if (my != gen) return;
-                if (blocks.isEmpty()) { if (!quiet) toast(label("noText", "No text found here")); ui.post(this::clear); return; }
-                // (Auto: the same words as now are left as they are drawn.)
-                if (quiet && same(blocks, shown) && results != null && results.getVisibility() == View.VISIBLE) return;
+                if (blocks.isEmpty() && !(autoOn && picture)) { if (!quiet) toast(label("noText", "No text found here")); ui.post(this::clear); return; }
+                if (quiet && !picture && same(blocks, shown) && results != null && results.getVisibility() == View.VISIBLE) return;
+                // (Lines met before keep their translation — a page scrolled back costs nothing.)
                 List<String> texts = new ArrayList<>(); for (KtScreenA11y.Block k : blocks) texts.add(k.text);
                 List<String> tr = KtTranslate.translate(texts, KtTranslate.Config.from(cfg));
                 for (int k = 0; k < blocks.size(); k++) blocks.get(k).tr = tr.get(k);
                 if (my != gen) return;
-                final List<KtScreenA11y.Block> done = blocks;
-                ui.post(() -> { if (my != gen) return; if ("panel".equals(s(cfg, "display", "overlay"))) { shown = done; showPanel(); } else draw(done); remember(done); speak(done); });
+                final List<KtScreenA11y.Block> done = blocks; final boolean pic = picture; final int base = at;
+                ui.post(() -> {
+                    if (my != gen) return;
+                    if ("panel".equals(s(cfg, "display", "overlay"))) { shown = done; showPanel(); }
+                    else if (autoOn && pic && area == null) { merge(done, base); startFollowing(); }
+                    else { scrollY = 0; memory.clear(); for (KtScreenA11y.Block k : done) { k.y = k.r.top; memory.add(k); } drawMemory(); }
+                    remember(done); speak(done);
+                });
             } catch (Throwable e) {
+                reading = false;
                 String m = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 if (!quiet) toast(m.contains("deeplKey") ? label("needDeepl", "Add your DeepL key in the app") : label("failed", "Translation failed") + ": " + m);
             } finally { if (my == gen) working(false); }
         });
+    }
+    /** A new reading of the page (at page offset `base`) put with what is remembered: the lines in view now replace
+     *  those remembered there; the ones out of view are kept for when the page comes back. */
+    private void merge(List<KtScreenA11y.Block> fresh, int base) {
+        int top = base, bottom = base + sh; List<KtScreenA11y.Block> keep = new ArrayList<>();
+        for (KtScreenA11y.Block m : memory) { int y = m.y, y2 = m.y + m.r.height(); if (y2 < top + px(8) || y > bottom - px(8)) keep.add(m); }
+        for (KtScreenA11y.Block k : fresh) { k.y = k.r.top + base; keep.add(k); }
+        while (keep.size() > 400) keep.remove(0);
+        memory.clear(); memory.addAll(keep); drawMemory();
     }
     private static boolean same(List<KtScreenA11y.Block> a, List<KtScreenA11y.Block> b) { if (a.size() != b.size()) return false; for (int k = 0; k < a.size(); k++) if (!a.get(k).text.equals(b.get(k).text) || !a.get(k).r.equals(b.get(k).r)) return false; return true; }
     /** The translator's own views hidden (true) for a picture of the screen, or shown again; when hidden. */
     private long hideAll(boolean hide) {
         CountDownLatch l = new CountDownLatch(1);
         ui.post(() -> { int v = hide ? View.INVISIBLE : View.VISIBLE; for (View x : new View[] { bubble, results, panel }) if (x != null) x.setVisibility(v); l.countDown(); });
-        try { l.await(1, TimeUnit.SECONDS); if (hide) Thread.sleep(90); } catch (InterruptedException ignored) {}
+        try { l.await(1, TimeUnit.SECONDS); if (hide) Thread.sleep(70); } catch (InterruptedException ignored) {}
         return System.currentTimeMillis();
     }
 
     /* ---------- drawing the translations over the words ---------- */
+    private void redraw() { drawMemory(); }
     @SuppressLint("ClickableViewAccessibility")
-    private void draw(List<KtScreenA11y.Block> blocks) {
+    private void drawMemory() {
         Map<String, Object> st = sub("style"); boolean tapClose = b(cfg, "tapClose", true) && !autoOn;
         if (results == null) {
             results = new FrameLayout(this);
@@ -368,10 +461,10 @@ public class KtScreenService extends Service {
             try { resultsWm.addView(results, p); } catch (Throwable e) { try { resultsWm = wm; p.type = overlayType(); if (!tapClose && Build.VERSION.SDK_INT >= 31) p.alpha = 0.8f; wm.addView(results, p); } catch (Throwable e2) { results = null; return; } }
         }
         results.removeAllViews(); results.setVisibility(View.VISIBLE);
-        int[] at = new int[2]; results.getLocationOnScreen(at);
         float size = (float) n(st, "size", 15); boolean smart = b(st, "smart", true); int bg = color(s(st, "bg", "#1E1E1E"), 0xFF1E1E1E), fg = color(s(st, "fg", "#FFFFFF"), Color.WHITE); int alpha = (int) Math.round(255 * n(st, "bgAlpha", 0.88));
-        float radius = px(n(st, "radius", 6)); boolean center = b(st, "center", false), outline = b(st, "outline", false), bold = b(st, "bold", false);
-        for (KtScreenA11y.Block k : blocks) {
+        float radius = px(n(st, "radius", 6)); boolean center = b(st, "center", false), outline = b(st, "outline", false), bold = b(st, "bold", false); float sd = getResources().getDisplayMetrics().scaledDensity;
+        List<KtScreenA11y.Block> list = new ArrayList<>();
+        for (KtScreenA11y.Block k : memory) {
             if (k.tr == null || k.tr.isEmpty()) continue;
             TextView t = new TextView(this); t.setText(k.tr);
             int fgc = smart && k.bg != 0 ? k.fg : fg; int bgc = smart && k.bg != 0 ? k.bg : bg;
@@ -381,16 +474,28 @@ public class KtScreenService extends Service {
             t.setGravity((center ? Gravity.CENTER_HORIZONTAL : Gravity.START) | Gravity.CENTER_VERTICAL); t.setPadding(px(2), 0, px(2), 0); t.setIncludeFontPadding(false);
             int w = Math.max(k.r.width(), px(36)), h = Math.max(k.r.height(), px(14));
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
-            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(t, 7, (int) Math.max(8, Math.min(size * 1.6, k.r.height() / getResources().getDisplayMetrics().scaledDensity)), 1, TypedValue.COMPLEX_UNIT_SP);
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h); lp.leftMargin = k.r.left - at[0]; lp.topMargin = k.r.top - at[1];
-            results.addView(t, lp);
+            // (As big as the words' box allows — up to twice the size set —, never under 8.)
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(t, 8, (int) Math.max(9, Math.min(size * 2, h / sd)), 1, TypedValue.COMPLEX_UNIT_SP);
+            results.addView(t, new FrameLayout.LayoutParams(w, h)); t.setTag(k); list.add(k);
         }
-        shown = blocks;
+        shown = list; placeAll();
         double hideAfter = n(cfg, "hideAfter", 0); ui.removeCallbacks(hideRun); if (hideAfter > 0 && !autoOn) ui.postDelayed(hideRun, (long) (hideAfter * 1000));
     }
+    /** Every translation put where its words are now: its place on the page less how far the page has moved. */
+    private void placeAll() {
+        if (results == null) return; results.setVisibility(View.VISIBLE);
+        int[] at = new int[2]; results.getLocationOnScreen(at); List<int[]> m = new ArrayList<>();
+        for (int c = 0; c < results.getChildCount(); c++) {
+            View v = results.getChildAt(c); KtScreenA11y.Block k = (KtScreenA11y.Block) v.getTag(); if (k == null) continue;
+            int y = k.y - scrollY; v.setX(k.r.left - at[0]); v.setY(y - at[1]);
+            boolean in = y + v.getLayoutParams().height > 0 && y < sh; v.setVisibility(in ? View.VISIBLE : View.GONE);
+            if (in) m.add(new int[] { k.r.left - px(2), y - px(2), k.r.left + v.getLayoutParams().width + px(2), y + v.getLayoutParams().height + px(2) });
+        }
+        masks = m.toArray(new int[0][]);
+    }
     private final Runnable hideRun = this::clear;
-    private void hideResults() { if (results != null) results.setVisibility(View.INVISIBLE); }
-    void clear() { remove(results); results = null; remove(panel); panel = null; shown = new ArrayList<>(); }
+    private void hideResults() { if (results != null) results.setVisibility(View.INVISIBLE); masks = new int[0][]; }
+    void clear() { remove(results); results = null; remove(panel); panel = null; shown = new ArrayList<>(); memory.clear(); scrollY = 0; masks = new int[0][]; }
 
     /* ---------- the translations as a list ---------- */
     private void showPanel() {

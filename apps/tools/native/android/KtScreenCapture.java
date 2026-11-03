@@ -29,6 +29,18 @@ final class KtScreenCapture {
     private static Image held; private static long heldAt; private static int width, height;
 
     static boolean ready() { return projection != null && reader != null; }
+    /** Told of each new frame (at most about ten a second) as its signature (KtScreenMotion): the translator follows
+     *  a scroll with it. */
+    interface Watcher { void frame(short[][] sig, long at); int[][] masks(); }
+    static volatile Watcher watcher; private static long sigAt;
+    private static void watch(Image i) {
+        Watcher w = watcher; long now = System.currentTimeMillis(); if (w == null || now - sigAt < 90) return; sigAt = now;
+        try {
+            Image.Plane p = i.getPlanes()[0]; final ByteBuffer b = p.getBuffer(); final int ps = p.getPixelStride(), rs = p.getRowStride();
+            short[][] sig = KtScreenMotion.signature((x, y) -> { int o = y * rs + x * ps; return ((b.get(o) & 255) << 16) | ((b.get(o + 1) & 255) << 8) | (b.get(o + 2) & 255); }, i.getWidth(), i.getHeight(), w.masks());
+            w.frame(sig, now);
+        } catch (Throwable ignored) {}
+    }
 
     /** Started with the system's consent (from KtScreenCapture.Consent), inside the running foreground service. */
     static synchronized boolean start(Context ctx, int code, Intent data) {
@@ -41,7 +53,7 @@ final class KtScreenCapture {
             DisplayMetrics dm = new DisplayMetrics(); ((WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(dm);
             width = dm.widthPixels; height = dm.heightPixels;
             reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
-            reader.setOnImageAvailableListener((r) -> { synchronized (KtScreenCapture.class) { try { Image i = r.acquireLatestImage(); if (i != null) { if (held != null) held.close(); held = i; heldAt = System.currentTimeMillis(); } } catch (Throwable ignored) {} } }, h);
+            reader.setOnImageAvailableListener((r) -> { synchronized (KtScreenCapture.class) { try { Image i = r.acquireLatestImage(); if (i != null) { if (held != null) held.close(); held = i; heldAt = System.currentTimeMillis(); watch(i); } } catch (Throwable ignored) {} } }, h);
             display = projection.createVirtualDisplay("kt-screen", width, height, dm.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, h);
             return true;
         } catch (Throwable e) { release(); return false; }

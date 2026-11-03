@@ -28,13 +28,14 @@ public class KtScreenA11y extends AccessibilityService {
         if (e == null || e.getPackageName() == null || getPackageName().contentEquals(e.getPackageName())) return;
         KtScreenService s = KtScreenService.self; if (s == null) return;
         int t = e.getEventType();
-        if (t == AccessibilityEvent.TYPE_VIEW_SCROLLED) s.screenMoved(true);
-        else if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) s.screenMoved(true);
-        else if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) s.screenMoved(false);
+        // (How far it scrolled, when the app says — most lists do —: the translations moved with it at once.)
+        if (t == AccessibilityEvent.TYPE_VIEW_SCROLLED) s.screenMoved(true, Build.VERSION.SDK_INT >= 28 ? e.getScrollDeltaY() : 0);
+        else if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) s.screenMoved(true, 0);
+        else if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) s.screenMoved(false, 0);
     }
 
     /** One piece of text on the screen and where it is. */
-    static final class Block { final Rect r; final String text; String tr; int bg = 0, fg = 0; Block(Rect r, String text) { this.r = r; this.text = text; } }
+    static final class Block { final Rect r; final String text; String tr; int bg = 0, fg = 0; /** where it is on the page (screen y when read, plus how far the page had moved) */ int y; Block(Rect r, String text) { this.r = r; this.text = text; } }
 
     /** The text of the other apps' windows (not this app's), inside `area` (null: all of the screen). */
     static List<Block> read(Rect area) {
