@@ -355,10 +355,13 @@ export function addonFields(into: HTMLElement, list: AddonEntry[], lang: string)
  *  and fonts added to the app itself; how many there are, and the list to remove from. */
 function fontRows(desktop: boolean): HTMLElement[] {
   const info = h('small', { class: 'src' });
-  const count = async () => { const f = await import('../player/fonts'); const lib = await f.library(); const dir = getSettings().playerFontsDir ? await f.folderFonts().catch(() => []) : []; info.textContent = t('fontsCount', { app: localDigits(lib.length), dir: localDigits(dir.length) }); };
+  const count = async () => { const f = await import('../player/fonts'); const lib = await f.library(); const dir = getSettings().playerFontsDir ? await f.folderFonts().catch(() => []) : []; const sysN = desktop && getSettings().playerSystemFonts !== false ? (await f.systemFonts().catch(() => [])).length : 0; info.textContent = t('fontsCount', { app: localDigits(lib.length), dir: localDigits(dir.length) }) + (sysN ? ' · ' + t('fontsSystemCount', { n: localDigits(sysN) }) : ''); };
   void count();
   const dirIn = h('input', { type: 'text', dir: 'ltr', value: getSettings().playerFontsDir ?? '', placeholder: desktop ? 'C:\\Windows\\Fonts' : '/storage/emulated/0/Fonts', onchange: (e: Event) => { updateSettings({ playerFontsDir: (e.target as HTMLInputElement).value.trim() || undefined }); info.textContent = '…'; void count(); } }) as HTMLInputElement;
-  const pick = desktop ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const d = window.kurokawaTools as unknown as { pickDir?(): Promise<string | null> } | undefined; const p = await d?.pickDir?.(); if (p) { dirIn.value = p; updateSettings({ playerFontsDir: p }); info.textContent = '…'; void count(); } } }, icon('folder'), t('chooseFolder')) : null;
+  // (A folder picked on the phone too — Android's folder chooser —; on a computer the installed fonts are found by themselves.)
+  const pickIt = async () => { let p: string | null | undefined; const d = window.kurokawaTools as unknown as { pickDir?(): Promise<string | null> } | undefined; if (d?.pickDir) p = await d.pickDir(); else { const { ktPlugin } = await import('../native'); p = await ktPlugin()?.pickDir().then((r) => r.dir).catch(() => null); } if (p) { if (/^content:/.test(p)) { toast(t('fontsDirPhone'), 'error', 6000); return; } dirIn.value = p; updateSettings({ playerFontsDir: p }); info.textContent = '…'; void count(); } };
+  const pick = h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pickIt() }, icon('folder'), t('changeFolder'));
+  const sys = desktop ? h('label', { class: 'row switch-row' }, h('span', null, t('fontsSystem'), h('small', { class: 'hint', style: { display: 'block' } }, t('fontsSystemHint'))), h('input', { type: 'checkbox', checked: getSettings().playerSystemFonts !== false, onchange: (e: Event) => { updateSettings({ playerSystemFonts: (e.target as HTMLInputElement).checked }); info.textContent = '…'; void count(); } })) : null;
   const file = h('input', { type: 'file', multiple: true, accept: '.ttf,.otf,.ttc,.otc,.woff,.woff2', hidden: true, onchange: async (e: Event) => { const fs = Array.from((e.target as HTMLInputElement).files ?? []); if (!fs.length) return; const n = await (await import('../player/fonts')).addFonts(fs); toast(t('fontsAdded', { n: localDigits(n) })); void count(); } }) as HTMLInputElement;
   const manage = async () => {
     const f = await import('../player/fonts'); const sh = openSheet(t('fontsTitle'), t('close'));
@@ -367,6 +370,7 @@ function fontRows(desktop: boolean): HTMLElement[] {
   };
   return [
     h('p', { class: 'hint' }, t('fontsHint')),
+    ...(sys ? [sys] : []),
     row(t('fontsDir'), h('div', { class: 'row-inline' }, dirIn, pick), desktop ? '' : t('fontsDirPhone')),
     h('div', { class: 'row-actions' }, file, h('button', { type: 'button', class: 'btn tonal small', onclick: () => file.click() }, icon('plus'), t('fontsAdd')), h('button', { type: 'button', class: 'btn text small', onclick: () => void manage() }, icon('list'), t('fontsManage')), info),
   ];

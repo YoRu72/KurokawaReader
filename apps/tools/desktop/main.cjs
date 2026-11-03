@@ -11,6 +11,7 @@ const Archive = require('./archive.cjs');
 const Ffmpeg = require('./ffmpeg.cjs');
 const Ytdlp = require('./ytdlp.cjs');
 const StreamProxy = require('./streamproxy.cjs');
+const TorrentStream = require('./torrentstream.cjs');
 const Packs = require('./packs.cjs');
 const Antivirus = require('./antivirus.cjs');
 const ScreenTr = require('./screentr.cjs');
@@ -208,6 +209,44 @@ ipcMain.handle('kt:archiveTest', async (e, o) => {
   finally { if (o.id) archiveJobs.delete(o.id); }
 });
 ipcMain.handle('kt:hashFile', (_e, p) => new Promise((res, rej) => { const crypto = require('node:crypto'); const hs = { md5: crypto.createHash('md5'), sha1: crypto.createHash('sha1'), sha256: crypto.createHash('sha256') }; const st = fs.createReadStream(String(p), { highWaterMark: 1 << 20 }); st.on('data', (c) => { for (const h of Object.values(hs)) h.update(c); }); st.on('error', rej); st.on('end', () => res({ md5: hs.md5.digest('hex'), sha1: hs.sha1.digest('hex'), sha256: hs.sha256.digest('hex'), size: fs.statSync(String(p)).size })); }));
+// (The computer's font folders, for styled subtitles: the system's and the user's own.)
+ipcMain.handle('kt:fontDirs', () => { const os = require('node:os'); const home = os.homedir(); const c = process.platform === 'win32' ? [path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts'), path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Microsoft', 'Windows', 'Fonts')] : process.platform === 'darwin' ? ['/System/Library/Fonts', '/Library/Fonts', path.join(home, 'Library', 'Fonts')] : ['/usr/share/fonts', '/usr/local/share/fonts', path.join(home, '.local', 'share', 'fonts'), path.join(home, '.fonts')]; return c.filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }); });
+// (Their fonts' family names, read here by seeking — only the table of contents and the «name» table of each file, a
+// few KB, not the whole font —, kept between calls; a file read again only when it changed.)
+const fontIx = new Map();
+function fontFamilies(file) {
+  const fd = fs.openSync(file, 'r'); const rd = (off, len) => { const b = Buffer.alloc(len); const n = fs.readSync(fd, b, 0, len, off); return b.subarray(0, n); };
+  const out = new Set();
+  const one = (off) => {
+    const hd = rd(off, 12); if (hd.length < 12) return; const n = hd.readUInt16BE(4); const dir = rd(off + 12, n * 16);
+    for (let i = 0; i + 16 <= dir.length; i += 16) {
+      if (dir.toString('latin1', i, i + 4) !== 'name') continue;
+      const to = dir.readUInt32BE(i + 8), tl = Math.min(dir.readUInt32BE(i + 12), 256 * 1024); const t = rd(to, tl); if (t.length < 6) return;
+      const count = t.readUInt16BE(2), strs = t.readUInt16BE(4);
+      for (let j = 0; j < count; j++) { const r = 6 + j * 12; if (r + 12 > t.length) break; const pid = t.readUInt16BE(r), eid = t.readUInt16BE(r + 2), nid = t.readUInt16BE(r + 6), len = t.readUInt16BE(r + 8), so = strs + t.readUInt16BE(r + 10);
+        if (![1, 4, 16].includes(nid) || so + len > t.length) continue; let str = '';
+        if (pid === 3 || pid === 0) { for (let k = 0; k + 1 < len; k += 2) str += String.fromCharCode(t.readUInt16BE(so + k)); } else if (pid === 1 && eid === 0) str = t.toString('latin1', so, so + len);
+        str = str.replace(/\0/g, '').trim(); if (str) out.add(str); }
+      return;
+    }
+  };
+  try { const h = rd(0, 12); if (h.toString('latin1', 0, 4) === 'ttcf') { const n = Math.min(h.readUInt32BE(8), 64); const offs = rd(12, n * 4); for (let i = 0; i + 4 <= offs.length; i += 4) one(offs.readUInt32BE(i)); } else one(0); } finally { fs.closeSync(fd); }
+  return [...out];
+}
+ipcMain.handle('kt:fontIndex', async (_e, dirs) => {
+  const files = []; const walk = (d, depth) => { let ents = []; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of ents) { const p = path.join(d, e.name); if (e.isDirectory() && depth < 3) walk(p, depth + 1); else if (/\.(ttf|otf|ttc|otc)$/i.test(e.name)) files.push(p); } };
+  for (const d of (Array.isArray(dirs) ? dirs : []).map(String)) walk(d, 0);
+  const out = [];
+  for (const f of files.slice(0, 6000)) {
+    let st; try { st = fs.statSync(f); } catch { continue; }
+    const had = fontIx.get(f); if (had && had.size === st.size && had.mtime === st.mtimeMs) { out.push(had); continue; }
+    let families = []; try { families = fontFamilies(f); } catch { /* not a font this reads */ }
+    if (!families.length) families = [path.basename(f).replace(/\.[^.]+$/, '').replace(/[-_](regular|bold|italic|medium|light|semibold|black|thin)$/i, '').replace(/[-_]+/g, ' ')];
+    const x = { path: f, size: st.size, mtime: st.mtimeMs, families }; fontIx.set(f, x); out.push(x);
+  }
+  return out;
+});
+ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(E(), String(o.id), Number(o.fileIndex) || 0) }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 // DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.
@@ -266,19 +305,45 @@ ipcMain.handle('kt:checkUpdate', async (_e, o) => {
   return { version: v, url: j.html_url, notes: j.body || '', asset: asset ? asset.browser_download_url : undefined };
 });
 ipcMain.handle('kt:installUpdate', async (e, url) => {
-  const res = await net.fetch(url); if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-  const total = Number(res.headers.get('content-length') || 0);
   const ext = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage';
   const file = path.join(app.getPath('temp'), `KurokawaTools-update-${Date.now()}` + ext);
-  const out = fs.createWriteStream(file); const reader = res.body.getReader(); let got = 0;
-  for (;;) { const { done, value } = await reader.read(); if (done) break; out.write(Buffer.from(value)); got += value.length; e.sender.send('kt:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total }); }
-  await new Promise((r) => out.end(r));
+  await fastFetch(url, file, (got, total) => e.sender.send('kt:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total }));
   const { spawn } = require('node:child_process');
   if (process.platform === 'linux') {
     const current = process.env.APPIMAGE; fs.chmodSync(file, 0o755);
     if (current) { const script = path.join(app.getPath('temp'), 'kt-update.sh'); fs.writeFileSync(script, `#!/bin/sh\nsleep 2\nmv -f "${file}" "${current}" && chmod +x "${current}" && ("${current}" >/dev/null 2>&1 &)\nrm -f "$0"\n`, { mode: 0o755 }); spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => app.quit(), 500); return current; }
     shell.showItemInFolder(file); return file;
   }
+  // (Windows, installed: the new version put in quietly over this one — no wizard to click through — and opened
+  // again when it is in, as the phone's own installer does. The portable app: its installer opened, as before.)
+  if (process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_FILE) {
+    try { spawn(file, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); setTimeout(() => app.quit(), 300); return file; } catch { /* opened instead */ }
+  }
   const err = await shell.openPath(file); if (err) throw new Error(err);
   setTimeout(() => app.quit(), 1500); return file;
 });
+/** A file fetched over several connections at once (8, each its own range) when the server allows ranges — as the
+ *  phone's downloader does —, else in one stream; `tick(got, total)` as it comes. */
+async function fastFetch(url, file, tick) {
+  let total = 0, ranges = false, final = url;
+  try { const h = await net.fetch(url, { headers: { range: 'bytes=0-0' } }); final = h.url || url; const cr = h.headers.get('content-range') || ''; const m = /\/(\d+)$/.exec(cr); if (h.status === 206 && m) { total = Number(m[1]); ranges = true; } else total = Number(h.headers.get('content-length') || 0); try { await h.body?.cancel(); } catch { /* fine */ } } catch { /* one stream */ }
+  if (!ranges || total < 4 * 1048576) {
+    const res = await net.fetch(url); if (!res.ok || !res.body) throw new Error('HTTP ' + res.status); total = total || Number(res.headers.get('content-length') || 0);
+    const out = fs.createWriteStream(file); const reader = res.body.getReader(); let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r)); got += value.length; tick(got, total); }
+    await new Promise((r) => out.end(r)); return;
+  }
+  const fd = fs.openSync(file, 'w'); fs.ftruncateSync(fd, total); let got = 0; const N = 8; const part = Math.ceil(total / N); let last = 0;
+  const one = async (k) => {
+    let from = k * part; const to = Math.min(total, (k + 1) * part) - 1;
+    for (let tries = 0; from <= to; tries++) {
+      try {
+        const res = await net.fetch(final, { headers: { range: `bytes=${from}-${to}` } }); if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
+        const reader = res.body.getReader();
+        for (;;) { const { done, value } = await reader.read(); if (done) break; const b = Buffer.from(value); fs.writeSync(fd, b, 0, b.length, from); from += b.length; got += b.length; const now = Date.now(); if (now - last > 150) { last = now; tick(got, total); } }
+      } catch (err) { if (tries >= 4) throw err; await new Promise((r) => setTimeout(r, 800 * (tries + 1))); }
+    }
+  };
+  try { await Promise.all(Array.from({ length: N }, (_, k) => one(k))); } finally { fs.closeSync(fd); }
+  tick(total, total);
+}

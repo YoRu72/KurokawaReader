@@ -98,7 +98,8 @@ class Aria2Engine {
     if (o.dir) opts.dir = o.dir; if (o.name && o.source.url) opts.out = o.name; if (o.paused) opts.pause = 'true';
     if (o.connections) { opts.split = String(o.connections); opts['max-connection-per-server'] = String(Math.min(16, o.connections)); }
     if (o.files?.length) opts['select-file'] = o.files.map((i) => i + 1).join(',');
-    if (o.sequential) opts['bt-prioritize-piece'] = 'head=16M,tail=4M';
+    // (Watched while it comes: its pieces fetched in order, its start and end first — a player reads both.)
+    if (o.sequential) { opts['bt-prioritize-piece'] = 'head=16M,tail=4M'; opts['stream-piece-selector'] = 'inorder'; }
     if (o.source.headers) opts.header = Object.entries(o.source.headers).map(([k, v]) => `${k}: ${v}`);
     // A file of that name there already, with «Skip» chosen: not downloaded again.
     if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(o.dir || this.defaultDir, o.name))) throw new Error('exists');
