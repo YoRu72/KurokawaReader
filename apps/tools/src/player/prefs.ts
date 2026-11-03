@@ -40,7 +40,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   skipAmount: 85, autoSkip: 'button', filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
-  repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: false,
+  repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true,
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,
   rotate: 0, flipH: false, flipV: false, crop: '', filterPreset: '',

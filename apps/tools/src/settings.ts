@@ -35,6 +35,8 @@ export interface Settings {
   addonSettings: Record<string, Record<string, string | number | boolean>>;
   /** AniList: the OAuth client id the user made, changes queued while offline, progress marked as episodes are watched. */
   anilistClientId: string;
+  /** «Watch now» plays the best release by itself (else the releases are shown to choose from, as in Hayase). */
+  animeWatchAuto?: boolean;
   anilistPending: Record<string, unknown>;
   anilistAutoProgress: boolean;
   /** Anime: extension repositories (Hayase index.json or Seanime marketplace URLs), the preferred quality, adult shows. */

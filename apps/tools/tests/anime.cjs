@@ -47,8 +47,8 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const epRows = await p.$$eval('.ep-sheet .dest-row', (r) => r.map((x) => x.innerText.split('\n')[0]));
   console.log('episode sheet:', epRows.join(' | '));
   if (!epRows.some((x) => /Watch now/.test(x)) || !epRows.some((x) => /Choose a release/.test(x))) errors.push('episode sheet');
-  // Watching by a release chosen by hand (searched by any name): the sheet in its watching mode; the pick remembered.
-  await p.locator('.ep-sheet .dest-row', { hasText: 'Choose a release to watch' }).click(); await p.waitForSelector('.sheet .torrent-name'); await p.waitForSelector('.torrent-list .result-row', { timeout: 20000 });
+  // Watch now, as in Hayase: the releases to choose from (searched by any name), the best first; the pick remembered.
+  await p.locator('.ep-sheet .dest-row', { hasText: 'Watch now' }).click(); await p.waitForSelector('.sheet .torrent-name'); await p.waitForSelector('.torrent-list .result-row', { timeout: 20000 });
   if (!(await p.$('.sheet .hint'))) errors.push('the watching sheet says what it is for');
   await p.click('.torrent-list .result-row >> nth=0'); await p.waitForTimeout(600);
   const picked = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.watchPick') || '{}')); console.log('remembered:', JSON.stringify(picked));

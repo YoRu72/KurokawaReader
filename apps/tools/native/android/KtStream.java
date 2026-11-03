@@ -132,18 +132,25 @@ final class KtStream {
     }
 
     /** The piece holding `pos` of file `index`: made the most urgent (with a few after it), waited for. */
+    /** Where the window ahead was last laid for each file being played (it is laid again as playback moves on). */
+    private final java.util.Map<String, Integer> windowAt = new java.util.concurrent.ConcurrentHashMap<>();
     private void waitForPiece(TorrentHandle th, TorrentInfo ti, int index, long pos, long end) throws InterruptedException {
         FileStorage fs = ti.files();
         PeerRequest pr = fs.mapFile(index, pos, 1); int piece = pr.piece();
+        // (The window ahead kept moving with playback — laid again each time the player reaches a new piece, even
+        // one already here — so the download stays ahead of what is watched instead of stopping to wait at each
+        // gap: about 48 MB after it, on deadlines that grow with the distance.)
+        String key = th.infoHash().toHex() + ":" + index; Integer at = windowAt.get(key);
+        if (at == null || at != piece) {
+            windowAt.put(key, piece);
+            int last = Math.min(ti.numPieces() - 1, fs.mapFile(index, end, 1).piece());
+            int ahead = Math.max(12, (int) ((48L << 20) / Math.max(1, ti.pieceLength())));
+            for (int k = piece; k <= Math.min(last, piece + ahead); k++) { if (!th.havePiece(k)) { th.piecePriority(k, Priority.TOP_PRIORITY); th.setPieceDeadline(k, 100 + (k - piece) * 180); } }
+            engine.streaming(th);
+        }
         if (th.havePiece(piece)) return;
-        int last = Math.min(ti.numPieces() - 1, fs.mapFile(index, end, 1).piece());
-        // (The window ahead, as the player reads: this piece now, then about 24 MB after it on deadlines that
-        // grow with the distance — the next minute or so of a 1080p video, kept coming without a gap.)
-        int ahead = Math.max(8, (int) ((24L << 20) / Math.max(1, ti.pieceLength())));
-        for (int k = piece; k <= Math.min(last, piece + ahead); k++) { if (!th.havePiece(k)) { th.piecePriority(k, Priority.TOP_PRIORITY); th.setPieceDeadline(k, (k - piece) * 250); } }
-        engine.streaming(th);
         long until = System.currentTimeMillis() + 120000;
-        while (!th.havePiece(piece)) { if (System.currentTimeMillis() > until || !th.isValid()) throw new InterruptedException("timeout"); Thread.sleep(150); }
+        while (!th.havePiece(piece)) { if (System.currentTimeMillis() > until || !th.isValid()) throw new InterruptedException("timeout"); Thread.sleep(100); }
     }
 
     private static String readLine(InputStream in) throws IOException {
