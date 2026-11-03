@@ -8,11 +8,11 @@
 // carry on; paragraphs already in the target script are left alone; the next
 // chapter is translated while this one is read; and names found in a chapter can
 // be put in the glossary at a tap, so they are rendered the same everywhere.
-import { h, icon, toast, openSheet } from './dom';
+import { h, icon, toast, openSheet, pickButton } from './dom';
 import { t, isRtlText, localDigits, getLang } from '../i18n';
 import { db } from '../db';
 import { translateBatch, translationKey, legacyTranslationKey, aiReady, suggestTerms, langName, hash, onAiWait, type TrContext } from '../ai';
-import { terms, saveTerms, type TermKind } from '../glossary';
+import { termsFor, addTerms, folders, linkedFolders, setLinked, namesTarget, type TermKind } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
 import { aiSettingsSheet } from './aisettings';
 
@@ -202,6 +202,36 @@ export function attachTranslator(host: TranslatorHost): Translator {
     if (cur.length) out.push(cur); return out;
   }
 
+  /** The names found in some text put in the book's glossary (or the folder chosen for it), none doubled; how many. */
+  async function namesFrom(texts: string[], bookId: string, folder?: string): Promise<number> {
+    const known = termsFor(bookId, getSettings().aiTarget).map((x) => x.from);
+    const found = await suggestTerms(texts, known);
+    const kind = (x?: string): TermKind => (x === 'person' || x === 'place' || x === 'group' ? x : 'term');
+    const place = folder ? { folder } : namesTarget(bookId, host.bookTitle?.(bookId) ?? '');
+    return addTerms(found.map((f) => ({ from: f.from, to: f.to, ...place, kind: kind(f.kind), auto: true, lang: getSettings().aiTarget })));
+  }
+  /** The whole book read for its names (Find names in the whole book): the chapters a few at a time — about
+   *  20,000 characters to a request —, as a job that goes on in the background, its progress in the
+   *  notification; the chapters already read for names skipped. */
+  async function scanWholeBook(folder?: string): Promise<void> {
+    if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
+    const chapters = host.chapters(); const bookId = chapters[0]?.bookId; if (!bookId) return;
+    const k = `glossScan:${bookId}`; const done = new Set((await db.getMeta<number[]>(k)) ?? []);
+    const groups: { idx: number[]; texts: string[] }[] = []; let cur = { idx: [] as number[], texts: [] as string[] }; let size = 0;
+    chapters.forEach((ch, i) => { if (done.has(i)) return; const tx = ch.blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1); const n = tx.reduce((a, x) => a + x.length, 0); if (!n) return; if (cur.idx.length && size + n > 20000) { groups.push(cur); cur = { idx: [], texts: [] }; size = 0; } cur.idx.push(i); cur.texts.push(...tx); size += n; });
+    if (cur.idx.length) groups.push(cur);
+    if (!groups.length) { toast(t('glossScanDone', { n: localDigits(0) })); return; }
+    const title = host.bookTitle?.(bookId) ?? ''; let stop = false; let added = 0;
+    const { runJob } = await import('../jobs');
+    void runJob(t('glossScanJob', { book: title }), async (rep) => {
+      for (let g = 0; g < groups.length && !stop; g++) {
+        rep((g / groups.length) * 100, t('glossScanProgress', { n: localDigits(g), total: localDigits(groups.length), found: localDigits(added) }));
+        try { added += await namesFrom(groups[g].texts.join('\n').slice(0, 24000).split('\n'), bookId, folder); await db.setMeta(k, [...((await db.getMeta<number[]>(k)) ?? []), ...groups[g].idx]); }
+        catch (e) { if ((e as Error).name === 'QuotaError') throw e; console.warn('[kurokawa] scan', e); }
+      }
+      return stop ? null : { blob: new Blob([]), name: title };
+    }, () => false, { quiet: true, cancel: () => { stop = true; }, doneText: () => t('glossScanDone', { n: localDigits(added) }) }).catch((e) => toast(String((e as Error).message ?? e), 'error', 6000));
+  }
   /** The names of a chapter put in its book's glossary before it is translated (when chosen): the model lists the
    *  characters, places and terms it holds, those not there yet are added — once for each chapter. */
   async function autoGlossary(bookId: string, chapterIdx: number, blocks: HTMLElement[], quiet: boolean): Promise<void> {
@@ -209,10 +239,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const k = `glossScan:${bookId}`; const done = (await db.getMeta<number[]>(k)) ?? []; if (done.includes(chapterIdx)) return;
     const texts = blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1); if (!texts.length) return;
     try {
-      const known = terms().filter((x) => !x.book || x.book === bookId).map((x) => x.from);
-      const found = await suggestTerms(texts, known);
-      const kind = (x?: string): TermKind => (x === 'person' || x === 'place' || x === 'group' ? x : 'term');
-      if (found.length) { saveTerms([...terms(), ...found.map((f) => ({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, from: f.from, to: f.to, book: bookId, kind: kind(f.kind), auto: true }))]); if (!quiet) toast(t('glossAutoAdded', { n: localDigits(found.length) })); }
+      const n = await namesFrom(texts, bookId);
+      if (n && !quiet) toast(t('glossAutoAdded', { n: localDigits(n) }));
       await db.setMeta(k, [...((await db.getMeta<number[]>(k)) ?? []), chapterIdx]);
     } catch (e) { console.warn('[kurokawa] auto glossary', e); }
   }
@@ -389,14 +417,17 @@ export function attachTranslator(host: TranslatorHost): Translator {
     sh.body.append(h('p', { class: 'src' }, t('trSuggestBody', { lang: (() => { try { return new Intl.DisplayNames([getLang()], { type: 'language' }).of(getSettings().aiTarget) ?? langName(getSettings().aiTarget); } catch { return langName(getSettings().aiTarget); } })() })), h('div', { class: 'center' }, h('div', { class: 'spinner' })));
     try {
       const texts = ch.blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1);
-      const known = terms().filter((x) => !x.book || x.book === ch.bookId).map((x) => x.from);
+      const known = termsFor(ch.bookId, getSettings().aiTarget).map((x) => x.from);
       const found = await suggestTerms(texts, known);
       if (!sh.el.isConnected) return;
       if (!found.length) { sh.body.replaceChildren(h('p', { class: 'src' }, t('trSuggestNone'))); return; }
       const rows = found.map((f) => { const cb = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement; const to = h('input', { type: 'text', value: f.to, dir: 'auto', class: 'tr-term-to' }) as HTMLInputElement; return { f, cb, to, el: h('label', { class: 'tr-term' }, cb, h('span', { class: 'tr-term-from', dir: 'auto' }, f.from), h('span', { class: 'upd-arrow' }, icon('arrowRight')), to) }; });
       sh.body.replaceChildren(h('p', { class: 'src' }, t('trSuggestPick')), h('div', { class: 'tr-terms' }, ...rows.map((r) => r.el)));
-      const add = (book?: string) => { const list = terms().slice(); let n = 0; for (const r of rows) if (r.cb.checked && r.to.value.trim()) { list.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, from: r.f.from, to: r.to.value.trim(), ...(book ? { book } : {}) }); n++; } saveTerms(list); sh.close(); toast(t('trTermsAdded', { n: localDigits(n) })); if (on) void run(true); };
-      sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => add() }, t('trAddAllBooks')), h('button', { type: 'button', class: 'btn primary', onclick: () => add(ch.bookId) }, icon('check'), t('trAddThisBook')));
+      const add = (scope: { book?: string; folder?: string }) => { const n = addTerms(rows.filter((r) => r.cb.checked && r.to.value.trim()).map((r) => ({ from: r.f.from, to: r.to.value.trim(), kind: (['person', 'place', 'group'].includes(r.f.kind ?? '') ? r.f.kind : 'term') as TermKind, lang: getSettings().aiTarget, ...scope }))); sh.close(); toast(t('trTermsAdded', { n: localDigits(n) })); if (on) void run(); };
+      // (Into this book's glossary, every book's, or a folder — one the book then uses.)
+      const fs = folders();
+      if (fs.length) sh.actions.append(pickButton(t('glossToFolder'), fs.map((f) => [f.id, f.name] as [string, string]), '', (id: string) => { setLinked(ch.bookId, [...linkedFolders(ch.bookId), id]); add({ folder: id }); }, t('close')));
+      sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => add({}) }, t('trAddAllBooks')), h('button', { type: 'button', class: 'btn primary', onclick: () => add({ book: ch.bookId }) }, icon('check'), t('trAddThisBook')));
     } catch (e) { if (sh.el.isConnected) sh.body.replaceChildren(h('p', { class: 'src' }, String((e as Error).message ?? e))); }
   }
 
@@ -456,7 +487,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const keepCb = h('input', { type: 'checkbox', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; void setKept(v); markSaved(v); if (v) void navigator.storage?.persist?.().catch(() => undefined); if (v && !on) setOn(true); toast(v ? t('trKept') : t('trNotKept')); } }) as HTMLInputElement;
     void isKept().then((v) => { keepCb.checked = v; });
     sh.body.append(h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('trKeepBook'), h('small', { class: 'hint' }, t('trKeepBookHint'))), keepCb));
-    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('trSuggestTerms'), () => void suggestSheet()), row('books', t('glossary'), () => void import('./glossarysheet').then((m) => { const id = host.chapters()[host.currentChapter()]?.bookId; m.glossarySheet(id ? { id, title: host.bookTitle?.(id) ?? '' } : undefined); })), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
+    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('trSuggestTerms'), () => void suggestSheet()), row('books', t('glossary'), () => void import('./glossarysheet').then((m) => { const id = host.chapters()[host.currentChapter()]?.bookId; m.glossarySheet(id ? { id, title: host.bookTitle?.(id) ?? '' } : undefined, { scan: (folder) => void scanWholeBook(folder) }); })), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
   }
   // (The bar hidden keeps the translation: it folds into a small button, the bar back at a tap. Turning the
   // translation off is the bar's first button; its X only hides the bar.)

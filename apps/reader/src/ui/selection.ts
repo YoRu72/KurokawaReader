@@ -231,6 +231,8 @@ function moreSheet(text: string, actions: SelectionActions, onClose?: () => void
     item('speak', t('speakSelected'), () => actions.speak(text)),
     actions.textRule ? item('pen', t('textRuleFromSelection'), () => actions.textRule!(text)) : null,
     actions.glossary ? item('define', t('glossaryAddSelection'), () => actions.glossary!(text)) : null,
+    // (Shamela's «search in the books»: the words looked for in the texts of the whole library.)
+    ar ? item('books', t('searchShamelaTexts'), () => { try { const k = 'kr.src.shamela.filters'; const f = JSON.parse(localStorage.getItem(k) ?? '{}'); localStorage.setItem(k, JSON.stringify({ ...f, mode: 'texts', match: f.match ?? 'words' })); } catch { /* none */ } location.hash = `#/sources/shamela?q=${encodeURIComponent(text.trim().slice(0, 120))}`; }) : null,
     item('search', t('searchWeb'), () => window.open(`https://duckduckgo.com/?q=${q}`, '_blank', 'noopener')),
     item('define', t('wikipedia'), () => window.open(`https://${ar ? 'ar' : 'en'}.wikipedia.org/w/index.php?search=${q}`, '_blank', 'noopener')),
   ));

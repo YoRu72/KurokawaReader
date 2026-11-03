@@ -2052,3 +2052,13 @@ body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox)
 .al-signin { align-self: flex-start; } .al-token { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; }
 .al-show-paste { align-self: flex-start; }
 .al-link .sheet-body { font-family: var(--font-ui); }
+/* Glossary places: this book, every book, the folders. */
+.gloss-places { flex-wrap: wrap; gap: 6px; }
+.gloss-folder-bar { display: flex; flex-direction: column; gap: 6px; } .gloss-folder-bar:empty { display: none; }
+.gloss-folder-bar .row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.gloss-use { display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 14px var(--font-ui); }
+.gloss-scan { align-self: flex-start; }
+.gloss-meta .gloss-move { font-size: 12.5px; padding: 4px 10px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shamela-where { margin: 4px 0 10px; }
+.gloss-langs { flex-wrap: wrap; gap: 6px; } .gloss-langs .chip.off { text-decoration: line-through; opacity: .75; }
+.gloss-dest { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container); } .gloss-dest-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 14px var(--font-ui); } .gloss-dest-row .label { text-transform: none; letter-spacing: normal; }
