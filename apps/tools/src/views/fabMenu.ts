@@ -7,6 +7,7 @@ import { t } from '../i18n';
 import { getEngine, parseSources } from '../engine';
 import { addSheet } from './add';
 import { canInstallApps, installSheet } from './apk';
+import { isIos } from './ipa';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
 
 let open: HTMLElement | null = null;
@@ -29,6 +30,8 @@ export function fabMenu(anchor: HTMLElement): void {
     item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())),
     ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []),
     // (An app from the phone: an APK, a bundle, or an archive with one inside — the installer reads it.)
+    // (On an iPhone or iPad: an iOS app — an IPA — looked into and handed to SideStore, AltStore or TrollStore.)
+    ...(!installer && isIos() ? [item('apps', t('installIosApp'), t('installIosAppHint'), () => void import('./ipa').then((m) => m.pickIpa()))] : []),
     ...(installer ? [item('apps', t('installAnApp'), t('installAnAppHint'), () => void (async () => { const { pickFiles } = await import('../archives'); const [f] = (await pickFiles(false).catch(() => [] as string[])) ?? []; if (f) await installer.installSheet(f); })())] : []));
   const scrim = h('div', { class: 'fab-scrim', onclick: close });
   open = h('div', { class: 'fab-menu-wrap' }, scrim, menu);

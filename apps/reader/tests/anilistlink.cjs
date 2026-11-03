@@ -24,10 +24,10 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.locator('h3.card-title').filter({ hasText: /Tracking|AniList/ }).first().click(); await p.waitForTimeout(300);
   const en = p.locator('label.row:has-text("AniList") input[type=checkbox]').first();
   if (!(await en.isChecked())) { await en.check(); await p.waitForTimeout(400); }
-  await p.fill('label.row:has-text("Client ID") input', '12345'); await p.press('label.row:has-text("Client ID") input', 'Tab');
-  await p.click('button:has-text("Sign in")'); await p.waitForTimeout(1200);
+  // One tap, with the apps' own AniList client: nothing to fill in.
+  await p.click('button:has-text("Sign in with AniList")'); await p.waitForTimeout(1200);
   const opened = await p.evaluate(() => window.__opened[0]);
-  ok('the sign-in opens in the app\'s browser, watched for the token', !!opened && /oauth\/authorize\?client_id=12345/.test(opened.url) && opened.until === 'access_token=');
+  ok('the sign-in opens in the app\'s browser, watched for the token', !!opened && /oauth\/authorize\?client_id=55772/.test(opened.url) && opened.until === 'access_token=');
   ok('… and the account is linked by itself, with the token from the page', auth === 'Bearer TOKEN123' && /Linked as Reader|Reader/.test(await p.evaluate(() => document.body.textContent)));
   // A change made while AniList could not be reached: kept, and sent once it can be.
   let down = true; const saves = [];

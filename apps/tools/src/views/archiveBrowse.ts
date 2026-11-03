@@ -90,6 +90,7 @@ export async function browseArchive(path: string): Promise<void> {
         const r = await job.done; void busy; const local = `${r.dest.replace(/[\\/]$/, '')}/${e.path}`; const k = kindOfFile(e.path);
         if (k === 'video' || k === 'audio') { const { openPlayer } = await import('./player'); const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(local); if (u) { await openPlayer(u, name, { localPath: local }); return; } }
         if (/\.(apk|apks|xapk|apkm)$/i.test(name)) { const m = await import('./apk'); if (m.canInstallApps()) { await m.installSheet(local); return; } }
+        if (/\.ipa$/i.test(name)) { const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(local); const file = u ? await (await fetch(u)).blob() : undefined; await (await import('./ipa')).ipaSheet({ file, name }); return; }
         if (k === 'archive') { void browseArchive(local); return; }
         const p = ktPlugin() as unknown as { openWith?(o: { path: string; mime: string; title: string }): Promise<void> } | null;
         if (p?.openWith) { await p.openWith({ path: local, mime: mimeOf(name), title: name }); return; }

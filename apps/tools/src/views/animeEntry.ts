@@ -37,7 +37,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     // The list entry
     const e = a.entry;
     const track = h('section', { class: 'card anime-track' }, h('h3', null, t('tracking')),
-      !al.linked() ? h('p', { class: 'hint' }, t('anilistLinkFirst'), ' ', h('button', { type: 'button', class: 'btn text small', onclick: () => navigate('/settings/anime') }, t('anilistSignIn')))
+      !al.linked() ? h('p', { class: 'hint' }, t('anilistLinkFirst'), ' ', h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(() => draw())) }, t('anilistSignInWith')))
         : h('div', { class: 'track-row' },
           pickButton(t('animeStatus'), al.AL_STATUSES.map((st) => [st, statusName(st)] as [al.AlStatus, string]), e?.status ?? 'CURRENT', (v) => void saveEntry({ ...(e ?? { progress: 0, score: 0 }), status: v, ...(v === 'COMPLETED' && a!.episodes ? { progress: a!.episodes, completedAt: e?.completedAt ?? al.today() } : {}), ...(v === 'CURRENT' && !e?.startedAt ? { startedAt: al.today() } : {}) }), t('close')),
           h('div', { class: 'progress-ctl' }, iconButton('minus', t('less'), () => e && e.progress > 0 && void saveEntry({ ...e, progress: e.progress - 1 })), h('span', { class: 'progress-num' }, `${localDigits(e?.progress ?? 0, 'prose')}${total ? ` / ${localDigits(total, 'prose')}` : ''}`), iconButton('plus', t('more'), () => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: (e?.progress ?? 0) + 1 }))),

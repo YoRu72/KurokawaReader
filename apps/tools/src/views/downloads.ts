@@ -174,6 +174,15 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       const apps = x.kind === 'torrent' ? x.files.filter((f) => /\.(apk|apks|xapk|apkm)$/i.test(f.path)).map((f) => ({ path: `${base}/${f.path}`, name: f.path.split('/').pop() ?? f.path })) : /\.(apk|apks|xapk|apkm)$/i.test(displayName(x)) ? [{ path: `${base}/${displayName(x)}`, name: displayName(x) }] : [];
       if (apps.length) void import('./apk').then((m) => { if (!m.canInstallApps()) return; const at = sh.body.children[1] ?? null; for (const a of apps.slice(0, 8)) sh.body.insertBefore(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.installSheet(a.path); } }, icon('apps'), h('span', { class: 'name' }, apps.length > 1 ? `${t('installApp')} · ${a.name}` : t('installApp'))), at); });
     }
+    // (An iOS app among what came: looked into, and handed to the iPhone's installer.)
+    if (x.state === 'done' && (x.kind !== 'torrent' ? /\.ipa$/i.test(displayName(x)) : x.files.some((f) => /\.ipa$/i.test(f.path)))) {
+      const f = x.kind === 'torrent' ? x.files.find((g) => /\.ipa$/i.test(g.path)) : undefined; const rel = f ? f.path : displayName(x);
+      row('apps', t('ipaTitle'), () => void (async () => {
+        let file: Blob | undefined;
+        try { if (x.dir && !x.dir.startsWith('content:')) { const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(`${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/` : ''}${rel}`); if (u) file = await (await fetch(u)).blob(); } } catch { /* the link alone */ }
+        const m = await import('./ipa'); await m.ipaSheet({ file, url: x.source.url, name: rel.split('/').pop() });
+      })());
+    }
     if (x.state === 'done' && x.dir && !x.dir.startsWith('content:') && x.kind !== 'torrent') { const fp = `${x.dir.replace(/[\\/]$/, '')}/${displayName(x)}`; void import('./convert').then((m) => { const k = m.kindOf(displayName(x)); const at = sh.body.children[2] ?? null; if (m.canConvert() && k) { sh.body.insertBefore(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.convertSheet(fp, 'convert'); } }, icon('convert'), h('span', { class: 'name' }, t('convertTitle'))), at); if (k !== 'image' || true) sh.body.insertBefore(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); void m.convertSheet(fp, 'shrink'); } }, icon('archive'), h('span', { class: 'name' }, t('shrinkTitle'))), at); } }); row('check', t('verifyTitle'), () => void import('../downloads/prism').then((m) => m.verifySheet(fp))); }
     if (x.source.magnet) row('copy', t('copyMagnet'), () => void navigator.clipboard?.writeText(x.source.magnet!).then(() => toast(t('copied'))));
     if (x.source.url) row('copy', t('copyLink'), () => void navigator.clipboard?.writeText(x.source.url!).then(() => toast(t('copied'))));
