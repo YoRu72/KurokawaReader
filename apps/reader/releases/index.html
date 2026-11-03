@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kurokawa Releases</title>
+<meta name="description" content="Download Kurokawa Reader and Kurokawa Tools for Android, iOS, Windows, macOS, Linux and the web — every release and its notes.">
+<link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --brand: #1F7FE0; --brand-2: #55B6FF; --on-brand: #fff;
+  --bg: #F6F8FC; --surface: #FFFFFF; --surface-2: #EDF2FA; --surface-3: #E1E9F6;
+  --text: #121A26; --muted: #556275; --line: #D6DFEC; --chip: #DCEBFF; --on-chip: #0B4A8F;
+  --fix: #0E7A4E; --fix-bg: #DDF5EA; --new: #6B3FD6; --new-bg: #ECE5FF;
+  --shadow: 0 1px 2px rgba(16,32,64,.06), 0 6px 24px rgba(16,32,64,.06);
+  --r-xl: 32px; --r-l: 24px; --r-m: 16px; --r-s: 12px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --brand: #4FA3FF; --brand-2: #8CCBFF; --on-brand: #04223F;
+  --bg: #0D1117; --surface: #151B24; --surface-2: #1B2330; --surface-3: #243042;
+  --text: #E7EDF6; --muted: #9AA8BC; --line: #2A3546; --chip: #1C3756; --on-chip: #B9DAFF;
+  --fix: #6FDDA9; --fix-bg: #12352A; --new: #BCA6FF; --new-bg: #2A2150;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.25); color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --brand: #4FA3FF; --brand-2: #8CCBFF; --on-brand: #04223F;
+  --bg: #0D1117; --surface: #151B24; --surface-2: #1B2330; --surface-3: #243042;
+  --text: #E7EDF6; --muted: #9AA8BC; --line: #2A3546; --chip: #1C3756; --on-chip: #B9DAFF;
+  --fix: #6FDDA9; --fix-bg: #12352A; --new: #BCA6FF; --new-bg: #2A2150;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.25); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--brand); }
+button, input { font: inherit; color: inherit; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* Top bar */
+.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.top .wrap { display: flex; align-items: center; gap: 10px; min-height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; color: var(--text); margin-inline-end: auto; }
+.brand img { width: 32px; height: 32px; border-radius: 9px; box-shadow: var(--shadow); }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 4px; gap: 2px; }
+.seg button { border: 0; background: transparent; padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 600; color: var(--muted); transition: background .2s, color .2s; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.icon-btn { width: 40px; height: 40px; border-radius: 999px; border: 0; background: var(--surface-2); cursor: pointer; display: grid; place-items: center; flex: none; }
+.icon-btn:hover { background: var(--surface-3); }
+.icon-btn svg { width: 20px; height: 20px; }
+.lang { width: auto; padding: 0 14px; font-weight: 600; }
+
+/* Hero */
+.hero { position: relative; margin: 24px 0 8px; padding: 40px 32px; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+.hero::before, .hero::after { content: ""; position: absolute; border-radius: 50%; filter: blur(2px); opacity: .55; pointer-events: none; }
+.hero::before { width: 420px; height: 420px; inset-inline-end: -140px; top: -180px; background: radial-gradient(circle at 30% 30%, var(--brand-2), transparent 65%); }
+.hero::after { width: 320px; height: 320px; inset-inline-end: 120px; bottom: -220px; background: radial-gradient(circle, color-mix(in srgb, var(--brand) 55%, transparent), transparent 70%); }
+.hero-in { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; }
+.app-tile { width: 112px; height: 112px; border-radius: 30px; background: #fff; box-shadow: 0 10px 30px rgba(31,127,224,.28); display: grid; place-items: center; }
+.app-tile img { width: 112px; height: 112px; border-radius: 30px; }
+.hero h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); line-height: 1.15; letter-spacing: -.01em; }
+.tag { margin: 8px 0 0; color: var(--muted); font-size: 17px; max-width: 56ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; background: var(--chip); color: var(--on-chip); font-size: 14px; font-weight: 600; }
+.chip.ghost { background: var(--surface-2); color: var(--muted); font-weight: 500; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.btn { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; border: 0; cursor: pointer; border-radius: 999px; padding: 12px 22px; font-weight: 600; transition: transform .15s, box-shadow .2s, background .2s; }
+.btn:active { transform: scale(.97); }
+.btn svg { width: 20px; height: 20px; flex: none; }
+.btn.primary { background: var(--brand); color: var(--on-brand); box-shadow: 0 6px 18px color-mix(in srgb, var(--brand) 35%, transparent); padding: 14px 26px; font-size: 17px; }
+.btn.primary:hover { box-shadow: 0 10px 26px color-mix(in srgb, var(--brand) 45%, transparent); }
+.btn.primary small { font-weight: 500; opacity: .85; }
+.btn.tonal { background: var(--chip); color: var(--on-chip); }
+.btn.tonal:hover { background: color-mix(in srgb, var(--chip) 80%, var(--brand) 20%); }
+
+/* Platforms */
+h2 { scroll-margin-top: 80px; font-size: 24px; margin: 40px 0 14px; letter-spacing: -.01em; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.plat { min-width: 0; background: var(--surface); border-radius: var(--r-l); padding: 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; border: 2px solid transparent; }
+.plat.mine { border-color: color-mix(in srgb, var(--brand) 55%, transparent); }
+.plat-h { display: flex; align-items: center; gap: 12px; }
+.plat-ic { width: 44px; height: 44px; border-radius: 14px; background: var(--chip); color: var(--on-chip); display: grid; place-items: center; flex: none; }
+.plat-ic svg { width: 24px; height: 24px; }
+.plat h3 { margin: 0; font-size: 18px; }
+.plat .you { font-size: 12px; font-weight: 600; color: var(--brand); }
+.file { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--text); padding: 10px 12px; border-radius: var(--r-s); background: var(--surface-2); transition: background .15s; }
+.file:hover { background: var(--surface-3); }
+.file .t { flex: 1; min-width: 0; }
+.file b { display: block; font-weight: 600; font-size: 15px; }
+.file span { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.file .sz { flex: none; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; direction: ltr; }
+.file svg { width: 18px; height: 18px; flex: none; color: var(--brand); }
+.hint { color: var(--muted); font-size: 13px; margin: 0; }
+.copy { display: flex; gap: 8px; align-items: center; background: var(--surface-2); border-radius: var(--r-s); padding: 6px 6px 6px 12px; }
+[dir="rtl"] .copy { padding: 6px 12px 6px 6px; }
+.copy code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; direction: ltr; text-align: left; }
+.copy button { border: 0; background: var(--chip); color: var(--on-chip); border-radius: 999px; padding: 6px 14px; cursor: pointer; font-weight: 600; font-size: 13px; flex: none; }
+
+/* Releases */
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 40px 0 14px; }
+.bar h2 { margin: 0; margin-inline-end: auto; }
+.search { display: flex; align-items: center; gap: 8px; background: var(--surface); border-radius: 999px; padding: 0 16px; box-shadow: var(--shadow); min-width: 0; flex: 0 1 320px; }
+.search svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+.search input { border: 0; background: transparent; outline: none; padding: 11px 0; width: 100%; min-width: 0; }
+.count { color: var(--muted); font-size: 14px; width: 100%; margin-top: -4px; }
+.rel { min-width: 0; background: var(--surface); border-radius: var(--r-l); box-shadow: var(--shadow); margin-bottom: 14px; overflow: hidden; scroll-margin-top: 80px; }
+.rel-h { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 18px 22px 0; }
+.rel-h h3 { margin: 0; font-size: 22px; direction: ltr; }
+.rel-h .date { color: var(--muted); font-size: 14px; margin-inline-start: auto; }
+.badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--brand); color: var(--on-brand); }
+.badge.pre { background: var(--surface-3); color: var(--muted); }
+.notes { padding: 6px 22px 6px; direction: ltr; text-align: left; }
+.notes h4 { display: inline-flex; align-items: center; gap: 6px; margin: 14px 0 6px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; padding: 3px 10px; border-radius: 8px; background: var(--surface-2); color: var(--muted); }
+.notes h4.fix { background: var(--fix-bg); color: var(--fix); }
+.notes h4.new { background: var(--new-bg); color: var(--new); }
+.notes ul { margin: 0; padding-left: 20px; }
+.notes li { margin: 6px 0; }
+.notes li::marker { color: var(--brand); }
+.notes p { margin: 8px 0; }
+.notes code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: .9em; }
+.notes.ar-heads { }
+.rtl-note { padding: 0 22px; color: var(--muted); font-size: 13px; }
+details.files { border-top: 1px solid var(--line); margin-top: 10px; }
+details.files summary { list-style: none; cursor: pointer; padding: 14px 22px; display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--brand); }
+details.files summary::-webkit-details-marker { display: none; }
+details.files summary svg { width: 18px; height: 18px; transition: transform .2s; }
+details.files[open] summary svg { transform: rotate(180deg); }
+details.files summary .gh { margin-inline-start: auto; font-weight: 500; font-size: 14px; }
+.flist { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; padding: 0 22px 20px; }
+.flist .file b { direction: ltr; text-align: start; overflow-wrap: anywhere; font-size: 14px; }
+.more { display: flex; justify-content: center; margin: 8px 0 24px; }
+.empty, .error { text-align: center; color: var(--muted); padding: 40px 16px; background: var(--surface); border-radius: var(--r-l); }
+footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px 16px 48px; }
+.skel { height: 160px; border-radius: var(--r-l); background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%); background-size: 200% 100%; animation: sh 1.4s infinite; margin-bottom: 14px; }
+@keyframes sh { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } .btn, details.files summary svg { transition: none; } }
+@media (max-width: 640px) {
+  .hero { padding: 28px 20px; border-radius: var(--r-l); }
+  .hero-in { grid-template-columns: 1fr; gap: 18px; }
+  .app-tile, .app-tile img { width: 80px; height: 80px; border-radius: 22px; }
+  .brand span { display: none; }
+  .seg button { padding: 6px 10px; }
+  .grid { grid-template-columns: 1fr; }
+  .search { flex: 1 1 100%; }
+  .btn.primary { width: 100%; justify-content: center; }
+  .rel-h .date { width: 100%; margin: 0; }
+  .flist { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#" id="brand"><img id="brandIcon" src="../icons/icon.svg" alt=""><span>Kurokawa</span></a>
+  <div class="seg" role="group" id="appSeg"><button data-app="reader" aria-pressed="true"></button><button data-app="tools" aria-pressed="false"></button></div>
+  <button class="icon-btn lang" id="langBtn" type="button"></button>
+  <button class="icon-btn" id="themeBtn" type="button"></button>
+</div></header>
+
+<main class="wrap">
+  <section class="hero" aria-labelledby="appName">
+    <div class="hero-in">
+      <div class="app-tile"><img id="heroIcon" src="../icons/icon.svg" alt=""></div>
+      <div>
+        <h1 id="appName"></h1>
+        <p class="tag" id="tagline"></p>
+        <div class="meta" id="heroMeta"></div>
+        <div class="cta" id="cta"></div>
+      </div>
+    </div>
+  </section>
+
+  <h2 id="platTitle"></h2>
+  <div class="grid" id="plats"></div>
+
+  <div class="bar">
+    <h2 id="listTitle"></h2>
+    <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="sr" id="searchLabel"></span><input id="q" type="search" autocomplete="off"></label>
+    <div class="count" id="count"></div>
+  </div>
+  <div id="list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  <div class="more"><button class="btn tonal" id="moreBtn" type="button" hidden></button></div>
+</main>
+<footer id="foot"></footer>
+
+<script>
+(() => {
+  const REPO = 'YoRu72/KurokawaReader';
+  const SITE = 'https://yoru72.github.io/KurokawaReader/';
+  const ALTSTORE = SITE + 'altstore.json';
+  const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } } };
+
+  // ── Words ───────────────────────────────────────────────────────────────────────────────────────────────
+  const T = {
+    ar: {
+      reader: 'قارئ كروكاوا', tools: 'أدوات كروكاوا', readerShort: 'القارئ', toolsShort: 'الأدوات',
+      readerTag: 'قارئٌ يعمل دون اتصال، لكتب EPUB وPDF وWord وغيرها، عنايتُه الأولى بالحرف العربي.',
+      toolsTag: 'التنزيل والتورنت والبثّ، وما يحتاج إليه ذلك من أدوات.',
+      version: 'الإصدار', published: 'صدر', latest: 'الأحدث', pre: 'تجريبي',
+      downloadFor: 'نزّله لـ', allPlatforms: 'كل المنصّات', openWeb: 'افتح تطبيق الويب', viewGh: 'على GitHub',
+      platforms: 'نزّل أحدث إصدار', releases: 'كل الإصدارات', search: 'ابحث في الإصدارات…', more: 'اعرض المزيد',
+      thisDevice: 'جهازك', none: 'لا إصدارَ يطابق بحثك.', error: 'تعذّر تحميل الإصدارات. تجدها كلها على GitHub:',
+      notesLang: 'ملاحظات الإصدار مكتوبة بالإنجليزية.', fixes: 'الإصلاحات', new: 'الجديد', copy: 'انسخ', copied: 'نُسخ',
+      updater: 'ملفات التحديث التلقائي (لا حاجة إليها)', theme: 'المظهر', themeAuto: 'تلقائي', themeLight: 'فاتح', themeDark: 'داكن',
+      android: 'أندرويد', ios: 'iOS وiPadOS', windows: 'ويندوز', mac: 'ماك', linux: 'لينكس', web: 'الويب',
+      arm64: 'لأغلب الهواتف', v7a: 'للهواتف القديمة (32 بت)', x86: 'للمحاكيات وأجهزة x86', universal: 'لكل جهاز، وحجمه أكبر',
+      androidHint: 'لا تعرف أيّها يناسبك؟ اختر الأول، فإن لم يُثبَّت فالعامّ.',
+      installer: 'المثبِّت', installerSub: 'يثبّت التطبيق ويحدّثه تلقائيًا', portable: 'نسخة محمولة لا تحتاج إلى تثبيت',
+      dmg: 'غير موقَّع: انقر عليه بالزر الأيمن ثم «فتح» في أول مرة', appimage: 'اجعله قابلًا للتشغيل ثم شغّله',
+      ipa: 'غير موقَّع: ثبّته بـ AltStore أو SideStore أو TrollStore', altstore: 'مصدر AltStore وSideStore — أضفه فتصلك التحديثات:',
+      webApp: 'يعمل في المتصفح، ويمكن تثبيته على الشاشة الرئيسية.', webZip: 'لمن أراد استضافته بنفسه',
+      packs: 'حزم إضافية (تُنزَّل من داخل التطبيق)', other: 'ملفات أخرى',
+      foot: 'كروكاوا — مفتوح المصدر على', made: 'حُدّثت القائمة',
+    },
+    en: {
+      reader: 'Kurokawa Reader', tools: 'Kurokawa Tools', readerShort: 'Reader', toolsShort: 'Tools',
+      readerTag: 'An offline reader for EPUB, PDF, Word and more — with Arabic typography at its heart.',
+      toolsTag: 'Downloads, torrents, streaming — and the tools around them.',
+      version: 'Version', published: 'Released', latest: 'Latest', pre: 'Pre-release',
+      downloadFor: 'Download for', allPlatforms: 'All platforms', openWeb: 'Open the web app', viewGh: 'On GitHub',
+      platforms: 'Get the latest version', releases: 'All releases', search: 'Search releases…', more: 'Show more',
+      thisDevice: 'Your device', none: 'No release matches your search.', error: 'Couldn’t load the releases. They are all on GitHub:',
+      notesLang: '', fixes: 'Fixes', new: 'New', copy: 'Copy', copied: 'Copied',
+      updater: 'Auto-update files (not needed)', theme: 'Theme', themeAuto: 'Auto', themeLight: 'Light', themeDark: 'Dark',
+      android: 'Android', ios: 'iOS & iPadOS', windows: 'Windows', mac: 'macOS', linux: 'Linux', web: 'Web',
+      arm64: 'Most phones', v7a: 'Older 32-bit phones', x86: 'Emulators and x86 devices', universal: 'Any device, larger',
+      androidHint: 'Not sure? Take the first; if it won’t install, the universal one.',
+      installer: 'Installer', installerSub: 'Installs the app and keeps it updated', portable: 'Portable, no install needed',
+      dmg: 'Unsigned: right-click → Open the first time', appimage: 'Make it executable, then run it',
+      ipa: 'Unsigned: install with AltStore, SideStore or TrollStore', altstore: 'AltStore / SideStore source — add it for updates:',
+      webApp: 'Runs in the browser; install it to your home screen.', webZip: 'To host it yourself',
+      packs: 'Add-on packs (downloaded from inside the app)', other: 'Other files',
+      foot: 'Kurokawa — open source on', made: 'List updated',
+    },
+  };
+  let lang = store.get('kr.rel.lang') || ((navigator.language || '').toLowerCase().startsWith('ar') ? 'ar' : 'en');
+  if (!T[lang]) lang = 'ar';
+  const t = (k) => T[lang][k] ?? T.en[k] ?? k;
+  // (Arabic counted nouns: one, two, three to ten, eleven and up.)
+  const count = (n, [one, two, few, many], en) => {
+    if (lang !== 'ar') return `${n} ${n === 1 ? en[0] : en[1]}`;
+    const d = num(n);
+    if (n === 0) return `لا ${few}`; if (n === 1) return one; if (n === 2) return two;
+    const r = n % 100; return r >= 3 && r <= 10 ? `${d} ${few}` : `${d} ${many}`;
+  };
+  const num = (n) => new Intl.NumberFormat(lang === 'ar' ? 'ar-EG' : 'en').format(n);
+  const date = (s) => new Intl.DateTimeFormat(lang === 'ar' ? 'ar-EG-u-ca-gregory' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(s));
+  const ago = (s) => {
+    const d = (Date.now() - new Date(s).getTime()) / 864e5; const rtf = new Intl.RelativeTimeFormat(lang === 'ar' ? 'ar-EG' : 'en', { numeric: 'auto' });
+    if (d < 1) return rtf.format(-Math.round(d * 24), 'hour'); if (d < 30) return rtf.format(-Math.round(d), 'day'); if (d < 365) return rtf.format(-Math.round(d / 30), 'month'); return rtf.format(-Math.round(d / 365), 'year');
+  };
+  const size = (b) => b >= 1048576 ? `${(b / 1048576).toFixed(b >= 104857600 ? 0 : 1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`;
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+  // ── Icons (generic shapes) ──────────────────────────────────────────────────────────────────────────────
+  const I = {
+    phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
+    tablet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2.5" width="16" height="19" rx="2.5"/><circle cx="12" cy="18" r=".6" fill="currentColor"/></svg>',
+    monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 16.5V21"/></svg>',
+    laptop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="11" rx="1.8"/><path d="M2 19.5h20"/></svg>',
+    terminal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
+    globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M2.5 12h19M12 2.5c2.8 2.8 4 6 4 9.5s-1.2 6.7-4 9.5c-2.8-2.8-4-6-4-9.5s1.2-6.7 4-9.5z"/></svg>',
+    box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m-5-5 5 5 5-5M5 20h14"/></svg>',
+    open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+    auto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></svg>',
+  };
+
+  // ── Which file is which ─────────────────────────────────────────────────────────────────────────────────
+  const kindOf = (name) => {
+    const n = name.toLowerCase();
+    if (/^latest.*\.yml$|\.blockmap$|mac-universal\.zip$/.test(n)) return ['updater'];
+    if (/-pack-|packs\.json$/.test(n)) return ['packs'];
+    if (n.endsWith('.apk')) return ['android', n.includes('arm64') ? 'arm64' : n.includes('armeabi') ? 'v7a' : n.includes('x86') ? 'x86' : 'universal'];
+    if (n.endsWith('.ipa')) return ['ios', 'ipa'];
+    if (n.endsWith('-portable.exe')) return ['windows', 'portable'];
+    if (n.endsWith('.exe')) return ['windows', 'installer'];
+    if (n.endsWith('.dmg')) return ['mac', 'dmg'];
+    if (n.endsWith('.appimage')) return ['linux', 'appimage'];
+    if (n.endsWith('web.zip')) return ['web', 'webZip'];
+    return ['other'];
+  };
+  const ORDER = { arm64: 0, v7a: 1, x86: 2, universal: 3, installer: 0, portable: 1 };
+  const PLATS = [['android', 'phone'], ['ios', 'tablet'], ['windows', 'monitor'], ['mac', 'laptop'], ['linux', 'terminal'], ['web', 'globe']];
+  const ua = navigator.userAgent; const mine = /android/i.test(ua) ? 'android' : /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) ? 'ios' : /windows/i.test(ua) ? 'windows' : /mac os x|macintosh/i.test(ua) ? 'mac' : /linux|x11|cros/i.test(ua) ? 'linux' : 'web';
+
+  const fileLink = (a, label, sub) => `<a class="file" href="${esc(a.url)}" rel="nofollow">${I.down}<span class="t"><b>${esc(label)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</span><span class="sz">${size(a.size)}</span></a>`;
+
+  // ── Notes: the subset of Markdown the notes use ─────────────────────────────────────────────────────────
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" rel="nofollow">$1</a>');
+  const md = (src) => {
+    let html = ''; const stack = []; let para = [];
+    const flush = () => { if (para.length) { html += `<p>${inline(para.join(' '))}</p>`; para = []; } };
+    const close = (to) => { while (stack.length > to) { html += '</li></ul>'; stack.pop(); } };
+    for (const raw of src.split('\n')) {
+      const line = raw.replace(/\s+$/, '');
+      if (!line.trim()) { flush(); continue; }
+      const h = /^#{2,4}\s+(.*)$/.exec(line);
+      if (h) { flush(); close(0); const w = h[1].trim(); const k = /^fix/i.test(w) ? 'fix' : /^new|^added/i.test(w) ? 'new' : ''; const label = k === 'fix' ? t('fixes') : k === 'new' ? t('new') : w; html += `<h4 class="${k}" dir="auto">${esc(label)}</h4>`; continue; }
+      const li = /^(\s*)[-*]\s+(.*)$/.exec(line);
+      if (li) {
+        flush(); const depth = Math.floor(li[1].length / 2) + 1;
+        if (depth > stack.length) { while (stack.length < depth) { html += '<ul><li>'; stack.push(1); } }
+        else { close(depth); html += '</li><li>'; }
+        html += inline(li[2]); continue;
+      }
+      if (/^\|/.test(line)) continue;
+      if (stack.length && /^\s+/.test(raw)) { html += ' ' + inline(line.trim()); continue; }
+      close(0); para.push(line.trim());
+    }
+    flush(); close(0); return html;
+  };
+
+  // ── State and drawing ───────────────────────────────────────────────────────────────────────────────────
+  let data = null; let app = (location.hash.match(/^#(reader|tools)/) || [])[1] || store.get('kr.rel.app') || 'reader';
+  let shown = 8; let query = '';
+  const $ = (id) => document.getElementById(id);
+  // (An app whose every release is marked «pre-release» on GitHub — so that the other app stays GitHub's «latest» —: none taken as one.)
+  const list = () => { const rs = (data?.releases ?? []).filter((r) => r.app === app); return rs.some((r) => !r.pre) ? rs : rs.map((r) => ({ ...r, pre: false })); };
+
+  function chrome() {
+    document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+    document.title = lang === 'ar' ? `إصدارات ${t(app)}` : `${t(app)} Releases`;
+    for (const b of $('appSeg').children) { b.textContent = t(b.dataset.app + 'Short'); b.setAttribute('aria-pressed', String(b.dataset.app === app)); }
+    $('appSeg').setAttribute('aria-label', lang === 'ar' ? 'التطبيق' : 'App');
+    $('langBtn').textContent = lang === 'ar' ? 'English' : 'العربية';
+    $('langBtn').setAttribute('lang', lang === 'ar' ? 'en' : 'ar');
+    const th = store.get('kr.rel.theme') || 'auto';
+    $('themeBtn').innerHTML = th === 'dark' ? I.moon : th === 'light' ? I.sun : I.auto;
+    $('themeBtn').title = `${t('theme')}: ${t('theme' + th[0].toUpperCase() + th.slice(1))}`; $('themeBtn').setAttribute('aria-label', $('themeBtn').title);
+    const icon = app === 'tools' ? '../tools/icons/icon.svg' : '../icons/icon.svg';
+    $('heroIcon').src = icon; $('brandIcon').src = icon;
+    $('appName').textContent = t(app); $('tagline').textContent = t(app + 'Tag');
+    $('platTitle').textContent = t('platforms'); $('listTitle').textContent = t('releases');
+    $('q').placeholder = t('search'); $('searchLabel').textContent = t('search'); $('moreBtn').textContent = t('more');
+    $('foot').innerHTML = `${esc(t('foot'))} <a href="https://github.com/${REPO}">GitHub</a>${data?.made ? ` · ${esc(t('made'))} ${esc(date(data.made))}` : ''}`;
+  }
+
+  function hero() {
+    const rs = list(); const r = rs.find((x) => !x.pre) ?? rs[0];
+    if (!r) { $('heroMeta').innerHTML = ''; $('cta').innerHTML = ''; return; }
+    $('heroMeta').innerHTML = `<span class="chip">${esc(t('version'))} <bdi dir="ltr">${esc(r.version)}</bdi></span><span class="chip ghost">${esc(t('published'))} ${esc(ago(r.date))}</span>`;
+    const pick = (p) => r.assets.filter((a) => kindOf(a.name)[0] === p).sort((a, b) => (ORDER[kindOf(a.name)[1]] ?? 9) - (ORDER[kindOf(b.name)[1]] ?? 9))[0];
+    let main = '';
+    if (mine === 'web' || (mine === 'ios' && !pick('ios'))) main = app === 'reader' ? `<a class="btn primary" href="${SITE}">${I.open}<span>${esc(t('openWeb'))}</span></a>` : `<a class="btn primary" href="${SITE}tools/">${I.open}<span>${esc(t('openWeb'))}</span></a>`;
+    else { const a = pick(mine); if (a) main = `<a class="btn primary" href="${esc(a.url)}" rel="nofollow">${I.down}<span>${esc(lang === 'ar' ? 'نزّله ل' + t(mine) : t('downloadFor') + ' ' + t(mine))} <small>· ${size(a.size)}</small></span></a>`; }
+    $('cta').innerHTML = `${main}<a class="btn tonal" href="#platforms" id="toPlats">${esc(t('allPlatforms'))}</a><a class="btn tonal" href="${esc(r.url)}">${esc(t('viewGh'))}</a>`;
+    $('toPlats').onclick = (e) => { e.preventDefault(); $('platTitle').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  }
+
+  function platforms() {
+    const rs = list(); const r = rs.find((x) => !x.pre) ?? rs[0];
+    if (!r) { $('plats').innerHTML = ''; return; }
+    const by = {}; for (const a of r.assets) { const [p, k] = kindOf(a.name); (by[p] ??= []).push([k, a]); }
+    let html = '';
+    for (const [p, ic] of PLATS) {
+      const files = (by[p] ?? []).sort((x, y) => (ORDER[x[0]] ?? 9) - (ORDER[y[0]] ?? 9));
+      const hasWeb = p === 'web';
+      if (!files.length && !hasWeb) continue;
+      let body = '';
+      if (p === 'android') body = files.map(([k, a], i) => fileLink(a, a.name.replace(/^.*?-\d[\d.]*-/, '').replace(/\.apk$/, ''), t(k))).join('') + `<p class="hint">${esc(t('androidHint'))}</p>`;
+      else if (p === 'ios') body = files.map(([k, a]) => fileLink(a, 'IPA', t(k))).join('') + (app === 'reader' ? `<p class="hint">${esc(t('altstore'))}</p><div class="copy"><code>${esc(ALTSTORE)}</code><button type="button" data-copy="${esc(ALTSTORE)}">${esc(t('copy'))}</button></div>` : '');
+      else if (p === 'web') body = `<a class="file" href="${app === 'reader' ? SITE : SITE + 'tools/'}">${I.open}<span class="t"><b>${esc(t('openWeb'))}</b><span>${esc(t('webApp'))}</span></span></a>` + files.map(([k, a]) => fileLink(a, a.name, t(k))).join('');
+      else body = files.map(([k, a]) => fileLink(a, k === 'installer' ? t('installer') : k === 'portable' ? (lang === 'ar' ? 'محمولة' : 'Portable') : k === 'appimage' ? 'AppImage' : k === 'dmg' ? 'DMG' : a.name.replace(/^.*?-\d[\d.]*-/, ''), k === 'portable' ? t('portable') : k === 'installer' ? t('installerSub') : t(k))).join('');
+      html += `<section class="plat${p === mine ? ' mine' : ''}"><div class="plat-h"><div class="plat-ic">${I[ic]}</div><div><h3>${esc(t(p))}</h3>${p === mine ? `<div class="you">${esc(t('thisDevice'))}</div>` : ''}</div></div>${body}</section>`;
+    }
+    $('plats').innerHTML = html; $('plats').id = 'plats';
+  }
+
+  function releases() {
+    const q = query.trim().toLowerCase();
+    const all = list(); const rs = q ? all.filter((r) => r.version.includes(q) || r.notes.toLowerCase().includes(q)) : all;
+    const latest = all.find((x) => !x.pre);
+    $('count').textContent = q
+      ? count(rs.length, ['إصدارٌ واحد يطابق بحثك', 'إصداران يطابقان بحثك', 'إصدارات تطابق بحثك', 'إصدارًا يطابق بحثك'], ['release matches', 'releases match'])
+      : count(all.length, ['إصدارٌ واحد', 'إصداران', 'إصدارات', 'إصدارًا'], ['release', 'releases']);
+    if (!rs.length) { $('list').innerHTML = `<div class="empty">${esc(t('none'))}</div>`; $('moreBtn').hidden = true; return; }
+    $('list').innerHTML = rs.slice(0, shown).map((r) => {
+      const groups = {}; for (const a of r.assets) { const [p, k] = kindOf(a.name); (groups[p] ??= []).push([k, a]); }
+      const main = r.assets.filter((a) => !['updater', 'packs'].includes(kindOf(a.name)[0]));
+      const files = main.map((a) => { const [p, k] = kindOf(a.name); return fileLink(a, a.name, p === 'other' ? '' : `${t(p)}${k && T[lang][k] && p !== 'web' ? ' — ' + t(k) : ''}`); }).join('');
+      const extra = [['packs', 'packs'], ['updater', 'updater']].map(([g, l]) => groups[g]?.length ? `<p class="hint" style="grid-column:1/-1;margin-top:6px">${esc(t(l))}</p>` + groups[g].map(([, a]) => fileLink(a, a.name, '')).join('') : '').join('');
+      const n = r.assets.length;
+      const filesLabel = lang === 'ar' ? (n === 1 ? 'ملفٌّ واحد' : n === 2 ? 'ملفّان' : n % 100 >= 3 && n % 100 <= 10 ? `${num(n)} ملفات` : `${num(n)} ملفًّا`) : `${n} file${n === 1 ? '' : 's'}`;
+      return `<article class="rel" id="${esc(r.tag)}"><div class="rel-h"><h3>${esc(r.version)}</h3>${r === latest ? `<span class="badge">${esc(t('latest'))}</span>` : ''}${r.pre ? `<span class="badge pre">${esc(t('pre'))}</span>` : ''}<span class="date" title="${esc(new Date(r.date).toISOString())}">${esc(date(r.date))}</span></div>`
+        + (r.notes ? `${lang === 'ar' && t('notesLang') ? `<div class="rtl-note">${esc(t('notesLang'))}</div>` : ''}<div class="notes">${md(r.notes)}</div>` : '')
+        + `<details class="files"><summary>${I.chev}<span>${esc(filesLabel)}</span><a class="gh" href="${esc(r.url)}">${esc(t('viewGh'))}</a></summary><div class="flist">${files}${extra}</div></details></article>`;
+    }).join('');
+    $('moreBtn').hidden = rs.length <= shown;
+  }
+
+  function draw() { chrome(); hero(); platforms(); releases(); }
+
+  // ── Events ──────────────────────────────────────────────────────────────────────────────────────────────
+  $('appSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b || b.dataset.app === app) return; app = b.dataset.app; store.set('kr.rel.app', app); shown = 8; history.replaceState(null, '', '#' + app); draw(); });
+  $('langBtn').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; store.set('kr.rel.lang', lang); draw(); };
+  const applyTheme = () => { const th = store.get('kr.rel.theme') || 'auto'; if (th === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', th); };
+  $('themeBtn').onclick = () => { const order = ['auto', 'light', 'dark']; const th = store.get('kr.rel.theme') || 'auto'; store.set('kr.rel.theme', order[(order.indexOf(th) + 1) % 3]); applyTheme(); chrome(); };
+  let timer; $('q').addEventListener('input', (e) => { clearTimeout(timer); timer = setTimeout(() => { query = e.target.value; shown = 8; releases(); }, 120); });
+  $('moreBtn').onclick = () => { shown += 10; releases(); };
+  $('brand').onclick = (e) => { e.preventDefault(); scrollTo({ top: 0, behavior: 'smooth' }); };
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copy]'); if (!b) return;
+    const done = () => { b.textContent = t('copied'); setTimeout(() => { b.textContent = t('copy'); }, 1500); };
+    (navigator.clipboard?.writeText(b.dataset.copy) ?? Promise.reject()).then(done).catch(() => { const r = document.createRange(); r.selectNodeContents(b.previousElementSibling); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
+  });
+  applyTheme(); chrome();
+
+  // ── Data: the list made when the site was published; GitHub's own as a fallback ──────────────────────────
+  const fromGitHub = async () => {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`); if (!res.ok) throw new Error(res.status);
+    const raw = await res.json();
+    const out = raw.filter((r) => !r.draft && /^(tools-)?v\d/.test(r.tag_name)).map((r) => {
+      const body = (r.body ?? '').replace(/\r/g, ''); let notes = body; const at = body.search(/^## What's new\s*$/m);
+      if (at >= 0) { notes = body.slice(at).replace(/^## What's new\s*\n/, ''); const end = notes.search(/^## /m); if (end >= 0) notes = notes.slice(0, end); }
+      return { app: r.tag_name.startsWith('tools-') ? 'tools' : 'reader', version: r.tag_name.replace(/^tools-/, '').replace(/^v/, ''), tag: r.tag_name, date: r.published_at, pre: r.prerelease, url: r.html_url, notes: notes.trim(), assets: r.assets.map((a) => ({ name: a.name, size: a.size, url: a.browser_download_url, n: a.download_count })) };
+    });
+    return { made: new Date().toISOString(), releases: out };
+  };
+  fetch('releases.json', { cache: 'no-cache' }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).catch(fromGitHub)
+    .then((d) => { data = d; draw(); const id = decodeURIComponent(location.hash.slice(1)); if (id && id !== app) { const el = document.getElementById(id); if (el) el.scrollIntoView(); } })
+    .catch(() => { $('list').innerHTML = `<div class="error">${esc(t('error'))} <a href="https://github.com/${REPO}/releases">github.com/${REPO}/releases</a></div>`; $('count').textContent = ''; });
+})();
+</script>
+</body>
+</html>

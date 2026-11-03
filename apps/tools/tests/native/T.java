@@ -95,6 +95,26 @@ public class T {
     KrDownloader.fetch(u, out11, 12, op, new AtomicBoolean(), new AtomicLong(), r11, () -> {}, new KrDownloader.Opts());
     long ms11 = System.currentTimeMillis() - t11; boolean ok11 = Arrays.equals(java.nio.file.Files.readAllBytes(out11.toPath()), data) && r11.connections > 3; capped = false;
     System.out.println("run11 scaled to " + r11.connections + " connections (started with 3) in " + ms11 + " ms, match=" + ok11);
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
+    // 12: what a finished file is, from its bytes: an APK, a bundle, an e-book, a video, a PDF, a ZIP — and only weak names changed.
+    java.util.function.BiFunction<String, String[], File> zipOf = (nm, entries) -> { try { File z = new File(dir, nm); try (java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(z))) { for (String e : entries) { zo.putNextEntry(new java.util.zip.ZipEntry(e)); zo.write(e.equals("mimetype") ? "application/epub+zip".getBytes() : new byte[] { 1, 2, 3 }); zo.closeEntry(); } } return z; } catch (Exception e) { throw new RuntimeException(e); } };
+    java.util.function.BiFunction<String, byte[], File> raw = (nm, head) -> { try { File z = new File(dir, nm); byte[] all = Arrays.copyOf(head, 1024); java.nio.file.Files.write(z.toPath(), all); return z; } catch (Exception e) { throw new RuntimeException(e); } };
+    String[][] cases = {
+      { KrDownloader.sniffExt(zipOf.apply("a.bin", new String[] { "META-INF/MANIFEST.MF", "AndroidManifest.xml", "classes.dex", "resources.arsc" })), "apk" },
+      { KrDownloader.sniffExt(zipOf.apply("b.bin", new String[] { "manifest.json", "icon.png", "com.x.apk", "config.arm64_v8a.apk" })), "xapk" },
+      { KrDownloader.sniffExt(zipOf.apply("c.bin", new String[] { "info.json", "base.apk", "split_config.en.apk" })), "apkm" },
+      { KrDownloader.sniffExt(zipOf.apply("d", new String[] { "mimetype", "META-INF/container.xml", "OEBPS/a.xhtml" })), "epub" },
+      { KrDownloader.sniffExt(zipOf.apply("e.dat", new String[] { "readme.md", "src/a.c" })), "zip" },
+      { KrDownloader.sniffExt(raw.apply("f.bin", "%PDF-1.7".getBytes())), "pdf" },
+      { KrDownloader.sniffExt(raw.apply("g.bin", new byte[] { 0, 0, 0, 0x20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm' })), "mp4" },
+      { KrDownloader.sniffExt(raw.apply("h.bin", new byte[] { 0x1a, 0x45, (byte) 0xdf, (byte) 0xa3, 0, 'm', 'a', 't', 'r', 'o', 's', 'k', 'a' })), "mkv" },
+      { KrDownloader.sniffExt(raw.apply("i.bin", "<!doctype html><html>".getBytes())), null },
+      { KrDownloader.withSniffed("Game-0.bin", "apk"), "Game-0.apk" }, { KrDownloader.withSniffed("download.php", "pdf"), "download.pdf" },
+      { KrDownloader.withSniffed("1234567", "mkv"), "1234567.mkv" }, { KrDownloader.withSniffed("pack.zip", "xapk"), "pack.xapk" },
+      { KrDownloader.withSniffed("notes.txt", "zip"), null }, { KrDownloader.withSniffed("app.apk", "apk"), null }, { KrDownloader.withSniffed("lib.jar", "zip"), null },
+      { KrDownloader.withSniffed("Movie.S01E01", "mkv"), "Movie.S01E01.mkv" },
+    };
+    boolean ok12 = true; for (String[] c : cases) if (!java.util.Objects.equals(c[0], c[1])) { ok12 = false; System.out.println("  sniff got " + c[0] + " wanted " + c[1]); }
+    System.out.println("run12 file types from their bytes: " + ok12);
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && ok12 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }

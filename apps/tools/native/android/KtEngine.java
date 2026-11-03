@@ -508,6 +508,9 @@ final class KtEngine {
                 if (x.httpOut.exists()) x.httpOut.delete();
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
+                // (What the file really is, from its first bytes — sites that send every file as «.bin» or with no type —:
+                // its extension put right, so an APK is an APK, a video plays, a book opens.)
+                try { String nm = KrDownloader.withSniffed(x.name, KrDownloader.sniffExt(x.httpOut)); if (nm != null) { File to = new File(dir, nm); if (to.exists()) to = new File(dir, freeName(dir, nm)); if (x.httpOut.renameTo(to)) { x.name = to.getName(); x.httpOut = to; } } } catch (Throwable ignored) {}
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; scan(x);
             } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
