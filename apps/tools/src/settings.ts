@@ -79,7 +79,7 @@ export interface Settings {
   net?: Partial<import('./downloads/net').NetPrefs>;
   miniAuto?: boolean;
   /** A folder of fonts for styled subtitles (the Player add-on). */
-  playerFontsDir?: string; /** A computer's installed fonts used for styled subtitles (on unless turned off). */ playerSystemFonts?: boolean;
+  playerFontsDir?: string; /** A computer's installed fonts used for styled subtitles (on unless turned off). */ playerSystemFonts?: boolean; /** The player's engine on Android: mpv (when its pack is here; the default) or the web view's own. */ playerEngine?: 'mpv' | 'web';
   /** More folders for the anime library. */
   animeLibraryDirs?: string[];
   /** Hayase's «hide spoilers»: episodes past the one you are on keep their titles and pictures hidden. */

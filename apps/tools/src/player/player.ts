@@ -21,16 +21,23 @@ import { getSettings } from '../settings';
 import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
-import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
+import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
 import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, type Cue, type AssRenderer } from './subs';
 import { request } from '../http';
 import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
 import { Picture, FILTER_PRESETS, CROPS } from './vfx';
 import { SeekPreview } from './thumbs';
+import { mpvVideo, mpvDone, type MpvControl } from './mpv';
+/** Two-letter language codes and the three-letter ones files often carry (mpv matches either). */
+const ISO3: Record<string, string> = { ar: 'ara', en: 'eng', ja: 'jpn', fr: 'fre,fra', de: 'ger,deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'chi,zho', ko: 'kor', tr: 'tur', fa: 'per,fas', ur: 'urd', hi: 'hin', id: 'ind', ms: 'may,msa', th: 'tha', vi: 'vie', nl: 'dut,nld', pl: 'pol', uk: 'ukr', sv: 'swe', he: 'heb' };
+/** The decoder's choices as mpv's options. */
+export const mpvExtra = (P: PlayerPrefs): Record<string, string> => ({ hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'hwcopy' ? 'mediacodec-copy' : 'mediacodec,mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.gpuNext ? 'gpu-next' : 'gpu' });
 const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i;
 
 export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[];
+  /** Which engine plays it: mpv (the Player add-on's, on Android with its pack) or the web view's own. */
+  engine?: 'mpv' | 'web';
   /** The show and episode when it is not a download's (an online source): for tracking, AniSkip, subtitles. */
   meta?: Task['meta'];
   /** Subtitles that come with an online source. */
@@ -48,7 +55,10 @@ export function parseTime(s: string): number | null {
 
 export function openPlayer(src: PlayerSource): void {
   const P = getPrefs(); const key = src.localPath ?? src.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
-  const video = h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' }) as HTMLVideoElement;
+  // (mpv when it is here — every codec, the file's own subtitles —, else the web view's <video>; the player is the same.)
+  const slang = (getSettings().subLangs ?? []).flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(',');
+  const video = (src.engine === 'mpv' ? mpvVideo(src.localPath ?? src.url, { start: memoryOf(key)?.pos && P.resume === 'always' ? memoryOf(key)!.pos : 0, slang, alang: P.audioLangs.flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(','), speed: P.defaultSpeed, headers: src.headers, extra: mpvExtra(P) }) : h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' })) as HTMLVideoElement;
+  const mpv: MpvControl | null = (video as HTMLVideoElement & { _mpv?: MpvControl })._mpv ?? null;
   const stage = h('div', { class: 'kt-stage' }, video, h('canvas', { class: 'kt-ass' }), h('div', { class: 'kt-subs' }), h('div', { class: 'kt-subs top' }));
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
   const mem = memoryOf(key);
@@ -69,7 +79,7 @@ export function openPlayer(src: PlayerSource): void {
   const aspectBtn = h('button', { type: 'button', class: 'kt-chip', onclick: () => cycleAspect() }, t('aspectFit'));
   const skipBtn = h('button', { type: 'button', class: 'kt-chip', title: t('skipAhead'), onclick: () => seekBy(getPrefs().skipAmount) }, `+${localDigits(P.skipAmount)}`);
   // Your own buttons (REX Player's custom buttons), before the built-in ones.
-  const customBox = h('span', { class: 'kt-custom' });
+  const customBox = h('span', { class: 'kt-custom' }); const toolBox = h('span', { class: 'kt-tools' });
   const customLabel = (b: PlayerPrefs['customButtons'][number]) => (b.act === 'seek' ? `${(b.v ?? 0) > 0 ? '+' : '−'}${localDigits(Math.abs(b.v ?? 0))}s` : b.act === 'speed' ? `${localDigits(b.v ?? 1)}×` : b.act === 'jump' ? `→${fmtTime(b.v ?? 0)}` : b.act === 'ab' ? 'A/B' : b.act === 'shot' ? '📷' : b.act === 'sub' ? 'CC' : b.act === 'audio' ? '♪' : '⇥CC');
   const runCustom = (b: PlayerPrefs['customButtons'][number]) => { if (b.act === 'seek') seekBy(b.v ?? 10); else if (b.act === 'speed') { setSpeed(speed === (b.v ?? 1) ? 1 : (b.v ?? 1)); flashText(`${localDigits(speed)}×`); } else if (b.act === 'jump') seekTo(b.v ?? 0); else if (b.act === 'ab') abPress(); else if (b.act === 'shot') screenshot(); else if (b.act === 'sub') cycleSub(); else if (b.act === 'audio') cycleAudio(); else subLine(1); };
   const drawCustom = () => customBox.replaceChildren(...getPrefs().customButtons.map((b) => h('button', { type: 'button', class: 'kt-chip', onclick: () => runCustom(b) }, customLabel(b))));
@@ -78,7 +88,7 @@ export function openPlayer(src: PlayerSource): void {
   const bottom = h('div', { class: 'kt-bottom' },
     h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
     h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('undo', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null,
-      h('span', { class: 'grow' }), customBox, skipBtn, speedBtn, abBtn, aspectBtn, iconButton('camera', t('screenshot'), () => screenshot()), 'pictureInPictureEnabled' in document ? iconButton('mini', t('pip'), () => void pip()) : null, iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
+      h('span', { class: 'grow' }), customBox, toolBox, iconButton('grid', t('playerTools'), () => toolsSheet()), iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
   const centre = h('div', { class: 'kt-centre' }, h('div', { class: 'kt-flash' })); const flash = centre.firstChild as HTMLElement;
   const ripple = h('div', { class: 'kt-ripple', hidden: true });
   const unlockBtn = iconButton('lock', t('unlock'), () => lock(false)); unlockBtn.classList.add('kt-unlock'); unlockBtn.hidden = true;
@@ -92,10 +102,10 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- playback
   if (src.headers && Object.keys(src.headers).length) toast(t('playerHeadersNote'));
-  video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
+  if (!mpv) video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
   video.addEventListener('loadedmetadata', () => {
     timeEnd.textContent = fmtTime(video.duration); applyAspect(); applyTransform(); drawMarks();
-    if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always') video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
+    if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always' && !mpv) video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
     if (mem?.speed) setSpeed(mem.speed); if (mem?.subDelay) subDelay = mem.subDelay;
     void video.play().catch(() => undefined);
     measureFps(); void checkSound();
@@ -132,7 +142,7 @@ export function openPlayer(src: PlayerSource): void {
   const seekTo = (s: number) => { video.currentTime = Math.max(0, Math.min(video.duration || Infinity, s)); };
   const seekBy = (dt: number, quiet = false) => { seekTo(video.currentTime + dt); if (!quiet) flashText(`${dt > 0 ? '+' : '−'}${localDigits(Math.abs(Math.round(dt)))}s`); };
   /** One frame on or back, at the video's own rate (measured as it plays; 30 until known). */
-  const frameStep = (n: number) => { video.pause(); seekTo(video.currentTime + n / (fps || 30)); flashText(`${n > 0 ? '+' : '−'}1 ${t('frameShort')}`); };
+  const frameStep = (n: number) => { video.pause(); if (mpv) { mpv.command(n > 0 ? 'frame-step' : 'frame-back-step'); flashText(`${n > 0 ? '+' : '−'}1 ${t('frameShort')}`); return; } seekTo(video.currentTime + n / (fps || 30)); flashText(`${n > 0 ? '+' : '−'}1 ${t('frameShort')}`); };
   function measureFps() {
     const v = video as HTMLVideoElement & { requestVideoFrameCallback?(cb: (now: number, m: { mediaTime: number; presentedFrames: number }) => void): number };
     if (!v.requestVideoFrameCallback) return; let last: { t: number; f: number } | null = null; const rates: number[] = [];
@@ -286,9 +296,11 @@ export function openPlayer(src: PlayerSource): void {
   const ASPECTS: PlayerPrefs['aspect'][] = ['fit', 'fill', 'stretch', '16:9', '4:3', '21:9'];
   function cycleAspect() { aspect = ASPECTS[(ASPECTS.indexOf(aspect) + 1) % ASPECTS.length]; applyAspect(); flashText(aspectName(aspect)); remember(key, { aspect }); }
   const aspectName = (a: PlayerPrefs['aspect']) => (a === 'fit' ? t('aspectFit') : a === 'fill' ? t('aspectFill') : a === 'stretch' ? t('aspectStretch') : localDigits(a));
-  function applyAspect() { video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
+  function applyAspectMpv(): boolean { if (!mpv) return false; mpv.set('keepaspect', aspect !== 'stretch'); mpv.set('panscan', aspect === 'fill' ? 1 : 0); mpv.set('video-aspect-override', /^\d/.test(aspect) ? aspect : 'no'); return true; }
+  function applyAspect() { if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
   function cycleCrop() { crop = CROPS[(CROPS.indexOf(crop) + 1) % CROPS.length]; applyTransform(); flashText(crop ? `${t('cropTo')} ${localDigits(crop)}` : t('cropOff')); }
-  function screenshot() { try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
+  function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(); toast(t('screenshotSaved')); return true; }
+  function screenshot() { if (screenshotMpv()) return; try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
   async function pip() { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); } catch { toast(t('pipFailed'), 'error'); } }
   async function fullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.requestFullscreen(); } catch { /* not allowed */ } }
   const remote = (video as HTMLVideoElement & { remote?: { prompt(): Promise<void>; state: string } }).remote;
@@ -351,6 +363,7 @@ export function openPlayer(src: PlayerSource): void {
   }
   async function useTrack(tr: SubTrack | null) {
     current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
+    if (mpv) { mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(tr.ass, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
     if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, [], own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
@@ -381,6 +394,9 @@ export function openPlayer(src: PlayerSource): void {
     const sh = openSheet(t('navSubs'), t('close')); const p = getPrefs();
     const list = h('div', { class: 'dest-list' }, h('label', { class: 'dest-row' + (!current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: !current, onchange: () => { chosenByHand = true; void useTrack(null); } }), icon('close'), h('span', { class: 'name' }, t('subsOff'))),
       ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => { chosenByHand = true; void useTrack(tr); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton(secondary === tr ? 'bookmark' : 'bookmarkAdd', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); drawSubs(video.currentTime); }))));
+    // (mpv: the subtitles inside the file — every one it carries, text or picture —, chosen here; the preferred
+    // languages are picked by themselves when the file opens.)
+    if (mpv) { const inFile = mpv.tracks().filter((x) => x.type === 'sub' && !x.external); if (inFile.length) list.append(h('h4', null, t('subsInVideo')), ...inFile.map((x) => h('label', { class: 'dest-row' + (x.selected && !current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: x.selected && !current, onchange: () => { chosenByHand = true; void useTrack(null).then(() => mpv.setTrack('sub', x.id)); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, x.title || x.lang || `#${x.id}`), h('small', { class: 'src' }, [(x.codec ?? '').toUpperCase(), x.lang].filter(Boolean).join(' · '))))); }
     const fileIn = h('input', { type: 'file', accept: '.srt,.ass,.ssa,.vtt,.sub,.txt', hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')));
@@ -438,7 +454,7 @@ export function openPlayer(src: PlayerSource): void {
   // ---- sound the decoder cannot play: turned into AAC by ffmpeg and played beside the video (./compat)
   let beside: import('./compat').SoundBeside | null = null; let tracksFound: import('./compat').Probe | null = null;
   async function checkSound() {
-    const c = await import('./compat'); if (!c.compatHere() || playerGone) return;
+    const c = await import('./compat'); if (mpv || !c.compatHere() || playerGone) return;
     tracksFound = await c.probe(src.url).catch(() => null); if (playerGone) return;
     if (tracksFound?.audio.length) {
       const pick = tracksFound.audio.find((a) => a.isDefault) ?? tracksFound.audio[0];
@@ -563,6 +579,107 @@ export function openPlayer(src: PlayerSource): void {
     const fresh = (await eng.list().catch(() => [] as Task[])).find((x) => x.id === tk.id) ?? live;
     close(); const { playTaskFile } = await import('../views/player'); await playTaskFile({ ...fresh, files: fresh.files.map((f) => (f.index === index ? { ...f, priority: 2 as const } : f)) }, index);
   }
+  // ---- REX Player's tools: every button of its legend, those chosen on the bar (in their order), all in the grid
+  type Tool = { id: string; icon: string; label: string; run: () => void; text?: string; on?: () => boolean; show?: () => boolean };
+  const TOOLS: Tool[] = [
+    { id: 'chapters', icon: 'chapters', label: t('toolChaptersBookmarks'), run: () => (chapters.length ? chaptersSheet() : bookmarksSheet()) },
+    { id: 'speed', icon: 'gauge', label: t('playbackSpeed'), run: () => speedSheet() },
+    { id: 'decoder', icon: 'chip', label: t('toolDecoder'), run: () => decoderSheet() },
+    { id: 'rotation', icon: 'screenRotate', label: t('toolScreenRotation'), run: () => cycleOrientation() },
+    { id: 'frames', icon: 'aperture', label: t('toolFrames'), run: () => frameSheet() },
+    { id: 'zoom', icon: 'zoomIn', label: t('toolZoom'), run: () => zoomSheet() },
+    { id: 'pip', icon: 'mini', label: t('pip'), run: () => void pip(), show: () => 'pictureInPictureEnabled' in document && !mpv },
+    { id: 'aspect', icon: 'aspect', label: t('toolAspect'), run: () => cycleAspect() },
+    { id: 'lock', icon: 'lock', label: t('lockScreen'), run: () => lock(true) },
+    { id: 'audio', icon: 'music', label: t('audioTracks'), run: () => audioSheet() },
+    { id: 'subs', icon: 'subtitles', label: t('navSubs'), run: () => void subsSheet() },
+    { id: 'chapter', icon: 'bookmark', label: t('toolCurrentChapter'), run: () => { const c = chapters.find((x) => video.currentTime >= x.start && video.currentTime < x.end); if (c) flashText(c.title || fmtTime(c.start), true); if (chapters.length) chaptersSheet(); else flashText(t('noChapters')); } },
+    { id: 'repeat', icon: 'repeat', label: t('repeatMode'), run: () => { repeat = repeat === 'off' ? 'one' : repeat === 'one' ? 'all' : 'off'; updatePrefs({ repeat }); flashText(repeatName()); drawTools(); }, on: () => repeat !== 'off' },
+    { id: 'shuffle', icon: 'shuffle', label: t('toolShuffle'), run: () => { updatePrefs({ shuffle: !getPrefs().shuffle }); flashText(getPrefs().shuffle ? t('shuffleOn') : t('shuffleOff')); drawTools(); }, on: () => getPrefs().shuffle },
+    { id: 'flipH', icon: 'flipH', label: t('toolFlipH'), run: () => { flipH = !flipH; applyTransform(); drawTools(); }, on: () => flipH },
+    { id: 'flipV', icon: 'flipV', label: t('toolFlipV'), run: () => { flipV = !flipV; applyTransform(); drawTools(); }, on: () => flipV },
+    { id: 'ab', icon: '', text: 'AB', label: t('toolAbLoop'), run: () => abPress(), on: () => abA !== null && abB !== null },
+    { id: 'skip', icon: 'skipFwd', label: t('toolCustomSkip'), run: () => seekBy(getPrefs().skipAmount) },
+    { id: 'background', icon: 'headphones', label: t('backgroundPlay'), run: () => { updatePrefs({ backgroundPlay: !getPrefs().backgroundPlay }); flashText(getPrefs().backgroundPlay ? t('backgroundOn') : t('backgroundOff')); drawTools(); }, on: () => getPrefs().backgroundPlay },
+    { id: 'ambient', icon: 'ambience', label: t('ambientMode'), run: () => { updatePrefs({ ambient: !getPrefs().ambient }); ambientTick(); drawTools(); }, on: () => getPrefs().ambient },
+    { id: 'sleep', icon: 'timer', label: t('sleepTimer'), run: () => sleepSheet(), on: () => !!sleepAt },
+    { id: 'quality', icon: 'hq', label: t('toolQuality'), run: () => qualitySheet() },
+    { id: 'cut', icon: 'scissors', label: t('toolCut'), run: () => void cutSheet() },
+    { id: 'shot', icon: 'camera', label: t('screenshot'), run: () => screenshot() },
+    { id: 'bookmark', icon: 'bookmarkAdd', label: t('addBookmark'), run: () => addBookmark() },
+    { id: 'jump', icon: 'clock', label: t('jumpToTime'), run: () => jumpSheet() },
+    { id: 'info', icon: 'info', label: t('mediaInfo'), run: () => infoSheet() },
+  ];
+  const toolsHere = () => TOOLS.filter((x) => !x.show || x.show());
+  function toolButton(x: Tool, withLabel = false): HTMLElement {
+    // (The bar's own speed, A/B, aspect and skip buttons kept: their labels follow what they set.)
+    if (!withLabel && x.id === 'speed') return speedBtn; if (!withLabel && x.id === 'ab') return abBtn; if (!withLabel && x.id === 'aspect') return aspectBtn; if (!withLabel && x.id === 'skip') return skipBtn;
+    const b = h('button', { type: 'button', class: (withLabel ? 'kt-tool' : 'icon-btn') + (x.on?.() ? ' on' : ''), title: x.label, 'aria-label': x.label, 'aria-pressed': x.on ? String(!!x.on()) : null, onclick: () => x.run() }, x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), withLabel ? h('span', null, x.label) : null);
+    return b;
+  }
+  function drawTools() { const want = getPrefs().bar; toolBox.replaceChildren(...want.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x))); }
+  /** The grid of every tool, as REX Player's legend shows them; and the bar's layout, chosen there. */
+  function toolsSheet() {
+    const sh = openSheet(t('playerTools'), t('close'));
+    sh.body.append(h('div', { class: 'kt-tool-grid' }, ...toolsHere().map((x) => { const b = toolButton(x, true); b.addEventListener('click', () => sh.close()); return b; })),
+      h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); layoutSheet(); } }, icon('layout'), t('playerLayout'))));
+  }
+  function layoutSheet() {
+    const sh = openSheet(t('playerLayout'), t('close')); const list = h('div', { class: 'dest-list' });
+    const draw = () => { const bar = getPrefs().bar; const all = [...bar.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x), ...toolsHere().filter((x) => !bar.includes(x.id))];
+      list.replaceChildren(...all.map((x) => { const on = bar.includes(x.id); const i = bar.indexOf(x.id);
+        return h('div', { class: 'dest-row' + (on ? ' on' : '') }, h('input', { type: 'checkbox', checked: on, 'aria-label': x.label, onchange: () => { updatePrefs({ bar: on ? bar.filter((y) => y !== x.id) : [...bar, x.id] }); draw(); drawTools(); } }), x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), h('span', { class: 'grow' }, x.label),
+          on ? iconButton('arrowUp', t('moveUp'), () => { if (i <= 0) return; const b2 = [...bar]; [b2[i - 1], b2[i]] = [b2[i], b2[i - 1]]; updatePrefs({ bar: b2 }); draw(); drawTools(); }) : null,
+          on ? iconButton('arrowDown', t('moveDown'), () => { if (i >= bar.length - 1) return; const b2 = [...bar]; [b2[i + 1], b2[i]] = [b2[i], b2[i + 1]]; updatePrefs({ bar: b2 }); draw(); drawTools(); }) : null); })); };
+    draw(); sh.body.prepend(h('p', { class: 'hint' }, t('playerLayoutHint'))); sh.body.append(list);
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updatePrefs({ bar: [...DEFAULT_PREFS.bar] }); draw(); drawTools(); } }, t('reset')));
+  }
+  /** Frame by frame (REX Player's frame navigation): a frame back or on, ten at a time, the frame's number and time,
+   *  saved as a picture, made A or B of the cut. */
+  function frameSheet() {
+    video.pause(); const sh = openSheet(t('toolFrames'), t('close')); const rate = () => fps || 30;
+    const info = h('p', { class: 'kt-frame-info', dir: 'ltr' }); const paint = () => { info.textContent = `${fmtTime(video.currentTime)}.${String(Math.floor((video.currentTime % 1) * 1000)).padStart(3, '0')} · ${t('frameShort')} ${localDigits(Math.round(video.currentTime * rate()))} · ${localDigits(Math.round(rate() * 100) / 100)} fps`; };
+    const step = (n: number) => { if (mpv && Math.abs(n) === 1) { mpv.command(n > 0 ? 'frame-step' : 'frame-back-step'); window.setTimeout(paint, 250); return; } seekTo(Math.max(0, video.currentTime + n / rate())); window.setTimeout(paint, 200); };
+    const b = (label: string, fn: () => void, cls = 'chip') => h('button', { type: 'button', class: cls, onclick: fn }, label);
+    sh.body.append(info, h('div', { class: 'kt-frame-row', dir: 'ltr' }, b('−10', () => step(-10)), b('−1', () => step(-1)), b('+1', () => step(1)), b('+10', () => step(10))),
+      h('div', { class: 'row-actions wrap' },
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => screenshot() }, icon('camera'), t('frameSave')),
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); drawMarks(); } }, t('framePointA')),
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => { abB = Math.max((abA ?? 0) + 0.04, video.currentTime); flashText(`B ${fmtTime(abB)}`); abBtn.classList.add('on'); drawMarks(); } }, t('framePointB')),
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void cutSheet(); } }, icon('scissors'), t('toolCut'))));
+    paint(); video.addEventListener('seeked', paint);
+  }
+  /** The decoder (mpv): hardware, hardware with copying, software — the file opened again at the same place. */
+  function decoderSheet() {
+    const sh = openSheet(t('toolDecoder'), t('close'));
+    if (!mpv) { sh.body.append(h('p', { class: 'hint' }, t('decoderWebOnly'))); return; }
+    const now = h('small', { class: 'src' }); void (ktPluginMpvGet('hwdec-current')).then((v) => { now.textContent = `${t('decoderNow')}: ${v && v !== 'no' ? v : t('decoderSoftware')}`; });
+    const choose = (v: PlayerPrefs['hwdec']) => { updatePrefs({ hwdec: v }); mpv.set('hwdec', mpvExtra(getPrefs()).hwdec); sh.close(); flashText(v === 'sw' ? t('decoderSoftware') : v === 'hwcopy' ? t('decoderHwCopy') : t('decoderHw')); };
+    sh.body.append(now, h('div', { class: 'dest-list' }, ...([['hw', t('decoderHw'), t('decoderHwHint')], ['hwcopy', t('decoderHwCopy'), t('decoderHwCopyHint')], ['sw', t('decoderSoftware'), t('decoderSoftwareHint')]] as [PlayerPrefs['hwdec'], string, string][]).map(([v, l, d]) => h('button', { type: 'button', class: 'dest-row' + (getPrefs().hwdec === v ? ' on' : ''), onclick: () => choose(v) }, icon('chip'), h('span', { class: 'grow' }, h('span', null, l), h('small', { class: 'src', style: { display: 'block' } }, d))))));
+  }
+  const ktPluginMpvGet = async (name: string): Promise<string | null> => { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { mpvGet?(o: { name: string }): Promise<{ value: string | null }> } | null; try { return (await kp?.mpvGet?.({ name }))?.value ?? null; } catch { return null; } };
+  /** The screen's turn: as the phone is held, landscape, portrait — kept locked so. */
+  function cycleOrientation() {
+    const o = screen.orientation as ScreenOrientation & { lock?(x: string): Promise<void>; unlock?(): void };
+    const next = orientLock === 'any' ? 'landscape' : orientLock === 'landscape' ? 'portrait' : 'any'; orientLock = next;
+    if (next === 'any') o.unlock?.(); else void o.lock?.(next).catch(() => toast(t('rotationUnavailable'), 'error'));
+    flashText(next === 'any' ? t('orientationAuto') : next === 'landscape' ? t('orientationLandscape') : t('orientationPortrait'));
+  }
+  let orientLock: 'any' | 'landscape' | 'portrait' = 'any';
+  /** The picture's zoom (and its pan put back). */
+  function zoomSheet() {
+    const sh = openSheet(t('toolZoom'), t('close')); const out = h('b', null, `${localDigits(Math.round(zoom * 100))}%`);
+    const r = h('input', { type: 'range', min: '50', max: '400', step: '5', value: String(Math.round(zoom * 100)), oninput: () => { zoom = Number(r.value) / 100; out.textContent = `${localDigits(Math.round(zoom * 100))}%`; applyTransform(); } }) as HTMLInputElement;
+    sh.body.append(h('div', { class: 'row' }, h('span', null, t('toolZoom')), out), r, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: () => { zoom = 1; panX = panY = 0; r.value = '100'; out.textContent = `${localDigits(100)}%`; applyTransform(); } }, t('reset'))));
+  }
+  /** The stream's qualities (an online stream's variants, as mpv lists them), or that there is only one. */
+  function qualitySheet() {
+    const sh = openSheet(t('toolQuality'), t('close'));
+    const vids = mpv ? mpv.tracks().filter((x) => x.type === 'video') : [];
+    if (vids.length < 2) { sh.body.append(h('p', { class: 'hint' }, video.videoHeight ? t('qualityOnly', { q: `${localDigits(video.videoWidth)}×${localDigits(video.videoHeight)}` }) : t('qualityOnlyUnknown'))); return; }
+    sh.body.append(h('div', { class: 'dest-list' }, ...vids.map((x) => h('button', { type: 'button', class: 'dest-row' + (x.selected ? ' on' : ''), onclick: () => { mpv!.set('vid', x.id); sh.close(); } }, icon('hq'), h('span', { class: 'grow' }, x.title || `#${x.id}`), h('small', { class: 'src' }, (x.codec ?? '').toUpperCase())))));
+  }
+  drawTools();
   function moreSheet() {
     const sh = openSheet(src.name, t('close'));
     const row = (ic: string, label: string, fn: () => void, extra?: string) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label), extra ? h('small', { class: 'src' }, extra) : null);
@@ -689,7 +806,7 @@ export function openPlayer(src: PlayerSource): void {
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); beside?.stop(); ass?.free(); sound?.close(); preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
+    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }

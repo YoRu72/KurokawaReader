@@ -35,6 +35,12 @@ export class Picture {
   apply(f: F, swipe = 1, preset = ''): void {
     const p = preset ? FILTER_PRESETS[preset] : undefined;
     const v = { ...f, ...(p ?? {}) } as F;
+    // (mpv: its own picture controls — brightness, contrast, saturation, gamma, hue, -100…100 —, sharpening by its
+    // «sharpen» filter; the page's CSS filters would not reach a picture drawn under the page.)
+    const m = (this.video as HTMLVideoElement & { _mpv?: { set(n: string, v: string | number): void } })._mpv;
+    if (m) { const c = (x: number) => Math.max(-100, Math.min(100, Math.round(x)));
+      m.set('brightness', c(((swipe * v.brightness) / 100 - 1) * 100)); m.set('contrast', c(v.contrast - 100)); m.set('saturation', c(v.saturation - 100)); m.set('gamma', c(v.gamma - 100)); m.set('hue', c((v.hue / 180) * 100));
+      m.set('sharpen', (Math.max(0, v.sharpness) / 100).toFixed(2)); return; }
     const css = [swipe !== 1 || v.brightness !== 100 ? `brightness(${(swipe * v.brightness) / 100})` : '', v.contrast !== 100 ? `contrast(${v.contrast / 100})` : '', v.saturation !== 100 ? `saturate(${v.saturation / 100})` : '', v.hue ? `hue-rotate(${v.hue}deg)` : '', p?.css ?? ''].filter(Boolean);
     const needSvg = v.gamma !== 100 || v.sharpness || v.temperature;
     if (needSvg) {
@@ -48,6 +54,16 @@ export class Picture {
   }
   /** Rotation, mirroring, zoom and pan, and a crop to a ratio (the picture scaled so the ratio fills the frame). */
   transform(o: { rotate: number; flipH: boolean; flipV: boolean; zoom: number; panX: number; panY: number; crop: string }): string {
+    const m = (this.video as HTMLVideoElement & { _mpv?: { set(n: string, v: string | number): void } })._mpv;
+    if (m) {
+      // (mpv: turned, zoomed (its zoom is a power of two), moved (a share of the picture), mirrored by its filters;
+      // a crop to a ratio by its pan-and-scan.)
+      const box = this.video.getBoundingClientRect(); const r = ratio(o.crop);
+      m.set('video-rotate', ((o.rotate % 360) + 360) % 360); m.set('video-zoom', Math.log2(Math.max(0.1, o.zoom)).toFixed(3));
+      m.set('video-pan-x', box.width ? (o.panX / box.width).toFixed(3) : 0); m.set('video-pan-y', box.height ? (o.panY / box.height).toFixed(3) : 0);
+      m.set('vf', [o.flipH ? 'hflip' : '', o.flipV ? 'vflip' : ''].filter(Boolean).join(','));
+      m.set('panscan', r ? 1 : 0); return '';
+    }
     const vw = this.video.videoWidth || 16, vh = this.video.videoHeight || 9; const box = this.video.getBoundingClientRect();
     let cropScale = 1;
     const r = ratio(o.crop); if (r) { const src = vw / vh; cropScale = r > src ? r / src : src / r; cropScale = Math.min(cropScale, 3); }

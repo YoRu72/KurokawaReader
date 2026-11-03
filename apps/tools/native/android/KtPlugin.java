@@ -529,6 +529,17 @@ public class KtPlugin extends Plugin {
 
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
     @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
+    /* ---------- the Player add-on's engine: mpv (KtMpv), from the mpv pack ---------- */
+    @PluginMethod public void mpvAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("available", KtMpv.available(getContext())); call.resolve(r); }
+    @PluginMethod public void mpvOpen(PluginCall call) {
+        if (!KtMpv.available(getContext())) { call.reject("pack:mpv"); return; }
+        try { KtMpv.get().open(getActivity(), getBridge().getWebView(), call.getString("url", ""), new org.json.JSONObject(call.getObject("options", new JSObject()).toString()), (o) -> { try { notifyListeners("mpv", JSObject.fromJSONObject(o)); } catch (Exception ignored) {} }); call.resolve(); }
+        catch (Exception e) { call.reject(e.getMessage()); }
+    }
+    @PluginMethod public void mpvCommand(PluginCall call) { try { KtMpv.get().command(new org.json.JSONArray(call.getArray("args", new com.getcapacitor.JSArray()).toString())); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); } }
+    @PluginMethod public void mpvSet(PluginCall call) { try { KtMpv.get().set(call.getString("name", ""), call.getString("value", "")); call.resolve(); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
+    @PluginMethod public void mpvGet(PluginCall call) { try { JSObject r = new JSObject(); r.put("value", KtMpv.get().getString(call.getString("name", ""))); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
+    @PluginMethod public void mpvClose(PluginCall call) { KtMpv.get().close(); call.resolve(); }
     /** The player's sound for tracks a web view cannot decode: ffmpeg turning them into AAC as they play (needs the ffmpeg pack). */
     @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); r.put("url", engine().stream().audioBase()); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
@@ -587,7 +598,7 @@ public class KtPlugin extends Plugin {
     /* ---------- packs: the heavy native parts, downloaded when an add-on needs them ---------- */
     private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> packJobs = new java.util.concurrent.ConcurrentHashMap<>();
     @PluginMethod public void packStatus(PluginCall call) {
-        bg.execute(() -> { JSObject r = new JSObject(); for (String n : new String[] { "python", "ffmpeg" }) { JSObject o = new JSObject(); String v = KtPacks.installed(getContext(), n); o.put("version", v == null ? JSObject.NULL : v); o.put("size", v == null ? 0 : KtPacks.sizeOnDisk(getContext(), n)); r.put(n, o); } r.put("abi", android.os.Build.SUPPORTED_ABIS[0]); call.resolve(r); });
+        bg.execute(() -> { JSObject r = new JSObject(); for (String n : new String[] { "python", "ffmpeg", "mpv" }) { JSObject o = new JSObject(); String v = KtPacks.installed(getContext(), n); o.put("version", v == null ? JSObject.NULL : v); o.put("size", v == null ? 0 : KtPacks.sizeOnDisk(getContext(), n)); r.put(n, o); } r.put("abi", android.os.Build.SUPPORTED_ABIS[0]); call.resolve(r); });
     }
     @PluginMethod public void packInstall(PluginCall call) {
         final String name = call.getString("name", ""); final String url = call.getString("url", ""); final String sha = call.getString("sha256", ""); final String ver = call.getString("version", "1");
