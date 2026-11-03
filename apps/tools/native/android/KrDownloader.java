@@ -83,12 +83,15 @@ final class KrDownloader {
      *  chunks done. Plain text: «kt1», total, validator, chunk, the done chunks' numbers. */
     static final class State {
         long total, chunk; String validator = ""; java.util.BitSet done = new java.util.BitSet();
+        /** Chunks begun but not finished: how many bytes from each one's start are in the file already. */
+        final java.util.Map<Integer, Long> partial = new java.util.HashMap<>();
         static State read(File f) {
             if (f == null || !f.exists()) return null;
             try { String[] l = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8).split("\n", -1);
                 if (l.length < 5 || !"kt1".equals(l[0])) return null;
                 State s = new State(); s.total = Long.parseLong(l[1].trim()); s.validator = l[2].trim(); s.chunk = Long.parseLong(l[3].trim());
                 for (String n : l[4].split(",")) if (!n.trim().isEmpty()) s.done.set(Integer.parseInt(n.trim()));
+                if (l.length > 5) for (String kv : l[5].split(",")) { int c = kv.indexOf(':'); if (c > 0) try { s.partial.put(Integer.parseInt(kv.substring(0, c).trim()), Long.parseLong(kv.substring(c + 1).trim())); } catch (Exception ignored) {} }
                 return s.total > 0 && s.chunk > 0 ? s : null;
             } catch (Exception e) { return null; }
         }
@@ -96,10 +99,14 @@ final class KrDownloader {
             if (f == null) return;
             StringBuilder b = new StringBuilder("kt1\n").append(total).append('\n').append(validator.replace('\n', ' ')).append('\n').append(chunk).append('\n');
             for (int i = done.nextSetBit(0); i >= 0; i = done.nextSetBit(i + 1)) b.append(i).append(',');
+            b.append('\n'); for (java.util.Map.Entry<Integer, Long> e : partial.entrySet()) if (e.getValue() > 0 && !done.get(e.getKey())) b.append(e.getKey()).append(':').append(e.getValue()).append(',');
             File tmp = new File(f.getPath() + ".tmp");
             try { java.nio.file.Files.write(tmp.toPath(), b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f); } } catch (IOException ignored) {}
         }
-        synchronized void mark(int i) { done.set(i); }
+        synchronized void mark(int i) { done.set(i); partial.remove(i); }
+        synchronized void unmark(int i) { done.clear(i); }
+        synchronized long partialOf(int i) { Long v = partial.get(i); return v == null ? 0 : v; }
+        synchronized void setPartial(int i, long v) { if (v > 0) partial.put(i, v); else partial.remove(i); }
         synchronized boolean has(int i) { return done.get(i); }
     }
     /** What tells this version of the file from another: a strong ETag, or else its date. */
@@ -126,7 +133,9 @@ final class KrDownloader {
         // A one-byte range asked first: the file's size, whether it can be cut, and where the redirects end
         // (GitHub → a signed storage address: asked there directly afterwards, a round trip less per chunk).
         URL[] at = { url };
-        HttpURLConnection probe = follow(url, opener, "bytes=0-0", at, prev != null ? prev.validator : null);
+        // (No If-Range: a server whose validator changes from one answer to the next — CDNs, signed links — would
+        // send the whole file again, and what was downloaded was thrown away. What is here is checked instead.)
+        HttpURLConnection probe = follow(url, opener, "bytes=0-0", at, null);
         int code = probe.getResponseCode();
         res.finalUrl = at[0];
         res.fileName = dispositionName(probe.getHeaderField("Content-Disposition")); res.mime = probe.getContentType();
@@ -169,10 +178,23 @@ final class KrDownloader {
         drain(probe);
         final long total = res.total;
         int n = (int) Math.max(1, Math.min(maxConnections, total / (512 * 1024)));
-        // Going on from before: the same size, and the server said (206 to If-Range) it is the same file.
-        final boolean resumed = prev != null && prev.total == total && out.length() == total && (prev.validator.isEmpty() || prev.validator.equals(validator) || validator.isEmpty());
+        // Going on from before: the same size; the same version by its validator, or — when the validator changed
+        // or is missing — by the bytes: pieces of what is here compared with the server's.
+        final boolean sameSize = prev != null && prev.total == total && out.length() == total;
+        boolean resumed = false; State st0 = null;
+        if (sameSize) {
+            localCheck(prev, out);
+            boolean sameVersion = !prev.validator.isEmpty() && prev.validator.equals(validator);
+            if (sameVersion || matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12)) { st0 = prev; resumed = true; }
+        } else if (prev == null && out.exists() && out.length() > 0 && out.length() <= total) {
+            // (No record kept — lost, or a download begun elsewhere under this name —: the chunks already here found
+            // by their bytes, each checked against the server's before it is kept.)
+            State r = new State(); r.total = total; r.chunk = Math.max(1L << 20, Math.min(8L << 20, total / Math.max(1, n * 4)));
+            int found = recover(res.finalUrl, opener, out, r, Math.max(1, Math.min(8, maxConnections)), cancelled);
+            if (found > 0) { try (RandomAccessFile raf = new RandomAccessFile(out, "rw")) { if (raf.length() < total) raf.setLength(total); } st0 = r; resumed = true; }
+        }
         final State st;
-        if (resumed) st = prev;
+        if (resumed) st = st0;
         else {
             // Chunks: about a quarter of each connection's share, between 1 and 8 MB.
             st = new State(); st.total = total; st.chunk = Math.max(1L << 20, Math.min(8L << 20, total / Math.max(1, n * 4)));
@@ -185,7 +207,8 @@ final class KrDownloader {
         for (int i = 0; i <= chunks; i++) {
             boolean d = i < chunks && st.has(i);
             if (d) { have += Math.min(total, (long) (i + 1) * chunk) - (long) i * chunk; if (runFrom < 0) runFrom = i; }
-            else if (runFrom >= 0) { Seg s = new Seg((long) runFrom * chunk, Math.min(total, (long) i * chunk), -1); s.pos = s.end; s.active = false; res.segs.add(s); runFrom = -1; }
+            else if (i < chunks && st.partialOf(i) > 0) have += Math.min(st.partialOf(i), Math.min(total, (long) (i + 1) * chunk) - (long) i * chunk);
+            if (!d && runFrom >= 0) { Seg s = new Seg((long) runFrom * chunk, Math.min(total, (long) i * chunk), -1); s.pos = s.end; s.active = false; res.segs.add(s); runFrom = -1; }
         }
         got.set(have);
         st.write(opt.state);
@@ -211,7 +234,7 @@ final class KrDownloader {
                         if (given != null) { idx = (int) given[0]; from = given[1]; toIncl = given[2]; }
                         else {
                             idx = next.getAndIncrement(); while (idx < chunks && st.has(idx)) idx = next.getAndIncrement();
-                            if (idx < chunks) { from = (long) idx * chunk; toIncl = Math.min(total, (long) (idx + 1) * chunk) - 1; parts[idx].incrementAndGet(); }
+                            if (idx < chunks) { from = (long) idx * chunk + Math.min(st.partialOf(idx), chunk - 1); toIncl = Math.min(total, (long) (idx + 1) * chunk) - 1; parts[idx].incrementAndGet(); }
                             else {
                                 // The end of the file, the way download accelerators and speed tests keep every
                                 // connection busy: no chunk left, so the part that will take longest is cut in two
@@ -224,6 +247,8 @@ final class KrDownloader {
                             }
                         }
                         final Seg seg = new Seg(from, toIncl + 1, wid); seg.chunk = idx; res.segs.add(seg);
+                        // (A chunk's own run from its start — not a half taken from another —: how far it got is kept.)
+                        final boolean fromStart = given == null && from == (long) idx * chunk + st.partialOf(idx); final long chunkStart = (long) idx * chunk;
                         long pos = from;
                         boolean leave = false;
                         for (int attempt = 0; pos < seg.stopAt && !cancelled.get(); attempt++) {
@@ -237,7 +262,7 @@ final class KrDownloader {
                                 if (rc != 206) throw new Status(rc);
                                 try (InputStream in = c.getInputStream()) {
                                     final long base = pos; final long[] w = wrote;
-                                    copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); tick.run(); }, wrote);
+                                    copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); if (fromStart) st.setPartial(seg.chunk, base + w[0] - chunkStart); long now = System.currentTimeMillis(); if (now - lastSave[0] > 3000) { lastSave[0] = now; st.write(opt.state); } tick.run(); }, wrote);
                                 }
                                 pos += wrote[0]; wrote[0] = 0;
                                 // (An answer that ended early without an error is a failed attempt too.)
@@ -273,6 +298,60 @@ final class KrDownloader {
         if (!cancelled.get() && got.get() < total) throw new IOException("incomplete (" + got.get() + " of " + total + ")");
         if (!cancelled.get() && opt.state != null) opt.state.delete();
         return res;
+    }
+
+    /** Done chunks whose last bytes are all zero in the file were never really written (the app was stopped before
+     *  the disk had them): fetched again. A chunk begun is trusted up to its last non-zero stretch. */
+    static void localCheck(State st, File out) {
+        try (RandomAccessFile raf = new RandomAccessFile(out, "r")) {
+            int chunks = (int) ((st.total + st.chunk - 1) / st.chunk); byte[] b = new byte[4096];
+            for (int i = st.done.nextSetBit(0); i >= 0 && i < chunks; i = st.done.nextSetBit(i + 1)) { long end = Math.min(st.total, (long) (i + 1) * st.chunk); if (zero(raf, end - Math.min(b.length, end - (long) i * st.chunk), b)) st.unmark(i); }
+            for (java.util.Map.Entry<Integer, Long> e : new java.util.ArrayList<>(st.partial.entrySet())) { long p = e.getValue(); long at = (long) e.getKey() * st.chunk + p; if (p < b.length || zero(raf, at - b.length, b)) st.setPartial(e.getKey(), 0); }
+        } catch (IOException ignored) {}
+    }
+    private static boolean zero(RandomAccessFile raf, long at, byte[] b) throws IOException { raf.seek(Math.max(0, at)); int r = raf.read(b); if (r <= 0) return true; for (int k = 0; k < r; k++) if (b[k] != 0) return false; return true; }
+    /** A few done chunks' last 16 KB compared with the server's (the first, the last and some between): whether the
+     *  file here is the same as the one there. No done chunk: nothing to lose, so yes. */
+    static boolean matches(URL url, Opener opener, File out, State st, int threads, int samples) {
+        java.util.List<Integer> done = new java.util.ArrayList<>(); for (int i = st.done.nextSetBit(0); i >= 0; i = st.done.nextSetBit(i + 1)) done.add(i);
+        if (done.isEmpty()) return true;
+        java.util.List<Integer> pick = new java.util.ArrayList<>(); for (int k = 0; k < samples && k < done.size(); k++) pick.add(done.get((int) ((long) k * (done.size() - 1) / Math.max(1, samples - 1))));
+        java.util.List<Integer> ok = check(url, opener, out, st, new java.util.ArrayList<>(new java.util.LinkedHashSet<>(pick)), threads, new AtomicBoolean(false));
+        return ok != null && ok.size() == new java.util.LinkedHashSet<>(pick).size();
+    }
+    /** The chunks of a file with no record: those with bytes in them, checked against the server's; how many kept. */
+    static int recover(URL url, Opener opener, File out, State st, int threads, AtomicBoolean cancelled) {
+        java.util.List<Integer> cand = new java.util.ArrayList<>(); int chunks = (int) ((st.total + st.chunk - 1) / st.chunk);
+        try (RandomAccessFile raf = new RandomAccessFile(out, "r")) { byte[] b = new byte[4096]; long len = raf.length();
+            for (int i = 0; i < chunks; i++) { long end = Math.min(st.total, (long) (i + 1) * st.chunk); if (end > len) break; if (!zero(raf, end - Math.min(b.length, end - (long) i * st.chunk), b)) cand.add(i); } } catch (IOException e) { return 0; }
+        java.util.List<Integer> ok = check(url, opener, out, st, cand, threads, cancelled); if (ok == null) return 0;
+        for (int i : ok) st.mark(i); return ok.size();
+    }
+    /** The chunks among `which` whose last 16 KB here are the server's (null: the server could not be asked). */
+    private static java.util.List<Integer> check(URL url, Opener opener, File out, State st, java.util.List<Integer> which, int threads, AtomicBoolean cancelled) {
+        final java.util.List<Integer> ok = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); final java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger(); final AtomicBoolean broken = new AtomicBoolean();
+        Thread[] ts = new Thread[Math.max(1, Math.min(threads, which.size()))];
+        for (int t = 0; t < ts.length; t++) { ts[t] = new Thread(() -> {
+            try (RandomAccessFile raf = new RandomAccessFile(out, "r")) {
+                for (int k; !cancelled.get() && !broken.get() && (k = next.getAndIncrement()) < which.size(); ) {
+                    int i = which.get(k); long start = (long) i * st.chunk, end = Math.min(st.total, (long) (i + 1) * st.chunk); int len = (int) Math.min(16384, end - start);
+                    // (Its first and its last 16 KB, both: a change at either end is seen.)
+                    boolean same = true;
+                    for (long from : new long[] { start, end - len }) {
+                        byte[] mine = new byte[len]; raf.seek(from); raf.readFully(mine);
+                        HttpURLConnection c = null;
+                        try { c = follow(url, opener, "bytes=" + from + "-" + (from + len - 1)); if (c.getResponseCode() != 206) { broken.set(true); same = false; break; }
+                            byte[] theirs = new byte[len]; int got = 0; try (InputStream in = c.getInputStream()) { int r; while (got < len && (r = in.read(theirs, got, len - got)) > 0) got += r; }
+                            if (got != len || !java.util.Arrays.equals(mine, theirs)) { same = false; break; }
+                        } catch (IOException e) { broken.set(true); same = false; break; } finally { if (c != null) c.disconnect(); }
+                        if (len == end - start) break;
+                    }
+                    if (broken.get()) break; if (same) ok.add(i);
+                }
+            } catch (IOException ignored) {}
+        }); ts[t].start(); }
+        for (Thread t : ts) try { t.join(); } catch (InterruptedException e) { return null; }
+        return broken.get() && ok.isEmpty() ? null : ok;
     }
 
     /** Copies a part's bytes until its end — which may be brought nearer while it runs (its second half taken by

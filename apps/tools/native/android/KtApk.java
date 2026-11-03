@@ -68,6 +68,10 @@ final class KtApk {
     static JSONObject info(Context ctx, File f) throws Exception { return info(ctx, f, null, null); }
     static JSONObject info(Context ctx, File f, String password, String select) throws Exception {
         PackageManager pm = ctx.getPackageManager(); File apk = f; File tmp = null; JSONObject o = new JSONObject(); int splits = 0; long size = f.length();
+        // (HatchZip's way: the base APK is never copied out whole to learn what it is — only its manifest, its
+        // resources and its signature are, a few MB at most; the full copy is made only when it is needed and the
+        // phone has room to spare.)
+        final Slim sl = new Slim(); java.util.concurrent.Callable<File> fullBase = null;
         if (isContainer(f)) {
             // (An app inside an archive: what the archive offers listed, one chosen — asked when there are several —,
             // its base APK read out to learn what it is; the parts to install handed back for the install.)
@@ -83,12 +87,19 @@ final class KtApk {
             tmp = new File(ctx.getCacheDir(), "kt-base-" + System.nanoTime() + ".apk");
             final File out = tmp; final String want = base.path; final String in2 = inner;
             KtArchive.walk(f, password, (name, sz, in) -> {
-                if (in2 == null) { if (!name.equals(want)) return true; try (OutputStream os = new FileOutputStream(out)) { copy(in, os, null); } return false; }
+                if (in2 == null) { if (!name.equals(want)) return true; trySlim(in, out, sl); return false; }
                 if (!name.equals(in2)) return true;
                 java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in); ZipEntry e;
-                while ((e = z.getNextEntry()) != null) if (e.getName().equals(want)) { try (OutputStream os = new FileOutputStream(out)) { copy(z, os, null); } break; }
+                while ((e = z.getNextEntry()) != null) if (e.getName().equals(want)) { trySlim(z, out, sl); break; }
                 return false;
             });
+            final File fin = f; final String pw2 = password;
+            fullBase = () -> { File full = new File(ctx.getCacheDir(), "kt-full-" + System.nanoTime() + ".apk"); KtArchive.walk(fin, pw2, (name, sz, in) -> {
+                if (in2 == null) { if (!name.equals(want)) return true; try (OutputStream os = new FileOutputStream(full)) { copy(in, os, null); } return false; }
+                if (!name.equals(in2)) return true; java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in); ZipEntry e;
+                while ((e = z.getNextEntry()) != null) if (e.getName().equals(want)) { try (OutputStream os = new FileOutputStream(full)) { copy(z, os, null); } break; }
+                return false; }); return full; };
+            sl.full = Math.max(0, base.size);
             apk = tmp; long s = 0; JSONArray pa = new JSONArray(); for (KtApkPlan.Entry e : parts) { s += Math.max(0, e.size); pa.put(e.path); } size = s; splits = parts.size() > 1 ? parts.size() : 0;
             o.put("select", app.select); o.put("parts", pa); o.put("container", true);
             { JSONArray all2 = new JSONArray(); for (KtApkPlan.Entry e : parts) { JSONObject x = new JSONObject(); x.put("name", e.path); x.put("size", e.size); x.put("kind", KtApkPlan.kindOf(e.path)); x.put("optional", KtApkPlan.optional(e.path)); all2.put(x); } o.put("partsAll", all2); }
@@ -96,7 +107,8 @@ final class KtApk {
             try (ZipFile z = new ZipFile(f)) {
                 List<ZipEntry> apks = chosen(z); splits = apks.size(); ZipEntry base = baseOf(z, apks); if (base == null) throw new Exception("noApkInside");
                 tmp = new File(ctx.getCacheDir(), "kt-base-" + System.nanoTime() + ".apk");
-                try (InputStream in = z.getInputStream(base); OutputStream os = new FileOutputStream(tmp)) { copy(in, os, null); }
+                try (InputStream in = z.getInputStream(base)) { trySlim(in, tmp, sl); }
+                final ZipEntry b0 = base; fullBase = () -> { File full = new File(ctx.getCacheDir(), "kt-full-" + System.nanoTime() + ".apk"); try (ZipFile z2 = new ZipFile(f); InputStream in = z2.getInputStream(b0); OutputStream os = new FileOutputStream(full)) { copy(in, os, null); } return full; }; sl.full = base.getSize();
                 apk = tmp; long s = 0; for (ZipEntry x : apks) s += Math.max(0, x.getSize()); size = s;
                 ZipEntry man = z.getEntry("manifest.json"); if (man != null) { try (InputStream in = z.getInputStream(man)) { JSONObject m = new JSONObject(new String(readAll(in), "UTF-8")); if (m.has("expansions") || m.has("obb")) o.put("obb", true); } catch (Exception ignored) {} }
                 // (Every part, for choosing: languages and densities may be left out; the chosen ones ticked.)
@@ -106,8 +118,15 @@ final class KtApk {
         }
         try {
             int flags = PackageManager.GET_PERMISSIONS | (Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES);
-            PackageInfo p = pm.getPackageArchiveInfo(apk.getPath(), flags); if (p == null) p = pm.getPackageArchiveInfo(apk.getPath(), 0); if (p == null) throw new Exception("notAnApk");
-            details(ctx, pm, p, apk, o);
+            // (The slim copy could not be made — an APK this reader cannot stream —: the whole base, as before.)
+            if (sl.failed && fullBase != null) { if (tmp != null) tmp.delete(); tmp = fullBase.call(); apk = tmp; sl.used = false; }
+            PackageInfo p = pm.getPackageArchiveInfo(apk.getPath(), sl.used ? PackageManager.GET_PERMISSIONS : flags); if (p == null) p = pm.getPackageArchiveInfo(apk.getPath(), 0);
+            // (The slim copy not understood by this Android, or a signature only the whole file carries: the whole base
+            // read after all — when there is room for it.)
+            File full = null; long free = 0; try { free = ctx.getCacheDir().getUsableSpace(); } catch (Exception ignored) {}
+            if (sl.used && fullBase != null && (p == null || sl.certs.isEmpty()) && free > sl.full * 2 + (256L << 20)) { try { full = fullBase.call(); PackageInfo q = pm.getPackageArchiveInfo(full.getPath(), flags); if (q != null) { if (p == null) p = q; else { p.signatures = q.signatures; if (Build.VERSION.SDK_INT >= 28) p.signingInfo = q.signingInfo; } } } catch (Exception ignored) {} }
+            try { if (p == null) throw new Exception("notAnApk");
+            details(ctx, pm, p, full != null ? full : apk, o, sl);
             ApplicationInfo ai = p.applicationInfo; if (ai != null) { ai.sourceDir = apk.getPath(); ai.publicSourceDir = apk.getPath(); }
             o.put("package", p.packageName); o.put("version", p.versionName == null ? "" : p.versionName); o.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
             if (ai != null) { o.put("label", String.valueOf(ai.loadLabel(pm))); if (Build.VERSION.SDK_INT >= 24) o.put("minSdk", ai.minSdkVersion); try { o.put("icon", png(ai.loadIcon(pm))); } catch (Exception ignored) {} }
@@ -116,16 +135,18 @@ final class KtApk {
             o.put("splits", splits); o.put("size", size); o.put("bundle", splits > 0);
             try { o.put("free", android.os.Environment.getDataDirectory().getUsableSpace()); } catch (Exception ignored) {} o.put("supported", !o.has("minSdk") || o.getInt("minSdk") <= Build.VERSION.SDK_INT);
             return o;
+            } finally { if (full != null) full.delete(); }
         } finally { if (tmp != null) tmp.delete(); }
     }
     /** The rest of what is shown before installing: target and minimum Android, the processors its code is
      *  built for (and whether this phone's is among them), what it asks to access (the risky ones marked), and
      *  who signed it — compared with the copy installed now, whose signer must be the same for an update. */
-    static void details(Context ctx, PackageManager pm, PackageInfo p, File apk, JSONObject o) {
+    static void details(Context ctx, PackageManager pm, PackageInfo p, File apk, JSONObject o) { details(ctx, pm, p, apk, o, new Slim()); }
+    static void details(Context ctx, PackageManager pm, PackageInfo p, File apk, JSONObject o, Slim sl) {
         try {
             if (p.applicationInfo != null) o.put("targetSdk", p.applicationInfo.targetSdkVersion);
             // Processors: the lib/<abi>/ folders of the base (a bundle's code splits are judged by their names).
-            java.util.Set<String> abis = new java.util.TreeSet<>();
+            java.util.Set<String> abis = new java.util.TreeSet<>(sl.abis);
             try (ZipFile z = new ZipFile(apk)) { Enumeration<? extends ZipEntry> e = z.entries(); while (e.hasMoreElements()) { String n = e.nextElement().getName(); if (n.startsWith("lib/") && n.indexOf('/', 4) > 4) abis.add(n.substring(4, n.indexOf('/', 4))); } } catch (Exception ignored) {}
             if (o.has("partsAll")) { JSONArray pa = o.getJSONArray("partsAll"); for (int i = 0; i < pa.length(); i++) { String a = KtApkPlan.abiOf(pa.getJSONObject(i).getString("name")); if (a != null) abis.add(a.replace('_', '-')); } }
             JSONArray ab = new JSONArray(); for (String a : abis) ab.put(a); o.put("abis", ab);
@@ -141,7 +162,7 @@ final class KtApk {
             }
             o.put("permissions", perms); o.put("riskyPermissions", risky);
             // Signers.
-            java.util.List<String> mine = signers(p);
+            java.util.List<String> mine = signers(p); if (mine.isEmpty()) mine = sl.certs;
             if (!mine.isEmpty()) o.put("signer", mine.get(0));
             try {
                 int f2 = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
@@ -234,10 +255,33 @@ final class KtApk {
         String name = path.replaceAll(".*/", ""); if (!name.toLowerCase(Locale.ROOT).endsWith(".apk")) name = name + ".apk";
         try (OutputStream os = s.openWrite(name, 0, size > 0 ? size : -1)) { copy(in, os, (k) -> { done[0] += k; progress(ev, id, done[0], Math.max(total, done[0])); }); s.fsync(os); }
     }
+    /** What the slim copy of a base APK learned on the way: its processors, its v1 signers, its size. */
+    static final class Slim { final java.util.Set<String> abis = new java.util.TreeSet<>(); final java.util.List<String> certs = new ArrayList<>(); boolean used, failed; long full; }
+    /** A base APK, read as it streams by, kept as a small APK of only what tells what it is: the manifest, the
+     *  resources table (stored, as Android wants it) and the resources (no code, native libraries or assets); its
+     *  processors and v1 signing certificates noted on the way. */
+    static void trySlim(InputStream in, File out, Slim sl) { try { slim(in, out, sl); } catch (Exception e) { sl.failed = true; sl.used = false; out.delete(); } }
+    static void slim(InputStream apkStream, File out, Slim sl) throws Exception {
+        sl.used = true;
+        java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(apkStream, 1 << 16)); ZipEntry e;
+        try (java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(new java.io.BufferedOutputStream(new FileOutputStream(out), 1 << 16))) {
+            while ((e = z.getNextEntry()) != null) {
+                String n = e.getName(); if (e.isDirectory()) continue;
+                if (n.startsWith("lib/") && n.indexOf('/', 4) > 4) { sl.abis.add(n.substring(4, n.indexOf('/', 4))); continue; }
+                boolean sig = n.startsWith("META-INF/") && n.matches("(?i)META-INF/[^/]+\\.(RSA|DSA|EC)");
+                if (sig) { try { for (java.security.cert.Certificate c : java.security.cert.CertificateFactory.getInstance("X.509").generateCertificates(new java.io.ByteArrayInputStream(readAll(z)))) { java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256"); StringBuilder b = new StringBuilder(); for (byte x : md.digest(c.getEncoded())) b.append(String.format("%02X", x)); if (!sl.certs.contains(b.toString())) sl.certs.add(b.toString()); } } catch (Exception ignored) {} continue; }
+                boolean keep = n.equals("AndroidManifest.xml") || n.equals("resources.arsc") || (n.startsWith("res/") && !n.startsWith("res/raw/"));
+                if (!keep) continue;
+                byte[] data = readAll(z); ZipEntry o2 = new ZipEntry(n);
+                if (n.equals("resources.arsc")) { java.util.zip.CRC32 crc = new java.util.zip.CRC32(); crc.update(data); o2.setMethod(ZipEntry.STORED); o2.setSize(data.length); o2.setCompressedSize(data.length); o2.setCrc(crc.getValue()); }
+                zo.putNextEntry(o2); zo.write(data); zo.closeEntry();
+            }
+        }
+    }
     interface Tick { void on(int n); }
     static long lastTick = 0;
     static void progress(Events ev, String id, long done, long total) { long now = System.currentTimeMillis(); if (now - lastTick < 200 && done < total) return; lastTick = now; try { JSONObject o = new JSONObject(); o.put("id", id); o.put("status", "progress"); o.put("done", done); o.put("total", total); ev.on(o); } catch (Exception ignored) {} }
-    static void copy(InputStream in, OutputStream os, Tick t) throws Exception { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) { os.write(b, 0, n); if (t != null) t.on(n); } }
+    static void copy(InputStream in, OutputStream os, Tick t) throws Exception { byte[] b = new byte[1 << 20]; int n; while ((n = in.read(b)) > 0) { os.write(b, 0, n); if (t != null) t.on(n); } }
     static byte[] readAll(InputStream in) throws Exception { ByteArrayOutputStream o = new ByteArrayOutputStream(); copy(in, o, null); return o.toByteArray(); }
 
     private static BroadcastReceiver receiver;

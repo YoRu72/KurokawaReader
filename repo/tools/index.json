@@ -664,6 +664,24 @@
       },
       "version": "0.1.0",
       "icon": "film"
+    },
+    {
+      "id": "screen",
+      "name": "Translate on screen",
+      "names": {
+        "ar": "ترجمة الشاشة"
+      },
+      "kind": "screen",
+      "description": "Translate any app's screen: on a phone, a floating bubble (the screen's text, or a picture of it read by OCR; auto translation as you scroll); on a computer, shortcuts that work everywhere — draw a region, watch one for subtitles, translate the clipboard — running in the tray. Google Translate, DeepL or your AI model.",
+      "descriptions": {
+        "ar": "ترجِم شاشة أيّ تطبيق: على الهاتف فقاعةٌ عائمة (نصّ الشاشة، أو صورتها بالتعرّف الضوئي، وترجمةٌ تلقائية مع التمرير)، وعلى الحاسوب اختصاراتٌ تعمل في كلّ مكان — ارسم منطقة، أو راقب واحدةً للترجمات، أو ترجِم الحافظة — وهي تعمل من منطقة الإعلام. بترجمة Google أو DeepL أو نموذجك من الذكاء الاصطناعي."
+      },
+      "version": "1.0.0",
+      "platforms": [
+        "android",
+        "desktop"
+      ],
+      "icon": "translate"
     }
   ]
 }

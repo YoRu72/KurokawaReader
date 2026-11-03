@@ -107,7 +107,7 @@ final class KtStream {
             KtEngine.Task x = parts.length >= 1 ? engine.task(parts[0]) : null; int index = parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
             if (x == null) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
             File f = engine.fileOf(x, index); long size;
-            TorrentHandle th = x.th; TorrentInfo ti = th != null && th.isValid() ? th.torrentFile() : null;
+            TorrentHandle th = x.th; TorrentInfo ti = th != null && th.isValid() ? engine.infoOf(x) : null;
             if (ti != null) size = ti.files().fileSize(index); else if (f != null && f.exists()) size = f.length(); else { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
             if (rangeEnd < 0 || rangeEnd >= size) rangeEnd = size - 1;
             if (rangeStart > rangeEnd) { out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + size + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }

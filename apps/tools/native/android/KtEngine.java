@@ -150,10 +150,10 @@ final class KtEngine {
             tell(true);
         } else if (t == AlertType.METADATA_RECEIVED) {
             TorrentHandle th = ((MetadataReceivedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
-            if (x != null) { TorrentInfo ti = th.torrentFile(); if (ti != null) { x.name = ti.name(); x.total = ti.totalSize(); if (x.priorities != null) applyPriorities(x); keepInfo(x, ti); } th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); persist(); tell(true); }
+            if (x != null) { TorrentInfo ti = own(th.torrentFile()); if (ti != null) { x.name = ti.name(); x.total = ti.totalSize(); if (x.priorities != null) applyPriorities(x); keepInfo(x, ti); } th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); persist(); tell(true); }
         } else if (t == AlertType.TORRENT_FINISHED) {
             TorrentHandle th = ((TorrentFinishedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
-            if (x != null) { if (x.doneAt == 0) x.doneAt = System.currentTimeMillis(); TorrentInfo ti = th.torrentFile(); if (ti != null) { keepInfo(x, ti); scan(x); } th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); if (!seedAfterDone) th.pause(); persist(); tell(true); }
+            if (x != null) { if (x.doneAt == 0) x.doneAt = System.currentTimeMillis(); TorrentInfo ti = own(th.torrentFile()); if (ti != null) { keepInfo(x, ti); scan(x); } th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); if (!seedAfterDone) th.pause(); persist(); tell(true); }
         } else if (t == AlertType.SAVE_RESUME_DATA) {
             SaveResumeDataAlert sa = (SaveResumeDataAlert) a; Task x = byHash.get(sa.handle().infoHash().toHex());
             if (x != null) { try { byte[] data = AddTorrentParams.writeResumeDataBuf(sa.params()); try (FileOutputStream fo = new FileOutputStream(new File(stateDir, x.id + ".fastresume"))) { fo.write(data); } } catch (Exception e) { Log.w(TAG, "resume", e); } }
@@ -253,7 +253,7 @@ final class KtEngine {
         for (int i = 0; i < n; i++) { int v = x.priorities != null && i < x.priorities.length ? x.priorities[i] : (x.priorities == null ? 1 : 0); out[i] = v == 0 ? Priority.IGNORE : v == 2 ? Priority.TOP_PRIORITY : Priority.DEFAULT; }
         return out;
     }
-    private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = x.th.torrentFile(); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
+    private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = infoOf(x); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
 
     void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
     void resume(String id) throws Exception { Task x = task(id); if (x == null) return; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
@@ -262,7 +262,7 @@ final class KtEngine {
         boolean loaded = x.th != null && x.th.isValid() && session != null;
         // (A finished torrent not loaded after a restart: its files found from the copy kept, and deleted here.)
         TorrentInfo kept = deleteFiles && !loaded && "torrent".equals(x.kind) ? infoOf(x) : null;
-        if (loaded) { if (deleteFiles) session.remove(x.th, SessionHandle.DELETE_FILES); else session.remove(x.th); }
+        if (loaded) { infoOf(x); TorrentHandle h = x.th; x.th = null; if (deleteFiles) session.remove(h, SessionHandle.DELETE_FILES); else session.remove(h); }
         if (kept != null) { java.util.Set<File> dirs = new java.util.HashSet<>(); for (int i = 0; i < kept.numFiles(); i++) { File f = new File(kept.files().filePath(i, x.dir)); f.delete(); new File(f.getPath() + ".part").delete(); File d = f.getParentFile(); while (d != null && !d.getAbsolutePath().equals(new File(x.dir).getAbsolutePath())) { dirs.add(d); d = d.getParentFile(); } } List<File> ds = new ArrayList<>(dirs); ds.sort((a, b) -> b.getAbsolutePath().length() - a.getAbsolutePath().length()); for (File d : ds) { String[] k = d.list(); if (k != null && k.length == 0) d.delete(); } }
         if (x.infoHash != null) byHash.remove(x.infoHash);
         if (x.cancel != null) x.cancel.set(true);
@@ -275,7 +275,7 @@ final class KtEngine {
     void setFiles(String id, int[] prios) {
         Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x);
         // (A finished torrent given more files to fetch: woken up again, unless it was paused by hand.)
-        try { if (!x.paused && x.th != null && x.th.isValid()) { long[] prog = x.th.fileProgress(); TorrentInfo ti = x.th.torrentFile(); boolean more = false;
+        try { if (!x.paused && x.th != null && x.th.isValid()) { long[] prog = x.th.fileProgress(); TorrentInfo ti = infoOf(x); boolean more = false;
             if (ti != null) for (int i = 0; i < Math.min(prios.length, ti.numFiles()); i++) if (prios[i] > 0 && prog[i] < ti.files().fileSize(i)) { more = true; break; }
             if (more && ("done".equals(x.state) || "seeding".equals(x.state) || x.th.status().isFinished())) { x.doneAt = 0; x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = "downloading"; KtService.ensure(ctx); } } } catch (Throwable ignored) {}
         persist(); tell(true);
@@ -318,7 +318,7 @@ final class KtEngine {
      *  early too (where a video keeps its index, which players read first to seek), then the rest in order. */
     void prepareStream(String id, int fileIndex) {
         try {
-            Task x = task(id); if (x == null || x.th == null || !x.th.isValid()) return; TorrentInfo ti = x.th.torrentFile(); if (ti == null) return;
+            Task x = task(id); if (x == null || x.th == null || !x.th.isValid()) return; TorrentInfo ti = infoOf(x); if (ti == null) return;
             FileStorage fs = ti.files(); if (fileIndex < 0 || fileIndex >= fs.numFiles()) return; long size = fs.fileSize(fileIndex); if (size <= 0) return;
             int first = fs.mapFile(fileIndex, 0, 1).piece(), last = fs.mapFile(fileIndex, size - 1, 1).piece();
             int now = fs.mapFile(fileIndex, Math.min(size - 1, 8L << 20), 1).piece(), soon = fs.mapFile(fileIndex, Math.min(size - 1, 32L << 20), 1).piece(), tail = fs.mapFile(fileIndex, Math.max(0, size - (4L << 20)), 1).piece();
@@ -615,7 +615,7 @@ final class KtEngine {
         JSONArray arr = new JSONArray();
         try {
             if (x.th != null && x.th.isValid()) {
-                TorrentInfo ti = x.th.torrentFile();
+                TorrentInfo ti = infoOf(x);
                 if (ti != null) {
                     FileStorage fs = ti.files(); long[] prog = x.th.fileProgress(); Priority[] pr = x.th.filePriorities();
                     for (int i = 0; i < fs.numFiles(); i++) { JSONObject f = new JSONObject(); f.put("index", i); f.put("path", fs.filePath(i)); f.put("size", fs.fileSize(i)); f.put("done", prog != null && i < prog.length ? prog[i] : 0); int p = pr != null && i < pr.length ? pr[i].swig() : 4; f.put("priority", p == 0 ? 0 : p >= 7 ? 2 : 1); arr.put(f); }
@@ -645,13 +645,17 @@ final class KtEngine {
     /** A torrent's description: from its handle, else the copy kept beside the task (a finished torrent is not
      *  loaded again after a restart — its files are still found, opened and listed). */
     TorrentInfo infoOf(Task x) {
-        try { if (x.th != null && x.th.isValid()) { TorrentInfo ti = x.th.torrentFile(); if (ti != null) return ti; } } catch (Throwable ignored) {}
+        // (Always the app's own copy: the handle's torrentFile() is libtorrent's object itself, freed when the torrent is
+        // removed — a list or a stream still reading it then ended the whole app, SIGABRT in free, 0.12.4.)
         if (x.info != null) return x.info;
+        try { if (x.th != null && x.th.isValid()) { TorrentInfo ti = own(x.th.torrentFile()); if (ti != null) { x.info = ti; return ti; } } } catch (Throwable ignored) {}
         try { File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) x.info = new TorrentInfo(tf); } catch (Throwable ignored) {}
         return x.info;
     }
+    /** An owned copy of a torrent's description (freed by Java, not with the torrent). */
+    static TorrentInfo own(TorrentInfo ti) { try { return ti == null ? null : new TorrentInfo(new org.libtorrent4j.swig.torrent_info(ti.swig())); } catch (Throwable e) { return null; } }
     private void keepInfo(Task x, TorrentInfo ti) {
-        x.info = ti; File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) return;
+        if (x.info == null) x.info = ti; File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) return;
         try (FileOutputStream fo = new FileOutputStream(tf)) { org.libtorrent4j.swig.add_torrent_params ap = new org.libtorrent4j.swig.add_torrent_params(); ap.set_ti(ti.swig()); fo.write(org.libtorrent4j.Vectors.byte_vector2bytes(org.libtorrent4j.swig.libtorrent.write_torrent_file_buf_ex(ap))); } catch (Throwable e) { Log.w(TAG, "keep torrent", e); }
     }
     /** Finished downloads in another folder moved to `dest` (the app's folder in Download, by default): their files

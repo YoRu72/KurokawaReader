@@ -112,6 +112,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       row(t('downloadFolder'), canPick ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); rerender(); toast(t('folderPicked', { dir: d })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('folder'), t('changeFolder')) : h('span'), s.downloadDir || t('defaultFolder')),
       // (Downloads kept before in the app's own storage, out of sight of the phone's file apps: moved to the
       // app's folder in Download in one go.)
+      eng.id === 'native' ? (() => { const st = h('small', { class: 'src' }); const btn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { await (ktPlugin() as unknown as { notifyAccess?(o: { ask?: boolean }): Promise<{ granted: boolean }> } | null)?.notifyAccess?.({ ask: true }).catch(() => null); for (let k = 0; k < 30; k++) { await new Promise((r) => setTimeout(r, 1000)); if (await show()) return; } } }, icon('bell'), t('notifyAllow'));
+        const show = async () => { const r = await (ktPlugin() as unknown as { notifyAccess?(o: { ask?: boolean }): Promise<{ granted: boolean }> } | null)?.notifyAccess?.({}).catch(() => null); st.textContent = r?.granted ? t('notifyOn') : t('notifyOff'); btn.hidden = !!r?.granted; return !!r?.granted; };
+        void show(); return row(t('notifyProgress'), h('div', { class: 'row' }, st, btn), t('notifyProgressHint')); })() : null,
       eng.id === 'native' && !s.downloadDir ? row(t('moveFinished'), h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const r = await (ktPlugin() as unknown as { moveFinished(o: { dir?: string }): Promise<{ moved: number; dir: string }> }).moveFinished({}); toast(t('movedFinished', { n: localDigits(r.moved), dir: r.dir }), 'info', 6000); } catch (er) { toast(String((er as Error).message ?? er), 'error'); } b.disabled = false; } }, icon('folder'), t('moveFinishedGo')), t('moveFinishedHint')) : null,
       row(t('maxActive'), numberField(s.maxActive, (v) => { updateSettings({ maxActive: Math.max(1, Math.min(10, v)) }); void (window.kurokawaTools?.configure?.({ maxConnections: v }) ?? ktPlugin()?.configure({ maxActive: v })); }, { min: 1, max: 10 })),
       eng.can.limits ? row(t('downLimit'), numberField(Math.round(s.limits.down / 1024), (v) => { const l = { ...s.limits, down: v * 1024 }; updateSettings({ limits: l }); void eng.setLimits?.(l); }, { width: '7em' }), 'KB/s · 0 = ' + t('unlimited')) : null,
@@ -288,7 +291,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         h('div', { class: 'usage-row total' }, h('span', { class: 'grow' }, t('usageDownloads')), h('b', null, formatBytes(total))), free >= 0 ? h('div', { class: 'usage-row' }, h('span', { class: 'grow' }, t('usageFree')), h('b', null, formatBytes(free))) : h('span'));
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
-    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    // Translate on screen (the add-on, Android): its own page.
+    const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
+    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
@@ -369,7 +374,7 @@ function fontRows(desktop: boolean): HTMLElement[] {
 
 
 /** Which settings cards belong to which add-on (a card may belong to two: AniList to Anime and to TV & Movies). */
-const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes'], tv: ['tv', 'anilist', 'episodes'], player: ['playerprefs', 'player', 'sublangs'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'] };
+const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes'], tv: ['tv', 'anilist', 'episodes'], player: ['playerprefs', 'player', 'sublangs'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'], screen: ['screen'] };
 /** The installed add-ons that have something to set: their cards here, and their (and their sources') options. */
 export function addonTabs(addons: string[], index: { addons: AddonEntry[] } | null, cardIds: Set<string>): { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] {
   const out: { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] = [];
