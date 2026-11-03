@@ -79,6 +79,67 @@ public class KtPlugin extends Plugin {
         if (Build.VERSION.SDK_INT < 33 || notifyAsked) return; notifyAsked = true;
         try { if (getContext().checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED) return; android.app.Activity a = getActivity(); if (a != null) a.runOnUiThread(() -> { try { a.requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 4712); } catch (Throwable ignored) {} }); } catch (Throwable ignored) {}
     }
+    /* ---------- the screen translator (Translate on screen add-on) ---------- */
+    private static boolean a11yOn(android.content.Context c) {
+        if (KtScreenA11y.self != null) return true;
+        try { String on = android.provider.Settings.Secure.getString(c.getContentResolver(), android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES); return on != null && on.contains(c.getPackageName() + "/") && on.contains("KtScreenA11y"); } catch (Throwable e) { return false; }
+    }
+    /** What the floating translator may do now: appear on top, read the screen's text, a picture of it; running or not. */
+    @PluginMethod public void screenStatus(PluginCall call) {
+        android.content.Context c = getContext(); JSObject r = new JSObject();
+        r.put("overlay", android.provider.Settings.canDrawOverlays(c)); r.put("a11y", a11yOn(c)); r.put("a11yLive", KtScreenA11y.self != null); r.put("running", KtScreenService.self != null); r.put("capture", KtScreenCapture.ready());
+        r.put("notify", androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled());
+        try { android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(android.content.Context.POWER_SERVICE); r.put("battery", pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName())); } catch (Throwable e) { r.put("battery", false); }
+        r.put("tile", Build.VERSION.SDK_INT >= 33);
+        call.resolve(r);
+    }
+    /** The system's page for one permission: appear on top, accessibility, battery, notifications; or the tile added (Android 13+). */
+    @PluginMethod public void screenPermission(PluginCall call) {
+        android.content.Context c = getContext(); String what = call.getString("what", "overlay"); android.content.Intent i = null;
+        switch (what) {
+            case "overlay": i = new android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + c.getPackageName())); break;
+            case "a11y": i = new android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS); break;
+            case "battery": i = new android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS); break;
+            case "app": i = new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + c.getPackageName())); break;
+            case "tile":
+                if (Build.VERSION.SDK_INT >= 33) { try { android.app.StatusBarManager sb = c.getSystemService(android.app.StatusBarManager.class); sb.requestAddTileService(new android.content.ComponentName(c, KtScreenTile.class), c.getString(c.getResources().getIdentifier("kt_screen_tile", "string", c.getPackageName())), android.graphics.drawable.Icon.createWithResource(c, android.R.drawable.ic_menu_view), c.getMainExecutor(), (res) -> {}); } catch (Throwable ignored) {} }
+                call.resolve(); return;
+        }
+        try { if (i != null) { i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); c.startActivity(i); } } catch (Throwable e) { try { c.startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Throwable ignored) {} }
+        call.resolve();
+    }
+    /** The translator's settings kept (the bubble reads them; a running one is told). */
+    @PluginMethod public void screenConfig(PluginCall call) {
+        JSObject cfg = call.getObject("config", new JSObject());
+        getContext().getSharedPreferences(KtScreenService.PREFS, android.content.Context.MODE_PRIVATE).edit().putString("config", cfg.toString()).apply();
+        if (Boolean.TRUE.equals(call.getBoolean("clearFixed", false))) getContext().getSharedPreferences(KtScreenService.PREFS, android.content.Context.MODE_PRIVATE).edit().remove("fl").remove("ft").remove("fr").remove("fb").apply();
+        KtTranslate.forget();
+        if (KtScreenService.self != null) try { getContext().startService(new android.content.Intent(getContext(), KtScreenService.class).setAction(KtScreenService.ACT_CONFIG)); } catch (Throwable ignored) {}
+        call.resolve();
+    }
+    @PluginMethod public void screenStart(PluginCall call) {
+        if (!android.provider.Settings.canDrawOverlays(getContext())) { call.reject("overlay"); return; }
+        askNotify();
+        try { KtScreenService.start(getContext(), KtScreenService.ACT_START); call.resolve(); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @PluginMethod public void screenStop(PluginCall call) { KtScreenService.stop(getContext()); call.resolve(); }
+    /** A try of the translator as set: the lines given, translated (the page's «Try it»). */
+    @PluginMethod public void screenTranslate(PluginCall call) {
+        final JSObject cfg = call.getObject("config", null); final JSArray texts = call.getArray("texts", new JSArray());
+        bg.execute(() -> {
+            try {
+                java.util.List<String> in = new java.util.ArrayList<>(); for (int k = 0; k < texts.length(); k++) in.add(texts.getString(k));
+                java.util.Map<String, Object> m = cfg != null ? KtJson.obj(KtJson.parse(cfg.toString())) : KtScreenService.config(getContext());
+                java.util.List<String> out = KtTranslate.translate(in, KtTranslate.Config.from(m));
+                JSObject r = new JSObject(); r.put("texts", new JSArray(out)); call.resolve(r);
+            } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    @PluginMethod public void screenHistory(PluginCall call) {
+        android.content.SharedPreferences sp = getContext().getSharedPreferences(KtScreenService.PREFS, android.content.Context.MODE_PRIVATE);
+        if (Boolean.TRUE.equals(call.getBoolean("clear", false))) sp.edit().remove("history").apply();
+        try { JSObject r = new JSObject(); r.put("items", new JSArray(sp.getString("history", "[]"))); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage()); }
+    }
     /** Whether notifications are allowed; `ask`: the system's dialog, or — once refused for good — the app's notification settings. */
     @PluginMethod public void notifyAccess(PluginCall call) {
         android.content.Context c = getContext(); boolean on = androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled();

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="kt_screen_a11y_label">Kurokawa screen translator</string>
+    <string name="kt_screen_a11y_summary">Reads the text on the screen when you ask the floating translator to translate it.</string>
+    <string name="kt_screen_a11y_desc">The floating translator reads the words other apps show (and when the screen scrolls) only when you tap it or turn on auto translation. Only those words are sent, to the translator you chose; nothing else is read, kept or shared.</string>
+    <string name="kt_screen_tile">Translate screen</string>
+</resources>

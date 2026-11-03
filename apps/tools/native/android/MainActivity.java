@@ -32,6 +32,8 @@ public class MainActivity extends BridgeActivity {
         String action = intent.getAction(); String u = null;
         if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null) {
             Uri d = intent.getData();
+            // (From the floating translator's menu or its tile: its page in the app.)
+            if ("kurokawatools".equals(d.getScheme()) && "screen".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/screen'", null), 400); return; }
             if ("magnet".equals(d.getScheme()) || "http".equals(d.getScheme()) || "https".equals(d.getScheme())) u = d.toString();
             else if ("content".equals(d.getScheme()) || "file".equals(d.getScheme())) u = readTorrent(d);
         } else if (Intent.ACTION_SEND.equals(action)) {

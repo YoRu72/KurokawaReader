@@ -85,6 +85,24 @@ if (!manifest.includes('android:scheme="magnet"')) {
       </intent-filter>
 `);
 }
+// --- the screen translator (the «Translate on screen» add-on): appearing over other apps, reading the screen's text
+// (accessibility service) or a picture of it (screen capture), its foreground service and quick-settings tile ---
+if (!manifest.includes('KtScreenService')) {
+  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <application`);
+  manifest = manifest.replace('</application>', `    <service android:name=".KtScreenService" android:exported="false" android:foregroundServiceType="specialUse|mediaProjection"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="A floating translator bubble the user opened over other apps" /></service>
+    <service android:name=".KtScreenA11y" android:exported="false" android:label="@string/kt_screen_a11y_label" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+      <meta-data android:name="android.accessibilityservice" android:resource="@xml/kt_screen_a11y" />
+    </service>
+    <service android:name=".KtScreenTile" android:exported="true" android:label="@string/kt_screen_tile" android:icon="@android:drawable/ic_menu_view" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+      <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+      <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+    </service>
+    <activity android:name=".KtScreenCapture$Consent" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:taskAffinity="app.kurokawa.tools.capture" android:launchMode="singleInstance" />
+    </application>`);
+}
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
 if (!manifest.includes('android:usesCleartextTraffic')) manifest = manifest.replace('<application', '<application android:usesCleartextTraffic="true"');
@@ -112,7 +130,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // --- the launcher icon (its own, not the template's; drawn by native/icon/render.cjs): adaptive layers, the themed
 // (monochrome) layer of Android 13, and the older launchers' icons ---
@@ -173,6 +191,14 @@ if (!gradle.includes('proguard-kt.pro')) {
   await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-keep class com.yausername.** { *; }\n');
   gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
+// (The screen translator's OCR: Google's text recognition through Play services — its models are fetched by the
+// phone, not carried in the APK: a few hundred KB instead of tens of MB.)
+if (!gradle.includes('play-services-mlkit-text-recognition')) gradle = gradle.replace(/dependencies \{/, `dependencies {
+    implementation "com.google.android.gms:play-services-mlkit-text-recognition:19.0.1"
+    implementation "com.google.android.gms:play-services-mlkit-text-recognition-japanese:16.0.1"
+    implementation "com.google.android.gms:play-services-mlkit-text-recognition-chinese:16.0.1"
+    implementation "com.google.android.gms:play-services-mlkit-text-recognition-korean:16.0.1"
+    implementation "com.google.android.gms:play-services-mlkit-text-recognition-devanagari:16.0.1"`);
 await fs.writeFile(gradlePath, gradle);
 // yt-dlp (Python inside the app) needs Android 7 (API 24) at least; Python and ffmpeg run as programs, so native
 // libraries are extracted on install (useLegacyPackaging above).
