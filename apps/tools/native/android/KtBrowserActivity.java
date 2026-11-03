@@ -52,17 +52,20 @@ public class KtBrowserActivity extends Activity {
     /** A replay's step on this page: the element found (by its id, its link, its words and kind, its place among
      *  the same) and tapped; tried for a few seconds while the page fills in. */
     static String replayJs(JSONArray steps, int after) {
-        return "(function(S,A){if(window.__ktBusy)return 'busy';var path=function(u){try{var x=new URL(u,location.href);return x.host+x.pathname;}catch(e){return u;}};var here=path(location.href);var norm=function(s){return (s||'').replace(/\\s+/g,' ').trim().slice(0,80);};"
-            + "var host=function(u){try{return new URL(u,location.href).host;}catch(e){return '';}};var idx=-1;for(var i=A+1;i<S.length;i++){if(!S[i].start&&path(S[i].url)===here){idx=i;break;}}"
-            // (A page whose address changes every visit — a download page with its own key —: the next step, on the same site.)
-            + "if(idx<0&&A+1<S.length&&!S[A+1].start&&host(S[A+1].url)===location.host)idx=A+1;if(idx<0)return 'nostep';var st=S[idx];var tries=0;window.__ktBusy=1;"
-            + "var find=function(){var el=null;if(st.id)el=document.getElementById(st.id);"
+        return "(function(S,A){if(window.__ktBusy)return 'busy';if(window.__ktDone>A)A=window.__ktDone;var path=function(u){try{var x=new URL(u,location.href);return x.host+x.pathname;}catch(e){return u;}};var here=path(location.href);var norm=function(s){return (s||'').replace(/\\s+/g,' ').trim().slice(0,80);};"
+            + "var host=function(u){try{return new URL(u,location.href).host;}catch(e){return '';}};var C=[],i;for(i=A+1;i<S.length;i++)if(!S[i].start&&path(S[i].url)===here)C.push(i);"
+            // (A page whose address changes every visit — a download page with its own key —: the steps on the same site next. Then any later
+            // step at all: the start page redirected elsewhere — example.com to www.example.com —, or a page that was not recorded — a
+            // page still loading its ads when it was tapped —: its button looked for here anyway.)
+            + "for(i=A+1;i<S.length;i++)if(!S[i].start&&C.indexOf(i)<0&&host(S[i].url)===location.host)C.push(i);for(i=A+1;i<S.length;i++)if(!S[i].start&&C.indexOf(i)<0)C.push(i);if(!C.length)return 'nostep';var idx=C[0],tries=0;window.__ktBusy=1;"
+            + "var find1=function(st){var el=null;if(st.id)el=document.getElementById(st.id);"
             + "if(!el&&st.href&&!/^javascript:|^#$/.test(st.href)){var hp=path(st.href);el=[].slice.call(document.querySelectorAll('a[href]')).filter(function(a){return path(a.getAttribute('href'))===hp;})[0]||null;}"
             + "if(!el&&st.text){var c=[].slice.call(document.querySelectorAll(st.tag||'*')).filter(function(x){return norm(x.innerText||x.value||x.getAttribute('aria-label'))===st.text;});el=c[Math.min(st.n>0?st.n:0,c.length-1)]||null;}return el;};"
-            + "var go=function(){var el=find();if(el){el.scrollIntoView({block:'center'});setTimeout(function(){window.__ktBusy=0;try{KtTrail.replayed(idx);}catch(e){}el.click();},350);return;}if(++tries<16)setTimeout(go,500);else{window.__ktBusy=0;try{KtTrail.missing(idx);}catch(e){}}};setTimeout(go,700);return 'step '+idx;})(" + steps.toString() + "," + after + ")";
+            + "var find=function(){for(var k=0;k<C.length;k++){var el=find1(S[C[k]]);if(el){idx=C[k];return el;}}return null;};"
+            + "var go=function(){var el=find();if(el){el.scrollIntoView({block:'center'});setTimeout(function(){window.__ktBusy=0;window.__ktDone=idx;try{KtTrail.replayed(idx);}catch(e){}el.click();},350);return;}if(++tries<16)setTimeout(go,500);else{window.__ktBusy=0;try{KtTrail.missing(idx);}catch(e){}}};setTimeout(go,700);return 'step '+idx;})(" + steps.toString() + "," + after + ")";
     }
     public class Trail {
-        @android.webkit.JavascriptInterface public void step(String json) { try { JSONObject o = new JSONObject(json); synchronized (trail) { trail.add(o); while (trail.size() > 12) trail.remove(0); } } catch (Exception ignored) {} }
+        @android.webkit.JavascriptInterface public void step(String json) { try { JSONObject o = new JSONObject(json); synchronized (trail) { trail.add(o); while (trail.size() > 30) trail.remove(0); } } catch (Exception ignored) {} }
         @android.webkit.JavascriptInterface public void replayed(int i) { h.post(() -> { replayAt = Math.max(replayAt, i); say((ar(KtBrowserActivity.this) ? "الخطوة " : "Step ") + i); /* (a step that opens something on the same page — a dialog —: the next one looked for there too) */ h.postDelayed(() -> { if (replay != null && wv != null) wv.evaluateJavascript(replayJs(replay, replayAt), null); }, 1600); }); }
         @android.webkit.JavascriptInterface public void missing(int i) { h.post(() -> { say(ar(KtBrowserActivity.this) ? "لم يُعثر على الزرّ نفسه — أكمِل بيدك" : "The same button was not found — go on by hand"); }); }
     }
@@ -102,7 +105,9 @@ public class KtBrowserActivity extends Activity {
         s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setLoadWithOverviewMode(true); s.setUseWideViewPort(true); s.setBuiltInZoomControls(true); s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(true); s.setSupportMultipleWindows(false);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
-        wv.setWebChromeClient(new WebChromeClient() { @Override public void onProgressChanged(WebView v, int p) { prog.setProgress(p); prog.setVisibility(p >= 100 ? View.INVISIBLE : View.VISIBLE); } });
+        wv.setWebChromeClient(new WebChromeClient() { @Override public void onProgressChanged(WebView v, int p) { prog.setProgress(p); prog.setVisibility(p >= 100 ? View.INVISIBLE : View.VISIBLE);
+            // (A page that never finishes loading — ads, trackers —: recorded, and its step replayed, once it is mostly there.)
+            if (p >= 40) v.evaluateJavascript(TRAIL_JS, null); if (p >= 80 && replay != null) v.evaluateJavascript(replayJs(replay, replayAt), null); } });
         wv.setWebViewClient(new KtDohWeb() {
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 String u = r.getUrl().toString();
@@ -117,7 +122,10 @@ public class KtBrowserActivity extends Activity {
                 return super.shouldInterceptRequest(v, r);
             }
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); }
-            @Override public void onPageFinished(WebView v, String u) { if (!bar.hasFocus()) bar.setText(u); CookieManager.getInstance().flush(); v.evaluateJavascript(TRAIL_JS, null); if (replay != null) v.evaluateJavascript(replayJs(replay, replayAt), null); }
+            // (Taps recorded as soon as the page shows, not only once it has finished loading: a page still loading its ads
+            // was tapped through unrecorded, and its replay stopped on the first page.)
+            @Override public void onPageCommitVisible(WebView v, String u) { v.evaluateJavascript(TRAIL_JS, null); }
+            @Override public void onPageFinished(WebView v, String u) { if (!bar.hasFocus()) bar.setText(u); CookieManager.getInstance().flush(); v.evaluateJavascript(TRAIL_JS, null); if (replay != null) v.evaluateJavascript(replayJs(replay, replayAt), (r) -> { if ("\"nostep\"".equals(r)) say(ar(KtBrowserActivity.this) ? "لا خطوةَ تالية في هذه الصفحة — أكمِل بيدك" : "No next step on this page — go on by hand"); }); }
         });
         // A file the page downloads: to the app, with the page's cookies and address (the site expects them).
         wv.setDownloadListener((url, ua, cd, mime, len) -> hand(url, URLUtil.guessFileName(url, cd, mime), wv.getUrl()));

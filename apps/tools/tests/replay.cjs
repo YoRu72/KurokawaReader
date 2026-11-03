@@ -50,6 +50,19 @@ const site = http.createServer((req, res) => {
   check('replayed to the file: every step, in order', !!got && seen.slice(0, 3).join() === '1,2,3');
   check('a new signed link (not the first one)', !!got && got !== first && /Game-0\.bin\?sig=\d+/.test(got));
   check('the right file among others (by its place)', !!got && !/mac\.zip/.test(got));
+  // 3. The start page redirected elsewhere (example.com → www.example.com): the recorded steps' addresses match no page;
+  //    their buttons are looked for on each page anyway, in order.
+  const moved = trail.map((s, k) => k === 0 ? s : { ...s, url: s.url.replace(/^http:\/\/[^/]+/, 'http://www.elsewhere.test') });
+  const r = await br.newPage(); let at3 = 0; let got3 = null; const seen3 = [];
+  await r.exposeFunction('__replayed', async (i) => { at3 = Math.max(at3, i); seen3.push(i); setTimeout(() => r.evaluate(replayJs(moved, at3)).catch(() => undefined), 1600); });
+  await r.exposeFunction('__missing', (i) => seen3.push('missing ' + i));
+  await r.addInitScript(() => { window.KtTrail = { step() {}, replayed: (i) => window.__replayed(i), missing: (i) => window.__missing(i) }; });
+  r.on('framenavigated', (f) => { if (f === r.mainFrame() && /\/file\//.test(f.url())) got3 = f.url(); });
+  r.on('load', () => { if (!got3) r.evaluate(replayJs(moved, at3)).catch(() => undefined); });
+  await r.goto(`${base}/game`);
+  for (let k = 0; k < 40 && !got3; k++) await r.waitForTimeout(250);
+  console.log('replayed (moved):', seen3.join(','), '→', got3);
+  check('the start page moved: still replayed to the file, step by step', !!got3 && seen3.slice(0, 3).join() === '1,2,3' && /Game-0\.bin/.test(got3));
   await br.close(); site.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
 })().catch((e) => { console.error(e); process.exit(1); });

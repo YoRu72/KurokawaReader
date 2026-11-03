@@ -1,7 +1,7 @@
 name: Pages
 
 # The site: the reader's web app at the root (as it has always been), Kurokawa Tools' under /tools/, and the
-# AltStore/SideStore source for the reader's IPA. Deployed after either app's release workflow, and on demand.
+# AltStore/SideStore source for the reader's IPA, and the releases page under /releases/. Deployed after either app's release workflow, and on demand.
 on:
   workflow_run:
     workflows: ['Release reader', 'Release tools']
@@ -40,6 +40,10 @@ jobs:
           cp -r apps/reader/dist/. site/
           cp -r apps/tools/dist/. site/tools/
           touch site/.nojekyll
+          # The releases page (/releases/): its list made from GitHub's releases now, so it never waits on the API.
+          mkdir -p site/releases && cp apps/reader/releases/index.html site/releases/
+          gh api --paginate --slurp "repos/${{ github.repository }}/releases?per_page=100" > releases.raw.json
+          node apps/reader/scripts/releases.mjs releases.raw.json > site/releases/releases.json
           V=$(node -p "require('./apps/reader/package.json').version")
           mkdir -p ipa && (gh release download "v$V" --pattern '*.ipa' --dir ipa || true)
           node apps/reader/scripts/altstore.mjs "$V" "${{ github.repository }}" "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" ipa > site/altstore.json
