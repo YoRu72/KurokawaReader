@@ -102,6 +102,9 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- playback
   if (src.headers && Object.keys(src.headers).length) toast(t('playerHeadersNote'));
+  // (mpv that cannot start here — its libraries not loading on this phone, the file refused —: the browser's player
+  // takes over at once, the same file at the same place.)
+  if (mpv) { let started = false; video.addEventListener('loadedmetadata', () => { started = true; }, { once: true }); video.addEventListener('error', () => { if (started || playerGone) return; toast(t('mpvFailed'), 'error', 5000); const at = video.currentTime; close(); openPlayer({ ...src, engine: 'web' }); void at; }, { once: true }); }
   if (!mpv) video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
   video.addEventListener('loadedmetadata', () => {
     timeEnd.textContent = fmtTime(video.duration); applyAspect(); applyTransform(); drawMarks();
