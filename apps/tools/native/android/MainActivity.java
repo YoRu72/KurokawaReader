@@ -30,8 +30,12 @@ public class MainActivity extends BridgeActivity {
     private void handOver(Intent intent) {
         if (intent == null) return;
         String action = intent.getAction(); String u = null;
+        if ("android.intent.action.INSTALL_PACKAGE".equals(action) && intent.getData() != null) { handApp(intent.getData()); return; }
         if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null) {
             Uri d = intent.getData();
+            // (An app to install, opened with «Kurokawa Installer» from a file manager or a browser: copied here and
+            // shown in the app's installer — what it is, its parts, then installed.)
+            if (isAppFile(intent, d)) { handApp(d); return; }
             // (From the floating translator's menu or its tile: its page in the app.)
             if ("kurokawatools".equals(d.getScheme()) && "screen".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/screen'", null), 400); return; }
             if ("magnet".equals(d.getScheme()) || "http".equals(d.getScheme()) || "https".equals(d.getScheme())) u = d.toString();
@@ -43,6 +47,35 @@ public class MainActivity extends BridgeActivity {
         if (u == null) return;
         final String link = u;
         if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/open?u='+encodeURIComponent(" + org.json.JSONObject.quote(link) + ")", null), 400);
+    }
+    private boolean isAppFile(Intent intent, Uri d) {
+        String type = intent.getType(); if (type == null) try { type = getContentResolver().getType(d); } catch (Throwable ignored) {}
+        if ("application/vnd.android.package-archive".equals(type)) return true;
+        if (intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtInstaller")) return true;
+        String n = nameOf(d).toLowerCase(java.util.Locale.ROOT); return n.endsWith(".apk") || n.endsWith(".apks") || n.endsWith(".xapk") || n.endsWith(".apkm");
+    }
+    private String nameOf(Uri d) {
+        String n = null;
+        try (android.database.Cursor c = getContentResolver().query(d, new String[] { android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) { if (c != null && c.moveToFirst()) n = c.getString(0); } catch (Throwable ignored) {}
+        if (n == null) n = d.getLastPathSegment(); if (n == null) n = "app.apk"; return n.replaceAll(".*/", "");
+    }
+    /** The app file (a file path as it is; anything else copied to the app's cache) handed to the page's installer. */
+    private void handApp(Uri d) {
+        new Thread(() -> {
+            String path = null;
+            try {
+                if ("file".equals(d.getScheme())) path = d.getPath();
+                else {
+                    String n = nameOf(d); if (!n.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(apk|apks|xapk|apkm)$")) n = n + ".apk";
+                    java.io.File dir = new java.io.File(getCacheDir(), "kt-install"); dir.mkdirs(); java.io.File[] old = dir.listFiles(); if (old != null) for (java.io.File f : old) if (System.currentTimeMillis() - f.lastModified() > 86400000L) f.delete();
+                    java.io.File out = new java.io.File(dir, n);
+                    try (java.io.InputStream in = getContentResolver().openInputStream(d); java.io.OutputStream os = new java.io.FileOutputStream(out)) { byte[] b = new byte[1 << 20]; int r; while ((r = in.read(b)) > 0) os.write(b, 0, r); }
+                    path = out.getAbsolutePath();
+                }
+            } catch (Throwable e) { note(this, "install hand-over: " + e); }
+            final String p = path; if (p == null) return;
+            runOnUiThread(() -> { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/install?p='+encodeURIComponent(" + org.json.JSONObject.quote(p) + ")", null), 400); });
+        }, "kt-install-handover").start();
     }
     /** A line added to the crash file the page shows next time. */
     static void note(android.content.Context c, String what) {

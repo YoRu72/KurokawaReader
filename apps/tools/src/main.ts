@@ -52,7 +52,7 @@ function placeNav(): void {
   if (isPc()) document.body.prepend(nav); else document.body.append(nav);
   markNav(parseRoute());
 }
-const destOf = (r: Route): string => (r.name === 'downloads' || r.name === 'task' || r.name === 'add' ? 'downloads' : r.name === 'settings' || r.name === 'addons' || r.name === 'screen' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : r.name === 'subs' ? 'subs' : r.name === 'tv' || r.name === 'tvTitle' ? 'tv' : r.name === 'videos' ? 'videos' : 'search');
+const destOf = (r: Route): string => (r.name === 'downloads' || r.name === 'task' || r.name === 'add' || r.name === 'install' ? 'downloads' : r.name === 'settings' || r.name === 'addons' || r.name === 'screen' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' ? 'anime' : r.name === 'subs' ? 'subs' : r.name === 'tv' || r.name === 'tvTitle' ? 'tv' : r.name === 'videos' ? 'videos' : 'search');
 /* Each tab remembers where it was (a show's page in Anime, a section of Settings…): going back to the tab
    brings that screen back as it was, scrolled where it was; tapping the tab that is open goes to its start. */
 const lastPath = new Map<string, string>();
@@ -98,6 +98,7 @@ function mountInner(route: Route): void {
     case 'subs': current = lazyView(() => import('./views/subs').then((m) => m.subsView(route.q))); break;
     case 'anime': current = lazyView(() => import('./views/anime').then((m) => m.animeView(route.tab as 'search' | undefined, route.q, route.genre || route.tag ? { q: '', genres: route.genre ? [route.genre] : [], tags: route.tag ? [route.tag] : [], notTags: [], formats: [], status: undefined, season: undefined, year: undefined, minScore: undefined } : undefined))); break;
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
+    case 'install': { const pth = route.p; current = downloadsView(); setTimeout(() => void import('./views/apk').then((m) => m.installSheet(pth)), 80); break; }
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;
@@ -135,6 +136,7 @@ if (MINI) { document.documentElement.classList.add('mini'); const { miniView } =
 else if (OVERLAY) { const { overlayView } = await import('./views/overlay'); app.replaceChildren(overlayView()); }
 else {
   placeNav();
+  void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
   onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());

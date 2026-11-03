@@ -62,7 +62,7 @@ public class KtPlugin extends Plugin {
     /** From the app's browser: a link to add, or the links of a page to pick from (event «browser»). */
     static void browserEvent(JSONObject o) { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("browser", JSObject.fromJSONObject(o), true); } catch (Exception ignored) {} }
     @PluginMethod public void browse(PluginCall call) {
-        Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
     @Override public void load() { self = this; try { KrDoh.provider = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {} bg.execute(this::engine); }
