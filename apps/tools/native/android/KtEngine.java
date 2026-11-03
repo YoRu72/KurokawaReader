@@ -470,17 +470,28 @@ final class KtEngine {
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
                 final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = retries; opt.state = state; opt.expectName = safe;
+                // (The server's own name for the file — Content-Disposition, or the right extension for its type — taken
+                // as soon as the server answers, not at the end: an APK no longer shows as «.bin» while it comes.)
+                final File dirF = dir;
+                opt.named = (n, mime) -> {
+                    if (!x.autoName) return null; String nn = n == null ? null : n.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim();
+                    if (nn == null || nn.isEmpty()) nn = KrDownloader.withTypeExt(x.name, mime); if (nn == null || nn.equals(x.name)) { x.autoName = false; return null; }
+                    if (new File(dirF, nn).exists() && !"overwrite".equals(conflict)) nn = freeName(dirF, nn);
+                    x.name = nn; x.httpOut = new File(dirF, nn); x.autoName = false; persist(); tell(true); return new File(dirF, nn + ".part");
+                };
                 opt.cookies = (u, set) -> { try { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(u.toString(), c); } catch (Throwable ignored) {} };
                 final int conns = lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim));
                 final Runnable tick = () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } };
                 KrDownloader.Result r;
-                try { r = KrDownloader.fetch(new URL(url), part, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                final File part0 = part;
+                try { r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
                 catch (IOException e) {
                     // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
                     // tried once more by the network's own DNS.)
                     if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || x.cancel.get()) throw e;
-                    r = KrDownloader.fetch(new URL(url), part, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt);
+                    r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt);
                 }
+                if (r.out != null) part = r.out;
                 // (The name the server gives — Content-Disposition — when the user gave none and the link's was a code.)
                 if (x.autoName && r.fileName != null) { String n = r.fileName.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); if (want.exists() && !"overwrite".equals(conflict)) n = freeName(dir, n); x.name = n; x.httpOut = new File(dir, n); } x.autoName = false; }
                 // (A server that refused connections: asked no more than it accepted next time.)
@@ -520,10 +531,11 @@ final class KtEngine {
     private void saveHosts() { try { JSONObject h = new JSONObject(); for (Map.Entry<String, Integer> e : hostLimit.entrySet()) h.put(e.getKey(), e.getValue()); write(new File(stateDir, "hosts.json"), h.toString()); } catch (Exception ignored) {} }
     JSONObject hosts() { JSONObject h = new JSONObject(); try { for (Map.Entry<String, Integer> e : hostLimit.entrySet()) h.put(e.getKey(), e.getValue()); } catch (Exception ignored) {} return h; }
     /** A new address for a download whose link ran out (a signed or expiring link): the same file, gone on from where it stopped. */
-    void setUrl(String id, String url) throws Exception {
+    void setUrl(String id, String url) throws Exception { setUrl(id, url, null); }
+    void setUrl(String id, String url, JSONObject headers) throws Exception {
         Task x = task(id); if (x == null || !"http".equals(x.kind)) throw new IllegalArgumentException("not a file download");
         if (x.cancel != null) x.cancel.set(true); if (x.httpThread != null) x.httpThread.join(5000);
-        x.source.put("url", url); x.paused = false; x.error = null; persist(); startHttp(x); tell(true);
+        x.source.put("url", url); if (headers != null && headers.length() > 0) x.source.put("headers", headers); x.paused = false; x.error = null; persist(); startHttp(x); tell(true);
     }
     private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
         java.net.Proxy px = proxyOf(proxy);

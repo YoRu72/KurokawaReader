@@ -202,7 +202,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void reannounce(PluginCall call) { run(call, () -> { engine().reannounce(call.getString("id", "")); call.resolve(); }); }
     @PluginMethod public void setTaskLimits(PluginCall call) { run(call, () -> { engine().setTaskLimits(call.getString("id", ""), call.getInt("down", 0), call.getInt("up", 0)); call.resolve(); }); }
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
-    @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { engine().setUrl(call.getString("id", ""), call.getString("url", "")); call.resolve(); }); }
+    @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { JSObject hd = call.getObject("headers", null); engine().setUrl(call.getString("id", ""), call.getString("url", ""), hd == null ? null : new JSONObject(hd.toString())); call.resolve(); }); }
     @PluginMethod public void hosts(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("hosts", engine().hosts()); call.resolve(r); }); }
     @PluginMethod public void setLimits(PluginCall call) { run(call, () -> { engine().setLimits(call.getLong("down", 0L), call.getLong("up", 0L)); call.resolve(); }); }
     @PluginMethod public void configure(PluginCall call) { run(call, () -> { engine().configure(new JSONObject(call.getData().toString())); call.resolve(); }); }

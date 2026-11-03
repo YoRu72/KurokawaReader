@@ -3,7 +3,7 @@
 // again and the file changed on the server: downloaded afresh. Run by downloader.sh.
 import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.atomic.*; import java.security.*;
 public class T {
-  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static AtomicInteger tag = new AtomicInteger();
+  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static volatile boolean apk = false; static volatile int deny = 0; static AtomicInteger tag = new AtomicInteger();
   public static void main(String[] a) throws Exception {
     data = new byte[20 << 20]; new Random(1).nextBytes(data);
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
@@ -12,6 +12,8 @@ public class T {
       boolean probe = "bytes=0-0".equals(range);
       if (!probe && busy.incrementAndGet() > limit) { busy.decrementAndGet(); refusals.incrementAndGet(); ex.sendResponseHeaders(503, -1); ex.close(); return; }
       try {
+        if (apk) ex.getResponseHeaders().add("Content-Type", "application/vnd.android.package-archive");
+        if (deny > 0 && !probe && busy.get() > 1) { deny--; ex.sendResponseHeaders(403, -1); ex.close(); return; }
         ex.getResponseHeaders().add("ETag", rotating ? "\"r" + tag.incrementAndGet() + "\"" : etag); ex.getResponseHeaders().add("Accept-Ranges", "bytes");
         if (range == null || (ir != null && !ir.equals(etag))) { ex.sendResponseHeaders(200, data.length); try (OutputStream o = ex.getResponseBody()) { o.write(data); } served.addAndGet(data.length); return; }
         String[] p = range.substring(6).split("-"); long f = Long.parseLong(p[0]), t = p.length > 1 && !p[1].isEmpty() ? Long.parseLong(p[1]) : data.length - 1;
@@ -78,6 +80,16 @@ public class T {
     KrDownloader.fetch(u, out8, 1, op, c8, g8, new KrDownloader.Result(), () -> f8.compareAndSet(-1, g8.get()), o8);
     boolean ok8 = Arrays.equals(java.nio.file.Files.readAllBytes(out8.toPath()), data) && f8.get() >= (4 << 20);
     System.out.println("run8 partial chunk kept from=" + f8.get() + " match=" + ok8);
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
+    // 9: an APK served under a «.bin» name: renamed as soon as the server answers, the download going on under it.
+    apk = true; File out9 = new File(dir, "Game-0.bin.part"), st9 = new File(dir, "g.state"); out9.delete(); st9.delete(); new File(dir, "Game-0.apk.part").delete(); KrDownloader.Opts o9 = new KrDownloader.Opts(); o9.state = st9;
+    final File[] named = { null }; o9.named = (n, mime) -> { String nn = KrDownloader.withTypeExt("Game-0.bin", mime); named[0] = nn == null ? null : new File(dir, nn + ".part"); return named[0]; };
+    KrDownloader.Result r9 = KrDownloader.fetch(u, out9, 4, op, new AtomicBoolean(), new AtomicLong(), new KrDownloader.Result(), () -> {}, o9);
+    boolean ok9 = named[0] != null && named[0].getName().equals("Game-0.apk.part") && r9.out != null && r9.out.equals(named[0]) && Arrays.equals(java.nio.file.Files.readAllBytes(named[0].toPath()), data) && !out9.exists();
+    System.out.println("run9 named from its type: " + (named[0] == null ? null : named[0].getName()) + " match=" + ok9); apk = false;
+    // 10: a few connections answered 403 while the others go on (storage refusing one too many): not the end.
+    File out10 = new File(dir, "deny.part"); out10.delete(); deny = 3; limit = 8; AtomicLong g10 = new AtomicLong(); KrDownloader.Result r10 = new KrDownloader.Result();
+    boolean ok10; try { KrDownloader.fetch(u, out10, 6, op, new AtomicBoolean(), g10, r10, () -> {}, new KrDownloader.Opts()); ok10 = Arrays.equals(java.nio.file.Files.readAllBytes(out10.toPath()), data); } catch (Exception e) { System.out.println("run10 " + e); ok10 = false; }
+    System.out.println("run10 403 on some connections, done anyway: " + ok10 + " connections now " + r10.connections); deny = 0;
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }
