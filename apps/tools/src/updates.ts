@@ -92,7 +92,7 @@ export function showUpdateSheet(rel: Release): void {
   const bar = h('div', { class: 'task-bar' }, h('i')); bar.hidden = true;
   // (Android: the app's own installer or Android's, chosen here and remembered.)
   const viaBox = nativePlatform() === 'android' ? h('div', { class: 'row upd-via' }, h('span', null, t('updInstallWith'), h('small', { class: 'src' }, t('updInstallWithHint'))),
-    h('div', { class: 'segmented', role: 'radiogroup' }, ...(['app', 'system'] as const).map((v) => h('button', { type: 'button', role: 'radio', 'data-v': v, 'aria-checked': String(installVia() === v), class: installVia() === v ? 'on' : '', onclick: (e: Event) => { setInstallVia(v); (e.currentTarget as HTMLElement).parentElement!.querySelectorAll('button').forEach((b) => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }); } }, v === 'app' ? t('updViaApp') : t('updViaSystem'))))) : null;
+    h('div', { class: 'segmented', role: 'radiogroup' }, ...(['app', 'system'] as const).map((v) => h('button', { type: 'button', role: 'radio', 'data-v': v, 'aria-checked': String(installVia() === v), 'aria-pressed': String(installVia() === v), class: installVia() === v ? 'on' : '', onclick: (e: Event) => { setInstallVia(v); (e.currentTarget as HTMLElement).parentElement!.querySelectorAll('button').forEach((b) => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-pressed', String(on)); }); toast(v === 'app' ? t('updViaAppSet') : t('updViaSystemSet')); } }, v === 'app' ? t('updViaApp') : t('updViaSystem'))))) : null;
   sh.body.append(...(viaBox ? [viaBox] : []), fileLine, bar, status);
   let asset: Awaited<ReturnType<typeof suitableAsset>>; let ctl: AbortController | null = null;
   const setBar = (pct: number, indet = false) => { bar.hidden = false; bar.classList.toggle('indet', indet); (bar.firstChild as HTMLElement).style.width = `${pct}%`; };
@@ -147,6 +147,7 @@ export function updateRows(row: (label: string, control: Node, hint?: string) =>
   return [row(t('version', { v: APP_VERSION }), check),
     toggle(t('autoCheck'), s.autoUpdateCheck, (v) => { updateSettings({ autoUpdateCheck: v }); scheduleAutoCheck(); }),
     pick(t('updateEvery'), [['launch', t('everyLaunch')], ['daily', t('everyDay')], ['weekly', t('everyWeek')]], s.updateEvery ?? 'launch', (v) => updateSettings({ updateEvery: v as 'launch' })),
+    ...(nativePlatform() === 'android' ? [pick(t('updInstallWith'), [['app', t('updViaApp')], ['system', t('updViaSystem')]], installVia(), (v) => setInstallVia(v as 'app' | 'system'))] : []),
     ...(nativePlatform() === 'android' ? [toggle(t('updateAutoDownload'), !!s.updateAutoDownload, (v) => updateSettings({ updateAutoDownload: v }), t('updateAutoDownloadHint'))] : []),
     h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: async () => { try { const all = await releasesOf(TAG_PREFIX, true); notesSheet(t('releaseHistory'), all.filter((r) => cmpVersion(r.version, APP_VERSION) <= 0).slice(0, 15)); } catch { toast(t('updateFailed'), 'error'); } } }, icon('list'), t('releaseHistory'))),
     status];

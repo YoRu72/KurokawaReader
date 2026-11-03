@@ -101,6 +101,28 @@ if (!manifest.includes('KtScreenService')) {
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
       <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
     </service>
+    <activity-alias android:name=".KtInstaller" android:targetActivity=".MainActivity" android:exported="true" android:label="@string/kt_installer" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
+      <intent-filter android:label="@string/kt_installer">
+        <action android:name="android.intent.action.VIEW" />
+        <action android:name="android.intent.action.INSTALL_PACKAGE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+        <data android:mimeType="application/vnd.android.package-archive" />
+      </intent-filter>
+      <intent-filter android:label="@string/kt_installer">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+        <data android:mimeType="application/octet-stream" />
+        <data android:mimeType="application/zip" />
+        <data android:host="*" />
+        <data android:pathPattern=".*\\\\.apks" />
+        <data android:pathPattern=".*\\\\.xapk" />
+        <data android:pathPattern=".*\\\\.apkm" />
+      </intent-filter>
+    </activity-alias>
     <activity android:name=".KtScreenLaunch" android:exported="true" android:enabled="false" android:label="@string/kt_screen_tile" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="app.kurokawa.tools.screen" android:launchMode="singleInstance">
       <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
     </activity>

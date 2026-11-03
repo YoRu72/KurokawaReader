@@ -42,6 +42,7 @@ const RELEASES = [rel('99.1.0', ['Newest fix', 'Newest feature']), rel('99.0.0',
   check('the installer offered: the app\'s chosen first', await p.$eval('.update-sheet .upd-via [data-v="app"]', (e) => e.classList.contains('on')));
   await p.click('.update-sheet .upd-via [data-v="system"]');
   check('Android\'s installer chosen and remembered', await p.evaluate(() => localStorage.getItem('kt.update.installer')) === 'system');
+  check('the choice shown on the buttons (pressed)', await p.$eval('.update-sheet .upd-via [data-v="system"]', (e) => e.getAttribute('aria-pressed') === 'true') && await p.$eval('.update-sheet .upd-via [data-v="app"]', (e) => e.getAttribute('aria-pressed') === 'false'));
   await p.locator('.update-sheet .btn.primary', { hasText: 'Download and install' }).click();
   await p.waitForFunction(() => /installer was opened/i.test(document.querySelector('.update-sheet')?.textContent || ''), null, { timeout: 15000 });
   const calls = await p.evaluate(() => window.__calls.map((c) => c[0]).filter((c) => c !== 'http').join(','));
