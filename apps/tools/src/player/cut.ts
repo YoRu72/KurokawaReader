@@ -48,7 +48,7 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
   const nudge = (which: 'a' | 'b', d: number) => { if (which === 'a') a += d; else b += d; clamp(); paint(); show(which === 'a' ? a : b); };
   const endRow = (which: 'a' | 'b', input: HTMLInputElement) => h('div', { class: 'cut-end' }, h('b', { class: `cut-tag ${which}` }, which.toUpperCase()), input,
     h('div', { class: 'cut-nudges', dir: 'ltr' }, ...([[-1, '−1s'], [-frame, '−1f'], [frame, '+1f'], [1, '+1s']] as [number, string][]).map(([d, l]) => h('button', { type: 'button', class: 'chip small', onclick: () => nudge(which, d) }, l)),
-      h('button', { type: 'button', class: 'chip small', title: t('cutSetNow'), onclick: () => { const now = job.video.currentTime; if (which === 'a') a = now; else b = now; clamp(); paint(); } }, t('cutNow')),
+      h('button', { type: 'button', class: 'chip small', title: t('cutSetNow'), onclick: () => { const now = job.video.currentTime; if (which === 'a') a = now; else b = now; clamp(); paint(); } }, which === 'a' ? t('framePointA') : t('framePointB')),
       h('button', { type: 'button', class: 'chip small', title: t('cutShow'), onclick: () => show(which === 'a' ? a : b) }, '▶')));
   const preview = h('button', { type: 'button', class: 'btn tonal small', onclick: () => { job.setRange?.(a, b); show(a); void job.video.play().catch(() => undefined); sh.close(); toast(t('cutPreviewing')); } }, icon('play'), t('cutPreview'));
   sh.body.append(h('div', { class: 'cut-head' }, track, h('div', { class: 'row' }, h('span', null, t('cutLength')), badge)), endRow('a', aIn), endRow('b', bIn), h('div', { class: 'row-actions' }, preview));

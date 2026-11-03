@@ -99,6 +99,7 @@ jobs:
       - name: Packs (Python and ffmpeg, downloaded by the app when an add-on needs them)
         run: python3 scripts/packs.py out && ls -la out
       - name: The mpv pack (the Player add-on's engine, from mpv-android's release)
+        continue-on-error: true   # (without it the player plays with the web view; the release goes out either way)
         env: { GH_TOKEN: "${{ github.token }}" }
         run: python3 scripts/mpvpack.py out && ls -la out
       - uses: actions/upload-artifact@v4

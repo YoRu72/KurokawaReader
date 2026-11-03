@@ -66,6 +66,8 @@ final class KtMpv {
         MPVLib.setOptionString("demuxer-max-bytes", String.valueOf(megs << 20));
         MPVLib.setOptionString("demuxer-max-back-bytes", String.valueOf(megs << 20));
         MPVLib.setOptionString("cache", "yes");
+        // (Saved frames — the player's «save the frame», its screenshots — where the phone keeps pictures.)
+        try { File shots = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "Kurokawa"); shots.mkdirs(); MPVLib.setOptionString("screenshot-directory", shots.getAbsolutePath()); MPVLib.setOptionString("screenshot-template", "%F-%wH.%wM.%wS.%wT"); } catch (Throwable ignored) {}
         MPVLib.setOptionString("network-timeout", "60");
         try { android.view.Display d = a.getWindowManager().getDefaultDisplay(); MPVLib.setOptionString("display-fps-override", String.valueOf(d.getRefreshRate())); } catch (Throwable ignored) {}
         MPVLib.init();
@@ -101,7 +103,8 @@ final class KtMpv {
                 ensure(a);
                 // (Per file: where it starts, the tracks and languages wanted, the decoding — each set before it loads.)
                 MPVLib.setOptionString("start", opt.has("start") ? opt.optString("start") : "none");
-                for (String k : new String[] { "aid", "sid", "alang", "slang", "speed", "volume", "hwdec", "user-agent", "http-header-fields" }) { String v = opt.optString(k, ""); if (!v.isEmpty()) MPVLib.setOptionString(k, v); }
+                for (String k : new String[] { "aid", "sid", "alang", "slang", "speed", "volume", "hwdec", "user-agent", "http-header-fields", "deband", "audio-channels" }) { String v = opt.optString(k, ""); if (!v.isEmpty()) MPVLib.setOptionString(k, v); }
+                { String vo = opt.optString("vo", ""); if (!vo.isEmpty() && !vo.equals(voInUse)) { voInUse = vo; MPVLib.setPropertyString("vo", vo); } }
                 if (opt.optBoolean("paused", false)) MPVLib.setPropertyBoolean("pause", true); else MPVLib.setPropertyBoolean("pause", false);
                 web = webView; if (!bgSaved) { webBg = webView.getBackground(); bgSaved = true; }
                 if (view == null) {

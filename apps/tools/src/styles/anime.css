@@ -348,3 +348,16 @@ html.kt-mpv-on, html.kt-mpv-on body { background: transparent !important; }
 html.kt-mpv-on body > :not(.kt-player):not(.sheet):not(.scrim):not(.sheet-scrim):not(.toast):not(.get-card):not(dialog):not(script):not(style) { visibility: hidden !important; }
 html.kt-mpv-on .kt-player, html.kt-mpv-on .kt-stage { background: transparent !important; }
 .kt-mpv-video { position: absolute; inset: 0; pointer-events: none; }
+
+/* REX Player's tools: the bar's chosen ones, the grid of all of them, frame navigation */
+.kt-tools { display: inline-flex; align-items: center; gap: 2px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 60vw; }
+.kt-tools::-webkit-scrollbar { display: none; }
+.kt-tools .icon-btn.on, .kt-tool.on { color: var(--primary, #8ab4ff); }
+.kt-tool-text { font-size: 13px; font-weight: 800; letter-spacing: .02em; }
+.kt-tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.kt-tool { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 0; border-radius: 14px; background: var(--surface-2, rgba(127,127,127,.12)); color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.kt-tool svg { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.kt-tool .kt-tool-text { width: 22px; text-align: center; }
+.kt-frame-info { font-variant-numeric: tabular-nums; text-align: center; font-size: 15px; margin: 4px 0 10px; }
+.kt-frame-row { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
+.kt-frame-row .chip { min-width: 56px; justify-content: center; font-variant-numeric: tabular-nums; }

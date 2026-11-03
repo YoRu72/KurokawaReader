@@ -129,6 +129,13 @@ final class KtEngine {
         // choice in Settings («Simple disk access»), for a phone whose storage misbehaves with the fast one.
         SessionParams params = new SessionParams(sp);
         boolean simpleDisk = false; try { simpleDisk = ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getBoolean("simpleDisk", false); } catch (Throwable ignored) {}
+        // (A crash inside libtorrent last time — its memory-mapped disk access on a phone whose storage does not take it:
+        // seen as heap corruption on its disk threads, Android 16–17 —: the simple disk access from now on, by itself.)
+        if (!simpleDisk) try {
+            File cf = new File(new File(ctx.getFilesDir(), "kt"), "crash.txt");
+            if (cf.isFile()) { String c = new String(java.nio.file.Files.readAllBytes(cf.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                if (c.contains("libtorrent4j") && (c.contains("SIGABRT") || c.contains("SIGSEGV") || c.contains("SIGBUS"))) { simpleDisk = true; ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", true).putBoolean("simpleDiskAuto", true).apply(); Log.w(TAG, "libtorrent crashed last time: simple disk access on"); } }
+        } catch (Throwable ignored) {}
         if (simpleDisk) try { params.setPosixDiskIO(); } catch (Throwable e) { Log.w(TAG, "posix disk io", e); }
         // (The DHT's table of nodes from last time: peers are asked at once instead of the DHT starting cold.)
         try { File st = new File(stateDir, "dht.dat"); if (st.length() > 0) { SessionParams old = new SessionParams(java.nio.file.Files.readAllBytes(st.toPath())); params.swig().setDht_state(old.swig().getDht_state()); } } catch (Throwable e) { Log.w(TAG, "dht state", e); }
@@ -341,7 +348,7 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.max_allowed_in_request_queue.swigValue(), 2000);
         sp.setInteger(settings_pack.int_types.send_buffer_watermark.swigValue(), 3 * 1024 * 1024);
         sp.setInteger(settings_pack.int_types.send_buffer_watermark_factor.swigValue(), 150);
-        sp.setInteger(settings_pack.int_types.aio_threads.swigValue(), 8);
+        sp.setInteger(settings_pack.int_types.aio_threads.swigValue(), 4);
         sp.setInteger(settings_pack.int_types.hashing_threads.swigValue(), Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2)));
         sp.setInteger(settings_pack.int_types.active_limit.swigValue(), 60);
         sp.setInteger(settings_pack.int_types.dht_upload_rate_limit.swigValue(), 50000);

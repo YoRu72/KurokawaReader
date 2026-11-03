@@ -34,7 +34,7 @@ export interface MpvControl {
 }
 
 /** An element that plays `url` through mpv, behaving as a <video> for the player. */
-export function mpvVideo(url: string, opts: { start?: number; alang?: string; slang?: string; speed?: number; headers?: Record<string, string> } = {}): HTMLVideoElement & { _mpv: MpvControl } {
+export function mpvVideo(url: string, opts: { start?: number; alang?: string; slang?: string; speed?: number; headers?: Record<string, string>; extra?: Record<string, string> } = {}): HTMLVideoElement & { _mpv: MpvControl } {
   const p = plug()!; const el = document.createElement('div'); el.className = 'kt-video kt-mpv-video';
   let time = 0, duration = NaN, paused = true, speed = opts.speed ?? 1, volume = 1, muted = false, ended = false, cache = 0, w = 0, h = 0, ready = 0, waiting = false, seeking = false;
   let error: { code: number; message: string } | null = null; let tracks: MpvTrack[] = []; let lastTime = 0; let loaded = false; const trackFns: (() => void)[] = [];
@@ -108,6 +108,7 @@ export function mpvVideo(url: string, opts: { start?: number; alang?: string; sl
   if (opts.start && opts.start > 1) o.start = String(opts.start);
   if (opts.alang) o.alang = opts.alang; if (opts.slang) o.slang = opts.slang; if (opts.speed && opts.speed !== 1) o.speed = String(opts.speed);
   if (opts.headers && Object.keys(opts.headers).length) o['http-header-fields'] = Object.entries(opts.headers).map(([k, v]) => `${k}: ${v.replace(/,/g, '\\,')}`).join(',');
+  Object.assign(o, opts.extra ?? {});
   document.documentElement.classList.add('kt-mpv-on');
   void p.mpvOpen({ url, options: o }).catch((e) => { error = { code: 4, message: String((e as Error).message ?? e) }; fire('error'); });
   return el as unknown as HTMLVideoElement & { _mpv: MpvControl };
