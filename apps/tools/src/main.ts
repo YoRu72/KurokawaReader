@@ -129,7 +129,10 @@ applyDocumentLang();
 applyChrome();
 // Prism's mini window (the computer): only the speed and what is downloading, nothing else started.
 const MINI = location.hash.startsWith('#/mini');
+// (The computer's screen translator over the screen: only its own view.)
+const OVERLAY = location.hash.startsWith('#/overlay');
 if (MINI) { document.documentElement.classList.add('mini'); const { miniView } = await import('./views/mini'); app.replaceChildren(miniView()); }
+else if (OVERLAY) { const { overlayView } = await import('./views/overlay'); app.replaceChildren(overlayView()); }
 else {
   placeNav();
   wirePcBack();

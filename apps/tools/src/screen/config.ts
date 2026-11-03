@@ -18,7 +18,12 @@ export interface ScreenConfig {
   style: { size: number; bg: string; bgAlpha: number; fg: string; smart: boolean; radius: number; center: boolean; outline: boolean; bold: boolean; bgMode: 'fill' | 'none' };
   bubble: { size: number; alpha: number; color: string; dim: boolean; dimAfter: number; edge: boolean };
   actions: { tap: Action; double: Action; long: Action };
+  /** On a computer: the shortcuts on, kept in the tray, started with the computer, how the picture is read. */
+  pcOn: boolean;
+  pc: { keys: Record<PcKey, string>; tray: boolean; startup: boolean; ocr: 'system' | 'ai'; closeOnBlur: boolean };
 }
+export type PcKey = 'region' | 'full' | 'repeat' | 'auto' | 'clipboard';
+export const PC_KEYS: Record<PcKey, string> = { region: 'Alt+Shift+T', full: 'Alt+Shift+F', repeat: 'Alt+Shift+R', auto: 'Alt+Shift+A', clipboard: 'Alt+Shift+C' };
 export type Action = 'translate' | 'region' | 'fixed' | 'auto' | 'panel' | 'menu' | 'clear' | 'none';
 
 export const AI_PRESETS: { id: AiPreset; label: string; style: AiStyle; base: string; model: string; keyUrl: string }[] = [
@@ -43,6 +48,7 @@ export const DEFAULT_SCREEN: ScreenConfig = {
   style: { size: 15, bg: '#1E1E1E', bgAlpha: 0.88, fg: '#FFFFFF', smart: true, radius: 6, center: false, outline: false, bold: false, bgMode: 'fill' },
   bubble: { size: 52, alpha: 0.92, color: '#6750A4', dim: true, dimAfter: 4, edge: true },
   actions: { tap: 'translate', double: 'region', long: 'menu' },
+  pcOn: false, pc: { keys: { ...PC_KEYS }, tray: true, startup: false, ocr: 'system', closeOnBlur: true },
 };
 
 const KEY = 'kt.screen';
@@ -58,7 +64,7 @@ export function saveScreen(c: ScreenConfig): void { try { localStorage.setItem(K
 /** The words the bubble shows (its menu, its notes), in the app's language. */
 export function screenLabels(): Record<string, string> {
   const k = ['translate', 'translateScreen', 'region', 'fixed', 'fixedSet', 'fixedChange', 'autoOn', 'autoOff', 'autoStarted', 'autoStopped', 'readAs', 'readText', 'readPicture', 'readAuto', 'list', 'copy', 'copied', 'clear', 'openApp', 'close',
-    'noText', 'needA11y', 'needCapture', 'needOverlay', 'needDeepl', 'captureFailed', 'failed', 'drawFixed', 'drawRegion', 'translations', 'noteTitle', 'noteText', 'channel', 'bubble'];
+    'noText', 'needA11y', 'needCapture', 'needOverlay', 'needDeepl', 'captureFailed', 'failed', 'drawFixed', 'drawRegion', 'translations', 'noteTitle', 'noteText', 'channel', 'bubble', 'clipboard', 'quit'];
   const out: Record<string, string> = {};
   for (const x of k) out[x] = t(`scr_${x}` as 'scr_translate');
   return out;

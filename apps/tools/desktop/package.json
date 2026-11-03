@@ -47,7 +47,8 @@
       "ytdlp.cjs",
       "streamproxy.cjs",
       "packs.cjs",
-      "antivirus.cjs"
+      "antivirus.cjs",
+      "screentr.cjs"
     ],
     "extraResources": [
       {

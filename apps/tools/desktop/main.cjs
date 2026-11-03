@@ -13,6 +13,8 @@ const Ytdlp = require('./ytdlp.cjs');
 const StreamProxy = require('./streamproxy.cjs');
 const Packs = require('./packs.cjs');
 const Antivirus = require('./antivirus.cjs');
+const ScreenTr = require('./screentr.cjs');
+let quitting = false;
 let videos = null; let lastAria = [];
 const allTasks = () => [...lastAria, ...(videos ? videos.list() : [])];
 const isVideoId = (id) => typeof id === 'string' && id.startsWith('v') && videos && videos.list().some((t) => t.id === id);
@@ -57,7 +59,9 @@ function createWindow() {
   win.webContents.on('did-finish-load', flushLinks);
   win.loadURL('app://kurokawa/index.html');
   if (st.maximized) win.maximize();
-  win.on('resize', saveState); win.on('move', saveState); win.on('close', saveState);
+  win.on('resize', saveState); win.on('move', saveState);
+  // (The screen translator kept in the tray: closing the window hides it; Quit is in the tray's menu.)
+  win.on('close', (e) => { saveState(); if (!quitting && ScreenTr.keepInTray()) { e.preventDefault(); win.hide(); } });
   win.on('closed', () => { win = null; closeMini(); });
   // (The mini window when the main one is put away, if chosen.)
   win.on('minimize', () => { if (loadState().miniOnMinimize) openMini(); });
@@ -92,11 +96,16 @@ else {
     engine.onTasks((tasks) => { lastAria = tasks; send('kt:tasks', allTasks()); });
     setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
     createWindow();
+    ScreenTr.init({
+      showMain: (route) => { if (!win) createWindow(); if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (route) win.webContents.executeJavaScript(`location.hash = ${JSON.stringify('#' + route)}`).catch(() => undefined); },
+      hideMain: () => { if (win) win.hide(); },
+      quit: () => { quitting = true; app.quit(); },
+    });
     process.argv.slice(1).forEach(takeArg);
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
-  app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { engine?.stop(); videos?.stop(); StreamProxy.stop(); });
+  app.on('window-all-closed', () => { if (process.platform !== 'darwin' && !ScreenTr.keepInTray()) app.quit(); });
+  app.on('before-quit', () => { quitting = true; ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
 }
 
 /* ---------- the engine, to the page ---------- */

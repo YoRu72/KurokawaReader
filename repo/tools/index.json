@@ -672,13 +672,14 @@
         "ar": "ترجمة الشاشة"
       },
       "kind": "screen",
-      "description": "A floating bubble over every app that translates what the screen shows — its text, or a picture of it read by OCR — with Google Translate, DeepL or your AI model; auto translation as you scroll.",
+      "description": "Translate any app's screen: on a phone, a floating bubble (the screen's text, or a picture of it read by OCR; auto translation as you scroll); on a computer, shortcuts that work everywhere — draw a region, watch one for subtitles, translate the clipboard — running in the tray. Google Translate, DeepL or your AI model.",
       "descriptions": {
-        "ar": "فقاعةٌ عائمة فوق كلّ تطبيق تترجم ما تعرضه الشاشة — نصَّها، أو صورتَها بالتعرّف الضوئي — بترجمة Google أو DeepL أو نموذجك من الذكاء الاصطناعي، وتترجم تلقائيًّا مع التمرير."
+        "ar": "ترجِم شاشة أيّ تطبيق: على الهاتف فقاعةٌ عائمة (نصّ الشاشة، أو صورتها بالتعرّف الضوئي، وترجمةٌ تلقائية مع التمرير)، وعلى الحاسوب اختصاراتٌ تعمل في كلّ مكان — ارسم منطقة، أو راقب واحدةً للترجمات، أو ترجِم الحافظة — وهي تعمل من منطقة الإعلام. بترجمة Google أو DeepL أو نموذجك من الذكاء الاصطناعي."
       },
       "version": "1.0.0",
       "platforms": [
-        "android"
+        "android",
+        "desktop"
       ],
       "icon": "translate"
     }

@@ -7,7 +7,17 @@ import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, getLang } from '../i18n';
 import { back } from '../router';
 import { ktPlugin, nativePlatform } from '../native';
-import { AI_PRESETS, SCREEN_LANGS, engineReady, loadScreen, nativeConfig, saveScreen, type Action, type ScreenConfig } from '../screen/config';
+import { AI_PRESETS, PC_KEYS, SCREEN_LANGS, engineReady, loadScreen, nativeConfig, saveScreen, type Action, type PcKey, type ScreenConfig } from '../screen/config';
+
+/** An Electron accelerator from a key press (a modifier and a key): «Alt+Shift+T», «CommandOrControl+F9». */
+export function accelerator(e: { key: string; code: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }): string {
+  if (['Control', 'Alt', 'Shift', 'Meta', 'AltGraph'].includes(e.key)) return '';
+  const k = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : /^Digit\d$/.test(e.code) ? e.code.slice(5) : /^F\d{1,2}$/.test(e.key) ? e.key : ({ Space: 'Space', Enter: 'Enter', Tab: 'Tab', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', Insert: 'Insert', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backslash: '\\', PrintScreen: 'PrintScreen' } as Record<string, string>)[e.code] ?? '';
+  if (!k) return '';
+  const mods = [e.ctrlKey ? 'Control' : '', e.metaKey ? 'Super' : '', e.altKey ? 'Alt' : '', e.shiftKey ? 'Shift' : ''].filter(Boolean);
+  if (!mods.length && !/^F\d{1,2}$/.test(k) && k !== 'PrintScreen') return '';
+  return [...mods, k].join('+');
+}
 
 type Status = { overlay: boolean; a11y: boolean; a11yLive?: boolean; running: boolean; capture: boolean; notify: boolean; battery: boolean; tile: boolean };
 type Plug = {
@@ -17,16 +27,20 @@ type Plug = {
 };
 const plug = (): Plug | null => ktPlugin() as unknown as Plug | null;
 
-/** Whether the add-on can run here (the floating translator is Android's). */
-export const screenHere = (): boolean => nativePlatform() === 'android';
+type PcStatus = { platform: string; on: boolean; keys: Record<string, { acc: string; ok: boolean }>; tray: boolean; auto: boolean; region: unknown; ocr: 'windows' | 'vision' | 'tesseract' | 'ai' | 'none' };
+type Desk = { screenConfig(o: { config: Record<string, unknown>; clearFixed?: boolean }): Promise<PcStatus>; screenStatus(): Promise<PcStatus>; screenAction(a: string): Promise<void>; screenOcrLangs(): Promise<{ kind: string; langs?: string[]; error?: string }> };
+const desk = (): Desk | null => { const d = (window as unknown as { kurokawaTools?: Partial<Desk> }).kurokawaTools; return d?.screenStatus ? d as Desk : null; };
+/** Whether the add-on can run here: the floating bubble on Android; shortcuts and the tray on a computer. */
+export const screenHere = (): boolean => nativePlatform() === 'android' || !!desk();
 
 export function screenView(): HTMLElement & { dispose?: () => void } {
   let cfg = loadScreen();
   const body = h('div', { class: 'body screen-body' });
   const root = h('div', { class: 'view settings-view screen-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/settings/addons')), h('div', { class: 'title' }, h('span', null, t('scrTitle')))), body) as HTMLElement & { dispose?: () => void };
   if (!screenHere()) { body.append(h('section', { class: 'card' }, h('p', null, t('scrAndroidOnly')))); return root; }
-
-  const push = (() => { let tm = 0; return (extra: { clearFixed?: boolean } = {}) => { saveScreen(cfg); clearTimeout(tm); tm = window.setTimeout(() => void plug()?.screenConfig?.({ config: nativeConfig(cfg), ...extra }).catch(() => undefined), 250); }; })();
+  const PC = nativePlatform() !== 'android' && !!desk();
+  const sendCfg = (extra: { clearFixed?: boolean } = {}) => (PC ? desk()!.screenConfig({ config: nativeConfig(cfg), ...extra }).then(() => { void refresh(); }) : plug()?.screenConfig?.({ config: nativeConfig(cfg), ...extra }));
+  const push = (() => { let tm = 0; return (extra: { clearFixed?: boolean } = {}) => { saveScreen(cfg); clearTimeout(tm); tm = window.setTimeout(() => void sendCfg(extra)?.catch(() => undefined), 250); }; })();
   const set = (f: (c: ScreenConfig) => void, redraw = false) => { f(cfg); push(); if (redraw) draw(); };
 
   // ---- the big button and the state ----
@@ -41,6 +55,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     h('span', { class: 'screen-step-ic' }, icon(ok ? 'check' : need ? 'alert' : 'info')), h('span', { class: 'grow' }, h('b', null, title), h('small', { class: 'src' }, hint)),
     ok ? null : h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what }) }, t('scrAllow')));
   async function refresh(): Promise<void> {
+    if (PC) { await refreshPc(); return; }
     const s = await plug()?.screenStatus?.().catch(() => null) ?? null; st = s;
     if (!s) { state.textContent = t('scrNoNative'); go.setAttribute('disabled', ''); return; }
     go.removeAttribute('disabled');
@@ -54,6 +69,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       ...(s.tile ? [h('div', { class: 'screen-step', 'data-step': 'tile' }, h('span', { class: 'screen-step-ic' }, icon('grid')), h('span', { class: 'grow' }, h('b', null, t('scrStepTile')), h('small', { class: 'src' }, t('scrStepTileHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what: 'tile' }) }, t('scrAddTile')))] : []));
   }
   go.addEventListener('click', async () => {
+    if (PC) { set((c) => { c.pcOn = !c.pcOn; }, true); return; }
     if (!st) return;
     if (st.running) { await plug()?.screenStop?.().catch(() => undefined); }
     else {
@@ -70,13 +86,25 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
   const toggle = (label: string, on: boolean, f: (v: boolean) => void, hint?: string) => h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => f((e.target as HTMLInputElement).checked) }));
   const select = <T extends string>(value: T, opts: [T, string][], f: (v: T) => void, name?: string) => h('select', { class: 'select', name: name ?? '', onchange: (e: Event) => f((e.target as HTMLSelectElement).value as T) }, ...opts.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
   const num = (value: number, min: number, max: number, stepN: number, f: (v: number) => void, name: string, unit = '') => { const out = h('output', null, `${value}${unit}`); const r = h('input', { type: 'range', min, max, step: stepN, value, name, oninput: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); out.textContent = `${v}${unit}`; f(v); } }); return h('span', { class: 'screen-range' }, r, out); };
-  const text = (value: string, f: (v: string) => void, opts: { type?: string; placeholder?: string; name: string }) => h('input', { class: 'input', type: opts.type ?? 'text', value, placeholder: opts.placeholder ?? '', name: opts.name, autocomplete: 'off', spellcheck: false, oninput: (e: Event) => f((e.target as HTMLInputElement).value) });
+  const text = (value: string, f: (v: string) => void, opts: { type?: string; placeholder?: string; name: string }) => h('input', { class: 'input', type: opts.type ?? 'text', value, placeholder: opts.placeholder ?? '', name: opts.name, autocomplete: 'off', spellcheck: false, dir: 'auto', oninput: (e: Event) => f((e.target as HTMLInputElement).value) });
   const colour = (value: string, f: (v: string) => void, name: string) => h('input', { type: 'color', value, name, class: 'screen-colour', oninput: (e: Event) => f((e.target as HTMLInputElement).value) });
   const segs = <T extends string>(value: T, opts: [T, string][], f: (v: T) => void, name: string) => h('div', { class: 'segmented', role: 'radiogroup', 'data-name': name }, ...opts.map(([v, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(v === value), class: v === value ? 'on' : '', 'data-v': v, onclick: () => f(v) }, l)));
 
+  // ---- on a computer: on or off, the shortcuts, working in the background ----
+  async function refreshPc(): Promise<void> {
+    const s = await desk()!.screenStatus().catch(() => null); if (!s) return;
+    go.replaceChildren(icon(s.on ? 'close' : 'play'), s.on ? t('scrPcOff') : t('scrPcOn')); go.classList.toggle('danger', s.on);
+    state.textContent = !s.on ? t('scrPcIntroOff') : !engineReady(cfg) ? t('scrNeedEngine') : t('scrPcRunning', { key: s.keys.region?.acc ?? '' });
+    const kind = { windows: t('scrOcrWindows'), vision: t('scrOcrVision'), tesseract: 'Tesseract', ai: t('scrEngineAi'), none: t('scrOcrNone') }[s.ocr] ?? s.ocr;
+    steps.replaceChildren(
+      h('div', { class: 'screen-step' + (s.ocr === 'none' ? ' need' : ' done'), 'data-step': 'ocr' }, h('span', { class: 'screen-step-ic' }, icon(s.ocr === 'none' ? 'alert' : 'check')), h('span', { class: 'grow' }, h('b', null, t('scrOcrIs', { kind })), h('small', { class: 'src' }, s.ocr === 'none' ? t('scrOcrNoneHint') : s.ocr === 'windows' ? t('scrOcrWindowsHint') : s.ocr === 'tesseract' ? t('scrOcrTessHint') : s.ocr === 'ai' ? t('scrOcrAiHint') : t('scrOcrVisionHint')))),
+      ...Object.entries(s.keys).filter(([, v]) => v.acc && s.on && !v.ok).map(([k, v]) => h('div', { class: 'screen-step need', 'data-step': 'key-' + k }, h('span', { class: 'screen-step-ic' }, icon('alert')), h('span', { class: 'grow' }, h('b', null, t('scrKeyTaken', { key: v.acc })), h('small', { class: 'src' }, t('scrKeyTakenHint'))))));
+  }
   const engineCard = h('section', { class: 'card', id: 'scr-engine' }); const readCard = h('section', { class: 'card', id: 'scr-read' }); const autoCard = h('section', { class: 'card', id: 'scr-auto' });
   const lookCard = h('section', { class: 'card', id: 'scr-look' }); const bubbleCard = h('section', { class: 'card', id: 'scr-bubble' }); const histCard = h('section', { class: 'card', id: 'scr-history' });
-  body.append(hero, setup, engineCard, readCard, autoCard, lookCard, bubbleCard, histCard);
+  const keysCard = h('section', { class: 'card', id: 'scr-keys' }); const bgCard = h('section', { class: 'card', id: 'scr-bg' });
+  if (PC) { hero.querySelector('p')!.textContent = t('scrPcIntro'); setup.querySelector('h3')!.textContent = t('scrPcState'); body.append(hero, setup, keysCard, bgCard, engineCard, readCard, autoCard, lookCard); }
+  else body.append(hero, setup, engineCard, readCard, autoCard, lookCard, bubbleCard, histCard);
 
   function draw(): void {
     const langs: [string, string][] = SCREEN_LANGS;
@@ -106,8 +134,25 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       ] : []),
       h('div', { class: 'screen-try' }, tryIn, tryBtn), tryOut);
 
+    if (PC) {
+      const keyIn = (k: PcKey) => { const inp = h('input', { class: 'input screen-key', readonly: true, value: cfg.pc.keys[k] ?? '', name: 'key-' + k, placeholder: t('scrKeyPress'), onkeydown: (e: KeyboardEvent) => { e.preventDefault(); if (e.key === 'Backspace' || e.key === 'Delete') { set((c) => { c.pc.keys[k] = ''; }, true); return; } const acc = accelerator(e); if (acc) set((c) => { c.pc.keys[k] = acc; }, true); } });
+        return h('div', { class: 'row' }, h('span', null, t(`scrKey_${k}` as 'scrKey_region')), h('span', { class: 'screen-colours' }, inp, iconButton('refresh', t('scrKeyDefault'), () => set((c) => { c.pc.keys[k] = PC_KEYS[k]; }, true)))); };
+      keysCard.replaceChildren(h('h3', null, t('scrKeys')), h('p', { class: 'hint' }, t('scrKeysHint')), ...(Object.keys(PC_KEYS) as PcKey[]).map(keyIn),
+        h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void desk()?.screenAction('region') }, icon('target'), t('scrKey_region')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void desk()?.screenAction('clipboard') }, icon('copy'), t('scrKey_clipboard'))));
+      bgCard.replaceChildren(h('h3', null, t('scrBg2')),
+        toggle(t('scrTray'), cfg.pc.tray, (v) => set((c) => { c.pc.tray = v; }), t('scrTrayHint')),
+        toggle(t('scrStartup'), cfg.pc.startup, (v) => set((c) => { c.pc.startup = v; }), t('scrStartupHint')),
+        toggle(t('scrCloseBlur'), cfg.pc.closeOnBlur, (v) => set((c) => { c.pc.closeOnBlur = v; }), t('scrCloseBlurHint')));
+      readCard.replaceChildren(h('h3', null, t('scrRead')),
+        segs(cfg.pc.ocr, [['system', t('scrOcrSystem')], ['ai', t('scrEngineAi')]], (v) => set((c) => { c.pc.ocr = v; }, true), 'ocr'),
+        h('p', { class: 'hint' }, cfg.pc.ocr === 'ai' ? t('scrOcrAiHint') : t('scrOcrSystemHint')),
+        h('button', { type: 'button', class: 'btn text small', onclick: () => { push({ clearFixed: true }); toast(t('scrFixedCleared')); } }, icon('close'), t('scrPcForget')));
+      autoCard.replaceChildren(h('h3', null, t('scrAuto')), h('p', { class: 'hint' }, t('scrPcAutoHint')),
+        row(t('scrInterval'), num(cfg.interval, 1, 15, 1, (v) => set((c) => { c.interval = v; }), 'interval', t('scrSec'))),
+        row(t('scrAutoStop'), num(cfg.autoStop, 0, 120, 5, (v) => set((c) => { c.autoStop = v; }), 'autoStop', t('scrMin')), t('scrAutoStopHint')));
+    }
     // How the screen is read, and what a translation covers
-    readCard.replaceChildren(h('h3', null, t('scrRead')),
+    if (!PC) readCard.replaceChildren(h('h3', null, t('scrRead')),
       segs(cfg.read, [['auto', t('scrReadAuto')], ['text', t('scrReadText')], ['picture', t('scrReadPicture')]], (v) => set((c) => { c.read = v; }, true), 'read'),
       h('p', { class: 'hint' }, cfg.read === 'text' ? t('scrReadTextHint') : cfg.read === 'picture' ? t('scrReadPictureHint') : t('scrReadAutoHint')),
       row(t('scrMode'), select(cfg.mode, [['full', t('scrModeFull')], ['fixed', t('scrModeFixed')]], (v) => set((c) => { c.mode = v; }), 'mode'), t('scrModeHint')),
@@ -115,7 +160,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       row(t('scrDisplay'), select(cfg.display, [['overlay', t('scrDisplayOverlay')], ['panel', t('scrDisplayPanel')]], (v) => set((c) => { c.display = v; }), 'display')));
 
     // Auto
-    autoCard.replaceChildren(h('h3', null, t('scrAuto')), h('p', { class: 'hint' }, t('scrAutoHint')),
+    if (!PC) autoCard.replaceChildren(h('h3', null, t('scrAuto')), h('p', { class: 'hint' }, t('scrAutoHint')),
       segs(cfg.auto, [['scroll', t('scrAutoScroll')], ['interval', t('scrAutoInterval')]], (v) => set((c) => { c.auto = v; }, true), 'auto'),
       cfg.auto === 'interval' ? row(t('scrInterval'), num(cfg.interval, 1, 15, 1, (v) => set((c) => { c.interval = v; }), 'interval', t('scrSec'))) : row(t('scrSettle'), num(cfg.settle, 0.3, 3, 0.1, (v) => set((c) => { c.settle = Math.round(v * 10) / 10; }), 'settle', t('scrSec')), t('scrSettleHint')),
       row(t('scrAutoStop'), num(cfg.autoStop, 0, 120, 5, (v) => set((c) => { c.autoStop = v; }), 'autoStop', t('scrMin')), t('scrAutoStopHint')));
@@ -132,9 +177,10 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       row(t('scrRadius'), num(sty.radius, 0, 16, 1, (v) => set((c) => { c.style.radius = v; }), 'radius')),
       toggle(t('scrBold'), sty.bold, (v) => set((c) => { c.style.bold = v; }, true)), toggle(t('scrCenter'), sty.center, (v) => set((c) => { c.style.center = v; }, true)), toggle(t('scrOutline'), sty.outline, (v) => set((c) => { c.style.outline = v; }, true), t('scrOutlineHint')),
       row(t('scrHideAfter'), num(cfg.hideAfter, 0, 60, 1, (v) => set((c) => { c.hideAfter = v; }), 'hideAfter', t('scrSec')), t('scrHideAfterHint')),
-      toggle(t('scrTapClose'), cfg.tapClose, (v) => set((c) => { c.tapClose = v; }), t('scrTapCloseHint')),
-      toggle(t('scrSpeak'), cfg.speak, (v) => set((c) => { c.speak = v; }, true), t('scrSpeakHint')),
-      ...(cfg.speak ? [row(t('scrRate'), num(cfg.ttsRate, 0.5, 2, 0.1, (v) => set((c) => { c.ttsRate = Math.round(v * 10) / 10; }), 'ttsRate', '×'))] : []));
+      ...(PC ? [] : [toggle(t('scrTapClose'), cfg.tapClose, (v) => set((c) => { c.tapClose = v; }), t('scrTapCloseHint'))]),
+      ...(PC ? [] : [toggle(t('scrSpeak'), cfg.speak, (v) => set((c) => { c.speak = v; }, true), t('scrSpeakHint')),
+      ...(cfg.speak ? [row(t('scrRate'), num(cfg.ttsRate, 0.5, 2, 0.1, (v) => set((c) => { c.ttsRate = Math.round(v * 10) / 10; }), 'ttsRate', '×'))] : [])]));
+    if (PC) return;
 
     // The bubble and its taps
     const acts: [Action, string][] = [['translate', t('scrActTranslate')], ['region', t('scrActRegion')], ['fixed', t('scrActFixed')], ['auto', t('scrActAuto')], ['panel', t('scrActPanel')], ['menu', t('scrActMenu')], ['clear', t('scrActClear')], ['none', t('scrActNone')]];
@@ -164,7 +210,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     const fmt = new Intl.DateTimeFormat(getLang(), { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
     list.replaceChildren(...items.slice(0, 80).map((x) => h('div', { class: 'screen-hist-item' },
       h('div', { class: 'grow' }, h('b', { dir: 'auto' }, x.t), h('small', { class: 'src', dir: 'auto' }, x.o), h('small', { class: 'src' }, fmt.format(new Date(x.at)))),
-      iconButton('copy', t('copy'), () => void navigator.clipboard?.writeText(x.t).then(() => toast(t('copied')))))));
+      iconButton('copy', t('copy'), () => void navigator.clipboard?.writeText(x.t).then(() => toast(t('copied'))).catch(() => undefined)))));
   }
 
   draw(); void refresh();

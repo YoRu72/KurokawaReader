@@ -292,7 +292,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     })();
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     // Translate on screen (the add-on, Android): its own page.
-    const screen = plat === 'android' && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
+    const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
     return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();

@@ -83,3 +83,26 @@ async function ai(texts: string[], c: ScreenConfig): Promise<string[]> {
   for (let i = 0; i < texts.length; i += 40) out.push(...await once(texts.slice(i, i + 40)));
   return out;
 }
+
+/** A picture read and translated by an AI model that sees (Gemini, OpenAI-style, Claude): its lines, where they are
+ *  (fractions of the picture), and their translations — for text no OCR on this computer reads. */
+export async function aiVision(dataUrl: string, c: ScreenConfig): Promise<{ text: string; tr: string; x: number; y: number; w: number; h: number }[]> {
+  const p = AI_PRESETS.find((x) => x.id === c.ai.preset) ?? AI_PRESETS[0];
+  const style = c.ai.preset === 'custom' ? c.ai.style : p.style; const base = (c.ai.base.trim() || p.base).replace(/\/+$/, ''); const model = c.ai.model.trim() || p.model; const key = c.ai.key.trim();
+  const [, mime, b64] = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl) ?? ['', 'image/png', ''];
+  const ask = `Find every line of text in this picture of a screen. Return ONLY a JSON array of objects {"text": the line as written, "tr": its translation into the language whose code is «${c.target}», "box": [x, y, width, height] in thousandths of the picture's width and height}. ${c.ai.prompt.trim() ? `Translate as instructed: ${c.ai.prompt.trim()}` : 'Translate naturally and faithfully.'}`;
+  let reply = '';
+  if (style === 'gemini') {
+    const j = JSON.parse(await send(`${base}/models/${encodeURIComponent(model)}:generateContent${key ? `?key=${encodeURIComponent(key)}` : ''}`, 'POST', { 'Content-Type': 'application/json' }, JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: ask }] }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json' } }))) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    reply = j.candidates?.[0]?.content?.parts?.map((x) => x.text ?? '').join('') ?? '';
+  } else if (style === 'anthropic') {
+    const j = JSON.parse(await send(`${base}/messages`, 'POST', { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, JSON.stringify({ model, max_tokens: 8192, temperature: 0.1, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: mime, data: b64 } }, { type: 'text', text: ask }] }] }))) as { content?: { type: string; text?: string }[] };
+    reply = j.content?.filter((x) => x.type === 'text').map((x) => x.text ?? '').join('') ?? '';
+  } else {
+    const j = JSON.parse(await send(`${base}/chat/completions`, 'POST', { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) }, JSON.stringify({ model, temperature: 0.1, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: dataUrl } }, { type: 'text', text: ask }] }] }))) as { choices?: { message?: { content?: string } }[] };
+    reply = j.choices?.[0]?.message?.content ?? '';
+  }
+  let s = reply.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''); const a = s.indexOf('['), b = s.lastIndexOf(']'); if (a >= 0 && b > a) s = s.slice(a, b + 1);
+  const arr = JSON.parse(s) as { text?: string; tr?: string; box?: number[] }[];
+  return arr.filter((x) => x && x.text && Array.isArray(x.box) && x.box.length === 4).map((x) => ({ text: String(x.text), tr: String(x.tr ?? x.text), x: x.box![0] / 1000, y: x.box![1] / 1000, w: x.box![2] / 1000, h: x.box![3] / 1000 }));
+}
