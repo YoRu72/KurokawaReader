@@ -280,7 +280,7 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
       row('info', t('details'), '', () => navigate(`/task/${encodeURIComponent(got.id)}`));
     } else {
       // (Watch now says what it will play: the batch picked before, gone on in — or the best release found.)
-      const watchRow = h('button', { type: 'button', class: 'dest-row primary', onclick: () => { sh.close(); void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)); } }, icon('play'), h('span', { class: 'grow' }, h('span', null, t('epWatchNow')), h('small', { class: 'src watch-hint', dir: 'auto' }, t('epWatchNowHint'))));
+      const watchRow = h('button', { type: 'button', class: 'dest-row primary', onclick: () => { sh.close(); void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)); } }, icon('play'), h('span', { class: 'grow' }, h('span', null, t('epWatchNow')), h('small', { class: 'src watch-hint', dir: 'auto' }, t(getSettings().animeWatchAuto ? 'epWatchNowHint' : 'epWatchPickHint'))));
       sh.body.append(watchRow);
       void import('../anime/watch').then((m) => m.watchPlan(a, n)).then((plan) => { const hint = watchRow.querySelector('.watch-hint'); if (hint && plan.picked) hint.textContent = t('epWatchContinue', { name: plan.picked.title }); });
       row('magnet', t('epChooseToWatch'), t('epChooseToWatchHint'), () => void torrentSheet(a, n, 'stream'));
