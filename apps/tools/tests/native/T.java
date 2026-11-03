@@ -3,7 +3,7 @@
 // again and the file changed on the server: downloaded afresh. Run by downloader.sh.
 import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.atomic.*; import java.security.*;
 public class T {
-  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static volatile boolean apk = false; static volatile int deny = 0; static AtomicInteger tag = new AtomicInteger();
+  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static volatile boolean apk = false; static volatile int deny = 0; static volatile boolean capped = false; static AtomicInteger tag = new AtomicInteger();
   public static void main(String[] a) throws Exception {
     data = new byte[20 << 20]; new Random(1).nextBytes(data);
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
@@ -20,7 +20,7 @@ public class T {
         ex.getResponseHeaders().add("Content-Range", "bytes " + f + "-" + t + "/" + data.length); ex.sendResponseHeaders(206, t - f + 1);
         if (slowFirst && f % (1310720) != 0) splits.incrementAndGet();
         final boolean slow = slowFirst && f == 0;
-        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); Thread.sleep(slow ? 150 : 2); } } catch (InterruptedException e) {}
+        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); Thread.sleep(slow ? 150 : capped ? 40 : 2); } } catch (InterruptedException e) {}
       } finally { if (!probe) busy.decrementAndGet(); }
     });
     s.start(); URL u = new URL("http://127.0.0.1:" + s.getAddress().getPort() + "/f");
@@ -90,6 +90,11 @@ public class T {
     File out10 = new File(dir, "deny.part"); out10.delete(); deny = 3; limit = 8; AtomicLong g10 = new AtomicLong(); KrDownloader.Result r10 = new KrDownloader.Result();
     boolean ok10; try { KrDownloader.fetch(u, out10, 6, op, new AtomicBoolean(), g10, r10, () -> {}, new KrDownloader.Opts()); ok10 = Arrays.equals(java.nio.file.Files.readAllBytes(out10.toPath()), data); } catch (Exception e) { System.out.println("run10 " + e); ok10 = false; }
     System.out.println("run10 403 on some connections, done anyway: " + ok10 + " connections now " + r10.connections); deny = 0;
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
+    // 11: a server that gives each connection only so much (1.6 MB/s here): connections added while the speed rises.
+    capped = true; limit = 16; File out11 = new File(dir, "capped.part"); out11.delete(); KrDownloader.Result r11 = new KrDownloader.Result(); long t11 = System.currentTimeMillis();
+    KrDownloader.fetch(u, out11, 12, op, new AtomicBoolean(), new AtomicLong(), r11, () -> {}, new KrDownloader.Opts());
+    long ms11 = System.currentTimeMillis() - t11; boolean ok11 = Arrays.equals(java.nio.file.Files.readAllBytes(out11.toPath()), data) && r11.connections > 3; capped = false;
+    System.out.println("run11 scaled to " + r11.connections + " connections (started with 3) in " + ms11 + " ms, match=" + ok11);
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }

@@ -317,7 +317,7 @@ public class KtPlugin extends Plugin {
     /* ---------- a file with its progress (an APK), and the installer ---------- */
     @PluginMethod public void downloadFile(PluginCall call) {
         final String urlStr = call.getString("url", ""); final String name = call.getString("name", "download.bin"); final String id = call.getString("id", "");
-        final int connections = Math.max(1, Math.min(16, call.getInt("connections", 8)));
+        final int connections = Math.max(1, Math.min(24, call.getInt("connections", 16)));
         final AtomicBoolean cancelled = new AtomicBoolean(false); if (!id.isEmpty()) downloads.put(id, cancelled);
         bg.execute(() -> {
             try {

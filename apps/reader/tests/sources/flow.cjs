@@ -279,6 +279,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
       const { variables } = JSON.parse(req.postData() || '{}'); const data = {};
       // (A series' synopsis, asked by its AniList id.)
       if (variables && typeof variables.id === 'number') return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { Media: { description: `The story of series ${variables.id}.<br><br>It goes on &amp; on.` } } }) });
+      // (A search by another name: the romaji of «The Apothecary Diaries».)
+      if (variables && typeof variables.q === 'string') return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { a: { media: /kusuriya/i.test(variables.q) ? [{ id: 9, title: { romaji: 'Kusuriya no Hitorigoto', english: 'The Apothecary Diaries', native: '薬屋のひとりごと' }, synonyms: ['Drugstore Soliloquy'] }] : [] }, b: { media: [] } } }) });
       for (const [k, q] of Object.entries(variables || {})) data[`s${k.slice(1)}`] = { media: /^Zeta/.test(q) ? [] : [{ id: q.length, title: { romaji: q, english: q }, synonyms: [], genres: /^B/.test(q) ? ['Action', 'Fantasy'] : ['Romance'], averageScore: 70, countryOfOrigin: /^B/.test(q) ? 'KR' : 'JP', tags: [{ name: /^B/.test(q) ? 'Isekai' : 'School', rank: 90, category: 'Theme-Fantasy' }, { name: 'Spoilery', rank: 95, isMediaSpoiler: true, category: 'Theme-Drama' }] }] };
       return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data }) });
     });
@@ -394,6 +396,13 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('… with a button for all of them', /Download all 4 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)) && /4 volumes/.test(await page.$eval('.series-head .src-chips', (e) => e.textContent)));
     await page.click('.vol-row >> nth=1 >> .vol-actions button'); await page.waitForSelector('.vol-row >> nth=1 >> .vol-actions .btn.primary', { timeout: 60000 });
     ok('one volume by its own button; the series\' button counts the rest', /Download all 3 volumes/.test(await page.$eval('.series-head .series-all', (e) => e.textContent)));
+    // A series searched by another of its names (AniList's romaji): found though the folder names it in English.
+    await page.goto(base + otlHash.replace(/\?.*$/, '')); await page.waitForSelector('.src-search', { timeout: 20000 });
+    await page.fill('.src-search', 'Kusuriya no Hitorigoto'); await page.press('.src-search', 'Enter'); await page.waitForTimeout(2500);
+    const byAlias = await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent));
+    ok('a series found by another of its names (AniList\'s romaji)', byAlias.includes('The Apothecary Diaries'));
+    if (!byAlias.includes('The Apothecary Diaries')) console.log('  found:', JSON.stringify(byAlias));
+    await page.goBack(); await page.waitForTimeout(300);
     // Genres and tags from AniList: on the series' page (no spoiler tags), a filter of the shelf, and in search.
     await page.waitForFunction(() => true); await page.reload(); await page.waitForSelector('.series-head', { timeout: 20000 }); await page.waitForTimeout(400);
     const genreChips = await page.$$eval('.series-head .tags-block .genre-chips .genre, .series-head .tags-block .top-tags .genre', (es) => es.map((e) => e.textContent));

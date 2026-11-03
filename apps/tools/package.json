@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools",
-  "version": "0.13.4",
+  "version": "0.13.5",
   "description": "Kurokawa Tools — downloads, torrents, streaming and the tools around them, with the Kurokawa add-ons.",
   "private": true,
   "type": "module",

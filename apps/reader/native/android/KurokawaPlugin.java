@@ -334,7 +334,7 @@ public class KurokawaPlugin extends Plugin {
         final String id = call.getString("id", "");
         // "persist": keep the file (e.g. a downloaded deck the library links to) instead of the cache.
         final boolean persist = Boolean.TRUE.equals(call.getBoolean("persist", false));
-        final int connections = Math.max(1, Math.min(16, call.getInt("connections", 8)));
+        final int connections = Math.max(1, Math.min(24, call.getInt("connections", 16)));
         final JSObject headers = call.getObject("headers", new JSObject());
         final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
         if (!id.isEmpty()) downloads.put(id, cancelled);

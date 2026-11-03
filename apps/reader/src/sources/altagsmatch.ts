@@ -6,7 +6,7 @@ export type Raw = { id: number; title: { romaji?: string; english?: string; nati
 /** A tag as kept: its name, how well it fits (AniList's rank, 0–100), its category ("Theme-Fantasy"), whether it
  *  gives the story away. */
 export interface Tag { n: string; r: number; c?: string; s?: 1 }
-export interface Picked { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string; cover?: string }
+export interface Picked { id: number; genres: string[]; tags: Tag[]; score?: number; country?: string; cover?: string; /** its other names (romaji, English, native, synonyms): searched too */ names?: string[] }
 
 /** A folder's name as a title to search for: brackets, "(Light Novel)", a publisher's tag and the like taken off. */
 export function searchName(name: string): string {
@@ -49,6 +49,8 @@ export function buildQuery(names: string[]): { query: string; variables: Record<
   return { query: `query (${names.map((_, i) => `$q${i}: String`).join(', ')}) { ${parts.join(' ')} }`, variables };
 }
 
+/** Every name AniList knows a series by (at most a dozen). */
+export function titlesOf(m: Raw): string[] { return [...new Set([m.title.romaji, m.title.english, m.title.native, ...(m.synonyms ?? [])].filter((x): x is string => !!x && !!x.trim()))].slice(0, 12); }
 /** A title's names to compare with: each as it is, and without what follows its main title — a subtitle after a
  *  colon ("Kino's Journey: The Beautiful World"), a part's number ("Ascendance of a Bookworm: Part 2"). */
 function namesOf(m: Raw): string[] {
@@ -80,7 +82,7 @@ export function pick(asked: string, list: Raw[] | null | undefined, whole = '', 
   if (!best) return null;
   // (Every tag, the best fitting first; those that give the story away marked, to be shown only when asked.)
   return {
-    id: best.id, genres: best.genres ?? [], score: best.averageScore, country: best.countryOfOrigin ?? undefined, cover: best.coverImage?.large ?? undefined,
+    id: best.id, names: titlesOf(best), genres: best.genres ?? [], score: best.averageScore, country: best.countryOfOrigin ?? undefined, cover: best.coverImage?.large ?? undefined,
     tags: (best.tags ?? []).sort((a, b) => b.rank - a.rank).map((x): Tag => ({ n: x.name, r: x.rank, ...(x.category ? { c: x.category } : {}), ...(x.isMediaSpoiler || x.isGeneralSpoiler ? { s: 1 as const } : {}) })),
   };
 }

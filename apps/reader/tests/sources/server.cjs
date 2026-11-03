@@ -170,7 +170,7 @@ const server = http.createServer((req, res) => {
     // (A new volume published in a series, as the site's keepers do.)
     if (p === '/__otl/add') { otlAdd(u.searchParams.get('folder'), u.searchParams.get('name'), EPUBS[0], 'application/epub+zip', Date.now()); res.setHeader('Content-Type', 'application/json'); return res.end('{"ok":true}'); }
     // (The extension's manifest, as the app's repository keeps it.)
-    if (p === '/extensions/otl.json') { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, '../../extensions/otl.json'))); }
+    if (p === '/extensions/otl.json') { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, '../../../../repo/reader/otl.json'))); }
     if (p === '/__otl/shield') { if (u.searchParams.has('kind')) { shield.kind = u.searchParams.get('kind'); shield.passed = false; shield.plain = 0; shield.browser = 0; } if (u.searchParams.has('passed')) shield.passed = u.searchParams.get('passed') === '1'; if (u.searchParams.has('nosearch')) shield.noSearch = u.searchParams.get('nosearch') === '1'; res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(shield)); }
     if (p === '/__otl/reset-posts') { posts.length = 0; res.setHeader('Content-Type', 'application/json'); return res.end('[]'); }
     // The shield: a request not made by a browser turned away; a browser's checked until the check is passed.
