@@ -72,6 +72,9 @@ export async function watchPlan(a: Anime, ep: number): Promise<{ task?: Task; pi
   return picked?.batch && covers ? { picked } : {};
 }
 export async function watchEpisode(a: Anime, ep: number, title: string, release?: TorrentResult): Promise<void> {
+  // (As in Hayase: the releases to choose from, the best one first — unless one is already here (or a batch
+  // picked before goes on), or picking by itself was chosen.)
+  if (!release && !getSettings().animeWatchAuto) { const plan = await watchPlan(a, ep); if (!plan.task && !plan.picked) { const m = await import('../views/animeEntry'); await m.torrentSheet(a, ep, 'stream'); return; } }
   return watchWith({
     title,
     have: release ? undefined : async () => taskFor(a.id, ep),
@@ -100,7 +103,8 @@ export async function watchWith(o: { title: string; have?: () => Promise<Task | 
   const me = { stop }; running = me;
   const el = h('div', { class: 'get-card watch-card', role: 'status' },
     h('div', { class: 'get-head' }, h('span', { class: 'get-ic' }, icon('play')), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, title), line),
-      h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('cancel'), onclick: () => { stop(); if (taskId) void eng.pause(taskId).catch(() => undefined); } }, icon('close'))),
+      // (×: the watching stops; the download goes on, as in Hayase — it is there to play later.)
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('watchStopHere'), title: t('watchStopHere'), onclick: () => { stop(); if (taskId) toast(t('watchKeptDownloading')); } }, icon('close'))),
     bar);
   document.body.append(el);
   const setBar = (p: number) => { (bar.firstChild as HTMLElement).style.width = `${Math.max(4, Math.min(100, p))}%`; };
@@ -125,7 +129,8 @@ export async function watchWith(o: { title: string; have?: () => Promise<Task | 
       if (x.kind === 'torrent' && x.files.length > 1 && eng.setFiles) await eng.setFiles(x.id, x.files.map((f) => (f.index === fi ? 2 : reuse ? (f.priority === 2 ? 1 : f.priority) : 0) as 0 | 1 | 2)).catch(() => undefined);
       if (x.state === 'paused' && reuse) await eng.resume(x.id).catch(() => undefined);
       setBar(100); line.textContent = t('watchOpening');
-      const { playTaskFile } = await import('../views/player'); await playTaskFile(x, fi); stop();
+      // (The card goes before the player's own question — «watch with» — so the two are never on top of each other.)
+      stop(); const { playTaskFile } = await import('../views/player'); await playTaskFile(x, fi);
     };
     if (ready(task)) { await go(task); return; }
     line.textContent = t('watchMeta');

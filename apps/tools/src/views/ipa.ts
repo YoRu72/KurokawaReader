@@ -64,7 +64,11 @@ export async function ipaSheet(src: { file?: Blob; url?: string; name?: string }
     const fileToShare = src.file ? new File([src.file], name.endsWith('.ipa') ? name : `${name}.ipa`, { type: 'application/octet-stream' }) : null;
     const canShare = !!fileToShare && !!navigator.canShare?.({ files: [fileToShare] });
     sh.body.append(h('h4', { class: 'ipa-sub' }, t('ipaInstallWith')), h('p', { class: 'hint' }, src.url ? t('ipaLinkHint') : t('ipaShareHint')));
-    if (src.url) sh.body.append(h('div', { class: 'ipa-installers' }, ...INSTALLERS.map((i) => h('a', { class: 'btn tonal', href: i.scheme(src.url!), onclick: () => toast(t('ipaOpening', { app: i.name })) }, icon('download'), i.name))));
+    // (The installer used last time is remembered: then one «Install» does it all.)
+    const used = (() => { try { return localStorage.getItem('kt.ipaInstaller') ?? ''; } catch { return ''; } })(); const last = INSTALLERS.find((i) => i.id === used);
+    const pick = (id: string) => { try { localStorage.setItem('kt.ipaInstaller', id); } catch { /* none */ } };
+    if (src.url && last) sh.body.append(h('a', { class: 'btn primary ipa-go', href: last.scheme(src.url), onclick: () => toast(t('ipaOpening', { app: last.name })) }, icon('download'), t('ipaInstallVia', { app: last.name })));
+    if (src.url) sh.body.append(h('div', { class: 'ipa-installers' }, ...INSTALLERS.filter((i) => i !== last).map((i) => h('a', { class: 'btn tonal', href: i.scheme(src.url!), onclick: () => { pick(i.id); toast(t('ipaOpening', { app: i.name })); } }, icon('download'), i.name))));
     if (canShare) sh.body.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void navigator.share({ files: [fileToShare!], title: info?.name ?? name }).catch(() => undefined) }, icon('share'), t('ipaShareTo')));
     if (!src.url && !canShare) sh.body.append(h('p', { class: 'plan-note' }, t('ipaNoWay')));
   } else sh.body.append(h('p', { class: 'plan-note' }, t('ipaElsewhere')));

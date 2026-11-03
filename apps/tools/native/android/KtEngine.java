@@ -89,7 +89,7 @@ final class KtEngine {
     static final String[] TRACKERS = { "udp://tracker.opentrackr.org:1337/announce", "udp://open.demonii.com:1337/announce", "udp://open.stealth.si:80/announce", "udp://tracker.torrent.eu.org:451/announce", "udp://exodus.desync.com:6969/announce", "udp://explodie.org:6969/announce", "udp://tracker.qu.ax:6969/announce", "udp://opentracker.io:6969/announce", "udp://tracker.dler.org:6969/announce", "udp://tracker.tiny-vps.com:6969/announce", "udp://tracker-udp.gbitt.info:80/announce", "udp://tracker.0x7c0.com:6969/announce", "http://tracker.opentrackr.org:1337/announce", "http://nyaa.tracker.wf:7777/announce" };
     private volatile String[] extraTrackers = TRACKERS; private volatile boolean addTrackers = true;
     /** Connections for one torrent (Hayase's 80); the session's budget is connections_limit. */
-    private volatile int connsPerTorrent = 80;
+    private volatile int connsPerTorrent = 150;
     private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
     /* Prism's connection settings: the name the app gives servers, tries per chunk, how long to wait, a proxy,
@@ -362,6 +362,12 @@ final class KtEngine {
         sp.setInteger(settings_pack.int_types.peer_timeout.swigValue(), 60);
         sp.setInteger(settings_pack.int_types.inactivity_timeout.swigValue(), 240);
         sp.setInteger(settings_pack.int_types.unchoke_slots_limit.swigValue(), 16);
+        // (More peers at once, and more room for what they send before it is written: a fast connection kept
+        // full instead of waiting on the disk or on a small peer list.)
+        sp.setInteger(settings_pack.int_types.connections_limit.swigValue(), 500);
+        sp.setInteger(settings_pack.int_types.max_queued_disk_bytes.swigValue(), 16 << 20);
+        sp.setInteger(settings_pack.int_types.max_peer_recv_buffer_size.swigValue(), 4 << 20);
+        sp.setInteger(settings_pack.int_types.send_not_sent_low_watermark.swigValue(), 512 << 10);
     }
     /** The DHT's nodes kept for the next start. */
     void saveDht() {
@@ -402,7 +408,7 @@ final class KtEngine {
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
         if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", false)).apply(); } catch (Throwable ignored) {}   // (from the next start)
-        if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 80)); for (Task t : snapshot()) applyOwn(t); }
+        if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
         if (o.has("connsTotal")) { int n = Math.max(20, o.optInt("connsTotal", 500)); try { SessionManager sm = session; if (sm != null && sm.isRunning()) { SettingsPack sp = new SettingsPack(); sp.connectionsLimit(n); sm.applySettings(sp); } } catch (Throwable ignored) {} }
         if (o.has("addTrackers")) addTrackers = o.optBoolean("addTrackers", true);
         if (o.has("trackers")) { JSONArray a = o.optJSONArray("trackers"); if (a != null && a.length() > 0) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) { String u = a.optString(i, "").trim(); if (u.matches("(?i)^(udp|https?|wss?)://\\S+$")) l.add(u); } if (!l.isEmpty()) extraTrackers = l.toArray(new String[0]); } }

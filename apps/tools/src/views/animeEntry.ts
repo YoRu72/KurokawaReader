@@ -127,7 +127,7 @@ const relName = (r: string): string => ({ PREQUEL: t('relPrequel'), SEQUEL: t('r
  *  played while it comes, and remembered — a batch goes on with the next episodes). */
 export async function torrentSheet(a: Anime, episode: number, mode: 'download' | 'stream' = 'download'): Promise<void> {
   const sh = openSheet(episode ? `${titleOf(a)} · ${t('episodeN', { n: episode })}` : titleOf(a), t('close'));
-  if (mode === 'stream') sh.body.append(h('p', { class: 'hint' }, t('chooseToWatchHint')));
+  if (mode === 'stream') sh.body.append(h('p', { class: 'hint' }, t('chooseToWatchHint')), h('label', { class: 'switch-row small' }, h('span', { class: 'grow' }, t('watchAutoNext')), h('input', { type: 'checkbox', checked: !!getSettings().animeWatchAuto, onchange: (e: Event) => updateSettings({ animeWatchAuto: (e.target as HTMLInputElement).checked }) })));
   await syncBuiltins().catch(() => undefined);
   const ps = (await providers()).filter((p) => p.enabled && p.role !== 'stream');
   if (!ps.length) { sh.body.append(h('div', { class: 'empty small' }, h('p', null, t('animeNoProviders')), h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); navigate('/settings/anime'); } }, icon('puzzle'), t('animeProviders')))); return; }
