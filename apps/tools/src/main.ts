@@ -136,6 +136,7 @@ if (MINI) { document.documentElement.classList.add('mini'); const { miniView } =
 else if (OVERLAY) { const { overlayView } = await import('./views/overlay'); app.replaceChildren(overlayView()); }
 else {
   placeNav();
+  void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
   onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());

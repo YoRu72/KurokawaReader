@@ -4,7 +4,7 @@
 import { ktPlugin, nativePlatform, listen } from './native';
 
 export interface BrowserLink { href: string; text: string; kind: string }
-type Ev = { kind: 'download'; url: string; name?: string; referer?: string; ua?: string; cookie?: string } | { kind: 'links'; url: string; title: string; links: BrowserLink[]; ua?: string };
+type Ev = { kind: 'download'; url: string; name?: string; referer?: string; ua?: string; cookie?: string; trail?: unknown[] } | { kind: 'relink'; id: string; ok: boolean; url?: string; referer?: string; ua?: string } | { kind: 'links'; url: string; title: string; links: BrowserLink[]; ua?: string };
 type Bridge = { browse?(o: { url: string }): Promise<unknown>; onBrowser?(cb: (o: Ev) => void): () => void };
 
 export const canBrowse = (): boolean => !!(window.kurokawaTools as unknown as Bridge | undefined)?.browse || nativePlatform() === 'android';
@@ -22,8 +22,10 @@ let wired = false;
 export function startBrowserEvents(): void {
   if (wired) return; wired = true;
   const on = (o: Ev) => {
+    if (o.kind === 'relink') { void import('./downloads/relink').then(async (m) => { const { toast } = await import('./ui/dom'); const { t } = await import('./i18n'); try { toast((await m.relinked(o)) ? t('relinkedAuto') : t('relinkFailed'), 'info', 5000); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }); return; }
     if (o.kind === 'download') {
       const headers: Record<string, string> = {}; if (o.referer) headers.Referer = o.referer; if (o.ua) headers['User-Agent'] = o.ua; if (o.cookie) headers.Cookie = o.cookie;
+      if (o.trail?.length) { const tr = o.trail; void import('./downloads/relink').then((m) => m.saveTrail(o.url, tr as never)); }
       // (A download whose link ran out waits for a new one from this browser: the first download caught goes to it.)
       const rl = relinkTarget(); if (rl) { clearRelink(); void import('./engine').then(async ({ getEngine }) => { const { toast } = await import('./ui/dom'); const { t } = await import('./i18n'); try { await getEngine().setUrl!(rl.id, o.url, Object.keys(headers).length ? headers : undefined); toast(t('relinked', { name: rl.name })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }); return; }
       void import('./views/add').then((m) => m.addSheet(o.url, { headers: Object.keys(headers).length ? headers : undefined, name: o.name }));
@@ -42,6 +44,10 @@ function clearRelink(): void { try { localStorage.removeItem(RELINK); } catch { 
 /** The page the download came from opened in the app's browser; the next download started there gives this one
  *  its new link (and the site's cookies), and it goes on from where it stopped. */
 export function relinkFromBrowser(x: { id: string; name: string; source: { url?: string; headers?: Record<string, string> } }): void {
+  // (The way to it kept: replayed — the same pages, the same buttons — instead of being done by hand.)
+  void import('./downloads/relink').then((m) => { if (!m.replayTrail(x as never)) relinkByHand(x); });
+}
+function relinkByHand(x: { id: string; name: string; source: { url?: string; headers?: Record<string, string> } }): void {
   try { localStorage.setItem(RELINK, JSON.stringify({ id: x.id, name: x.name, at: Date.now() })); } catch { /* blocked */ }
   const ref = x.source.headers?.Referer ?? x.source.headers?.referer; const u = ref && /^https?:/.test(ref) ? ref : x.source.url ?? '';
   void import('./ui/dom').then(async ({ toast }) => { const { t } = await import('./i18n'); toast(t('relinkHint'), 'info', 6000); });

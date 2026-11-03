@@ -8,6 +8,7 @@ import { canArchive, isArchiveName } from '../archives';
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t } from '../i18n';
 import { getEngine, displayName, isVideo } from '../engine';
+import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
 import { back } from '../router';
 import { stateLabel } from './downloads';
@@ -53,7 +54,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : null) : h('span'), acts),
-      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
+      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
   let filesBox: FilesCard | undefined;
@@ -68,4 +69,10 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
 /** A download's error in words: «page» is the site's page sent instead of the file (its check, a sign-in). */
 /** A connection the server cut (as sites behind a visitor check do to apps they have not seen pass it). */
 export const isCut = (e: string): boolean => /connection reset|reset by peer|closed early|unexpected end of stream|broken pipe|handshake|ssl/i.test(e);
+/** «Get a new link by itself»: off by default; only for a download caught in the app's browser (its way is known). */
+function relinkCard(x: Task): HTMLElement {
+  const has = !!trailOf(x); const on = has && autoRelinkOn(x.id);
+  const box = h('input', { type: 'checkbox', checked: on, disabled: !has, 'data-act': 'auto-relink', onchange: (e: Event) => { setAutoRelink(x.id, (e.target as HTMLInputElement).checked); if ((e.target as HTMLInputElement).checked && expired(x)) replayTrail(x); } });
+  return h('section', { class: 'card relink-card' }, h('label', { class: 'row switch-row' }, h('span', null, t('autoRelink'), h('small', { class: 'src' }, has ? t('autoRelinkHint') : t('autoRelinkNoWay'))), box));
+}
 export const errorText = (e: string): string => (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e);
