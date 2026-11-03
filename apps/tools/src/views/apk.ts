@@ -74,13 +74,15 @@ export async function installSheet(path: string, o: { password?: string; select?
     const id = uid(); go.disabled = true; let installed = -1; let confirming = false;
     const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src' }, t('apkWriting'));
     sh.body.append(h('div', { class: 'extract-progress' }, bar, line));
+    // (Android's own check of apps not from the Play Store: what to tap when it warns — the app cannot skip it.)
+    const protectHint = h('p', { class: 'hint' }, t('apkProtectHint'));
     const sub = await p.addListener('apkInstall', (e) => {
       if (e.id !== id) return;
       if (e.status === 'progress' && e.total) { const f = e.done! / e.total; (bar.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`; line.textContent = `${t('apkWriting')} ${localDigits(Math.round(f * 100))}%`; }
       // (Android's own progress once it has the app: checking and preparing it.)
       else if (e.status === 'installing' && e.total) { const pc = Math.max(installed, Math.min(100, Math.round((e.done! / e.total) * 100))); installed = pc; (bar.firstChild as HTMLElement).style.width = `${pc}%`; if (!confirming) line.textContent = `${t('apkInstalling')} ${localDigits(pc)}%`; }
       else if (e.status === 'committed') { if (installed < 0) { (bar.firstChild as HTMLElement).style.width = '100%'; line.textContent = t('apkInstalling'); } }
-      else if (e.status === 'confirm') { confirming = true; line.textContent = t('apkConfirm'); }
+      else if (e.status === 'confirm') { confirming = true; line.textContent = t('apkConfirm'); if (!protectHint.isConnected) line.after(protectHint); }
       else if (e.status === 'success') {
         // (A game's data, from an .xapk: put where it reads it, then the archive let go when that was asked.)
         if (info.obb && !info.container && p.apkObb) void p.apkObb({ path, pkg: info.package }).then((r) => { if (r.copied) toast(r.direct ? t('apkObbCopied', { n: localDigits(r.copied) }) : t('apkObbMoveBy', { to: r.to }), 'info', r.direct ? 4000 : 9000); }).catch((er) => toast(String((er as Error).message ?? er), 'error'));
