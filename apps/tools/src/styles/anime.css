@@ -334,3 +334,10 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 .get-card.watch-card { z-index: 45; }
 body:has(.sheet) .get-card.watch-card { opacity: 0; pointer-events: none; }
 .watch-card .get-head b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* TV & Movies search: tags and filters over the results */
+.tv-filters { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
+.tv-filters .hint.small { margin: 0; }
+.tv-filters .chip-row.wrap { gap: 6px; }
+.tv-filters .tv-genres { max-height: 7.5em; overflow-y: auto; }
+.chip-sep { width: 1px; align-self: stretch; background: var(--outline-variant, rgba(127,127,127,.35)); margin: 2px 4px; }

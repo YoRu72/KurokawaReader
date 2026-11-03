@@ -247,7 +247,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
   /** Translate the shown chapter: cached paragraphs appear at once, the rest in view order. */
   async function run(force = false) {
     const gen = ++generation;
-    { const cur = host.currentChapter(); const ch = host.chapters()[cur]; if (ch && getSettings().aiAutoGlossary && on) { running = true; paint(); await autoGlossary(ch.bookId, cur, ch.blocks, false); running = false; if (gen !== generation) return; } }
+    { const cur = host.currentChapter(); const ch = host.chapters()[cur]; if (ch && getSettings().aiAutoGlossary && on && aiReady() && navigator.onLine !== false) { running = true; paint(); await autoGlossary(ch.bookId, cur, ch.blocks, false); running = false; if (gen !== generation) return; } }
     const list = host.blocks().filter((b) => eligible(b.el));
     // visible first, then by distance from the viewport
     const sr = host.scroll.getBoundingClientRect();
@@ -267,7 +267,9 @@ export function attachTranslator(host: TranslatorHost): Translator {
     paint();
     if (!todo.length) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { paint(); return; }   // (offline: what is kept is shown, the rest waits)
-    if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); settingsSheet(); return; }
+    // (No translator set up — say a book translated before, its key since removed —: what is kept is shown; asked
+    // for a key only when nothing at all was kept for this chapter.)
+    if (!aiReady()) { if (!done) { toast(t('aiNeedsKey'), 'error', 4000); settingsSheet(); } return; }
     running = true; paint();
     // Batches in view order (the nearest first); within one, the paragraphs in reading order, so the context
     // given with it — the lines before its first — is the right one.
@@ -535,7 +537,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const id = firstBook(); if (!id || disposed || on) return;
     const k = await db.getMeta<{ hidden?: boolean; on?: boolean }>(keepKey(id)); if (disposed || on) return;
     // (Not saved, but chapters of it translated before: the bar is there, the translation a tap away.)
-    if (!k) { if (!pill && aiReady() && (Object.keys(await sourceIndex(id)).length || Object.keys(await cache(id)).length) && !disposed) buildPill(); return; }
+    if (!k) { if (!pill && (Object.keys(await sourceIndex(id)).length || Object.keys(await cache(id)).length) && !disposed) buildPill(); return; }
     buildPill(); if (k.hidden || k.on === false) hidePill(); if (k.on !== false) setOn(true); else paint();
   })();
 
@@ -567,7 +569,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
       return out;
     },
     // (The toolbar's button: the bar shown or hidden — the translation stays; the first time, turned on.)
-    toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); if (aiReady()) setOn(true); else settingsSheet(); },
+    toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); void (async () => { const id = firstBook(); const kept = !!id && (Object.keys(await sourceIndex(id)).length > 0 || Object.keys(await cache(id)).length > 0); if (aiReady() || kept) setOn(true); else settingsSheet(); })(); },
     dispose() { disposed = true; offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
   };
 
