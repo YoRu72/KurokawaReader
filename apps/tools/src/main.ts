@@ -141,6 +141,9 @@ else {
   onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
   if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
+  // (The Player add-on comes with ffmpeg — for the sound a web view cannot play, clips and chapters —: one installed
+  // before it came with it gets it now, offered once, a while after the app opens.)
+  if (getSettings().addons.includes('player')) window.setTimeout(() => void (async () => { const pk = await import('./packs'); if (!pk.packsHere()) return; const st = await pk.status().catch(() => null) as Record<string, { version?: string | null }> | null; if (!st || st.ffmpeg?.version) return; try { if (localStorage.getItem('kt.playerFfmpegAsked')) return; localStorage.setItem('kt.playerFfmpegAsked', '1'); } catch { /* none */ } const { t } = await import('./i18n'); await pk.ensurePacks(['ffmpeg'], t('packWhyPlayerSound'), { start: true }); })().catch(() => undefined), 8000);
   if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
   setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).

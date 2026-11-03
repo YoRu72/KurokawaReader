@@ -78,6 +78,7 @@ final class KtEngine {
     }
 
     private final Context ctx;
+    Context context() { return ctx; }
     private final Listener listener;
     private final File stateDir;
     private final Map<String, Task> tasks = new LinkedHashMap<>();
