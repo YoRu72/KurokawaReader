@@ -142,7 +142,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
       };
       drawSub(); void show();
     } else {
-      if (!al.linked()) { body.append(h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('user')), h('h2', null, t('animeMyList')), h('p', null, t('anilistLinkFirst')), h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn primary', onclick: () => navigate('/settings/anime') }, icon('link'), t('anilistSignIn'))))); return; }
+      if (!al.linked()) { body.append(h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('user')), h('h2', null, t('animeMyList')), h('p', null, t('anilistLinkFirst')), h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn primary', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(() => draw())) }, icon('user'), t('anilistSignInWith'))))); return; }
       const stats: (AlStatus | 'ALL' | 'SEQUELS')[] = ['CURRENT', 'PLANNING', 'PAUSED', 'COMPLETED', 'DROPPED', 'REPEATING', 'SEQUELS'];
       let which = (localStorage.getItem('kt.anime.listStatus') as AlStatus | 'SEQUELS' | null) ?? 'CURRENT';
       const sChips = h('div', { class: 'chip-row wrap list-status' });

@@ -566,3 +566,22 @@ html.pc .fab-menu { max-height: calc(100dvh - 116px); }
 html:not(.pc) .body > .filter-chips { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; }
 .view > .filter-chips { padding-inline: 16px; scroll-padding-inline: 16px; flex: none; }
 html.pc .view > .filter-chips { padding-inline: max(40px, calc((100% - 1100px) / 2 + 40px)); }
+/* The iOS app installer. */
+.ipa-sheet .sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.ipa-head { display: flex; align-items: center; gap: 14px; }
+.ipa-head .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .ipa-head .grow small { overflow-wrap: anywhere; }
+.ipa-icon { width: 64px; height: 64px; border-radius: 15px; flex: none; object-fit: cover; box-shadow: var(--el-1); }
+.ipa-icon.none { display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); } .ipa-icon.none svg { width: 30px; height: 30px; }
+.ipa-facts { margin: 0; display: grid; gap: 6px; }
+.ipa-row { display: flex; gap: 12px; } .ipa-row dt { flex: none; width: 8.5em; color: var(--md-on-surface-variant); font-size: 13px; } .ipa-row dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.ipa-row.warn dd { color: var(--md-error); }
+.ipa-uses ul { margin: 6px 0 0; padding-inline-start: 18px; display: grid; gap: 6px; } .ipa-uses li { display: grid; gap: 2px; }
+.ipa-sub { margin: 6px 0 0; }
+.ipa-installers { display: flex; flex-wrap: wrap; gap: 8px; } .ipa-installers a { text-decoration: none; }
+/* The bottom bar always fits: its items share the width (six of them — Downloads, Search, Anime, TV & films,
+   Videos, Settings — no longer push Settings off a phone's screen), the pill and the label shrinking with it. */
+.bottom-nav { gap: 2px; padding-inline: 4px; }
+.bottom-nav .nav-item { flex: 1 1 0; min-width: 0; max-width: 96px; }
+.bottom-nav .nav-pill { width: min(64px, 100%); }
+.bottom-nav .nav-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.bottom-nav[data-count="6"] .nav-label, .bottom-nav[data-count="7"] .nav-label { font-size: 10.5px; }

@@ -81,7 +81,7 @@ function trackButton(srcId: string, bookId: () => Promise<string | undefined>, a
   btn.addEventListener('click', async () => {
     const { anilistOn, linked } = await import('../anilist');
     if (!anilistOn()) { toast(t('trackTurnOn')); navigate('/settings'); return; }
-    if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; }
+    if (!linked()) { await (await import('../ui/anilistlink')).anilistSignIn(() => undefined); if (!linked()) return; }
     const id = await bookId(); const b = id ? await db.getBook(id) : undefined;
     if (!b) { toast(t('trackAddFirst')); return; }
     const { trackSheet } = await import('../ui/track');

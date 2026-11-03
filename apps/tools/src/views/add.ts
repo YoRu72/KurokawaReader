@@ -5,6 +5,7 @@ import { t, formatBytes, localDigits, countFiles } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
 import type { TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
+import { isIos } from './ipa';
 import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin } from '../native';
@@ -55,7 +56,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
   // A Hugging Face model's page: offered to the model window, where its files can be picked.
   const hfBox = h('div', { class: 'plan-note hf-offer', hidden: true });
-  const peekHf = (u: string | null) => void import('../hf/hf').then((HF) => {
+  // (A link to an iOS app, on an iPhone: offered to the installer — SideStore, AltStore, TrollStore.)
+  const peekIpa = (u: string | null): boolean => { if (!u || !/\.ipa(\?|$)/i.test(u) || !isIos()) return false; hfBox.hidden = false; hfBox.replaceChildren(icon('apps'), h('span', { class: 'grow' }, t('ipaOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./ipa').then((m) => m.ipaSheet({ url: u })); } }, t('ipaInstallIt'))); return true; };
+  const peekHf = (u: string | null) => peekIpa(u) || void import('../hf/hf').then((HF) => {
     if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || !S.socialOf(u)) return; hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });

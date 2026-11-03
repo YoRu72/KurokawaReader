@@ -122,7 +122,7 @@ export function bookView(id: string): HTMLElement {
       tile('clock', stats?.ms ? formatDuration(stats.ms) : t('notStarted'), !!stats?.ms, async () => { const { showBookInfo } = await import('../ui/bookinfo'); showBookInfo({ book, stats: stats ?? { ms: 0, words: 0, days: {} }, speed: null, pages: book.pageCount, pct: book.progress?.pct ?? 0 }); }),
       // (Tracking is for titles that came from a source — an extension, a web folder — as Mihon tracks its
       // entries; a book of one's own files gets it once an AniList account is linked.)
-      anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { toast(t('anilistLinkFirst')); navigate('/settings'); return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
+      anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { await (await import('../ui/anilistlink')).anilistSignIn(() => render(book)); if (!linked()) return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
       tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
       tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }),
       // (A novel from an extension: moved to another source — its site gone or blocked — with its reading kept.)
