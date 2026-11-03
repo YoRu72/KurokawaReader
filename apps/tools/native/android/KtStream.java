@@ -81,6 +81,21 @@ final class KtStream {
         out.flush(); c.disconnect();
     }
 
+    /** The base address of the sound a web view cannot decode itself (AC-3, E-AC-3, DTS, TrueHD…). */
+    synchronized String audioBase() throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/audio"; }
+    /** /audio?src=&ss=&a=: one audio track of a video (any address ffmpeg reads, this server's own included), from
+     *  `ss` seconds, turned into AAC as it plays — the player plays it beside the muted video, in step with it. */
+    private void audio(String path, String method, Socket sock, OutputStream out) throws Exception {
+        String q = path.substring(path.indexOf('?') + 1); String src = param(q, "src"); String ss = param(q, "ss"); String a = param(q, "a");
+        out.write("HTTP/1.1 200 OK\r\nContent-Type: audio/aac\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        if ("HEAD".equals(method) || src == null) { out.flush(); return; }
+        java.util.List<String> args = java.util.Arrays.asList("-nostdin", "-hide_banner", "-loglevel", "error", "-ss", ss == null ? "0" : ss, "-i", src, "-map", "0:a:" + (a == null ? "0" : a), "-vn", "-sn", "-dn", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-f", "adts", "pipe:1");
+        Process p = KtPacks.command(engine.context(), KtPacks.ffmpegBin(engine.context()), args).redirectErrorStream(false).start();
+        // (Its messages drained, so it never stops on a full pipe.)
+        Thread drain = new Thread(() -> { try (InputStream e = p.getErrorStream()) { byte[] b = new byte[4096]; while (e.read(b) > 0) { /* dropped */ } } catch (IOException ignored) {} }, "kt-audio-err"); drain.setDaemon(true); drain.start();
+        try (InputStream in = p.getInputStream()) { byte[] b = new byte[16384]; int n; while ((n = in.read(b)) > 0) { out.write(b, 0, n); out.flush(); } }
+        finally { p.destroy(); }
+    }
     private void serve(Socket s) {
         try (Socket sock = s) {
             sock.setSoTimeout(30000);
@@ -93,6 +108,7 @@ final class KtStream {
             String[] parts = path.replaceFirst("^/", "").split("/");
             BufferedOutputStream out = new BufferedOutputStream(rawOut, 1 << 16);
             if (path.startsWith("/proxy?")) { proxy(path, req[0], rawRange, out); return; }
+            if (path.startsWith("/audio?")) { audio(path, req[0], sock, out); return; }
             // /file?p=<path>: any file of the device (the player's local files and their subtitles), served with ranges.
             if (path.startsWith("/file?p=")) {
                 File lf = new File(java.net.URLDecoder.decode(path.substring(8), "UTF-8"));
@@ -117,8 +133,11 @@ final class KtStream {
             if ("HEAD".equals(req[0])) { out.flush(); return; }
             // (The file is read from disk as its pieces land; a piece missing is asked for first and waited for.)
             long pos = rangeStart; byte[] buf = new byte[1 << 17];
+            // (The newest request for a file steers the download: an older one, left behind by a seek, still finishes
+            // what it sends but no longer pulls the download back to where it was — the two used to take turns.)
+            final String key = (th != null && th.isValid() ? th.infoHash().toHex() : x.id) + ":" + index; final long me = requests.incrementAndGet(); owner.put(key, me);
             while (pos <= rangeEnd) {
-                if (ti != null) waitForPiece(th, ti, index, pos, rangeEnd);
+                if (ti != null) waitForPiece(th, ti, index, pos, rangeEnd, sock, key, me);
                 if (f == null || !f.exists()) { Thread.sleep(300); continue; }
                 try (RandomAccessFile raf = new RandomAccessFile(f, "r")) {
                     raf.seek(pos); int want = (int) Math.min(buf.length, rangeEnd - pos + 1); int n = raf.read(buf, 0, want);
@@ -134,23 +153,38 @@ final class KtStream {
     /** The piece holding `pos` of file `index`: made the most urgent (with a few after it), waited for. */
     /** Where the window ahead was last laid for each file being played (it is laid again as playback moves on). */
     private final java.util.Map<String, Integer> windowAt = new java.util.concurrent.ConcurrentHashMap<>();
-    private void waitForPiece(TorrentHandle th, TorrentInfo ti, int index, long pos, long end) throws InterruptedException {
+    private final java.util.concurrent.atomic.AtomicLong requests = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.Map<String, Long> owner = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Whether the player is still there (it closes a request it no longer wants: a seek, the player shut). */
+    private static boolean gone(Socket sock) {
+        try { sock.setSoTimeout(1); return sock.getInputStream().read() < 0; } catch (java.net.SocketTimeoutException e) { return false; } catch (IOException e) { return true; }
+        finally { try { sock.setSoTimeout(30000); } catch (IOException ignored) {} }
+    }
+    private void waitForPiece(TorrentHandle th, TorrentInfo ti, int index, long pos, long end, Socket sock, String key, long me) throws InterruptedException {
         FileStorage fs = ti.files();
         PeerRequest pr = fs.mapFile(index, pos, 1); int piece = pr.piece();
+        Long own = owner.get(key); boolean steer = own == null || own == me;
         // (The window ahead kept moving with playback — laid again each time the player reaches a new piece, even
         // one already here — so the download stays ahead of what is watched instead of stopping to wait at each
         // gap: about 48 MB after it, on deadlines that grow with the distance.)
-        String key = th.infoHash().toHex() + ":" + index; Integer at = windowAt.get(key);
-        if (at == null || at != piece) {
+        Integer at = windowAt.get(key);
+        if (steer && (at == null || at != piece)) {
+            int ahead = Math.max(12, (int) ((48L << 20) / Math.max(1, ti.pieceLength())));
+            // (A jump — a seek —: the old window's deadlines dropped, so the download turns here at once.)
+            if (at != null && (piece < at || piece > at + ahead)) { try { th.clearPieceDeadlines(); } catch (Throwable ignored) {} }
             windowAt.put(key, piece);
             int last = Math.min(ti.numPieces() - 1, fs.mapFile(index, end, 1).piece());
-            int ahead = Math.max(12, (int) ((48L << 20) / Math.max(1, ti.pieceLength())));
             for (int k = piece; k <= Math.min(last, piece + ahead); k++) { if (!th.havePiece(k)) { th.piecePriority(k, Priority.TOP_PRIORITY); th.setPieceDeadline(k, 100 + (k - piece) * 180); } }
             engine.streaming(th);
         }
         if (th.havePiece(piece)) return;
-        long until = System.currentTimeMillis() + 120000;
-        while (!th.havePiece(piece)) { if (System.currentTimeMillis() > until || !th.isValid()) throw new InterruptedException("timeout"); Thread.sleep(100); }
+        long until = System.currentTimeMillis() + 120000; int n = 0;
+        while (!th.havePiece(piece)) {
+            if (System.currentTimeMillis() > until || !th.isValid()) throw new InterruptedException("timeout");
+            // (A request the player gave up on ends now, instead of waiting two minutes for its piece.)
+            if (++n % 8 == 0 && gone(sock)) throw new InterruptedException("gone");
+            Thread.sleep(100);
+        }
     }
 
     private static String readLine(InputStream in) throws IOException {
@@ -160,7 +194,7 @@ final class KtStream {
     }
     static String mimeOf(String name) {
         String n = name.toLowerCase();
-        if (n.endsWith(".mp4") || n.endsWith(".m4v")) return "video/mp4"; if (n.endsWith(".mkv")) return "video/x-matroska"; if (n.endsWith(".webm")) return "video/webm"; if (n.endsWith(".avi")) return "video/x-msvideo"; if (n.endsWith(".mov")) return "video/quicktime"; if (n.endsWith(".ts")) return "video/mp2t"; if (n.endsWith(".mp3")) return "audio/mpeg"; if (n.endsWith(".flac")) return "audio/flac"; if (n.endsWith(".m4a")) return "audio/mp4";
+        if (n.endsWith(".mp4") || n.endsWith(".m4v")) return "video/mp4"; if (n.endsWith(".mkv")) return "video/webm"; /* (a web view plays Matroska under WebM's name, and refuses it under its own) */ if (n.endsWith(".webm")) return "video/webm"; if (n.endsWith(".avi")) return "video/x-msvideo"; if (n.endsWith(".mov")) return "video/quicktime"; if (n.endsWith(".ts")) return "video/mp2t"; if (n.endsWith(".mp3")) return "audio/mpeg"; if (n.endsWith(".flac")) return "audio/flac"; if (n.endsWith(".m4a")) return "audio/mp4";
         return "application/octet-stream";
     }
 }

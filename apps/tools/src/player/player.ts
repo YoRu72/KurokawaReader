@@ -98,7 +98,7 @@ export function openPlayer(src: PlayerSource): void {
     if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always') video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
     if (mem?.speed) setSpeed(mem.speed); if (mem?.subDelay) subDelay = mem.subDelay;
     void video.play().catch(() => undefined);
-    measureFps();
+    measureFps(); void checkSound();
   }, { once: true });
   video.addEventListener('timeupdate', onTime); video.addEventListener('progress', drawBuffer);
   video.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); playBtn.setAttribute('aria-label', t('pause')); scheduleHide(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
@@ -111,7 +111,7 @@ export function openPlayer(src: PlayerSource): void {
     if (getPrefs().closeAtEnd) { close(); return; }
     showControls();
   });
-  video.addEventListener('error', () => { const err = video.error; toast(err?.code === 4 ? t('playerCantPlay') : t('stateFailed'), 'error', 5000); showControls(); });
+  video.addEventListener('error', () => { const err = video.error; toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); });
   video.addEventListener('waiting', () => centre.classList.add('busy')); video.addEventListener('playing', () => centre.classList.remove('busy')); video.addEventListener('canplay', () => centre.classList.remove('busy'));
   let lastPosState = 0;
   function onTime() {
@@ -435,10 +435,35 @@ export function openPlayer(src: PlayerSource): void {
   type AT = { length: number; [i: number]: { enabled: boolean; label: string; language: string; id: string } };
   const audioTracks = () => (video as HTMLVideoElement & { audioTracks?: AT }).audioTracks;
   function cycleAudio() { const a = audioTracks(); if (!a || a.length < 2) { flashText(t('audioOneTrack')); return; } let i = 0; for (let k = 0; k < a.length; k++) if (a[k].enabled) i = k; const n = (i + 1) % a.length; for (let k = 0; k < a.length; k++) a[k].enabled = k === n; flashText(a[n].label || a[n].language || `#${n + 1}`); }
+  // ---- sound the decoder cannot play: turned into AAC by ffmpeg and played beside the video (./compat)
+  let beside: import('./compat').SoundBeside | null = null; let tracksFound: import('./compat').Probe | null = null;
+  async function checkSound() {
+    const c = await import('./compat'); if (!c.compatHere() || playerGone) return;
+    tracksFound = await c.probe(src.url).catch(() => null); if (playerGone) return;
+    if (tracksFound?.audio.length) {
+      const pick = tracksFound.audio.find((a) => a.isDefault) ?? tracksFound.audio[0];
+      if (!c.audioPlayable(pick.codec)) await startBeside(pick.index, pick.codec);
+      return;
+    }
+    // (No answer from ffprobe: a video playing for a few seconds with no sound decoded is taken as one.)
+    const check = () => { if (playerGone || beside) return; const n = (video as HTMLVideoElement & { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount; if (n === 0 && video.currentTime > 3 && !video.paused) void startBeside(0, ''); };
+    window.setTimeout(check, 6000); window.setTimeout(check, 12000);
+  }
+  async function startBeside(track: number, codec: string) {
+    const c = await import('./compat'); const packs = await import('../packs');
+    if (packs.packsHere() && !(await packs.ensurePacks(['ffmpeg'], t('packWhyPlayerSound')))) { toast(t('playerNoSound', { codec: codec.toUpperCase() }), 'error', 6000); return; }
+    let base: string | null = null; try { base = await c.audioBase(); } catch { base = null; }
+    if (!base || playerGone) return;
+    beside?.stop(); beside = new c.SoundBeside(video, src.url, track, base);
+    flashText(t('playerSoundBeside', { codec: (codec || '?').toUpperCase() }), true);
+  }
   function audioSheet() {
     const sh = openSheet(t('audioSection'), t('close')); const p = getPrefs();
     const a = audioTracks();
-    if (a && a.length > 1) sh.body.append(h('h4', null, t('audioTracks')), h('div', { class: 'dest-list' }, ...Array.from({ length: a.length }, (_x, i) => h('label', { class: 'dest-row' + (a[i].enabled ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-at', checked: a[i].enabled, onchange: () => { for (let k = 0; k < a.length; k++) a[k].enabled = k === i; } }), icon('music'), h('span', { class: 'name', dir: 'auto' }, a[i].label || `${t('audioTrack')} ${localDigits(i + 1)}`), h('small', { class: 'src' }, a[i].language || '')))));
+    // (The tracks ffprobe found, when the browser does not list them or one is played beside the video: each one
+    // either played by the browser or turned into AAC beside it.)
+    if (tracksFound && tracksFound.audio.length > 1 && (beside || !a || a.length < 2)) { const pr = tracksFound; sh.body.append(h('h4', null, t('audioTracks')), h('div', { class: 'dest-list' }, ...pr.audio.map((x) => h('label', { class: 'dest-row' + ((beside ? beside.track === x.index : x.isDefault) ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-pt', checked: beside ? beside.track === x.index : !!x.isDefault, onchange: () => { void import('./compat').then((c) => { if (c.audioPlayable(x.codec) && !beside && a && a.length > x.index) { for (let k = 0; k < a.length; k++) a[k].enabled = k === x.index; } else if (beside) beside.restart(x.index); else void startBeside(x.index, x.codec); }); } }), icon('music'), h('span', { class: 'grow', dir: 'auto' }, [x.title, x.lang, `${x.codec.toUpperCase()}${x.channels ? ` ${localDigits(x.channels)}ch` : ''}`].filter(Boolean).join(' · ')))))); }
+    else if (a && a.length > 1) sh.body.append(h('h4', null, t('audioTracks')), h('div', { class: 'dest-list' }, ...Array.from({ length: a.length }, (_x, i) => h('label', { class: 'dest-row' + (a[i].enabled ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-at', checked: a[i].enabled, onchange: () => { for (let k = 0; k < a.length; k++) a[k].enabled = k === i; } }), icon('music'), h('span', { class: 'name', dir: 'auto' }, a[i].label || `${t('audioTrack')} ${localDigits(i + 1)}`), h('small', { class: 'src' }, a[i].language || '')))));
     else sh.body.append(h('p', { class: 'src' }, a ? t('audioOneTrack') : t('audioTracksNote')));
     const vol = h('input', { type: 'range', min: '0', max: String(100 + p.volumeBoost), step: '1', value: String(Math.round(video.volume * boost * 100)), oninput: () => { setVolume(Number(vol.value) / 100); volOut.textContent = `${localDigits(vol.value)}%`; } }) as HTMLInputElement;
     const volOut = h('b', null, `${localDigits(Math.round(video.volume * boost * 100))}%`);
@@ -664,7 +689,7 @@ export function openPlayer(src: PlayerSource): void {
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); ass?.free(); sound?.close(); preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
+    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); beside?.stop(); ass?.free(); sound?.close(); preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }

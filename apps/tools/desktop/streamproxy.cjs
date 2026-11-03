@@ -21,7 +21,7 @@ function start() {
 async function url(u, headers) { await start(); return `http://127.0.0.1:${port}/p?u=${encodeURIComponent(u)}&h=${encodeURIComponent(JSON.stringify(headers || {}))}`; }
 
 async function serve(req, out) {
-  const q = new URL(req.url, 'http://x'); if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
+  const q = new URL(req.url, 'http://x'); if (q.pathname === '/audio') { audio(q, req, out); return; } if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
   const u = q.searchParams.get('u'); let h = {}; try { h = JSON.parse(q.searchParams.get('h') || '{}'); } catch { /* none */ }
   const headers = { 'user-agent': UA, ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), String(v)])) };
   const isPlaylist = (type, href) => /mpegurl/i.test(type || '') || /\.m3u8(\?|$)/i.test(href);
@@ -50,5 +50,15 @@ function remux(u, headers, req, out) {
   req.on('close', () => { try { p.kill('SIGKILL'); } catch { /* gone */ } });
   p.on('close', (code) => { if (code && err) console.warn('streamproxy ffmpeg:', err.trim().split('\n').pop()); out.end(); });
 }
+/** One audio track of a video, from `ss` seconds, turned into AAC as it plays: for sound the player cannot decode
+ *  (AC-3, E-AC-3, DTS, TrueHD), played beside the muted video. */
+function audio(q, req, out) {
+  const src = q.searchParams.get('src') || ''; const ss = String(Number(q.searchParams.get('ss')) || 0); const a = String(Number(q.searchParams.get('a')) || 0);
+  out.writeHead(200, { 'content-type': 'audio/aac', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+  if (req.method === 'HEAD' || !src) { out.end(); return; }
+  const p = spawn(Ffmpeg.binary(), ['-nostdin', '-hide_banner', '-loglevel', 'error', '-ss', ss, '-i', src, '-map', `0:a:${a}`, '-vn', '-sn', '-dn', '-ac', '2', '-c:a', 'aac', '-b:a', '192k', '-f', 'adts', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  p.stdout.pipe(out); req.on('close', () => { try { p.kill('SIGKILL'); } catch { /* gone */ } }); p.on('close', () => out.end());
+}
+async function audioBase() { await start(); return `http://127.0.0.1:${port}/audio`; }
 function stop() { try { server?.close(); } catch { /* fine */ } server = null; }
-module.exports = { url, stop };
+module.exports = { url, stop, audioBase };

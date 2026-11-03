@@ -247,6 +247,7 @@ ipcMain.handle('kt:fontIndex', async (_e, dirs) => {
   return out;
 });
 ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(E(), String(o.id), Number(o.fileIndex) || 0) }));
+ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 // DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.

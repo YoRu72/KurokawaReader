@@ -14,7 +14,7 @@ const get = (u, range) => new Promise((ok, no) => http.get(u, { headers: range ?
   const errors = []; const check = (w, ok) => { console.log(ok ? 'ok  ' : 'FAIL', w); if (!ok) errors.push(w); };
   const u = await TS.url(engine, 'g1', 1);
   check('asked to fetch in order', changed.some((o) => o['stream-piece-selector'] === 'inorder'));
-  let r = await get(u, 'bytes=0-1023'); check('the start, at once', r.status === 206 && r.body.equals(B.subarray(0, 1024)) && r.h['content-range'] === `bytes 0-1023/${B.length}` && r.h['content-type'] === 'video/x-matroska');
+  let r = await get(u, 'bytes=0-1023'); check('the start, at once', r.status === 206 && r.body.equals(B.subarray(0, 1024)) && r.h['content-range'] === `bytes 0-1023/${B.length}` && r.h['content-type'] === 'video/webm');
   // A seek past what is in: answered once those pieces come.
   const from = PL * 20 - A.length + 100; const t0 = Date.now(); const pending = get(u, `bytes=${from}-${from + 999}`);
   setTimeout(() => { put(20); }, 900);
