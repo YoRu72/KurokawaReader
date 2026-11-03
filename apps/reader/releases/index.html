@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kurokawa Releases</title>
-<meta name="description" content="Download Kurokawa Reader and Kurokawa Tools for Android, iOS, Windows, macOS, Linux and the web — every release and its notes.">
+<meta name="description" content="Download Kurokawa Reader for Android, iOS, Windows, macOS, Linux and the web — every release and its notes.">
 <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -154,7 +154,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href="#" id="brand"><img id="brandIcon" src="../icons/icon.svg" alt=""><span>Kurokawa</span></a>
-  <div class="seg" role="group" id="appSeg"><button data-app="reader" aria-pressed="true"></button><button data-app="tools" aria-pressed="false"></button></div>
+  <div class="seg" role="group" id="appSeg" style="display:none"><button data-app="reader" aria-pressed="true"></button></div>
   <button class="icon-btn lang" id="langBtn" type="button"></button>
   <button class="icon-btn" id="themeBtn" type="button"></button>
 </div></header>
@@ -322,7 +322,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
   };
 
   // ── State and drawing ───────────────────────────────────────────────────────────────────────────────────
-  let data = null; let app = (location.hash.match(/^#(reader|tools)/) || [])[1] || store.get('kr.rel.app') || 'reader';
+  let data = null; const app = 'reader';
   let shown = 8; let query = '';
   const $ = (id) => document.getElementById(id);
   // (An app whose every release is marked «pre-release» on GitHub — so that the other app stays GitHub's «latest» —: none taken as one.)
@@ -402,7 +402,6 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
   function draw() { chrome(); hero(); platforms(); releases(); }
 
   // ── Events ──────────────────────────────────────────────────────────────────────────────────────────────
-  $('appSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b || b.dataset.app === app) return; app = b.dataset.app; store.set('kr.rel.app', app); shown = 8; history.replaceState(null, '', '#' + app); draw(); });
   $('langBtn').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; store.set('kr.rel.lang', lang); draw(); };
   const applyTheme = () => { const th = store.get('kr.rel.theme') || 'auto'; if (th === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', th); };
   $('themeBtn').onclick = () => { const order = ['auto', 'light', 'dark']; const th = store.get('kr.rel.theme') || 'auto'; store.set('kr.rel.theme', order[(order.indexOf(th) + 1) % 3]); applyTheme(); chrome(); };
@@ -420,7 +419,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
   const fromGitHub = async () => {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`); if (!res.ok) throw new Error(res.status);
     const raw = await res.json();
-    const out = raw.filter((r) => !r.draft && /^(tools-)?v\d/.test(r.tag_name)).map((r) => {
+    const out = raw.filter((r) => !r.draft && /^v\d/.test(r.tag_name)).map((r) => {
       const body = (r.body ?? '').replace(/\r/g, ''); let notes = body; const at = body.search(/^## What's new\s*$/m);
       if (at >= 0) { notes = body.slice(at).replace(/^## What's new\s*\n/, ''); const end = notes.search(/^## /m); if (end >= 0) notes = notes.slice(0, end); }
       return { app: r.tag_name.startsWith('tools-') ? 'tools' : 'reader', version: r.tag_name.replace(/^tools-/, '').replace(/^v/, ''), tag: r.tag_name, date: r.published_at, pre: r.prerelease, url: r.html_url, notes: notes.trim(), assets: r.assets.map((a) => ({ name: a.name, size: a.size, url: a.browser_download_url, n: a.download_count })) };

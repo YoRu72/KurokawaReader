@@ -8,7 +8,8 @@ const text = fs.readFileSync(process.argv[2], 'utf8');
 let all; try { all = [JSON.parse(text)].flat(2); } catch { all = text.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); }
 const out = [];
 for (const r of all) {
-  if (r.draft || !/^(tools-)?v\d/.test(r.tag_name)) continue;   // (the apps' releases only: not the decks' or packs')
+  // (The reader's releases only: Kurokawa Tools stays a pre-release on GitHub, off this page; nor the decks' or packs'.)
+  if (r.draft || !/^v\d/.test(r.tag_name)) continue;
   const tools = r.tag_name.startsWith('tools-');
   const version = r.tag_name.replace(/^tools-/, '').replace(/^v/, '');
   // («What's new» from the release's text: from its heading to the next second-level heading; a release without one
