@@ -67,8 +67,9 @@ public class KtService extends Service {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return PendingIntent.getActivity(c, 0, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
-    static Notification note(Context c, String title, String text, int pct, boolean indeterminate) {
-        return new NotificationCompat.Builder(c, CH_RUN).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(text).setProgress(100, Math.max(0, Math.min(100, pct)), indeterminate).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setContentIntent(openApp(c)).setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE).build();
+    static Notification note(Context c, String title, String text, int pct, boolean indeterminate) { return builder(c, title, text, pct, indeterminate).build(); }
+    static NotificationCompat.Builder builder(Context c, String title, String text, int pct, boolean indeterminate) {
+        return new NotificationCompat.Builder(c, CH_RUN).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(text).setProgress(100, Math.max(0, Math.min(100, pct)), indeterminate).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setContentIntent(openApp(c)).setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE).setCategory(NotificationCompat.CATEGORY_PROGRESS).setShowWhen(false);
     }
 
     /** Started when a download begins (once). */
@@ -77,16 +78,29 @@ public class KtService extends Service {
         if (running) return;
         try { Intent i = new Intent(c, KtService.class); if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i); running = true; } catch (Exception ignored) { /* background start not allowed: the download still runs while the app lives */ }
     }
-    /** The notification brought up to date with the tasks (called by the plugin on each change). */
+    /** The notification brought up to date with the tasks (called by the plugin on each change): how far, how
+     *  fast and how long is left — for one download its own; for several, a line for each under the total. */
     static void update(Context c, JSONArray tasks) {
-        if (!running) return;
-        int active = 0; long done = 0, total = 0, speed = 0; String one = null;
-        for (int i = 0; i < tasks.length(); i++) { JSONObject t = tasks.optJSONObject(i); if (t == null) continue; String st = t.optString("state"); if ("downloading".equals(st) || "metadata".equals(st) || "checking".equals(st)) { active++; done += t.optLong("done"); total += t.optLong("total"); speed += t.optLong("downSpeed"); one = t.optString("name"); } }
-        if (active == 0) return;
+        int active = 0; long done = 0, total = 0, speed = 0; String one = null; java.util.List<String> lines = new java.util.ArrayList<>();
         boolean ar = ar(c);
+        for (int i = 0; i < tasks.length(); i++) { JSONObject t = tasks.optJSONObject(i); if (t == null) continue; String st = t.optString("state"); if ("downloading".equals(st) || "metadata".equals(st) || "checking".equals(st)) {
+            active++; long d = t.optLong("done"), tt = t.optLong("total"), sp = t.optLong("downSpeed"); done += d; total += tt; speed += sp; one = t.optString("name");
+            if (lines.size() < 6) lines.add((tt > 0 ? Math.round(d * 100.0 / tt) + "% · " : "") + one + (sp > 0 && tt > d ? " · " + left(ar, (tt - d) / sp) : "")); } }
+        if (active == 0) return;
+        // (Not started — the app was in the background when the first download began: started now.)
+        if (!running) { ensure(c); if (!running) return; }
         String title = active == 1 && one != null ? one : (ar ? arCount(active) : active + " downloads");
-        String text = (total > 0 ? Math.round(done * 100.0 / total) + "% · " : "") + human(speed) + "/s";
-        try { NotificationManagerCompat.from(c).notify(NOTE_RUN, note(c, title, text, total > 0 ? (int) (done * 100 / total) : 0, total <= 0)); } catch (SecurityException ignored) {}
+        String text = (total > 0 ? Math.round(done * 100.0 / total) + "% · " : "") + (total > 0 ? human(done) + " / " + human(total) + " · " : "") + human(speed) + "/s" + (speed > 0 && total > done ? " · " + left(ar, (total - done) / speed) : "");
+        NotificationCompat.Builder b = builder(c, title, text, total > 0 ? (int) (done * 100 / total) : 0, total <= 0);
+        if (active > 1) { NotificationCompat.InboxStyle st = new NotificationCompat.InboxStyle().setSummaryText(text); for (String l : lines) st.addLine(l); b.setStyle(st); }
+        try { NotificationManagerCompat.from(c).notify(NOTE_RUN, b.build()); } catch (SecurityException ignored) {}
+    }
+    /** «4 min left» / «بقي ٤ دقائق» (hours and minutes, or seconds under a minute). */
+    static String left(boolean ar, long s) {
+        if (s < 0 || s > 86400L * 30) return ar ? "وقت غير معروف" : "time unknown";
+        long h = s / 3600, m = (s % 3600) / 60;
+        if (ar) return "بقي " + (h > 0 ? h + " س " + m + " د" : m > 0 ? m + " د" : s + " ث");
+        return (h > 0 ? h + " h " + m + " min" : m > 0 ? m + " min" : s + " s") + " left";
     }
     private static String arCount(int n) { if (n == 2) return "تنزيلان"; if (n >= 3 && n <= 10) return n + " تنزيلات"; return n + " تنزيلًا"; }
     static String human(long b) { if (b < 1024) return b + " B"; if (b < 1048576) return String.format(java.util.Locale.US, "%.0f KB", b / 1024.0); if (b < 1073741824L) return String.format(java.util.Locale.US, "%.1f MB", b / 1048576.0); return String.format(java.util.Locale.US, "%.2f GB", b / 1073741824.0); }

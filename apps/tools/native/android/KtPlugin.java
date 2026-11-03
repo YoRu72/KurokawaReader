@@ -72,7 +72,25 @@ public class KtPlugin extends Plugin {
     private static JSObject obj(JSONObject o) { try { return JSObject.fromJSONObject(o); } catch (Exception e) { return new JSObject(); } }
 
     @PluginMethod public void list(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("tasks", new JSArray(engine().list().toString())); call.resolve(r); }); }
-    @PluginMethod public void add(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("task", obj(engine().add(new JSONObject(call.getData().toString())))); call.resolve(r); }); }
+    /** Android 13+: notifications are off for an app until it asks — so the downloads' progress never showed. Asked
+     *  once, when the first download is added (the system's own dialog). */
+    private static volatile boolean notifyAsked = false;
+    private void askNotify() {
+        if (Build.VERSION.SDK_INT < 33 || notifyAsked) return; notifyAsked = true;
+        try { if (getContext().checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED) return; android.app.Activity a = getActivity(); if (a != null) a.runOnUiThread(() -> { try { a.requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 4712); } catch (Throwable ignored) {} }); } catch (Throwable ignored) {}
+    }
+    /** Whether notifications are allowed; `ask`: the system's dialog, or — once refused for good — the app's notification settings. */
+    @PluginMethod public void notifyAccess(PluginCall call) {
+        android.content.Context c = getContext(); boolean on = androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled();
+        if (!on && Boolean.TRUE.equals(call.getBoolean("ask", false))) {
+            android.app.Activity a = getActivity();
+            boolean dialog = Build.VERSION.SDK_INT >= 33 && a != null && c.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED && (!notifyAsked || a.shouldShowRequestPermissionRationale("android.permission.POST_NOTIFICATIONS"));
+            if (dialog) { notifyAsked = true; a.runOnUiThread(() -> { try { a.requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 4712); } catch (Throwable ignored) {} }); }
+            else try { android.content.Intent i = new android.content.Intent("android.settings.APP_NOTIFICATION_SETTINGS").putExtra("android.provider.extra.APP_PACKAGE", c.getPackageName()).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); c.startActivity(i); } catch (Throwable ignored) {}
+        }
+        JSObject r = new JSObject(); r.put("granted", on); call.resolve(r);
+    }
+    @PluginMethod public void add(PluginCall call) { askNotify(); run(call, () -> { JSObject r = new JSObject(); r.put("task", obj(engine().add(new JSONObject(call.getData().toString())))); call.resolve(r); }); }
     @PluginMethod public void pause(PluginCall call) { run(call, () -> { engine().pause(call.getString("id", "")); call.resolve(); }); }
     @PluginMethod public void resume(PluginCall call) { run(call, () -> { engine().resume(call.getString("id", "")); call.resolve(); }); }
     @PluginMethod public void moveFinished(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("moved", engine().moveFinished(call.getString("dir", ""))); r.put("dir", engine().defaultDir().getAbsolutePath()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }

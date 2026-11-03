@@ -3,7 +3,7 @@
 // again and the file changed on the server: downloaded afresh. Run by downloader.sh.
 import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.atomic.*; import java.security.*;
 public class T {
-  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger();
+  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static AtomicInteger tag = new AtomicInteger();
   public static void main(String[] a) throws Exception {
     data = new byte[20 << 20]; new Random(1).nextBytes(data);
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
@@ -12,7 +12,7 @@ public class T {
       boolean probe = "bytes=0-0".equals(range);
       if (!probe && busy.incrementAndGet() > limit) { busy.decrementAndGet(); refusals.incrementAndGet(); ex.sendResponseHeaders(503, -1); ex.close(); return; }
       try {
-        ex.getResponseHeaders().add("ETag", etag); ex.getResponseHeaders().add("Accept-Ranges", "bytes");
+        ex.getResponseHeaders().add("ETag", rotating ? "\"r" + tag.incrementAndGet() + "\"" : etag); ex.getResponseHeaders().add("Accept-Ranges", "bytes");
         if (range == null || (ir != null && !ir.equals(etag))) { ex.sendResponseHeaders(200, data.length); try (OutputStream o = ex.getResponseBody()) { o.write(data); } served.addAndGet(data.length); return; }
         String[] p = range.substring(6).split("-"); long f = Long.parseLong(p[0]), t = p.length > 1 && !p[1].isEmpty() ? Long.parseLong(p[1]) : data.length - 1;
         ex.getResponseHeaders().add("Content-Range", "bytes " + f + "-" + t + "/" + data.length); ex.sendResponseHeaders(206, t - f + 1);
@@ -53,6 +53,31 @@ public class T {
     KrDownloader.fetch(u, out5, 4, op, new AtomicBoolean(), got, new KrDownloader.Result(), () -> {});
     long ms = System.currentTimeMillis() - t0; boolean ok5 = Arrays.equals(java.nio.file.Files.readAllBytes(out5.toPath()), data);
     System.out.println("run5 slow connection match=" + ok5 + " parts taken over=" + splits.get() + " ms=" + ms + " counted=" + got.get());
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
+    slowFirst = false;
+    // 6: a server whose ETag changes on every answer (CDNs, signed links): stopped at 8 MB, then resumed — the bytes
+    // here checked against the server's instead of downloading it all again.
+    File out6 = new File(dir, "cdn.part"), st6 = new File(dir, "cdn.state"); out6.delete(); st6.delete(); KrDownloader.Opts o6 = new KrDownloader.Opts(); o6.state = st6; rotating = true;
+    AtomicBoolean c6 = new AtomicBoolean(); AtomicLong g6 = new AtomicLong();
+    KrDownloader.fetch(u, out6, 4, op, c6, g6, new KrDownloader.Result(), () -> { if (g6.get() > (8 << 20)) c6.set(true); }, o6);
+    long b6 = served.get(); c6.set(false); g6.set(0); AtomicLong f6 = new AtomicLong(-1);
+    KrDownloader.fetch(u, out6, 4, op, c6, g6, new KrDownloader.Result(), () -> f6.compareAndSet(-1, g6.get()), o6);
+    boolean ok6 = Arrays.equals(java.nio.file.Files.readAllBytes(out6.toPath()), data) && f6.get() >= (7 << 20) && served.get() - b6 < (14L << 20);
+    System.out.println("run6 changing ETag resumed from=" + f6.get() + " served=" + (served.get() - b6) + " match=" + ok6);
+    // 7: the record lost (only the .part left): the chunks there found by their bytes, checked, and kept.
+    st6.delete(); out6.delete(); c6.set(false); g6.set(0);
+    KrDownloader.fetch(u, out6, 4, op, c6, g6, new KrDownloader.Result(), () -> { if (g6.get() > (10 << 20)) c6.set(true); }, o6);
+    st6.delete(); long b7 = served.get(); g6.set(0); c6.set(false); AtomicLong f7 = new AtomicLong(-1);
+    KrDownloader.fetch(u, out6, 4, op, c6, g6, new KrDownloader.Result(), () -> f7.compareAndSet(-1, g6.get()), o6);
+    boolean ok7 = Arrays.equals(java.nio.file.Files.readAllBytes(out6.toPath()), data) && f7.get() >= (5 << 20) && served.get() - b7 < (16L << 20);
+    System.out.println("run7 no record: found=" + f7.get() + " served=" + (served.get() - b7) + " match=" + ok7);
+    // 8: one big chunk stopped halfway: what it had is kept (not just whole chunks).
+    File out8 = new File(dir, "one.part"), st8 = new File(dir, "one.state"); out8.delete(); st8.delete(); KrDownloader.Opts o8 = new KrDownloader.Opts(); o8.state = st8; rotating = false;
+    AtomicBoolean c8 = new AtomicBoolean(); AtomicLong g8 = new AtomicLong();
+    KrDownloader.fetch(u, out8, 1, op, c8, g8, new KrDownloader.Result(), () -> { if (g8.get() > (5 << 20)) c8.set(true); }, o8);
+    g8.set(0); c8.set(false); AtomicLong f8 = new AtomicLong(-1);
+    KrDownloader.fetch(u, out8, 1, op, c8, g8, new KrDownloader.Result(), () -> f8.compareAndSet(-1, g8.get()), o8);
+    boolean ok8 = Arrays.equals(java.nio.file.Files.readAllBytes(out8.toPath()), data) && f8.get() >= (4 << 20);
+    System.out.println("run8 partial chunk kept from=" + f8.get() + " match=" + ok8);
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }
