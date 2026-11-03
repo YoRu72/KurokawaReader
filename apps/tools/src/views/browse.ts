@@ -10,6 +10,6 @@ export function browseSheet(initial = ''): void {
   sh.body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); go(); } }, input));
   const rec = recentSites();
   if (rec.length) sh.body.append(h('span', { class: 'label' }, t('browseRecent')), ...rec.map((u) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); openBrowser(u); } }, icon('globe'), h('span', { class: 'grow', dir: 'ltr' }, u.replace(/^https?:\/\//, '')))));
-  sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: go }, icon('globe'), t('browseGo')));
+  sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); openBrowser(''); } }, icon('external'), t('browseOpen')), h('button', { type: 'button', class: 'btn primary', onclick: go }, icon('globe'), t('browseGo')));
   setTimeout(() => input.focus(), 60);
 }

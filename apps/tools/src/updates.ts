@@ -8,7 +8,7 @@ import { h, icon, openSheet, toast } from './ui/dom';
 import { t, dateLocale, formatBytes, localDigits, countConnections, countVersions } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { APP_VERSION, TAG_PREFIX } from './repo';
-import { releasesOf, suitableAsset, fetchAndInstall, keptDownload, downloadRunning, cmpVersion, type Release, type Progress } from './installer';
+import { releasesOf, suitableAsset, fetchAndInstall, keptDownload, downloadRunning, cmpVersion, installVia, setInstallVia, type Release, type Progress } from './installer';
 import { newerThan, whatsNew, versionChange, sha256Of } from './updateCore';
 import { openExternal, nativePlatform } from './native';
 
@@ -90,7 +90,10 @@ export function showUpdateSheet(rel: Release): void {
   const fileLine = h('p', { class: 'src upd-file', dir: 'auto' });
   const status = h('p', { class: 'src', 'aria-live': 'polite' });
   const bar = h('div', { class: 'task-bar' }, h('i')); bar.hidden = true;
-  sh.body.append(fileLine, bar, status);
+  // (Android: the app's own installer or Android's, chosen here and remembered.)
+  const viaBox = nativePlatform() === 'android' ? h('div', { class: 'row upd-via' }, h('span', null, t('updInstallWith'), h('small', { class: 'src' }, t('updInstallWithHint'))),
+    h('div', { class: 'segmented', role: 'radiogroup' }, ...(['app', 'system'] as const).map((v) => h('button', { type: 'button', role: 'radio', 'data-v': v, 'aria-checked': String(installVia() === v), class: installVia() === v ? 'on' : '', onclick: (e: Event) => { setInstallVia(v); (e.currentTarget as HTMLElement).parentElement!.querySelectorAll('button').forEach((b) => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }); } }, v === 'app' ? t('updViaApp') : t('updViaSystem'))))) : null;
+  sh.body.append(...(viaBox ? [viaBox] : []), fileLine, bar, status);
   let asset: Awaited<ReturnType<typeof suitableAsset>>; let ctl: AbortController | null = null;
   const setBar = (pct: number, indet = false) => { bar.hidden = false; bar.classList.toggle('indet', indet); (bar.firstChild as HTMLElement).style.width = `${pct}%`; };
   const onProgress = (p: Progress) => {

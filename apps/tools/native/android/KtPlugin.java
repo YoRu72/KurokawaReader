@@ -90,7 +90,7 @@ public class KtPlugin extends Plugin {
         r.put("overlay", android.provider.Settings.canDrawOverlays(c)); r.put("a11y", a11yOn(c)); r.put("a11yLive", KtScreenA11y.self != null); r.put("running", KtScreenService.self != null); r.put("capture", KtScreenCapture.ready());
         r.put("notify", androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled());
         try { android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(android.content.Context.POWER_SERVICE); r.put("battery", pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName())); } catch (Throwable e) { r.put("battery", false); }
-        r.put("tile", Build.VERSION.SDK_INT >= 33);
+        r.put("tile", Build.VERSION.SDK_INT >= 33); r.put("sdk", Build.VERSION.SDK_INT);
         call.resolve(r);
     }
     /** The system's page for one permission: appear on top, accessibility, battery, notifications; or the tile added (Android 13+). */
@@ -117,6 +117,24 @@ public class KtPlugin extends Plugin {
         if (KtScreenService.self != null) try { getContext().startService(new android.content.Intent(getContext(), KtScreenService.class).setAction(KtScreenService.ACT_CONFIG)); } catch (Throwable ignored) {}
         call.resolve();
     }
+    /** «Translate screen» as an app of its own (the app drawer, the phone's sidebar): shown or hidden; `pin`: also
+     *  offered for the home screen (Android's own dialog). */
+    @PluginMethod public void screenShortcut(PluginCall call) {
+        android.content.Context c = getContext(); android.content.ComponentName cn = new android.content.ComponentName(c, KtScreenLaunch.class); PackageManager pm = c.getPackageManager();
+        Boolean show = call.getBoolean("show", null);
+        if (show != null) pm.setComponentEnabledSetting(cn, show ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+        boolean pinned = false;
+        if (Boolean.TRUE.equals(call.getBoolean("pin", false))) {
+            try {
+                androidx.core.content.pm.ShortcutInfoCompat sc = new androidx.core.content.pm.ShortcutInfoCompat.Builder(c, "kt-screen").setShortLabel(c.getString(c.getResources().getIdentifier("kt_screen_tile", "string", c.getPackageName())))
+                    .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(c, c.getResources().getIdentifier("ic_launcher", "mipmap", c.getPackageName())))
+                    .setIntent(new Intent(c, KtScreenLaunch.class).setAction(Intent.ACTION_VIEW).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).build();
+                if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) pm.setComponentEnabledSetting(cn, PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP);
+                pinned = androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(c) && androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(c, sc, null);
+            } catch (Throwable ignored) {}
+        }
+        JSObject r = new JSObject(); r.put("shown", pm.getComponentEnabledSetting(cn) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED); r.put("pinned", pinned); call.resolve(r);
+    }
     @PluginMethod public void screenStart(PluginCall call) {
         if (!android.provider.Settings.canDrawOverlays(getContext())) { call.reject("overlay"); return; }
         askNotify();
@@ -139,6 +157,19 @@ public class KtPlugin extends Plugin {
         android.content.SharedPreferences sp = getContext().getSharedPreferences(KtScreenService.PREFS, android.content.Context.MODE_PRIVATE);
         if (Boolean.TRUE.equals(call.getBoolean("clear", false))) sp.edit().remove("history").apply();
         try { JSObject r = new JSObject(); r.put("items", new JSArray(sp.getString("history", "[]"))); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+    /** Whether the app may write to `dir`; whether it has «All files access» (Android 11+), or the storage
+     *  permission (older); `ask`: Android's page for it (or its dialog). */
+    @PluginMethod public void folderAccess(PluginCall call) {
+        String dir = call.getString("dir", ""); boolean ask = Boolean.TRUE.equals(call.getBoolean("ask", false)); android.content.Context c = getContext();
+        boolean all = Build.VERSION.SDK_INT >= 30 ? android.os.Environment.isExternalStorageManager() : c.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        if (ask && !all) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                try { c.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + c.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+                catch (Throwable e) { try { c.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Throwable ignored) {} }
+            } else if (getActivity() != null) getActivity().requestPermissions(new String[] { android.Manifest.permission.WRITE_EXTERNAL_STORAGE }, 4713);
+        }
+        JSObject r = new JSObject(); r.put("all", all); r.put("writable", !dir.isEmpty() && !dir.startsWith("content:") && KtEngine.writable(new File(dir))); r.put("defaultDir", engine().defaultDir().getAbsolutePath()); call.resolve(r);
     }
     /** Whether notifications are allowed; `ask`: the system's dialog, or — once refused for good — the app's notification settings. */
     @PluginMethod public void notifyAccess(PluginCall call) {
@@ -215,7 +246,7 @@ public class KtPlugin extends Plugin {
         // another storage keeps the URI, and the engine downloads into the app's folder — the limitation is said
         // in the docs.)
         String path = pathOfTree(tree);
-        JSObject r = new JSObject(); r.put("dir", path != null ? path : tree.toString()); call.resolve(r);
+        JSObject r = new JSObject(); r.put("dir", path != null ? path : tree.toString()); r.put("writable", path != null && KtEngine.writable(new File(path))); call.resolve(r);
     }
     private static String pathOfTree(Uri tree) {
         try { String id = android.provider.DocumentsContract.getTreeDocumentId(tree); String[] parts = id.split(":", 2); if ("primary".equalsIgnoreCase(parts[0])) return new File(android.os.Environment.getExternalStorageDirectory(), parts.length > 1 ? parts[1] : "").getAbsolutePath(); } catch (Exception ignored) {}

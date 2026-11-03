@@ -22,6 +22,7 @@ const RELEASES = [rel('99.1.0', ['Newest fix', 'Newest feature']), rel('99.0.0',
         downloadFile: async (a) => { window.__calls.push(['dl', a.name]); for (const g of [5e6, 1e7, 15800000]) { await new Promise((r) => setTimeout(r, 60)); (listeners.downloadProgress || []).forEach((f) => f({ id: a.id, got: g, total: 15800000, speed: 4e6, connections: 8 })); } return { path: '/cache/kt-files/' + a.name, size: 15800000 }; },
         hashFile: async () => ({ sha256: o.damaged ? 'b'.repeat(64) : 'a'.repeat(64), size: 15800000 }), exists: async () => ({ exists: [false] }), deletePath: async () => ({ ok: true }),
         canInstall: async () => ({ granted: can }),
+        apkInstall: async (a) => { window.__calls.push(['appinstall', a.path]); if (!can) { setTimeout(() => { can = true; }, 900); throw new Error('permission'); } },
         installApk: async (a) => { window.__calls.push(['install', a.path]); if (!can) { setTimeout(() => { can = true; }, 900); throw new Error('permission'); } },
         httpRequest: async (r) => { window.__calls.push(['http', r.url]); return { status: 200, headers: {}, body: `<?xml version="1.0"?><feed><entry><updated>2026-11-01T00:00:00Z</updated><link rel="alternate" type="text/html" href="https://github.com/YoRu72/KurokawaReader/releases/tag/tools-v99.2.0"/><content type="html">&lt;h2&gt;What's new&lt;/h2&gt;&lt;ul&gt;&lt;li&gt;From the feed&lt;/li&gt;&lt;/ul&gt;</content></entry><entry><link href="https://github.com/YoRu72/KurokawaReader/releases/tag/v0.60.0"/></entry></feed>` }; },
       };
@@ -38,11 +39,22 @@ const RELEASES = [rel('99.1.0', ['Newest fix', 'Newest feature']), rel('99.0.0',
   check('the newest open, its bullets', await p.$eval('.update-sheet .upd-version[open]', (e) => /Newest fix/.test(e.textContent) && !/Files/.test(e.textContent)));
   await p.waitForFunction(() => /arm64-v8a\.apk/.test(document.querySelector('.update-sheet .upd-file')?.textContent || ''));
   const file = await p.$eval('.update-sheet .upd-file', (e) => e.textContent); console.log('file:', file); check('this phone\'s file, its size, checked', /arm64-v8a\.apk/.test(file) && /MB/.test(file) && /SHA-256/.test(file));
+  check('the installer offered: the app\'s chosen first', await p.$eval('.update-sheet .upd-via [data-v="app"]', (e) => e.classList.contains('on')));
+  await p.click('.update-sheet .upd-via [data-v="system"]');
+  check('Android\'s installer chosen and remembered', await p.evaluate(() => localStorage.getItem('kt.update.installer')) === 'system');
   await p.locator('.update-sheet .btn.primary', { hasText: 'Download and install' }).click();
   await p.waitForFunction(() => /installer was opened/i.test(document.querySelector('.update-sheet')?.textContent || ''), null, { timeout: 15000 });
   const calls = await p.evaluate(() => window.__calls.map((c) => c[0]).filter((c) => c !== 'http').join(','));
   console.log('calls:', calls); check('fetched, refused for want of the right, installed once it was given', calls === 'dl,install,install');
   check('the download kept for a second tap', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.update.file')).name === 'KurokawaTools-99.1.0-arm64-v8a.apk'));
+  await p.close();
+  // The app's own installer.
+  p = await page({}); await p.evaluate(() => localStorage.setItem('kt.update.installer', 'app'));
+  await p.waitForFunction(() => /arm64/.test(document.querySelector('.update-sheet .upd-file')?.textContent || ''));
+  await p.locator('.update-sheet .btn.primary', { hasText: 'Download and install' }).click();
+  await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'appinstall'), null, { timeout: 15000 }); await p.waitForTimeout(1500);
+  const c2 = await p.evaluate(() => window.__calls.filter((c) => c[0] !== 'http'));
+  console.log('app installer calls:', JSON.stringify(c2)); check('the app\'s installer: given the file downloaded, not Android\'s', c2.some((c) => c[0] === 'appinstall' && /KurokawaTools-99\.1\.0-arm64-v8a\.apk$/.test(c[1])) && !c2.some((c) => c[0] === 'install'));
   await p.close();
   p = await page({ damaged: true });
   await p.waitForFunction(() => /arm64/.test(document.querySelector('.update-sheet .upd-file')?.textContent || ''));

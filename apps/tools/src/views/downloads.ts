@@ -1,13 +1,15 @@
 // The downloads: every task as a card — its name, a progress bar, speeds, peers, what is left — with pause,
 // resume, play, remove; filters over them (all, active, finished, failed) and the options sheet (filter, sort,
 // display, as the reader's Library has it); a search; selecting several for one action; the + for a new one.
+import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countItems } from '../i18n';
 import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem } from '../engine';
 import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
 import { addSheet } from './add';
-import { getSettings } from '../settings';
+import { getSettings, onSettingsChange } from '../settings';
+import { nativePlatform } from '../native';
 import { canArchive, isArchiveName } from '../archives';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 import { updateSettings } from '../settings';
@@ -41,7 +43,14 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (getSettings().addons.includes('debrid')) row('cloud', t('cloud'), () => void import('./cloud').then((m) => m.cloudSheet()));
     row('settings', t('settings'), () => navigate('/settings'));
   };
-  const actions = h('div', { class: 'topbar-actions' }, iconButton('more', t('more'), moreMenu));
+  // (The app's browser, opened straight away — no address needed: a site's downloads caught as they start.)
+  const browseBtn = canBrowse() ? iconButton('globe', t('browseOpen'), () => openBrowser('')) : null; browseBtn?.classList.add('browse-btn');
+  // (Translate on screen, when its add-on is here: its page, where the bubble — or the computer's shortcuts — start.)
+  const screenHere = nativePlatform() === 'android' || !!(window.kurokawaTools as unknown as { screenStatus?: unknown } | undefined)?.screenStatus;
+  const screenBtn = screenHere ? iconButton('translate', t('scrTitle'), () => navigate('/screen')) : null; screenBtn?.classList.add('screen-btn');
+  const showScreen = () => { if (screenBtn) screenBtn.hidden = !getSettings().addons.includes('screen'); }; showScreen();
+  const offScreen = onSettingsChange(showScreen);
+  const actions = h('div', { class: 'topbar-actions' }, ...(screenBtn ? [screenBtn] : []), ...(browseBtn ? [browseBtn] : []), iconButton('more', t('more'), moreMenu));
   // Search, options (with how many filters are on), select
   const searchIn = h('input', { type: 'search', class: 'search-input', placeholder: t('dlSearch'), dir: 'auto', oninput: () => { query = searchIn.value; draw(); } }) as HTMLInputElement;
   const searchRow = h('div', { class: 'dl-search', hidden: true }, searchIn);
@@ -131,7 +140,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
-    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error);
+    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : x.error);
     return parts.join(' · ');
   };
   const card = (x: Task): HTMLElement => {
@@ -210,7 +219,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     else if (e.key === ' ' && selecting && picked.size) { e.preventDefault(); const eng = getEngine(); void Promise.all(tasks.filter((x) => picked.has(x.id)).map((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve()))); }
   };
   window.addEventListener('keydown', onKey);
-  root.dispose = () => { off(); offEngine(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
+  root.dispose = () => { off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
   return root;
 }
 /** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */

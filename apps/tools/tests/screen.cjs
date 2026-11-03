@@ -2,7 +2,7 @@
 // the bubble not started without permission to appear on top, nor without the chosen translator's key; started
 // with the settings and the bubble's words in the app's language; DeepL's key and the AI's service, model and
 // address (a custom API's own); «Try» translating through the phone; the history listed and cleared; the + menu
-// and Settings leading to it; nothing of it away from Android; no overflow on a small phone in Arabic.
+// and Settings leading to it — the Downloads page's top bar too, while the add-on is there; nothing of it away from Android; no overflow on a small phone in Arabic.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
@@ -13,7 +13,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL', what); if (!ok) errors.push(what); };
   const stub = (lang) => {
     localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['screen'] }));
-    window.__calls = []; window.__st = { overlay: false, a11y: false, running: false, capture: false, notify: true, battery: false, tile: true };
+    window.__calls = []; window.__st = { sdk: 34, overlay: false, a11y: false, running: false, capture: false, notify: true, battery: false, tile: true };
     const api = {
       addListener: () => ({ remove() {} }), list: async () => ({ tasks: [] }),
       screenStatus: async () => ({ ...window.__st }),
@@ -22,6 +22,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       screenStart: async () => { window.__calls.push(['start']); window.__st.running = true; },
       screenStop: async () => { window.__calls.push(['stop']); window.__st.running = false; },
       screenTranslate: async (o) => { window.__calls.push(['try', o.texts, o.config.engine]); return { texts: o.texts.map((x) => '«' + x + '»→' + o.config.target) }; },
+      screenShortcut: async (o) => { window.__calls.push(['shortcut', o.show, !!o.pin]); if (o.show !== undefined) window.__shown = o.show; return { shown: !!window.__shown, pinned: !!o.pin }; },
       screenHistory: async (o) => { window.__calls.push(['history', !!o.clear]); if (o.clear) window.__hist = []; return { items: window.__hist ?? [{ o: 'Hello', t: 'مرحبًا', at: Date.now() - 60000 }, { o: 'Exit', t: 'خروج', at: Date.now() - 120000 }] }; },
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -33,7 +34,14 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.goto(`http://127.0.0.1:${port}/#/screen`); await p.waitForSelector('.screen-step');
   check('what Android must allow: appear on top marked as needed', await p.$eval('.screen-step[data-step="overlay"]', (e) => e.classList.contains('need')));
   check('notifications already allowed: no button', !(await p.$('.screen-step[data-step="app"] .btn')));
+  check('Android 13+: the restricted accessibility switch explained, App info offered', !!(await p.$('.screen-step[data-step="restricted"] .btn')));
   check('the tile offered (Android 13+)', !!(await p.$('.screen-step[data-step="tile"] .btn')));
+  // «Translate screen» as an app (drawer, sidebar) and on the home screen.
+  await p.waitForSelector('.screen-step[data-step="shortcut"] [data-act="show"]'); await p.click('.screen-step[data-step="shortcut"] [data-act="show"]');
+  await p.waitForSelector('.screen-step[data-step="shortcut"].done', { timeout: 4000 }).catch(() => undefined);
+  await p.click('.screen-step[data-step="shortcut"] [data-act="pin"]'); await p.waitForTimeout(300);
+  let sc = (await calls()).filter((x) => x[0] === 'shortcut');
+  check('shown as an app, then offered for the home screen', sc.some((x) => x[1] === true) && sc.some((x) => x[2] === true) && !!(await p.$('.screen-step[data-step="shortcut"].done')));
   // 1. Not allowed to appear on top: not started, asked for.
   await p.click('.screen-go'); await p.waitForTimeout(400);
   let c = await calls(); check('not started without permission to appear on top; its page opened', !c.some((x) => x[0] === 'start') && c.some((x) => x[0] === 'perm' && x[1] === 'overlay'));
@@ -81,9 +89,9 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   check('no sideways overflow at 360 px (' + over + ')', over <= 1);
   await p.screenshot({ path: path.join(__dirname, `shot-screen-${lang}.png`), fullPage: false });
   // 9. Reached from the + menu and from Settings.
-  await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.click('.fab'); await p.waitForSelector('.fab-item');
-  check('the + menu leads to it', !!(await p.$('.fab-item[data-act="translate"]')));
-  await p.click('.fab-item[data-act="translate"]'); await p.waitForSelector('.screen-view');
+  await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.topbar .screen-btn');
+  check('the Downloads page\'s top bar leads to it', await p.$eval('.topbar .screen-btn', (e) => !e.hidden));
+  await p.click('.topbar .screen-btn'); await p.waitForSelector('.screen-view');
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForTimeout(1200);
   check('Settings has its card', !!(await p.$('#screen a[href="#/screen"]')));
   await ctx.close();
@@ -93,7 +101,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p2.goto(`http://127.0.0.1:${port}/#/screen`); await p2.waitForSelector('.screen-view');
   check('elsewhere: said to be Android\'s, nothing to set', !(await p2.$('.screen-go')) && !!(await p2.$('.screen-body .card p')));
   await p2.goto(`http://127.0.0.1:${port}/#/`); await p2.waitForTimeout(800); const fab = await p2.$('.fab:visible, .rail-fab:visible'); if (fab) { await fab.click(); await p2.waitForTimeout(300); }
-  check('elsewhere: not in the + menu', !(await p2.$('.fab-item[data-act="translate"]')));
+  check('elsewhere: not in the top bar', !(await p2.$('.topbar .screen-btn:not([hidden])')));
   check('no page errors', !errors.length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
