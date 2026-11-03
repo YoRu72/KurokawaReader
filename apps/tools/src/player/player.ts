@@ -28,9 +28,14 @@ import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
 import { Picture, FILTER_PRESETS, CROPS } from './vfx';
 import { SeekPreview } from './thumbs';
+import { mpvVideo, mpvDone, type MpvControl } from './mpv';
+/** Two-letter language codes and the three-letter ones files often carry (mpv matches either). */
+const ISO3: Record<string, string> = { ar: 'ara', en: 'eng', ja: 'jpn', fr: 'fre,fra', de: 'ger,deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'chi,zho', ko: 'kor', tr: 'tur', fa: 'per,fas', ur: 'urd', hi: 'hin', id: 'ind', ms: 'may,msa', th: 'tha', vi: 'vie', nl: 'dut,nld', pl: 'pol', uk: 'ukr', sv: 'swe', he: 'heb' };
 const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i;
 
 export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[];
+  /** Which engine plays it: mpv (the Player add-on's, on Android with its pack) or the web view's own. */
+  engine?: 'mpv' | 'web';
   /** The show and episode when it is not a download's (an online source): for tracking, AniSkip, subtitles. */
   meta?: Task['meta'];
   /** Subtitles that come with an online source. */
@@ -48,7 +53,10 @@ export function parseTime(s: string): number | null {
 
 export function openPlayer(src: PlayerSource): void {
   const P = getPrefs(); const key = src.localPath ?? src.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
-  const video = h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' }) as HTMLVideoElement;
+  // (mpv when it is here — every codec, the file's own subtitles —, else the web view's <video>; the player is the same.)
+  const slang = (getSettings().subLangs ?? []).flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(',');
+  const video = (src.engine === 'mpv' ? mpvVideo(src.localPath ?? src.url, { start: memoryOf(key)?.pos && P.resume === 'always' ? memoryOf(key)!.pos : 0, slang, speed: P.defaultSpeed, headers: src.headers }) : h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' })) as HTMLVideoElement;
+  const mpv: MpvControl | null = (video as HTMLVideoElement & { _mpv?: MpvControl })._mpv ?? null;
   const stage = h('div', { class: 'kt-stage' }, video, h('canvas', { class: 'kt-ass' }), h('div', { class: 'kt-subs' }), h('div', { class: 'kt-subs top' }));
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
   const mem = memoryOf(key);
@@ -92,10 +100,10 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- playback
   if (src.headers && Object.keys(src.headers).length) toast(t('playerHeadersNote'));
-  video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
+  if (!mpv) video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
   video.addEventListener('loadedmetadata', () => {
     timeEnd.textContent = fmtTime(video.duration); applyAspect(); applyTransform(); drawMarks();
-    if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always') video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
+    if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always' && !mpv) video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
     if (mem?.speed) setSpeed(mem.speed); if (mem?.subDelay) subDelay = mem.subDelay;
     void video.play().catch(() => undefined);
     measureFps(); void checkSound();
@@ -286,9 +294,11 @@ export function openPlayer(src: PlayerSource): void {
   const ASPECTS: PlayerPrefs['aspect'][] = ['fit', 'fill', 'stretch', '16:9', '4:3', '21:9'];
   function cycleAspect() { aspect = ASPECTS[(ASPECTS.indexOf(aspect) + 1) % ASPECTS.length]; applyAspect(); flashText(aspectName(aspect)); remember(key, { aspect }); }
   const aspectName = (a: PlayerPrefs['aspect']) => (a === 'fit' ? t('aspectFit') : a === 'fill' ? t('aspectFill') : a === 'stretch' ? t('aspectStretch') : localDigits(a));
-  function applyAspect() { video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
+  function applyAspectMpv(): boolean { if (!mpv) return false; mpv.set('keepaspect', aspect !== 'stretch'); mpv.set('panscan', aspect === 'fill' ? 1 : 0); mpv.set('video-aspect-override', /^\d/.test(aspect) ? aspect : 'no'); return true; }
+  function applyAspect() { if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
   function cycleCrop() { crop = CROPS[(CROPS.indexOf(crop) + 1) % CROPS.length]; applyTransform(); flashText(crop ? `${t('cropTo')} ${localDigits(crop)}` : t('cropOff')); }
-  function screenshot() { try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
+  function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(); toast(t('screenshotSaved')); return true; }
+  function screenshot() { if (screenshotMpv()) return; try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
   async function pip() { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); } catch { toast(t('pipFailed'), 'error'); } }
   async function fullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.requestFullscreen(); } catch { /* not allowed */ } }
   const remote = (video as HTMLVideoElement & { remote?: { prompt(): Promise<void>; state: string } }).remote;
@@ -351,6 +361,7 @@ export function openPlayer(src: PlayerSource): void {
   }
   async function useTrack(tr: SubTrack | null) {
     current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
+    if (mpv) { mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(tr.ass, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
     if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, [], own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
@@ -381,6 +392,9 @@ export function openPlayer(src: PlayerSource): void {
     const sh = openSheet(t('navSubs'), t('close')); const p = getPrefs();
     const list = h('div', { class: 'dest-list' }, h('label', { class: 'dest-row' + (!current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: !current, onchange: () => { chosenByHand = true; void useTrack(null); } }), icon('close'), h('span', { class: 'name' }, t('subsOff'))),
       ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => { chosenByHand = true; void useTrack(tr); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton(secondary === tr ? 'bookmark' : 'bookmarkAdd', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); drawSubs(video.currentTime); }))));
+    // (mpv: the subtitles inside the file — every one it carries, text or picture —, chosen here; the preferred
+    // languages are picked by themselves when the file opens.)
+    if (mpv) { const inFile = mpv.tracks().filter((x) => x.type === 'sub' && !x.external); if (inFile.length) list.append(h('h4', null, t('subsInVideo')), ...inFile.map((x) => h('label', { class: 'dest-row' + (x.selected && !current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: x.selected && !current, onchange: () => { chosenByHand = true; void useTrack(null).then(() => mpv.setTrack('sub', x.id)); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, x.title || x.lang || `#${x.id}`), h('small', { class: 'src' }, [(x.codec ?? '').toUpperCase(), x.lang].filter(Boolean).join(' · '))))); }
     const fileIn = h('input', { type: 'file', accept: '.srt,.ass,.ssa,.vtt,.sub,.txt', hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')));
@@ -438,7 +452,7 @@ export function openPlayer(src: PlayerSource): void {
   // ---- sound the decoder cannot play: turned into AAC by ffmpeg and played beside the video (./compat)
   let beside: import('./compat').SoundBeside | null = null; let tracksFound: import('./compat').Probe | null = null;
   async function checkSound() {
-    const c = await import('./compat'); if (!c.compatHere() || playerGone) return;
+    const c = await import('./compat'); if (mpv || !c.compatHere() || playerGone) return;
     tracksFound = await c.probe(src.url).catch(() => null); if (playerGone) return;
     if (tracksFound?.audio.length) {
       const pick = tracksFound.audio.find((a) => a.isDefault) ?? tracksFound.audio[0];
@@ -689,7 +703,7 @@ export function openPlayer(src: PlayerSource): void {
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); beside?.stop(); ass?.free(); sound?.close(); preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
+    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }

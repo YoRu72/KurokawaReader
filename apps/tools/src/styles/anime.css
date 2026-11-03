@@ -341,3 +341,10 @@ body:has(.sheet) .get-card.watch-card { opacity: 0; pointer-events: none; }
 .tv-filters .chip-row.wrap { gap: 6px; }
 .tv-filters .tv-genres { max-height: 7.5em; overflow-y: auto; }
 .chip-sep { width: 1px; align-self: stretch; background: var(--outline-variant, rgba(127,127,127,.35)); margin: 2px 4px; }
+
+/* mpv: its picture is under the page (a surface behind the web view), so the page is see-through while it plays —
+   the player's own controls and subtitles over it, the rest of the app hidden. */
+html.kt-mpv-on, html.kt-mpv-on body { background: transparent !important; }
+html.kt-mpv-on body > :not(.kt-player):not(.sheet):not(.scrim):not(.sheet-scrim):not(.toast):not(.get-card):not(dialog):not(script):not(style) { visibility: hidden !important; }
+html.kt-mpv-on .kt-player, html.kt-mpv-on .kt-stage { background: transparent !important; }
+.kt-mpv-video { position: absolute; inset: 0; pointer-events: none; }

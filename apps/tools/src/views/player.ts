@@ -20,7 +20,10 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
     const { needAddon } = await import('../addons/need');
     if (!(await needAddon('player', t('addonWhyPlayer')))) { bare(url, name); return; }
   }
-  const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts });
+  // (The engine: mpv when it is here and not turned off — Settings → Player —, else the web view's own.)
+  let engine: 'mpv' | 'web' = 'web';
+  if (nativePlatform() === 'android' && getSettings().playerEngine !== 'web') { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; }
+  const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts, engine });
 }
 /** The question, unless a choice is remembered: another app, or the in-app player (with what it brings). */
 function chooseHow(): Promise<'app' | 'external' | null> {

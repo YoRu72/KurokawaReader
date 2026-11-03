@@ -9,7 +9,7 @@ import { ktPlugin, listen } from './native';
 import { REPO, APP_VERSION } from './repo';
 import { request } from './http';
 
-export type PackName = 'python' | 'ffmpeg';
+export type PackName = 'python' | 'ffmpeg' | 'mpv';
 type Status = Record<PackName, { version: string | null; size: number }> & { abi?: string; platform?: string; arch?: string };
 type Prog = { name: string; done: number; total: number };
 type Plug = { packStatus(): Promise<Status>; packInstall(o: { name: string; url: string; sha256: string; version: string }): Promise<void>; packCancel(o: { name: string }): Promise<void>; packRemove(o: { name: string }): Promise<void>; addListener(ev: string, fn: (p: Prog) => void): unknown };
@@ -19,12 +19,14 @@ const desk = (): Desk | null => { const d = window.kurokawaTools as unknown as D
 /** Whether this build fetches packs at all (Android and the desktop do; the web has no native parts). */
 export const packsHere = (): boolean => !!(plug() || desk());
 /** The packs this platform has (the desktop has only ffmpeg: yt-dlp there is a single program). */
-export const packNames = (): PackName[] => (desk() ? ['ffmpeg'] : plug() ? ['python', 'ffmpeg'] : []);
+export const packNames = (): PackName[] => (desk() ? ['ffmpeg'] : plug() ? ['python', 'ffmpeg', 'mpv'] : []);
 
 export async function status(): Promise<Status | null> { const d = desk(); if (d) return d.packStatus(); const p = plug(); return p ? p.packStatus() : null; }
 
 type Entry = { file: string; size: number; sha256: string };
-type Manifest = { ydl?: string; version?: string; packs: Record<string, Record<string, Entry>> };
+type Manifest = { ydl?: string; version?: string; versions?: Record<string, string>; packs: Record<string, Record<string, Entry>> };
+/** A pack's version in this release's file (the mpv pack has its own; the others are youtubedl-android's). */
+const versionOf = (m: Manifest, n: PackName): string | undefined => m.versions?.[n] ?? m.ydl ?? m.version;
 let manifest: Promise<Manifest> | null = null;
 const base = () => `https://github.com/${REPO}/releases/download/tools-v${APP_VERSION}/`;
 /** What this release offers: its packs file (Android), or the desktop's ffmpeg with its checksum beside it. */
@@ -40,21 +42,23 @@ async function entryFor(name: PackName, st: Status): Promise<{ url: string; size
   const m = await readManifest();
   const key = st.abi ?? `${st.platform}-${st.arch}`;
   const e = m.packs[name]?.[key]; if (!e) throw new Error(t('packNoneForDevice', { what: key }));
-  return { url: base() + e.file, size: e.size, sha256: e.sha256, version: m.ydl ?? m.version ?? APP_VERSION };
+  return { url: base() + e.file, size: e.size, sha256: e.sha256, version: versionOf(m, name) ?? APP_VERSION };
 }
 /** Packs that are missing (or older than this release's). */
 async function missing(names: PackName[], st: Status): Promise<PackName[]> {
   const out: PackName[] = [];
-  for (const n of names) { const v = st[n]?.version; if (!v) { out.push(n); continue; } try { const m = await readManifest(); const want = m.ydl ?? m.version; if (want && v !== want) out.push(n); } catch { /* offline: the one here will do */ } }
+  for (const n of names) { const v = st[n]?.version; if (!v) { out.push(n); continue; } try { const m = await readManifest(); const want = versionOf(m, n); if (want && v !== want) out.push(n); } catch { /* offline: the one here will do */ } }
   return out;
 }
-export const packLabel = (n: PackName): string => (n === 'python' ? t('packPython') : t('packFfmpeg'));
+export const packLabel = (n: PackName): string => (n === 'python' ? t('packPython') : n === 'mpv' ? t('packMpv') : t('packFfmpeg'));
 
 /** The packs among `names` that have to be fetched, with where from and how big (null: nothing to fetch). */
 export async function packsToFetch(names: PackName[]): Promise<{ n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[]> {
   const st = await status(); if (!st) return [];
   const need = await missing(names.filter((n) => packNames().includes(n)), st); if (!need.length) return [];
-  return Promise.all(need.map(async (n) => ({ n, e: await entryFor(n, st) })));
+  // (The mpv pack is the player's better engine, not a must: a release or a phone without it plays with the web view.)
+  const got = await Promise.all(need.map(async (n) => { try { return { n, e: await entryFor(n, st) }; } catch (err) { if (n === 'mpv') return null; throw err; } }));
+  return got.filter((x): x is { n: PackName; e: Awaited<ReturnType<typeof entryFor>> } => !!x);
 }
 let runningPack: PackName | null = null;
 export function cancelPack(): void { if (!runningPack) return; const d = desk(); if (d) void d.packCancel(runningPack); else void plug()?.packCancel({ name: runningPack }); }

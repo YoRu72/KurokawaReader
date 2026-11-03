@@ -25,7 +25,7 @@ final class KtPacks {
     static File dir(Context ctx, String name) { return new File(ctx.getNoBackupFilesDir(), "youtubedl-android/packages/" + name); }
     private static File marker(Context ctx, String name) { return new File(dir(ctx, name), ".kurokawa-pack"); }
     private static String prefKey(String name) { return "python".equals(name) ? "pythonLibVersion" : "ffmpegLibVersion"; }
-    static boolean valid(String name) { return "python".equals(name) || "ffmpeg".equals(name); }
+    static boolean valid(String name) { return "python".equals(name) || "ffmpeg".equals(name) || "mpv".equals(name); }
 
     /** The version of an installed pack, or null. */
     static String installed(Context ctx, String name) {
