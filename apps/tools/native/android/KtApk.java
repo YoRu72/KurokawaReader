@@ -115,6 +115,15 @@ final class KtApk {
                 JSONArray pa = new JSONArray(); for (ZipEntry x : apks) pa.put(x.getName()); o.put("parts", pa); o.put("partsAll", partsJson(apks));
                 int obb = 0; Enumeration<? extends ZipEntry> en = z.entries(); while (en.hasMoreElements()) { ZipEntry x = en.nextElement(); if (!x.isDirectory() && x.getName().toLowerCase(Locale.ROOT).endsWith(".obb")) obb++; } if (obb > 0) { o.put("obb", true); o.put("obbFiles", obb); }
             }
+        } else {
+            // (A plain APK, read the HatchZip way too — never handed whole to Android's parser where it lies: Android maps
+            // the file into memory, and a file on shared storage (one picked in the app) can fail under the map on some
+            // phones, which kills the app (SIGBUS). Only its manifest and resources are read out; its signers are read
+            // from its signing block where it is.)
+            tmp = new File(ctx.getCacheDir(), "kt-base-" + System.nanoTime() + ".apk");
+            try { slimFile(f, tmp, sl); } catch (Exception e) { sl.used = false; tmp.delete(); }
+            if (sl.used) { try { for (String c : blockCerts(f)) if (!sl.certs.contains(c)) sl.certs.add(c); } catch (Exception ignored) {} apk = tmp; }
+            else { tmp = null; apk = f; sl.failed = false; }
         }
         try {
             int flags = PackageManager.GET_PERMISSIONS | (Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES);
@@ -232,6 +241,17 @@ final class KtApk {
             register(ctx, ev, id, f, deleteAfter);
             Intent cb = new Intent(ACTION).setPackage(ctx.getPackageName()).putExtra("kt.id", id);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+            // (Android's own progress once it has the app — checking and preparing it, which takes a while for a big
+            // one —: shown as a percentage, not a still bar.)
+            try {
+                final PackageInstaller pi2 = pi; final android.os.Handler hd = new android.os.Handler(android.os.Looper.getMainLooper());
+                pi2.registerSessionCallback(new PackageInstaller.SessionCallback() {
+                    int last = -1;
+                    @Override public void onCreated(int i) {} @Override public void onBadgingChanged(int i) {} @Override public void onActiveChanged(int i, boolean a) {}
+                    @Override public void onProgressChanged(int i, float pr) { if (i != sid) return; int pc = Math.round(pr * 100); if (pc == last) return; last = pc; try { JSONObject o = new JSONObject(); o.put("id", id); o.put("status", "installing"); o.put("done", pc); o.put("total", 100); ev.on(o); } catch (Exception ignored) {} }
+                    @Override public void onFinished(int i, boolean ok) { if (i == sid) try { pi2.unregisterSessionCallback(this); } catch (Exception ignored) {} }
+                }, hd);
+            } catch (Exception ignored) {}
             s.commit(PendingIntent.getBroadcast(ctx, sid, cb, flags).getIntentSender());
             JSONObject o = new JSONObject(); o.put("id", id); o.put("status", "committed"); ev.on(o);
         } catch (Exception e) { s.abandon(); throw e; }
@@ -278,6 +298,55 @@ final class KtApk {
             }
         }
     }
+    /** A plain APK's slim copy, its entries read where they lie (by seeking: only the manifest, the resources table
+     *  and the resources, never the code, libraries or assets — a 1 GB game is read in a second, nothing else copied). */
+    static void slimFile(File f, File out, Slim sl) throws Exception {
+        sl.used = true;
+        try (ZipFile z = new ZipFile(f); java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(new java.io.BufferedOutputStream(new FileOutputStream(out), 1 << 16))) {
+            Enumeration<? extends ZipEntry> en = z.entries(); boolean manifest = false;
+            while (en.hasMoreElements()) {
+                ZipEntry e = en.nextElement(); String n = e.getName(); if (e.isDirectory()) continue;
+                if (n.startsWith("lib/") && n.indexOf('/', 4) > 4) { sl.abis.add(n.substring(4, n.indexOf('/', 4))); continue; }
+                if (n.startsWith("META-INF/") && n.matches("(?i)META-INF/[^/]+\\.(RSA|DSA|EC)")) { try (InputStream in = z.getInputStream(e)) { for (java.security.cert.Certificate c : java.security.cert.CertificateFactory.getInstance("X.509").generateCertificates(new java.io.ByteArrayInputStream(readAll(in)))) { java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256"); StringBuilder b = new StringBuilder(); for (byte x : md.digest(c.getEncoded())) b.append(String.format("%02X", x)); if (!sl.certs.contains(b.toString())) sl.certs.add(b.toString()); } } catch (Exception ignored) {} continue; }
+                boolean keep = n.equals("AndroidManifest.xml") || n.equals("resources.arsc") || (n.startsWith("res/") && !n.startsWith("res/raw/"));
+                if (!keep) continue; if (n.equals("AndroidManifest.xml")) manifest = true;
+                byte[] data; try (InputStream in = z.getInputStream(e)) { data = readAll(in); } ZipEntry o2 = new ZipEntry(n);
+                if (n.equals("resources.arsc")) { java.util.zip.CRC32 crc = new java.util.zip.CRC32(); crc.update(data); o2.setMethod(ZipEntry.STORED); o2.setSize(data.length); o2.setCompressedSize(data.length); o2.setCrc(crc.getValue()); }
+                zo.putNextEntry(o2); zo.write(data); zo.closeEntry();
+            }
+            if (!manifest) throw new Exception("notAnApk");
+        }
+    }
+    /** The signers in an APK's v2/v3 signing block (the one apps signed for Android 7 and later carry, often alone),
+     *  as SHA-256 fingerprints — read from the file by seeking, a few KB, without Android's parser. */
+    static java.util.List<String> blockCerts(File f) throws Exception {
+        java.util.List<String> out = new ArrayList<>();
+        try (java.io.RandomAccessFile r = new java.io.RandomAccessFile(f, "r")) {
+            long len = r.length(); int tail = (int) Math.min(len, 65557); byte[] t = new byte[tail]; r.seek(len - tail); r.readFully(t);
+            int eocd = -1; for (int i = tail - 22; i >= 0; i--) if (t[i] == 0x50 && t[i + 1] == 0x4b && t[i + 2] == 5 && t[i + 3] == 6) { eocd = i; break; }
+            if (eocd < 0) return out;
+            java.nio.ByteBuffer e = java.nio.ByteBuffer.wrap(t, eocd, 22).order(java.nio.ByteOrder.LITTLE_ENDIAN); long cd = e.getInt(eocd + 16) & 0xffffffffL;
+            if (cd < 32) return out;
+            byte[] foot = new byte[24]; r.seek(cd - 24); r.readFully(foot); java.nio.ByteBuffer fb = java.nio.ByteBuffer.wrap(foot).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            long size = fb.getLong(0); if (!new String(foot, 8, 16, "US-ASCII").equals("APK Sig Block 42") || size < 24 || size > (32L << 20) || size + 8 > cd) return out;
+            byte[] blk = new byte[(int) size - 24]; r.seek(cd - size); r.readFully(blk);
+            java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(blk).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            while (b.remaining() >= 12) {
+                long pl = b.getLong(); if (pl < 4 || pl > b.remaining()) break; int id = b.getInt(); int end = b.position() + (int) pl - 4;
+                if (id == 0x7109871a || id == 0xf05368c0 || id == 0x1b93ad61) {
+                    java.nio.ByteBuffer v = slice(b, end); java.nio.ByteBuffer signers = lp(v);
+                    while (signers.remaining() >= 4) { java.nio.ByteBuffer signer = lp(signers); java.nio.ByteBuffer sd = lp(signer); lp(sd); java.nio.ByteBuffer certs = lp(sd);
+                        while (certs.remaining() >= 4) { java.nio.ByteBuffer c = lp(certs); byte[] der = new byte[c.remaining()]; c.get(der); java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256"); StringBuilder sb = new StringBuilder(); for (byte x : md.digest(der)) sb.append(String.format("%02X", x)); if (!out.contains(sb.toString())) out.add(sb.toString()); } }
+                    if (!out.isEmpty()) return out;
+                }
+                b.position(end);
+            }
+        }
+        return out;
+    }
+    private static java.nio.ByteBuffer slice(java.nio.ByteBuffer b, int end) { java.nio.ByteBuffer d = b.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN); d.limit(end); return d.slice().order(java.nio.ByteOrder.LITTLE_ENDIAN); }
+    /** A length-prefixed part (uint32, little-endian) taken from `b`. */
+    private static java.nio.ByteBuffer lp(java.nio.ByteBuffer b) throws Exception { int n = b.getInt(); if (n < 0 || n > b.remaining()) throw new Exception("bad block"); java.nio.ByteBuffer d = slice(b, b.position() + n); b.position(b.position() + n); return d; }
     interface Tick { void on(int n); }
     static long lastTick = 0;
     static void progress(Events ev, String id, long done, long total) { long now = System.currentTimeMillis(); if (now - lastTick < 200 && done < total) return; lastTick = now; try { JSONObject o = new JSONObject(); o.put("id", id); o.put("status", "progress"); o.put("done", done); o.put("total", total); ev.on(o); } catch (Exception ignored) {} }

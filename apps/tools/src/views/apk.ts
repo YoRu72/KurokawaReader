@@ -15,7 +15,7 @@ export const APK_RE = /\.(apk|apks|xapk|apkm)$/i;
 export const isApkName = (n: string): boolean => APK_RE.test(n);
 type Part = { name: string; size: number; kind: 'base' | 'abi' | 'density' | 'lang' | 'feature'; optional: boolean };
 type ApkInfo = { targetSdk?: number; abis?: string[]; abiFits?: boolean; deviceAbis?: string[]; permissions?: { name: string; danger: boolean; label?: string }[]; riskyPermissions?: number; signer?: string; sameSigner?: boolean; installedSigner?: string; partsAll?: Part[]; obbFiles?: number; choose?: { select: string; label: string; size: number }[]; select?: string; parts?: string[]; container?: boolean; free?: number; package: string; version: string; versionCode: number; label?: string; icon?: string; minSdk?: number; installed?: string; change: 'new' | 'upgrade' | 'same' | 'downgrade'; splits: number; size: number; bundle: boolean; supported: boolean; obb?: boolean };
-type Ev = { id: string; status: 'progress' | 'committed' | 'confirm' | 'success' | 'failure'; done?: number; total?: number; message?: string; code?: number; package?: string };
+type Ev = { id: string; status: 'progress' | 'installing' | 'committed' | 'confirm' | 'success' | 'failure'; done?: number; total?: number; message?: string; code?: number; package?: string };
 type P = { apkInfo(o: { path: string; password?: string; select?: string }): Promise<ApkInfo>; apkInstall(o: { id: string; path: string; deleteAfter?: boolean; password?: string; select?: string; parts?: string[] }): Promise<void>; launchApp(o: { pkg: string }): Promise<void>; uninstallApp?(o: { pkg: string }): Promise<void>; appDetails?(o: { pkg: string }): Promise<void>; appInstalled?(o: { pkg: string }): Promise<{ installed: boolean }>; apkObb?(o: { path: string; pkg: string }): Promise<{ copied: number; to: string; direct: boolean }>; addListener(ev: 'apkInstall', fn: (e: Ev) => void): Promise<{ remove(): void }> };
 const plug = (): P | null => { const p = ktPlugin() as unknown as P | null; return p?.apkInfo ? p : null; };
 export const canInstallApps = (): boolean => !!plug();
@@ -71,13 +71,16 @@ export async function installSheet(path: string, o: { password?: string; select?
   const go = h('button', { type: 'button', class: 'btn primary', disabled: !info.supported }, icon('download'), info.change === 'upgrade' ? t('apkUpdate') : t('apkInstall')) as HTMLButtonElement;
   sh.actions.replaceChildren(go);
   go.addEventListener('click', async () => {
-    const id = uid(); go.disabled = true;
+    const id = uid(); go.disabled = true; let installed = -1; let confirming = false;
     const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src' }, t('apkWriting'));
     sh.body.append(h('div', { class: 'extract-progress' }, bar, line));
     const sub = await p.addListener('apkInstall', (e) => {
       if (e.id !== id) return;
       if (e.status === 'progress' && e.total) { const f = e.done! / e.total; (bar.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`; line.textContent = `${t('apkWriting')} ${localDigits(Math.round(f * 100))}%`; }
-      else if (e.status === 'committed' || e.status === 'confirm') { (bar.firstChild as HTMLElement).style.width = '100%'; line.textContent = t('apkConfirm'); }
+      // (Android's own progress once it has the app: checking and preparing it.)
+      else if (e.status === 'installing' && e.total) { const pc = Math.max(installed, Math.min(100, Math.round((e.done! / e.total) * 100))); installed = pc; (bar.firstChild as HTMLElement).style.width = `${pc}%`; if (!confirming) line.textContent = `${t('apkInstalling')} ${localDigits(pc)}%`; }
+      else if (e.status === 'committed') { if (installed < 0) { (bar.firstChild as HTMLElement).style.width = '100%'; line.textContent = t('apkInstalling'); } }
+      else if (e.status === 'confirm') { confirming = true; line.textContent = t('apkConfirm'); }
       else if (e.status === 'success') {
         // (A game's data, from an .xapk: put where it reads it, then the archive let go when that was asked.)
         if (info.obb && !info.container && p.apkObb) void p.apkObb({ path, pkg: info.package }).then((r) => { if (r.copied) toast(r.direct ? t('apkObbCopied', { n: localDigits(r.copied) }) : t('apkObbMoveBy', { to: r.to }), 'info', r.direct ? 4000 : 9000); }).catch((er) => toast(String((er as Error).message ?? er), 'error'));

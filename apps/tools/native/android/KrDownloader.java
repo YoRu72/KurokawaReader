@@ -55,6 +55,71 @@ final class KrDownloader {
         if (low.endsWith(".bin") || low.endsWith(".dat") || !low.matches(".*\\.[a-z0-9]{1,5}$")) return name.replaceAll("\\.(bin|dat)$", "") + "." + ext;
         return null;
     }
+    /** What a finished file really is, from its first bytes (and, for a ZIP, what is inside): its extension, or null
+     *  when it cannot be told. Sites that send everything as «application/octet-stream», or name it «file.bin». */
+    static String sniffExt(File f) {
+        byte[] b = new byte[4096]; int n = 0;
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) { int r; while (n < b.length && (r = in.read(b, n, b.length - n)) > 0) n += r; } catch (IOException e) { return null; }
+        if (n < 4) return null;
+        String head = new String(b, 0, n, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (head.startsWith("PK\u0003\u0004") || head.startsWith("PK\u0005\u0006")) return zipKind(f);
+        if (head.startsWith("%PDF")) return "pdf";
+        if (head.startsWith("7z¼¯'\u001c")) return "7z";
+        if (head.startsWith("Rar!")) return "rar";
+        if ((b[0] & 255) == 0x1f && (b[1] & 255) == 0x8b) return "gz";
+        if (head.startsWith("ý7zXZ")) return "xz";
+        if (head.startsWith("BZh")) return "bz2";
+        if (n >= 12 && head.startsWith("ftyp", 4)) { String brand = head.substring(8, 12); return brand.startsWith("M4A") ? "m4a" : brand.startsWith("qt") ? "mov" : brand.startsWith("hei") || brand.startsWith("mif1") ? "heic" : brand.startsWith("avif") ? "avif" : brand.startsWith("3gp") ? "3gp" : "mp4"; }
+        if ((b[0] & 255) == 0x1a && (b[1] & 255) == 0x45 && (b[2] & 255) == 0xdf && (b[3] & 255) == 0xa3) return head.contains("webm") ? "webm" : "mkv";
+        if (head.startsWith("OggS")) return head.contains("OpusHead") ? "opus" : "ogg";
+        if (head.startsWith("fLaC")) return "flac";
+        if (head.startsWith("ID3") || ((b[0] & 255) == 0xff && ((b[1] & 255) & 0xe6) == 0xe2)) return "mp3";
+        if (n >= 12 && head.startsWith("RIFF")) { String k = head.substring(8, 12); return k.equals("WAVE") ? "wav" : k.equals("AVI ") ? "avi" : k.equals("WEBP") ? "webp" : null; }
+        if (head.startsWith("\u0089PNG")) return "png";
+        if ((b[0] & 255) == 0xff && (b[1] & 255) == 0xd8 && (b[2] & 255) == 0xff) return "jpg";
+        if (head.startsWith("GIF8")) return "gif";
+        if (head.startsWith("#EXTM3U")) return "m3u8";
+        if (head.startsWith("d8:announce") || head.startsWith("d13:announce") || (head.startsWith("d") && head.contains("4:infod"))) return "torrent";
+        if (head.startsWith("MZ")) return "exe";
+        if (head.startsWith("ÐÏ\u0011à")) return null;   // (an old Office file or an MSI: cannot be told apart here)
+        if (head.startsWith("G") && n > 376 && (b[188] & 255) == 0x47 && (b[376] & 255) == 0x47) return "ts";
+        return null;
+    }
+    /** A ZIP's kind from its entries: an APK, an app bundle (XAPK, APKM, APKS), an e-book, an Office file, or a ZIP. */
+    private static String zipKind(File f) {
+        try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(f)) {
+            boolean manifest = false, dex = false, apks = false, xapkManifest = false, apkmInfo = false, epub = false, word = false, xl = false, ppt = false, cbz = true; int files = 0;
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = z.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement(); String nm = e.getName(); String low = nm.toLowerCase(java.util.Locale.ROOT);
+                if (nm.equals("AndroidManifest.xml")) manifest = true; else if (nm.equals("classes.dex") || nm.equals("resources.arsc")) dex = true;
+                else if (low.endsWith(".apk")) apks = true; else if (nm.equals("manifest.json")) xapkManifest = true; else if (nm.equals("info.json")) apkmInfo = true;
+                else if (nm.equals("mimetype")) { try (InputStream in = z.getInputStream(e)) { byte[] m = new byte[40]; int k = in.read(m); epub = k > 0 && new String(m, 0, k, "US-ASCII").startsWith("application/epub+zip"); } }
+                else if (nm.startsWith("word/")) word = true; else if (nm.startsWith("xl/")) xl = true; else if (nm.startsWith("ppt/")) ppt = true;
+                if (!e.isDirectory()) { files++; if (!low.matches(".*\\.(jpe?g|png|webp|gif|avif|xml|txt|json)$")) cbz = false; }
+            }
+            if (manifest && dex) return "apk";
+            if (apks) return xapkManifest ? "xapk" : apkmInfo ? "apkm" : "apks";
+            if (epub) return "epub"; if (word) return "docx"; if (xl) return "xlsx"; if (ppt) return "pptx";
+            if (cbz && files > 2) return "cbz";
+            return "zip";
+        } catch (IOException e) { return "zip"; }
+    }
+    /** The name with the sniffed extension, when its own says nothing (none, «.bin», «.dat»…) or only «a ZIP» of what is
+     *  more (an APK, a bundle, an e-book); null: keep the name. */
+    static String withSniffed(String name, String ext) {
+        if (name == null || ext == null) return null; String low = name.toLowerCase(java.util.Locale.ROOT);
+        if (low.endsWith("." + ext)) return null;
+        int dot = low.lastIndexOf('.'); String cur = dot > 0 ? low.substring(dot + 1) : "";
+        // (A meaningless extension is replaced; a name whose last dot is not one — «Movie.S01E01», «v1.2» — kept whole.)
+        boolean junk = cur.matches("bin|dat|tmp|file|download|dl|php|aspx?|jsp|cgi|octet-stream|unknown");
+        boolean weak = junk || cur.isEmpty() || !cur.matches("[a-z0-9]{1,5}") || cur.matches("\\d+");
+        boolean zipOf = cur.equals("zip") && !ext.equals("zip") && !ext.equals("cbz");
+        // (Things that are ZIPs inside, kept as their own name says: a «.jar», «.apks» named on purpose, «.cbz», «.ipa»…)
+        if (!weak && !zipOf) return null;
+        String stem = dot > 0 && (junk || zipOf) ? name.substring(0, dot) : name;
+        return stem + "." + ext;
+    }
     /** Where Set-Cookie headers go (the engine's: Android's cookie store, shared with its web views). */
     static volatile java.util.function.BiConsumer<URL, java.util.List<String>> cookieSink;
     /** A web page sent where a file was expected (a site's check, a sign-in, an error page). */
