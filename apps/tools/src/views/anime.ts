@@ -71,6 +71,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
           ...(n ? [h('button', { type: 'button', class: 'chip small text', onclick: () => { Object.assign(f, { genres: [], tags: [], notTags: [], formats: [], status: undefined, season: undefined, year: undefined, minScore: undefined }); saveFilters(f); drawActive(); void run(); } }, t('clearAll'))] : []));
       };
       const more = h('button', { type: 'button', class: 'btn tonal small anime-more', hidden: true, onclick: () => void run(true) }, t('loadMore')) as HTMLButtonElement;
+      let used: string | undefined;
       const run = async (next = false) => {
         f.q = input.value.trim(); saveFilters(f); const mine = ++runs;
         const any = f.q || f.genres?.length || f.tags?.length || f.formats?.length || f.status || f.season || f.year || f.minScore;
@@ -78,7 +79,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
         if (!next) { page = 1; all = []; results.replaceChildren(spinner()); } else { page++; more.disabled = true; }
         try {
           const r = await al.searchBy({ ...f, adult: getSettings().animeAdult }, page); if (my !== token || mine !== runs) return;
-          all = all.concat(r.media); results.replaceChildren(all.length ? grid(all) : h('p', { class: 'empty small' }, t('noResults')), more); more.hidden = !r.hasNext; more.disabled = false;
+          all = all.concat(r.media); if (!next) used = r.used; results.replaceChildren(...(used && all.length ? [h('p', { class: 'hint small' }, t('searchShowingFor', { q: used }))] : []), all.length ? grid(all) : h('p', { class: 'empty small' }, t('noResults')), more); more.hidden = !r.hasNext; more.disabled = false;
         } catch (e) { if (mine === runs) results.replaceChildren(fail(e)); }
       };
       input.addEventListener('input', debounce(() => void run(), 400));

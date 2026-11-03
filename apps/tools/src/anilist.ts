@@ -3,6 +3,7 @@
 // season chart (what AniChart draws) and the airing schedule (what LiveChart draws) — all from the one GraphQL
 // endpoint, through the app's own HTTP so the phone and the desktop are not held back by CORS.
 import { request } from './http';
+import { parseFilename } from './anime/anitomy';
 import { getSettings, updateSettings } from './settings';
 
 const API = 'https://graphql.anilist.co';
@@ -98,14 +99,28 @@ export async function search(q: string, opts: { adult?: boolean; page?: number }
  *  left out), format, status, season and year, sort — any of them alone browses by it. Answers are kept a few
  *  minutes, so going back and forth costs no request. */
 export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean }
-const searchCache = new Map<string, { at: number; v: { media: Anime[]; hasNext: boolean } }>();
-export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Anime[]; hasNext: boolean }> {
+const searchCache = new Map<string, { at: number; v: { media: Anime[]; hasNext: boolean; used?: string } }>();
+/** Other ways to put what was typed, for when it finds nothing: a release's file name read for its title; «season 2»,
+ *  «2nd season», «part 2», «S2», an episode and a year dropped; punctuation made spaces; then the first words only. */
+export function queryVariants(q: string): string[] {
+  const out: string[] = []; const add = (x: string) => { const y = x.replace(/\s+/g, ' ').trim(); if (y.length >= 2 && y !== q && !out.includes(y)) out.push(y); };
+  if (/[[\]_]|\.(mkv|mp4|avi|webm|torrent)$|\b(1080|720|480)p\b/i.test(q)) add(parseFilename(q).title);
+  const plain = q.replace(/\b(?:season|cour|part)\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+(?:season|cour)\b|\bS\d{1,2}(?:E\d{1,3})?\b|\b(?:ep(?:isode)?\.?)\s*\d+\b|\(?\b(?:19|20)\d\d\b\)?/gi, ' ');
+  add(plain); const words = plain.replace(/[:\-–—!?,.~'’"“”]+/g, ' ').replace(/\s+/g, ' ').trim(); add(words);
+  const w = words.split(' '); if (w.length > 2) add(w.slice(0, -1).join(' ')); if (w.length > 3) add(w.slice(0, 3).join(' '));
+  return out.slice(0, 4);
+}
+export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Anime[]; hasNext: boolean; used?: string }> {
   const v: Record<string, unknown> = { page, adult: f.adult ? undefined : false, sort: [f.sort || (f.q ? 'SEARCH_MATCH' : 'POPULARITY_DESC')] };
   if (f.q?.trim()) v.q = f.q.trim(); if (f.genres?.length) v.genres = f.genres; if (f.tags?.length) v.tags = f.tags; if (f.notTags?.length) v.notTags = f.notTags;
   if (f.formats?.length) v.formats = f.formats; if (f.status) v.status = f.status; if (f.season) v.season = f.season; if (f.year) v.year = f.year; if (f.minScore) v.minScore = f.minScore; if (f.onList !== undefined) v.onList = f.onList;
   const key = JSON.stringify(v); const had = searchCache.get(key); if (had && Date.now() - had.at < 5 * 60000) return had.v;
-  const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList) { ${CARD} } } }`, v);
-  const out = { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage };
+  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList) { ${CARD} } } }`, vars);
+  let d = await ask(v); let used: string | undefined;
+  // (Nothing for the words as typed — a file's name, «Season 2», a subtitle, a typo's last word —: the same search with
+  // the words cleaned up, then shortened; the results say which words found them.)
+  if (page === 1 && v.q && !d.Page.media.length) for (const q of queryVariants(String(v.q))) { const r = await ask({ ...v, q }); if (r.Page.media.length) { d = r; used = q; break; } }
+  const out = { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage, used };
   searchCache.set(key, { at: Date.now(), v: out }); if (searchCache.size > 60) searchCache.delete(searchCache.keys().next().value!);
   return out;
 }

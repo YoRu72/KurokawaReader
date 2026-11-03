@@ -51,3 +51,42 @@ export async function meta(type: TvKind, id: string): Promise<TvMeta> {
 /** A series' seasons (specials, season 0, last). */
 export const seasonsOf = (m: TvMeta): number[] => { const s = [...new Set((m.videos ?? []).map((v) => v.season))]; return [...s.filter((x) => x > 0).sort((a, b) => a - b), ...s.filter((x) => x === 0)]; };
 export const aired = (v: TvEpisode, now = Date.now()): boolean => !v.released || Date.parse(v.released) <= now;
+
+/** What was typed, made into something Cinemeta's title search finds: an IMDb link or id kept as it is; a file's
+ *  name read as one (dots, brackets, quality, «S01E02» left out); a year taken aside (the search finds titles, not
+ *  years); «season 2», «part 1» and the like dropped. */
+export function cleanQuery(raw: string): { q: string; year?: number; imdb?: string; season?: number } {
+  const s0 = raw.trim(); const imdb = /\b(tt\d{6,10})\b/.exec(s0)?.[1]; if (imdb) return { q: s0, imdb };
+  let s = s0;
+  if (/[._]/.test(s) && !/\s/.test(s)) s = s.replace(/[._]+/g, ' ');
+  s = s.replace(/\[[^\]]*\]|\{[^}]*\}/g, ' ').replace(/\b(2160|1080|720|480)p\b.*$/i, ' ').replace(/\b(web[- ]?dl|webrip|bluray|brrip|hdtv|x26[45]|hevc|10bit|remux)\b.*$/i, ' ');
+  let season: number | undefined;
+  const se = /\bS(\d{1,2})(?:E\d{1,3})?\b/i.exec(s); if (se) { season = Number(se[1]); s = s.slice(0, se.index); }
+  const sn = /\b(?:season|series)\s*(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/i.exec(s); if (sn) { season = Number(sn[1] ?? sn[2]); s = s.replace(sn[0], ' '); }
+  s = s.replace(/\b(?:part|vol(?:ume)?)\.?\s*\d+\b/gi, ' ');
+  let year: number | undefined; const y = /[([]?\b(19[2-9]\d|20[0-4]\d)\b[)\]]?\s*$/.exec(s.trim()); if (y && s.trim().length > y[0].length + 1) { year = Number(y[1]); s = s.trim().slice(0, -y[0].length); }
+  s = s.replace(/[:\-–—!?,"“”'’]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return { q: s || s0, year, season };
+}
+/** A search that tries harder: the cleaned words first; then, when nothing comes, the words without what ends them
+ *  (subtitles, the last word). Titles of the year asked for first. `used`: the words that found them. */
+export async function searchSmart(raw: string): Promise<{ metas: TvMeta[]; used: string; year?: number; imdb?: string }> {
+  const c = cleanQuery(raw);
+  if (c.imdb) { for (const type of ['movie', 'series'] as const) { try { return { metas: [await meta(type, c.imdb)], used: c.imdb, imdb: c.imdb }; } catch { /* the other kind */ } } return { metas: [], used: c.imdb }; }
+  const tries = [c.q]; const words = c.q.split(' ');
+  if (words.length > 2) tries.push(words.slice(0, -1).join(' '));
+  if (words.length > 3) tries.push(words.slice(0, 3).join(' '));
+  for (const q of [...new Set(tries)]) {
+    const r = await search(q); if (!r.length) continue;
+    if (c.year) { const y = String(c.year); const of = (m: TvMeta) => ((m.releaseInfo ?? m.year ?? '').startsWith(y) ? 1 : 0); r.sort((a, b) => of(b) - of(a)); }
+    return { metas: r, used: q, year: c.year };
+  }
+  return { metas: [], used: c.q, year: c.year };
+}
+/** The results filled in — genres, rating, year — from each title's page (kept an hour), a few at a time, so they
+ *  can be filtered and ordered; `each` told as they come. */
+export async function fillIn(ms: TvMeta[], each: (m: TvMeta, i: number) => void, limit = 40): Promise<void> {
+  let next = 0; const n = Math.min(ms.length, limit);
+  const worker = async () => { while (next < n) { const i = next++; try { const full = await meta(ms[i].type, ms[i].id); const m = { ...ms[i], genres: full.genres, imdbRating: full.imdbRating ?? ms[i].imdbRating, year: full.year ?? ms[i].year, releaseInfo: ms[i].releaseInfo ?? full.releaseInfo, runtime: full.runtime }; ms[i] = m; each(m, i); } catch { /* left as it was */ } } };
+  await Promise.all(Array.from({ length: 6 }, () => worker()));
+}

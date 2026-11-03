@@ -39,7 +39,46 @@ export function tvView(tab?: TvTab, q?: string): HTMLElement & { dispose?: () =>
     if (current === 'search') {
       const input = h('input', { type: 'search', class: 'search-input', placeholder: t('tvSearchHint'), value: q ?? '', enterkeyhint: 'search' }) as HTMLInputElement; const results = h('div');
       let runs = 0;
-      const run = async () => { const s = input.value.trim(); const mine = ++runs; if (!s) { results.replaceChildren(); return; } results.replaceChildren(spinner()); try { const r = await cm.search(s); if (my !== token || mine !== runs) return; results.replaceChildren(r.length ? grid(r) : h('p', { class: 'empty small' }, t('noResults'))); } catch (e) { if (mine === runs) results.replaceChildren(fail(e)); } };
+      // (Tags and filters over the results: films or series, genres — a tap keeps only those with it —, a lowest rating,
+      // and the order; the genres and ratings filled in from each title's page as they come.)
+      type SF = { type: '' | TvKind; genres: string[]; min: number; sort: 'match' | 'rating' | 'new' | 'old' | 'title' };
+      let sf: SF = { type: '', genres: [], min: 0, sort: 'match' };
+      try { sf = { ...sf, ...(JSON.parse(localStorage.getItem('kt.tv.sf') ?? '{}') as Partial<SF>), genres: [] }; } catch { /* first time */ }
+      const saveSf = () => { try { localStorage.setItem('kt.tv.sf', JSON.stringify({ ...sf, genres: [] })); } catch { /* full */ } };
+      let found: TvMeta[] = []; let note = '';
+      const bar = h('div', { class: 'tv-filters' }); const gridBox = h('div');
+      const yearOf = (m: TvMeta) => Number((m.releaseInfo ?? m.year ?? '').slice(0, 4)) || 0;
+      const shown = () => {
+        let r = found.filter((m) => (!sf.type || m.type === sf.type) && (!sf.min || Number(m.imdbRating ?? 0) >= sf.min) && sf.genres.every((g) => m.genres.includes(g)));
+        const by: Record<SF['sort'], ((a: TvMeta, b: TvMeta) => number) | null> = { match: null, rating: (a, b) => Number(b.imdbRating ?? 0) - Number(a.imdbRating ?? 0), new: (a, b) => yearOf(b) - yearOf(a), old: (a, b) => (yearOf(a) || 9999) - (yearOf(b) || 9999), title: (a, b) => a.name.localeCompare(b.name) };
+        const f = by[sf.sort]; if (f) r = [...r].sort(f); return r;
+      };
+      const chip = (on: boolean, label: string, fn: () => void) => h('button', { type: 'button', class: 'chip small' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => { fn(); saveSf(); drawBar(); drawGrid(); } }, label);
+      const drawBar = () => {
+        if (!found.length) { bar.replaceChildren(); return; }
+        const counts = new Map<string, number>(); for (const m of found) for (const g of m.genres) counts.set(g, (counts.get(g) ?? 0) + 1);
+        const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([g]) => g);
+        bar.replaceChildren(
+          ...(note ? [h('p', { class: 'hint small' }, note)] : []),
+          h('div', { class: 'chip-row wrap' }, chip(!sf.type, t('tvAll'), () => { sf.type = ''; }), chip(sf.type === 'series', t('tvSeriesPl'), () => { sf.type = 'series'; }), chip(sf.type === 'movie', t('tvFilmsPl'), () => { sf.type = 'movie'; }),
+            h('span', { class: 'chip-sep' }), ...([0, 6, 7, 8] as const).map((n) => chip(sf.min === n, n ? `★ ${localDigits(n)}+` : t('tvAnyRating'), () => { sf.min = n; }))),
+          h('div', { class: 'chip-row wrap' }, ...([['match', t('tvRelevance')], ['rating', t('tvSortRating')], ['new', t('sortNewest')], ['old', t('tvSortOldest')], ['title', t('sortTitle')]] as const).map(([k, l]) => chip(sf.sort === k, l, () => { sf.sort = k; }))),
+          ...(tags.length ? [h('div', { class: 'chip-row wrap tv-genres' }, ...tags.slice(0, 18).map((g) => chip(sf.genres.includes(g), g, () => { sf.genres = sf.genres.includes(g) ? sf.genres.filter((x) => x !== g) : [...sf.genres, g]; })))] : []));
+      };
+      const drawGrid = () => { const r = shown(); gridBox.replaceChildren(r.length ? grid(r) : h('p', { class: 'empty small' }, found.length ? t('tvNoMatchFilters') : t('noResults'))); };
+      const run = async () => {
+        const s = input.value.trim(); const mine = ++runs; if (!s) { found = []; note = ''; drawBar(); gridBox.replaceChildren(); return; }
+        gridBox.replaceChildren(spinner()); bar.replaceChildren();
+        try {
+          const r = await cm.searchSmart(s); if (my !== token || mine !== runs) return;
+          // (An IMDb link or id pasted: its page at once.)
+          if (r.imdb && r.metas.length === 1) { navigate(`/tv/${r.metas[0].type}/${r.metas[0].id}`); return; }
+          found = r.metas; note = r.used.toLowerCase() !== s.toLowerCase() && found.length ? t('searchShowingFor', { q: r.used + (r.year ? ` (${localDigits(r.year)})` : '') }) : '';
+          drawBar(); drawGrid();
+          let pending = 0; void cm.fillIn(found, () => { if (mine !== runs || my !== token) return; if (pending++ % 6 === 5 || pending >= Math.min(found.length, 40)) { drawBar(); drawGrid(); } }).then(() => { if (mine === runs && my === token) { drawBar(); drawGrid(); } });
+        } catch (e) { if (mine === runs) gridBox.replaceChildren(fail(e)); }
+      };
+      results.append(bar, gridBox);
       input.addEventListener('input', debounce(() => void run(), 400));
       body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input), results);
       if (q) void run(); setTimeout(() => input.focus(), 50);
