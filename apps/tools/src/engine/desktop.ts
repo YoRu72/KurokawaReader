@@ -22,6 +22,8 @@ export interface DesktopBridge {
   move?(id: string, how: number): Promise<void>;
   torrentInfo(source: TaskSource): Promise<TorrentInfo>;
   open(id: string, fileIndex?: number): Promise<void>;
+  /** Watching while it downloads: the file served as its pieces come (desktop/torrentstream.cjs). */
+  streamUrl?(o: { id: string; fileIndex: number }): Promise<{ url: string }>;
   defaultDir(): Promise<string>;
   pickDir(): Promise<string | null>;
   configure(o: { listenPort?: number; maxConnections?: number; seed?: boolean }): Promise<void>;
@@ -39,8 +41,12 @@ export interface DesktopBridge {
 
 export class DesktopEngine implements Engine {
   readonly id = 'native' as const;
-  readonly can = { torrents: true, http: true, stream: false, limits: true, pickFiles: true, pause: true, seeding: true };
-  constructor(private b: DesktopBridge) {}
+  readonly can: { torrents: boolean; http: boolean; stream: boolean; limits: boolean; pickFiles: boolean; pause: boolean; seeding: boolean };
+  readonly streamUrl?: (id: string, fileIndex: number) => Promise<string>;
+  constructor(private b: DesktopBridge) {
+    this.can = { torrents: true, http: true, stream: !!b.streamUrl, limits: true, pickFiles: true, pause: true, seeding: true };
+    if (b.streamUrl) this.streamUrl = async (id, fileIndex) => (await b.streamUrl!({ id, fileIndex })).url;
+  }
   list() { return this.b.list(); }
   add(o: AddOptions) { return this.b.add(o).catch((e: Error) => { if (/\bexists$/.test(String(e?.message ?? ''))) throw new Error(t('existsSkipped', { name: o.name ?? '' })); throw e; }); }
   pause(id: string) { return this.b.pause(id); }
