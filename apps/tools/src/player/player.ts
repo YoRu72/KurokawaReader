@@ -42,7 +42,9 @@ export interface PlayerSource { url: string; name: string; task?: Task; fileInde
   /** The show and episode when it is not a download's (an online source): for tracking, AniSkip, subtitles. */
   meta?: Task['meta'];
   /** Subtitles that come with an online source. */
-  subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[] }
+  subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[];
+  /** Opened by another app (Android's «Kurokawa Player»): where it asked to start, and whether it wants the position back when the player closes. */
+  startAt?: number; forCaller?: boolean }
 interface SubTrack { id: string; name: string; lang?: string; cues: Cue[]; ass?: string; fmt: string }
 
 const fmtTime = (s: number): string => { if (!isFinite(s)) return '–:––'; s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits((h ? `${h}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0')); };
@@ -58,7 +60,7 @@ export function openPlayer(src: PlayerSource): void {
   const P = getPrefs(); const key = src.localPath ?? src.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
   // (mpv when it is here — every codec, the file's own subtitles —, else the web view's <video>; the player is the same.)
   const slang = (getSettings().subLangs ?? []).flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(',');
-  const video = (src.engine === 'mpv' ? mpvVideo(src.localPath ?? src.url, { start: memoryOf(key)?.pos && P.resume === 'always' ? memoryOf(key)!.pos : 0, slang, alang: P.audioLangs.flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(','), speed: P.defaultSpeed, headers: src.headers, extra: mpvExtra(P) }) : h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' })) as HTMLVideoElement;
+  const video = (src.engine === 'mpv' ? mpvVideo(src.localPath ?? src.url, { start: src.startAt ? src.startAt : memoryOf(key)?.pos && P.resume === 'always' ? memoryOf(key)!.pos : 0, slang, alang: P.audioLangs.flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(','), speed: P.defaultSpeed, headers: src.headers, extra: mpvExtra(P) }) : h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' })) as HTMLVideoElement;
   const mpv: MpvControl | null = (video as HTMLVideoElement & { _mpv?: MpvControl })._mpv ?? null;
   const stage = h('div', { class: 'kt-stage' }, video, h('canvas', { class: 'kt-ass' }), h('div', { class: 'kt-subs' }), h('div', { class: 'kt-subs top' }));
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
@@ -109,7 +111,8 @@ export function openPlayer(src: PlayerSource): void {
   if (!mpv) video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
   video.addEventListener('loadedmetadata', () => {
     timeEnd.textContent = fmtTime(video.duration); applyAspect(); applyTransform(); drawMarks();
-    if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always' && !mpv) video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
+    if (src.startAt && !mpv) video.currentTime = src.startAt;
+    else if (mem && mem.pos > 5 && mem.pos < video.duration - 10) { if (P.resume === 'always' && !mpv) video.currentTime = mem.pos; else if (P.resume === 'ask') askResume(mem.pos); }
     if (mem?.speed) setSpeed(mem.speed); if (mem?.subDelay) subDelay = mem.subDelay;
     // (This video's picture as it was left: zoom, turn, mirror, crop.)
     if (mem && (mem.zoom || mem.rotate || mem.flipH || mem.flipV || mem.crop)) { zoom = mem.zoom ?? 1; rotate = (mem.rotate ?? 0) as typeof rotate; flipH = !!mem.flipH; flipV = !!mem.flipV; crop = mem.crop ?? ''; applyTransform(); }
@@ -883,6 +886,8 @@ export function openPlayer(src: PlayerSource): void {
   function close() {
     playerGone = true;
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
+    // (Opened by another app: the position and the length handed back to it, and the app steps aside.)
+    if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
     window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);

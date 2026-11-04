@@ -1,0 +1,1 @@
+import{a,b,c,d,e,f,g,h,i,j}from"./chunk-chunk-O55NSPN6.js";import"./chunk-chunk-ARSVEJUH.js";import"./chunk-chunk-O72S6HWG.js";export{i as installVoices,j as languageName,f as queueSpeech,e as speakPassage,g as speakQueue,b as speechLangOf,h as stopSpeech,a as ttsAvailable,d as voiceFor,c as voices};

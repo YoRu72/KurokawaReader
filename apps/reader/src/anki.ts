@@ -103,7 +103,7 @@ export async function parseApkg(file: Blob): Promise<Deck> {
         const cf = pbRead(config ?? new Uint8Array());
         types.set(Number(id), { id: Number(id), name, cloze: pbNum(cf, 1) === 1, css: pbStr(cf, 3), fields: [], templates: [] });
       }
-      for (const [ntid, ord, name] of rows(d, 'select ntid, ord, name from fields order by ntid, ord') as [number, number, string][]) types.get(Number(ntid))?.fields.push(name);
+      for (const [ntid, , name] of rows(d, 'select ntid, ord, name from fields order by ntid, ord') as [number, number, string][]) types.get(Number(ntid))?.fields.push(name);
       for (const [ntid, ord, name, config] of rows(d, 'select ntid, ord, name, config from templates order by ntid, ord') as [number, number, string, Uint8Array][]) {
         const cf = pbRead(config ?? new Uint8Array());
         types.get(Number(ntid))?.templates.push({ name, ord: Number(ord), q: pbStr(cf, 1), a: pbStr(cf, 2) });

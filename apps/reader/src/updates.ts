@@ -2,7 +2,7 @@
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
 import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
-import { t, getLang, dateLocale, countConnections, countVersions } from './i18n';
+import { t, dateLocale, countConnections, countVersions } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 import { listReleases, newerThan, whatsNew, sha256Of, versionChange, type FetchText, type Rel } from './updateCore';
@@ -12,8 +12,6 @@ export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_V
 import { REPO, WEB_APP_URL } from './repo';
 export { REPO, WEB_APP_URL };
 export const ALTSTORE_SOURCE = `${WEB_APP_URL}altstore.json`;
-const API = `https://api.github.com/repos/${REPO}/releases/latest`;
-const API_ALL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 const CHECK_EVERY_MS = 30 * 60 * 1000; // every launch, at most twice an hour
 
 export interface ReleaseInfo { version: string; url: string; notes: string; publishedAt?: string; assets: { name: string; url: string; size: number; digest?: string }[] }
@@ -126,13 +124,6 @@ export function versionNotes(list: ReleaseInfo[]): HTMLElement {
   }));
 }
 
-function offerUpdate(rel: ReleaseInfo): void {
-  const el = h('div', { class: 'toast update-toast', role: 'status' }, h('span', null, t('updateAvailableShort', { v: rel.version })),
-    h('button', { type: 'button', class: 'btn small primary', onclick: () => { el.remove(); showUpdateSheet(rel); } }, icon('download'), t('updateNow')),
-    h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('close'), onclick: () => el.remove() }, icon('close')));
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 30000);
-}
 
 /* ---------- platform installers ---------- */
 

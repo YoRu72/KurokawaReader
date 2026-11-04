@@ -6,8 +6,7 @@
 // rebuilt from geometry (right-to-left when the line is Arabic/Hebrew), paragraphs
 // from the spacing, headings from the font size — and the fonts the PDF embeds are
 // carried over, so an Arabic, Japanese or Chinese PDF keeps its look in the EPUB.
-import { joinLine, cleanPdfText } from './pdftext';
-import { findVertical, plainVerticalForms } from './pdfvertical';
+import { cleanPdfText } from './pdftext';
 import JSZip from 'jszip';
 import { packDocx, zipOut, type ZipLike } from './ziputil';
 import { imageSize } from './imagesize';

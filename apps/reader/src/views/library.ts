@@ -1,5 +1,5 @@
 import { busyNow, onBusy } from '../busy';
-import { h, icon, iconButton, toast, clear, coverColors, pickSheet, openSheet } from '../ui/dom';
+import { h, icon, iconButton, toast, clear, coverColors, openSheet } from '../ui/dom';
 import { onBack } from '../ui/backstack';
 import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';

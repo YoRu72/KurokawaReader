@@ -6,4 +6,5 @@
     <string name="kt_screen_tile">ترجمة الشاشة</string>
     <string name="kt_downloads_tile">التنزيلات: إيقاف / استئناف</string>
     <string name="kt_installer">مثبّت كوروكاوا</string>
+    <string name="kt_player">مشغّل كوروكاوا</string>
 </resources>

@@ -38,6 +38,9 @@ public class MainActivity extends BridgeActivity {
             if (isAppFile(intent, d)) { handApp(d); return; }
             // (From the floating translator's menu or its tile: its page in the app.)
             if ("kurokawatools".equals(d.getScheme()) && "screen".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/screen'", null), 400); return; }
+            // (A video or a sound file opened with «Kurokawa Player»: straight into the player, with what the caller
+            // says — where to start, the title, subtitles, headers (MX Player's extras) —, the position handed back.)
+            if (isMedia(intent, d)) { handMedia(intent, d); return; }
             if ("magnet".equals(d.getScheme()) || "http".equals(d.getScheme()) || "https".equals(d.getScheme())) u = d.toString();
             else if ("content".equals(d.getScheme()) || "file".equals(d.getScheme())) u = readTorrent(d);
         } else if (Intent.ACTION_SEND.equals(action)) {
@@ -47,6 +50,39 @@ public class MainActivity extends BridgeActivity {
         if (u == null) return;
         final String link = u;
         if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/open?u='+encodeURIComponent(" + org.json.JSONObject.quote(link) + ")", null), 400);
+    }
+    private boolean isMedia(Intent intent, Uri d) {
+        if (intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtPlayer")) return true;
+        String type = intent.getType(); if (type == null) try { type = getContentResolver().getType(d); } catch (Throwable ignored) {}
+        if (type != null && (type.startsWith("video/") || type.startsWith("audio/") || type.contains("mpegurl"))) return true;
+        String n = nameOf(d).toLowerCase(java.util.Locale.ROOT);
+        return n.matches(".*\\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|flv|wmv|3gp|mp3|m4a|flac|ogg|opus|wav|aac|m3u8)$") && !"magnet".equals(d.getScheme());
+    }
+    /** Launched to play something: the activity ends when the player closes, its position handed to the caller. */
+    static volatile boolean playingForCaller = false;
+    private void handMedia(Intent intent, Uri d) { handMedia(intent, d, 0); }
+    private void handMedia(Intent intent, Uri d, int tries) {
+        // (The engine and the page come up a moment after a cold start: waited for, a little at a time.)
+        if ((KtPlugin.engineIfAny() == null || getBridge() == null || getBridge().getWebView() == null) && tries < 20) { new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> handMedia(intent, d, tries + 1), 300); return; }
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            String url = d.toString();
+            if ("content".equals(d.getScheme())) url = KtPlugin.engineIfAny() != null ? KtPlugin.engineIfAny().stream().contentUrl(d.toString()) : url;
+            else if ("file".equals(d.getScheme())) { o.put("path", d.getPath()); url = KtPlugin.engineIfAny() != null ? KtPlugin.engineIfAny().stream().fileUrl(d.getPath()) : url; }
+            o.put("url", url); o.put("name", intent.hasExtra("title") ? intent.getStringExtra("title") : nameOf(d));
+            if (intent.hasExtra("position")) o.put("position", intent.getIntExtra("position", 0) / 1000.0);
+            if (intent.hasExtra("return_result")) playingForCaller = true; if (getCallingActivity() != null) playingForCaller = true;
+            String[] hs = intent.getStringArrayExtra("headers"); if (hs != null && hs.length >= 2) { org.json.JSONObject h = new org.json.JSONObject(); for (int i = 0; i + 1 < hs.length; i += 2) h.put(hs[i], hs[i + 1]); o.put("headers", h); }
+            android.os.Parcelable[] subs = intent.getParcelableArrayExtra("subs"); if (subs != null) { org.json.JSONArray a = new org.json.JSONArray(); for (android.os.Parcelable p : subs) if (p instanceof Uri) { Uri su = (Uri) p; a.put("content".equals(su.getScheme()) && KtPlugin.engineIfAny() != null ? KtPlugin.engineIfAny().stream().contentUrl(su.toString()) : su.toString()); } o.put("subs", a); }
+            final String js = "window.dispatchEvent(new CustomEvent('kt:play',{detail:" + o.toString() + "}))";
+            if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(js, null), 600);
+        } catch (Exception e) { android.util.Log.w("KtMain", "media", e); }
+    }
+    /** The player closed: the position and the length to whoever asked (MX Player's result), the activity ended. */
+    void playerDone(long positionMs, long durationMs, String endBy) {
+        if (!playingForCaller) return; playingForCaller = false;
+        Intent r = new Intent("app.kurokawa.tools.player.result"); r.putExtra("position", (int) positionMs); r.putExtra("duration", (int) durationMs); r.putExtra("end_by", endBy);
+        setResult(RESULT_OK, r); runOnUiThread(this::finish);
     }
     private boolean isAppFile(Intent intent, Uri d) {
         String type = intent.getType(); if (type == null) try { type = getContentResolver().getType(d); } catch (Throwable ignored) {}

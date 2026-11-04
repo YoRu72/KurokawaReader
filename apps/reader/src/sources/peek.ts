@@ -6,7 +6,7 @@
 // The covers are kept the way Mihon keeps its own: a small picture (a blob, WebP where the platform writes it)
 // on the device, found again by the file's address and size, and a few hundred of them at hand in memory for
 // the session; the ones on the screen are fetched first, those scrolled past are dropped from the queue.
-import { request, bytesOf, bytesOfAsync } from './http';
+import { request, bytesOfAsync } from './http';
 import { db } from '../db';
 import { SourceError } from './types';
 

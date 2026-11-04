@@ -1,7 +1,7 @@
 // A book's own page, shown before the reader: the cover, the title, what the file carries about it, the
 // reader's stars and words, its AniList entry when tracking is on, and the contents — each chapter a tap away,
 // the read ones marked, with «resume» to carry on where the reader left off.
-import { h, icon, iconButton, toast, coverColors } from '../ui/dom';
+import { h, icon, iconButton, coverColors } from '../ui/dom';
 import { volumesOf } from '../series';
 import { t, formatBytes, formatDuration, localDigits, countChapters, getLang, formatLabel } from '../i18n';
 import { db, FAV_TAG, chapterRead, type Book } from '../db';

@@ -587,7 +587,6 @@ export function folderSource(repo: Repo): Source {
   const groupsOf = (list: Vol[], f: FilterValues, withScans = scans(f)) => groupVolumes(list, storeFirst(f), withScans, format(f));
   const HIDDEN_FOLDERS = /^\s*yaoi\s*$/i;
   const folderCard = (name: string, rel: string, extra: Partial<SourceBook> = {}): SourceBook => ({ id: `d:${rel}`, title: shownName(name), openShelf: rel, look: 'folder', ...extra });
-  const fileFor = (rel: string, name: string, size?: number): SourceFile => fileOf({ name, url: `${root}${rel}`, size, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, rel);
   /** A row for a group of editions: the best one shown, the others offered beside it. */
   const volumeRow = (g: VolGroup, opts: { full?: boolean; where?: string } = {}): SourceBook => {
     const first = g.items[0];
