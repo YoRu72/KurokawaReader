@@ -32,7 +32,9 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   // The phone's Back: from Settings to the downloads, then the background — never round.
   await p.click('[data-dest="settings"]'); await p.waitForTimeout(300);
   await sysBack(); check('Back from Settings: the downloads', (await hash()) === '#/');
-  await sysBack(); check('Back from the downloads\' top: the app to the background', (await p.evaluate(() => window.__min)) === 1 && (await hash()) === '#/');
+  // (The first press at the top only warns — «Press Back again to leave» —; the second within two seconds backgrounds the app.)
+  await sysBack(); check('Back from the downloads\' top: a warning first', (await p.evaluate(() => window.__min)) === 0 && !!(await p.$('.toast')) && (await hash()) === '#/');
+  await sysBack(); check('Back again: the app to the background', (await p.evaluate(() => window.__min)) === 1 && (await hash()) === '#/');
   // A sheet open: Back closes it first.
   await p.click('.fab'); await p.locator('.fab-item').first().click(); await p.waitForSelector('.sheet'); await sysBack();
   check('Back closes the open sheet first', !(await p.$('.sheet')) && (await p.evaluate(() => window.__min)) === 1);
