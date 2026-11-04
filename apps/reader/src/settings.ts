@@ -210,7 +210,7 @@ export const DEFAULTS: VisualSettings = {
   cjkFont: 'system',
   headingsFont: false,
   fontSize: 19,
-  lineHeight: 1.7, fontWeight: 400, doubleBackExit: false, searchEngine: 'duckduckgo',
+  lineHeight: 1.7, fontWeight: 400, doubleBackExit: true, searchEngine: 'duckduckgo',
   paragraphSpacing: 0.9,
   textWidth: 720,
   margin: 22,

@@ -1928,3 +1928,19 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .folder-chips .chip svg { width: 14px; height: 14px; }
 .qr-box { display: grid; place-items: center; padding: 12px; background: #fff; border-radius: 16px; width: max-content; margin: 8px auto; }
 .qr-box svg { display: block; }
+
+/* DNS over HTTPS status (Settings → Privacy): a light for the state, the counters, the last events. */
+.doh-card { display: grid; gap: 8px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container-low); margin: 6px 0; }
+.doh-head { display: flex; align-items: center; gap: 10px; }
+.doh-light { width: 12px; height: 12px; border-radius: 50%; background: var(--md-outline); flex: none; }
+.doh-card[data-state='ok'] .doh-light { background: #4caf50; box-shadow: 0 0 0 4px rgb(76 175 80 / .2); }
+.doh-card[data-state='resolving'] .doh-light { background: #f5a623; animation: doh-pulse 1s ease-in-out infinite; }
+.doh-card[data-state='failed'] .doh-light { background: var(--md-error); }
+.doh-card[data-state='idle'] .doh-light { background: var(--md-primary); opacity: .6; }
+@keyframes doh-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: .5; } }
+.doh-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.doh-feed { display: grid; gap: 2px; font-size: 12px; max-height: 220px; overflow: auto; }
+.doh-ev { display: flex; gap: 8px; align-items: baseline; }
+.doh-ev .doh-kind { font-weight: 600; min-width: 6em; }
+.doh-ev.k-fail .doh-kind, .doh-ev.k-retry .doh-kind { color: var(--md-error); }
+.doh-ev.k-unblock .doh-kind, .doh-ev.k-resolve .doh-kind { color: var(--md-primary); }

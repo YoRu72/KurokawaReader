@@ -35,6 +35,52 @@ final class KrDoh {
 
     static boolean on() { String p = provider; return p != null && !p.isEmpty() && !"off".equals(p); }
 
+    /* ---------- what is going on, for the reader to see: counters, the last events, a listener ---------- */
+    /** Someone who wants to hear each event (the plugin, which tells the page; the browser, for its indicator). */
+    interface Listener { void on(String json); }
+    static volatile Listener listener;
+    static final java.util.concurrent.atomic.AtomicLong queries = new java.util.concurrent.atomic.AtomicLong(), hits = new java.util.concurrent.atomic.AtomicLong(), fails = new java.util.concurrent.atomic.AtomicLong(), unblocked = new java.util.concurrent.atomic.AtomicLong();
+    static volatile String lastResolver = "", lastError = ""; static volatile long lastMs = -1, lastAt = 0;
+    /** «off», «idle» (on, nothing asked yet), «resolving», «ok» (the resolver answered), «failed» (the last ask failed). */
+    static volatile String state = "off";
+    private static final java.util.ArrayDeque<String> log = new java.util.ArrayDeque<>();
+    static void note(String kind, String host, String ip, long ms, String msg) {
+        String j;
+        try { org.json.JSONObject o = new org.json.JSONObject(); o.put("at", System.currentTimeMillis()); o.put("kind", kind); if (host != null) o.put("host", host); if (ip != null) o.put("ip", ip); if (ms >= 0) o.put("ms", ms); if (msg != null) o.put("msg", msg); o.put("state", state); j = o.toString(); } catch (Exception e) { return; }
+        synchronized (log) { log.addLast(j); while (log.size() > 80) log.removeFirst(); }
+        Listener l = listener; if (l != null) try { l.on(j); } catch (Throwable ignored) {}
+    }
+    /** Everything the page shows: the state, the counters, the last events. */
+    static org.json.JSONObject status() {
+        org.json.JSONObject o = new org.json.JSONObject();
+        try {
+            if (!on()) state = "off"; else if ("off".equals(state)) state = "idle";
+            o.put("provider", provider); o.put("state", state); o.put("queries", queries.get()); o.put("hits", hits.get()); o.put("fails", fails.get()); o.put("unblocked", unblocked.get());
+            o.put("lastResolver", lastResolver); o.put("lastMs", lastMs); o.put("lastAt", lastAt); o.put("lastError", lastError); o.put("cached", cache.size());
+            org.json.JSONArray a = new org.json.JSONArray(); synchronized (log) { for (String j : log) a.put(new org.json.JSONObject(j)); } o.put("log", a);
+        } catch (Exception ignored) {}
+        return o;
+    }
+    /** The resolver tried on purpose (a known name asked, each address of the resolver in turn): whether it answers, from which address, in how long. */
+    static org.json.JSONObject probe() {
+        org.json.JSONObject o = new org.json.JSONObject();
+        try {
+            if (!on()) { o.put("ok", false); o.put("why", "off"); return o; }
+            String[] ep = endpoint(provider); if (ep == null) { o.put("ok", false); o.put("why", "noResolver"); return o; }
+            state = "resolving"; note("probe", "example.com", null, -1, "start");
+            org.json.JSONArray tries = new org.json.JSONArray(); boolean any = false;
+            for (int i = ep.length > 1 ? 1 : 0; i < ep.length; i++) {
+                org.json.JSONObject tr = new org.json.JSONObject(); tr.put("resolver", ep.length > 1 ? ep[i] : ep[0]); long t0 = System.currentTimeMillis();
+                try { InetAddress[] ips = parse(ask(new URL(ep[0]), ep.length > 1 ? ep[i] : null, query("example.com", 1)), new long[] { 300 }); long ms = System.currentTimeMillis() - t0; tr.put("ok", ips.length > 0); tr.put("ms", ms); if (ips.length > 0) { any = true; if (!o.has("ms")) { o.put("ms", ms); o.put("resolver", tr.getString("resolver")); } } }
+                catch (Exception e) { tr.put("ok", false); tr.put("error", String.valueOf(e.getMessage())); }
+                tries.put(tr);
+            }
+            o.put("ok", any); o.put("tries", tries); state = any ? "ok" : "failed"; if (any) { lastResolver = o.optString("resolver"); lastMs = o.optLong("ms"); lastAt = System.currentTimeMillis(); lastError = ""; } else lastError = tries.length() > 0 ? tries.getJSONObject(tries.length() - 1).optString("error") : "";
+            note("probe", "example.com", any ? lastResolver : null, any ? o.optLong("ms") : -1, any ? "ok" : "failed");
+        } catch (Exception e) { try { o.put("ok", false); o.put("why", String.valueOf(e.getMessage())); } catch (Exception ignored) {} }
+        return o;
+    }
+
     /** Each provider: its resolver's address and the addresses to reach it by (asked of no DNS at all). */
     private static String[] endpoint(String p) {
         switch (p) {
@@ -48,18 +94,18 @@ final class KrDoh {
 
     private static final class Entry { final InetAddress[] ips; final long until; Entry(InetAddress[] ips, long until) { this.ips = ips; this.until = until; } }
     private static final Map<String, Entry> cache = new ConcurrentHashMap<>();
-    static void forget() { cache.clear(); neededAt.clear(); }
+    static void forget() { cache.clear(); neededAt.clear(); state = on() ? "idle" : "off"; lastResolver = ""; lastError = ""; lastMs = -1; }
 
     /** The addresses of `host`, asked of the resolver (kept for their time to live, at least a minute). */
     static InetAddress[] resolve(String host) throws IOException {
         if (isLiteral(host)) return new InetAddress[] { InetAddress.getByName(host) };
         String p = provider; String key = p + "|" + host.toLowerCase();
         Entry e = cache.get(key);
-        if (e != null && e.until > System.currentTimeMillis()) return e.ips;
+        if (e != null && e.until > System.currentTimeMillis()) { hits.incrementAndGet(); return e.ips; }
         String[] ep = endpoint(p);
         if (ep == null) return InetAddress.getAllByName(host);
         byte[] query = query(host, 1);
-        IOException last = null;
+        IOException last = null; queries.incrementAndGet(); state = "resolving"; long t0 = System.currentTimeMillis();
         // (The resolver by each of its own addresses in turn; one given by address only, by its name.)
         for (int i = ep.length > 1 ? 1 : 0; i < ep.length; i++) {
             try {
@@ -71,9 +117,13 @@ final class KrDoh {
                 }
                 if (ips.length == 0) throw new java.net.UnknownHostException(host);
                 cache.put(key, new Entry(ips, System.currentTimeMillis() + Math.max(60, Math.min(3600, ttl[0])) * 1000));
+                long ms = System.currentTimeMillis() - t0; state = "ok"; lastResolver = ep.length > 1 ? ep[i] : ep[0]; lastMs = ms; lastAt = System.currentTimeMillis(); lastError = "";
+                note("resolve", host, ips[0].getHostAddress(), ms, null);
                 return ips;
-            } catch (IOException ex) { last = ex; }
+            } catch (IOException ex) { last = ex; note("retry", host, ep.length > 1 ? ep[i] : ep[0], -1, String.valueOf(ex.getMessage())); }
         }
+        fails.incrementAndGet(); state = "failed"; lastError = last != null ? String.valueOf(last.getMessage()) : "unknown host"; lastAt = System.currentTimeMillis();
+        note("fail", host, null, System.currentTimeMillis() - t0, lastError);
         throw last != null ? last : new java.net.UnknownHostException(host);
     }
 
@@ -83,6 +133,8 @@ final class KrDoh {
      *  to the web view's own requests: a site's check (Cloudflare) wants the browser's own connection, and the
      *  clearance it gives holds for that connection only. Kept ten minutes a name. */
     private static final Map<String, long[]> neededAt = new ConcurrentHashMap<>();
+    /** What `needed` last found for `host`, when it looked within ten minutes; null when it has not (no network here). */
+    static Boolean neededCached(String host) { if (!on() || host == null) return null; long[] had = neededAt.get(provider + "|" + host.toLowerCase()); return had == null || had[0] <= System.currentTimeMillis() ? null : had[1] == 1; }
     static boolean needed(String host) {
         if (!on() || isLiteral(host)) return false;
         String key = provider + "|" + host.toLowerCase();
@@ -108,6 +160,8 @@ final class KrDoh {
             } catch (IOException e) { need = false; }
         }
         neededAt.put(key, new long[] { System.currentTimeMillis() + 600_000L, need ? 1 : 0 });
+        if (need) unblocked.incrementAndGet();
+        note(need ? "unblock" : "direct", host, null, -1, need ? (usable ? "hidden" : "noAnswer") : null);
         return need;
     }
     private static boolean sameNet(InetAddress a, InetAddress b) {

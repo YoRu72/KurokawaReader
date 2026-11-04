@@ -180,7 +180,10 @@ else {
     type AppPlugin = { addListener(ev: 'backButton', fn: () => void): unknown; minimizeApp(): unknown; exitApp(): unknown };
     const App = (window.Capacitor.registerPlugin?.('App') ?? window.Capacitor.Plugins?.App) as AppPlugin | undefined;
     const call = (f: () => unknown) => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
-    if (App) void call(() => App.addListener('backButton', () => { if (!goBack()) void call(() => App.minimizeApp()).catch(() => call(() => App.exitApp())).catch(() => undefined); })).catch(() => undefined);
+    // (Nothing left to close: the app is put away only on a second press within two seconds — a Back that lands
+    // right after a file picker or a sheet that was lost no longer throws the reader out of the app.)
+    let backAt = 0;
+    if (App) void call(() => App.addListener('backButton', () => { if (goBack()) return; if (Date.now() - backAt > 2000) { backAt = Date.now(); void import('./ui/dom').then(({ toast }) => toast(t('pressAgainToExit'))); return; } void call(() => App.minimizeApp()).catch(() => call(() => App.exitApp())).catch(() => undefined); })).catch(() => undefined);
   }
   // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
   // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)

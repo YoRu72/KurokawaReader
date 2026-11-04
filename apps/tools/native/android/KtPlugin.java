@@ -72,7 +72,7 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { self = this; try { KrDoh.provider = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {} bg.execute(this::engine); }
+    @Override public void load() { wireDoh(); self = this; try { KrDoh.provider = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("doh", "off"); } catch (Exception ignored) {} bg.execute(this::engine); }
 
     private interface Work { void run() throws Exception; }
     private void run(PluginCall call, Work w) { bg.execute(() -> { try { w.run(); } catch (Throwable e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e instanceof Exception ? (Exception) e : new Exception(e)); } }); }
@@ -332,6 +332,13 @@ public class KtPlugin extends Plugin {
         getActivity().runOnUiThread(() -> { try { android.content.ClipboardManager cm = (android.content.ClipboardManager) getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE); JSObject r = new JSObject(); String text = ""; if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) { CharSequence c = cm.getPrimaryClip().getItemAt(0).coerceToText(getContext()); if (c != null) text = c.toString(); } r.put("text", text); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
     }
     /** DNS over HTTPS (the reader's resolver): {provider: off | cloudflare | google | quad9 | adguard | https://…}; {test: host}. */
+    /** DNS over HTTPS up close: its state, counters and last events; `probe` tries the resolver first. */
+    @PluginMethod public void dohStatus(PluginCall call) {
+        final boolean probe = Boolean.TRUE.equals(call.getBoolean("probe", false));
+        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe()); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+    }
+    /** Each DoH event handed to the page as «doh» (the Settings page's live feed, the status chip). */
+    static void wireDoh() { KrDoh.listener = (json) -> { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("doh", JSObject.fromJSONObject(new org.json.JSONObject(json)), true); } catch (Exception ignored) {} KtBrowserActivity.dohEvent(json); }; }
     @PluginMethod public void setDoh(PluginCall call) {
         String p = call.getString("provider", null);
         if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }

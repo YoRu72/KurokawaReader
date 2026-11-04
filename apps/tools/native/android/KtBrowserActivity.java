@@ -43,6 +43,51 @@ public class KtBrowserActivity extends Activity {
     /** Media the page asked for (a player's video, its playlist), seen as it loads. */
     private final Map<String, String> media = new LinkedHashMap<>();
     private WebView wv; private EditText bar; private ProgressBar prog;
+    /** The DoH chip on the bar: grey off, amber while a name is being asked, green once the resolver answered (and
+     *  this page's site came through it), red when the last ask failed. Tapped: the status and the last events. */
+    private Button doh; private static volatile KtBrowserActivity shown; private String pageHost = "";
+    private final java.util.ArrayDeque<String> dohLog = new java.util.ArrayDeque<>();
+    static void dohEvent(String json) { KtBrowserActivity a = shown; if (a != null) a.h.post(() -> a.onDoh(json)); }
+    private void onDoh(String json) {
+        synchronized (dohLog) { dohLog.addLast(json); while (dohLog.size() > 30) dohLog.removeFirst(); }
+        paintDoh();
+    }
+    private void paintDoh() {
+        if (doh == null) return;
+        String st = KrDoh.on() ? KrDoh.state : "off"; boolean ar = ar(this);
+        int c; String label;
+        switch (st) {
+            case "resolving": c = Color.rgb(245, 166, 35); label = "DoH …"; break;
+            case "ok": c = Color.rgb(76, 175, 80); label = "DoH ✓"; break;
+            case "failed": c = Color.rgb(229, 57, 53); label = "DoH ✕"; break;
+            case "idle": c = dark() ? Color.rgb(170, 170, 176) : Color.rgb(110, 110, 116); label = "DoH"; break;
+            default: c = dark() ? Color.rgb(110, 110, 116) : Color.rgb(160, 160, 166); label = ar ? "DoH ·" : "DoH ·";
+        }
+        doh.setTextColor(c); doh.setText(label);
+        doh.setContentDescription(ar ? "حالة DNS عبر HTTPS" : "DNS over HTTPS status");
+    }
+    private static String ago(long at) { long s = Math.max(0, (System.currentTimeMillis() - at) / 1000); return s < 60 ? s + "s" : s < 3600 ? (s / 60) + "m" : (s / 3600) + "h"; }
+    private void dohDialog() {
+        boolean ar = ar(this); org.json.JSONObject st = KrDoh.status();
+        StringBuilder sb = new StringBuilder();
+        String prov = st.optString("provider", "off"); String state = st.optString("state", "off");
+        sb.append(ar ? "المزوِّد: " : "Resolver: ").append("off".equals(prov) ? (ar ? "معطَّل" : "off") : prov).append('\n');
+        sb.append(ar ? "الحالة: " : "State: ").append(ar ? (state.equals("ok") ? "متّصل" : state.equals("resolving") ? "يستعلم…" : state.equals("failed") ? "أخفق" : state.equals("idle") ? "جاهز" : "معطَّل") : state).append('\n');
+        if (!st.optString("lastResolver").isEmpty()) sb.append(ar ? "آخر عنوان أجاب: " : "Last answered from: ").append(st.optString("lastResolver")).append(st.optLong("lastMs", -1) >= 0 ? " (" + st.optLong("lastMs") + " ms)" : "").append('\n');
+        if (!st.optString("lastError").isEmpty()) sb.append(ar ? "آخر خطأ: " : "Last error: ").append(st.optString("lastError")).append('\n');
+        sb.append(ar ? "استعلامات: " : "Queries: ").append(st.optLong("queries")).append(ar ? " · من الذاكرة: " : " · cached: ").append(st.optLong("hits")).append(ar ? " · أخفقت: " : " · failed: ").append(st.optLong("fails")).append(ar ? " · مواقع فُتحت عبره: " : " · sites unblocked: ").append(st.optLong("unblocked")).append('\n');
+        if (!pageHost.isEmpty()) sb.append(ar ? "هذه الصفحة: " : "This page: ").append(pageHost).append(!KrDoh.on() ? (ar ? " — DoH معطَّل" : " — DoH off") : Boolean.TRUE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — عبر DoH (الشبكة تحجبه)" : " — through DoH (hidden by the network)") : Boolean.FALSE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — مباشرة (الشبكة تعطيه)" : " — direct (the network gives it)") : (ar ? " — لم يُفحَص بعد" : " — not checked yet")).append('\n');
+        org.json.JSONArray log = st.optJSONArray("log");
+        if (log != null && log.length() > 0) {
+            sb.append('\n').append(ar ? "آخر الأحداث:" : "Recent:").append('\n');
+            for (int i = log.length() - 1, n = 0; i >= 0 && n < 12; i--, n++) { org.json.JSONObject e = log.optJSONObject(i); if (e == null) continue; sb.append("• ").append(ago(e.optLong("at"))).append("  ").append(e.optString("kind")).append(' ').append(e.optString("host")); if (!e.optString("ip").isEmpty()) sb.append(" → ").append(e.optString("ip")); if (e.optLong("ms", -1) >= 0) sb.append(" ").append(e.optLong("ms")).append("ms"); if (!e.optString("msg").isEmpty()) sb.append(" ").append(e.optString("msg")); sb.append('\n'); }
+        }
+        android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this).setTitle("DNS over HTTPS").setMessage(sb.toString());
+        b.setPositiveButton(ar ? "اختبار" : "Test", (d, w) -> { paintDoh(); new Thread(() -> { org.json.JSONObject r = KrDoh.probe(); h.post(() -> { paintDoh(); say(r.optBoolean("ok") ? (ar ? "يعمل عبر " : "Working via ") + r.optString("resolver") + " (" + r.optLong("ms") + " ms)" : (ar ? "أخفق: " : "Failed: ") + r.optString("why", KrDoh.lastError)); }); }, "kt-doh-probe").start(); });
+        b.setNeutralButton(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل (Cloudflare)" : "Turn on (Cloudflare)"), (d, w) -> { String np = KrDoh.on() ? "off" : "cloudflare"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — Cloudflare" : "DoH on — Cloudflare") : (ar ? "DoH معطَّل" : "DoH off")); if (wv != null) wv.reload(); });
+        b.setNegativeButton(ar ? "إغلاق" : "Close", null);
+        b.show();
+    }
     /* The way to a download, kept with it: the pages and what was tapped on each (its words, its link, its kind), so
        a link that runs out (signed links: itch.io, cloud storage) can be got again by going the same way. */
     private final java.util.List<JSONObject> trail = new java.util.ArrayList<>();
@@ -93,7 +138,9 @@ public class KtBrowserActivity extends Activity {
         top.addView(btn("‹", v -> { if (wv.canGoBack()) wv.goBack(); }));
         top.addView(bar, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         top.addView(btn("↻", v -> wv.reload()));
+        doh = btn("DoH", v -> dohDialog()); doh.setTextSize(12); top.addView(doh); paintDoh();
         Button grab = btn(ar ? "التقِط" : "Grab", v -> grab()); grab.setTypeface(Typeface.DEFAULT_BOLD); top.addView(grab);
+        top.addView(btn("⋮", v -> menu()));
         root.addView(top, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         prog = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); prog.setMax(100); prog.setIndeterminate(false);
         root.addView(prog, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(3)));
@@ -121,7 +168,7 @@ public class KtBrowserActivity extends Activity {
                 if (kind != null) synchronized (media) { if (media.size() < 400 && !media.containsKey(u)) media.put(u, kind); }
                 return super.shouldInterceptRequest(v, r);
             }
-            @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); }
+            @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); try { pageHost = android.net.Uri.parse(u).getHost(); if (pageHost == null) pageHost = ""; } catch (Exception e) { pageHost = ""; } paintDoh(); }
             // (Taps recorded as soon as the page shows, not only once it has finished loading: a page still loading its ads
             // was tapped through unrecorded, and its replay stopped on the first page.)
             @Override public void onPageCommitVisible(WebView v, String u) { v.evaluateJavascript(TRAIL_JS, null); }
@@ -201,6 +248,27 @@ public class KtBrowserActivity extends Activity {
         });
     }
 
+    /** The browser's own menu: the page in the system's browser, its link copied or shared, the desktop site, find in page, the site's cookies cleared, DoH. */
+    private boolean desktopSite = false;
+    private void menu() {
+        boolean ar = ar(this);
+        String[] items = { ar ? "افتح في متصفّح النظام" : "Open in system browser", ar ? "انسخ الرابط" : "Copy link", ar ? "شارِك الرابط" : "Share link", desktopSite ? (ar ? "موقع الهاتف" : "Mobile site") : (ar ? "موقع الحاسوب" : "Desktop site"), ar ? "ابحث في الصفحة" : "Find in page", ar ? "امسح كعكات هذا الموقع" : "Clear this site's cookies", ar ? "DNS عبر HTTPS…" : "DNS over HTTPS…", ar ? "الصفحة الرئيسية" : "Home" };
+        new android.app.AlertDialog.Builder(this).setItems(items, (d, i) -> {
+            String u = wv.getUrl() == null ? "" : wv.getUrl();
+            switch (i) {
+                case 0: try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(u))); } catch (Exception e) { say(String.valueOf(e.getMessage())); } break;
+                case 1: ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(android.content.ClipData.newPlainText("url", u)); say(ar ? "نُسِخ" : "Copied"); break;
+                case 2: { Intent sh = new Intent(Intent.ACTION_SEND); sh.setType("text/plain"); sh.putExtra(Intent.EXTRA_TEXT, u); startActivity(Intent.createChooser(sh, null)); break; }
+                case 3: desktopSite = !desktopSite; { WebSettings st = wv.getSettings(); st.setUserAgentString(desktopSite ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36" : null); st.setUseWideViewPort(true); st.setLoadWithOverviewMode(true); } wv.reload(); break;
+                case 4: { EditText in = new EditText(this); in.setHint(ar ? "كلمة" : "Word"); new android.app.AlertDialog.Builder(this).setTitle(ar ? "ابحث في الصفحة" : "Find in page").setView(in).setPositiveButton(ar ? "ابحث" : "Find", (dd, ww) -> { wv.findAllAsync(in.getText().toString()); wv.setFindListener((active, count, done) -> { if (done) say(count == 0 ? (ar ? "لا شيء" : "Nothing") : (active + 1) + " / " + count); }); }).setNeutralButton(ar ? "التالي" : "Next", (dd, ww) -> wv.findNext(true)).setNegativeButton(ar ? "إغلاق" : "Close", (dd, ww) -> wv.clearMatches()).show(); break; }
+                case 5: { String host = pageHost; CookieManager cm = CookieManager.getInstance(); String ck = cm.getCookie(u); if (ck != null) for (String part : ck.split(";")) { String name = part.trim().split("=")[0]; cm.setCookie(u, name + "=; Max-Age=0; path=/"); cm.setCookie(u, name + "=; Max-Age=0; path=/; domain=" + host); } cm.flush(); say(ar ? "مُسِحت" : "Cleared"); wv.reload(); break; }
+                case 6: dohDialog(); break;
+                case 7: go("https://duckduckgo.com/"); break;
+            }
+        }).show();
+    }
+    @Override protected void onResume() { super.onResume(); shown = this; paintDoh(); }
+    @Override protected void onPause() { super.onPause(); if (shown == this) shown = null; }
     @Override public void onBackPressed() { if (wv != null && wv.canGoBack()) wv.goBack(); else super.onBackPressed(); }
     @Override protected void onDestroy() { if (wv != null) { wv.stopLoading(); wv.destroy(); } super.onDestroy(); }
 }
