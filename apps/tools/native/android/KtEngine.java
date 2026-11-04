@@ -209,6 +209,7 @@ final class KtEngine {
         x.sequential = o.optBoolean("sequential", false); x.paused = o.optBoolean("paused", false);
         x.wantConnections = Math.max(1, Math.min(32, o.optInt("connections", 24)));
         String name = o.optString("name", ""); if (!name.isEmpty()) x.name = name;
+        if (x.meta != null && x.meta.optBoolean("wifiOnly") && netCb == null) watchNetwork(true);
         JSONArray files = o.optJSONArray("files");
         if (files != null) { x.priorities = new int[0]; List<Integer> want = new ArrayList<>(); for (int i = 0; i < files.length(); i++) want.add(files.getInt(i)); x.priorities = new int[Math.max(0, max(want) + 1)]; for (int i : want) x.priorities[i] = 1; }
         if (o.has("video") && x.source.has("url")) { x.kind = "video"; JSONObject v = o.getJSONObject("video"); if (x.meta == null) x.meta = new JSONObject(); x.meta.put("kind", "video"); for (java.util.Iterator<String> it = v.keys(); it.hasNext(); ) { String k = it.next(); x.meta.put(k, v.get(k)); } if (x.name == null) x.name = v.optString("title", x.source.getString("url")); synchronized (this) { tasks.put(x.id, x); } if (!x.paused) startVideo(x); else x.state = "paused"; }
@@ -280,10 +281,15 @@ final class KtEngine {
     /** A reason to hold the downloads (`on`) or its end: held ones resumed when no reason is left. */
     synchronized void hold(String reason, boolean on) {
         boolean was = !holds.isEmpty(); if (on) holds.add(reason); else holds.remove(reason);
-        if (on && !was) { for (Task x : snapshot()) if (!x.paused && isMoving(x)) { pause(x.id); x.heldBy = reason; } }
+        if (on && !was) { for (Task x : snapshot()) if (!x.paused && isMoving(x) && heldBy(x, reason)) { pause(x.id); x.heldBy = reason; } }
+        else if (on && was) { for (Task x : snapshot()) if (!x.paused && isMoving(x) && x.heldBy == null && heldBy(x, reason)) { pause(x.id); x.heldBy = reason; } }
         else if (!on && holds.isEmpty()) { for (Task x : snapshot()) if (x.heldBy != null) { x.heldBy = null; try { resume(x.id); } catch (Exception e) { Log.w(TAG, "resume held", e); } } }
         tell(true);
     }
+    /** Whether `reason` holds this task: a metered network holds those marked Wi-Fi only when the switch is off. */
+    private boolean heldBy(Task x, String reason) { return !"metered".equals(reason) || wifiOnly || (x.meta != null && x.meta.optBoolean("wifiOnly")); }
+    /** Whether the network needs watching: the Wi-Fi only switch, or any download marked so. */
+    private boolean needNet() { if (wifiOnly) return true; for (Task x : snapshot()) if (x.meta != null && x.meta.optBoolean("wifiOnly") && !"done".equals(x.state) && !"seeding".equals(x.state)) return true; return false; }
     String heldReason() { synchronized (holds) { return holds.isEmpty() ? null : holds.iterator().next(); } }
     private android.net.ConnectivityManager.NetworkCallback netCb; private android.content.BroadcastReceiver batteryRx; private boolean wifiOnly, batteryGuard;
     /** Wi-Fi only: downloads held on a metered network (mobile data, a hotspot), resumed on Wi-Fi. */
@@ -459,7 +465,7 @@ final class KtEngine {
         sp.setBoolean(settings_pack.bool_types.anonymous_mode.swigValue(), anonymous);
     }
     void configure(JSONObject o) {
-        if (o.has("wifiOnly") && o.optBoolean("wifiOnly") != wifiOnly) { wifiOnly = o.optBoolean("wifiOnly"); watchNetwork(wifiOnly); }
+        if (o.has("wifiOnly") && o.optBoolean("wifiOnly") != wifiOnly) { wifiOnly = o.optBoolean("wifiOnly"); watchNetwork(needNet()); }
         if (o.has("batteryGuard") && o.optBoolean("batteryGuard") != batteryGuard) { batteryGuard = o.optBoolean("batteryGuard"); watchBattery(batteryGuard); }
         if (o.has("seed")) seedAfterDone = o.optBoolean("seed");
         if (o.has("dht")) dht = o.optBoolean("dht", true); if (o.has("lsd")) lsd = o.optBoolean("lsd", true); if (o.has("upnp")) upnp = o.optBoolean("upnp", true); if (o.has("natpmp")) natpmp = o.optBoolean("natpmp", true);
@@ -529,7 +535,7 @@ final class KtEngine {
                 x.httpOut = new File(dir, safe);
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
-                final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = retries; opt.state = state; opt.expectName = safe;
+                final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = x.meta != null && x.meta.optBoolean("noRetry") ? 0 : retries; opt.state = state; opt.expectName = safe;
                 // (The server's own name for the file — Content-Disposition, or the right extension for its type — taken
                 // as soon as the server answers, not at the end: an APK no longer shows as «.bin» while it comes.)
                 final File dirF = dir;

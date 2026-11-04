@@ -1913,3 +1913,16 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 @media (prefers-reduced-motion: reduce) { .busy-bar.busy-any i { animation: none; width: 100% !important; opacity: .5; } }
 .search-missing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; font-size: 13px; }
 .gallery-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 2px 14px; font-size: 13px; }
+
+/* The Add sheet's «Save as»: the name and the extension apart; what the link says of itself; the folders used lately. */
+.save-as { display: grid; gap: 8px; margin-top: 4px; }
+.save-as.many .field, .save-as.many .add-size { display: none; }
+.save-as-row { display: flex; align-items: center; gap: 4px; }
+.save-as-row .dot { opacity: .6; font-weight: 600; }
+.save-as-row .ext-in { width: 6em; flex: none; text-align: start; }
+.add-size, .add-storage { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 20px; }
+.add-size svg, .add-storage svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; flex: none; }
+.add-size .danger, .add-storage .danger { color: var(--md-error); }
+.add-size .spinner.small { width: 14px; height: 14px; }
+.check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); gap: 0 8px; margin: 6px 0; }
+.folder-chips .chip svg { width: 14px; height: 14px; }

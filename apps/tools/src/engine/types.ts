@@ -62,7 +62,9 @@ export interface Task {
   pieceMap?: string; numPieces?: number; havePieces?: number;
   meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number;
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
-    hf?: string; sha256?: string };
+    hf?: string; sha256?: string;
+    /** Waits for Wi-Fi (Android); not retried when it fails; a hidden file (a dot name); waits for the schedule's window. */
+    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }
