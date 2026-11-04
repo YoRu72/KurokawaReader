@@ -286,7 +286,7 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
       row('magnet', t('epChooseToWatch'), t('epChooseToWatchHint'), () => void torrentSheet(a, n, 'stream'));
       void import('../anime/stream').then((st) => st.streamProviders()).then((ps) => { if (ps.length && sh.el.isConnected) row('globe', t('streamWatch'), t('epOnlineHint'), () => void import('./animeStream').then((m) => m.streamSheet(a, n))); });
       row('download', t('epDownloadBest'), t('epDownloadBestHint'), () => void (async () => {
-        const { buildQuery, searchAll, magnetOf } = await import('../anime/providers'); const { bestRelease } = await import('../anime/watch');
+        const { buildQuery, searchAll } = await import('../anime/providers'); const { bestRelease } = await import('../anime/watch');
         toast(t('watchFinding'));
         const rs = await searchAll(await buildQuery(a, n), () => undefined); const best = bestRelease(a, n, rs);
         if (!best) { toast(t('watchNone'), 'error', 5000); torrentSheet(a, n); return; }

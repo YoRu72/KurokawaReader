@@ -187,7 +187,7 @@ final class KtStream {
         }
     }
 
-    private static String readLine(InputStream in) throws IOException {
+    static String readLine(InputStream in) throws IOException {
         StringBuilder sb = new StringBuilder(); int c;
         while ((c = in.read()) >= 0) { if (c == '\n') break; if (c != '\r') sb.append((char) c); if (sb.length() > 8192) break; }
         return c < 0 && sb.length() == 0 ? null : sb.toString();

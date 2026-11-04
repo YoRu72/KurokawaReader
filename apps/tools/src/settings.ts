@@ -14,6 +14,8 @@ export interface Settings {
   accentCustom: string;
   /** The download folder (a path, or a content: URI on Android); '' = the engine's default. */
   downloadDir: string;
+  /** Folders chosen lately in the Add sheet, newest first. */
+  recentDirs?: string[];
   maxActive: number;
   limits: Limits;
   seedAfterDone: boolean;

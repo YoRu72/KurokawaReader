@@ -104,7 +104,7 @@ const serve = () => http.createServer((req, res) => {
   // The preferences panel.
   await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Player settings' }).click(); await p.waitForSelector('.sheet .pp-group');
   const groups = await p.$$eval('.sheet .pp-group > summary', (e) => e.map((x) => x.textContent)); console.log('groups:', groups.join(' | '));
-  check('the groups of preferences (the decoder\'s too, on a phone)', groups.length === 6 || (groups.length === 7 && groups.includes('Decoder')));
+  check('the groups of preferences (the decoder\'s too, on a phone)', groups.length === 8 || (groups.length === 9 && groups.includes('Decoder')));
   check('no page errors', !errors.length);
   await br.close(); web.close(); fs.rmSync(MEDIA, { recursive: true, force: true });
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

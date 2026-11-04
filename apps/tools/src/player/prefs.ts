@@ -18,6 +18,8 @@ export interface PlayerPrefs {
   controlsTimeout: number; seekPreview: boolean; showClock: boolean;
   /** REX Player's layout: the buttons on the bar, in their order (the rest in the tools menu). */
   bar: string[];
+  /** Appearance (REX Player's page): the accent colour (empty: the app's), the seek bar's look, how dark the controls' shade is, the title shown, the chapter marks on the bar, the controls' size. */
+  accent: string; seekStyle: 'thin' | 'thick' | 'wave'; controlsDim: number; showTitle: boolean; chapterMarks: boolean; controlSize: 'small' | 'normal' | 'large';
   /** Decoder (mpv): hardware (MediaCodec), hardware with copying (works with filters and screenshots), software; GPU
    *  debanding; the newer renderer. */
   hwdec: 'hw' | 'hwcopy' | 'sw'; deband: boolean; gpuNext: boolean;
@@ -49,7 +51,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   skipAmount: 85, autoSkip: 'button', filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
-  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false,
+  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false,
   repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true,
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,

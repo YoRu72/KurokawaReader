@@ -3,7 +3,7 @@
 // credits, previews, menus, samples) told apart — the wanted episodes ticked, the rest left out — then changed by
 // hand as you like, and only those downloaded.
 import { h, icon, openSheet } from '../ui/dom';
-import { t, formatBytes, localDigits, countFiles } from '../i18n';
+import { t, formatBytes, localDigits } from '../i18n';
 import { getEngine, isVideo } from '../engine';
 import type { TaskSource, TorrentInfo } from '../engine/types';
 import { parseFilename } from '../anime/anitomy';

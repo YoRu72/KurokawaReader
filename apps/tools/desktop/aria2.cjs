@@ -7,6 +7,7 @@ const path = require('node:path');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const { Aria2Rpc } = require('./aria2rpc.cjs');
+const Sniff = require('./sniff.cjs');
 
 const num = (s) => Number(s ?? 0) || 0;
 
@@ -77,7 +78,7 @@ class Aria2Engine {
       id: st.gid, kind: st.bittorrent ? 'torrent' : 'http', name: extra.name || this.nameOf(st), source: extra.source || (st.bittorrent ? (st.infoHash ? { magnet: `magnet:?xt=urn:btih:${st.infoHash}` } : {}) : { url: st.files?.[0]?.uris?.[0]?.uri }),
       dir, state: this.stateOf(st), done, total, downSpeed: speed, upSpeed: num(st.uploadSpeed), eta: speed > 0 && total > done ? Math.round((total - done) / speed) : undefined,
       peers: st.bittorrent ? num(st.connections) : undefined, seeds: st.numSeeders !== undefined ? num(st.numSeeders) : undefined, connections: st.bittorrent ? undefined : num(st.connections), infoHash: st.infoHash,
-      files: (st.files || []).map((f) => ({ index: Number(f.index) - 1, path: (f.path || '').startsWith(dir) ? f.path.slice(dir.length).replace(/^[\\/]+/, '') : f.path, size: num(f.length), done: num(f.completedLength), priority: f.selected === 'true' ? 1 : 0 })),
+      files: (st.files || []).map((f, i) => { const fp = i === 0 && extra.renamed ? extra.renamed : f.path; return { index: Number(f.index) - 1, path: (fp || '').startsWith(dir) ? fp.slice(dir.length).replace(/^[\\/]+/, '') : fp, size: num(f.length), done: num(f.completedLength), priority: f.selected === 'true' ? 1 : 0 }; }),
       segments: st.status === 'active' && !st.bittorrent ? piecesToSegments(st) : undefined,
       error: st.status === 'error' ? `${st.errorMessage || ''} (${st.errorCode})` : undefined, addedAt: extra.addedAt || Date.now(), doneAt: st.status === 'complete' ? extra.doneAt || Date.now() : undefined, meta: extra.meta, engine: 'native',
     };
@@ -86,7 +87,12 @@ class Aria2Engine {
     if (!this.available) return [];
     const [a, w, s] = await Promise.all([this.rpc.call('tellActive'), this.rpc.call('tellWaiting', 0, 1000), this.rpc.call('tellStopped', 0, 1000)]);
     const all = [...a, ...w, ...s].filter((st) => !(st.followedBy?.length && num(st.totalLength) === 0) && !(st.status === 'complete' && st.followedBy?.length));
-    for (const st of all) if (st.status === 'complete' && this.keep[st.gid] && !this.keep[st.gid].doneAt) { this.keep[st.gid].doneAt = Date.now(); this.saveKeep(); }
+    for (const st of all) if (st.status === 'complete' && this.keep[st.gid] && !this.keep[st.gid].doneAt) {
+      this.keep[st.gid].doneAt = Date.now();
+      // (A file whose name said nothing — «.bin», no extension, a «.php» — named for what it is, now that it is here.)
+      if (!st.bittorrent && st.files?.length === 1 && st.files[0].path) { const to = Sniff.fixName(st.files[0].path); if (to) { this.keep[st.gid].renamed = to; this.keep[st.gid].name = path.basename(to); } }
+      this.saveKeep();
+    }
     // (A magnet's metadata task followed by the real download: the keep goes to the follower.)
     for (const st of [...a, ...w, ...s]) if (st.followedBy?.length && this.keep[st.gid]) for (const g of st.followedBy) if (!this.keep[g]) { this.keep[g] = { ...this.keep[st.gid] }; this.saveKeep(); }
     this.last = all.map((st) => this.task(st)).sort((x, y) => y.addedAt - x.addedAt);
@@ -101,6 +107,7 @@ class Aria2Engine {
     // (Watched while it comes: its pieces fetched in order, its start and end first — a player reads both.)
     if (o.sequential) { opts['bt-prioritize-piece'] = 'head=16M,tail=4M'; opts['stream-piece-selector'] = 'inorder'; }
     if (o.source.headers) opts.header = Object.entries(o.source.headers).map(([k, v]) => `${k}: ${v}`);
+    if (o.meta?.noRetry) opts['max-tries'] = '1';
     // A file of that name there already, with «Skip» chosen: not downloaded again.
     if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(o.dir || this.defaultDir, o.name))) throw new Error('exists');
     const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [o.source.magnet || o.source.url], opts);

@@ -1,9 +1,9 @@
 // A new download: links or magnets typed or pasted (several at once), a .torrent file chosen; the folder, the
 // name, the connections; for a torrent, its files picked once the metadata is here.
 import { h, icon, openSheet, toast } from '../ui/dom';
-import { t, formatBytes, localDigits, countFiles } from '../i18n';
+import { t, formatBytes, countFiles } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
-import type { TaskSource, TorrentInfo } from '../engine/types';
+import type { Task, TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
 import { isIos } from './ipa';
 import { categoryOf, categoryDir } from '../downloads/categories';
@@ -11,6 +11,9 @@ import { getSettings, updateSettings } from '../settings';
 import { ktPlugin } from '../native';
 import { videoPanel, preferredFormat } from './addVideo';
 import { videoEnabled, isVideoHost } from '../video/ytdlp';
+import { probeUrl, splitName, type Probe } from '../downloads/probe';
+import { freeSpaceAt } from '../archives';
+import { nativePlatform } from '../native';
 
 const toBase64 = (buf: ArrayBuffer): string => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); };
 
@@ -33,21 +36,62 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
   let dirChosen = false;
-  const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); if (!(await import('./folderAccess').then((m) => m.ensureFolderAccess(d!)))) { dir.textContent = t('defaultFolder'); return; } dir.textContent = d; dirChosen = true; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
-  const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: how.name ?? '' }) as HTMLInputElement;
+  const pick = async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d, recentDirs: [d, ...(getSettings().recentDirs ?? []).filter((x) => x !== d)].slice(0, 8) }); drawDirs(); void showStorage(); if (!(await import('./folderAccess').then((m) => m.ensureFolderAccess(d!)))) { dir.textContent = t('defaultFolder'); return; } dir.textContent = d; dirChosen = true; } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
+  // «Save as»: the name and the extension apart, filled from the link once it is looked at (the site's name for it,
+  // its size, what its bytes say it is), both free to change; the folder, with the ones used lately to pick from.
+  const given = splitName(how.name ?? '');
+  const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: given.stem, class: 'grow' }) as HTMLInputElement;
+  const ext = h('input', { type: 'text', dir: 'ltr', placeholder: t('extension'), value: given.ext, class: 'ext-in', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
+  const sizeLine = h('div', { class: 'src add-size' }); const storageLine = h('div', { class: 'src add-storage' });
+  let probed: Probe | null = null; let probeToken = 0; let nameTouched = !!how.name;
+  name.addEventListener('input', () => { nameTouched = true; }); ext.addEventListener('input', () => { nameTouched = true; });
+  const showStorage = async () => { const free = await freeSpaceAt(getSettings().downloadDir || '').catch(() => -1); if (free < 0) { storageLine.hidden = true; return; } storageLine.hidden = false; const need = probed?.size ?? 0; storageLine.replaceChildren(icon('storage'), h('span', null, t('storageFree', { free: formatBytes(free) }))); if (need && need > free) storageLine.append(h('b', { class: 'danger' }, ` · ${t('storageShort')}`)); };
+  const lookAt = async (u: string | null, hdrs?: Record<string, string>) => {
+    const my = ++probeToken; probed = null;
+    if (!u || !/^https?:/i.test(u)) { sizeLine.hidden = true; void showStorage(); return; }
+    sizeLine.hidden = false; sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('lookingAtLink')}`);
+    const r = await probeUrl(u, hdrs).catch(() => null); if (my !== probeToken) return;
+    if (!r) { sizeLine.hidden = true; void showStorage(); return; }
+    probed = r;
+    if (!nameTouched) { name.value = r.stem; ext.value = r.ext; }
+    const bits: (string | HTMLElement)[] = [];
+    if (r.size) bits.push(formatBytes(r.size)); else bits.push(t('sizeUnknown'));
+    if (r.resumable === false) bits.push(t('notResumable'));
+    if (r.extFrom) bits.push(t(r.extFrom === 'bytes' ? 'extFromBytes' : 'extFromType', { ext: r.ext }));
+    sizeLine.replaceChildren(icon('info'), h('span', null, `${t('size')}: ${bits.join(' · ')}`));
+    if (r.page) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('linkIsPage')}`));
+    void showStorage();
+  };
+  // (Folders used before, for one tap; the newest first.)
+  const recent = (): string[] => (getSettings().recentDirs ?? []).filter((d) => d && d !== getSettings().downloadDir).slice(0, 5);
+  const dirMenu = h('div', { class: 'folder-chips', hidden: !recent().length }, ...recent().map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d)));
+  const drawDirs = () => { const r = recent(); dirMenu.hidden = !r.length; dirMenu.replaceChildren(...r.map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d))); };
+  const referer = h('input', { type: 'url', dir: 'ltr', placeholder: t('refererHint'), spellcheck: 'false', autocapitalize: 'off', value: how.headers?.Referer ?? how.headers?.referer ?? '' }) as HTMLInputElement;
   const seq = h('input', { type: 'checkbox', checked: s.sequentialVideo }) as HTMLInputElement;
   const paused = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const later = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const wifi = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const retry = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement;
+  const hidden = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const conn = h('input', { type: 'number', min: '1', max: '32', value: '24', style: { width: '5em' } }) as HTMLInputElement;
   const filesBox = h('div', { class: 'add-files', hidden: true });
   let info: TorrentInfo | null = null; let chosen = new Set<number>(); let metaToken = 0;
-  const opts = h('details', { class: 'add-options' }, h('summary', null, t('addAdvanced')),
+  const saveAs = h('div', { class: 'save-as' },
+    h('div', { class: 'field' }, h('span', { class: 'label' }, t('saveAs')), h('div', { class: 'save-as-row' }, name, h('span', { class: 'dot' }, '.'), ext)),
+    sizeLine, storageLine,
     h('div', { class: 'dest-row static' }, icon('folder'), h('span', { class: 'label' }, t('saveTo')), dir, (window.kurokawaTools || ktPlugin()) ? h('button', { type: 'button', class: 'btn text small', onclick: () => void pick() }, t('changeFolder')) : null),
-    h('label', { class: 'field' }, h('span', { class: 'label' }, t('fileName')), name),
+    dirMenu);
+  const quick = h('div', { class: 'check-grid' },
+    ...(nativePlatform() === 'android' ? [h('label', { class: 'check-row' }, wifi, h('span', null, t('wifiOnlyThis')))] : []),
+    h('label', { class: 'check-row' }, retry, h('span', null, t('retryOnFail'))),
+    h('label', { class: 'check-row' }, hidden, h('span', null, t('hiddenFile'))),
+    h('label', { class: 'check-row' }, paused, h('span', null, t('startPaused'))));
+  const opts = h('details', { class: 'add-options' }, h('summary', null, t('addAdvanced')),
+    h('label', { class: 'field' }, h('span', { class: 'label' }, t('refererPage')), referer),
     h('label', { class: 'check-row' }, seq, h('span', null, t('sequential'))),
-    h('label', { class: 'check-row' }, paused, h('span', null, t('startPaused'))),
     ...(getSettings().schedule.enabled ? [h('label', { class: 'check-row' }, later, h('span', null, t('downloadLater')))] : []),
     h('label', { class: 'field row' }, h('span', { class: 'label' }, t('connections')), conn));
+  void showStorage();
   // Through a debrid service (the Debrid add-on with a key): the cloud fetches it, the app downloads the result.
   const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
   const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
@@ -62,13 +106,13 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || !S.socialOf(u)) return; hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
-  sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, debridRow, opts);
+  sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
   sh.actions.append(go);
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
   const peekZip = async (u: string | null) => { if (!u || !/\.(zip|cbz|apks|xapk|apkm)(\?|$)/i.test(u)) { zipBox.hidden = true; zipFor = ''; return; } if (zipFor === u) return; zipFor = u; zipBox.hidden = false; zipBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('zipPeeking')}`)); const m = await import('../downloads/prism'); const r = await m.remoteZipEntries(u).catch(() => null); if (zipFor !== u) return; if (!r) { zipBox.hidden = true; return; } zipBox.replaceChildren(h('details', null, h('summary', null, `${t('archiveContents')} · ${countFiles(r.entries.length)} · ${formatBytes(r.total)}`), h('div', { class: 'file-rows' }, ...r.entries.slice(0, 300).map((e) => h('div', { class: 'file-row' }, h('span', { class: 'grow', dir: 'ltr' }, e.path), h('small', { class: 'src' }, formatBytes(e.size))))))); };
   const metadata = async () => {
-    { const one = sources(); video.check(one.length === 1 && one[0].url ? one[0].url : null); void peekZip(one.length === 1 && one[0].url ? one[0].url : null); peekHf(one.length === 1 && one[0].url ? one[0].url : null); }
+    { const one = sources(); const u = one.length === 1 && one[0].url ? one[0].url : null; video.check(u); void peekZip(u); peekHf(u); void lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }
     const my = ++metaToken;
@@ -84,7 +128,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     filesBox.replaceChildren(h('div', { class: 'add-files-head' }, h('b', { dir: 'auto' }, info.name)), chooser(fs, chosen, () => undefined));
   };
   // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
-  const sources = (): TaskSource[] => { const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
+  const sources = (): TaskSource[] => { const ref = referer.value.trim(); const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)).map((x) => (ref && x.url ? { ...x, headers: { ...(x.headers ?? {}), Referer: ref } } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
   let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => void metadata(), 600); });
   if (initial) void metadata();
   go.addEventListener('click', async () => {
@@ -92,7 +136,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (!srcs.length) { toast(t('invalidLink'), 'error'); ta.focus(); return; }
     if (!debridRow.hidden && viaDebrid.checked) {
       go.disabled = true;
-      try { const { sendToDebrid } = await import('../debrid/transfers'); for (const src of srcs) { const r = await sendToDebrid(src, { dir: getSettings().downloadDir || undefined, name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined }); toast(r.kind === 'cloud' ? t('debridSent', { name: r.name }) : t('taskAdded', { name: r.name })); } sh.close(); }
+      try { const { sendToDebrid } = await import('../debrid/transfers'); for (const src of srcs) { const r = await sendToDebrid(src, { dir: getSettings().downloadDir || undefined, name: srcs.length === 1 && name.value.trim() ? `${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim()}` : ''}` : undefined }); toast(r.kind === 'cloud' ? t('debridSent', { name: r.name }) : t('taskAdded', { name: r.name })); } sh.close(); }
       catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; }
       return;
     }
@@ -116,7 +160,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         const files = info && srcs.length === 1 && chosen.size < info.files.length ? [...chosen] : undefined;
         const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
         const wait = later.checked && !(await import('../downloads/prism')).inWindow();
-        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (catDir ?? getSettings().downloadDir ?? undefined), name: srcs.length === 1 && name.value.trim() ? name.value.trim() : undefined, sequential: videoish && seq.checked, paused: paused.checked || wait, connections: Number(conn.value) || 8, files, ...(later.checked ? { meta: { later: true } as never } : {}) });
+        const fullName = srcs.length === 1 && name.value.trim() ? `${hidden.checked && !name.value.trim().startsWith('.') ? '.' : ''}${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` : undefined;
+        const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true; if (!retry.checked) meta.noRetry = true; if (hidden.checked) meta.hidden = true;
+        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (catDir ?? getSettings().downloadDir ?? undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait, connections: Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
       }
       sh.close();

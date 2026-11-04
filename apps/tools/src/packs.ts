@@ -3,8 +3,8 @@
 // (an add-on installed, a file converted), checked against their SHA-256, and can be removed again in Settings.
 // On Android both come from youtubedl-android's own bundles; on the desktop ffmpeg is the static build that used to
 // sit inside the installer.
-import { h, icon, openSheet, toast } from './ui/dom';
-import { t, formatBytes, localDigits } from './i18n';
+import { h, icon, toast } from './ui/dom';
+import { t, formatBytes } from './i18n';
 import { ktPlugin, listen } from './native';
 import { REPO, APP_VERSION } from './repo';
 import { request } from './http';

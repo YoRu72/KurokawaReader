@@ -371,3 +371,20 @@ kbd { display: inline-block; min-width: 2.2em; padding: 2px 8px; border-radius: 
 .tv-card { position: relative; }
 .tv-mark { position: absolute; top: 6px; inset-inline-end: 6px; z-index: 1; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: rgb(0 0 0 / .65); color: #fff; }
 .tv-mark svg { width: 15px; height: 15px; }
+
+/* Appearance (the player's preferences): the accent, the seek bar's look, the shade under the controls, the size. */
+.kt-player { --kt-accent: var(--md-primary); --kt-dim: .55; }
+.kt-played, .kt-knob, .kt-chip.on { background: var(--kt-accent); }
+.kt-player .kt-top { background: linear-gradient(rgb(0 0 0 / var(--kt-dim)), transparent); }
+.kt-player .kt-bottom { background: linear-gradient(transparent, rgb(0 0 0 / var(--kt-dim))); }
+.kt-player[data-seek='thick'] .kt-seek::before, .kt-player[data-seek='thick'] .kt-buf, .kt-player[data-seek='thick'] .kt-played { height: 8px; top: 10px; border-radius: 4px; }
+.kt-player[data-seek='thick'] .kt-knob { width: 16px; height: 16px; top: 6px; margin-inline-start: -8px; }
+.kt-player[data-seek='wave'] .kt-played { background: repeating-linear-gradient(90deg, var(--kt-accent) 0 6px, color-mix(in srgb, var(--kt-accent) 55%, #000) 6px 10px); height: 6px; top: 11px; }
+.kt-player[data-seek='wave'] .kt-seek::before { height: 6px; top: 11px; }
+.kt-player[data-size='small'] .icon-btn { width: 36px; height: 36px; } .kt-player[data-size='small'] .kt-play { width: 44px; height: 44px; } .kt-player[data-size='small'] .kt-chip { height: 28px; font-size: 12px; }
+.kt-player[data-size='large'] .icon-btn { width: 52px; height: 52px; } .kt-player[data-size='large'] .kt-play { width: 64px; height: 64px; } .kt-player[data-size='large'] .kt-play svg { width: 36px; height: 36px; } .kt-player[data-size='large'] .kt-chip { height: 36px; font-size: 14px; }
+.kt-player.no-chapter-marks .kt-chapter { display: none; }
+.pp-layout .dest-row { grid-template-columns: auto 1fr auto auto; }
+.pp-layout .icon-btn.small { width: 32px; height: 32px; font-size: 16px; }
+.pp-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+.pp-hidden { display: none !important; }

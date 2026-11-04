@@ -2,7 +2,7 @@
 // what it finds — the title and picture, the qualities, the audio, the subtitles, a playlist's videos — appears in
 // the same sheet to pick from. A page yt-dlp cannot read is downloaded as an ordinary link; a video site's page
 // without the add-on offers to add it there and then.
-import { h, icon, toast } from '../ui/dom';
+import { h, icon } from '../ui/dom';
 import { t, formatBytes, localDigits, countVideos } from '../i18n';
 import { getSettings } from '../settings';
 import type { AddOptions } from '../engine/types';
