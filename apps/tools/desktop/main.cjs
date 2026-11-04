@@ -195,6 +195,7 @@ ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => E().configure(o));
 ipcMain.handle('kt:torrentInfo', (_e, s) => E().torrentInfo(s));
+ipcMain.handle('kt:rename', (_e, o) => E().rename(String(o.id), String(o.name)));
 ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
 ipcMain.handle('kt:defaultDir', () => engine?.defaultDir || app.getPath('downloads'));
 ipcMain.handle('kt:pickDir', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });

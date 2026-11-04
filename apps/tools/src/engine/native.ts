@@ -25,7 +25,8 @@ export class NativeEngine implements Engine {
   move(id: string, how: -2 | -1 | 1 | 2) { return this.p.move({ id, how }); }
   async torrentInfo(source: TaskSource) { return (await this.p.torrentInfo({ source })).info as TorrentInfo; }
   async streamUrl(id: string, fileIndex: number) { return (await this.p.streamUrl({ id, fileIndex })).url; }
-  open(id: string, fileIndex?: number) { return this.p.open({ id, fileIndex }); }
+  open(id: string, fileIndex?: number) { return this.p.open({ id, fileIndex }) as Promise<void | { opened?: boolean; dir?: string }>; }
+  rename(id: string, name: string) { return (this.p as unknown as { rename(o: { id: string; name: string }): Promise<{ name: string }> }).rename({ id, name }).then((r) => r.name); }
   onChange(fn: (tasks: Task[]) => void): () => void {
     this.subs.add(fn);
     if (!this.sub && !this.subbing) { this.subbing = true; void listen<{ tasks: Task[] }>(this.p as never, 'tasksChanged', (ev) => { for (const f of this.subs) f(ev.tasks); }).then((s) => { this.sub = s; }).catch((e) => { this.subbing = false; console.warn('[tools] tasksChanged', e); }); }

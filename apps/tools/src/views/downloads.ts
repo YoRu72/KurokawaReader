@@ -16,6 +16,7 @@ import { allCategories, categoryOf, categoryName } from '../downloads/categories
 import { updateSettings } from '../settings';
 import { dlPrefs, applyFilters, sortTasks, groupOf, activeFilters, downloadsOptionsSheet } from './downloadsOptions';
 import { historyOf, sparkline } from './taskmap';
+const isMedia = (n: string): boolean => /\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|wmv|flv|ogv|3gp|mp3|m4a|flac|ogg|opus|wav|aac)$/i.test(n);
 
 const ACTIVE: TaskState[] = ['queued', 'metadata', 'downloading', 'checking', 'seeding'];
 export const stateLabel = (s: TaskState): string => t(({ queued: 'stateQueued', metadata: 'stateMetadata', downloading: 'stateDownloading', seeding: 'stateSeeding', paused: 'statePaused', done: 'stateDone', failed: 'stateFailed', checking: 'stateChecking' } as const)[s]);
@@ -175,7 +176,8 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'paused') acts.append(iconButton('play', t('resume'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'failed') acts.append(iconButton('refresh', t('retry'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch(() => eng.remove(x.id, false).then(() => eng.add({ source: x.source, dir: x.dir, name: x.name, meta: x.meta }))).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'done' && isVideo(displayName(x))) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
-    else if (x.state === 'done' && eng.open) acts.append(iconButton('play', t('open'), (e) => { e.stopPropagation(); void eng.open!(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
+    // (Done: a video or a sound plays in the app; anything else opens in the system's viewer.)
+    else if (x.state === 'done' && eng.open) { const media = x.files.some((f) => f.priority > 0 && isMedia(f.path)) || isMedia(x.name); acts.append(iconButton(media ? 'play' : 'external', t(media ? 'play' : 'open'), (e) => { e.stopPropagation(); if (media) { void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => f.priority > 0 && isMedia(f.path))?.index ?? 0)).catch((er) => toast(String((er as Error).message ?? er), 'error')); return; } void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error')); })); }
     acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(x); }));
   };
   const taskMenu = (x: Task) => {
@@ -183,7 +185,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const eng = getEngine();
     const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(x.id)}`));
-    if (x.state === 'done' && eng.open) { row('play', t('open'), () => void eng.open!(x.id)); row('folder', t('openFolder'), () => void eng.open!(x.id, -1)); }
+    if (x.state === 'done' && eng.open) { row('external', t('open'), () => void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error'))); row('folder', t('showInFolder'), () => void import('./folder').then((m) => m.showInFolder(x))); if (eng.rename) row('pen', t('rename'), () => void import('./folder').then((m) => m.renameSheet(x))); }
     if (x.state === 'done' && x.kind !== 'torrent' && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('archive', t('extract'), async () => { if (!getSettings().addons.includes('archives')) { const { needAddon } = await import('../addons/need'); if (!(await needAddon('archives', t('addonWhyArchives')))) return; } void import('./extract').then((m) => m.extractSheet(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)); });
     if (x.state === 'done' && x.kind !== 'torrent' && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('folder', t('archiveBrowse'), () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)));
     // (An app among what came — a plain download, or a torrent's files —: installed from here; several, one row each.)

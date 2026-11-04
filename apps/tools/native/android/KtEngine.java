@@ -712,6 +712,25 @@ final class KtEngine {
     }
 
     /** The file of a task on disk (a torrent's by index). */
+    /** `id` renamed to `name` (a file name, extension included): the file on disk for an HTTP download or a torrent
+     *  of one file, the folder for a torrent of many (libtorrent moves its files under the new name); the name kept. */
+    String rename(String id, String name) throws Exception {
+        Task x = task(id); if (x == null) throw new Exception("notFound");
+        String nm = name.replaceAll("[\\/:*?\"<>|\u0000]", "_").trim(); if (nm.isEmpty() || nm.equals(".") || nm.equals("..")) throw new Exception("badName");
+        if ("http".equals(x.kind) || "video".equals(x.kind)) {
+            boolean done = "done".equals(x.state); File cur = x.httpOut != null ? x.httpOut : new File(x.dir, x.name);
+            if (done && cur.exists()) { File to = new File(cur.getParentFile(), nm); if (to.exists() && !to.equals(cur)) throw new Exception("exists"); if (!cur.renameTo(to)) throw new Exception("cannotRename"); x.httpOut = to; }
+            else if (!done) throw new Exception("notDone");
+            x.name = nm;
+        } else {
+            TorrentInfo ti = infoOf(x); if (ti == null || x.th == null || !x.th.isValid()) { x.name = nm; persist(); tell(true); return nm; }
+            FileStorage fs = ti.files();
+            if (fs.numFiles() == 1) x.th.renameFile(0, nm);
+            else { String old = fs.filePath(0).split("/")[0]; for (int i = 0; i < fs.numFiles(); i++) { String p = fs.filePath(i); if (p.startsWith(old + "/")) x.th.renameFile(i, nm + p.substring(old.length())); } }
+            x.name = nm;
+        }
+        persist(); tell(true); return nm;
+    }
     File fileOf(Task x, int index) {
         if ("http".equals(x.kind) || "video".equals(x.kind)) return x.httpOut != null ? x.httpOut : new File(x.dir, x.name);
         TorrentInfo ti = infoOf(x); if (ti == null) return null;

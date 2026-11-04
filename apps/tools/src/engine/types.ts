@@ -128,5 +128,7 @@ export interface Engine {
   /** Told of every change (progress, state); returns the way to stop listening. */
   onChange(fn: (tasks: Task[]) => void): () => void;
   /** Opens the finished file (or its folder) with the system. */
-  open?(id: string, fileIndex?: number): Promise<void>;
+  open?(id: string, fileIndex?: number): Promise<void | { opened?: boolean; dir?: string }>;
+  /** The download renamed — the file on disk, extension included (a torrent of many files: its folder); the name kept. */
+  rename?(id: string, name: string): Promise<string>;
 }
