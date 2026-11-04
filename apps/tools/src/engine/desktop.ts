@@ -58,5 +58,6 @@ export class DesktopEngine implements Engine {
   async setUrl(id: string, url: string) { if (!this.b.setUrl) throw new Error('not here'); await this.b.setUrl(id, url); }
   torrentInfo(s: TaskSource) { return this.b.torrentInfo(s); }
   open(id: string, i?: number) { return this.b.open(id, i); }
+  rename(id: string, name: string) { return (this.b as unknown as { rename(o: { id: string; name: string }): Promise<string> }).rename({ id, name }); }
   onChange(fn: (t: Task[]) => void) { return this.b.onTasks(fn); }
 }

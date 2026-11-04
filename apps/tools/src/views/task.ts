@@ -37,9 +37,23 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const acts = h('div', { class: 'task-detail-actions' });
     if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id) }, icon('play'), t('resume')));
     else if (x.state !== 'done' && eng.can.pause) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void eng.pause(x.id) }, icon('pause'), t('pause')));
-    if (x.state === 'done' && eng.open) acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.open!(x.id) }, icon('external'), t('open')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void eng.open!(x.id, -1) }, icon('folder'), t('openFolder')));
-    const video = x.files.find((f) => isVideo(f.path) && f.priority > 0);
-    if (video && (eng.streamUrl || x.state === 'done')) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./player').then((m) => m.playTaskFile(x, video.index)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t(x.state === 'done' ? 'play' : 'stream')));
+    // What the main file is decides the first button: a video or a sound plays in the app, an app installs, an
+    // archive opens inside, anything else goes to the system's viewer; «Open with…» offers every app; «Show in
+    // folder» shows the folder itself — never a file picker.
+    const video = x.files.find((f) => isVideo(f.path) && f.priority > 0) ?? (isVideo(name) ? { index: 0, path: name } : undefined);
+    const audio = !video && /\.(mp3|m4a|flac|ogg|opus|wav|aac)$/i.test(x.files.find((f) => f.priority > 0)?.path ?? name);
+    const mainPath = x.dir && !x.dir.startsWith('content:') ? `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/${(x.files.find((f) => f.priority > 0) ?? x.files[0]).path}` : (x.files[0]?.path ?? name)}`.replace(/\/+/g, '/') : '';
+    const isApk = /\.(apk|apks|xapk|apkm)$/i.test(mainPath || name);
+    if (video && (eng.streamUrl || x.state === 'done')) acts.append(h('button', { type: 'button', class: x.state === 'done' ? 'btn primary' : 'btn tonal', onclick: () => void import('./player').then((m) => m.playTaskFile(x, video.index)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t(x.state === 'done' ? 'play' : 'stream')));
+    if (x.state === 'done' && eng.open) {
+      if (audio && mainPath) acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void import('./player').then((m) => m.playTaskFile(x, x.files[0]?.index ?? 0)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t('play')));
+      else if (isApk && nativePlatform() === 'android' && mainPath) acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void import('./apk').then((m) => m.installSheet(mainPath)) }, icon('apps'), t('install')));
+      else if (!video) acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.open!(x.id).catch((e) => toast(String((e as Error).message ?? e) === 'notFound' ? t('fileGone') : String((e as Error).message ?? e), 'error')) }, icon('external'), t('open')));
+      if (nativePlatform() === 'android' && mainPath) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void (ktPlugin() as unknown as { openChooser?(o: { path: string; title: string }): Promise<void> } | null)?.openChooser?.({ path: mainPath, title: name }).catch((e) => toast(String((e as Error).message ?? e) === 'notFound' ? t('fileGone') : String((e as Error).message ?? e), 'error')) }, icon('external'), t('openWith')));
+      acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./folder').then((m) => m.showInFolder(x)) }, icon('folder'), t('showInFolder')));
+    }
+    // (Renamed — the extension too — once it is here: the file on disk follows.)
+    if (x.state === 'done' && eng.rename) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./folder').then((m) => m.renameSheet(x)) }, icon('pen'), t('rename')));
     if (x.state === 'done' && x.dir && !x.dir.startsWith('content:') && x.kind !== 'torrent') {
       const fp = `${x.dir.replace(/[\\/]$/, '')}/${name}`;
       acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/prism').then((m) => m.verifySheet(fp)) }, icon('check'), t('verifyTitle')));

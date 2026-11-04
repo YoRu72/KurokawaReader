@@ -157,7 +157,16 @@ class Aria2Engine {
       }
     } finally { await this.rpc.call('forceRemove', gid).catch(() => {}); await this.rpc.call('removeDownloadResult', gid).catch(() => {}); }
   }
-  async fileOf(id, fileIndex) { const st = await this.rpc.call('tellStatus', id); const f = (st.files || [])[Math.max(0, fileIndex || 0)]; return f ? f.path : st.dir; }
+  async fileOf(id, fileIndex) { const st = await this.rpc.call('tellStatus', id); const i = Math.max(0, fileIndex || 0); const k = this.keep[id]; if (i === 0 && k?.renamed && fs.existsSync(k.renamed)) return k.renamed; const f = (st.files || [])[i]; return f ? f.path : st.dir; }
+  /** A finished download renamed on disk (its extension included) and in the list. */
+  async rename(id, name) {
+    const nm = String(name).replace(/[\\/:*?"<>|\0]/g, '_').trim(); if (!nm || nm === '.' || nm === '..') throw new Error('badName');
+    const st = await this.rpc.call('tellStatus', id); if (st.status !== 'complete') throw new Error('notDone');
+    const k = this.keep[id] || {}; const cur = (k.renamed && fs.existsSync(k.renamed)) ? k.renamed : (st.files || [])[0]?.path;
+    if (!cur || !fs.existsSync(cur)) { k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm; }
+    if (st.bittorrent && (st.files || []).length > 1) { const dir = path.dirname(cur); const top = path.join(st.dir, (st.files[0].path.slice((st.dir || '').length).replace(/^[\\/]+/, '').split(/[\\/]/)[0])); const to = path.join(path.dirname(top), nm); if (fs.existsSync(to)) throw new Error('exists'); fs.renameSync(top, to); void dir; k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm; }
+    const to = path.join(path.dirname(cur), nm); if (fs.existsSync(to) && to !== cur) throw new Error('exists'); fs.renameSync(cur, to); k.renamed = to; k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm;
+  }
   onTasks(fn) { this.subs.add(fn); this.tick(); return () => this.subs.delete(fn); }
   tick() { clearTimeout(this.timer); this.timer = setTimeout(() => this.loop(), 50); }
   async loop() {

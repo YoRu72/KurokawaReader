@@ -249,12 +249,34 @@ public class KtPlugin extends Plugin {
             Integer given = call.getInt("fileIndex"); int idx = given == null ? -2 : given;
             File f = engine().fileOf(x, idx == -1 ? -2 : idx);
             if (f == null || !f.exists()) { File d = new File(x.dir); f = d.exists() ? d : null; if (f == null) throw new Exception("notFound"); }
-            if (idx < 0 || f.isDirectory()) { File d = f.isDirectory() ? f : f.getParentFile(); Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(Uri.parse(d.toURI().toString()), "resource/folder"); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); try { getContext().startActivity(i); } catch (Exception e) { Intent g = new Intent(Intent.ACTION_GET_CONTENT); g.setType("*/*"); g.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(Intent.createChooser(g, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } call.resolve(); return; }
+            // (A folder: the system's Files app at that folder when it will open one; else the page is told to show the
+            // folder itself — never a file picker in a folder's place.)
+            if (idx < 0 || f.isDirectory()) { File d = f.isDirectory() ? f : f.getParentFile(); JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); r.put("opened", openFolder(d)); call.resolve(r); return; }
+            if (!f.exists()) throw new Exception("notFound");
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
             Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(uri, mimeOf(f.getName())); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(i); call.resolve();
         });
     }
+    /** The system's Files app (DocumentsUI) at `d`, when `d` is on the shared storage; false when nothing opens it. */
+    private boolean openFolder(File d) {
+        try {
+            String root = android.os.Environment.getExternalStorageDirectory().getAbsolutePath(); String p = d.getAbsolutePath();
+            if (!p.startsWith(root)) return false;
+            String rel = p.substring(root.length()).replaceFirst("^/", "");
+            Uri doc = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:" + rel);
+            Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(doc, "vnd.android.document/directory"); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (i.resolveActivity(getContext().getPackageManager()) == null) return false;
+            getContext().startActivity(i); return true;
+        } catch (Exception e) { return false; }
+    }
+    /** «Open with…»: the system's chooser for a finished file, whatever app the reader picks. */
+    @PluginMethod public void openChooser(PluginCall call) {
+        try { File f = fileOf(call.getString("path", "")); if (!f.exists()) { call.reject("notFound"); return; } Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f); Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(u, call.getString("mime", mimeOf(f.getName()))); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); Intent ch = Intent.createChooser(i, call.getString("title", "")); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve(); }
+        catch (Exception e) { call.reject(e.getMessage()); }
+    }
+    /** A download renamed — the file on disk (an HTTP download, a torrent's single file; a torrent's folder when it holds many) and its name. */
+    @PluginMethod public void rename(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("name", engine().rename(call.getString("id", ""), call.getString("name", ""))); call.resolve(r); }); }
     static String mimeOf(String name) {
         String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase() : "";
         String m = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
