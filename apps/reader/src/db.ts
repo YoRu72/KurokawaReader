@@ -28,6 +28,8 @@ export interface Locator {
 /** A linked file: a content:// / file:// URI on Android, a path on the desktop. */
 /** The reserved tag that marks favourites (shown with a heart, sorted first; it syncs and backs up like any tag). */
 export const FAV_TAG = '★';
+/** «To read»: a shelf of what is lined up next (ReadEra's To Read list), a tag kept apart from the user's own. */
+export const TOREAD_TAG = '◷';
 
 export interface FileSource { uri?: string; tree?: string; path?: string }
 

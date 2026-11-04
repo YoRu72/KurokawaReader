@@ -104,6 +104,14 @@ export function fontsUsed(ass: string): string[] {
   return [...out];
 }
 /** For JASSUB: each wanted family (lower-cased) and the address of its file. */
+/** The font files for these family names (the user's library, the computer's installed fonts, the fonts folder): bytes by family. */
+export async function fontFiles(families: string[]): Promise<Record<string, Uint8Array>> {
+  const want = new Set(families.map((x) => x.toLowerCase())); const out: Record<string, Uint8Array> = {};
+  for (const f of await library()) for (const fam of f.families) { const k = fam.toLowerCase(); if (want.has(k) && !out[k]) { const blob = await db.getFile(`font:${f.id}`); if (blob) out[k] = new Uint8Array(await blob.arrayBuffer()); } }
+  if ([...want].some((k) => !out[k]) && getSettings().playerSystemFonts !== false) for (const f of await systemFonts().catch(() => [])) for (const fam of f.families) { const k = fam.toLowerCase(); if (want.has(k) && !out[k]) { const b = await readLocal(f.path); if (b) out[k] = b; } }
+  if ([...want].some((k) => !out[k]) && getSettings().playerFontsDir) { let ix = (await db.getMeta<DirIndex>(DIRIX)); if (!ix || ix.dir !== getSettings().playerFontsDir) ix = { dir: getSettings().playerFontsDir!, files: await folderFonts() }; for (const f of ix.files) for (const fam of f.families) { const k = fam.toLowerCase(); if (want.has(k) && !out[k]) { const b = await readLocal(f.path); if (b) out[k] = b; } } }
+  return out;
+}
 export async function availableFor(ass: string): Promise<Record<string, string>> {
   const want = new Set(fontsUsed(ass).map((x) => x.toLowerCase())); if (!want.size) return {};
   const out: Record<string, string> = {};

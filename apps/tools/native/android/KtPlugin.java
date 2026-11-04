@@ -588,6 +588,11 @@ public class KtPlugin extends Plugin {
             } catch (Exception e) { call.reject(e.getMessage()); }
         });
     }
+    /** A binary file (a font for a burnt subtitle) in the clip folder, under `sub` when given; its path. */
+    @PluginMethod public void writeTempBytes(PluginCall call) {
+        try { File dir = new File(getContext().getCacheDir(), "clip"); String sub = call.getString("sub", ""); if (!sub.isEmpty()) dir = new File(dir, sub.replaceAll("[\\\\/]", "_")); dir.mkdirs(); File f = new File(dir, call.getString("name", "file.bin").replaceAll("[\\\\/]", "_")); try (java.io.FileOutputStream o = new java.io.FileOutputStream(f)) { o.write(android.util.Base64.decode(call.getString("b64", ""), android.util.Base64.DEFAULT)); } JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r); }
+        catch (Exception e) { call.reject(e.getMessage()); }
+    }
     @PluginMethod public void writeTemp(PluginCall call) {
         try { File dir = new File(getContext().getCacheDir(), "clip"); new File(dir, "fonts").mkdirs(); File f = new File(dir, call.getString("name", "clip.txt").replaceAll("[\\\\/]", "_")); try (java.io.Writer w = new java.io.OutputStreamWriter(new java.io.FileOutputStream(f), java.nio.charset.StandardCharsets.UTF_8)) { w.write(call.getString("text", "")); } JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r); }
         catch (Exception e) { call.reject(e.getMessage()); }

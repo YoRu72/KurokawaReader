@@ -626,7 +626,7 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 }
 
 /* PDF pages grid */
-.pages-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; }
+.pages-grid { display: grid; touch-action: pan-y; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; }
 .page-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; border-radius: var(--sh-md); padding: 6px; background: var(--md-surface-container-low); transition: transform var(--dur-short) var(--ease-spring), background var(--dur-short); }
 .page-cell:hover { background: var(--md-surface-container-high); transform: translateY(-2px); }
 .page-cell img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; background: #fff; border-radius: 6px; box-shadow: var(--el-1); }

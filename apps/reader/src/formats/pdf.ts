@@ -484,7 +484,7 @@ export class PdfViewer {
           // (A frame between two drawings, so the page keeps moving under the finger.)
           await new Promise((r) => requestAnimationFrame(() => r(null)));
         }
-      } finally { this.busy = false; }
+      } finally { this.busy = false; this.pumpThumbs(); }
     })();
   }
 
@@ -959,7 +959,12 @@ export class PdfViewer {
     p.catch(() => this.thumbs.delete(key));
     return p;
   }
+  /** Thumbnails still waiting are let go (the pages grid closed): the pages being read come first. */
+  dropThumbs(): void { for (const j of this.thumbQueue.splice(0)) { this.thumbs.delete(j.key); j.fail(new Error('dropped')); } }
   private pumpThumbs(): void {
+    // (The pages on screen are drawn first: thumbnails wait while a page is being drawn — on a phone both go
+    // through the one native renderer, and a grid's thumbnails used to keep the page itself blank for seconds.)
+    if (this.busy) return;
     while (this.thumbBusy < 2 && this.thumbQueue.length) {
       const job = this.thumbQueue.pop()!;   // the last asked for: what the reader is looking at now
       this.thumbBusy++;
