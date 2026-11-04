@@ -29,6 +29,10 @@ jobs:
         run: |
           set -o pipefail
           { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/prepare.log
+      - name: Throw-away signing key (the check signs with it; releases use the repository's)
+        run: |
+          keytool -genkeypair -v -keystore $RUNNER_TEMP/kr.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 30 -storepass kurokawa -keypass kurokawa -dname "CN=check, O=Kurokawa, C=SA" > /dev/null 2>&1
+          echo "KR_KEYSTORE=$RUNNER_TEMP/kr.keystore" >> $GITHUB_ENV; echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=kurokawa" >> $GITHUB_ENV
       - name: Compile
         shell: bash
         run: |
