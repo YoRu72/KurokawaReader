@@ -72,10 +72,11 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} applyDohProxy(); bg.execute(this::engine); }
+    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); }
     /** The web views pointed at the app's own proxy (KrDohProxy) while DoH is on — every connection they make resolved
      *  through the resolver, the hello split — and set free of it when off. The app's own page (localhost) and the home
      *  network stay direct. */
+    /** (Off the main thread: it binds, connects to itself and talks to the resolver.) */
     static void applyDohProxy() {
         try {
             if (!androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.PROXY_OVERRIDE)) { KrDoh.note("proxy", null, null, -1, "unsupported"); return; }
@@ -88,6 +89,13 @@ public class KtPlugin extends Plugin {
                 KrDohProxy.stop();
             }
         } catch (Throwable e) { KrDoh.note("proxy", null, null, -1, "error: " + e.getMessage()); }
+    }
+    /** The web views set free of the proxy (and it stopped) when they could not reach it: the requests the app makes for
+     *  them (KtDohWeb) take over, as before the proxy. */
+    static void dropProxy(String why) {
+        KrDoh.note("proxy", null, null, -1, "dropped: " + why);
+        try { androidx.webkit.ProxyController.getInstance().clearProxyOverride(Runnable::run, () -> {}); } catch (Throwable ignored) {}
+        KrDohProxy.stop();
     }
     static boolean proxyUsable() { try { return androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.PROXY_OVERRIDE); } catch (Throwable e) { return false; } }
 
@@ -382,7 +390,7 @@ public class KtPlugin extends Plugin {
         String p = call.getString("provider", null); String sp = call.getString("split", null);
         if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }
         if (sp != null) { KrDoh.split = sp; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("dohSplit", sp).apply(); }
-        if (p != null) applyDohProxy();
+        if (p != null) bg.execute(KtPlugin::applyDohProxy);
         final String test = call.getString("test", null); JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
         if (test == null) { call.resolve(r); return; }
         bg.execute(() -> { try { java.net.InetAddress[] ips = KrDoh.resolve(test); org.json.JSONArray a = new org.json.JSONArray(); for (java.net.InetAddress ip : ips) a.put(ip.getHostAddress()); r.put("ips", a); call.resolve(r); } catch (Exception e) { call.reject("DoH: " + e.getMessage(), e); } });

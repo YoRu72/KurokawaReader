@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools-desktop",
-  "version": "0.14.10",
+  "version": "0.14.11",
   "description": "Kurokawa Tools for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,

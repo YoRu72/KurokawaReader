@@ -107,7 +107,7 @@ public class KtBrowserActivity extends Activity {
         TextView title = text("DNS over HTTPS", 20, cOnSurface(), true); box.addView(title);
         dohRows = new LinearLayout(this); dohRows.setOrientation(LinearLayout.VERTICAL); box.addView(dohRows);
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL); actions.setGravity(Gravity.END); actions.setPadding(0, dp(12), 0, 0);
-        actions.addView(chip(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل" : "Turn on"), false, v -> { String np = KrDoh.on() ? "off" : "auto"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); KtPlugin.applyDohProxy(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); if (wv != null) wv.reload(); if (dohSheet != null) dohSheet.dismiss(); }));
+        actions.addView(chip(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل" : "Turn on"), false, v -> { String np = KrDoh.on() ? "off" : "auto"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); new Thread(KtPlugin::applyDohProxy, "kt-doh-apply").start(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); h.postDelayed(() -> { if (wv != null) wv.reload(); }, 900); if (dohSheet != null) dohSheet.dismiss(); }));
         actions.addView(chip(ar ? "اختبار" : "Test", true, v -> { fillDoh(true); new Thread(() -> { KrDoh.probe(); h.post(() -> { paintDoh(); fillDoh(false); }); }, "kt-doh-probe").start(); }));
         actions.addView(chip(ar ? "إغلاق" : "Close", false, v -> { if (dohSheet != null) dohSheet.dismiss(); }));
         box.addView(actions);
@@ -236,6 +236,8 @@ public class KtBrowserActivity extends Activity {
             @Override public void onReceivedError(WebView v, WebResourceRequest r, android.webkit.WebResourceError e) {
                 if (!r.isForMainFrame() || !KrDoh.on()) return;
                 int code = e.getErrorCode(); String host = r.getUrl().getHost(); if (host == null) return;
+                // (The web view could not reach the app's own proxy: it is let go of, and the page loaded the old way.)
+                if (String.valueOf(e.getDescription()).contains("PROXY") && KrDohProxy.running()) { KtPlugin.dropProxy(String.valueOf(e.getDescription())); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول إلى وكيل التطبيق — يُحمَّل بالطريقة القديمة" : "The app's proxy could not be reached — loading the old way"); h.postDelayed(() -> { if (wv != null) wv.loadUrl(r.getUrl().toString()); }, 300); return; }
                 boolean netFail = code == ERROR_CONNECT || code == ERROR_TIMEOUT || code == ERROR_FAILED_SSL_HANDSHAKE || code == ERROR_HOST_LOOKUP || code == ERROR_IO || code == ERROR_UNKNOWN;
                 if (!netFail || KrDoh.isForced(host)) return;
                 KrDoh.force(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول مباشرةً — يُعاد عبر DoH" : "Unreachable directly — retrying through DoH");
