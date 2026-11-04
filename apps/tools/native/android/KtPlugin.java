@@ -81,6 +81,17 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void pauseAll(PluginCall call) { run(call, () -> { engine().pauseAll(); call.resolve(); }); }
     @PluginMethod public void resumeAll(PluginCall call) { run(call, () -> { engine().resumeAll(); call.resolve(); }); }
     /** A finished file handed to Android's share sheet (another app, a chat, Nearby Share). */
+    /** Files shared over Wi-Fi: a page another device opens; its address (null when the phone has no network). */
+    @PluginMethod public void shareWifi(PluginCall call) {
+        try {
+            java.util.List<String> paths = new java.util.ArrayList<>(), names = new java.util.ArrayList<>();
+            JSArray a = call.getArray("paths"); for (int i = 0; i < a.length(); i++) paths.add(a.getString(i));
+            JSArray b = call.getArray("names"); if (b != null) for (int i = 0; i < b.length(); i++) names.add(b.getString(i));
+            String url = KtShare.get().start(paths, names); JSObject r = new JSObject(); r.put("url", url); r.put("files", KtShare.get().fileCount()); call.resolve(r);
+        } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+    @PluginMethod public void shareWifiStop(PluginCall call) { KtShare.get().stop(); call.resolve(); }
+    @PluginMethod public void shareWifiStatus(PluginCall call) { KtShare s = KtShare.get(); JSObject r = new JSObject(); r.put("running", s.running()); r.put("url", s.url()); r.put("sent", s.sentBytes()); r.put("hits", s.hitCount()); call.resolve(r); }
     @PluginMethod public void shareFile(PluginCall call) {
         try {
             File f = new File(call.getString("path", "")); if (!f.isFile()) { call.reject("notFound"); return; }

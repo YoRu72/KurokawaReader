@@ -860,10 +860,19 @@ export function openPlayer(src: PlayerSource): void {
   }
   // Dragging the subtitles up or down moves them (REX Player's way); the position is kept. A pinch on them
   // resizes them.
+  // (A swipe sideways on them goes to the next or the previous line; two fingers pinching them change their size.)
+  const subPointers = new Map<number, { x: number; y: number }>(); let pinch0 = 0; let size0 = 0;
   for (const box of [subBox, subTop]) box.addEventListener('pointerdown', (e) => {
-    if (locked || !(e.target as HTMLElement).closest('.kt-cue')) return; e.stopPropagation(); const r = stage.getBoundingClientRect(); const y0 = e.clientY; const top = box === subTop && !!secondary; const p0 = top ? getPrefs().sub2Pos : getPrefs().subPos; box.setPointerCapture(e.pointerId);
-    const mv = (ev: PointerEvent) => { const d = ((y0 - ev.clientY) / r.height) * 100; if (top) updatePrefs({ sub2Pos: Math.max(0, Math.min(90, Math.round(p0 - d))) }); else updatePrefs({ subPos: Math.max(5, Math.min(100, Math.round(p0 - d))) }); applySubStyle(); };
-    const up = () => { box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); box.removeEventListener('pointercancel', up); };
+    if (locked || !(e.target as HTMLElement).closest('.kt-cue')) return; e.stopPropagation(); const r = stage.getBoundingClientRect(); const x0 = e.clientX, y0 = e.clientY; const top = box === subTop && !!secondary; const p0 = top ? getPrefs().sub2Pos : getPrefs().subPos; box.setPointerCapture(e.pointerId);
+    subPointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); let moved = false; let swiped = false;
+    if (subPointers.size === 2) { const [a, b] = [...subPointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); size0 = top ? getPrefs().sub2Size : getPrefs().subSize; }
+    const mv = (ev: PointerEvent) => {
+      subPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (subPointers.size >= 2 && pinch0 > 0) { const [a, b] = [...subPointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); const sz = Math.max(40, Math.min(250, Math.round((size0 * d) / pinch0 / 5) * 5)); if (top) updatePrefs({ sub2Size: sz }); else updatePrefs({ subSize: sz }); applySubStyle(); flashText(`${localDigits(sz)}%`, true); moved = true; return; }
+      const dx = ev.clientX - x0, dy = ev.clientY - y0; if (!moved && Math.abs(dx) < 8 && Math.abs(dy) < 8) return; moved = true;
+      if (Math.abs(dx) > Math.abs(dy) * 1.5) { if (!swiped && Math.abs(dx) > 48) { swiped = true; subLine(dx > 0 !== (document.documentElement.dir === 'rtl') ? 1 : -1); } return; }
+      if (swiped) return; const d = ((y0 - ev.clientY) / r.height) * 100; if (top) updatePrefs({ sub2Pos: Math.max(0, Math.min(90, Math.round(p0 - d))) }); else updatePrefs({ subPos: Math.max(5, Math.min(100, Math.round(p0 - d))) }); applySubStyle(); };
+    const up = (ev: PointerEvent) => { subPointers.delete(ev.pointerId); if (subPointers.size < 2) pinch0 = 0; box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); box.removeEventListener('pointercancel', up); };
     box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
   });
   // Another player (VLC, MX, mpv…) through Android's chooser.

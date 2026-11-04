@@ -1926,3 +1926,5 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .add-size .spinner.small { width: 14px; height: 14px; }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); gap: 0 8px; margin: 6px 0; }
 .folder-chips .chip svg { width: 14px; height: 14px; }
+.qr-box { display: grid; place-items: center; padding: 12px; background: #fff; border-radius: 16px; width: max-content; margin: 8px auto; }
+.qr-box svg { display: block; }
