@@ -274,8 +274,8 @@ jobs:
   release:
     name: Publish release
     needs: [version, web, android, ios, windows, macos, linux]
-    # Published when every build but the iOS one succeeded (that one may be missing when no macOS runner came).
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.macos.result == 'success' && needs.linux.result == 'success' }}
+    # Published when every build but the macOS ones succeeded (those may be missing when no macOS runner came).
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -285,6 +285,9 @@ jobs:
       - name: Note a missing IPA
         if: ${{ needs.ios.result != 'success' }}
         run: echo "IOS_NOTE=- _The iOS build did not run this time (no macOS runner came); the previous release's IPA still works, and the next release will carry a new one._" >> $GITHUB_ENV
+      - name: Note a missing DMG
+        if: ${{ needs.macos.result != 'success' }}
+        run: echo "MAC_NOTE=- _The macOS build did not run this time (no macOS runner came); the previous release's DMG still works, and the next release will carry a new one._" >> $GITHUB_ENV
       - name: Release notes
         run: |
           # What's new: commit subjects since the previous release, split into bullets.
@@ -299,6 +302,7 @@ jobs:
             # (Notes written for this version, when there are any — docs/notes/v<version>.md — else the commits.)
             if [ -s "$APP/docs/notes/v${{ needs.version.outputs.v }}.md" ]; then cat "$APP/docs/notes/v${{ needs.version.outputs.v }}.md"; elif [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
             if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
+            if [ -n "$MAC_NOTE" ]; then echo "$MAC_NOTE"; fi
             echo
             echo "## Files"
             echo

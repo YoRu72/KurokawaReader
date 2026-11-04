@@ -352,6 +352,30 @@ export async function siteSearch(term: string, o: { page?: number; cats?: number
   if (!hits.length && !/النتائج|لا توجد|لم يتم العثور|srch/.test(html) && html.length > 20000) throw new SourceError('parse', 'parse');
   return { hits, total, next: next && next > (o.page ?? 1) ? next : undefined };
 }
+/** The words of `q` wrapped in <mark> inside `html` (a snippet that came without them), the site's own marks kept. */
+export function markWords(html: string, q: string): string {
+  if (/<mark>/.test(html)) return html;
+  const words = q.replace(/["()+\-]/g, ' ').split(/\s+/).map((w) => w.trim()).filter((w) => w.length > 1);
+  if (!words.length) return html;
+  // (A letter matched with its look-alikes and any harakat after it; a clitic before the word allowed.)
+  const letter = (c: string) => (c === 'ا' || c === 'أ' || c === 'إ' || c === 'آ' ? '[اأإآ]' : c === 'ه' || c === 'ة' ? '[هة]' : c === 'ي' || c === 'ى' ? '[يى]' : c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) + '[\u064B-\u0652\u0670]*';
+  // (The word's own stem, with or without «ال» and the clitics before it: «الوغد» marks «وغد» and «للوغد» too.)
+  const alt = words.map((w) => w.replace(/[\u064B-\u0652\u0670]/g, '').replace(/^(?:وال|فال|بال|كال|ال|لل)/, '')).filter((w) => w.length > 1).map((w) => w.split('').map(letter).join('')).join('|');
+  if (!alt) return html;
+  const re = new RegExp(`(^|[^\\p{L}\\p{M}])((?:ال|وال|فال|بال|كال|لل|و|ف|ب|ك|ل)?(?:${alt}))`, 'gu');
+  // (Only the text between tags is marked; what tags there are stay as they are.)
+  return html.split(/(<[^>]+>)/).map((part) => (part.startsWith('<') ? part : part.replace(re, (_m, pre: string, w: string) => `${pre}<mark>${w}</mark>`))).join('');
+}
+/** The paragraph on page `n` of book `id` that holds the words of `q` (for «show more»): the page's text, cut to
+ *  about 700 characters around the first match, the words marked. */
+export async function hitExcerpt(id: number, n: number, q: string): Promise<string> {
+  const pg = await page(id, n); const div = document.createElement('div'); div.innerHTML = pg.html;
+  const text = (div.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const words = q.replace(/["()+\-]/g, ' ').split(/\s+/).filter((w) => w.length > 1); let at = -1;
+  for (const w of words) { const i = text.indexOf(w); if (i >= 0 && (at < 0 || i < at)) at = i; }
+  const start = Math.max(0, (at < 0 ? 0 : at) - 300); const piece = (start > 0 ? '… ' : '') + text.slice(start, start + 700) + (start + 700 < text.length ? ' …' : '');
+  return markWords(piece.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string)), q);
+}
 /** Which engine searches the texts: the site itself (no account), or وصلة الشاملة when signed in. */
 export function textEngine(f: FilterValues): 'site' | 'link' {
   return String(f.engine ?? 'site') === 'link' && link.isConnected() ? 'link' : 'site';
@@ -418,11 +442,11 @@ export const shamelaSource: Source = {
       const from = Number(f.from) || 0, to = Number(f.to) || 0;
       const centuries = from || to ? Array.from({ length: Math.max(0, (to || 15) - (from || 1) + 1) }, (_, i) => (from || 1) + i) : [];
       const r = await siteSearch(siteTerm(text, match), { page: pageNo, cats: catId ? [catId] : [], centuries });
-      const items: SourceBook[] = r.hits.map((h) => ({ id: `${h.bookId}#${h.page}`, title: h.title, author: h.author || undefined, lang: 'ar', badge: `ص ${h.page}`, description: h.snippet.replace(/<\/?mark>/g, '') }));
+      const items: SourceBook[] = r.hits.map((h) => ({ id: `${h.bookId}#${h.page}`, title: h.title, author: h.author || undefined, lang: 'ar', badge: `ص ${h.page}`, description: h.snippet.replace(/<\/?mark>/g, ''), snippet: h.snippet, page: h.page, look: 'hit' }));
       return { items, hasMore: !!r.next && items.length > 0, title: r.total !== undefined ? `${r.total} نتيجة` : undefined };
     }
     const r = await link.searchPages(text, { offset: (pageNo - 1) * 20, limit: 20, titles: mode === 'chapters', phrase: match === 'phrase', morphology: match === 'root', wildcards: match === 'wild', scope: { ...period, ...(catId ? { category_ids: [catId] } : {}) } });
-    const items: SourceBook[] = r.results.map((h) => ({ id: `${h.book_id}#${h.page_id}`, title: h.book_name, author: h.author_name, lang: 'ar', badge: h.printed_page ? `ص ${h.printed_page}` : undefined, description: (h.snippet_body || h.snippet_foot || '').replace(/<\/?mark>/g, '') , year: h.category }));
+    const items: SourceBook[] = r.results.map((h) => ({ id: `${h.book_id}#${h.page_id}`, title: h.book_name, author: h.author_name, lang: 'ar', badge: h.printed_page ? `ص ${h.printed_page}` : undefined, look: 'hit', page: h.page_id, snippet: markWords(h.snippet_body || h.snippet_foot || '', text), description: (h.snippet_body || h.snippet_foot || '').replace(/<\/?mark>/g, '') , year: h.category }));
     const tags: SourceTag[] = Object.entries(r.coverage?.by_category ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([label, count]) => ({ id: `cat:${label}`, label, count }));
     return { items, hasMore: r.has_more, tags, title: `${r.total_hits} نتيجة` };
   },
