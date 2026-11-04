@@ -36,6 +36,8 @@ final class KtStream {
         if (!taskId.isEmpty()) engine.prepareStream(taskId, fileIndex);
         return "http://127.0.0.1:" + port + "/" + taskId + "/" + fileIndex;
     }
+    /** A content:// document's URL on this server (a video handed over by another app), served with ranges. */
+    synchronized String contentUrl(String uri) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/content?u=" + java.net.URLEncoder.encode(uri, "UTF-8"); }
     /** A local file's URL on this server. */
     synchronized String fileUrl(String path) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/file?p=" + java.net.URLEncoder.encode(path, "UTF-8"); }
 
@@ -109,6 +111,24 @@ final class KtStream {
             BufferedOutputStream out = new BufferedOutputStream(rawOut, 1 << 16);
             if (path.startsWith("/proxy?")) { proxy(path, req[0], rawRange, out); return; }
             if (path.startsWith("/audio?")) { audio(path, req[0], sock, out); return; }
+            // /content?u=<uri>: a document another app handed over (its file descriptor read with ranges when it seeks).
+            if (path.startsWith("/content?u=")) {
+                android.net.Uri cu = android.net.Uri.parse(java.net.URLDecoder.decode(path.substring(11), "UTF-8"));
+                android.os.ParcelFileDescriptor pfd;
+                try { pfd = engine.context().getContentResolver().openFileDescriptor(cu, "r"); } catch (Exception e) { pfd = null; }
+                if (pfd == null) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                try (android.os.ParcelFileDescriptor keep = pfd; java.io.FileInputStream fin = new java.io.FileInputStream(keep.getFileDescriptor())) {
+                    long lsize = keep.getStatSize(); String mime = null; try { mime = engine.context().getContentResolver().getType(cu); } catch (Exception ignored) {} if (mime == null) mime = "application/octet-stream";
+                    if (lsize < 0) { out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); if (!"HEAD".equals(req[0])) { byte[] b = new byte[1 << 16]; int n; while ((n = fin.read(b)) > 0) out.write(b, 0, n); } out.flush(); return; }
+                    if (rangeEnd < 0 || rangeEnd >= lsize) rangeEnd = lsize - 1; if (rangeStart > rangeEnd) { out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + lsize + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                    long llen = rangeEnd - rangeStart + 1;
+                    out.write(((ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + rangeStart + "-" + rangeEnd + "/" + lsize + "\r\n" : "HTTP/1.1 200 OK\r\n") + "Content-Type: " + mime + "\r\nAccept-Ranges: bytes\r\nContent-Length: " + llen + "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    if ("HEAD".equals(req[0])) { out.flush(); return; }
+                    java.nio.channels.FileChannel ch = fin.getChannel(); ch.position(rangeStart); java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocate(1 << 17); long left = llen;
+                    while (left > 0) { bb.clear(); if (left < bb.capacity()) bb.limit((int) left); int n = ch.read(bb); if (n <= 0) break; out.write(bb.array(), 0, n); left -= n; }
+                    out.flush(); return;
+                }
+            }
             // /file?p=<path>: any file of the device (the player's local files and their subtitles), served with ranges.
             if (path.startsWith("/file?p=")) {
                 File lf = new File(java.net.URLDecoder.decode(path.substring(8), "UTF-8"));

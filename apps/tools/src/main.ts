@@ -183,6 +183,8 @@ else {
     if (App) void call(() => App.addListener('backButton', () => { if (!goBack()) void call(() => App.minimizeApp()).catch(() => call(() => App.exitApp())).catch(() => undefined); })).catch(() => undefined);
   }
   // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
+  // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)
+  window.addEventListener('kt:play', (e) => { const d = (e as CustomEvent<{ url: string; name: string; path?: string; position?: number; headers?: Record<string, string>; subs?: string[] }>).detail; if (!d?.url) return; void import('./views/player').then((m) => m.openPlayer(d.url, d.name || 'video', { localPath: d.path, startAt: d.position, headers: d.headers, forCaller: true, subtitles: (d.subs ?? []).map((u, i) => ({ url: u, name: u.split('/').pop()?.split('?')[0] || `subtitle ${i + 1}`, isDefault: i === 0 })) })); });
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
   if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }
 

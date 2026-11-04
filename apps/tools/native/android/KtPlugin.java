@@ -90,6 +90,8 @@ public class KtPlugin extends Plugin {
             String url = KtShare.get().start(paths, names); JSObject r = new JSObject(); r.put("url", url); r.put("files", KtShare.get().fileCount()); call.resolve(r);
         } catch (Exception e) { call.reject(e.getMessage()); }
     }
+    /** The player closed on something another app asked to play: its position handed back (MainActivity). */
+    @PluginMethod public void playerDone(PluginCall call) { android.app.Activity a = getActivity(); if (a instanceof MainActivity) ((MainActivity) a).playerDone(call.getInt("position", 0), call.getInt("duration", 0), call.getString("endBy", "user")); call.resolve(); }
     @PluginMethod public void shareWifiStop(PluginCall call) { KtShare.get().stop(); call.resolve(); }
     @PluginMethod public void shareWifiStatus(PluginCall call) { KtShare s = KtShare.get(); JSObject r = new JSObject(); r.put("running", s.running()); r.put("url", s.url()); r.put("sent", s.sentBytes()); r.put("hits", s.hitCount()); call.resolve(r); }
     @PluginMethod public void shareFile(PluginCall call) {

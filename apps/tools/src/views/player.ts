@@ -8,7 +8,7 @@ import { getSettings, updateSettings } from '../settings';
 import { getEngine, isVideo } from '../engine';
 import type { Task } from '../engine/types';
 
-type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[] };
+type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[]; headers?: Record<string, string>; startAt?: number; forCaller?: boolean };
 export type PlayWith = 'ask' | 'app' | 'external';
 export const canPlayExternally = (): boolean => { const p = nativePlatform(); return p === 'android' || p === 'desktop'; };
 

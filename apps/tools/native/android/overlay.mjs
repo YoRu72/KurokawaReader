@@ -127,6 +127,25 @@ if (!manifest.includes('KtScreenService')) {
         <data android:pathPattern=".*\\\\.apkm" />
       </intent-filter>
     </activity-alias>
+    <!-- «Kurokawa Player»: videos and sound opened with the app from a file manager, a browser or another app
+         (MX Player's extras honoured: position, title, subs, headers; the position handed back when it closes). -->
+    <activity-alias android:name=".KtPlayer" android:targetActivity=".MainActivity" android:exported="true" android:label="@string/kt_player" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
+      <intent-filter android:label="@string/kt_player">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+        <data android:scheme="http" />
+        <data android:scheme="https" />
+        <data android:scheme="rtsp" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="application/vnd.apple.mpegurl" />
+        <data android:mimeType="application/x-mpegurl" />
+        <data android:mimeType="application/mp4" />
+      </intent-filter>
+    </activity-alias>
     <activity android:name=".KtScreenLaunch" android:exported="true" android:enabled="false" android:label="@string/kt_screen_tile" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="app.kurokawa.tools.screen" android:launchMode="singleInstance">
       <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
     </activity>
