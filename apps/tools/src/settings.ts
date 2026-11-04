@@ -73,7 +73,7 @@ export interface Settings {
   /** Torrent options (Senpwai's): peer discovery, encryption, when seeding stops (0 = never). */
   torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; addTrackers?: boolean; simpleDisk?: boolean; connsPerTorrent?: number; connsTotal?: number; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
   /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */
-  doh: string; secureScreen: boolean;
+  doh: string; dohSplit?: 'auto' | 'always' | 'off'; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
   playerWith: 'ask' | 'app' | 'external';
   /** Sounds and the «Download complete» card (downloads/done.ts). */

@@ -127,8 +127,8 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     } }, icon('translate'), t('scrTry'));
     const preset = AI_PRESETS.find((p) => p.id === cfg.ai.preset) ?? AI_PRESETS[0];
     engineCard.replaceChildren(h('h3', null, t('scrEngine')),
-      segs(cfg.engine, [['google', 'Google'], ['deepl', 'DeepL'], ['ai', t('scrEngineAi')]], (v) => set((c) => { c.engine = v; }, true), 'engine'),
-      h('p', { class: 'hint' }, cfg.engine === 'google' ? t('scrGoogleHint') : cfg.engine === 'deepl' ? t('scrDeeplHint') : t('scrAiHint')),
+      segs(cfg.engine, [['google', 'Google'], ['microsoft', 'Microsoft'], ['deepl', 'DeepL'], ['ai', t('scrEngineAi')]], (v) => set((c) => { c.engine = v; }, true), 'engine'),
+      h('p', { class: 'hint' }, cfg.engine === 'google' ? t('scrGoogleHint') : cfg.engine === 'microsoft' ? t('scrMicrosoftHint') : cfg.engine === 'deepl' ? t('scrDeeplHint') : t('scrAiHint')),
       row(t('scrFrom'), select(cfg.source, [['auto', t('scrDetect')], ...langs], (v) => set((c) => { c.source = v; }), 'source'), t('scrFromHint')),
       row(t('scrTo'), select(cfg.target, langs, (v) => set((c) => { c.target = v; }), 'target')),
       ...(cfg.engine === 'deepl' ? [row(t('scrDeeplKey'), text(cfg.deeplKey, (v) => set((c) => { c.deeplKey = v; }), { type: 'password', name: 'deeplKey', placeholder: 'xxxxxxxx-…:fx' }), t('scrDeeplKeyHint'))] : []),

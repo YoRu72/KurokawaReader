@@ -555,7 +555,14 @@ final class KtEngine {
                     // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
                     // tried once more by the network's own DNS.)
                     if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || x.cancel.get()) throw e;
-                    r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt);
+                    try { r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt); }
+                    catch (IOException e2) {
+                        // (Neither way reached it: the site forced through the resolver with the TLS hello split — a
+                        // filter reading names — and tried a last time.)
+                        if (e2 instanceof KrDownloader.Status || e2 instanceof KrDownloader.WebPage || x.cancel.get() || KrDoh.isForced(new URL(url).getHost())) throw e2;
+                        KrDoh.force(new URL(url).getHost());
+                        r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt);
+                    }
                 }
                 if (r.out != null) part = r.out;
                 // (The name the server gives — Content-Disposition — when the user gave none and the link's was a code.)

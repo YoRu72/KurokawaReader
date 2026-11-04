@@ -73,18 +73,19 @@ public class KtBrowserActivity extends Activity {
         String prov = st.optString("provider", "off"); String state = st.optString("state", "off");
         sb.append(ar ? "المزوِّد: " : "Resolver: ").append("off".equals(prov) ? (ar ? "معطَّل" : "off") : prov).append('\n');
         sb.append(ar ? "الحالة: " : "State: ").append(ar ? (state.equals("ok") ? "متّصل" : state.equals("resolving") ? "يستعلم…" : state.equals("failed") ? "أخفق" : state.equals("idle") ? "جاهز" : "معطَّل") : state).append('\n');
-        if (!st.optString("lastResolver").isEmpty()) sb.append(ar ? "آخر عنوان أجاب: " : "Last answered from: ").append(st.optString("lastResolver")).append(st.optLong("lastMs", -1) >= 0 ? " (" + st.optLong("lastMs") + " ms)" : "").append('\n');
+        if (!st.optString("lastResolver").isEmpty()) sb.append(ar ? "آخر عنوان أجاب: " : "Last answered from: ").append(st.optString("lastResolver")).append(st.optString("lastShape").isEmpty() ? "" : " · " + st.optString("lastShape")).append(st.optLong("lastMs", -1) >= 0 ? " (" + st.optLong("lastMs") + " ms)" : "").append('\n');
+        sb.append(ar ? "تقسيم تحيّة TLS: " : "Split TLS hello: ").append(st.optString("split", "auto")).append('\n');
         if (!st.optString("lastError").isEmpty()) sb.append(ar ? "آخر خطأ: " : "Last error: ").append(st.optString("lastError")).append('\n');
         sb.append(ar ? "استعلامات: " : "Queries: ").append(st.optLong("queries")).append(ar ? " · من الذاكرة: " : " · cached: ").append(st.optLong("hits")).append(ar ? " · أخفقت: " : " · failed: ").append(st.optLong("fails")).append(ar ? " · مواقع فُتحت عبره: " : " · sites unblocked: ").append(st.optLong("unblocked")).append('\n');
-        if (!pageHost.isEmpty()) sb.append(ar ? "هذه الصفحة: " : "This page: ").append(pageHost).append(!KrDoh.on() ? (ar ? " — DoH معطَّل" : " — DoH off") : Boolean.TRUE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — عبر DoH (الشبكة تحجبه)" : " — through DoH (hidden by the network)") : Boolean.FALSE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — مباشرة (الشبكة تعطيه)" : " — direct (the network gives it)") : (ar ? " — لم يُفحَص بعد" : " — not checked yet")).append('\n');
+        if (!pageHost.isEmpty()) sb.append(ar ? "هذه الصفحة: " : "This page: ").append(pageHost).append(!KrDoh.on() ? (ar ? " — DoH معطَّل" : " — DoH off") : KrDoh.isForced(pageHost) ? (ar ? " — عبر DoH (أُجبر: الشبكة تمنعه)" : " — through DoH (forced: the network blocks it)") : Boolean.TRUE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — عبر DoH (الشبكة تحجبه)" : " — through DoH (hidden by the network)") : Boolean.FALSE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — مباشرة (الشبكة تعطيه)" : " — direct (the network gives it)") : (ar ? " — لم يُفحَص بعد" : " — not checked yet")).append('\n');
         org.json.JSONArray log = st.optJSONArray("log");
         if (log != null && log.length() > 0) {
             sb.append('\n').append(ar ? "آخر الأحداث:" : "Recent:").append('\n');
             for (int i = log.length() - 1, n = 0; i >= 0 && n < 12; i--, n++) { org.json.JSONObject e = log.optJSONObject(i); if (e == null) continue; sb.append("• ").append(ago(e.optLong("at"))).append("  ").append(e.optString("kind")).append(' ').append(e.optString("host")); if (!e.optString("ip").isEmpty()) sb.append(" → ").append(e.optString("ip")); if (e.optLong("ms", -1) >= 0) sb.append(" ").append(e.optLong("ms")).append("ms"); if (!e.optString("msg").isEmpty()) sb.append(" ").append(e.optString("msg")); sb.append('\n'); }
         }
         android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this).setTitle("DNS over HTTPS").setMessage(sb.toString());
-        b.setPositiveButton(ar ? "اختبار" : "Test", (d, w) -> { paintDoh(); new Thread(() -> { org.json.JSONObject r = KrDoh.probe(); h.post(() -> { paintDoh(); say(r.optBoolean("ok") ? (ar ? "يعمل عبر " : "Working via ") + r.optString("resolver") + " (" + r.optLong("ms") + " ms)" : (ar ? "أخفق: " : "Failed: ") + r.optString("why", KrDoh.lastError)); }); }, "kt-doh-probe").start(); });
-        b.setNeutralButton(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل (Cloudflare)" : "Turn on (Cloudflare)"), (d, w) -> { String np = KrDoh.on() ? "off" : "cloudflare"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — Cloudflare" : "DoH on — Cloudflare") : (ar ? "DoH معطَّل" : "DoH off")); if (wv != null) wv.reload(); });
+        b.setPositiveButton(ar ? "اختبار" : "Test", (d, w) -> { paintDoh(); new Thread(() -> { org.json.JSONObject r = KrDoh.probe(); h.post(() -> { paintDoh(); StringBuilder t = new StringBuilder(r.optBoolean("ok") ? (ar ? "يعمل عبر " : "Working via ") + r.optString("resolver") + " · " + r.optString("shape") + " (" + r.optLong("ms") + " ms)" : (ar ? "أخفق: " : "Failed: ") + r.optString("why", KrDoh.lastError)); org.json.JSONArray tr = r.optJSONArray("tries"); if (tr != null) for (int i = 0; i < tr.length(); i++) { org.json.JSONObject x = tr.optJSONObject(i); if (x != null) t.append('\n').append(x.optBoolean("ok") ? "✓ " : "✕ ").append(x.optString("resolver")).append(' ').append(x.optBoolean("ok") ? x.optString("shape") + " " + x.optLong("ms") + " ms" : x.optString("error")); } new android.app.AlertDialog.Builder(KtBrowserActivity.this).setTitle(ar ? "اختبار DoH" : "DoH test").setMessage(t.toString()).setPositiveButton(ar ? "إغلاق" : "Close", null).show(); }); }, "kt-doh-probe").start(); });
+        b.setNeutralButton(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل (تلقائي)" : "Turn on (auto)"), (d, w) -> { String np = KrDoh.on() ? "off" : "auto"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); if (wv != null) wv.reload(); });
         b.setNegativeButton(ar ? "إغلاق" : "Close", null);
         b.show();
     }
@@ -126,7 +127,7 @@ public class KtBrowserActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        boolean ar = ar(this);
+        boolean ar = ar(this); adBlock = getSharedPreferences("kt", MODE_PRIVATE).getBoolean("adblock", true);
         int bg = dark() ? Color.rgb(23, 24, 26) : Color.rgb(246, 246, 248);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(bg);
         root.setFitsSystemWindows(true);
@@ -136,6 +137,7 @@ public class KtBrowserActivity extends Activity {
         bar.setOnEditorActionListener((v, id, ev) -> { if (id == EditorInfo.IME_ACTION_GO || (ev != null && ev.getKeyCode() == KeyEvent.KEYCODE_ENTER)) { go(bar.getText().toString()); return true; } return false; });
         top.addView(btn("✕", v -> finish()));
         top.addView(btn("‹", v -> { if (wv.canGoBack()) wv.goBack(); }));
+        top.addView(btn("›", v -> { if (wv.canGoForward()) wv.goForward(); }));
         top.addView(bar, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         top.addView(btn("↻", v -> wv.reload()));
         doh = btn("DoH", v -> dohDialog()); doh.setTextSize(12); top.addView(doh); paintDoh();
@@ -152,7 +154,13 @@ public class KtBrowserActivity extends Activity {
         s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setLoadWithOverviewMode(true); s.setUseWideViewPort(true); s.setBuiltInZoomControls(true); s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(true); s.setSupportMultipleWindows(false);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
-        wv.setWebChromeClient(new WebChromeClient() { @Override public void onProgressChanged(WebView v, int p) { prog.setProgress(p); prog.setVisibility(p >= 100 ? View.INVISIBLE : View.VISIBLE);
+        // (A link held: opened, copied, or sent to the app as a download — a downloader's browser.)
+        wv.setOnLongClickListener(v -> { WebView.HitTestResult hit = wv.getHitTestResult(); int ty = hit.getType(); if (ty != WebView.HitTestResult.SRC_ANCHOR_TYPE && ty != WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE && ty != WebView.HitTestResult.IMAGE_TYPE) return false; String link = hit.getExtra(); if (link == null || link.isEmpty()) return false; linkMenu(link, ty == WebView.HitTestResult.IMAGE_TYPE); return true; });
+        wv.setWebChromeClient(new WebChromeClient() {
+            private View full; private CustomViewCallback fullCb;
+            @Override public void onShowCustomView(View view, CustomViewCallback cb) { if (full != null) { cb.onCustomViewHidden(); return; } full = view; fullCb = cb; ((android.view.ViewGroup) getWindow().getDecorView()).addView(full, new android.view.ViewGroup.LayoutParams(-1, -1)); getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY); setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR); }
+            @Override public void onHideCustomView() { if (full == null) return; ((android.view.ViewGroup) getWindow().getDecorView()).removeView(full); full = null; getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE); setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED); if (fullCb != null) fullCb.onCustomViewHidden(); fullCb = null; }
+            @Override public void onProgressChanged(WebView v, int p) { prog.setProgress(p); prog.setVisibility(p >= 100 ? View.INVISIBLE : View.VISIBLE);
             // (A page that never finishes loading — ads, trackers —: recorded, and its step replayed, once it is mostly there.)
             if (p >= 40) v.evaluateJavascript(TRAIL_JS, null); if (p >= 80 && replay != null) v.evaluateJavascript(replayJs(replay, replayAt), null); } });
         wv.setWebViewClient(new KtDohWeb() {
@@ -164,9 +172,21 @@ public class KtBrowserActivity extends Activity {
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
                 String u = r.getUrl().toString();
+                // (Ads and trackers, and the pop-under scripts that come with download sites: answered with nothing.)
+                if (adBlock && !r.isForMainFrame() && isAd(r.getUrl().getHost(), u)) { blocked++; return new WebResourceResponse("text/plain", "utf-8", 204, "No Content", java.util.Collections.emptyMap(), new java.io.ByteArrayInputStream(new byte[0])); }
                 String kind = mediaKind(u, r.getRequestHeaders());
                 if (kind != null) synchronized (media) { if (media.size() < 400 && !media.containsKey(u)) media.put(u, kind); }
                 return super.shouldInterceptRequest(v, r);
+            }
+            // (A page the network's own way could not reach — reset, timed out, the handshake refused, the name unknown —
+            // while DoH is on: its site forced through the resolver, with the hello split, and the page asked again, once.)
+            @Override public void onReceivedError(WebView v, WebResourceRequest r, android.webkit.WebResourceError e) {
+                if (!r.isForMainFrame() || !KrDoh.on()) return;
+                int code = e.getErrorCode(); String host = r.getUrl().getHost(); if (host == null) return;
+                boolean netFail = code == ERROR_CONNECT || code == ERROR_TIMEOUT || code == ERROR_FAILED_SSL_HANDSHAKE || code == ERROR_HOST_LOOKUP || code == ERROR_IO || code == ERROR_UNKNOWN;
+                if (!netFail || KrDoh.isForced(host)) return;
+                KrDoh.force(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول مباشرةً — يُعاد عبر DoH" : "Unreachable directly — retrying through DoH");
+                h.postDelayed(() -> { if (wv != null) wv.loadUrl(r.getUrl().toString()); }, 300);
             }
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); try { pageHost = android.net.Uri.parse(u).getHost(); if (pageHost == null) pageHost = ""; } catch (Exception e) { pageHost = ""; } paintDoh(); }
             // (Taps recorded as soon as the page shows, not only once it has finished loading: a page still loading its ads
@@ -249,10 +269,27 @@ public class KtBrowserActivity extends Activity {
     }
 
     /** The browser's own menu: the page in the system's browser, its link copied or shared, the desktop site, find in page, the site's cookies cleared, DoH. */
-    private boolean desktopSite = false;
+    private boolean desktopSite = false; private boolean adBlock = true; private int blocked = 0;
+    /** Hosts (and paths) that are ads, trackers or pop-under scripts — the usual on download sites. */
+    private static final java.util.regex.Pattern AD_HOST = java.util.regex.Pattern.compile("(?i)(^|\\.)(doubleclick\\.net|googlesyndication\\.com|googleadservices\\.com|adservice\\.google\\.com|google-analytics\\.com|googletagmanager\\.com|googletagservices\\.com|adnxs\\.com|adsrvr\\.org|advertising\\.com|criteo\\.(com|net)|taboola\\.com|outbrain\\.com|popads\\.net|popcash\\.net|propellerads\\.com|propellerclick\\.com|adsterra\\.com|hilltopads\\.(net|com)|exoclick\\.com|exosrv\\.com|juicyads\\.com|trafficjunky\\.(net|com)|adcash\\.com|clickadu\\.com|onclickads\\.net|onclicka\\.com|pushwoosh\\.com|mgid\\.com|revcontent\\.com|zedo\\.com|yieldmanager\\.com|bidvertiser\\.com|adroll\\.com|scorecardresearch\\.com|quantserve\\.com|moatads\\.com|hotjar\\.com|mouseflow\\.com|yandex\\.ru/metrika|mc\\.yandex\\.ru|amazon-adsystem\\.com|media\\.net|adform\\.net|rubiconproject\\.com|pubmatic\\.com|openx\\.net|smartadserver\\.com|casalemedia\\.com|33across\\.com|bttrack\\.com|realsrv\\.com|tsyndicate\\.com|a-ads\\.com|coinzilla\\.(com|io)|cointraffic\\.io|ad-maven\\.com|admaven\\.com|clkmon\\.com|monetag\\.com|richads\\.com|galaksion\\.com|evadav\\.com|pushground\\.com|datadoghq\\.com|sentry\\.io|bugsnag\\.com)$");
+    private static final java.util.regex.Pattern AD_PATH = java.util.regex.Pattern.compile("(?i)/(ads?|adv|advert[a-z]*|banners?|popunder|pop-?under|popup|sponsor[a-z]*|tracking|tracker|pixel|beacon)[/._-]|/(ad|ads|adsbygoogle|pagead|gpt|prebid|popunder|pop)\\.js(\\?|$)|[?&](utm_|fbclid=|gclid=)");
+    static boolean isAd(String host, String url) { if (host == null) return false; if (AD_HOST.matcher(host).find()) return true; int q = url.indexOf("//"); String path = q >= 0 ? url.substring(url.indexOf('/', q + 2) < 0 ? url.length() : url.indexOf('/', q + 2)) : url; return AD_PATH.matcher(path).find() && !path.matches("(?i).*\\.(mp4|mkv|webm|m3u8|mpd|mp3|m4a|zip|rar|7z|apk|pdf|epub)(\\?.*)?$"); }
+    /** A held link's menu: open it here, copy it, or send it to the app to download. */
+    private void linkMenu(String link, boolean image) {
+        boolean ar = ar(this);
+        String[] items = { ar ? "افتح" : "Open", ar ? "نزِّل بالتطبيق" : "Download with the app", ar ? "انسخ الرابط" : "Copy link", ar ? "شارِك" : "Share" };
+        new android.app.AlertDialog.Builder(this).setTitle(link.length() > 90 ? link.substring(0, 90) + "…" : link).setItems(items, (d, i) -> {
+            switch (i) {
+                case 0: wv.loadUrl(link); break;
+                case 1: hand(link, image ? URLUtil.guessFileName(link, null, null) : null, wv.getUrl()); break;
+                case 2: ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(android.content.ClipData.newPlainText("url", link)); say(ar ? "نُسِخ" : "Copied"); break;
+                case 3: { Intent sh = new Intent(Intent.ACTION_SEND); sh.setType("text/plain"); sh.putExtra(Intent.EXTRA_TEXT, link); startActivity(Intent.createChooser(sh, null)); break; }
+            }
+        }).show();
+    }
     private void menu() {
         boolean ar = ar(this);
-        String[] items = { ar ? "افتح في متصفّح النظام" : "Open in system browser", ar ? "انسخ الرابط" : "Copy link", ar ? "شارِك الرابط" : "Share link", desktopSite ? (ar ? "موقع الهاتف" : "Mobile site") : (ar ? "موقع الحاسوب" : "Desktop site"), ar ? "ابحث في الصفحة" : "Find in page", ar ? "امسح كعكات هذا الموقع" : "Clear this site's cookies", ar ? "DNS عبر HTTPS…" : "DNS over HTTPS…", ar ? "الصفحة الرئيسية" : "Home" };
+        String[] items = { ar ? "افتح في متصفّح النظام" : "Open in system browser", ar ? "انسخ الرابط" : "Copy link", ar ? "شارِك الرابط" : "Share link", desktopSite ? (ar ? "موقع الهاتف" : "Mobile site") : (ar ? "موقع الحاسوب" : "Desktop site"), ar ? "ابحث في الصفحة" : "Find in page", ar ? "امسح كعكات هذا الموقع" : "Clear this site's cookies", ar ? "DNS عبر HTTPS…" : "DNS over HTTPS…", (adBlock ? (ar ? "أوقِف حجب الإعلانات" : "Ad blocking off") : (ar ? "شغِّل حجب الإعلانات" : "Ad blocking on")) + (blocked > 0 ? " (" + blocked + ")" : ""), ar ? "الصفحة الرئيسية" : "Home" };
         new android.app.AlertDialog.Builder(this).setItems(items, (d, i) -> {
             String u = wv.getUrl() == null ? "" : wv.getUrl();
             switch (i) {
@@ -263,12 +300,14 @@ public class KtBrowserActivity extends Activity {
                 case 4: { EditText in = new EditText(this); in.setHint(ar ? "كلمة" : "Word"); new android.app.AlertDialog.Builder(this).setTitle(ar ? "ابحث في الصفحة" : "Find in page").setView(in).setPositiveButton(ar ? "ابحث" : "Find", (dd, ww) -> { wv.findAllAsync(in.getText().toString()); wv.setFindListener((active, count, done) -> { if (done) say(count == 0 ? (ar ? "لا شيء" : "Nothing") : (active + 1) + " / " + count); }); }).setNeutralButton(ar ? "التالي" : "Next", (dd, ww) -> wv.findNext(true)).setNegativeButton(ar ? "إغلاق" : "Close", (dd, ww) -> wv.clearMatches()).show(); break; }
                 case 5: { String host = pageHost; CookieManager cm = CookieManager.getInstance(); String ck = cm.getCookie(u); if (ck != null) for (String part : ck.split(";")) { String name = part.trim().split("=")[0]; cm.setCookie(u, name + "=; Max-Age=0; path=/"); cm.setCookie(u, name + "=; Max-Age=0; path=/; domain=" + host); } cm.flush(); say(ar ? "مُسِحت" : "Cleared"); wv.reload(); break; }
                 case 6: dohDialog(); break;
-                case 7: go("https://duckduckgo.com/"); break;
+                case 7: adBlock = !adBlock; getSharedPreferences("kt", MODE_PRIVATE).edit().putBoolean("adblock", adBlock).apply(); say(adBlock ? (ar ? "حجب الإعلانات مُفعَّل" : "Ad blocking on") : (ar ? "حجب الإعلانات معطَّل" : "Ad blocking off")); wv.reload(); break;
+                case 8: go("https://duckduckgo.com/"); break;
             }
         }).show();
     }
     @Override protected void onResume() { super.onResume(); shown = this; paintDoh(); }
     @Override protected void onPause() { super.onPause(); if (shown == this) shown = null; }
-    @Override public void onBackPressed() { if (wv != null && wv.canGoBack()) wv.goBack(); else super.onBackPressed(); }
+    @Override public void onBackPressed() { if (wv != null && wv.getWebChromeClient() != null && fullShown()) { wv.getWebChromeClient().onHideCustomView(); return; } if (wv != null && wv.canGoBack()) wv.goBack(); else super.onBackPressed(); }
+    private boolean fullShown() { android.view.ViewGroup d = (android.view.ViewGroup) getWindow().getDecorView(); return d.getChildCount() > 1; }
     @Override protected void onDestroy() { if (wv != null) { wv.stopLoading(); wv.destroy(); } super.onDestroy(); }
 }

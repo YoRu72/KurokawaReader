@@ -2,7 +2,7 @@
 // floating translator (KtScreenService) whenever they change, so the bubble works without the app open.
 import { t } from '../i18n';
 
-export type Engine = 'google' | 'deepl' | 'ai';
+export type Engine = 'google' | 'microsoft' | 'deepl' | 'ai';
 export type AiStyle = 'openai' | 'anthropic' | 'gemini';
 export type AiPreset = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
 export interface ScreenConfig {

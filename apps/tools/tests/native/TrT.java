@@ -14,7 +14,12 @@ public class TrT {
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
     s.createContext("/translate_a/single", ex -> { hits.incrementAndGet(); Map<String, String> q = new HashMap<>(); for (String kv : ex.getRequestURI().getRawQuery().split("&")) { int i = kv.indexOf('='); q.put(kv.substring(0, i), URLDecoder.decode(kv.substring(i + 1), "UTF-8")); }
       if (q.get("q").equals("busy") && busy.getAndDecrement() > 0) { send(ex, 429, "{}"); return; }
-      String t = up(q.get("q")) + "/" + q.get("tl"); int h = t.length() / 2; send(ex, 200, "[[[" + KtJson.write(t.substring(0, h)) + ",\"x\"],[" + KtJson.write(t.substring(h)) + ",\"y\"]],null,\"en\"]"); });
+      // (As Google does: each line translated, the newlines kept; the answer in pieces.)
+      StringBuilder tb = new StringBuilder(); for (String line : q.get("q").split("\n", -1)) { if (tb.length() > 0) tb.append('\n'); tb.append(up(line)).append('/').append(q.get("tl")); }
+      String t = tb.toString(); int h = t.length() / 2; send(ex, 200, "[[[" + KtJson.write(t.substring(0, h)) + ",\"x\"],[" + KtJson.write(t.substring(h)) + ",\"y\"]],null,\"en\"]"); });
+    s.createContext("/translate/auth", ex -> { hits.incrementAndGet(); send(ex, 200, "TOKEN1"); });
+    s.createContext("/translate", ex -> { hits.incrementAndGet(); if (!"Bearer TOKEN1".equals(ex.getRequestHeaders().getFirst("Authorization"))) { send(ex, 401, "{}"); return; } String to = ex.getRequestURI().getRawQuery().replaceAll(".*to=([^&]+).*", "$1");
+      List<Object> out = new ArrayList<>(); for (Object x : (List<Object>) KtJson.parse(body(ex))) out.add(KtJson.map("translations", KtJson.list(KtJson.map("text", "ms:" + up((String) KtJson.obj(x).get("Text")) + "/" + to)))); send(ex, 200, KtJson.write(out)); });
     s.createContext("/v2/translate", ex -> { hits.incrementAndGet(); Map<String, Object> req = (Map<String, Object>) KtJson.parse(body(ex)); String auth = ex.getRequestHeaders().getFirst("Authorization");
       if (!"DeepL-Auth-Key k1:fx".equals(auth)) { send(ex, 403, "{\"message\":\"bad key\"}"); return; }
       List<Object> out = new ArrayList<>(); for (Object x : (List<Object>) req.get("text")) out.add(KtJson.map("text", up((String) x) + "/" + req.get("target_lang"))); send(ex, 200, KtJson.write(KtJson.map("translations", out))); });
@@ -39,11 +44,21 @@ public class TrT {
     List<String> r = KtTranslate.translate(Arrays.asList("hello world", "", "123 !", "hello world", "good night"), g);
     check("Google: pieces joined, order kept " + r, r.get(0).equals("«HELLO WORLD»/ar") && r.get(4).equals("«GOOD NIGHT»/ar"));
     check("Google: empty and letterless lines left as they are", r.get(1).equals("") && r.get(2).equals("123 !"));
-    check("Google: a line twice asked once (" + hits.get() + ")", hits.get() == 2);
-    int before = hits.get(); KtTranslate.translate(Arrays.asList("hello world", "good night"), g);
+    check("Google: two lines, one request; a line twice asked once (" + hits.get() + ")", hits.get() == 1);
+    int before = hits.get(); r = KtTranslate.translate(Arrays.asList("multi\nline", "plain"), g);
+    check("Google: a line with a newline of its own asked alone " + r, hits.get() == before + 2 && r.get(1).equals("«PLAIN»/ar"));
+    before = hits.get(); KtTranslate.translate(Arrays.asList("hello world", "good night"), g);
     check("cache: a screen read again asks nothing", hits.get() == before);
     check("Google: a busy server waited for", KtTranslate.translate(Arrays.asList("busy"), g).get(0).equals("«BUSY»/ar"));
     check("Google codes", KtTranslate.googleCode("zh").equals("zh-CN") && KtTranslate.googleCode("he").equals("iw") && KtTranslate.googleCode("").equals("auto"));
+
+    // Microsoft, and the keyless engines standing in for each other
+    KtTranslate.Config ms = KtTranslate.Config.from(KtJson.map("engine", "microsoft", "target", "ar", "microsoftBase", base, "microsoftAuth", base + "/translate/auth"));
+    before = hits.get(); r = KtTranslate.translate(Arrays.asList("red", "blue"), ms);
+    check("Microsoft: a token then one request " + r, r.equals(Arrays.asList("ms:«RED»/ar", "ms:«BLUE»/ar")) && hits.get() == before + 2);
+    KtTranslate.Config gBroken = KtTranslate.Config.from(KtJson.map("engine", "google", "target", "fr", "googleBase", base + "/nowhere", "microsoftBase", base, "microsoftAuth", base + "/translate/auth"));
+    r = KtTranslate.translate(Arrays.asList("green"), gBroken);
+    check("Google refusing: Microsoft stands in " + r, r.get(0).equals("ms:«GREEN»/fr"));
 
     // DeepL
     KtTranslate.Config d = KtTranslate.Config.from(KtJson.map("engine", "deepl", "target", "en", "deeplKey", "k1:fx", "deeplBase", base));
