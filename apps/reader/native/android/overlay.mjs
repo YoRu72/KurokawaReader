@@ -253,7 +253,7 @@ if (!gradle.includes('minifyEnabled true')) {
     '-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }',
     '-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod',
     '-dontwarn org.apache.commons.compress.**', '-dontwarn org.tukaani.xz.**', '-dontwarn com.github.junrar.**', '-dontwarn org.brotli.**', '-dontwarn com.github.luben.zstd.**',
-    '-dontwarn javax.annotation.**', '-dontwarn org.bouncycastle.**', '-dontwarn org.conscrypt.**', '-dontwarn org.openjsse.**',
+    '-dontwarn javax.annotation.**', '-dontwarn org.bouncycastle.**', '-dontwarn org.conscrypt.**', '-dontwarn org.openjsse.**', '-dontwarn org.slf4j.**', '-dontwarn java.beans.**', '-dontwarn javax.naming.**',
   ].join('\n') + '\n');
 }
 // Archives (the Tools app's engine, shared): zip is read by the app itself; 7z/tar/gz/xz/bz2, rar and encrypted
