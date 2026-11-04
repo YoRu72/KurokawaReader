@@ -86,7 +86,7 @@ final class KrDoh {
                 Thread t = new Thread(() -> {
                     org.json.JSONObject tr = new org.json.JSONObject(); long t0 = System.currentTimeMillis();
                     try { tr.put("resolver", r.id); tr.put("url", r.url); Answer a = askResolver(r, query("example.com", 1), 9000); tr.put("ok", a.ips.length > 0); tr.put("ms", System.currentTimeMillis() - t0); tr.put("from", a.from); tr.put("shape", a.shape); }
-                    catch (Exception e) { try { tr.put("ok", false); tr.put("ms", System.currentTimeMillis() - t0); tr.put("error", String.valueOf(e.getMessage())); } catch (Exception ignored) {} }
+                    catch (Exception e) { try { tr.put("ok", false); tr.put("ms", System.currentTimeMillis() - t0); tr.put("error", clean(e.getMessage())); } catch (Exception ignored) {} }
                     synchronized (tries) { tries.put(tr); }
                 }, "kt-doh-probe"); t.setDaemon(true); ts.add(t); t.start();
             }
@@ -104,6 +104,8 @@ final class KrDoh {
     /* ---------- the resolvers ---------- */
     static final class Resolver {
         final String id, url; final String[] ips;
+        /** Whether it answers the JSON form (Cloudflare's, Google's, AdGuard's, DNS.SB's do; Quad9 and ControlD do not). */
+        boolean json() { return id.equals("cloudflare") || id.equals("google") || id.equals("adguard") || id.equals("dnssb") || id.equals("custom"); }
         /** How it was last reached: the shape that worked (asked first next time). */
         volatile String shape = ""; volatile boolean lastOk; volatile long lastMs = -1; volatile String lastError;
         Resolver(String id, String url, String... ips) { this.id = id; this.url = url; this.ips = ips; }
@@ -164,7 +166,7 @@ final class KrDoh {
                 return ips;
             } catch (IOException ex) { last = ex; note("retry", host, r.id, -1, String.valueOf(ex.getMessage())); }
         }
-        fails.incrementAndGet(); state = "failed"; lastError = last != null ? String.valueOf(last.getMessage()) : "unknown host"; lastAt = System.currentTimeMillis();
+        fails.incrementAndGet(); state = "failed"; lastError = last != null ? clean(last.getMessage()) : "unknown host"; lastAt = System.currentTimeMillis();
         note("fail", host, null, System.currentTimeMillis() - t0, lastError);
         throw last != null ? last : new java.net.UnknownHostException(host);
     }
@@ -180,6 +182,7 @@ final class KrDoh {
         String[] by = r.ips.length > 0 ? r.ips : new String[] { null };
         for (String shape : shapes) {
             // (The JSON form goes by the resolver's name alone; the others by each of its addresses — by name when none is known.)
+            if (shape.equals("json") && !r.json()) continue;
             String[] over = shape.equals("json") ? new String[] { null } : by;
             for (String ip : over) {
                 if (ip == null && (shape.equals("post-split") || shape.equals("post-noname"))) continue;
@@ -192,7 +195,7 @@ final class KrDoh {
                 catch (IOException e) { last = e; }
             }
         }
-        r.lastOk = false; r.lastMs = System.currentTimeMillis() - t0; r.lastError = last == null ? "no answer" : String.valueOf(last.getMessage());
+        r.lastOk = false; r.lastMs = System.currentTimeMillis() - t0; r.lastError = last == null ? "no answer" : clean(last.getMessage());
         throw last != null ? last : new IOException("no answer");
     }
 
@@ -257,6 +260,8 @@ final class KrDoh {
         return true;
     }
 
+    /** An error's words fit to show: printable, one line, short. */
+    static String clean(String m) { if (m == null) return "error"; String t = m.replaceAll("[^\\p{Print}\\p{L}\\p{N} ]+", " ").replaceAll("\\s+", " ").trim(); return t.length() > 90 ? t.substring(0, 90) + "…" : t; }
     private static boolean isLiteral(String host) { return host.matches("\\d+\\.\\d+\\.\\d+\\.\\d+") || host.contains(":"); }
 
     /** A DNS question (RFC 1035) for `host`, record type 1 (A) or 28 (AAAA), id 0 as RFC 8484 asks. */

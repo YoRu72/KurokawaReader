@@ -2,13 +2,13 @@
 // answering (from which address, in how long), failed — with the counters and the last events, live as they
 // come from the phone's resolver (the «doh» event) or from a probe on a computer.
 import { h, icon } from './dom';
-import { t, localDigits } from '../i18n';
+import { t, localDigits, formatBytes } from '../i18n';
 import { ktPlugin, listen, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 
 export type DohEvent = { at: number; kind: string; host?: string; ip?: string; ms?: number; msg?: string; state?: string };
 export type DohResolver = { id: string; url: string; ok: boolean; ms: number; shape: string; error: string };
-export type DohStatus = { split?: string; lastShape?: string; forced?: number; resolvers?: DohResolver[]; provider: string; state: 'off' | 'idle' | 'resolving' | 'ok' | 'failed'; queries: number; hits: number; fails: number; unblocked: number; lastResolver: string; lastMs: number; lastAt: number; lastError: string; cached: number; log: DohEvent[]; probe?: { ok: boolean; resolver?: string; ms?: number; why?: string; tries?: { resolver: string; ok: boolean; ms?: number; error?: string; shape?: string; from?: string }[]; shape?: string } };
+export type DohStatus = { proxy?: { running: boolean; port: number; tunnels: number; open: number; up: number; down: number }; split?: string; lastShape?: string; forced?: number; resolvers?: DohResolver[]; provider: string; state: 'off' | 'idle' | 'resolving' | 'ok' | 'failed'; queries: number; hits: number; fails: number; unblocked: number; lastResolver: string; lastMs: number; lastAt: number; lastError: string; cached: number; log: DohEvent[]; probe?: { ok: boolean; resolver?: string; ms?: number; why?: string; tries?: { resolver: string; ok: boolean; ms?: number; error?: string; shape?: string; from?: string }[]; shape?: string } };
 type Plug = { dohStatus(o: { probe?: boolean }): Promise<DohStatus>; addListener(ev: 'doh', fn: (e: DohEvent) => void): Promise<{ remove(): void }> };
 type Desk = { dohProbe?(): Promise<{ ok: boolean; ms?: number; resolver?: string; why?: string; ips?: string[] }> };
 
@@ -33,8 +33,10 @@ export function dohStatusCard(): HTMLElement {
     line.textContent = state === 'off' ? t('dohStateOff') : state === 'resolving' ? t('dohStateResolving') : state === 'ok' ? t('dohStateOk', { resolver: st.lastResolver || name, ms: localDigits(Math.max(0, st.lastMs)) }) : state === 'failed' ? t('dohStateFailed', { error: st.lastError || '' }) : t('dohStateIdle');
     counts.replaceChildren(...(state === 'off' ? [] : [[t('dohQueries'), st.queries], [t('dohCached'), st.hits], [t('dohFailed'), st.fails], [t('dohUnblocked'), st.unblocked], ...(st.forced ? [[t('dohForced'), st.forced]] : [])].map(([k, v]) => h('span', { class: 'chip small' }, `${k}: ${localDigits(Number(v))}`))));
     // (Each resolver and how it last fared: answered (by which shape, in how long), failed (why), or not asked yet.)
+    // (The app's own proxy, which every page's connection goes through while the resolver is on.)
+    const px = st.proxy; const proxyLine = state === 'off' || !px ? null : h('div', { class: `doh-ev ${px.running ? 'k-resolve' : 'k-fail'}` }, h('span', { class: 'doh-kind' }, px.running ? '✓' : '✕'), h('span', { class: 'grow', dir: 'auto' }, px.running ? t('dohProxyOn', { port: String(px.port), n: localDigits(px.tunnels), up: formatBytes(px.up), down: formatBytes(px.down) }) : t('dohProxyOff')));
     const rs = state === 'off' ? [] : (st.resolvers ?? []).filter((r) => r.ms >= 0 || r.ok);
-    table.replaceChildren(...(rs.length ? [h('small', { class: 'src' }, t('dohResolvers')), ...rs.map((r) => h('div', { class: `doh-ev ${r.ok ? 'k-resolve' : 'k-fail'}` }, h('span', { class: 'doh-kind' }, r.ok ? '✓' : '✕'), h('span', { dir: 'ltr', class: 'grow' }, `${r.id}${r.ok ? ` · ${r.shape} · ${localDigits(r.ms)} ms` : r.error ? ` · ${r.error}` : ''}`)))] : []));
+    table.replaceChildren(...(proxyLine ? [proxyLine] : []), ...(rs.length ? [h('small', { class: 'src' }, t('dohResolvers')), ...rs.map((r) => h('div', { class: `doh-ev ${r.ok ? 'k-resolve' : 'k-fail'}` }, h('span', { class: 'doh-kind' }, r.ok ? '✓' : '✕'), h('span', { dir: 'ltr', class: 'grow' }, `${r.id}${r.ok ? ` · ${r.shape} · ${localDigits(r.ms)} ms` : r.error ? ` · ${r.error}` : ''}`)))] : []));
     const log = (st.log ?? []).slice(-10).reverse();
     feed.replaceChildren(...log.map((e) => h('div', { class: `doh-ev k-${e.kind}` }, h('small', { class: 'src' }, ago(e.at)), h('span', { class: 'doh-kind' }, kindLabel(e.kind)), h('span', { dir: 'ltr', class: 'grow' }, [e.host, e.ip ? `→ ${e.ip}` : '', e.ms !== undefined && e.ms >= 0 ? `${localDigits(e.ms)} ms` : '', e.msg && e.msg !== 'ok' && e.msg !== 'start' ? e.msg : ''].filter(Boolean).join(' ')))));
     if (!log.length && state !== 'off') feed.replaceChildren(h('p', { class: 'hint' }, t('dohNoEvents')));
