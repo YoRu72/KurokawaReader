@@ -92,6 +92,7 @@ async function run(repoKey: string, l: Line): Promise<void> {
         for (const ok of l.waiting.get(rel) ?? []) ok(found);
         l.waiting.delete(rel);
       });
+      revs.set(k, (revs.get(k) ?? 0) + 1);
       const done = new Set(batch); l.order = l.order.filter((r) => !done.has(r));
       // (Written to the device every few answers and at the end — the whole folder's tags each time.)
       if (++unsaved >= 5 || !l.order.length) { unsaved = 0; await db.setMeta(KEY(repoKey), k).catch(() => undefined); }
@@ -112,22 +113,25 @@ export async function fillTags(repoKey: string, series: { rel: string; name: str
   await wantTags(repoKey, series, false, () => changed());
 }
 
+// (The filter sheet asks for every genre and tag of the folder each time it is drawn: counted once per answer
+// from AniList, not once per drawing — a folder of hundreds of series has thousands of tags.)
+const revs = new WeakMap<Kept, number>();
+const lists = new WeakMap<Kept, { rev: number; genres: string[]; tags: string[] }>();
+const listsOf = (k: Kept): { genres: string[]; tags: string[] } => {
+  const rev = revs.get(k) ?? 0; const had = lists.get(k); if (had && had.rev === rev) return had;
+  const n = new Set<string>(); const g = new Map<string, number>();
+  for (const v of Object.values(k.tags)) { for (const tg of v?.tags ?? []) if (!tg.s) n.add(tg.n); for (const x of v?.genres ?? []) g.set(x, (g.get(x) ?? 0) + 1); }
+  const out = { rev, tags: [...n].sort((a, b) => a.localeCompare(b)), genres: [...g.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([x]) => x) };
+  lists.set(k, out); return out;
+};
 /** Every tag a folder's series have (those that give a story away left out), by name. */
-export function tagsOfAll(k: Kept): string[] {
-  const n = new Set<string>();
-  for (const v of Object.values(k.tags)) for (const tg of v?.tags ?? []) if (!tg.s) n.add(tg.n);
-  return [...n].sort((a, b) => a.localeCompare(b));
-}
+export const tagsOfAll = (k: Kept): string[] => listsOf(k).tags;
 /** The countries a folder's series come from, as the shelf's Type filter offers them. */
 export const ORIGINS = ['JP', 'KR', 'CN', 'OTHER'] as const;
 export const originOf = (t: SeriesTags | null | undefined): (typeof ORIGINS)[number] | undefined => (!t?.country ? undefined : t.country === 'JP' || t.country === 'KR' ? t.country : t.country === 'CN' || t.country === 'TW' || t.country === 'HK' ? 'CN' : 'OTHER');
 
 /** The genres a folder's series have, the most common first. */
-export function genresOf(k: Kept): string[] {
-  const n = new Map<string, number>();
-  for (const v of Object.values(k.tags)) for (const g of v?.genres ?? []) n.set(g, (n.get(g) ?? 0) + 1);
-  return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
-}
+export const genresOf = (k: Kept): string[] => listsOf(k).genres;
 
 /* ---------- a series' synopsis ---------- */
 // (Asked only when a series' page is opened — one small request by its AniList id — and kept on the device:

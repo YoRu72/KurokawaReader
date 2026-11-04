@@ -464,9 +464,26 @@ public class KurokawaPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r);
     }
 
-    /** Whether Kurokawa Tools (with its installer) is on the phone. */
+    /** Whether Kurokawa Tools is on the phone (its installer is no longer needed: the reader carries its own). */
     private boolean toolsInstalled() { try { getContext().getPackageManager().getPackageInfo("app.kurokawa.tools", 0); return true; } catch (Exception e) { return false; } }
-    @PluginMethod public void installerAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("kurokawa", toolsInstalled()); call.resolve(r); }
+    @PluginMethod public void installerAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("kurokawa", true); r.put("tools", toolsInstalled()); r.put("canInstall", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r); }
+    private static File apkFile(String path) { if (path.startsWith("file://")) path = path.substring(7); return new File(path); }
+    /** What an APK (or a split bundle) holds: name, version, package, size, signers against the installed app's. */
+    @PluginMethod
+    public void apkInfo(PluginCall call) {
+        File f = apkFile(call.getString("path", "")); if (!f.isFile()) { call.reject("notFound"); return; }
+        new Thread(() -> { try { call.resolve(JSObject.fromJSONObject(KrInstaller.info(getContext(), f))); } catch (Exception e) { call.reject(e.getMessage() == null ? "info" : e.getMessage()); } }, "kr-apkinfo").start();
+    }
+    /** The Kurokawa Installer: the file streamed into an install session; progress and the outcome come as `apk` events. */
+    @PluginMethod
+    public void apkInstall(PluginCall call) {
+        File f = apkFile(call.getString("path", "")); if (!f.isFile()) { call.reject("notFound"); return; }
+        String id = call.getString("id", String.valueOf(System.currentTimeMillis())); boolean del = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false));
+        new Thread(() -> {
+            try { KrInstaller.install(getContext(), id, f, del, (ev) -> { try { notifyListeners("apk", JSObject.fromJSONObject(ev)); } catch (Exception ignored) {} }); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
+            catch (Exception e) { call.reject(e.getMessage() == null ? "install" : e.getMessage()); }
+        }, "kr-apkinstall").start();
+    }
     @PluginMethod
     public void installApk(PluginCall call) {
         String path = call.getString("path", "");
@@ -474,14 +491,17 @@ public class KurokawaPlugin extends Plugin {
         try {
             File apk = new File(path);
             if (!apk.exists()) { call.reject("APK not found: " + path); return; }
-            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
-            // (Kurokawa Installer — the Tools app's, which reads the APK as a stream and shows what it is — when it
-            // is on the phone and asked for; else the system's installer.)
-            if (!"system".equals(call.getString("installer", "kurokawa")) && toolsInstalled()) {
-                Intent kt = new Intent(Intent.ACTION_VIEW); kt.setDataAndType(uri, "application/vnd.android.package-archive");
-                kt.setClassName("app.kurokawa.tools", "app.kurokawa.tools.KtInstaller"); kt.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                try { getActivity().startActivity(kt); call.resolve(); return; } catch (Exception e) { android.util.Log.w("Kurokawa", "Kurokawa Installer: " + e); }
+            // (Kurokawa Installer — the reader's own, which streams the APK into an install session and tells its
+            // progress — unless the system's was asked for.)
+            if (!"system".equals(call.getString("installer", "kurokawa"))) {
+                String id = call.getString("id", String.valueOf(System.currentTimeMillis()));
+                new Thread(() -> {
+                    try { KrInstaller.install(getContext(), id, apk, false, (ev) -> { try { notifyListeners("apk", JSObject.fromJSONObject(ev)); } catch (Exception ignored) {} }); JSObject r = new JSObject(); r.put("id", id); r.put("installer", "kurokawa"); call.resolve(r); }
+                    catch (Exception e) { call.reject("Kurokawa Installer: " + e.getMessage(), e); }
+                }, "kr-install").start();
+                return;
             }
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
             Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
             intent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);

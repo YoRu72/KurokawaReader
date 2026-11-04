@@ -71,6 +71,29 @@ async function preloadStartupChunks() {
   return order.length;
 }
 
+/** A slim build (the phone apps, KR_SLIM=1): the reading fonts rarely chosen and pdf.js's CJK character maps
+ *  are left out of the package and fetched from the web app the first time they are needed (the fonts kept on
+ *  the device once fetched) — two and a half megabytes less in every APK. What was left out is written to
+ *  dist/slim.json for the app to read. */
+const SLIM_FONTS = new Set(['EB Garamond', 'Vollkorn', 'Source Serif', 'Bitter', 'Gelasio', 'Crimson Pro', 'TeX Gyre Termes']);
+async function slimDown() {
+  if (!process.env.KR_SLIM) return;
+  const cssPath = path.join(dist, 'assets', 'app.css');
+  let css = await fs.readFile(cssPath, 'utf8');
+  const fonts = {};
+  css = css.replace(/@font-face\{[^}]*\}/g, (block) => {
+    const fam = /font-family:\s*"?([^;"]+)"?;/.exec(block)?.[1]?.trim(); const file = /url\("?\.?\/?fonts\/([^")]+)"?\)/.exec(block)?.[1];
+    if (!fam || !file || !SLIM_FONTS.has(fam)) return block;
+    (fonts[fam] ??= []).push({ file, weight: /font-weight:\s*([^;}]+)/.exec(block)?.[1]?.trim() ?? '400', style: /font-style:\s*([^;}]+)/.exec(block)?.[1]?.trim() ?? 'normal' });
+    return '';
+  });
+  await fs.writeFile(cssPath, css);
+  for (const list of Object.values(fonts)) for (const f of list) await fs.rm(path.join(dist, 'assets', 'fonts', f.file), { force: true });
+  await fs.rm(path.join(dist, 'assets', 'pdfjs', 'cmaps'), { recursive: true, force: true });
+  await fs.writeFile(path.join(dist, 'slim.json'), JSON.stringify({ cmaps: true, fonts }));
+  console.log(`Slim build: ${Object.keys(fonts).length} font families and the CJK character maps left to the web app`);
+}
+
 async function writeServiceWorker() {
   const files = (await walk(dist)).filter((f) => f !== '/sw.js' && !f.endsWith('.map'));
   // Installed at once: the app itself (its page, code, styles, icons, the two fonts it preloads). The rest —
@@ -158,6 +181,7 @@ if (watch || serve) {
   await esbuild.build(buildOptions);
   await esbuild.build(runtimeOptions);
   const n = await preloadStartupChunks();
+  await slimDown();
   await writeServiceWorker();
   console.log(`Built → dist/ (${n} startup chunks preloaded)`);
 }

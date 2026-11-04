@@ -3,6 +3,7 @@
 // quick; the units are then searched with the same normalisation as the in-book search (Arabic harakat,
 // tatweel and letter variants, vertical and full-width forms, case), or exactly, as chosen.
 import { db, type Book } from './db';
+import { cmapsUrl } from './slim';
 import { normalizeForSearch, searchFormOf } from './formats/types';
 import { flowHandlerFor } from './formats';
 
@@ -60,7 +61,7 @@ async function pdfUnits(file: Blob, onPage?: (n: number, total: number) => void)
   const RES = new URL('./pdfjs/', import.meta.url).href;
   let o: Awaited<ReturnType<typeof openPdfjs>>;
   // (A protected file opens with the password remembered for it; one never opened here is left out, not asked.)
-  try { o = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), { cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false }); }
+  try { o = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), { cMapUrl: cmapsUrl(RES), cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false }); }
   catch (e) { if (String((e as Error).message) === 'password') return 'protected'; throw e; }
   try {
     const out: Unit[] = [];

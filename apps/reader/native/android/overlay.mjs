@@ -188,6 +188,7 @@ await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join
 await fs.copyFile(path.join(root, 'native/android/KrArchive.java'), path.join(pkgDir, 'KrArchive.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDoh.java'), path.join(pkgDir, 'KrDoh.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDohWeb.java'), path.join(pkgDir, 'KrDohWeb.java'));
+await fs.copyFile(path.join(root, 'native/android/KrInstaller.java'), path.join(pkgDir, 'KrInstaller.java'));
 // (The print job's callbacks can only be made from the android.print package: that one class lives there.)
 const printDir = path.join(app, 'src/main/java/android/print');
 await fs.mkdir(printDir, { recursive: true });
@@ -239,6 +240,21 @@ if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/buildTypes \{\s*release \{/, `buildTypes {
         release {
             signingConfig signingConfigs.release`);
+}
+// R8: the code shrunk and the resources with it (the libraries' unused classes are most of the dex — a third of
+// the APK). Capacitor's own rules keep the plugins; ours keep the app's classes (the WebView bridge, the
+// receivers, the services named in the manifest) as they are.
+if (!gradle.includes('minifyEnabled true')) {
+  gradle = gradle.replace(/minifyEnabled false/, 'minifyEnabled true\n            shrinkResources true');
+  if (!gradle.includes('proguard-kr.pro')) gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kr.pro'");
+  await fs.writeFile(path.join(app, 'proguard-kr.pro'), [
+    '-keep class app.kurokawa.reader.** { *; }',
+    '-keep class com.getcapacitor.** { *; }',
+    '-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }',
+    '-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod',
+    '-dontwarn org.apache.commons.compress.**', '-dontwarn org.tukaani.xz.**', '-dontwarn com.github.junrar.**', '-dontwarn org.brotli.**', '-dontwarn com.github.luben.zstd.**',
+    '-dontwarn javax.annotation.**', '-dontwarn org.bouncycastle.**', '-dontwarn org.conscrypt.**', '-dontwarn org.openjsse.**',
+  ].join('\n') + '\n');
 }
 // Archives (the Tools app's engine, shared): zip is read by the app itself; 7z/tar/gz/xz/bz2, rar and encrypted
 // zips through their libraries.

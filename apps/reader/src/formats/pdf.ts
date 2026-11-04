@@ -1,6 +1,7 @@
 // PDF viewing on top of pdf.js: lazily rendered pages with a selectable text
 // layer, a page slider, go-to, outline and full-text search.
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { cmapsUrl } from '../slim';
 import { buildTextLayer } from '../pdflayer';
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
@@ -27,7 +28,7 @@ async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () =
     // Android draws pages with its own renderer; elsewhere the bundled standard fonts keep
     // metrics consistent (system-font substitution misplaces glyphs for many PDFs).
     useSystemFonts: (window as unknown as { Capacitor?: { getPlatform?(): string } }).Capacitor?.getPlatform?.() === 'android',
-    cMapUrl: `${RES}cmaps/`, cMapPacked: true,
+    cMapUrl: cmapsUrl(RES), cMapPacked: true,
     standardFontDataUrl: `${RES}standard_fonts/`,
     wasmUrl: `${RES}wasm/`,
     iccUrl: `${RES}iccs/`,

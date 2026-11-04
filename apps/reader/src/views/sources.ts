@@ -1074,7 +1074,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       let badged = false;
       const fill = (p: { cover?: string; count?: number } | null) => {
         if (p?.cover) { cover.classList.add('has-img'); cover.replaceChildren(h('img', { src: p.cover, alt: '', referrerpolicy: 'no-referrer', onerror: () => { cover.classList.remove('has-img'); retryLater(); } }), h('span', { class: 'folder-mark' }, icon('folder')), ...(fresh ? [freshMark()!] : [])); }
-        if (badged || !p) return; badged = true;
+        if (badged || !p || ((p as { provisional?: boolean }).provisional && !p.count)) return; badged = true;
         if (p.count && !b.badge) el.append(h('span', { class: 'src-badge left' }, countVolumes(p.count)));
         if (mine) el.append(h('span', { class: 'src-badge right have', title: t('inLibrary') }, icon('check'), p.count ? `${localDigits(mine)}/${localDigits(p.count)}` : localDigits(mine)));
       };
@@ -1083,7 +1083,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       const run = async () => { cover.classList.add('loading'); try { const p = await src.folderCover!(b.openShelf!).catch(() => null); fill(p); if (!p?.cover) retryLater(); } finally { cover.classList.remove('loading'); } };
       const retryLater = () => { coverless.add(() => { if (el.isConnected && !cover.classList.contains('has-img')) observe(el, run); }); };
       const now = src.folderCoverNow?.(b.openShelf);
-      if (now?.cover) fill(now);
+      if (now?.cover && !now.provisional) fill(now);
       else { if (now) fill(now); observe(el, run); }
     }
     return el;

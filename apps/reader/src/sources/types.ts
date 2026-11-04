@@ -48,7 +48,7 @@ export interface SourceBook {
 }
 
 /** What a file holds, looked into from afar: its cover (a small picture's address), title, contents. */
-export interface SourcePeek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; count?: number; description?: string; publisher?: string }
+export interface SourcePeek { title?: string; author?: string; cover?: string; toc?: { label: string; depth: number }[]; count?: number; description?: string; publisher?: string; /** a cover to show meanwhile (a database's), the file's own still to come */ provisional?: boolean }
 
 /** A filter as a Mihon filter sheet shows it: a choice, a set of choices, a sort order, or text. */
 export type SourceFilter =

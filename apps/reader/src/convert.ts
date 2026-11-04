@@ -7,6 +7,7 @@
 // from the spacing, headings from the font size — and the fonts the PDF embeds are
 // carried over, so an Arabic, Japanese or Chinese PDF keeps its look in the EPUB.
 import { cleanPdfText } from './pdftext';
+import { cmapsUrl } from './slim';
 import JSZip from 'jszip';
 import { packDocx, zipOut, type ZipLike } from './ziputil';
 import { imageSize } from './imagesize';
@@ -871,7 +872,7 @@ export async function buildCbz(book: Book, file: Blob, progress: Progress, passw
     const pdfjs = await loadPdfjs();
     const { openPdfjs } = await import('./pdfkeys');
     const RES = new URL('./pdfjs/', import.meta.url).href;
-    const o = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), { cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false, password });
+    const o = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), { cMapUrl: cmapsUrl(RES), cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false, password });
     try {
       const n = o.doc.numPages; const digits = String(n).length;
       for (let i = 1; i <= n; i++) {

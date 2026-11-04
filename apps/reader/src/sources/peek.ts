@@ -7,6 +7,7 @@
 // on the device, found again by the file's address and size, and a few hundred of them at hand in memory for
 // the session; the ones on the screen are fetched first, those scrolled past are dropped from the queue.
 import { request, bytesOfAsync } from './http';
+import { cmapsUrl } from '../slim';
 import { db } from '../db';
 import { SourceError } from './types';
 
@@ -302,7 +303,7 @@ async function peekPdf(url: string, size?: number, height = THUMB_H, coverOnly =
   const pdfjs = await loadPdfjs();
   let task: ReturnType<typeof pdfjs.getDocument>;
   const res = new URL('./pdfjs/', import.meta.url).href;
-  const common = { cMapUrl: `${res}cmaps/`, cMapPacked: true, standardFontDataUrl: `${res}standard_fonts/`, wasmUrl: `${res}wasm/`, iccUrl: `${res}iccs/`, isEvalSupported: false, disableFontFace: false };
+  const common = { cMapUrl: cmapsUrl(res), cMapPacked: true, standardFontDataUrl: `${res}standard_fonts/`, wasmUrl: `${res}wasm/`, iccUrl: `${res}iccs/`, isEvalSupported: false, disableFontFace: false };
   if (head.whole) task = pdfjs.getDocument({ data: head.bytes, ...common });
   else {
     const total = head.total ?? size;

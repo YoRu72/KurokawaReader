@@ -22,6 +22,7 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - run: npm install
       - run: npm run build
+        env: { KR_SLIM: '1' }
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Create Android project
         shell: bash
@@ -32,7 +33,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cd android && chmod +x gradlew && ./gradlew compileDebugJavaWithJavac --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -E "error:|warning: \[|BUILD" | head -n 200
+          # (A release build, unsigned: R8 runs — a class it strips wrongly, or a rule it rejects, shows here and not on release day.)
+          cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -E "error:|warning: \[|BUILD|Missing class|R8" | head -n 200
+          ls -la app/build/outputs/apk/release/ | awk '{print $5, $9}'
       - name: Report failure
         if: failure()
         env: { GH_TOKEN: "${{ github.token }}" }
