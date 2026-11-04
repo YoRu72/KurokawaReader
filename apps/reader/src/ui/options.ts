@@ -87,7 +87,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     [t('presetCandle'), { theme: 'custom', customBg: '#2a1d12', customFg: '#f1dcb8', texture: 'paper', textureOpacity: 0.45, warmth: 0.25, dimOverlay: 0, bgImage: false }],
     [t('presetManuscript'), { theme: 'custom', customBg: '#e9d9b6', customFg: '#3a2a16', texture: 'parchment', textureOpacity: 0.6, warmth: 0.05, dimOverlay: 0, bgImage: false }],
     [t('presetDaylight'), { theme: 'light', texture: 'none', warmth: 0, dimOverlay: 0, bgImage: false }],
-    [t('presetEink'), { theme: 'custom', customBg: '#dcdcd8', customFg: '#1a1a1a', texture: 'dots', textureOpacity: 0.25, warmth: 0, dimOverlay: 0, bgImage: false }],
+    [t('presetEink'), { theme: 'custom', customBg: '#dcdcd8', customFg: '#1a1a1a', texture: 'linen', textureOpacity: 0.25, warmth: 0, dimOverlay: 0, bgImage: false }],
     [t('presetClassic'), { theme: 'sepia', texture: 'paper', textureOpacity: 0.35, warmth: 0.08, dimOverlay: 0, bgImage: false, align: 'justify', hyphenate: true, fontSize: 19, lineHeight: 1.65, textWidth: 640 }],
     [t('presetLargePrint'), { fontSize: 26, lineHeight: 1.8, paragraphSpacing: 1.1, textWidth: 820, align: 'start', hyphenate: false }],
     [t('presetCompact'), { fontSize: 16, lineHeight: 1.45, paragraphSpacing: 0.5, textWidth: 900, margin: 14, align: 'start' }],
@@ -108,13 +108,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
 
   /* ----- Background ----- */
   grid.append(head('background', t('background')));
-  const textures: [Texture, string][] = [['none', t('textureNone')], ['paper', t('texturePaper')], ['linen', t('textureLinen')], ['parchment', t('textureParchment')], ['dots', t('textureDots')], ['polka', t('texturePolka')]];
+  const textures: [Texture, string][] = [['none', t('textureNone')], ['paper', t('texturePaper')], ['linen', t('textureLinen')], ['parchment', t('textureParchment')]];
   grid.append(section([t('texture'), 'texture'], segmented(textures, s.texture, (v) => { updateSettings({ texture: v }); rerender(); })));
-  if (s.texture === 'polka') {
-    grid.append(stepper([t('polkaAmount'), 'polkaAmount'], s.polkaAmount, 1, 5, 1, (v) => updateSettings({ polkaAmount: v }), (v) => localDigits(String(v))));
-    grid.append(section([t('polkaPlace'), 'polkaPlace'], segmented([['both', t('polkaBoth')], ['left', t('polkaLeft')], ['right', t('polkaRight')], ['edges', t('polkaEdges')]] as [typeof s.polkaPlace, string][], s.polkaPlace, (v) => updateSettings({ polkaPlace: v }))));
-    grid.append(section([t('polkaSize'), 'polkaSize'], segmented([['1', t('coverSmall')], ['2', t('coverMedium')], ['3', t('coverLarge')]] as [string, string][], String(s.polkaSize), (v) => updateSettings({ polkaSize: Number(v) as 1 | 2 | 3 }))));
-  }
   if (s.texture !== 'none') grid.append(stepper([t('textureStrength'), 'textureOpacity'], s.textureOpacity, 0.1, 1, 0.05, (v) => updateSettings({ textureOpacity: round2(v) }), pct));
 
   const preview = h('div', { class: 'bg-preview' }, s.bgImage ? '' : t('backgroundImage'));
@@ -167,6 +162,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('headingsFont'), 'headingsFont'], s.headingsFont, (v) => updateSettings({ headingsFont: v })));
   grid.append(stepper([t('fontSize'), 'fontSize'], s.fontSize, 12, 40, 1, (v) => updateSettings({ fontSize: v }), (v) => `${v}`));
   grid.append(stepper([t('lineHeight'), 'lineHeight'], s.lineHeight, 1.2, 2.6, 0.1, (v) => updateSettings({ lineHeight: Math.round(v * 10) / 10 }), (v) => v.toFixed(1)));
+  grid.append(stepper([t('fontWeight'), 'fontWeight'], s.fontWeight ?? 400, 300, 700, 50, (v) => updateSettings({ fontWeight: Math.round(v / 50) * 50 }), (v) => localDigits(String(v))));
   grid.append(stepper([t('wordSpacing'), 'wordSpacing'], s.wordSpacing, -0.05, 0.5, 0.01, (v) => updateSettings({ wordSpacing: round2(v) }), (v) => v.toFixed(2)));
   grid.append(stepper([t('letterSpacing'), 'letterSpacing'], s.letterSpacing, -0.05, 0.2, 0.005, (v) => updateSettings({ letterSpacing: Math.round(v * 1000) / 1000 }), (v) => v.toFixed(3)));
 
@@ -201,7 +197,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => { updateSettings({ tapToTurn: v }); rerender(); }));
   if (s.tapToTurn) {
     // The nine zones: each a button naming its action; tapping one picks another.
-    const acts: [TapAction, string][] = [['menu', t('tapMenu')], ['next', t('tapNext')], ['prev', t('tapPrev')], ['nextChapter', t('nextChapter')], ['prevChapter', t('prevChapter')], ['bookmark', t('addBookmark')], ['toc', t('contents')], ['search', t('search')], ['options', t('visualOptions')], ['speak', t('speechScope')], ['autoScroll', t('autoScroll')], ['fullscreen', t('fullscreen')], ['none', t('tapNone')]];
+    const acts: [TapAction, string][] = [['menu', t('tapMenu')], ['next', t('tapNext')], ['prev', t('tapPrev')], ['nextChapter', t('nextChapter')], ['prevChapter', t('prevChapter')], ['bookmark', t('addBookmark')], ['toc', t('contents')], ['search', t('search')], ['options', t('visualOptions')], ['speak', t('speechScope')], ['autoScroll', t('autoScroll')], ['fullscreen', t('fullscreen')], ['dayNight', t('tapDayNight')], ['none', t('tapNone')]];
     const zones = [...(s.tapZones ?? DEFAULT_TAP_ZONES)];
     const gridEl = h('div', { class: 'tap-grid' }, ...zones.map((z, i) => h('button', { type: 'button', onclick: () => { pickSheet(t('tapZoneAction'), acts, zones[i], (v) => { zones[i] = v; updateSettings({ tapZones: [...zones] }); rerender(); }, t('close')); } }, acts.find((a) => a[0] === z)?.[1] ?? z)));
     grid.append(section([t('tapZones'), 'tapZones'], gridEl));

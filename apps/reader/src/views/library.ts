@@ -6,7 +6,7 @@ import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, ge
 import { partOf } from '../series';
 import { searchFormOf } from '../formats/types';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
-import { db, uid, FAV_TAG, type Book, type Folder, type TagDef } from '../db';
+import { db, uid, FAV_TAG, TOREAD_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats/detect';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
@@ -285,6 +285,7 @@ export function libraryView(): HTMLElement {
         ['books', n > 1 ? t('openTogether') : t('open'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); navigate(`/read/${ids.join(',')}`); }, 'primary'],
         ...(n > 1 ? [['sort', t('readInOrder'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); void import('../ui/queue').then((m) => m.queueSheet(ids, { start: true })); }] as Act] : []),
         ['heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
+        ['clock', t('toRead'), () => void Promise.all([...selected].map((id) => setTag([id], TOREAD_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
         ['check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))],
         ['tag', t('tags'), () => tagsSheet([...selected])],
         ...(n === 1 ? [['info', t('details'), () => { const b = one(); if (b) showDetails(b); }] as Act, ['note', t('reviewBook'), () => { const b = one(); if (b) void import('../ui/review').then((m) => m.reviewSheet(b, () => renderGrid())); }] as Act] : []),
@@ -463,6 +464,7 @@ export function libraryView(): HTMLElement {
       if (book.review) s.body.append(h('p', { class: 'review-quote', dir: 'auto' }, book.review));
       s.actions.append(
         (() => { const isFav = (book.tags ?? []).includes(FAV_TAG); return h('button', { class: 'btn small' + (isFav ? ' tonal' : ''), onclick: async () => { await setTag([book.id], FAV_TAG, !isFav); s.close(); await refresh(); toast(isFav ? t('removedFromFavorites') : t('addedToFavorites')); } }, icon(isFav ? 'heartFill' : 'heart'), isFav ? t('unfavorite') : t('favorite')); })(),
+        (() => { const on = (book.tags ?? []).includes(TOREAD_TAG); return h('button', { class: 'btn small' + (on ? ' tonal' : ''), onclick: async () => { await setTag([book.id], TOREAD_TAG, !on); s.close(); await refresh(); toast(on ? t('removedFromToRead') : t('addedToToRead')); } }, icon('clock'), on ? t('notToRead') : t('toRead')); })(),
         (() => { const d = isDone(book); return h('button', { class: 'btn small' + (d ? ' tonal' : ''), onclick: async () => { await setDone([book.id], !d); s.close(); toast(d ? t('markedNotDone') : t('markedDone')); } }, icon(d ? 'undo' : 'check'), d ? t('markNotDone') : t('markDone')); })(),
         h('button', { class: 'btn small', onclick: () => { void import('../ui/review').then((m) => m.reviewSheet(book, () => { renderGrid(); paint(); })); } }, icon('note'), t('reviewBook')),
         h('button', { class: 'btn small', onclick: () => { s.close(); tagsSheet([book.id]); } }, icon('tag'), t('manageTags')),
@@ -494,7 +496,7 @@ export function libraryView(): HTMLElement {
         const groups = FORMAT_GROUPS.filter((g) => present.has(g.id));
         if (groups.length > 1) { panel.append(h('h4', null, t('format'))); for (const g of groups) panel.append(row(g.label, fm.has(g.id), () => { const n = new Set(fm); if (n.has(g.id)) n.delete(g.id); else n.add(g.id); updateSettings({ formatFilter: [...n] }); })); }
         const tags = allTags();
-        if (tags.length) { panel.append(h('h4', null, t('tags'))); for (const tg of tags) panel.append(row(tg.name === FAV_TAG ? t('favorites') : tg.name, tagFilter === tg.name, () => setTagFilter(tagFilter === tg.name ? null : tg.name), tg.name === FAV_TAG ? 'heart' : undefined)); }
+        if (tags.length) { panel.append(h('h4', null, t('tags'))); for (const tg of tags) panel.append(row(tg.name === FAV_TAG ? t('favorites') : tg.name === TOREAD_TAG ? t('toRead') : tg.name, tagFilter === tg.name, () => setTagFilter(tagFilter === tg.name ? null : tg.name), tg.name === FAV_TAG ? 'heart' : undefined)); }
         if (st.size || fm.size || tagFilter) panel.append(h('button', { type: 'button', class: 'btn tonal small', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); draw(which); renderGrid(); } }, icon('close'), t('clearFilters')));
       } else if (which === 'sort') {
         for (const [id, label, ic] of SORTS) panel.append(row(label, sort === id, () => { if (sort === id) sortDesc = !sortDesc; else { sort = id; sortDesc = false; } localStorage.setItem('kr.sort', sort); localStorage.setItem('kr.sortDesc', sortDesc ? '1' : '0'); sortLabel.textContent = label; }, sort === id ? (sortDesc ? 'chevronUp' : 'chevronDown') : ic));
@@ -554,7 +556,7 @@ export function libraryView(): HTMLElement {
     const counts = new Map<string, number>();
     for (const tg of tagDefs) counts.set(tg.name, 0);
     for (const b of books) for (const name of b.tags ?? []) counts.set(name, (counts.get(name) ?? 0) + 1);
-    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => (a.name === FAV_TAG ? -1 : b.name === FAV_TAG ? 1 : natural.compare(a.name, b.name)));
+    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => (a.name === FAV_TAG ? -1 : b.name === FAV_TAG ? 1 : a.name === TOREAD_TAG ? -1 : b.name === TOREAD_TAG ? 1 : natural.compare(a.name, b.name)));
   }
 
   function setTagFilter(name: string | null) {
@@ -570,9 +572,9 @@ export function libraryView(): HTMLElement {
     if (!tags.length) return;
     for (const tag of tags) {
       const on = tagFilter === tag.name;
-      const fav = tag.name === FAV_TAG;
-      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : '') + (fav ? ' fav' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon(fav ? 'heartFill' : 'tag'), h('span', { dir: 'auto' }, fav ? t('favorites') : tag.name));
-      if (fav) { tagChips.append(c); continue; }
+      const fav = tag.name === FAV_TAG; const toRead = tag.name === TOREAD_TAG;
+      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : '') + (fav ? ' fav' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon(fav ? 'heartFill' : toRead ? 'clock' : 'tag'), h('span', { dir: 'auto' }, fav ? t('favorites') : toRead ? t('toRead') : tag.name));
+      if (fav || toRead) { tagChips.append(c); continue; }
       c.addEventListener('contextmenu', (e) => { e.preventDefault(); tagSheet(tag.name); });
       let pt: number | undefined;
       c.addEventListener('pointerdown', () => { pt = window.setTimeout(() => tagSheet(tag.name), 560); });
@@ -586,7 +588,7 @@ export function libraryView(): HTMLElement {
   async function saveTagDefs(next: TagDef[]): Promise<void> { tagDefs = next; await db.setMeta('tags', next); }
   /** Remember a tag so it stays (also when empty) until it is deleted. */
   async function declareTag(name: string): Promise<void> {
-    if (name === FAV_TAG || tagDefs.some((x) => x.name === name)) return;
+    if (name === FAV_TAG || name === TOREAD_TAG || tagDefs.some((x) => x.name === name)) return;
     await saveTagDefs([...tagDefs, { name, createdAt: Date.now() }]);
   }
 

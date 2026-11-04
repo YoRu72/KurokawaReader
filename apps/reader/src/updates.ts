@@ -127,7 +127,7 @@ export function versionNotes(list: ReleaseInfo[]): HTMLElement {
 
 /* ---------- platform installers ---------- */
 
-interface AndroidPlugin { deviceInfo(): Promise<{ abis: string[] }>; installApk(o: { path: string }): Promise<void> }
+interface AndroidPlugin { deviceInfo(): Promise<{ abis: string[] }>; installApk(o: { path: string; installer?: 'kurokawa' | 'system' }): Promise<void>; installerAvailable?(): Promise<{ kurokawa: boolean }> }
 interface FsPlugin { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }> }
 function androidPlugins(): { kr: AndroidPlugin; fs: FsPlugin } | null {
   const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: AndroidPlugin; Filesystem?: FsPlugin } } }).Capacitor;
@@ -260,7 +260,7 @@ export async function installAsset(asset: Asset, onProgress: (p: Progress) => vo
       let ok = (await perm.canInstall?.().catch(() => ({ granted: true })))?.granted ?? true;
       if (!ok) { toast(t('allowInstallHint'), 'info', 6000); ok = (await perm.requestInstallPermission?.().catch(() => ({ granted: false })))?.granted ?? false; }
       if (!ok) throw new Error(t('installNotAllowed'));
-      await p.kr.installApk({ path });
+      await p.kr.installApk({ path, installer: getSettings().updateInstaller ?? 'kurokawa' });
     } else toast(t('savedTo', { f: asset.name }));
     return;
   }
@@ -402,9 +402,14 @@ export function renderUpdateCard(container: HTMLElement): void {
   const every = seg<'launch' | 'daily' | 'weekly'>([['launch', t('everyLaunch')], ['daily', t('everyDay')], ['weekly', t('everyWeek')]], s0.updateEvery, (v) => updateSettings({ updateEvery: v }));
   const desk = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { downloadUpdate?: unknown }) | undefined;
   const bg = h('input', { type: 'checkbox', onchange: () => updateSettings({ updateAutoDownload: bg.checked }) }) as HTMLInputElement; bg.checked = s0.updateAutoDownload;
+  // (Android: Kurokawa Installer — the Tools app's — by default, when it is on the phone; the system's otherwise.)
+  const installerSeg = seg<'kurokawa' | 'system'>([['kurokawa', t('installerKurokawa')], ['system', t('installerSystem')]], s0.updateInstaller ?? 'kurokawa', (v) => updateSettings({ updateInstaller: v }));
+  const installerHint = h('p', { class: 'hint' }, t('installerKurokawaHint'));
+  if (nativePlatform() === 'android') void (androidPlugins()?.kr as AndroidPlugin | undefined)?.installerAvailable?.().then((r) => { if (!r.kurokawa) installerHint.textContent = t('installerKurokawaMissing'); }).catch(() => undefined);
   container.append(h('p', null, `${t('version')} ${APP_VERSION}`), h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } }, btn, h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, cb, h('i')), h('span', null, t('autoCheck')))), status,
     h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateChannel')), channel),
     h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateEvery')), every),
-    ...(nativePlatform() === 'android' ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownloadAndroid'))), h('p', { class: 'hint' }, t('updateAutoDownloadAndroidHint'))] : []),
+    ...(nativePlatform() === 'android' ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownloadAndroid'))), h('p', { class: 'hint' }, t('updateAutoDownloadAndroidHint')),
+      h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateInstaller')), installerSeg), installerHint] : []),
     ...(desk?.downloadUpdate ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownload'))), h('p', { class: 'hint' }, t('updateAutoDownloadHint'))] : []));
 }

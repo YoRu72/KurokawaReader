@@ -3,13 +3,13 @@ import { familyFor } from './fonts';
 // applied as CSS custom properties on the .reader element.
 
 export type Theme = 'grey' | 'dark' | 'black' | 'slate' | 'night' | 'sepia' | 'moon' | 'paper' | 'mintpaper' | 'rosepaper' | 'light' | 'olive' | 'amber' | 'forest' | 'plum' | 'sand' | 'ink' | 'coffee' | 'lavender' | 'sky' | 'charcoal' | 'nord' | 'dracula' | 'solardark' | 'gruvbox' | 'solarlight' | 'cream' | 'peach' | 'custom';
-export type Texture = 'none' | 'paper' | 'linen' | 'parchment' | 'dots' | 'polka';
+export type Texture = 'none' | 'paper' | 'linen' | 'parchment';
 export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'merriweather' | 'termes' | 'lora' | 'literata' | 'garamond' | 'crimson' | 'gelasio' | 'vollkorn' | 'bitter' | 'sourceserif' | 'atkinson' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
-export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen';
+export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight';
 export const DEFAULT_TAP_ZONES: TapAction[] = ['prev', 'prev', 'prev', 'menu', 'menu', 'menu', 'next', 'next', 'next'];
 export type CjkFont = 'system' | 'mincho' | 'gothic' | 'publisher' | (string & {});
 
@@ -20,6 +20,8 @@ export interface VisualSettings {
   nightFrom: string;
   nightTo: string;
   nightTheme: Theme;
+  /** The theme a day/night tap left (to come back to). */
+  dayTheme?: Theme;
   /** A reminder to rest the eyes every so many minutes of reading (0: none). */
   eyeRestMinutes: number;
   latinFont: LatinFont;
@@ -28,6 +30,12 @@ export interface VisualSettings {
   headingsFont: boolean;      // the chosen reading fonts apply to headings too (else headings keep the default faces)
   fontSize: number;       // px
   lineHeight: number;     // unitless
+  /** Font thickness (ReadEra's): a weight for variable fonts, 300–700; 400 is as the font comes. */
+  fontWeight: number;
+  /** Android: the Back button leaves the app only when pressed twice (ReadEra's). */
+  doubleBackExit: boolean;
+  /** Where «Search the web» from a selection goes. */
+  searchEngine: 'duckduckgo' | 'google' | 'bing' | 'wikipedia' | 'yandex' | 'baidu';
   paragraphSpacing: number; // em
   textWidth: number;      // px
   margin: number;         // px
@@ -51,9 +59,6 @@ export interface VisualSettings {
   customFg: string;
   texture: Texture;
   textureOpacity: number;  // 0–1
-  polkaAmount: number;     // 1–5: how many dots the polka texture scatters in the margins
-  polkaPlace: 'both' | 'left' | 'right' | 'edges'; // which margins carry dots (edges: top and bottom too)
-  polkaSize: 1 | 2 | 3;    // dot size
   bgImage: boolean;        // a picture is stored in IndexedDB under 'bg-image'
   bgImageOpacity: number;  // 0–1
   bgBlur: number;          // px
@@ -98,7 +103,9 @@ export interface VisualSettings {
   autoUpdateCheck: boolean;
   updateChannel: 'stable' | 'beta';   // beta: pre-releases too
   updateEvery: 'launch' | 'daily' | 'weekly'; // how often the start-up check runs
-  updateAutoDownload: boolean;       // desktop: fetch the update in the background and install it on quit
+  updateAutoDownload: boolean;       // the update fetched in the background (desktop: installed on quit; Android: offered ready to install)
+  /** Android: which installer takes the update — Kurokawa Installer (the Tools app's, when it is on the phone) or the system's. */
+  updateInstaller: 'kurokawa' | 'system';
   /** Long work (conversions) shows its progress in notifications. */
   jobNotify: boolean;
   tapToTurn: boolean;
@@ -203,7 +210,7 @@ export const DEFAULTS: VisualSettings = {
   cjkFont: 'system',
   headingsFont: false,
   fontSize: 19,
-  lineHeight: 1.7,
+  lineHeight: 1.7, fontWeight: 400, doubleBackExit: false, searchEngine: 'duckduckgo',
   paragraphSpacing: 0.9,
   textWidth: 720,
   margin: 22,
@@ -226,9 +233,6 @@ export const DEFAULTS: VisualSettings = {
   customFg: '#e4e9f0',
   texture: 'none',
   textureOpacity: 0.5,
-  polkaAmount: 3,
-  polkaPlace: 'both',
-  polkaSize: 2,
   bgImage: false,
   bgImageOpacity: 0.35,
   bgBlur: 0,
@@ -265,7 +269,7 @@ export const DEFAULTS: VisualSettings = {
   autoUpdateCheck: true,
   updateChannel: 'stable',
   updateEvery: 'launch',
-  updateAutoDownload: false,
+  updateAutoDownload: true, updateInstaller: 'kurokawa',
   jobNotify: true,
   tapToTurn: true,
   pictureZoom: true,
@@ -357,6 +361,8 @@ function load(): VisualSettings {
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
     if (!localStorage.getItem('kr.pinchMigrated')) { s.pdfPinchZoom = true; localStorage.setItem('kr.pinchMigrated', '1'); localStorage.setItem(KEY, JSON.stringify(s)); }
+    // 0.59.8: the dots and polka textures are gone; a page that had one is plain again.
+    if (!['none', 'paper', 'linen', 'parchment'].includes(s.texture as string)) s.texture = 'none';
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -587,8 +593,6 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.style.setProperty('--r-custom-bg', s.customBg);
   root.style.setProperty('--r-custom-fg', s.customFg);
   root.style.setProperty('--r-texture-opacity', String(s.textureOpacity));
-  if (s.texture === 'polka') { const [l, r, tb] = polkaStrips(s.polkaAmount, s.polkaSize); root.style.setProperty('--r-polka-l', l); root.style.setProperty('--r-polka-r', r); root.style.setProperty('--r-polka-tb', tb); }
-  root.dataset.polka = s.texture === 'polka' ? s.polkaPlace : '';
   root.style.setProperty('--r-bg-image-opacity', String(s.bgImage ? s.bgImageOpacity : 0));
   // (The picture and texture layers exist only when there is something on them: an empty full-screen layer
   // with a filter still costs the phone a composited surface on every scrolled frame.)
@@ -614,7 +618,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   // Headings keep the default faces unless asked to follow the text's.
   root.style.setProperty('--r-font-head', s.headingsFont ? 'var(--r-font)' : (s.latinFont === 'publisher' ? 'inherit' : `${LATIN.merriweather}, ${ARABIC.uthman}, ${fallback}`));
   root.style.setProperty('--r-font-head-rtl', s.headingsFont ? 'var(--r-font-rtl)' : (s.arabicFont === 'publisher' ? 'inherit' : `${ARABIC.uthman}, ${LATIN.lora}, ${fallback}`));
-  root.style.setProperty('--r-size', `${s.fontSize}px`);
+  root.style.setProperty('--r-size', `${s.fontSize}px`); root.style.setProperty('--r-weight', String(s.fontWeight || 400));
   root.style.setProperty('--r-lh', String(s.lineHeight));
   root.style.setProperty('--r-para', `${s.paragraphSpacing}em`);
   root.style.setProperty('--r-width', `${s.textWidth}px`);
@@ -627,42 +631,6 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   applyCustomCss(s.customCss);
 }
 
-// The polka texture: dots scattered at random down both page margins — a background, never under the text —
-// as in Moon+ Reader. Two strips (left and right) are drawn once per amount and kept, so the dots stay put
-// while other settings change; each strip is 240 px wide and cropped to the margin, so a wider margin (a
-// desktop window) shows more of its dots. Colour comes from the theme (currentColor via the CSS mask).
-const polkaCache = new Map<string, [string, string, string]>();
-function polkaStrips(amount: number, size: 1 | 2 | 3): [string, string, string] {
-  const key = `${amount}/${size}`; const hit = polkaCache.get(key); if (hit) return hit;
-  const H = 900, W = 240, big = [2, 3, 5, 8, 12][Math.max(1, Math.min(5, Math.round(amount))) - 1];
-  const R = [4.5, 6.5, 8.5][size - 1], r0 = [1.5, 2, 2.6][size - 1];
-  const strip = (side: 'l' | 'r' | 'tb'): string => {
-    const dots: string[] = []; const placed: [number, number][] = [];
-    // Vertical strips run down a margin; the top/bottom band is the same strip turned on its side.
-    const place = (r: number, nearEdge: boolean) => {
-      // Near the edge: within the narrowest margin (a phone's 22 px); further out only a wide margin shows.
-      // A few tries keep dots from clumping; the tile also repeats, so the ends stay clear of each other.
-      for (let tries = 0; tries < 12; tries++) {
-        const x = nearEdge ? r + 1 + Math.random() * Math.max(0, 20 - 2 * r) : 24 + Math.random() * (W - 32);
-        const y = r + 8 + Math.random() * (H - 2 * r - 16);
-        if (placed.some(([px, py]) => Math.abs(px - x) < 30 && Math.abs(py - y) < 70) && tries < 11) continue;
-        placed.push([x, y]);
-        const [cx, cy] = side === 'l' ? [x, y] : side === 'r' ? [W - x, y] : [y, x];
-        dots.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}"/>`);
-        break;
-      }
-    };
-    for (let i = 0; i < big; i++) place(R, i % 2 === 0);
-    for (let i = 0; i < big * 2; i++) place(r0, i % 3 !== 0);
-    for (let i = 0; i < big; i++) place(R, false);
-    const [w, h] = side === 'tb' ? [H, W] : [W, H];
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="${side === 'l' ? 'xMinYMin' : side === 'r' ? 'xMaxYMin' : 'xMinYMin'} slice"><g fill="#000">${dots.join('')}</g></svg>`;
-    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-  };
-  const out: [string, string, string] = [strip('l'), strip('r'), strip('tb')];
-  polkaCache.set(key, out);
-  return out;
-}
 
 // The reader's own CSS, as Moon+ allows: every rule is scoped to the book's text, so `p { text-indent: 2em }`
 // touches paragraphs of the book and nothing of the app. `body` and `html` mean the text as a whole.

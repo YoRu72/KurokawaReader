@@ -2,7 +2,7 @@
    Visual Options panel writes onto .reader, so changes apply instantly. */
 .reader {
   --r-bg: #141414; --r-fg: #cfcbc4; --r-dim: #8d8a84; --r-link: #8ec8e8; --r-rule: #2f2f2f; --r-img-filter: brightness(.85) contrast(1.02);
-  --r-size: 19px; --r-lh: 1.7; --r-para: 0.9em; --r-width: 720px; --r-margin: 22px; --r-align: start; --r-word: normal; --r-letter: normal; --r-hyphens: manual;
+  --r-size: 19px; --r-weight: 400; --r-lh: 1.7; --r-para: 0.9em; --r-width: 720px; --r-margin: 22px; --r-align: start; --r-word: normal; --r-letter: normal; --r-hyphens: manual;
   --r-font: var(--font-read); --r-font-rtl: var(--font-read-rtl);
   flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--r-bg); color: var(--r-fg);
 }
@@ -50,7 +50,7 @@
    sit under the text so selection and reading are unaffected. */
 .reader-scroll { background: var(--r-bg); }
 .reader-scroll::before, .reader-scroll::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-.reader:not([data-bg-image='on']):not([data-polka='edges']) .reader-scroll::before, .reader[data-texture='none'] .reader-scroll::after, .reader:not([data-texture]) .reader-scroll::after { display: none; }
+.reader:not([data-bg-image='on']) .reader-scroll::before, .reader[data-texture='none'] .reader-scroll::after, .reader:not([data-texture]) .reader-scroll::after { display: none; }
 .reader-scroll::before {
   background-image: linear-gradient(rgb(0 0 0 / var(--r-bg-shade, 0)), rgb(0 0 0 / var(--r-bg-shade, 0))), var(--r-bg-image, none); background-size: var(--r-bg-size, cover); background-position: var(--r-bg-pos, center); background-repeat: var(--r-bg-repeat, no-repeat);
   opacity: var(--r-bg-image-opacity, 0); filter: blur(var(--r-bg-blur, 0px)) saturate(var(--r-bg-sat, 1)); transform: scale(1.04);
@@ -58,14 +58,7 @@
 .reader[data-texture='paper'] .reader-scroll::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--r-texture-opacity, .5); mix-blend-mode: overlay; }
 .reader[data-texture='linen'] .reader-scroll::after { background-image: repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0 1px, transparent 1px 3px), repeating-linear-gradient(90deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px); opacity: var(--r-texture-opacity, .6); }
 .reader[data-texture='parchment'] .reader-scroll::after { background: radial-gradient(ellipse at 20% 10%, rgba(255,210,140,.14), transparent 50%), radial-gradient(ellipse at 80% 90%, rgba(120,70,20,.18), transparent 55%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .6 0 0 0 0 .45 0 0 0 0 .25 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--r-texture-opacity, .55); mix-blend-mode: multiply; }
-.reader[data-texture='polka'] .reader-flow { isolation: isolate; --r-gutter: max(var(--r-margin), calc((100vw - var(--r-width)) / 2 + var(--r-margin))); }
-.reader[data-texture='polka'] .reader-flow::before, .reader[data-texture='polka'] .reader-flow::after { content: ''; position: fixed; z-index: -1; top: 0; bottom: 0; width: var(--r-gutter); pointer-events: none; background: var(--r-link); opacity: var(--r-texture-opacity, .5); -webkit-mask-repeat: repeat-y; mask-repeat: repeat-y; -webkit-mask-size: 100% 900px; mask-size: 100% 900px; }
-.reader[data-texture='polka'] .reader-flow::before { left: 0; -webkit-mask-image: var(--r-polka-l); mask-image: var(--r-polka-l); -webkit-mask-position: left top; mask-position: left top; }
-.reader[data-texture='polka'] .reader-flow::after { right: 0; -webkit-mask-image: var(--r-polka-r); mask-image: var(--r-polka-r); -webkit-mask-position: right top; mask-position: right top; }
-.reader[data-polka='left'] .reader-flow::after, .reader[data-polka='right'] .reader-flow::before { display: none; }
 /* Edges: the two side strips plus a band along the top and the bottom, in the padding above and below the text. */
-.reader[data-polka='edges'] .reader-scroll::before { content: ''; position: fixed; left: 0; right: 0; top: 0; height: 28px; z-index: 0; pointer-events: none; background: var(--r-link); opacity: var(--r-texture-opacity, .5); -webkit-mask-image: var(--r-polka-tb); mask-image: var(--r-polka-tb); -webkit-mask-size: 900px 100%; mask-size: 900px 100%; -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x; -webkit-mask-position: left top; mask-position: left top; background-image: none; }
-.reader[data-texture='dots'] .reader-scroll::after { background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1.5px); background-size: 14px 14px; opacity: var(--r-texture-opacity, .5); }
 .reader-flow { position: relative; z-index: 1; }
 /* Comfort filters applied to the whole reading area */
 /* (Blending a full-screen layer costs every scrolled frame, so the overlay is only in the page while a filter is on.) */
@@ -91,7 +84,7 @@
 
 /* Flowed content */
 .kr-content {
-  font-family: var(--r-font); font-size: var(--r-size); line-height: var(--r-lh); text-align: var(--r-align);
+  font-family: var(--r-font); font-size: var(--r-size); font-weight: var(--r-weight, 400); line-height: var(--r-lh); text-align: var(--r-align);
   word-spacing: var(--r-word); letter-spacing: var(--r-letter); hyphens: var(--r-hyphens); -webkit-hyphens: var(--r-hyphens);
   overflow-wrap: break-word; text-rendering: optimizeLegibility; font-kerning: normal;
 }

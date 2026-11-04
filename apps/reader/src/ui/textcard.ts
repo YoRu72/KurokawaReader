@@ -68,10 +68,6 @@ async function paintBackground(ctx: CanvasRenderingContext2D, W: number, H: numb
       ctx.fillStyle = g2; ctx.fillRect(0, 0, W, H);
     }
     ctx.restore();
-  } else if (s.texture === 'dots') {
-    ctx.save(); ctx.globalAlpha = s.textureOpacity; ctx.fillStyle = 'rgba(255,255,255,.08)';
-    for (let y = 7; y < H; y += 14 * (W / 480)) for (let x = 7; x < W; x += 14 * (W / 480)) { ctx.beginPath(); ctx.arc(x, y, 1.6, 0, Math.PI * 2); ctx.fill(); }
-    ctx.restore();
   } else if (s.texture === 'linen') {
     ctx.save(); ctx.globalAlpha = s.textureOpacity; const step = 3 * (W / 480);
     ctx.fillStyle = 'rgba(255,255,255,.035)'; for (let y = 0; y < H; y += step) ctx.fillRect(0, y, W, 1);

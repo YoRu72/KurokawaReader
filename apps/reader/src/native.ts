@@ -183,7 +183,9 @@ export function initNativeBridges(): void {
     void cap.Plugins.App.getLaunchUrl().then((d) => { if (d?.url) void handleUrl(d.url); }).catch(() => undefined);
     // Android back: what is open on top first, then a place inside the view, then the view (see backstack);
     // at the library's top the app is put away.
-    void cap.Plugins.App.addListener('backButton', () => { if (!goBack()) void cap.Plugins?.App?.minimizeApp?.(); });
+    // (ReadEra's «exit only by double-clicking Back», when it is on: the first press at the library's top warns.)
+    let backAt = 0;
+    void cap.Plugins.App.addListener('backButton', () => { if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); });
   }
   wirePcBack();
   if (window.kurokawaDesktop) {

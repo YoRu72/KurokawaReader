@@ -8,10 +8,10 @@ import { getSettings } from '../settings';
 import { shiftAss, cuesToSrt, type Cue } from './subs';
 import type { PlayerSource } from './player';
 
-export interface CutJob { src: PlayerSource; a: number; b: number; duration: number; subtitle?: { name: string; ass?: string; cues: Cue[]; delay: number }; video: HTMLVideoElement; fps?: number; setRange?(a: number, b: number): void }
+export interface CutJob { src: PlayerSource; a: number; b: number; duration: number; subtitle?: { name: string; ass?: string; cues: Cue[]; delay: number; /** How the player draws it (SRT/VTT): font family, size (% of the player's), colours, outline, bold, position. */ style?: { font: string; size: number; color: string; outline: string; outlineWidth: number; bold: boolean; italic: boolean; pos: number; background: string } }; video: HTMLVideoElement; fps?: number; setRange?(a: number, b: number): void }
 type FfProgress = { id: string; time: number; size?: number; speed?: number; done?: boolean; error?: string };
-type Bridge = { ffmpeg(o: { id: string; args: string[]; cwd?: string }): Promise<{ code: number; log: string }>; ffmpegCancel(id: string): Promise<void>; ffprobe(path: string): Promise<unknown>; writeTemp(name: string, text: string): Promise<string>; onFfmpegProgress(cb: (p: FfProgress) => void): () => void; ffmpegAvailable(): Promise<{ ok: boolean; path?: string; why?: string }> };
-type Plugin = { ffmpeg(o: { id: string; args: string[] }): Promise<{ code: number; log: string }>; ffmpegCancel(o: { id: string }): Promise<void>; ffprobe(o: { path: string }): Promise<{ json: string }>; writeTemp(o: { name: string; text: string }): Promise<{ path: string }>; clipsDir(): Promise<{ dir: string }>; addListener(ev: 'ffmpegProgress', fn: (p: FfProgress) => void): Promise<{ remove(): void }> };
+type Bridge = { ffmpeg(o: { id: string; args: string[]; cwd?: string }): Promise<{ code: number; log: string }>; ffmpegCancel(id: string): Promise<void>; ffprobe(path: string): Promise<unknown>; writeTemp(name: string, text: string): Promise<string>; writeTempBytes?(o: { name: string; b64: string; sub?: string }): Promise<string>; onFfmpegProgress(cb: (p: FfProgress) => void): () => void; ffmpegAvailable(): Promise<{ ok: boolean; path?: string; why?: string }> };
+type Plugin = { ffmpeg(o: { id: string; args: string[] }): Promise<{ code: number; log: string }>; ffmpegCancel(o: { id: string }): Promise<void>; ffprobe(o: { path: string }): Promise<{ json: string }>; writeTemp(o: { name: string; text: string }): Promise<{ path: string }>; writeTempBytes?(o: { name: string; b64: string; sub?: string }): Promise<{ path: string }>; clipsDir(): Promise<{ dir: string }>; addListener(ev: 'ffmpegProgress', fn: (p: FfProgress) => void): Promise<{ remove(): void }> };
 const desk = (): Bridge | null => { const d = window.kurokawaTools as unknown as Bridge | undefined; return d?.ffmpeg ? d : null; };
 const plug = (): Plugin | null => { const p = ktPlugin() as unknown as Plugin | null; return p?.ffmpeg ? p : null; };
 export const canCut = (): boolean => !!(desk() || plug());
@@ -54,6 +54,8 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
   sh.body.append(h('div', { class: 'cut-head' }, track, h('div', { class: 'row' }, h('span', null, t('cutLength')), badge)), endRow('a', aIn), endRow('b', bIn), h('div', { class: 'row-actions' }, preview));
   const modePick = pickButton(t('cutMode'), [['fast', t('cutFast')], ['exact', t('cutExact')]], mode, (v) => { mode = v; if (v === 'fast') { burn = false; burnBox.checked = false; } draw(); }, t('close'));
   const burnBox = h('input', { type: 'checkbox', checked: burn, disabled: !job.subtitle, onchange: () => { burn = burnBox.checked; if (burn) { mode = 'exact'; modePick.setValue('exact'); } draw(); } }) as HTMLInputElement;
+  // (The player's own look — its font, size, colours and outline — kept on the burnt subtitle, with that font's file carried along for libass.)
+  let styled = true; const styledBox = h('input', { type: 'checkbox', checked: true, disabled: !job.subtitle, onchange: () => { styled = styledBox.checked; } }) as HTMLInputElement;
   const opts = h('div', { class: 'cut-opts' });
   const draw = () => {
     opts.replaceChildren(
@@ -61,6 +63,7 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
       ...(kind === 'video' ? [
         h('div', { class: 'row' }, h('span', null, t('cutMode'), h('small', { class: 'src' }, mode === 'fast' ? t('cutFastHint') : t('cutExactHint'))), modePick),
         h('label', { class: 'row switch-row' }, h('span', null, t('cutBurn'), h('small', { class: 'src' }, job.subtitle ? job.subtitle.name : t('cutNoSubtitle'))), burnBox),
+        h('label', { class: 'row switch-row' }, h('span', null, t('cutBurnStyled'), h('small', { class: 'src' }, t('cutBurnStyledHint'))), styledBox),
         h('label', { class: 'row switch-row' }, h('span', null, t('cutMute')), h('input', { type: 'checkbox', checked: mute, onchange: (e: Event) => { mute = (e.target as HTMLInputElement).checked; } })),
         ...(mode === 'exact' ? [h('div', { class: 'row' }, h('span', null, t('resolution')), pickButton(t('resolution'), [['', t('cutSourceRes')], ['1080', '1080p'], ['720', '720p'], ['480', '480p']], res, (v) => { res = v; }, t('close'))), h('div', { class: 'row' }, h('span', null, t('codec')), pickButton(t('codec'), [['h264', 'H.264'], ['hevc', 'HEVC']], codec, (v) => { codec = v; }, t('close'))), h('div', { class: 'row' }, h('span', null, t('quality'), h('small', { class: 'src' }, t('qualityHint'))), h('input', { type: 'range', min: '16', max: '32', step: '1', value: String(quality), oninput: (e: Event) => { quality = Number((e.target as HTMLInputElement).value); } }))] : [])] : []),
       ...(kind === 'audio' ? [h('p', { class: 'hint' }, t('cutAudioHint'))] : []),
@@ -96,7 +99,19 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
           const fontsDir = subPath.replace(/[\\/][^\\/]*$/, '/fonts');
           // The video's attached fonts, dumped beside the subtitle so libass finds them.
           if (isLocal) { const probe = d ? await d.ffprobe(input).catch(() => null) : await p!.ffprobe({ path: input }).then((r) => JSON.parse(r.json)).catch(() => null); const streams = ((probe as { streams?: { index: number; codec_type: string; tags?: { filename?: string } }[] } | null)?.streams ?? []).filter((s) => s.codec_type === 'attachment' && s.tags?.filename); if (streams.length) { const dumpArgs = ['-y', '-hide_banner', '-nostdin']; streams.forEach((s, i) => dumpArgs.push(`-dump_attachment:${s.index}`, `${fontsDir}/${s.tags!.filename!.replace(/[\\/]/g, '_') || `font${i}`}`)); dumpArgs.push('-i', input); line.textContent = t('cutDumpingFonts'); await (d ? d.ffmpeg({ id: `${id}-fonts`, args: dumpArgs }) : p!.ffmpeg({ id: `${id}-fonts`, args: dumpArgs })).catch(() => undefined); } }
-          vf.push(`subtitles='${esc(subPath)}':fontsdir='${esc(fontsDir)}'`);
+          // The fonts the subtitle names (an ASS's styles), and the player's own font for a plain SRT/VTT, written beside it;
+          // the player's style handed to libass as force_style so the clip looks as the screen did.
+          let force = '';
+          try {
+            const F = await import('./fonts'); const want = job.subtitle.ass ? F.fontsUsed(job.subtitle.ass) : (styled && job.subtitle.style?.font ? [job.subtitle.style.font] : []);
+            if (want.length) { const files = await F.fontFiles(want); for (const [fam, bytes] of Object.entries(files)) { let b64 = ''; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); b64 = btoa(b64); const name = `${fam.replace(/[^\w.-]+/g, '_')}.ttf`; if (d?.writeTempBytes) await d.writeTempBytes({ name, b64, sub: 'fonts' }); else if (p?.writeTempBytes) await p.writeTempBytes({ name, b64, sub: 'fonts' }); } }
+            if (styled && !job.subtitle.ass && job.subtitle.style) {
+              const st = job.subtitle.style; const bgr = (hex: string) => { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex); return m ? `&H00${m[3]}${m[2]}${m[1]}&`.toUpperCase() : '&H00FFFFFF&'; };
+              const h0 = job.video.videoHeight || 720; const size = Math.round((h0 / 18) * (st.size / 100));
+              force = [st.font ? `FontName=${st.font.replace(/[,:']/g, '')}` : '', `FontSize=${size}`, `PrimaryColour=${bgr(st.color)}`, `OutlineColour=${bgr(st.outline)}`, `Outline=${Math.max(0, Math.round(st.outlineWidth * (h0 / 720) * 10) / 10)}`, `Bold=${st.bold ? -1 : 0}`, `Italic=${st.italic ? -1 : 0}`, `Alignment=2`, `MarginV=${Math.round(h0 * 0.04 + (h0 * 0.9 * (100 - st.pos)) / 100)}`, st.background === 'box' ? 'BorderStyle=4,BackColour=&H80000000&' : ''].filter(Boolean).join(',');
+            }
+          } catch { /* the default look then */ }
+          vf.push(`subtitles='${esc(subPath)}':fontsdir='${esc(fontsDir)}'${force ? `:force_style='${esc(force)}'` : ''}`);
         }
         vf.push('format=yuv420p'); args.push('-vf', vf.join(','), '-map', '0:v:0'); if (!mute) args.push('-map', '0:a:0?'); else args.push('-an');
         if (android) args.push('-c:v', codec === 'hevc' ? 'hevc_mediacodec' : 'h264_mediacodec', '-bitrate_mode', 'vbr', '-b:v', `${Math.round(Math.max(1.5, 14 - quality * 0.4) * (res === '480' ? 0.35 : res === '720' ? 0.6 : 1))}M`, '-g', '60');

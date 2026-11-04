@@ -464,6 +464,9 @@ public class KurokawaPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("granted", Build.VERSION.SDK_INT < 26 || getContext().getPackageManager().canRequestPackageInstalls()); call.resolve(r);
     }
 
+    /** Whether Kurokawa Tools (with its installer) is on the phone. */
+    private boolean toolsInstalled() { try { getContext().getPackageManager().getPackageInfo("app.kurokawa.tools", 0); return true; } catch (Exception e) { return false; } }
+    @PluginMethod public void installerAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("kurokawa", toolsInstalled()); call.resolve(r); }
     @PluginMethod
     public void installApk(PluginCall call) {
         String path = call.getString("path", "");
@@ -472,6 +475,13 @@ public class KurokawaPlugin extends Plugin {
             File apk = new File(path);
             if (!apk.exists()) { call.reject("APK not found: " + path); return; }
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
+            // (Kurokawa Installer — the Tools app's, which reads the APK as a stream and shows what it is — when it
+            // is on the phone and asked for; else the system's installer.)
+            if (!"system".equals(call.getString("installer", "kurokawa")) && toolsInstalled()) {
+                Intent kt = new Intent(Intent.ACTION_VIEW); kt.setDataAndType(uri, "application/vnd.android.package-archive");
+                kt.setClassName("app.kurokawa.tools", "app.kurokawa.tools.KtInstaller"); kt.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                try { getActivity().startActivity(kt); call.resolve(); return; } catch (Exception e) { android.util.Log.w("Kurokawa", "Kurokawa Installer: " + e); }
+            }
             Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
             intent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);

@@ -875,6 +875,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (c === 'search') openSearch(); else if (c === 'options') openOptions(); else if (c === 'toc') openContents('toc'); else if (c === 'bookmark') void addBookmark();
     else if (c === 'translate') translator.toggleUi(); else if (c === 'speak') { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }
     else if (c === 'fullscreen') { void toggleFullscreen(root); }
+    // (Day and night swapped with one tap — ReadEra's top-left corner: the chosen theme and the night theme take turns.)
+    else if (c === 'dayNight') { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); }
     else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
@@ -1790,7 +1792,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
 
   function showPagesGrid(): void {
     const grid = h('div', { class: 'pages-grid' });
-    const close = () => { overlay.remove(); window.removeEventListener('keydown', onKey); };
+    const close = () => { overlay.remove(); window.removeEventListener('keydown', onKey); io.disconnect(); (viewer as { dropThumbs?(): void }).dropThumbs?.(); };
+    // (Two fingers on the grid — a pinch — are not a tap on a page: the cell under them is not opened.)
+    let multi = false; grid.addEventListener('touchstart', (e) => { if (e.touches.length > 1) multi = true; }, { passive: true }); grid.addEventListener('touchend', (e) => { if (!e.touches.length) setTimeout(() => { multi = false; }, 300); }, { passive: true });
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     const overlay = h('div', { class: 'view', style: { position: 'fixed', inset: '0', zIndex: '45', background: 'var(--md-surface)' }, role: 'dialog' },
       h('header', { class: 'topbar' }, iconButton('back', t('back'), close), h('div', { class: 'title' }, t('pagesGrid'), h('small', null, t('pageOf', { n: viewer.current, total: viewer.total })))),
@@ -1805,7 +1809,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     }, { root: overlay.querySelector('.gallery-body'), rootMargin: '200px 0px' });
     for (let n = 1; n <= viewer.total; n++) {
       // (The picture's place is a blank page until it is drawn — never a broken-picture mark.)
-      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { back.remember(); viewer.goTo(n); close(); } }, h('img', { alt: '' }), h('span', null, String(n)));
+      const cell = h('button', { type: 'button', class: 'page-cell' + (n === viewer.current ? ' current' : ''), dataset: { page: String(n) }, onclick: () => { if (multi) return; back.remember(); viewer.goTo(n); close(); } }, h('img', { alt: '' }), h('span', null, String(n)));
       grid.append(cell); io.observe(cell);
     }
     window.addEventListener('keydown', onKey);
