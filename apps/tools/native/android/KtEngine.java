@@ -61,6 +61,7 @@ final class KtEngine {
 
     /** One download, torrent or file. */
     static final class Task {
+        /** Paused by the app itself (no Wi-Fi, a low battery), not by the user: resumed when that passes. */ transient String heldBy;
         String id, kind, name, dir, state = "queued", error, infoHash;
         JSONObject source = new JSONObject(), meta;
         long done, total, downSpeed, upSpeed, addedAt = System.currentTimeMillis(), doneAt;
@@ -128,7 +129,9 @@ final class KtEngine {
         // read, write and check on the network's thread, so peers wait while a big torrent is checked: it is only a
         // choice in Settings («Simple disk access»), for a phone whose storage misbehaves with the fast one.
         SessionParams params = new SessionParams(sp);
-        boolean simpleDisk = false; try { simpleDisk = ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getBoolean("simpleDisk", false); } catch (Throwable ignored) {}
+        // (The simple (posix) disk access by default since 0.14.2: the memory-mapped one crashed libtorrent's disk threads on
+        // several phones — heap corruption, SIGABRT —; the fast one is a choice in Settings for phones it suits.)
+        boolean simpleDisk = true; try { simpleDisk = ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getBoolean("simpleDisk", true); } catch (Throwable ignored) {}
         // (A crash inside libtorrent last time — its memory-mapped disk access on a phone whose storage does not take it:
         // seen as heap corruption on its disk threads, Android 16–17 —: the simple disk access from now on, by itself.)
         if (!simpleDisk) try {
@@ -154,7 +157,7 @@ final class KtEngine {
             // The handle an alert gives points into the alert itself, which libtorrent frees once the alert has been
             // handled: kept, it was read later from another thread (the page asking for the list) and the whole app
             // ended (SIGSEGV in torrent_handle::is_valid, from KtEngine.files). The session's own copy is kept instead.
-            if (x != null) { TorrentHandle own = session.find(th.infoHash()); x.th = own; if (own == null) { tell(true); return; } th = own; applyOwn(x); if (x.priorities != null) applyPriorities(x); if (x.sequential) th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); if (x.paused) th.pause(); else th.resume(); }
+            if (x != null) { TorrentHandle own = session.find(th.infoHash()); x.th = own; if (own == null) { tell(true); return; } th = own; applyOwn(x); if (x.priorities != null) applyPriorities(x); if (x.sequential) th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); if (x.paused) { th.unsetFlags(TorrentFlags.AUTO_MANAGED); th.pause(); } else th.resume(); }
             tell(true);
         } else if (t == AlertType.METADATA_RECEIVED) {
             TorrentHandle th = ((MetadataReceivedAlert) a).handle(); Task x = byHash.get(th.infoHash().toHex());
@@ -247,7 +250,10 @@ final class KtEngine {
             }
         } catch (Throwable e) { Log.w(TAG, "trackers", e); }
         p.setSavePath(x.dir);
-        p.setFlags(p.getFlags().or_(TorrentFlags.AUTO_MANAGED).or_(TorrentFlags.UPDATE_SUBSCRIBE).or_(TorrentFlags.DUPLICATE_IS_ERROR));
+        // (A paused one is added paused and not auto-managed: libtorrent's queue starts auto-managed paused torrents by
+        // itself — so a download paused by the user started again each time the app was opened.)
+        p.setFlags(p.getFlags().or_(TorrentFlags.UPDATE_SUBSCRIBE).or_(TorrentFlags.DUPLICATE_IS_ERROR));
+        if (!x.paused) p.setFlags(p.getFlags().or_(TorrentFlags.AUTO_MANAGED));
         if (x.sequential) p.setFlags(p.getFlags().or_(TorrentFlags.SEQUENTIAL_DOWNLOAD));
         if (x.paused) p.setFlags(p.getFlags().or_(TorrentFlags.PAUSED));
         if (x.priorities != null && x.total > 0) p.filePriorities(prioArray(x, p.getTorrentInfo()));
@@ -266,6 +272,43 @@ final class KtEngine {
 
     void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
     void resume(String id) throws Exception { Task x = task(id); if (x == null) return; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
+    /* ---------- everything at once, and the app's own pauses (Wi-Fi only, a low battery) ---------- */
+    void pauseAll() { for (Task x : snapshot()) if (!x.paused && isMoving(x)) pause(x.id); }
+    void resumeAll() { for (Task x : snapshot()) if (x.paused && !"done".equals(x.state) && !"seeding".equals(x.state)) { try { x.heldBy = null; resume(x.id); } catch (Exception e) { Log.w(TAG, "resume all", e); } } }
+    private static boolean isMoving(Task x) { return "downloading".equals(x.state) || "metadata".equals(x.state) || "queued".equals(x.state) || "checking".equals(x.state); }
+    private final java.util.Set<String> holds = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    /** A reason to hold the downloads (`on`) or its end: held ones resumed when no reason is left. */
+    synchronized void hold(String reason, boolean on) {
+        boolean was = !holds.isEmpty(); if (on) holds.add(reason); else holds.remove(reason);
+        if (on && !was) { for (Task x : snapshot()) if (!x.paused && isMoving(x)) { pause(x.id); x.heldBy = reason; } }
+        else if (!on && holds.isEmpty()) { for (Task x : snapshot()) if (x.heldBy != null) { x.heldBy = null; try { resume(x.id); } catch (Exception e) { Log.w(TAG, "resume held", e); } } }
+        tell(true);
+    }
+    String heldReason() { synchronized (holds) { return holds.isEmpty() ? null : holds.iterator().next(); } }
+    private android.net.ConnectivityManager.NetworkCallback netCb; private android.content.BroadcastReceiver batteryRx; private boolean wifiOnly, batteryGuard;
+    /** Wi-Fi only: downloads held on a metered network (mobile data, a hotspot), resumed on Wi-Fi. */
+    private void watchNetwork(boolean on) {
+        android.net.ConnectivityManager cm = (android.net.ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE); if (cm == null) return;
+        if (netCb != null) { try { cm.unregisterNetworkCallback(netCb); } catch (Exception ignored) {} netCb = null; }
+        if (!on) { hold("metered", false); return; }
+        netCb = new android.net.ConnectivityManager.NetworkCallback() {
+            @Override public void onCapabilitiesChanged(android.net.Network n, android.net.NetworkCapabilities c) { hold("metered", !c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)); }
+            @Override public void onLost(android.net.Network n) { /* (nothing to download over; the downloads wait by themselves) */ }
+        };
+        try { cm.registerDefaultNetworkCallback(netCb); } catch (Exception e) { Log.w(TAG, "network callback", e); }
+        try { hold("metered", cm.isActiveNetworkMetered()); } catch (Exception ignored) {}
+    }
+    /** A low battery (15 % or less, not charging): downloads held until it charges or passes 20 %. */
+    private void watchBattery(boolean on) {
+        if (batteryRx != null) { try { ctx.unregisterReceiver(batteryRx); } catch (Exception ignored) {} batteryRx = null; }
+        if (!on) { hold("battery", false); return; }
+        batteryRx = new android.content.BroadcastReceiver() { @Override public void onReceive(Context c, android.content.Intent i) {
+            int lvl = i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1), scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100), plug = i.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0);
+            if (lvl < 0) return; int pct = lvl * 100 / Math.max(1, scale); boolean held = holds.contains("battery");
+            if (plug != 0 || pct >= 20) { if (held) hold("battery", false); } else if (pct <= 15 && !held) hold("battery", true);
+        } };
+        try { ctx.registerReceiver(batteryRx, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)); } catch (Exception e) { Log.w(TAG, "battery", e); }
+    }
     void remove(String id, boolean deleteFiles) {
         Task x; synchronized (this) { x = tasks.remove(id); } if (x == null) return;
         boolean loaded = x.th != null && x.th.isValid() && session != null;
@@ -416,6 +459,8 @@ final class KtEngine {
         sp.setBoolean(settings_pack.bool_types.anonymous_mode.swigValue(), anonymous);
     }
     void configure(JSONObject o) {
+        if (o.has("wifiOnly") && o.optBoolean("wifiOnly") != wifiOnly) { wifiOnly = o.optBoolean("wifiOnly"); watchNetwork(wifiOnly); }
+        if (o.has("batteryGuard") && o.optBoolean("batteryGuard") != batteryGuard) { batteryGuard = o.optBoolean("batteryGuard"); watchBattery(batteryGuard); }
         if (o.has("seed")) seedAfterDone = o.optBoolean("seed");
         if (o.has("dht")) dht = o.optBoolean("dht", true); if (o.has("lsd")) lsd = o.optBoolean("lsd", true); if (o.has("upnp")) upnp = o.optBoolean("upnp", true); if (o.has("natpmp")) natpmp = o.optBoolean("natpmp", true);
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
@@ -423,7 +468,7 @@ final class KtEngine {
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
-        if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", false)).apply(); } catch (Throwable ignored) {}   // (from the next start)
+        if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", true)).apply(); } catch (Throwable ignored) {}   // (from the next start)
         if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
         if (o.has("connsTotal")) { int n = Math.max(20, o.optInt("connsTotal", 500)); try { SessionManager sm = session; if (sm != null && sm.isRunning()) { SettingsPack sp = new SettingsPack(); sp.connectionsLimit(n); sm.applySettings(sp); } } catch (Throwable ignored) {} }
         if (o.has("addTrackers")) addTrackers = o.optBoolean("addTrackers", true);
@@ -633,7 +678,7 @@ final class KtEngine {
     JSONObject json(Task x) {
         JSONObject o = new JSONObject();
         try {
-            o.put("id", x.id); o.put("kind", x.kind); o.put("name", x.name == null ? "" : x.name); o.put("source", x.source); o.put("dir", x.dir); o.put("state", x.state);
+            o.put("id", x.id); o.put("kind", x.kind); o.put("name", x.name == null ? "" : x.name); o.put("source", x.source); o.put("dir", x.dir); o.put("state", x.state); if (x.heldBy != null) o.put("heldBy", x.heldBy);
             o.put("done", x.done); o.put("total", x.total); o.put("downSpeed", x.downSpeed); o.put("upSpeed", x.upSpeed);
             if (x.downSpeed > 0 && x.total > x.done) o.put("eta", (x.total - x.done) / x.downSpeed);
             if ("torrent".equals(x.kind)) { o.put("peers", x.peers); o.put("seeds", x.seeds); if (x.pieceMap != null) { o.put("pieceMap", x.pieceMap); o.put("numPieces", x.numPieces); o.put("havePieces", x.havePieces); } if (x.infoHash != null) o.put("infoHash", x.infoHash); } else { o.put("connections", x.connections);

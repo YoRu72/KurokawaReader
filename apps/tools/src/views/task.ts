@@ -5,7 +5,8 @@
 import { swarmCard } from './swarm';
 import { filesCard, type FilesCard } from './taskFiles';
 import { canArchive, isArchiveName } from '../archives';
-import { h, icon, iconButton, toast } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
+import { ktPlugin, nativePlatform } from '../native';
 import { t } from '../i18n';
 import { getEngine, displayName, isVideo } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
@@ -45,6 +46,10 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
       void import('./convert').then((m) => { if (m.canConvert() && m.kindOf(name)) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.convertSheet(fp, 'convert') }, icon('convert'), t('convertTitle')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.convertSheet(fp, 'shrink') }, icon('archive'), t('shrinkTitle'))); });
     }
     if (x.state === 'done' && x.kind !== 'torrent' && x.dir && !x.dir.startsWith('content:') && isArchiveName(name) && canArchive()) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${name}`)) }, icon('folder'), t('archiveBrowse')));
+    // (Shared to another app — Android's share sheet —, the page it came from opened again, a note of one's own.)
+    if (x.state === 'done' && nativePlatform() === 'android' && x.dir && !x.dir.startsWith('content:')) { const fp = `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/${(x.files.find((f) => f.priority > 0) ?? x.files[0]).path}` : (x.files[0]?.path ?? name)}`.replace(/\/+/g, '/'); acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void (ktPlugin() as unknown as { shareFile?(o: { path: string; title: string }): Promise<void> } | null)?.shareFile?.({ path: fp, title: name }).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('share'), t('share'))); }
+    { const ref = x.source.headers?.Referer ?? x.source.headers?.referer; if (ref && /^https?:/.test(ref)) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../browser').then((m) => m.openBrowser(ref)) }, icon('globe'), t('openSourcePage'))); }
+    acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/extras').then((m) => { const sh = openSheet(t('taskNote'), t('close')); const area = h('textarea', { class: 'text-input', rows: '3', dir: 'auto', value: m.noteOf(x.id), placeholder: t('taskNoteHint') }) as HTMLTextAreaElement; area.value = m.noteOf(x.id); sh.body.append(area); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { m.setNote(x.id, area.value); sh.close(); toast(t('saved')); } }, icon('check'), t('save'))); }) }, icon('pen'), t('taskNote')));
     acts.append(h('button', { type: 'button', class: 'btn text danger', onclick: () => void import('./downloads').then((m) => m.removeSheet([x], () => back('/'))) }, icon('trash'), t('removeTask')));
     const files = x.files.length > 1 || (x.files.length === 1 && x.kind === 'torrent') ? filesEl(x) : null;
     const panel = h('section', { class: 'card kt-panel' },

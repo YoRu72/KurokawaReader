@@ -7,12 +7,15 @@ import { navigate } from '../router';
 import * as cm from '../tv/cinemeta';
 import type { TvMeta, TvKind, Catalog } from '../tv/cinemeta';
 import { watchlist, watchingIds, nextUp } from '../tv/library';
+import { historyChips, remember as rememberSearch } from '../ui/searchHistory';
 
 export type TvTab = 'discover' | 'search' | 'watchlist';
 const TAB_KEY = 'kt.tv.tab'; const PREF_KEY = 'kt.tv.discover';
 export function tvCard(m: { id: string; type: TvKind; name: string; poster?: string; year?: string; releaseInfo?: string; imdbRating?: string }, extra?: HTMLElement | null): HTMLElement {
   const facts = [m.type === 'movie' ? t('tvFilm') : t('tvSeries'), m.releaseInfo ?? m.year ?? '', m.imdbRating ? `★ ${localDigits(m.imdbRating)}` : ''].filter(Boolean).join(' · ');
-  return h('button', { type: 'button', class: 'anime-card tv-card', onclick: () => navigate(`/tv/${m.type}/${m.id}`) },
+  // (In the watchlist, or being watched: marked on the card.)
+  const listed = watchlist().some((w) => w.id === m.id), watching = m.type === 'series' && watchingIds().includes(m.id);
+  return h('button', { type: 'button', class: 'anime-card tv-card' + (listed ? ' listed' : ''), onclick: () => navigate(`/tv/${m.type}/${m.id}`) }, listed || watching ? h('span', { class: 'tv-mark', title: watching ? t('tvWatching') : t('tvInWatchlist') }, icon(watching ? 'play' : 'bookmark')) : null,
     h('span', { class: 'anime-cover' }, m.poster ? h('img', { src: m.poster, alt: '', loading: 'lazy', onerror: (e: Event) => { (e.target as HTMLElement).replaceWith(icon('film')); } }) : icon('film')),
     h('span', { class: 'anime-text' }, h('span', { class: 'anime-title', dir: 'auto' }, m.name), h('span', { class: 'anime-facts' }, facts), extra ?? null));
 }
@@ -67,7 +70,7 @@ export function tvView(tab?: TvTab, q?: string): HTMLElement & { dispose?: () =>
       };
       const drawGrid = () => { const r = shown(); gridBox.replaceChildren(r.length ? grid(r) : h('p', { class: 'empty small' }, found.length ? t('tvNoMatchFilters') : t('noResults'))); };
       const run = async () => {
-        const s = input.value.trim(); const mine = ++runs; if (!s) { found = []; note = ''; drawBar(); gridBox.replaceChildren(); return; }
+        const s = input.value.trim(); const mine = ++runs; if (!s) { found = []; note = ''; drawBar(); gridBox.replaceChildren(...[historyChips('tv', (q) => { input.value = q; void run(); })].filter((x): x is HTMLElement => !!x)); return; }
         gridBox.replaceChildren(spinner()); bar.replaceChildren();
         try {
           const r = await cm.searchSmart(s); if (my !== token || mine !== runs) return;
@@ -78,29 +81,34 @@ export function tvView(tab?: TvTab, q?: string): HTMLElement & { dispose?: () =>
           let pending = 0; void cm.fillIn(found, () => { if (mine !== runs || my !== token) return; if (pending++ % 6 === 5 || pending >= Math.min(found.length, 40)) { drawBar(); drawGrid(); } }).then(() => { if (mine === runs && my === token) { drawBar(); drawGrid(); } });
         } catch (e) { if (mine === runs) gridBox.replaceChildren(fail(e)); }
       };
-      results.append(bar, gridBox);
+      results.append(bar, gridBox); if (!q) { const hc = historyChips('tv', (x) => { input.value = x; void run(); }); if (hc) gridBox.append(hc); }
       input.addEventListener('input', debounce(() => void run(), 400));
+      // (Kept once it is meant — Enter, or the box left —, not each word as it is typed.)
+      input.addEventListener('change', () => rememberSearch('tv', input.value));
       body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input), results);
       if (q) void run(); setTimeout(() => input.focus(), 50);
     } else if (current === 'watchlist') {
       const l = watchlist(); body.append(l.length ? grid(l) : h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('bookmark')), h('p', null, t('tvWatchlistEmpty'))));
       void continueRow(body, my);
     } else {
-      let p: { type: TvKind; cat: Catalog; genre: string } = { type: 'series', cat: 'top', genre: '' };
+      let p: { type: TvKind; cat: Catalog; genre: string; min?: number } = { type: 'series', cat: 'top', genre: '' };
       try { p = { ...p, ...(JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}') as Partial<typeof p>) }; } catch { /* first time */ }
       const head = h('div', { class: 'chip-row wrap tv-head' }); const genres = h('div', { class: 'chip-row tv-genres' }); const list = h('div'); const more = h('button', { type: 'button', class: 'btn tonal small anime-more', hidden: true }, t('loadMore')) as HTMLButtonElement;
       let skip = 0; let all: TvMeta[] = [];
+      // (A lowest rating chosen: only the titles at or above it.)
+      const shownGrid = () => { const r = p.min ? all.filter((m) => Number(m.imdbRating ?? 0) >= p.min!) : all; return r.length ? grid(r) : h('p', { class: 'empty small' }, all.length ? t('tvNoMatchFilters') : t('noResults')); };
       const save = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch { /* full */ } };
       const drawHead = () => {
         const c = (on: boolean, label: string, fn: () => void) => h('button', { type: 'button', class: 'chip small' + (on ? ' on' : ''), onclick: fn }, label);
         head.replaceChildren(c(p.type === 'series', t('tvSeriesPl'), () => { p.type = 'series'; p.genre = ''; save(); drawHead(); void load(); }), c(p.type === 'movie', t('tvFilmsPl'), () => { p.type = 'movie'; p.genre = ''; save(); drawHead(); void load(); }), h('span', { class: 'chip-sep' }),
           c(p.cat === 'top', t('sortPopular'), () => { p.cat = 'top'; p.genre = ''; save(); drawHead(); void load(); }), c(p.cat === 'year', t('sortNewest'), () => { p.cat = 'year'; p.genre = String(new Date().getFullYear()); save(); drawHead(); void load(); }), c(p.cat === 'imdbRating', t('sortScore'), () => { p.cat = 'imdbRating'; p.genre = ''; save(); drawHead(); void load(); }));
+        head.append(h('span', { class: 'chip-sep' }), ...([0, 6, 7, 8] as const).map((n) => c(Number(p.min ?? 0) === n, n ? `★ ${localDigits(n)}+` : t('tvAnyRating'), () => { p.min = n; save(); drawHead(); list.replaceChildren(shownGrid()); })));
         const opts = p.cat === 'year' ? Array.from({ length: 30 }, (_, i) => String(new Date().getFullYear() - i)) : cm.GENRES[p.type];
         genres.replaceChildren(...(p.cat === 'year' ? [] : [c(!p.genre, t('allFiles'), () => { p.genre = ''; save(); drawHead(); void load(); })]), ...opts.map((g) => c(p.genre === g, p.cat === 'year' ? localDigits(g) : g, () => { p.genre = g; save(); drawHead(); void load(); })));
       };
       const load = async (next = false) => {
         if (!next) { skip = 0; all = []; list.replaceChildren(spinner()); } else more.disabled = true;
-        try { const r = await cm.catalog(p.type, p.cat, p.genre || undefined, skip); if (my !== token) return; all = all.concat(r.metas); skip += r.metas.length; list.replaceChildren(all.length ? grid(all) : h('p', { class: 'empty small' }, t('noResults'))); more.hidden = !r.more; more.disabled = false; }
+        try { const r = await cm.catalog(p.type, p.cat, p.genre || undefined, skip); if (my !== token) return; all = all.concat(r.metas); skip += r.metas.length; list.replaceChildren(shownGrid()); more.hidden = !r.more; more.disabled = false; }
         catch (e) { list.replaceChildren(fail(e)); }
       };
       more.addEventListener('click', () => void load(true));

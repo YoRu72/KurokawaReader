@@ -2,6 +2,7 @@
 // (AniChart's page), the week's airing schedule (LiveChart's), and the user's own watching list — each card
 // leading to the show's page, where episodes are found as torrents and progress is tracked.
 import { h, icon, iconButton, openSheet, toast, debounce } from '../ui/dom';
+import { historyChips, remember as rememberSearch } from '../ui/searchHistory';
 import { t, localDigits, countEpisodes, dateLocale, getLang, countDays, countHours, countMinutes } from '../i18n';
 import { navigate } from '../router';
 import { getSettings } from '../settings';
@@ -59,6 +60,8 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
       const f = searchFilters(); if (q !== undefined && !preset) f.q = q; if (preset) { Object.assign(f, preset); preset = undefined; }
       const input = h('input', { type: 'search', class: 'search-input', placeholder: t('animeSearchHint'), value: f.q ?? '', enterkeyhint: 'search' }) as HTMLInputElement;
       const results = h('div'); const active = h('div', { class: 'chip-row wrap anime-active' });
+      // (Something to watch, picked at random among the 600 best known — a nudge when nothing comes to mind.)
+      const lucky = h('button', { type: 'button', class: 'btn tonal small', title: t('animeLucky'), onclick: async () => { try { const r = await al.searchBy({ sort: 'POPULARITY_DESC', adult: getSettings().animeAdult }, 1 + Math.floor(Math.random() * 20)); const a = r.media[Math.floor(Math.random() * r.media.length)]; if (a) navigate(`/anime/${a.id}`); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('star'), t('animeLucky'));
       const fbtn = h('button', { type: 'button', class: 'btn tonal small anime-filter-btn', onclick: () => filterSheet(f, () => { saveFilters(f); drawActive(); void run(); }) }, icon('filter'), t('animeFilters')) as HTMLButtonElement;
       let runs = 0; let page = 1; let all: Anime[] = [];
       const drawActive = () => {
@@ -75,7 +78,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
       const run = async (next = false) => {
         f.q = input.value.trim(); saveFilters(f); const mine = ++runs;
         const any = f.q || f.genres?.length || f.tags?.length || f.formats?.length || f.status || f.season || f.year || f.minScore;
-        if (!any) { results.replaceChildren(h('p', { class: 'hint' }, t('animeSearchStart'))); more.hidden = true; void tagSuggestions(results, (g) => { f.genres = [...new Set([...(f.genres ?? []), g])]; saveFilters(f); drawActive(); void run(); }); return; }
+        if (!any) { results.replaceChildren(...[historyChips('anime', (q) => { input.value = q; void run(); })].filter((x): x is HTMLElement => !!x), h('p', { class: 'hint' }, t('animeSearchStart'))); more.hidden = true; void tagSuggestions(results, (g) => { f.genres = [...new Set([...(f.genres ?? []), g])]; saveFilters(f); drawActive(); void run(); }); return; }
         if (!next) { page = 1; all = []; results.replaceChildren(spinner()); } else { page++; more.disabled = true; }
         try {
           const r = await al.searchBy({ ...f, adult: getSettings().animeAdult }, page); if (my !== token || mine !== runs) return;
@@ -83,7 +86,8 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
         } catch (e) { if (mine === runs) results.replaceChildren(fail(e)); }
       };
       input.addEventListener('input', debounce(() => void run(), 400));
-      body.append(h('form', { class: 'search-form row', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input, fbtn), active, results);
+      input.addEventListener('change', () => rememberSearch('anime', input.value));
+      body.append(h('form', { class: 'search-form row', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input, fbtn, lucky), active, results);
       drawActive(); void run(); setTimeout(() => input.focus(), 50);
     } else if (current === 'season') {
       let at = al.seasonOf(); let adult = getSettings().animeAdult; let leftovers = false; let sort = 'POPULARITY_DESC';

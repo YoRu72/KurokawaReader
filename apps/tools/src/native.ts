@@ -63,3 +63,12 @@ export async function openExternal(url: string): Promise<void> {
 /** A folder opened in the system's file manager (the desktop); false where that cannot be done. */
 export async function openFolder(path: string): Promise<boolean> { const d = window.kurokawaTools as { openPath?(p: string): Promise<void> } | undefined; if (d?.openPath) { await d.openPath(path); return true; } return false; }
 export const canOpenFolder = (): boolean => !!(window.kurokawaTools as { openPath?: unknown } | undefined)?.openPath;
+
+/** A small text file the user keeps: Downloads/Kurokawa on a phone, a save dialog on a computer, the browser's download on the web. */
+export async function saveText(name: string, text: string, mime = 'text/plain'): Promise<string | null> {
+  const d = window.kurokawaTools as unknown as { saveText?(o: { name: string; text: string }): Promise<{ path: string | null }> } | undefined;
+  if (d?.saveText) return (await d.saveText({ name, text })).path;
+  const p = ktPlugin() as unknown as { saveText?(o: { name: string; text: string }): Promise<{ path: string }> } | null;
+  if (p?.saveText) return (await p.saveText({ name, text })).path;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); return name;
+}

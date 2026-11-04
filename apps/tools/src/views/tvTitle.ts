@@ -38,7 +38,10 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
           h('div', { class: 'row-actions wrap' },
             h('button', { type: 'button', class: 'btn small ' + (inWl ? 'tonal on' : 'tonal'), onclick: () => { const on = lib.toggleWatchlist(mm); toast(on ? t('tvAddedWl') : t('tvRemovedWl')); draw(); } }, icon('bookmark'), inWl ? t('tvInWatchlist') : t('tvAddWatchlist')),
             mm.type === 'series' ? h('button', { type: 'button', class: 'btn small ' + (fol?.enabled ? 'tonal on' : 'text'), onclick: () => followSheet(mm, draw) }, icon('bell'), fol?.enabled ? t('autoOn') : t('tvFollow')) : null,
-            mm.trailer ? h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.youtube.com/watch?v=${mm.trailer}`) }, icon('play'), t('tvTrailer')) : null))));
+            mm.trailer ? h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.youtube.com/watch?v=${mm.trailer}`) }, icon('play'), t('tvTrailer')) : null,
+            // (Its IMDb page, and its link copied — to send it to someone.)
+            h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.imdb.com/title/${mm.id}/`) }, icon('external'), 'IMDb'),
+            h('button', { type: 'button', class: 'btn small text', onclick: () => void navigator.clipboard?.writeText(`https://www.imdb.com/title/${mm.id}/`).then(() => toast(t('copied'))).catch(() => undefined) }, icon('copy'), t('copyLink'))))));
     const syn = mm.description ? h('section', { class: 'card anime-synopsis' }, h('h3', null, t('animeSynopsis')), h('p', { class: 'clamp', dir: 'auto', onclick: (ev: Event) => (ev.currentTarget as HTMLElement).classList.toggle('clamp') }, mm.description),
       mm.cast?.length ? h('p', { class: 'src tv-cast' }, `${t('tvCast')}: ${mm.cast.join('، ')}`) : null, mm.director?.length ? h('p', { class: 'src' }, `${t('tvDirector')}: ${mm.director.join('، ')}`) : null) : null;
     let main: HTMLElement;

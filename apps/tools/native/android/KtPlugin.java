@@ -64,6 +64,8 @@ public class KtPlugin extends Plugin {
     @Override protected void handleOnPause() { super.handleOnPause(); visible = false; }
     @Override protected void handleOnResume() { super.handleOnResume(); visible = true; if (behind) { behind = false; JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(lastTasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); } }
     private static KtPlugin self;
+    /** The engine when the app made it (for the notification's and the tile's buttons). */
+    static KtEngine engineIfAny() { KtPlugin p = self; return p == null ? null : p.engine; }
     /** From the app's browser: a link to add, or the links of a page to pick from (event «browser»). */
     static void browserEvent(JSONObject o) { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("browser", JSObject.fromJSONObject(o), true); } catch (Exception ignored) {} }
     @PluginMethod public void browse(PluginCall call) {
@@ -76,6 +78,17 @@ public class KtPlugin extends Plugin {
     private void run(PluginCall call, Work w) { bg.execute(() -> { try { w.run(); } catch (Throwable e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e instanceof Exception ? (Exception) e : new Exception(e)); } }); }
     private static JSObject obj(JSONObject o) { try { return JSObject.fromJSONObject(o); } catch (Exception e) { return new JSObject(); } }
 
+    @PluginMethod public void pauseAll(PluginCall call) { run(call, () -> { engine().pauseAll(); call.resolve(); }); }
+    @PluginMethod public void resumeAll(PluginCall call) { run(call, () -> { engine().resumeAll(); call.resolve(); }); }
+    /** A finished file handed to Android's share sheet (another app, a chat, Nearby Share). */
+    @PluginMethod public void shareFile(PluginCall call) {
+        try {
+            File f = new File(call.getString("path", "")); if (!f.isFile()) { call.reject("notFound"); return; }
+            Uri u = androidx.core.content.FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+            Intent i = new Intent(Intent.ACTION_SEND).setType(mimeOf(f.getName()) == null ? "*/*" : mimeOf(f.getName())).putExtra(Intent.EXTRA_STREAM, u).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent ch = Intent.createChooser(i, call.getString("title", f.getName())); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve();
+        } catch (Exception e) { call.reject(e.getMessage()); }
+    }
     @PluginMethod public void list(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("tasks", new JSArray(engine().list().toString())); call.resolve(r); }); }
     /** Android 13+: notifications are off for an app until it asks — so the downloads' progress never showed. Asked
      *  once, when the first download is added (the system's own dialog). */
@@ -549,6 +562,19 @@ public class KtPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("paths", out); call.resolve(r);
     }
     @PluginMethod public void clipsDir(PluginCall call) { File d = new File(engine().defaultDir(), "Clips"); d.mkdirs(); JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); call.resolve(r); }
+    /** A small text file the user keeps (an exported list, a settings backup): put in Downloads/Kurokawa. */
+    @PluginMethod public void saveText(PluginCall call) {
+        bg.execute(() -> {
+            try {
+                String name = call.getString("name", "kurokawa.txt").replaceAll("[\\\\/:*?\"<>|]+", "_");
+                File dir = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Kurokawa"); dir.mkdirs();
+                File f = new File(dir, name);
+                try (java.io.OutputStream o = new java.io.FileOutputStream(f)) { o.write(call.getString("text", "").getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { f.getAbsolutePath() }, null, null); } catch (Throwable ignored) {}
+                JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage()); }
+        });
+    }
     @PluginMethod public void writeTemp(PluginCall call) {
         try { File dir = new File(getContext().getCacheDir(), "clip"); new File(dir, "fonts").mkdirs(); File f = new File(dir, call.getString("name", "clip.txt").replaceAll("[\\\\/]", "_")); try (java.io.Writer w = new java.io.OutputStreamWriter(new java.io.FileOutputStream(f), java.nio.charset.StandardCharsets.UTF_8)) { w.write(call.getString("text", "")); } JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r); }
         catch (Exception e) { call.reject(e.getMessage()); }

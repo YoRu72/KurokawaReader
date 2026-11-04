@@ -47,6 +47,8 @@ export interface Task {
   seeds?: number;
   connections?: number;
   infoHash?: string;
+  /** Paused by the app itself — no Wi-Fi («metered»), a low battery («battery») —, resumed when that passes. */
+  heldBy?: string;
   files: TaskFile[];
   /** Sequential piece order (so the file plays while it comes). */
   sequential?: boolean;
