@@ -46,7 +46,22 @@ public final class KtArchive {
     public interface Progress { void on(long done, long total, String file); boolean stopped(); }
 
     /* ---------- what kind ---------- */
+    /** The volumes of a split 7z («x.7z.001», «.002»…), in order, when `f` is one of them; else null. */
+    static java.util.List<File> volumesOf(File f) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*\\.7z)\\.(\\d{3})$", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(f.getName()); if (!m.matches()) return null;
+        java.util.List<File> out = new java.util.ArrayList<>(); File dir = f.getParentFile() == null ? new File(".") : f.getParentFile();
+        for (int i = 1; ; i++) { File v = new File(dir, m.group(1) + "." + String.format(java.util.Locale.US, "%03d", i)); if (!v.isFile()) break; out.add(v); }
+        return out.size() > 1 ? out : null;
+    }
+    /** A 7z opened — every volume of a split one joined — with its password when one is given. */
+    static SevenZFile open7z(File f, char[] pw) throws IOException {
+        java.util.List<File> vols = volumesOf(f);
+        if (vols == null) return pw != null && pw.length > 0 ? new SevenZFile(f, pw) : new SevenZFile(f);
+        java.nio.channels.SeekableByteChannel ch = org.apache.commons.compress.utils.MultiReadOnlySeekableByteChannel.forFiles(vols.toArray(new File[0]));
+        return pw != null && pw.length > 0 ? new SevenZFile(ch, f.getName(), pw) : new SevenZFile(ch, f.getName());
+    }
     public static String formatOf(File f) throws IOException {
+        if (volumesOf(f) != null) { f = volumesOf(f).get(0); }
         byte[] b = new byte[8];
         try (RandomAccessFile r = new RandomAccessFile(f, "r")) { r.readFully(b, 0, (int) Math.min(8, r.length())); }
         String n = f.getName().toLowerCase();
@@ -121,7 +136,7 @@ public final class KtArchive {
         } else if ((fmt = formatOf(f)).equals("zip")) {
             try (RandomAccessFile r = new RandomAccessFile(f, "r")) { for (ZipItem it : readZip(r).items) { arr.put(item(it.name, it.usize, it.csize, it.dir)); total += it.usize; enc |= it.encrypted; } }
         } else if (fmt.equals("7z")) {
-            try (SevenZFile z = password != null && !password.isEmpty() ? new SevenZFile(f, password.toCharArray()) : new SevenZFile(f)) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
+            try (SevenZFile z = open7z(f, password == null ? null : password.toCharArray())) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
         } else if (fmt.equals("rar")) {
             try (com.github.junrar.Archive a = password != null && !password.isEmpty() ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) { for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), h.getFullPackSize(), h.isDirectory())); total += h.getFullUnpackSize(); enc |= h.isEncrypted(); } }
         } else if (fmt.startsWith("tar")) {
@@ -234,7 +249,7 @@ public final class KtArchive {
                     for (net.lingala.zip4j.model.FileHeader h : z.getFileHeaders()) { if (h.isDirectory()) continue; try (InputStream in = z.getInputStream(h)) { if (!v.entry(h.getFileName(), h.getUncompressedSize(), in)) return; } }
                 }
             } else if (fmt.equals("7z")) {
-                try (SevenZFile z = pw != null ? new SevenZFile(f, pw) : new SevenZFile(f)) {
+                try (SevenZFile z = open7z(f, pw)) {
                     SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { if (e.isDirectory() || !e.hasStream()) continue; if (!v.entry(e.getName(), e.getSize(), z.getInputStream(e))) return; }
                 }
             } else if (fmt.equals("rar")) {
@@ -421,7 +436,7 @@ public final class KtArchive {
     /* ---------- the other formats ---------- */
     static int extract7z(File f, File dest, Options o, Progress pr) throws Exception {
         int n = 0; long done = 0, total = 0;
-        try (SevenZFile z = o.password != null && !o.password.isEmpty() ? new SevenZFile(f, o.password.toCharArray()) : new SevenZFile(f)) {
+        try (SevenZFile z = open7z(f, o.password == null ? null : o.password.toCharArray())) {
             for (SevenZArchiveEntry e : z.getEntries()) total += e.getSize();
             SevenZArchiveEntry e;
             while ((e = z.getNextEntry()) != null) {

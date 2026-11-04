@@ -241,7 +241,10 @@ function ruleSheet(a: Anime, next: number, changed: () => void): void {
   const r = ruleOf(a.id) ?? { anilistId: a.id, title: titleOf(a), cover: a.cover, resolution: getSettings().animeQuality, group: '', dub: 'any', require: '', avoid: '', next, enabled: true } as AutoRule;
   const c = { ...r };
   const from = h('input', { type: 'number', min: '1', value: String(r.next), inputmode: 'numeric', onchange: (e: Event) => { c.next = Math.max(1, Number((e.target as HTMLInputElement).value) || 1); } });
-  sh.body.append(h('p', { class: 'hint' }, t('autoHint')), h('label', { class: 'num-field' }, h('span', null, t('fromEpisode')), from), ...choiceFields(c));
+  const numF = (label: string, k: 'minSeeders' | 'maxSizeMb' | 'delayHours', hint?: string) => h('label', { class: 'num-field' }, h('span', null, label, hint ? h('small', { class: 'src' }, ` ${hint}`) : null), h('input', { type: 'number', min: '0', value: String(c[k] ?? ''), placeholder: '0', inputmode: 'numeric', onchange: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); c[k] = v > 0 ? v : undefined; } }));
+  const provIn = h('input', { type: 'text', dir: 'ltr', value: c.providers ?? '', placeholder: 'nyaa, animetosho', onchange: (e: Event) => { c.providers = (e.target as HTMLInputElement).value.trim() || undefined; } });
+  sh.body.append(h('p', { class: 'hint' }, t('autoHint')), h('label', { class: 'num-field' }, h('span', null, t('fromEpisode')), from), ...choiceFields(c),
+    h('details', { class: 'auto-more' }, h('summary', null, t('autoMoreRules')), numF(t('autoMinSeeders'), 'minSeeders'), numF(t('autoMaxSize'), 'maxSizeMb', 'MB'), numF(t('autoDelay'), 'delayHours', t('hoursUnit')), h('label', { class: 'field' }, h('span', { class: 'label' }, t('autoProviders'), h('small', { class: 'src' }, ` ${t('autoProvidersHint')}`)), provIn)));
   sh.actions.append(...(ruleOf(a.id) ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => { dropRule(a.id); toast(t('autoOff')); sh.close(); changed(); } }, icon('trash'), t('autoStop'))] : []),
     h('button', { type: 'button', class: 'btn primary', onclick: async () => { saveRule({ ...c, enabled: true }); startAuto(); sh.close(); changed(); toast(t('autoOn')); await checkRules(false); } }, icon('bell'), t('autoSave')));
 }
