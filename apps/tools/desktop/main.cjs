@@ -276,7 +276,19 @@ ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.header
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 // DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.
 const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query' };
-ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
+// (The resolver tried: a known name asked through the app's own resolver — the one configureHostResolver set —
+// and timed; on an older Electron without resolveHost, the resolver's JSON endpoint is asked directly.)
+ipcMain.handle('kt:dohProbe', async () => {
+  const t0 = Date.now();
+  try {
+    if (typeof app.resolveHost === 'function') { const r = await app.resolveHost('example.com', { queryType: 'A' }); const ips = (r.endpoints || []).map((e) => e.address); return { ok: ips.length > 0, ms: Date.now() - t0, ips, resolver: 'secure DNS' }; }
+    const { net } = require('electron'); const url = `${(DOH[String(_dohProvider)] || _dohProvider || DOH.cloudflare).replace(/\/dns-query$/, '')}/dns-query?name=example.com&type=A`;
+    const body = await new Promise((ok, bad) => { const rq = net.request({ url, headers: { accept: 'application/dns-json' } }); let d = ''; rq.on('response', (res) => { res.on('data', (c) => { d += c; }); res.on('end', () => ok(d)); }); rq.on('error', bad); rq.end(); });
+    const j = JSON.parse(body); const ips = (j.Answer || []).map((a) => a.data); return { ok: ips.length > 0, ms: Date.now() - t0, ips, resolver: url.replace(/\?.*$/, '') };
+  } catch (e) { return { ok: false, ms: Date.now() - t0, why: String(e.message || e) }; }
+});
+let _dohProvider = 'off';
+ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
 ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(String(p)); if (err) throw new Error(err); });
 ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
 ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
