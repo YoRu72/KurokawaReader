@@ -9,6 +9,8 @@ const SIG = { zip: [0x50, 0x4b], sevenz: [0x37, 0x7a, 0xbc, 0xaf], rar: [0x52, 0
 async function formatOf(file) {
   const fd = await fsp.open(file, 'r'); const b = Buffer.alloc(8); try { await fd.read(b, 0, 8, 0); } finally { await fd.close(); }
   const n = path.basename(file).toLowerCase(); const is = (s) => s.every((v, i) => b[i] === v);
+  // (Split volumes — «x.7z.001», «x.zip.001», «x.zip» beside «x.z01» — go to 7-Zip, which joins them.)
+  if (/\.(7z|zip)\.\d{3}$/.test(n) || (n.endsWith('.zip') && fs.existsSync(file.replace(/\.zip$/i, '.z01')))) return '7z';
   if (is(SIG.zip)) return 'zip'; if (is(SIG.sevenz)) return '7z'; if (is(SIG.rar)) return 'rar';
   if (is(SIG.gz)) return /\.(tar\.gz|tgz)$/.test(n) ? 'tar.gz' : 'gz'; if (is(SIG.xz)) return /\.(tar\.xz|txz)$/.test(n) ? 'tar.xz' : 'xz'; if (is(SIG.bz2)) return /\.(tar\.bz2|tbz2)$/.test(n) ? 'tar.bz2' : 'bz2';
   if (n.endsWith('.tar')) return 'tar'; throw new Error('notArchive');

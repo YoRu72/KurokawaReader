@@ -12,17 +12,20 @@ import { request } from '../http';
 import { buildQuery, searchAll, rank, magnetOf, type TorrentResult } from './providers';
 import { parseFilename, matchesEpisode, similar } from './anitomy';
 
-export interface AutoRule { anilistId: number; title: string; cover?: string; resolution: string; group: string; dub: 'any' | 'sub' | 'dub'; require: string; avoid: string; next: number; enabled: boolean; at?: number }
+export interface AutoRule { anilistId: number; title: string; cover?: string; resolution: string; group: string; dub: 'any' | 'sub' | 'dub'; require: string; avoid: string; next: number; enabled: boolean; at?: number;
+  /** Seanime's finer rules: at least this many seeders; at most this size (MB); only these providers (names, comma-separated); taken this many hours after airing, not at once. */
+  minSeeders?: number; maxSizeMb?: number; providers?: string; delayHours?: number }
 export const rules = (): AutoRule[] => (getSettings().animeAuto ?? []) as AutoRule[];
 export const ruleOf = (id: number): AutoRule | undefined => rules().find((r) => r.anilistId === id);
 export function saveRule(r: AutoRule): void { updateSettings({ animeAuto: [...rules().filter((x) => x.anilistId !== r.anilistId), r] }); }
 export function dropRule(id: number): void { updateSettings({ animeAuto: rules().filter((x) => x.anilistId !== id) }); }
 
 /** The release that best fits an episode and the show's choices (null when none does). */
-export function pickFor(rs: TorrentResult[], ep: number, c: Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'>, allowBatch = false): TorrentResult | null {
+export function pickFor(rs: TorrentResult[], ep: number, c: Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'> & Partial<Pick<AutoRule, 'minSeeders' | 'maxSizeMb' | 'providers'>>, allowBatch = false): TorrentResult | null {
   const words = (s: string) => s.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
-  const req = words(c.require), avoid = words(c.avoid);
+  const req = words(c.require), avoid = words(c.avoid); const provs = words(c.providers ?? '');
   const ok = rs.filter((r) => {
+    if (c.minSeeders && (r.seeders ?? 0) < c.minSeeders) return false; if (c.maxSizeMb && r.size > c.maxSizeMb * 1048576) return false; if (provs.length && !provs.some((p) => r.provider.toLowerCase().includes(p))) return false;
     const p = parseFilename(r.title); const title = r.title.toLowerCase();
     if (ep && !(r.accuracy === 'high' && !p.batch) && !(p.episode === ep && p.episodeEnd === undefined) && !(allowBatch && matchesEpisode(p, ep))) return false;
     if (c.resolution && !(r.resolution ?? p.resolution ?? '').startsWith(c.resolution)) return false;
@@ -116,6 +119,8 @@ export async function checkRules(quiet = true): Promise<number> {
       const have = await downloadedEpisodes(r.anilistId); let next = r.next;
       for (let ep = r.next; ep <= aired; ep++) {
         if (have.has(ep)) { next = ep + 1; continue; }
+        // (A delay after airing — the better releases take a few hours — kept when the airing time is known.)
+        if (r.delayHours) { const airedAt = (a.schedule ?? []).find((x) => x.episode === ep)?.airingAt; if (airedAt && airedAt * 1000 + r.delayHours * 3600e3 > Date.now()) break; }
         const q = await buildQuery(a, ep); const rs = await searchAll(q, () => undefined).catch(() => [] as TorrentResult[]);
         const best = pickFor(rs, ep, r); if (!best) break;   // (not out yet in the wanted form: tried again next time)
         await addFor(a, best, ep); n++; next = ep + 1; toast(t('autoAdded', { title: r.title, n: ep }));

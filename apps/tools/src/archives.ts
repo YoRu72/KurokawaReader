@@ -15,10 +15,17 @@ const desk = () => (window.kurokawaTools as unknown as Bridge | undefined)?.arch
 const plug = () => { const p = ktPlugin() as unknown as Plugin | null; return p?.archiveList ? p : null; };
 
 export const canArchive = (): boolean => !!(desk() || plug());
-export const ARCHIVE_RE = /\.(zip|cbz|7z|rar|tar|tgz|tar\.gz|tar\.xz|txz|tar\.bz2|tbz2|gz|xz|bz2)$/i;
+export const ARCHIVE_RE = /\.(zip|cbz|7z|rar|tar|tgz|tar\.gz|tar\.xz|txz|tar\.bz2|tbz2|gz|xz|bz2|7z\.\d{3}|zip\.\d{3}|z\d{2}|part\d+\.rar|r\d{2})$/i;
+/** A split archive's first volume («x.7z.002» → «x.7z.001», «x.part3.rar» → «x.part1.rar», «x.z01» → «x.zip», «x.r00» → «x.rar»): the one to open. */
+export function firstVolume(path: string): string {
+  return path.replace(/\.(7z|zip)\.\d{3}$/i, '.$1.001').replace(/\.part\d+(\.rar)$/i, '.part1$1').replace(/\.z\d{2}$/i, '.zip').replace(/\.r\d{2}$/i, '.rar');
+}
+/** Whether a name is a later volume of a split archive (opened through its first). */
+export const isLaterVolume = (n: string): boolean => firstVolume(n) !== n;
 export const isArchiveName = (n: string): boolean => ARCHIVE_RE.test(n);
 
 export async function listArchive(path: string, password?: string): Promise<ArchiveInfo> {
+  path = firstVolume(path);
   const d = desk(); if (d) return d.archiveList({ path, password });
   const p = plug(); if (p) return p.archiveList({ path, password });
   throw new Error('unsupported');
@@ -30,7 +37,7 @@ function wire(): void {
   const p = plug(); if (p) void p.addListener('archiveProgress', (ev) => listeners.get(ev.id)?.(ev));
 }
 export async function extractArchive(o: ExtractOptions, onProgress?: (p: ArchiveProgress) => void): Promise<{ id: string; files: number; dest: string }> {
-  wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
+  o = { ...o, path: firstVolume(o.path) }; wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
   try { const d = desk(); const r = d ? await d.archiveExtract({ ...o, id }) : await plug()!.archiveExtract({ ...o, id }); return { id, ...r }; }
   finally { listeners.delete(id); }
 }
