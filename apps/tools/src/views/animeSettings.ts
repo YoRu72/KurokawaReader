@@ -7,20 +7,10 @@ import { getSettings, updateSettings } from '../settings';
 import * as al from '../anilist';
 import { providers, installRepo, removeProvider, setEnabled, updateAll, syncBuiltins, optionsOf, installEntry, type ProviderEntry } from '../anime/providers';
 import { MARKETS, STREMIO_SUGGESTED, readMarket, resolveEntry, type MarketItem } from '../anime/market';
-import { ktPlugin } from '../native';
 
 const card = (id: string, title: string, ...kids: (Node | null)[]) => h('section', { class: 'card', id }, h('h3', null, title), ...kids.filter((k): k is Node => !!k));
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label), c); };
-
-/** The address a sign-in window ends on, through whichever shell can watch one; null when none can. */
-async function captureAddress(url: string, marker: string, title: string): Promise<string | null | undefined> {
-  const d = window.kurokawaTools as (typeof window.kurokawaTools & { captureUrl?(o: { url: string; marker: string; title: string }): Promise<string | null> }) | undefined;
-  if (d?.captureUrl) return d.captureUrl({ url, marker, title });
-  const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { captureUrl?(o: { url: string; marker: string; title: string }): Promise<{ url: string | null }> }) | null;
-  if (p?.captureUrl) return (await p.captureUrl({ url, marker, title })).url;
-  return undefined;
-}
 
 /** The AniList account (Settings shows it on its own, near the top, once the Anime add-on is in): linked, who it is
  *  and the progress sent by itself; else how to link it. */

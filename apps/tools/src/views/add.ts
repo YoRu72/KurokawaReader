@@ -1,7 +1,7 @@
 // A new download: links or magnets typed or pasted (several at once), a .torrent file chosen; the folder, the
 // name, the connections; for a torrent, its files picked once the metadata is here.
 import { h, icon, openSheet, toast } from '../ui/dom';
-import { t, formatBytes, localDigits, countFiles } from '../i18n';
+import { t, formatBytes, countFiles } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
 import type { Task, TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';

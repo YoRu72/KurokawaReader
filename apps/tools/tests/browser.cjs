@@ -29,7 +29,7 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
   console.log('all rows', allRows, 'adds', JSON.stringify(adds.map((a) => [a.source.url, a.source.headers])));
   await p.evaluate(() => window.__emit('browser', { kind: 'download', url: 'https://file.example/data/zz.zip?f=Pack.zip', name: 'Pack.zip', referer: 'https://pawchive.example/post/1', ua: 'Mozilla/5.0 test' }));
   await p.waitForSelector('.sheet textarea'); await p.waitForTimeout(300);
-  const addSheet = await p.evaluate(() => [document.querySelector('.sheet textarea').value, document.querySelector('.sheet input[type=text]')?.value]);
+  const addSheet = await p.evaluate(() => [document.querySelector('.sheet textarea').value, document.querySelector('.sheet .save-as input.grow')?.value + '.' + document.querySelector('.sheet .ext-in')?.value]);
   console.log('add sheet:', addSheet);
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove())); await p.waitForTimeout(200);
   await p.click('.fab'); await p.waitForSelector('.fab-item'); await p.click('.fab-item[data-act="globe"]'); await p.waitForSelector('.sheet .search-input');

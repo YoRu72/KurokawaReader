@@ -4,7 +4,6 @@
 const EC_M: Record<number, [number, number, number]> = { // version: [data codewords, EC codewords per block, blocks]
   1: [16, 10, 1], 2: [28, 16, 1], 3: [44, 26, 1], 4: [64, 18, 2], 5: [86, 24, 2], 6: [108, 16, 4], 7: [124, 18, 4], 8: [154, 22, 4], 9: [182, 22, 5], 10: [216, 26, 5],
 };
-const TOTAL: Record<number, number> = { 1: 26, 2: 44, 3: 70, 4: 100, 5: 134, 6: 172, 7: 196, 8: 242, 9: 292, 10: 346 };
 const ALIGN: Record<number, number[]> = { 1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34], 7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50] };
 
 // GF(256) with the QR polynomial 0x11d.
@@ -25,7 +24,7 @@ export function qrModules(text: string): boolean[][] | null {
   if (!ver) return null;
   const [dataLen, ecLen, blocks] = EC_M[ver];
   // Bits: mode 0100, the count (8 bits under version 10, 16 at 10), the bytes, a terminator, padding.
-  const bits: number[] = []; const push = (v: number, n: number) => { for (let i = n - 1; i >= 0; i--) bits.push((v >> i) & 1); };
+  const bits: number[] = []; const push = (v: number, len: number) => { for (let i = len - 1; i >= 0; i--) bits.push((v >> i) & 1); };
   push(4, 4); push(bytes.length, ver < 10 ? 8 : 16); for (const b of bytes) push(b, 8);
   push(0, Math.min(4, dataLen * 8 - bits.length)); while (bits.length % 8) bits.push(0);
   const data: number[] = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));

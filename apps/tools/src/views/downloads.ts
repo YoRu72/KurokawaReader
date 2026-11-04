@@ -95,7 +95,6 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       ...(cats.length > 1 ? [h('span', { class: 'chip-sep' }), ...cats.map((c) => h('button', { type: 'button', class: 'chip' + (cat === c.id ? ' on' : ''), onclick: () => { cat = cat === c.id ? '' : c.id; draw(); } }, icon(c.icon), categoryName(c)))] : []),
       h('button', { type: 'button', class: 'chip sort-chip', onclick: () => downloadsOptionsSheet(tasks, draw, 'sort') }, icon('sort'), t((({ progress: 'sortProgress', speed: 'sortSpeed', eta: 'sortEta' } as Record<string, string>)[getSettings().sort] ?? `sort_${getSettings().sort}`) as 'sort_added')));
   };
-  const ORDER: Record<TaskState, number> = { downloading: 0, metadata: 1, checking: 2, queued: 3, seeding: 4, paused: 5, failed: 6, done: 7 };
   const shown = () => {
     const list = tasks.filter((x) => (current === 'all' ? true : current === 'active' ? ACTIVE.includes(x.state) || x.state === 'paused' : current === 'done' ? x.state === 'done' : x.state === 'failed') && (!cat || catOf(x).id === cat));
     return sortTasks(applyFilters(list, query));

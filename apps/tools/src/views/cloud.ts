@@ -3,7 +3,7 @@
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countFiles } from '../i18n';
 import { debridServices, type Debrid, type DebridTorrent } from '../debrid';
-import { pendingTransfers, latestOf, cancelTransfer, onTransfersChange, poll, type Transfer } from '../debrid/transfers';
+import { pendingTransfers, latestOf, cancelTransfer, onTransfersChange, poll } from '../debrid/transfers';
 import { getEngine } from '../engine';
 import { getSettings } from '../settings';
 

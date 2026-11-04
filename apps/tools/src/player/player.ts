@@ -190,7 +190,7 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- seek bar (with previews of the time under the finger)
   const canPreview = () => getPrefs().seekPreview && !(src.headers && Object.keys(src.headers).length) && (!!src.localPath || /^(http:\/\/127\.0\.0\.1|blob:|file:|https?:\/\/localhost)/.test(src.url));
-  const previewAt = (clientX: number) => { if (!canPreview() || !video.duration) return; if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } const r = bar.getBoundingClientRect(); const rr = bar.parentElement!.getBoundingClientRect(); const f = fracAt(clientX); preview.show(f * video.duration, clientX - rr.left, rr.width); };
+  const previewAt = (clientX: number) => { if (!canPreview() || !video.duration) return; if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } const rr = bar.parentElement!.getBoundingClientRect(); const f = fracAt(clientX); preview.show(f * video.duration, clientX - rr.left, rr.width); };
   const fracAt = (clientX: number) => { const r = bar.getBoundingClientRect(); const rtl = getComputedStyle(bar).direction === 'rtl'; let f = (clientX - r.left) / r.width; if (rtl) f = 1 - f; return Math.max(0, Math.min(1, f)); };
   const seekToX = (clientX: number) => { if (video.duration) seekTo(fracAt(clientX) * video.duration); };
   let scrubbing = false;
