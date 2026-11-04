@@ -22,20 +22,27 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - run: npm install
       - run: npm run build
+        env: { KR_SLIM: '1' }
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Create Android project
         shell: bash
         run: |
           set -o pipefail
           { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/prepare.log
+      - name: Throw-away signing key (the check signs with it; releases use the repository's)
+        run: |
+          keytool -genkeypair -v -keystore $RUNNER_TEMP/kr.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 30 -storepass kurokawa -keypass kurokawa -dname "CN=check, O=Kurokawa, C=SA" > /dev/null 2>&1
+          echo "KR_KEYSTORE=$RUNNER_TEMP/kr.keystore" >> $GITHUB_ENV; echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=kurokawa" >> $GITHUB_ENV
       - name: Compile
         shell: bash
         run: |
           set -o pipefail
-          cd android && chmod +x gradlew && ./gradlew compileDebugJavaWithJavac --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -E "error:|warning: \[|BUILD" | head -n 200
+          # (A release build, unsigned: R8 runs — a class it strips wrongly, or a rule it rejects, shows here and not on release day.)
+          cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
+          ls -la app/build/outputs/apk/release/ | awk '{print $5, $9}'
       - name: Report failure
         if: failure()
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          { echo "### Android compile check (Reader) failed"; echo '```'; grep -E -B2 -A6 "error:" $RUNNER_TEMP/build.log | head -c 50000 || tail -n 120 $RUNNER_TEMP/prepare.log $RUNNER_TEMP/build.log | tail -c 50000; echo '```'; } > body.md
+          { echo "### Android compile check (Reader) failed"; echo '```'; tail -n 150 $RUNNER_TEMP/build.log | tail -c 50000; echo '```'; } > body.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true

@@ -35,7 +35,10 @@ const num = (v: unknown): number | undefined => { const n = typeof v === 'number
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 const stamp = (ms: number) => { const d = new Date(ms); return Number.isNaN(d.getTime()) ? undefined : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const msOf = (d?: string): number | undefined => { if (!d) return undefined; const x = Date.parse(/^\d{4}-\d{2}-\d{2} /.test(d) ? d.replace(' ', 'T') : d); return Number.isNaN(x) ? undefined : x; };
-const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+// (One collator for every comparison: localeCompare with options builds a new one each call, and a shelf of
+// hundreds of series is sorted on every page.)
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const natural = (a: string, b: string) => collator.compare(a, b);
 
 /** A size as a listing writes it: "1.2M", "345K", "12 MB", "1073741824", "12345 bytes"; "-" is none. */
 export function sizeIn(s: string): number | undefined {
@@ -150,7 +153,16 @@ export function folderName(url: string): string {
  *  and its scanner). */
 export interface VolName { series: string; num?: number; sub?: string; publisher?: string; editions: string[]; version: number; ext: string; base: string; /** the number said to be a volume's ("Volume", "Vol.", "v01", "#", "المجلد"), not just a number at the end */ marked?: boolean }
 const EDITION_TAG = /^(kobo|premium|kindle(?:[- ]?(?:kobo|hq))?|kindlehq|google(?: ?play)?|bookwalker|ibooks|apple(?: books)?|nook|prepub|pre-?pub|ocr(?:[_ -].*)?|anon|retail|hq|lq|scans?|fan[- ]?tl|mtl|web|digital|epub|pdf|v\d+)$/i;
+const parsed = new Map<string, VolName>();
+/** (A name is parsed once: the same names come up in every sort, grouping and card of a shelf, with ten regexes each.) */
 export function parseName(name: string): VolName {
+  const had = parsed.get(name); if (had) return had;
+  const v = parseNameRaw(name);
+  if (parsed.size > 20000) parsed.clear();
+  parsed.set(name, v);
+  return v;
+}
+function parseNameRaw(name: string): VolName {
   const ext = (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase();
   const raw = ext ? name.slice(0, -(ext.length + 1)) : name;
   const tags = [...raw.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1].trim()).filter(Boolean);
@@ -354,6 +366,8 @@ type Hit = { href?: string; size?: unknown; time?: unknown; managed?: boolean };
 
 /** The index's entries by folder, made once per index. */
 const byFolder = new WeakMap<FolderIndex, Map<string, { files: IndexFile[]; dirs: string[] }>>();
+/** The newest files of an index, found once. */
+const newest = new WeakMap<FolderIndex, IndexFile[]>();
 const parentOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 function folderMap(idx: FolderIndex): Map<string, { files: IndexFile[]; dirs: string[] }> {
   const had = byFolder.get(idx); if (had) return had;
@@ -391,7 +405,7 @@ function mergeFolder(repo: Repo, idx: FolderIndex, rel: string, live: DirEntry[]
   const dirs = idx.dirs.filter((d) => { if (!here(d)) return true; if (!liveDirs.has(d)) { changed = true; return false; } liveDirs.delete(d); return true; });
   for (const d of liveDirs) { dirs.push(d); changed = true; }
   if (!changed) return false;
-  idx.files = files; idx.dirs = dirs; derived.delete(idx); byFolder.delete(idx);
+  idx.files = files; idx.dirs = dirs; derived.delete(idx); byFolder.delete(idx); newest.delete(idx);
   void db.setMeta(INDEX_KEY(repo), idx).catch(() => undefined);
   return true;
 }
@@ -635,7 +649,7 @@ export function folderSource(repo: Repo): Source {
   // filtered by tag grows — and covers missing from their files tried with AniList's.)
   let told = 0;
   const onTags = (rels: string[]) => {
-    searches.clear();
+    forgetCached();
     window.dispatchEvent(new CustomEvent('kr:tags-changed', { detail: { source: srcId, rels } }));
     if (Date.now() - told > 5000) { told = Date.now(); window.dispatchEvent(new CustomEvent('kr:covers-retry')); }
   };
@@ -661,8 +675,11 @@ export function folderSource(repo: Repo): Source {
     const tg = rel && !rel.includes('/') ? tagsOf(rel) : null;
     return { cover: tg?.cover, genres: tg?.genres, tagList: tg?.tags.map((x) => ({ name: x.n, rank: x.r, category: x.c, spoiler: !!x.s })), id: `a:${rel}`, title: crumbs.length ? shownName(crumbs[crumbs.length - 1]) : repo.name, look: 'series', coverFile: c ? fileOf(c.e, c.rel) : undefined, author: crumbs.length > 1 ? crumbs.slice(0, -1).map(shownName).join(' / ') : undefined, badge: countVolumes(groups.length), description: total ? formatBytes(total) : undefined, files: groups.map((g) => fileOf(g.items[0].e, g.items[0].rel)), volumeIds: groups.map((g) => g.items.map((x) => `f:${x.rel}`)), formats: [...pubs.slice(0, 2), ...new Set(books.map((e) => BOOK_EXT[e.ext!]?.[0] ?? ''))].filter(Boolean) };
   };
-  // A search's matches are gathered once and paged from memory.
+  // A search's matches are gathered once and paged from memory; so is the top shelf (its series filtered and
+  // sorted once per filter, not once per page), and both are dropped when the index or the tags change.
   const searches = new Map<string, { items: SourceBook[]; partial: boolean }>();
+  const tops = new Map<string, SourceBook[]>();
+  const forgetCached = () => { searches.clear(); tops.clear(); };
   const search = async (q: string, rel: string, f: FilterValues): Promise<{ items: SourceBook[]; partial: boolean }> => {
     const key = `${rel}\u0000${q}\u0000${JSON.stringify([f.kinds, f.publisher, f.genre, f.tag, f.type, f.match, f.sort, f.edition, f.scans, f.format])}`;
     const had = searches.get(key); if (had) return had;
@@ -748,7 +765,7 @@ export function folderSource(repo: Repo): Source {
     checking.add(rel);
     void listFolder(urlOf(root, rel), true, h5ai).then((live) => {
       if (!mergeFolder(repo, idx, rel, live)) return;
-      searches.clear();
+      forgetCached();
       window.dispatchEvent(new CustomEvent('kr:shelf-changed', { detail: { source: srcId, shelf: rel } }));
     }).catch(() => undefined).finally(() => setTimeout(() => checking.delete(rel), KEEP));
   };
@@ -795,7 +812,7 @@ export function folderSource(repo: Repo): Source {
       const run = async (progress: (text: string) => void, live: () => boolean, auto = false): Promise<boolean> => {
         const before = await loadIndex(repo);
         const made = await buildIndex(repo, progress, live, { walk: !auto });
-        searches.clear();
+        forgetCached();
         progress(t('indexMade', { series: countSeries(seriesOf(made).size), n: countVolumes(made.files.length) }));
         if (!before || before.files.length !== made.files.length || before.dirs.length !== made.dirs.length) return true;
         const had = new Set(before.files.map((x) => x.p));
@@ -822,12 +839,15 @@ export function folderSource(repo: Repo): Source {
       const idx = await loadIndex(repo);
       // The newest volumes of the whole folder.
       if (special === '::new' && idx) {
-        const latest = idx.files.filter((x) => x.t).sort((a, b) => (b.t ?? 0) - (a.t ?? 0)).slice(0, 240);
+        let latest = newest.get(idx); if (!latest) { latest = idx.files.filter((x) => x.t).sort((a, b) => (b.t ?? 0) - (a.t ?? 0)).slice(0, 240); newest.set(idx, latest); }
         const rows = latest.map((x) => { const name = dec(x.p.split('/').pop() ?? ''); const where = x.p.split('/').slice(0, -1).map(dec).join(' / '); return { ...volumeRow({ key: x.p, num: undefined, items: [{ e: { name, url: `${root}${x.p}`, dir: false, size: x.s, time: x.t, date: x.t ? stamp(x.t) : undefined, ext: (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? '').toLowerCase() }, v: parseName(name), rel: x.p }] }, { full: true, where }), group: x.p.includes('/') ? shownName(dec(x.p.split('/')[0])) : undefined, shelf: x.p.includes('/') ? x.p.split('/')[0] : undefined }; });
         return paged(rows, undefined, t('shelfNewVolumes'));
       }
       // The top: the series (from the index when there is one: counted, with their publishers).
       if (!rel) {
+        const topKey = `${special ?? ''}\u0000${JSON.stringify([f.kinds, f.publisher, f.genre, f.tag, f.type, f.match, f.sort, f.edition, f.scans, f.format])}`;
+        const hadTop = pageNo > 1 ? tops.get(topKey) : undefined;
+        if (hadTop) return paged(hadTop, undefined, special === '::recent' ? t('shelfRecentSeries') : special === '::mine' ? t('shelfInMyLibrary') : undefined);
         let list: SourceBook[]; let topBooks: Vol[] = [];
         if (idx) {
           const dirSet = new Set(idx.dirs);
@@ -857,6 +877,7 @@ export function folderSource(repo: Repo): Source {
         const groups = groupsOf(topBooks, f);
         list.push(...groups.map((g) => volumeRow(g, { full: true })));
         const head = groups.length && !shelvesHere && !special ? seriesHeadOf('', groups, topBooks.map((x) => x.e)) : undefined;
+        if (!head && list.length > PAGE) { tops.set(topKey, list); if (tops.size > 12) tops.delete(tops.keys().next().value as string); }
         const out = paged(list, head, special === '::recent' ? t('shelfRecentSeries') : special === '::mine' ? t('shelfInMyLibrary') : undefined);
         if (!list.length && !special) out.empty = { text: t('folderEmpty'), url: root };
         return out;
@@ -916,7 +937,9 @@ export function folderSource(repo: Repo): Source {
     },
     peekNow: (b) => (b.file ? peekKnown(b.file.url, b.file.size, noCover()) : undefined),
     freshNow: (rel) => { const news = newsMem.get(repo.key); return news ? news[rel]?.n ?? 0 : undefined; },
-    folderCoverNow: (rel) => known(`peek:dir:${keyOf(urlOf(root, rel))}`),
+    // (Known at once: the cover kept for it; else, meanwhile, AniList's cover of the series — the shelf shows
+    // every series it knows at once, and each file's own cover takes its place as it is read.)
+    folderCoverNow: (rel) => { const had = known(`peek:dir:${keyOf(urlOf(root, rel))}`); if (had?.cover) return had; const al = tagsOn && !rel.includes('/') && !noCover() ? tagsOf(rel)?.cover : undefined; return al ? { ...(had ?? {}), cover: al, provisional: true } : had; },
     async tagsFor(b) {
       const rel = b.id.startsWith('a:') ? b.id.slice(2) : '';
       if (!tagsOn || !rel || rel.includes('/')) return null;

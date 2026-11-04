@@ -1,4 +1,5 @@
 import { familyFor } from './fonts';
+import { ensureFont } from './slim';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
@@ -572,6 +573,12 @@ export async function applyOrientation(s: VisualSettings = current): Promise<voi
 }
 
 /** Write the settings onto a reader root element as CSS variables. */
+/** A reading font the slim package left out: fetched and registered the first time it is chosen (said when it
+ *  cannot be, offline). */
+export function warmFonts(s: VisualSettings = current): void {
+  const fam = LATIN[s.latinFont]; if (!fam || /^(serif|sans|publisher)$/.test(s.latinFont)) return;
+  void ensureFont(fam).then((ok) => { if (!ok) window.dispatchEvent(new CustomEvent('kr:font-missing', { detail: fam })); });
+}
 export function applySettings(root: HTMLElement, s: VisualSettings = current): void {
   root.dataset.theme = themeNow(s);
   root.dataset.dimImages = String(s.dimImages);
@@ -610,6 +617,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   applyChrome(s);
   const latin = familyFor(s.latinFont, LATIN);
   const arabic = familyFor(s.arabicFont, ARABIC);
+  warmFonts(s);
   const fallback = "'Noto Naskh Arabic', Georgia, serif";
   root.style.setProperty('--r-font', s.latinFont === 'publisher' ? 'inherit' : `${latin}, ${arabic}, ${fallback}`);
   root.style.setProperty('--r-font-rtl', s.arabicFont === 'publisher' ? 'inherit' : `${arabic}, ${latin}, ${fallback}`);

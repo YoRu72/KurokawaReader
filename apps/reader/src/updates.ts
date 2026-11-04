@@ -2,7 +2,7 @@
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
 import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
-import { t, dateLocale, countConnections, countVersions } from './i18n';
+import { t, dateLocale, countConnections, countVersions, formatBytes as fmtSize } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 import { listReleases, newerThan, whatsNew, sha256Of, versionChange, type FetchText, type Rel } from './updateCore';
@@ -127,7 +127,7 @@ export function versionNotes(list: ReleaseInfo[]): HTMLElement {
 
 /* ---------- platform installers ---------- */
 
-interface AndroidPlugin { deviceInfo(): Promise<{ abis: string[] }>; installApk(o: { path: string; installer?: 'kurokawa' | 'system' }): Promise<void>; installerAvailable?(): Promise<{ kurokawa: boolean }> }
+interface AndroidPlugin { deviceInfo(): Promise<{ abis: string[] }>; installApk(o: { path: string; installer?: 'kurokawa' | 'system' }): Promise<void>; installerAvailable?(): Promise<{ kurokawa: boolean; canInstall?: boolean }> }
 interface FsPlugin { writeFile(o: { path: string; data: string; directory: string; recursive?: boolean }): Promise<{ uri: string }> }
 function androidPlugins(): { kr: AndroidPlugin; fs: FsPlugin } | null {
   const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: AndroidPlugin; Filesystem?: FsPlugin } } }).Capacitor;
@@ -196,6 +196,51 @@ export async function cachedUpdate(asset: Asset): Promise<string | null> {
 }
 export const updateRunning = (name: string): boolean => updateRun?.name === name;
 
+type ApkInfo = { label: string; package: string; version: string; versionCode: number; size: number; sameApp: boolean; installed: boolean; installedVersion?: string; signerMatch?: boolean; bundle?: boolean; parts?: number; minSdk: number };
+type ApkEvent = { id: string; status: 'progress' | 'installing' | 'committed' | 'confirm' | 'success' | 'failure'; done?: number; total?: number; pct?: number; code?: number; message?: string };
+type AndroidApk = AndroidDl & { apkInfo?(o: { path: string }): Promise<ApkInfo>; apkInstall?(o: { id: string; path: string; deleteAfter?: boolean }): Promise<{ id: string }> };
+/** The Kurokawa Installer's sheet: what the file is (checked against the installed app), then its streaming
+ *  into the install session with a bar, the system's confirmation when it asks, and the outcome. */
+export async function kurokawaInstall(kr: AndroidApk, path: string): Promise<void> {
+  if (!kr.apkInstall) { await kr.installApk({ path, installer: 'system' }); return; }
+  const sh = openSheet(t('installerKurokawa'), t('close'));
+  const title = h('div', { class: 'inst-title' }, h('b', null, '…')); const meta = h('p', { class: 'hint', dir: 'auto' }, t('installerReading'));
+  const bar = h('div', { class: 'wave-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i')); const setP = (pct: number) => { bar.style.setProperty('--p', `${pct}%`); bar.setAttribute('aria-valuenow', String(pct)); };
+  const status = h('p', { class: 'hint inst-status', dir: 'auto' }); const warn = h('p', { class: 'hint inst-warn', dir: 'auto', hidden: true });
+  const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('check'), t('install')) as HTMLButtonElement;
+  sh.body.append(h('div', { class: 'inst-card' }, title, meta, warn), bar, status, h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '10px' } }, go));
+  let info: ApkInfo | null = null;
+  try { info = await kr.apkInfo!({ path }); } catch { meta.textContent = t('installerNotApk'); return; }
+  const same = info.sameApp;
+  title.replaceChildren(h('b', { dir: 'auto' }, info.label), h('small', { dir: 'ltr' }, ` ${info.installed && info.installedVersion ? `${info.installedVersion} → ` : ''}${info.version}`));
+  meta.textContent = `${info.package} · ${fmtSize(info.size)}${info.bundle ? ` · ${t('installerBundle', { n: info.parts ?? 0 })}` : ''}`;
+  if (info.installed && info.signerMatch === false) { warn.hidden = false; warn.textContent = t('installerSignerMismatch'); }
+  else if (!same) { warn.hidden = false; warn.textContent = t('installerOtherApp', { app: info.label }); }
+  status.textContent = info.installed && info.signerMatch !== false ? t('installerSignerOk') : '';
+  go.disabled = false;
+  await new Promise<void>((resolve) => {
+    go.onclick = async () => {
+      go.disabled = true; status.textContent = t('installerCopying');
+      const id = `kr-inst-${Date.now()}`;
+      const sub = await kr.addListener?.('apk', ((ev: ApkEvent) => {
+        if (ev.id !== id) return;
+        if (ev.status === 'progress' && ev.total) { setP(Math.floor(((ev.done ?? 0) / ev.total) * 100)); status.textContent = `${t('installerCopying')} ${fmtSize(ev.done ?? 0)} / ${fmtSize(ev.total)}`; }
+        else if (ev.status === 'installing') { setP(ev.pct ?? 0); status.textContent = t('installerInstalling'); }
+        else if (ev.status === 'committed') { setP(100); status.textContent = t('installerInstalling'); }
+        else if (ev.status === 'confirm') status.textContent = t('installerConfirm');
+        else if (ev.status === 'success') { status.textContent = t('installerDone'); sub?.remove(); if (same) setTimeout(() => sh.close(), 400); else go.disabled = false; resolve(); }
+        else if (ev.status === 'failure') { status.textContent = t('installerFailed', { why: installFailure(ev.code, ev.message) }); setP(0); sub?.remove(); go.disabled = false; resolve(); }
+      }) as unknown as (d: Progress & { id?: string }) => void);
+      try { await kr.apkInstall!({ id, path }); } catch (e) { status.textContent = t('installerFailed', { why: String((e as Error)?.message ?? e) }); sub?.remove(); go.disabled = false; resolve(); }
+    };
+  });
+}
+function installFailure(code: number | undefined, msg: string | undefined): string {
+  // PackageInstaller's statuses: 1 failure, 2 blocked, 3 aborted (the user said no), 4 invalid, 5 conflict (another signer), 6 storage, 7 incompatible.
+  const key = ({ 2: 'installerBlocked', 3: 'installerAborted', 4: 'installerInvalid', 5: 'installerConflict', 6: 'installerStorage', 7: 'installerIncompatible' } as Record<number, string>)[code ?? 1];
+  return key ? t(key as 'installerBlocked') : (msg || t('installerUnknown'));
+}
+
 function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<string> {
   if (!updateRun || updateRun.name !== asset.name) {
     const id = `kr-update:${asset.name}`;
@@ -260,7 +305,8 @@ export async function installAsset(asset: Asset, onProgress: (p: Progress) => vo
       let ok = (await perm.canInstall?.().catch(() => ({ granted: true })))?.granted ?? true;
       if (!ok) { toast(t('allowInstallHint'), 'info', 6000); ok = (await perm.requestInstallPermission?.().catch(() => ({ granted: false })))?.granted ?? false; }
       if (!ok) throw new Error(t('installNotAllowed'));
-      await p.kr.installApk({ path, installer: getSettings().updateInstaller ?? 'kurokawa' });
+      if ((getSettings().updateInstaller ?? 'kurokawa') === 'system') await p.kr.installApk({ path, installer: 'system' });
+      else await kurokawaInstall(p.kr as AndroidDl, path);
     } else toast(t('savedTo', { f: asset.name }));
     return;
   }
@@ -405,7 +451,7 @@ export function renderUpdateCard(container: HTMLElement): void {
   // (Android: Kurokawa Installer — the Tools app's — by default, when it is on the phone; the system's otherwise.)
   const installerSeg = seg<'kurokawa' | 'system'>([['kurokawa', t('installerKurokawa')], ['system', t('installerSystem')]], s0.updateInstaller ?? 'kurokawa', (v) => updateSettings({ updateInstaller: v }));
   const installerHint = h('p', { class: 'hint' }, t('installerKurokawaHint'));
-  if (nativePlatform() === 'android') void (androidPlugins()?.kr as AndroidPlugin | undefined)?.installerAvailable?.().then((r) => { if (!r.kurokawa) installerHint.textContent = t('installerKurokawaMissing'); }).catch(() => undefined);
+  if (nativePlatform() === 'android') void (androidPlugins()?.kr as AndroidPlugin | undefined)?.installerAvailable?.().then((r) => { if (r.canInstall === false) installerHint.textContent = `${t('installerKurokawaHint')} ${t('installerKurokawaMissing')}`; }).catch(() => undefined);
   container.append(h('p', null, `${t('version')} ${APP_VERSION}`), h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } }, btn, h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, cb, h('i')), h('span', null, t('autoCheck')))), status,
     h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateChannel')), channel),
     h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateEvery')), every),

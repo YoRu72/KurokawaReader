@@ -5,6 +5,7 @@
 // borderless table, the running head in the page header, and footnotes as Word footnotes.
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
 import { findVertical, plainVerticalForms } from './pdfvertical';
+import { cmapsUrl } from './slim';
 import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics, renamedFont } from './fontbuild';
 import { loadPdfjs, offscreen } from './pdfjsload';
@@ -1906,7 +1907,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   // A protected file opens with the password given or remembered for it; one whose text pdf.js cannot read
   // (it comes out as control characters) is read from a copy decrypted here instead.
   const { openPdfjs, reopenDecrypted, looksGarbled } = await import('./pdfkeys');
-  const jsOpts = { fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` };
+  const jsOpts = { fontExtraProperties: true, useSystemFonts: false, cMapUrl: cmapsUrl(RES), cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` };
   let opened = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password });
   if (opened.encrypted) {
     const p1 = await opened.doc.getPage(1); const tc = await p1.getTextContent();

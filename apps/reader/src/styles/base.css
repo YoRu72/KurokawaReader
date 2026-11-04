@@ -2077,3 +2077,10 @@ body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox)
 /* (Cards and hit rows far down the page are not laid out until they come near: a long result list scrolls lightly.) */
 .src-grid .src-card { content-visibility: auto; contain-intrinsic-size: auto 240px; }
 .src-grid.hits .hit-row { content-visibility: auto; contain-intrinsic-size: auto 150px; }
+
+/* The Kurokawa Installer's sheet */
+.inst-card { padding: 14px 16px; border-radius: var(--sh-lg); background: var(--md-surface-container); }
+.inst-title b { font-size: 1.1rem; }
+.inst-title small { color: var(--md-on-surface-variant); }
+.inst-warn { color: var(--md-error); }
+.inst-status { min-height: 1.4em; }

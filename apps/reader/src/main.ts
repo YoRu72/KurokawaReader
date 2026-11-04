@@ -1,12 +1,13 @@
 import { normalizeForSearch } from './formats/types';
+import { cmapsUrl, loadSlim } from './slim';
 import './styles/fonts.css';
 import './styles/base.css';
 import './styles/reader.css';
-import { applyDocumentLang, onLangChange, loadLang, getLang } from './i18n';
+import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, lastMove, type Route } from './router';
 import { h } from './ui/dom';
 import { libraryView } from './views/library';
-import { applyChrome, onSettingsChange, getSettings } from './settings';
+import { applyChrome, onSettingsChange, getSettings, warmFonts } from './settings';
 import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
@@ -96,6 +97,9 @@ applyChrome();
 initPcShell();
 setTimeout(() => void import('./ui/share').then((m) => m.clearShareCache()), 8000);
 void loadFonts();
+// (A slim package: what it left out, and the chosen font fetched before the first book opens.)
+void loadSlim().then((sl) => { if (sl.fonts) warmFonts(); });
+window.addEventListener('kr:font-missing', () => void import('./ui/dom').then((m) => m.toast(t('fontFetchFailed'), 'info', 5000)));
 initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);
 scheduleAutoCheck();
@@ -145,7 +149,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
   const pdfjs = await loadPdfjs();
   const RES = new URL('./pdfjs/', import.meta.url).href;
   const { openPdfjs } = await import('./pdfkeys');
-  const o = await openPdfjs(pdfjs, bytes, { cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false });
+  const o = await openPdfjs(pdfjs, bytes, { cMapUrl: cmapsUrl(RES), cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, isEvalSupported: false });
   if (!n) {
     // All pages' reading text (up to 40), for comparing extraction before and after a change.
     const all: string[] = [];

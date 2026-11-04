@@ -1,10 +1,11 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
 import { ttsAvailable } from '../tts';
+import { slimNow } from '../slim';
 import { aiTtsSupported } from '../ai';
 import { h, clear, icon, toast, pickButton, pickSheet } from './dom';
 import { colorField } from './colorpicker';
-import { isTouchDevice, t, countMinutes, localDigits } from '../i18n';
+import { isTouchDevice, t, countMinutes, localDigits, dateLocale } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
@@ -157,6 +158,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const cjkBook = !!document.querySelector('.cjk-book');
   const cjk: [CjkFont, string][] = [['system', t('fontSystemDefault')], ['mincho', t('fontMincho')], ['gothic', t('fontGothic')], ...customCjk, ...sys, ['publisher', t('fontPublisher')]];
   grid.append(section([t('latinFont'), 'latinFont'], segmented(latin, s.latinFont, (v) => { updateSettings({ latinFont: v }); rerender(); })));
+  // (A slim package: the fonts it fetches when first chosen, said once under the list.)
+  { const remote = Object.keys(slimNow().fonts ?? {}); if (remote.length) grid.append(h('p', { class: 'hint', dir: 'auto' }, t('fontFetched', { names: new Intl.ListFormat(dateLocale(), { type: 'conjunction' }).format(remote) }))); }
   grid.append(section([t('arabicFont'), 'arabicFont'], segmented(arabic, s.arabicFont, (v) => { updateSettings({ arabicFont: v }); rerender(); }, true)));
   if (cjkBook || customCjk.length) grid.append(section([t('cjkFont'), 'cjkFont'], segmented(cjk, s.cjkFont, (v) => { updateSettings({ cjkFont: v }); rerender(); })));
   grid.append(toggle([t('headingsFont'), 'headingsFont'], s.headingsFont, (v) => updateSettings({ headingsFont: v })));

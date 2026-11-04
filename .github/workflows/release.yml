@@ -67,6 +67,7 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - run: npm install
       - run: npm run build
+        env: { KR_SLIM: '1' }
       - name: Accept Android SDK licences (SDK is preinstalled on the runner)
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Create Android project
@@ -137,6 +138,7 @@ jobs:
         with: { node-version: 22 }
       - run: npm install
       - run: npm run build
+        env: { KR_SLIM: '1' }
       - name: Create iOS project
         shell: bash
         run: |
