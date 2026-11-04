@@ -14,7 +14,7 @@ export async function translateTexts(texts: string[], c: ScreenConfig): Promise<
   const out = texts.slice(); const ask: string[] = []; const id = idOf(c);
   for (const tx of texts) if (hasLetters(tx) && !cache.has(`${id}\u0000${tx}`) && !ask.includes(tx)) ask.push(tx);
   if (ask.length) {
-    const got = c.engine === 'deepl' ? await deepl(ask, c) : c.engine === 'ai' ? await ai(ask, c) : await google(ask, c);
+    const got = c.engine === 'deepl' ? await deepl(ask, c) : c.engine === 'ai' ? await ai(ask, c) : c.engine === 'microsoft' ? await keyless(ask, c, 'microsoft') : await keyless(ask, c, 'google');
     ask.forEach((tx, i) => cache.set(`${id}\u0000${tx}`, got[i] ?? tx));
     if (cache.size > 6000) for (const k of [...cache.keys()].slice(0, 2000)) cache.delete(k);
   }
@@ -30,14 +30,58 @@ async function send(url: string, method: string, headers: Record<string, string>
     return r.body;
   }
 }
+/* ---------- the keyless engines: Google and Microsoft, each the other's stand-in ---------- */
+// (Google refused — too many requests, a check — falls back to Microsoft for the batch, and the other way round;
+// which one last answered is asked first for the next minute.)
+let keylessDown: Record<string, number> = {};
+async function keyless(texts: string[], c: ScreenConfig, want: 'google' | 'microsoft'): Promise<string[]> {
+  const order: ('google' | 'microsoft')[] = want === 'google' ? ['google', 'microsoft'] : ['microsoft', 'google'];
+  const now = Date.now(); const live = order.filter((e) => (keylessDown[e] ?? 0) < now); const tryOrder = live.length ? [...live, ...order.filter((e) => !live.includes(e))] : order;
+  let last: unknown = null;
+  for (const e of tryOrder) {
+    try { return e === 'google' ? await google(texts, c) : await microsoft(texts, c); }
+    catch (err) { last = err; keylessDown[e] = Date.now() + 60000; }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
+}
 const gCode = (l: string): string => (!l ? 'auto' : l === 'zh' ? 'zh-CN' : l === 'he' ? 'iw' : l);
+/** Google Translate (the free address its own pages use): many lines in one request, each on its own line, the
+ *  answer's lines matched back; a batch whose lines came back in another number is asked line by line. */
 async function google(texts: string[], c: ScreenConfig): Promise<string[]> {
-  const one = async (tx: string): Promise<string> => {
-    const j = JSON.parse(await send(`https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${encodeURIComponent(gCode(c.source))}&tl=${encodeURIComponent(gCode(c.target))}&q=${encodeURIComponent(tx)}`, 'GET', {})) as [[string, string][]];
-    return (j?.[0] ?? []).map((x) => x?.[0] ?? '').join('');
-  };
-  const out: string[] = new Array(texts.length); let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, texts.length) }, async () => { for (let i = next++; i < texts.length; i = next++) out[i] = await one(texts[i]); }));
+  const url = (q: string) => `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${encodeURIComponent(gCode(c.source))}&tl=${encodeURIComponent(gCode(c.target))}&q=${encodeURIComponent(q)}`;
+  const one = async (tx: string): Promise<string> => { const j = JSON.parse(await send(url(tx), 'GET', {})) as [[string, string][]]; return (j?.[0] ?? []).map((x) => x?.[0] ?? '').join(''); };
+  // (Batches of up to 40 lines or 3000 characters, the lines joined with newlines Google keeps; a line of the batch
+  // with a newline of its own is asked alone.)
+  const out: string[] = new Array(texts.length); const batches: number[][] = []; let cur: number[] = []; let size = 0;
+  for (let i = 0; i < texts.length; i++) { const tx = texts[i]; if (tx.includes('\n') || tx.length > 1500) { batches.push([i]); continue; } if (cur.length >= 40 || size + tx.length > 3000) { if (cur.length) batches.push(cur); cur = []; size = 0; } cur.push(i); size += tx.length + 1; }
+  if (cur.length) batches.push(cur);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(3, batches.length) }, async () => {
+    for (let b = next++; b < batches.length; b = next++) {
+      const idx = batches[b];
+      if (idx.length === 1) { out[idx[0]] = await one(texts[idx[0]]); continue; }
+      const joined = idx.map((i) => texts[i]).join('\n');
+      let lines: string[] | null = null;
+      try { const j = JSON.parse(await send(url(joined), 'GET', {})) as [[string, string][]]; const whole = (j?.[0] ?? []).map((x) => x?.[0] ?? '').join(''); const got = whole.split('\n'); if (got.length === idx.length) lines = got; } catch { /* line by line */ }
+      if (lines) idx.forEach((i, k) => { out[i] = lines![k].trim(); });
+      else for (const i of idx) out[i] = await one(texts[i]);
+    }
+  }));
+  return out;
+}
+/** Microsoft Translator by the token Edge's own translator takes (no key): up to 100 lines in one request. */
+let msToken: { v: string; at: number } | null = null;
+const mCode = (l: string): string => (!l || l === 'auto' ? '' : l === 'zh' || l === 'zh-CN' ? 'zh-Hans' : l === 'zh-TW' ? 'zh-Hant' : l === 'iw' ? 'he' : l === 'pt' ? 'pt' : l === 'sr' ? 'sr-Cyrl' : l);
+async function microsoft(texts: string[], c: ScreenConfig): Promise<string[]> {
+  if (!msToken || Date.now() - msToken.at > 8 * 60000) msToken = { v: (await send('https://edge.microsoft.com/translate/auth', 'GET', {})).trim(), at: Date.now() };
+  const out: string[] = [];
+  for (let i = 0; i < texts.length; i += 100) {
+    const part = texts.slice(i, i + 100);
+    const from = mCode(c.source);
+    const j = JSON.parse(await send(`https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(mCode(c.target) || 'en')}${from ? `&from=${encodeURIComponent(from)}` : ''}`, 'POST', { Authorization: `Bearer ${msToken.v}`, 'Content-Type': 'application/json' }, JSON.stringify(part.map((Text) => ({ Text }))))) as { translations?: { text: string }[] }[];
+    if (!Array.isArray(j) || j.length !== part.length) throw new Error('Microsoft');
+    out.push(...j.map((x) => x.translations?.[0]?.text ?? ''));
+  }
   return out;
 }
 const dCode = (l: string, target: boolean): string => { const u = l.toUpperCase(); if (!target) return u.replace(/-.*/, ''); return u === 'EN' ? 'EN-US' : u === 'PT' ? 'PT-BR' : u === 'ZH' || u === 'ZH-CN' ? 'ZH-HANS' : u === 'ZH-TW' ? 'ZH-HANT' : u; };

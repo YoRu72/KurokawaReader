@@ -276,7 +276,7 @@ ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() 
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 // DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.
-const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query' };
+const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query', mullvad: 'https://dns.mullvad.net/dns-query', dnssb: 'https://doh.dns.sb/dns-query', controld: 'https://freedns.controld.com/p0', opendns: 'https://doh.opendns.com/dns-query' };
 // (The resolver tried: a known name asked through the app's own resolver — the one configureHostResolver set —
 // and timed; on an older Electron without resolveHost, the resolver's JSON endpoint is asked directly.)
 ipcMain.handle('kt:dohProbe', async () => {
@@ -289,7 +289,7 @@ ipcMain.handle('kt:dohProbe', async () => {
   } catch (e) { return { ok: false, ms: Date.now() - t0, why: String(e.message || e) }; }
 });
 let _dohProvider = 'off';
-ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
+ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: p === 'auto' ? Object.values(DOH) : [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
 ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(String(p)); if (err) throw new Error(err); });
 ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
 ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });

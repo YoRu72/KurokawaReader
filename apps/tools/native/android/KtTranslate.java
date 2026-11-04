@@ -34,7 +34,7 @@ final class KtTranslate {
         String deeplKey = "";
         String style = "openai", base = "", key = "", model = "", prompt = ""; Map<String, String> headers = new LinkedHashMap<>();
         // (Addresses, changed only by the tests.)
-        String googleBase = "https://translate.googleapis.com", deeplBase = "";
+        String googleBase = "https://translate.googleapis.com", deeplBase = "", microsoftBase = "https://api.cognitive.microsofttranslator.com", microsoftAuth = "https://edge.microsoft.com/translate/auth";
         int timeoutMs = 30000;
         String id() { return engine + "|" + source + "|" + target + "|" + (engine.equals("ai") ? style + base + model + prompt.hashCode() : ""); }
 
@@ -45,6 +45,7 @@ final class KtTranslate {
             c.style = KtJson.str(ai.get("style"), "openai"); c.base = KtJson.str(ai.get("base"), "").replaceAll("/+$", ""); c.key = KtJson.str(ai.get("key"), ""); c.model = KtJson.str(ai.get("model"), ""); c.prompt = KtJson.str(ai.get("prompt"), "");
             for (Map.Entry<String, Object> e : KtJson.obj(ai.get("headers")).entrySet()) c.headers.put(e.getKey(), String.valueOf(e.getValue()));
             if (o.get("googleBase") instanceof String) c.googleBase = (String) o.get("googleBase"); if (o.get("deeplBase") instanceof String) c.deeplBase = (String) o.get("deeplBase");
+            if (o.get("microsoftBase") instanceof String) c.microsoftBase = (String) o.get("microsoftBase"); if (o.get("microsoftAuth") instanceof String) c.microsoftAuth = (String) o.get("microsoftAuth");
             return c;
         }
     }
@@ -67,7 +68,7 @@ final class KtTranslate {
         }
         if (!ask.isEmpty()) {
             List<String> got;
-            switch (c.engine) { case "deepl": got = deepl(ask, c); break; case "ai": got = ai(ask, c); break; default: got = google(ask, c); }
+            switch (c.engine) { case "deepl": got = deepl(ask, c); break; case "ai": got = ai(ask, c); break; case "microsoft": got = keyless(ask, c, "microsoft"); break; default: got = keyless(ask, c, "google"); }
             synchronized (cache) { for (int k = 0; k < ask.size(); k++) cache.put(c.id() + "\u0000" + ask.get(k), got.get(k)); }
             for (int k : todo) out[k] = got.get(firstOf.get(texts.get(k)));
         }
@@ -75,11 +76,59 @@ final class KtTranslate {
     }
     static boolean hasLetters(String s) { for (int k = 0; k < s.length(); k++) if (Character.isLetter(s.charAt(k))) return true; return false; }
 
-    /* ---------- Google Translate (the free address its own pages use): one request a line, four at a time ---------- */
+    /* ---------- the keyless engines, each the other's stand-in ---------- */
+    // (Google refused — too many requests, a check — falls back to Microsoft for the batch, and the other way round;
+    // one that refused is not asked first again for a minute.)
+    private static final Map<String, Long> keylessDown = new java.util.concurrent.ConcurrentHashMap<>();
+    static List<String> keyless(List<String> texts, Config c, String want) throws Exception {
+        String[] order = want.equals("microsoft") ? new String[] { "microsoft", "google" } : new String[] { "google", "microsoft" };
+        List<String> tryOrder = new ArrayList<>(); long now = System.currentTimeMillis();
+        for (String e : order) if (keylessDown.getOrDefault(e, 0L) < now) tryOrder.add(e); for (String e : order) if (!tryOrder.contains(e)) tryOrder.add(e);
+        Exception last = null;
+        for (String e : tryOrder) {
+            try { return e.equals("google") ? google(texts, c) : microsoft(texts, c); }
+            catch (Exception ex) { last = ex; keylessDown.put(e, System.currentTimeMillis() + 60000); }
+        }
+        throw last == null ? new IOException("no engine") : last;
+    }
+
+    /* ---------- Google Translate (the free address its own pages use): many lines in one request ---------- */
+    /** Batches of up to 40 lines or 3000 characters joined with newlines (which Google keeps), three batches at a time;
+     *  a batch whose lines came back in another number is asked line by line. */
     static List<String> google(List<String> texts, Config c) throws Exception {
-        List<Future<String>> fs = new ArrayList<>();
-        for (String t : texts) fs.add(pool.submit(() -> googleOne(t, c)));
-        List<String> out = new ArrayList<>(); for (Future<String> f : fs) out.add(f.get()); return out;
+        String[] out = new String[texts.size()]; List<List<Integer>> batches = new ArrayList<>(); List<Integer> cur = new ArrayList<>(); int size = 0;
+        for (int i = 0; i < texts.size(); i++) { String t = texts.get(i); if (t.contains("\n") || t.length() > 1500) { List<Integer> one = new ArrayList<>(); one.add(i); batches.add(one); continue; } if (cur.size() >= 40 || size + t.length() > 3000) { if (!cur.isEmpty()) batches.add(cur); cur = new ArrayList<>(); size = 0; } cur.add(i); size += t.length() + 1; }
+        if (!cur.isEmpty()) batches.add(cur);
+        List<Future<?>> fs = new ArrayList<>();
+        for (final List<Integer> idx : batches) fs.add(pool.submit(() -> {
+            if (idx.size() == 1) { out[idx.get(0)] = googleOne(texts.get(idx.get(0)), c); return null; }
+            StringBuilder joined = new StringBuilder(); for (int i : idx) { if (joined.length() > 0) joined.append('\n'); joined.append(texts.get(i)); }
+            String[] lines = null;
+            try { String whole = googleOne(joined.toString(), c); String[] got = whole.split("\n", -1); if (got.length == idx.size()) lines = got; } catch (IOException ignored) { /* line by line */ }
+            if (lines != null) for (int k = 0; k < idx.size(); k++) out[idx.get(k)] = lines[k].trim();
+            else for (int i : idx) out[i] = googleOne(texts.get(i), c);
+            return null;
+        }));
+        for (Future<?> f : fs) f.get();
+        List<String> l = new ArrayList<>(); for (String x : out) l.add(x); return l;
+    }
+
+    /* ---------- Microsoft Translator by the token Edge's own translator takes (no key): up to 100 lines a request ---------- */
+    private static volatile String msToken = ""; private static volatile long msTokenAt = 0;
+    static String microsoftCode(String l) { if (l == null || l.isEmpty() || l.equals("auto")) return ""; if (l.equals("zh") || l.equals("zh-CN")) return "zh-Hans"; if (l.equals("zh-TW")) return "zh-Hant"; if (l.equals("iw")) return "he"; if (l.equals("sr")) return "sr-Cyrl"; return l; }
+    static List<String> microsoft(List<String> texts, Config c) throws Exception {
+        if (msToken.isEmpty() || System.currentTimeMillis() - msTokenAt > 8 * 60000) { msToken = request("GET", c.microsoftAuth, null, null, c.timeoutMs).trim(); msTokenAt = System.currentTimeMillis(); }
+        List<String> out = new ArrayList<>();
+        for (int from = 0; from < texts.size(); from += 100) {
+            List<String> part = texts.subList(from, Math.min(texts.size(), from + 100));
+            List<Object> body = new ArrayList<>(); for (String t : part) body.add(KtJson.map("Text", t));
+            String src = microsoftCode(c.source); String to = microsoftCode(c.target); if (to.isEmpty()) to = "en";
+            Map<String, String> h = new LinkedHashMap<>(); h.put("Authorization", "Bearer " + msToken); h.put("Content-Type", "application/json");
+            Object j = KtJson.parse(request("POST", c.microsoftBase + "/translate?api-version=3.0&to=" + enc(to) + (src.isEmpty() ? "" : "&from=" + enc(src)), h, KtJson.write(body), c.timeoutMs));
+            List<Object> arr = KtJson.arr(j); if (arr.size() != part.size()) throw new IOException("Microsoft: " + arr.size() + "/" + part.size());
+            for (Object x : arr) { List<Object> tr = KtJson.arr(KtJson.obj(x).get("translations")); out.add(tr.isEmpty() ? "" : KtJson.str(KtJson.obj(tr.get(0)).get("text"), "")); }
+        }
+        return out;
     }
     static String googleOne(String text, Config c) throws IOException {
         String url = c.googleBase + "/translate_a/single?client=gtx&dt=t&sl=" + enc(googleCode(c.source)) + "&tl=" + enc(googleCode(c.target)) + "&q=" + enc(text);

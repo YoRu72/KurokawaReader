@@ -25,6 +25,9 @@ const RELEASES = [rel('tools-v99.9.0', ['TOOLS'], true), rel('v99.1.0', ['Reader
         cachedFile: async () => ({}), downloadFile: async (a) => { window.__calls.push('dl'); (ls.downloadProgress || []).forEach((f) => f({ id: a.id, got: 11600000, total: 11600000, speed: 3e6 })); return { path: 'file:///cache/kr-update/' + a.name, size: 11600000 }; },
         hashFile: async () => { window.__calls.push('hash'); return { sha256: damaged ? 'd'.repeat(64) : 'c'.repeat(64), size: 11600000 }; }, deleteDownload: async () => { window.__calls.push('del'); return { ok: true }; },
         canInstall: async () => ({ granted: true }), installApk: async () => { window.__calls.push('install'); },
+        // (The Kurokawa Installer inside the reader: what the file is, then the install with its events.)
+        apkInfo: async () => ({ label: 'KurokawaReader', package: 'app.kurokawa.reader', version: '99.1.0', versionCode: 990100, size: 11600000, sameApp: true, installed: true, installedVersion: '0.59.11', signerMatch: true, minSdk: 24 }),
+        apkInstall: async (a) => { window.__calls.push('install'); (ls.apk || []).forEach((f) => f({ id: a.id, status: 'progress', done: 11600000, total: 11600000 })); (ls.apk || []).forEach((f) => f({ id: a.id, status: 'success' })); return { id: a.id }; },
       }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
       window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { Kurokawa, Filesystem: { writeFile: async () => ({ uri: 'x' }) } }, PluginHeaders: [] };
     }, damaged);
@@ -39,8 +42,14 @@ const RELEASES = [rel('tools-v99.9.0', ['TOOLS'], true), rel('v99.1.0', ['Reader
   ok('beta: the reader\'s own newest, every version since, no Tools release', vers.join() === '99.1.0,99.0.0' && !/TOOLS/.test(await p.$eval('.update-sheet', (e) => e.textContent)));
   await p.waitForFunction(() => /arm64-v8a/.test(document.querySelector('.update-sheet .upd-file-name')?.textContent || ''));
   await p.locator('.update-sheet .upd-go').click();
+  // (The installer's sheet: the file read — the version old → new, the signature matching — then Install tapped.)
+  const inst = p.locator('.sheet').filter({ has: p.locator('.inst-card') }).first();
+  await inst.locator('.inst-title').filter({ hasText: /0\.59\.11.*99\.1\.0/ }).waitFor({ timeout: 10000 });
+  ok('the installer says what the file is', /0\.59\.11 → 99\.1\.0/.test(await inst.locator('.inst-title').textContent()) && /matches/i.test(await inst.locator('.inst-status').textContent()));
+  await inst.locator('button.btn.primary').click();
   await p.waitForFunction(() => window.__calls.includes('install'), null, { timeout: 10000 });
   ok('fetched, checked, installed', (await p.evaluate(() => window.__calls.join(','))) === 'dl,hash,install');
+  await p.waitForFunction(() => /Installed/.test(document.querySelector('.inst-status')?.textContent || ''), null, { timeout: 5000 });
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await p.close();
   ({ p, errors } = await run(true));

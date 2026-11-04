@@ -7,7 +7,8 @@ import { ktPlugin, listen, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 
 export type DohEvent = { at: number; kind: string; host?: string; ip?: string; ms?: number; msg?: string; state?: string };
-export type DohStatus = { provider: string; state: 'off' | 'idle' | 'resolving' | 'ok' | 'failed'; queries: number; hits: number; fails: number; unblocked: number; lastResolver: string; lastMs: number; lastAt: number; lastError: string; cached: number; log: DohEvent[]; probe?: { ok: boolean; resolver?: string; ms?: number; why?: string; tries?: { resolver: string; ok: boolean; ms?: number; error?: string }[] } };
+export type DohResolver = { id: string; url: string; ok: boolean; ms: number; shape: string; error: string };
+export type DohStatus = { split?: string; lastShape?: string; forced?: number; resolvers?: DohResolver[]; provider: string; state: 'off' | 'idle' | 'resolving' | 'ok' | 'failed'; queries: number; hits: number; fails: number; unblocked: number; lastResolver: string; lastMs: number; lastAt: number; lastError: string; cached: number; log: DohEvent[]; probe?: { ok: boolean; resolver?: string; ms?: number; why?: string; tries?: { resolver: string; ok: boolean; ms?: number; error?: string; shape?: string; from?: string }[]; shape?: string } };
 type Plug = { dohStatus(o: { probe?: boolean }): Promise<DohStatus>; addListener(ev: 'doh', fn: (e: DohEvent) => void): Promise<{ remove(): void }> };
 type Desk = { dohProbe?(): Promise<{ ok: boolean; ms?: number; resolver?: string; why?: string; ips?: string[] }> };
 
@@ -22,14 +23,18 @@ const kindLabel = (k: string): string => ({ resolve: t('dohEvResolve'), hit: t('
 export function dohStatusCard(): HTMLElement {
   const light = h('span', { class: 'doh-light' }); const title = h('b', null, '…'); const line = h('small', { class: 'src' }); const counts = h('div', { class: 'doh-counts' }); const feed = h('div', { class: 'doh-feed' });
   const probeBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => void probe() }, icon('check'), t('dohTest')) as HTMLButtonElement;
-  const el = h('div', { class: 'doh-card' }, h('div', { class: 'doh-head' }, light, h('div', { class: 'grow' }, title, h('br'), line), probeBtn), counts, feed);
+  const table = h('div', { class: 'doh-resolvers' });
+  const el = h('div', { class: 'doh-card' }, h('div', { class: 'doh-head' }, light, h('div', { class: 'grow' }, title, h('br'), line), probeBtn), counts, table, feed);
   let last: DohStatus | null = null; let sub: { remove(): void } | null = null;
   const paint = (st: DohStatus) => {
     last = st; const prov = getSettings().doh; const name = prov === 'off' ? t('dohOff') : /^https:/.test(prov) ? t('dohCustom') : prov[0].toUpperCase() + prov.slice(1);
     const state = prov === 'off' ? 'off' : st.state; el.dataset.state = state;
     title.textContent = `${t('dohTitle')} — ${name}`;
     line.textContent = state === 'off' ? t('dohStateOff') : state === 'resolving' ? t('dohStateResolving') : state === 'ok' ? t('dohStateOk', { resolver: st.lastResolver || name, ms: localDigits(Math.max(0, st.lastMs)) }) : state === 'failed' ? t('dohStateFailed', { error: st.lastError || '' }) : t('dohStateIdle');
-    counts.replaceChildren(...(state === 'off' ? [] : [[t('dohQueries'), st.queries], [t('dohCached'), st.hits], [t('dohFailed'), st.fails], [t('dohUnblocked'), st.unblocked]].map(([k, v]) => h('span', { class: 'chip small' }, `${k}: ${localDigits(Number(v))}`))));
+    counts.replaceChildren(...(state === 'off' ? [] : [[t('dohQueries'), st.queries], [t('dohCached'), st.hits], [t('dohFailed'), st.fails], [t('dohUnblocked'), st.unblocked], ...(st.forced ? [[t('dohForced'), st.forced]] : [])].map(([k, v]) => h('span', { class: 'chip small' }, `${k}: ${localDigits(Number(v))}`))));
+    // (Each resolver and how it last fared: answered (by which shape, in how long), failed (why), or not asked yet.)
+    const rs = state === 'off' ? [] : (st.resolvers ?? []).filter((r) => r.ms >= 0 || r.ok);
+    table.replaceChildren(...(rs.length ? [h('small', { class: 'src' }, t('dohResolvers')), ...rs.map((r) => h('div', { class: `doh-ev ${r.ok ? 'k-resolve' : 'k-fail'}` }, h('span', { class: 'doh-kind' }, r.ok ? '✓' : '✕'), h('span', { dir: 'ltr', class: 'grow' }, `${r.id}${r.ok ? ` · ${r.shape} · ${localDigits(r.ms)} ms` : r.error ? ` · ${r.error}` : ''}`)))] : []));
     const log = (st.log ?? []).slice(-10).reverse();
     feed.replaceChildren(...log.map((e) => h('div', { class: `doh-ev k-${e.kind}` }, h('small', { class: 'src' }, ago(e.at)), h('span', { class: 'doh-kind' }, kindLabel(e.kind)), h('span', { dir: 'ltr', class: 'grow' }, [e.host, e.ip ? `→ ${e.ip}` : '', e.ms !== undefined && e.ms >= 0 ? `${localDigits(e.ms)} ms` : '', e.msg && e.msg !== 'ok' && e.msg !== 'start' ? e.msg : ''].filter(Boolean).join(' ')))));
     if (!log.length && state !== 'off') feed.replaceChildren(h('p', { class: 'hint' }, t('dohNoEvents')));
@@ -39,7 +44,7 @@ export function dohStatusCard(): HTMLElement {
     probeBtn.disabled = true; line.textContent = t('dohStateResolving'); el.dataset.state = 'resolving';
     try {
       const p = plug(); const d = desk();
-      if (p) { const st = await p.dohStatus({ probe: true }); paint(st); if (st.probe) line.textContent = st.probe.ok ? t('dohProbeOk', { resolver: st.probe.resolver ?? '', ms: localDigits(st.probe.ms ?? 0) }) : t('dohProbeFailed', { error: st.probe.why ?? st.lastError ?? '' }); }
+      if (p) { const st = await p.dohStatus({ probe: true }); paint(st); if (st.probe) line.textContent = st.probe.ok ? `${t('dohProbeOk', { resolver: st.probe.resolver ?? '', ms: localDigits(st.probe.ms ?? 0) })}${st.probe.shape ? ` · ${st.probe.shape}` : ''}` : t('dohProbeFailed', { error: st.probe.why ?? st.lastError ?? '' }); }
       else if (d) { const r = await d.dohProbe!(); const st: DohStatus = { ...(last ?? { provider: getSettings().doh, queries: 0, hits: 0, fails: 0, unblocked: 0, lastResolver: '', lastMs: -1, lastAt: 0, lastError: '', cached: 0, log: [] }), state: r.ok ? 'ok' : 'failed', lastResolver: r.resolver ?? '', lastMs: r.ms ?? -1, lastError: r.why ?? '', log: [...(last?.log ?? []), { at: Date.now(), kind: 'probe', host: 'example.com', ip: r.ips?.[0], ms: r.ms, msg: r.ok ? 'ok' : r.why }] }; paint(st); }
     } catch (e) { line.textContent = String((e as Error).message ?? e); el.dataset.state = 'failed'; }
     finally { probeBtn.disabled = false; }
