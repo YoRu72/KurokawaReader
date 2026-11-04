@@ -37,10 +37,19 @@ final class KrDohProxy {
         if (server != null && !server.isClosed()) return port;
         ServerSocket s = new ServerSocket(); s.setReuseAddress(true); s.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 64);
         server = s; port = s.getLocalPort();
-        Thread t = new Thread(() -> { while (!s.isClosed()) { try { Socket c = s.accept(); Thread w = new Thread(() -> serve(c), "kt-proxy"); w.setDaemon(true); w.start(); } catch (IOException e) { break; } } }, "kt-proxy-accept");
+        Thread t = new Thread(() -> { while (!s.isClosed()) { try { Socket c = s.accept(); Thread w = new Thread(() -> serve(c), "kt-proxy"); w.setDaemon(true); w.start(); } catch (IOException e) { break; } catch (Throwable e) { KrDoh.note("proxy", null, null, -1, "accept: " + e); } } }, "kt-proxy-accept");
         t.setDaemon(true); t.start();
+        // (Asked of itself before anyone else is pointed at it: a ping through its own port, answered at once.)
+        try { selfTest(port); } catch (IOException e) { stop(); throw new IOException("proxy self-test: " + e.getMessage()); }
         KrDoh.note("proxy", null, "127.0.0.1:" + port, -1, "started");
         return port;
+    }
+    private static void selfTest(int port) throws IOException {
+        try (Socket c = new Socket()) {
+            c.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 3000); c.setSoTimeout(3000);
+            c.getOutputStream().write("GET http://127.0.0.1/__kt/ping HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); c.getOutputStream().flush();
+            String line = KtStream.readLine(c.getInputStream()); if (line == null || !line.contains("200")) throw new IOException("no answer: " + line);
+        }
     }
     static synchronized void stop() { if (server != null) { try { server.close(); } catch (IOException ignored) {} server = null; port = 0; KrDoh.note("proxy", null, null, -1, "stopped"); } }
     static boolean running() { ServerSocket s = server; return s != null && !s.isClosed(); }
@@ -49,15 +58,25 @@ final class KrDohProxy {
     private static void serve(Socket client) {
         open.incrementAndGet();
         try (Socket c = client) {
-            c.setSoTimeout(30000); c.setTcpNoDelay(true);
+            // (A page's connection waits for its request a while — the web view opens some ahead of need and may
+            // send nothing for a time — then, once a tunnel, as long as either side keeps it.)
+            c.setSoTimeout(90000); c.setTcpNoDelay(true);
             BufferedInputStream in = new BufferedInputStream(c.getInputStream(), 1 << 14); OutputStream out = c.getOutputStream();
             String line = KtStream.readLine(in); if (line == null || line.isEmpty()) return;
             String[] req = line.split(" "); if (req.length < 2) { reply(out, 400, "Bad Request"); return; }
             java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
             for (String h; (h = KtStream.readLine(in)) != null && !h.isEmpty(); ) { int k = h.indexOf(':'); if (k > 0) headers.put(h.substring(0, k).trim(), h.substring(k + 1).trim()); }
-            if ("CONNECT".equalsIgnoreCase(req[0])) { tunnel(c, in, out, req[1]); return; }
-            forward(c, in, out, req, headers);
-        } catch (Exception ignored) { /* the page sees a closed connection */ }
+            if (req[1].endsWith("/__kt/ping")) { byte[] b = "pong".getBytes(StandardCharsets.US_ASCII); out.write(("HTTP/1.1 200 OK\r\nContent-Length: " + b.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.write(b); out.flush(); return; }
+            try {
+                if ("CONNECT".equalsIgnoreCase(req[0])) { tunnel(c, in, out, req[1]); return; }
+                forward(c, in, out, req, headers);
+            } catch (Throwable e) {
+                // (Whatever went wrong, the page is answered, never left with a closed connection — which the web view
+                // takes for a proxy that is down and stops using.)
+                KrDoh.note("proxy", req[1], null, -1, "error: " + KrDoh.clean(String.valueOf(e)));
+                try { reply(out, 502, "Bad Gateway"); } catch (IOException ignored) {}
+            }
+        } catch (Throwable ignored) { /* the connection is gone */ }
         finally { open.decrementAndGet(); }
     }
     private static void reply(OutputStream out, int code, String text) throws IOException { out.write(("HTTP/1.1 " + code + " " + text + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); }
@@ -77,7 +96,7 @@ final class KrDohProxy {
         IOException last = null;
         for (int i = 0; i < Math.min(3, ips.length); i++) {
             Socket s = new Socket();
-            try { s.setTcpNoDelay(true); s.connect(new InetSocketAddress(ips[i], port), 12000); s.setSoTimeout(120000); return s; }
+            try { s.setTcpNoDelay(true); s.connect(new InetSocketAddress(ips[i], port), 12000); s.setSoTimeout(0); return s; }
             catch (IOException e) { last = e; try { s.close(); } catch (IOException ignored) {} }
         }
         throw last != null ? last : new IOException("no address: " + host);
@@ -89,10 +108,12 @@ final class KrDohProxy {
         if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
         Socket site;
         try { site = connect(host, port); }
-        catch (IOException e) { KrDoh.note("proxy", host, null, -1, "unreachable: " + e.getMessage()); reply(out, 502, "Bad Gateway"); return; }
+        catch (Throwable e) { KrDoh.note("proxy", host, null, -1, "unreachable: " + KrDoh.clean(String.valueOf(e.getMessage()))); reply(out, 502, "Bad Gateway"); return; }
         tunnels.incrementAndGet();
-        out.write("HTTP/1.1 200 Connection established\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush();
+        // (Whether the hello is cut is settled before the page is told to go on: the web view sends it at once.)
         final String h = host; final boolean split = cut(host); final boolean[] siteSpoke = { false }; boolean sent = false;
+        out.write("HTTP/1.1 200 Connection established\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush();
+        client.setSoTimeout(0); site.setSoTimeout(0);
         try (Socket s = site) {
             OutputStream up = s.getOutputStream(); InputStream down = s.getInputStream();
             // (The first bytes from the page: the hello, cut in two on the wire when asked; whole otherwise.)
@@ -104,7 +125,8 @@ final class KrDohProxy {
             pump.setDaemon(true); pump.start();
             try { copy(in, up, bytesUp, null); } catch (IOException ignored) {}
             try { s.shutdownOutput(); } catch (IOException ignored) {}
-            try { pump.join(5000); } catch (InterruptedException ignored) {}
+            // (The page done sending: the site's answer carried to its end, however long.)
+            try { pump.join(); } catch (InterruptedException ignored) {}
         } finally {
             // (A tunnel the site never spoke on — reset or dropped before its first byte — on a name the network
             // gives as it is: a filter on the way; the site is forced through the split hello from now.)
