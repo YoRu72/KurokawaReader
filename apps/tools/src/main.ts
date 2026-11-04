@@ -141,6 +141,7 @@ else {
   onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
   if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
+  void import('./downloads/power').then((m) => m.applyPower());
   // (The Player add-on comes with ffmpeg — for the sound a web view cannot play, clips and chapters —: one installed
   // before it came with it gets it now, offered once, a while after the app opens.)
   if (getSettings().addons.includes('player')) window.setTimeout(() => void (async () => { const pk = await import('./packs'); if (!pk.packsHere()) return; const want = pk.packNames().filter((n) => n === 'ffmpeg' || n === 'mpv'); const need = await pk.packsToFetch(want).catch(() => []); if (!need.length) return; try { if (localStorage.getItem('kt.playerPacksAsked') === need.map((x) => x.n).join()) return; localStorage.setItem('kt.playerPacksAsked', need.map((x) => x.n).join()); } catch { /* none */ } const { t } = await import('./i18n'); await pk.ensurePacks(need.map((x) => x.n), t('packWhyPlayer'), { start: true }); })().catch(() => undefined), 8000);

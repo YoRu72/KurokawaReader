@@ -32,6 +32,29 @@ const pendingLinks = [];
 const statePath = () => path.join(app.getPath('userData'), 'window-state.json');
 function loadState() { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; } }
 function saveState() { if (!win) return; try { const b = win.getNormalBounds(); fs.writeFileSync(statePath(), JSON.stringify({ ...loadState(), ...b, maximized: win.isMaximized() })); } catch { /* ignore */ } }
+/* ---------- the computer's side of the downloads: a progress bar on the taskbar / dock, a count on the dock,
+   the computer kept awake while they run, and what to do when they are all done ---------- */
+let awakeId = -1; const deskPrefs = { keepAwake: true, whenDone: 'nothing' }; let wasActive = false;
+function onDesktopTasks(tasks) {
+  if (!Array.isArray(tasks) || !win || win.isDestroyed()) return;
+  const moving = tasks.filter((x) => ['downloading', 'metadata', 'checking'].includes(x.state));
+  const total = moving.reduce((n, x) => n + (Number(x.total) || 0), 0), done = moving.reduce((n, x) => n + (Number(x.done) || 0), 0);
+  try { win.setProgressBar(moving.length ? (total > 0 ? Math.min(1, done / total) : 2) : -1); } catch { /* not here */ }
+  try { if (process.platform !== 'win32') app.setBadgeCount(moving.length); } catch { /* not here */ }
+  const { powerSaveBlocker } = require('electron');
+  if (moving.length && deskPrefs.keepAwake && awakeId < 0) awakeId = powerSaveBlocker.start('prevent-app-suspension');
+  if ((!moving.length || !deskPrefs.keepAwake) && awakeId >= 0) { try { powerSaveBlocker.stop(awakeId); } catch { /* gone */ } awakeId = -1; }
+  // (All done — something was running and nothing is now, none failed in between —: as chosen.)
+  if (wasActive && !moving.length && !tasks.some((x) => x.state === 'queued') && deskPrefs.whenDone !== 'nothing') whenAllDone(deskPrefs.whenDone);
+  wasActive = moving.length > 0;
+}
+function whenAllDone(what) {
+  const { exec } = require('node:child_process'); const p = process.platform;
+  const cmd = what === 'sleep' ? (p === 'win32' ? 'rundll32.exe powrprof.dll,SetSuspendState 0,1,0' : p === 'darwin' ? 'pmset sleepnow' : 'systemctl suspend')
+    : what === 'shutdown' ? (p === 'win32' ? 'shutdown /s /t 60' : p === 'darwin' ? 'osascript -e \'tell app "System Events" to shut down\'' : 'systemctl poweroff') : what === 'quit' ? null : null;
+  if (what === 'quit') { setTimeout(() => app.quit(), 3000); return; }
+  if (cmd) setTimeout(() => exec(cmd, () => undefined), 5000);
+}
 function send(channel, payload) { if (win && !win.webContents.isLoading()) win.webContents.send(channel, payload); if (channel === 'kt:tasks' && mini && !mini.webContents.isLoading()) mini.webContents.send(channel, payload); }
 /* ---------- Prism's mini window: small, on top of the others, the speed and what is downloading ---------- */
 let mini = null;
@@ -94,7 +117,7 @@ else {
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
     await engine.start().catch((e) => { engine.available = false; engine.reason = String(e.message || e); });
     videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
-    engine.onTasks((tasks) => { lastAria = tasks; send('kt:tasks', allTasks()); });
+    engine.onTasks((tasks) => { lastAria = tasks; const all = allTasks(); send('kt:tasks', all); onDesktopTasks(all); });
     setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
     createWindow();
     ScreenTr.init({
@@ -246,6 +269,7 @@ ipcMain.handle('kt:fontIndex', async (_e, dirs) => {
   }
   return out;
 });
+ipcMain.handle('kt:desktopPrefs', (_e, o) => { if (o && typeof o === 'object') { if ('keepAwake' in o) deskPrefs.keepAwake = !!o.keepAwake; if (['nothing', 'quit', 'sleep', 'shutdown'].includes(o.whenDone)) deskPrefs.whenDone = o.whenDone; } return deskPrefs; });
 ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(E(), String(o.id), Number(o.fileIndex) || 0) }));
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
@@ -289,6 +313,7 @@ ipcMain.handle('kt:ffmpegAvailable', () => Ffmpeg.available());
 ipcMain.handle('kt:ffmpeg', (e, o) => { let last = 0; return Ffmpeg.run(String(o.id), (o.args || []).map(String), (p) => { const now = Date.now(); if (now - last < 300 && !p.done) return; last = now; e.sender.send('kt:ffmpegProgress', { id: o.id, ...p }); }); });
 ipcMain.handle('kt:ffmpegCancel', (_e, id) => Ffmpeg.cancel(String(id)));
 ipcMain.handle('kt:ffprobe', (_e, p) => Ffmpeg.probe(String(p)));
+ipcMain.handle('kt:saveText', async (_e, o) => { const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), String(o && o.name || 'kurokawa.txt')) }); if (r.canceled || !r.filePath) return { path: null }; await fs.promises.writeFile(r.filePath, String(o && o.text || ''), 'utf8'); return { path: r.filePath }; });
 ipcMain.handle('kt:writeTemp', async (_e, o) => { const dir = path.join(app.getPath('temp'), 'kurokawa-clip'); fs.mkdirSync(path.join(dir, 'fonts'), { recursive: true }); const f = path.join(dir, String(o.name).replace(/[\\/]/g, '_')); await fs.promises.writeFile(f, String(o.text), 'utf8'); return f; });
 ipcMain.handle('kt:siblings', async (_e, p) => { try { const dir = path.dirname(String(p)); const base = path.basename(String(p)).replace(/\.[^.]+$/, '').toLowerCase(); return (await fs.promises.readdir(dir)).filter((n) => n.toLowerCase().startsWith(base) && n !== path.basename(String(p))).map((n) => path.join(dir, n)); } catch { return []; } });
 ipcMain.handle('kt:fileUrl', (_e, p) => 'file://' + String(p));

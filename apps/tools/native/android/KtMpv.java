@@ -6,8 +6,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebView;
@@ -21,7 +19,7 @@ import is.xyz.mpv.MPVLib;
 
 /**
  * The Player add-on's engine on Android: mpv (libmpv, as mpv-android and the players built on it — mpvEx, REX
- * Player — use it), from the mpv pack. Its picture is drawn on a SurfaceView put behind the app's web view, which
+ * Player — use it), from the mpv pack. Its picture is drawn on a TextureView put behind the app's web view, which
  * turns see-through while it plays, so the player's own controls, gestures and subtitles stay on top as they are.
  * mpv plays what the web view cannot: AC-3, E-AC-3, DTS, TrueHD, HEVC and 10-bit video, every Matroska feature,
  * the subtitles inside the file (ASS drawn by libass). The page drives it with commands and properties and hears
@@ -34,7 +32,7 @@ final class KtMpv {
     static synchronized KtMpv get() { if (self == null) self = new KtMpv(); return self; }
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private boolean created = false; private SurfaceView view; private WebView web; private android.graphics.drawable.Drawable webBg; private boolean bgSaved = false; private String pendingUrl; private Events events;
+    private boolean created = false; private android.view.TextureView view; private android.view.Surface surface; private WebView web; private android.graphics.drawable.Drawable webBg; private boolean bgSaved = false; private String pendingUrl; private Events events;
     private String voInUse = "gpu";
 
     static File libDir(android.content.Context ctx) { return new File(KtPacks.dir(ctx, "mpv"), "usr/lib"); }
@@ -107,21 +105,25 @@ final class KtMpv {
                 { String vo = opt.optString("vo", ""); if (!vo.isEmpty() && !vo.equals(voInUse)) { voInUse = vo; MPVLib.setPropertyString("vo", vo); } }
                 if (opt.optBoolean("paused", false)) MPVLib.setPropertyBoolean("pause", true); else MPVLib.setPropertyBoolean("pause", false);
                 web = webView; if (!bgSaved) { webBg = webView.getBackground(); bgSaved = true; }
+                // (A TextureView, drawn in the window like any view — under the see-through page —: a SurfaceView's «hole»
+                // stayed black under the web view on some phones, the sound playing with no picture.)
                 if (view == null) {
-                    view = new SurfaceView(a);
-                    view.getHolder().addCallback(new SurfaceHolder.Callback() {
-                        @Override public void surfaceCreated(SurfaceHolder h) {
-                            MPVLib.attachSurface(h.getSurface()); MPVLib.setOptionString("force-window", "yes");
+                    view = new android.view.TextureView(a);
+                    view.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
+                        @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int hh) {
+                            surface = new android.view.Surface(st); MPVLib.attachSurface(surface); MPVLib.setOptionString("force-window", "yes");
+                            MPVLib.setPropertyString("android-surface-size", w + "x" + hh);
                             if (pendingUrl != null) { MPVLib.command(new String[] { "loadfile", pendingUrl }); pendingUrl = null; } else MPVLib.setPropertyString("vo", voInUse);
                         }
-                        @Override public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) { MPVLib.setPropertyString("android-surface-size", w + "x" + hh); }
-                        @Override public void surfaceDestroyed(SurfaceHolder h) { MPVLib.setPropertyString("vo", "null"); MPVLib.setPropertyString("force-window", "no"); MPVLib.detachSurface(); }
+                        @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int hh) { MPVLib.setPropertyString("android-surface-size", w + "x" + hh); }
+                        @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) { MPVLib.setPropertyString("vo", "null"); MPVLib.setPropertyString("force-window", "no"); MPVLib.detachSurface(); if (surface != null) { surface.release(); surface = null; } return true; }
+                        @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {}
                     });
                 }
                 ViewGroup parent = (ViewGroup) webView.getParent();
                 if (view.getParent() == null && parent != null) parent.addView(view, 0, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 webView.setBackgroundColor(Color.TRANSPARENT);
-                if (view.getHolder().getSurface() != null && view.getHolder().getSurface().isValid()) MPVLib.command(new String[] { "loadfile", url });
+                if (view.isAvailable() && surface != null) MPVLib.command(new String[] { "loadfile", url });
                 else pendingUrl = url;
                 view.setVisibility(View.VISIBLE);
             } catch (Throwable e) {

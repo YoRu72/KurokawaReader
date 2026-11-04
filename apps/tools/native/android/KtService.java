@@ -83,6 +83,23 @@ public class KtService extends Service {
         return new NotificationCompat.Builder(c, CH_RUN).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(text).setProgress(100, Math.max(0, Math.min(100, pct)), indeterminate).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setContentIntent(openApp(c)).setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE).setCategory(NotificationCompat.CATEGORY_PROGRESS).setShowWhen(false);
     }
 
+    static final String ACT_PAUSE_ALL = "app.kurokawa.tools.PAUSE_ALL", ACT_RESUME_ALL = "app.kurokawa.tools.RESUME_ALL";
+    static PendingIntent action(Context c, String act) { return PendingIntent.getBroadcast(c, act.hashCode(), new Intent(c, Actions.class).setAction(act), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT); }
+    /** The notification's and the tile's buttons: everything paused or resumed, the app open or not. */
+    public static class Actions extends android.content.BroadcastReceiver {
+        @Override public void onReceive(Context c, Intent i) {
+            KtEngine e = KtPlugin.engineIfAny(); if (e == null) return;
+            if (ACT_PAUSE_ALL.equals(i.getAction())) { e.pauseAll(); pausedNote(c); } else if (ACT_RESUME_ALL.equals(i.getAction())) { e.resumeAll(); try { NotificationManagerCompat.from(c).cancel(NOTE_PAUSED); } catch (Exception ignored) {} }
+        }
+    }
+    static final int NOTE_PAUSED = 8302;
+    /** «Downloads paused» with a Resume all button, after Pause all. */
+    static void pausedNote(Context c) {
+        channels(c); boolean ar = ar(c);
+        Notification n = new NotificationCompat.Builder(c, CH_RUN).setSmallIcon(android.R.drawable.ic_media_pause).setContentTitle(ar ? "التنزيلات متوقّفة مؤقتًا" : "Downloads paused").setContentIntent(openApp(c)).setAutoCancel(true).setOnlyAlertOnce(true)
+            .addAction(0, ar ? "استئناف الكل" : "Resume all", action(c, ACT_RESUME_ALL)).build();
+        try { NotificationManagerCompat.from(c).notify(NOTE_PAUSED, n); } catch (SecurityException ignored) {}
+    }
     /** Started when a download begins (once). */
     static void ensure(Context c) {
         stopWhenStarted = false;
@@ -106,6 +123,8 @@ public class KtService extends Service {
         String title = active == 1 && one != null ? one : (ar ? arCount(active) : active + " downloads");
         String text = (total > 0 ? Math.round(done * 100.0 / total) + "% · " : "") + (total > 0 ? human(done) + " / " + human(total) + " · " : "") + human(speed) + "/s" + (speed > 0 && total > done ? " · " + left(ar, (total - done) / speed) : "");
         NotificationCompat.Builder b = builder(c, title, text, total > 0 ? (int) (done * 100 / total) : 0, total <= 0);
+        // (Pause all / Resume all from the notification itself.)
+        b.addAction(0, ar ? "إيقاف الكل مؤقتًا" : "Pause all", action(c, ACT_PAUSE_ALL));
         if (active > 1) { NotificationCompat.InboxStyle st = new NotificationCompat.InboxStyle().setSummaryText(text); for (String l : lines) st.addLine(l); b.setStyle(st); }
         try { NotificationManagerCompat.from(c).notify(NOTE_RUN, b.build()); } catch (SecurityException ignored) {}
     }

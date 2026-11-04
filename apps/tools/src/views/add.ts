@@ -97,6 +97,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       return;
     }
     if (!eng.can.torrents && srcs.some((x) => x.magnet || x.torrent)) { toast(t('noEngine'), 'error'); return; }
+    // (Already in the list — the same link, or the same torrent by its info-hash —: asked before adding it again.)
+    { const { duplicateOf } = await import('../downloads/extras'); const have = await eng.list().catch(() => []); const dup = srcs.map((x) => duplicateOf(x, have)).find(Boolean);
+      if (dup && !(await askDuplicate(dup.name))) return; }
     go.disabled = true;
     // A page yt-dlp read (one video, or a playlist's videos), and video-site links among several: video tasks.
     const videoDir = dirChosen ? (getSettings().downloadDir || undefined) : (categoryDir(categoryOf('x.mp4')) ?? (getSettings().downloadDir || undefined));
@@ -122,4 +125,14 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   if (how.video) ta.placeholder = t('fabVideoHint');
   if (how.torrent) { const f = how.torrent; void f.arrayBuffer().then((b) => { torrentFile = { name: f.name, b64: toBase64(b) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); }); }
   else if (how.pickTorrent) fileIn.click(); else setTimeout(() => ta.focus(), 60);
+}
+
+/** «Already in your downloads»: added again, or not. */
+function askDuplicate(name: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false; const sh = openSheet(t('dupTitle'), t('cancel'), { stack: true }); const end = (v: boolean) => { if (done) return; done = true; sh.close(); resolve(v); };
+    sh.body.append(h('p', null, t('dupBody')), h('p', { class: 'src', dir: 'auto' }, name));
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => end(false) }, t('cancel')), h('button', { type: 'button', class: 'btn primary', onclick: () => end(true) }, t('dupAddAgain')));
+    const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); if (!done) { done = true; resolve(false); } } }); mo.observe(document.body, { childList: true });
+  });
 }

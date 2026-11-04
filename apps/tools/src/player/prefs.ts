@@ -23,6 +23,8 @@ export interface PlayerPrefs {
   hwdec: 'hw' | 'hwcopy' | 'sw'; deband: boolean; gpuNext: boolean;
   /** Audio: the preferred languages (two-letter codes, in order), the channels (as the file has them, or down to stereo). */
   audioLangs: string[]; audioChannels: 'auto' | 'stereo';
+  /** Subtitles fetched by themselves when the video has none in the preferred languages (the Subtitles add-on). */
+  autoSubs: boolean;
   /** Playback: repeat (off, all, one), closing at the end, the brightness kept between videos, playing on in the
    *  background, chapter skip by double tap. */
   repeat: 'off' | 'all' | 'one'; closeAtEnd: boolean; rememberBrightness: boolean; brightness: number; backgroundPlay: boolean;
@@ -47,7 +49,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   skipAmount: 85, autoSkip: 'button', filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
-  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto',
+  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false,
   repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true,
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,
@@ -62,7 +64,7 @@ export function updatePrefs(p: Partial<PlayerPrefs>): PlayerPrefs { prefs = { ..
 export function resetPrefs(keys: (keyof PlayerPrefs)[]): PlayerPrefs { const o: Partial<PlayerPrefs> = {}; for (const k of keys) (o as Record<string, unknown>)[k] = DEFAULT_PREFS[k]; return updatePrefs(o); }
 
 export interface Bookmark { t: number; label: string }
-export interface VideoMemory { pos: number; duration: number; sub?: string; subDelay?: number; speed?: number; zoom?: number; watched?: boolean; at: number; marks?: Bookmark[]; aspect?: PlayerPrefs['aspect']; audioDelay?: number }
+export interface VideoMemory { pos: number; duration: number; sub?: string; subDelay?: number; speed?: number; zoom?: number; watched?: boolean; at: number; marks?: Bookmark[]; aspect?: PlayerPrefs['aspect']; audioDelay?: number; rotate?: number; flipH?: boolean; flipV?: boolean; crop?: string }
 type Memory = Record<string, VideoMemory>;
 const memory = (): Memory => { try { return JSON.parse(localStorage.getItem(MEM) ?? '{}') as Memory; } catch { return {}; } };
 export const memoryOf = (key: string): VideoMemory | undefined => memory()[key];
