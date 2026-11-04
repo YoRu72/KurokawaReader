@@ -23,7 +23,7 @@ import java.util.Map;
 class KtDohWeb extends WebViewClient {
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
-        if (!KrDoh.on()) return null;
+        if (!KrDoh.on() || KrDohProxy.running()) return null;   // (with the proxy on, every connection already goes through the resolver)
         String scheme = req.getUrl() != null ? req.getUrl().getScheme() : null;
         if (!"GET".equalsIgnoreCase(req.getMethod()) || scheme == null || !(scheme.equals("http") || scheme.equals("https"))) return null;
         // (Only a site the network's DNS hides: the others go the web view's own way — see KrDoh.needed.)

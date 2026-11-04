@@ -72,7 +72,24 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(this::engine); }
+    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} applyDohProxy(); bg.execute(this::engine); }
+    /** The web views pointed at the app's own proxy (KrDohProxy) while DoH is on — every connection they make resolved
+     *  through the resolver, the hello split — and set free of it when off. The app's own page (localhost) and the home
+     *  network stay direct. */
+    static void applyDohProxy() {
+        try {
+            if (!androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.PROXY_OVERRIDE)) { KrDoh.note("proxy", null, null, -1, "unsupported"); return; }
+            if (KrDoh.on()) {
+                int port = KrDohProxy.start();
+                androidx.webkit.ProxyConfig cfg = new androidx.webkit.ProxyConfig.Builder().addProxyRule("127.0.0.1:" + port).addBypassRule("127.0.0.1").addBypassRule("localhost").addBypassRule("10.0.0.0/8").addBypassRule("192.168.0.0/16").addBypassRule("172.16.0.0/12").bypassSimpleHostnames().build();
+                androidx.webkit.ProxyController.getInstance().setProxyOverride(cfg, Runnable::run, () -> KrDoh.note("proxy", null, "127.0.0.1:" + port, -1, "web views routed"));
+            } else {
+                androidx.webkit.ProxyController.getInstance().clearProxyOverride(Runnable::run, () -> {});
+                KrDohProxy.stop();
+            }
+        } catch (Throwable e) { KrDoh.note("proxy", null, null, -1, "error: " + e.getMessage()); }
+    }
+    static boolean proxyUsable() { try { return androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.PROXY_OVERRIDE); } catch (Throwable e) { return false; } }
 
     private interface Work { void run() throws Exception; }
     private void run(PluginCall call, Work w) { bg.execute(() -> { try { w.run(); } catch (Throwable e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e instanceof Exception ? (Exception) e : new Exception(e)); } }); }
@@ -357,7 +374,7 @@ public class KtPlugin extends Plugin {
     /** DNS over HTTPS up close: its state, counters and last events; `probe` tries the resolver first. */
     @PluginMethod public void dohStatus(PluginCall call) {
         final boolean probe = Boolean.TRUE.equals(call.getBoolean("probe", false));
-        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe()); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe()); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
     }
     /** Each DoH event handed to the page as «doh» (the Settings page's live feed, the status chip). */
     static void wireDoh() { KrDoh.listener = (json) -> { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("doh", JSObject.fromJSONObject(new org.json.JSONObject(json)), true); } catch (Exception ignored) {} KtBrowserActivity.dohEvent(json); }; }
@@ -365,6 +382,7 @@ public class KtPlugin extends Plugin {
         String p = call.getString("provider", null); String sp = call.getString("split", null);
         if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }
         if (sp != null) { KrDoh.split = sp; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("dohSplit", sp).apply(); }
+        if (p != null) applyDohProxy();
         final String test = call.getString("test", null); JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
         if (test == null) { call.resolve(r); return; }
         bg.execute(() -> { try { java.net.InetAddress[] ips = KrDoh.resolve(test); org.json.JSONArray a = new org.json.JSONArray(); for (java.net.InetAddress ip : ips) a.put(ip.getHostAddress()); r.put("ips", a); call.resolve(r); } catch (Exception e) { call.reject("DoH: " + e.getMessage(), e); } });

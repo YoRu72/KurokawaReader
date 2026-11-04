@@ -179,7 +179,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }
@@ -201,6 +201,7 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "org.libtorrent4j:libtorrent4j-android-arm:${LIBTORRENT4J}"
     implementation "org.libtorrent4j:libtorrent4j-android-x86_64:${LIBTORRENT4J}"
     implementation "androidx.documentfile:documentfile:1.0.1"
+    implementation "androidx.webkit:webkit:1.11.0"
     implementation "org.apache.commons:commons-compress:1.27.1"
     implementation "org.tukaani:xz:1.10"
     implementation "com.github.junrar:junrar:7.5.5"

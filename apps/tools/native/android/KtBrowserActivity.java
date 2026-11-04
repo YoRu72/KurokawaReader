@@ -24,6 +24,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
+import android.widget.TextView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -50,44 +51,93 @@ public class KtBrowserActivity extends Activity {
     static void dohEvent(String json) { KtBrowserActivity a = shown; if (a != null) a.h.post(() -> a.onDoh(json)); }
     private void onDoh(String json) {
         synchronized (dohLog) { dohLog.addLast(json); while (dohLog.size() > 30) dohLog.removeFirst(); }
-        paintDoh();
+        paintDoh(); if (dohSheet != null) fillDoh(false);
     }
     private void paintDoh() {
         if (doh == null) return;
         String st = KrDoh.on() ? KrDoh.state : "off"; boolean ar = ar(this);
         int c; String label;
         switch (st) {
-            case "resolving": c = Color.rgb(245, 166, 35); label = "DoH …"; break;
-            case "ok": c = Color.rgb(76, 175, 80); label = "DoH ✓"; break;
-            case "failed": c = Color.rgb(229, 57, 53); label = "DoH ✕"; break;
-            case "idle": c = dark() ? Color.rgb(170, 170, 176) : Color.rgb(110, 110, 116); label = "DoH"; break;
+            case "resolving": c = cWarn(); label = "DoH …"; break;
+            case "ok": c = cGood(); label = "DoH ✓"; break;
+            case "failed": c = cError(); label = "DoH ✕"; break;
+            case "idle": c = cMuted(); label = "DoH"; break;
             default: c = dark() ? Color.rgb(110, 110, 116) : Color.rgb(160, 160, 166); label = ar ? "DoH ·" : "DoH ·";
         }
         doh.setTextColor(c); doh.setText(label);
         doh.setContentDescription(ar ? "حالة DNS عبر HTTPS" : "DNS over HTTPS status");
     }
+    private static String human(long b) { if (b < 1024) return b + " B"; double v = b / 1024.0; String[] u = { "KB", "MB", "GB" }; int i = 0; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return String.format(java.util.Locale.US, v >= 100 ? "%.0f %s" : "%.1f %s", v, u[i]); }
     private static String ago(long at) { long s = Math.max(0, (System.currentTimeMillis() - at) / 1000); return s < 60 ? s + "s" : s < 3600 ? (s / 60) + "m" : (s / 3600) + "h"; }
+    /* ---------- Material 3 bits: colours, pills, rows ---------- */
+    private int cPrimary() { return dark() ? Color.rgb(208, 188, 255) : Color.rgb(103, 80, 164); }
+    private int cOnSurface() { return dark() ? Color.rgb(230, 224, 233) : Color.rgb(29, 27, 32); }
+    private int cMuted() { return dark() ? Color.rgb(202, 196, 208) : Color.rgb(73, 69, 79); }
+    private int cSurface() { return dark() ? Color.rgb(20, 18, 24) : Color.rgb(254, 247, 255); }
+    private int cContainer() { return dark() ? Color.rgb(43, 41, 48) : Color.rgb(236, 230, 240); }
+    private int cContainerHigh() { return dark() ? Color.rgb(54, 52, 59) : Color.rgb(230, 224, 233); }
+    private int cTonal() { return dark() ? Color.rgb(74, 68, 88) : Color.rgb(232, 222, 248); }
+    private int cError() { return dark() ? Color.rgb(242, 184, 181) : Color.rgb(179, 38, 30); }
+    private int cGood() { return dark() ? Color.rgb(129, 199, 132) : Color.rgb(46, 125, 50); }
+    private int cWarn() { return dark() ? Color.rgb(255, 196, 92) : Color.rgb(176, 108, 0); }
+    private android.graphics.drawable.GradientDrawable pill(int color, float radiusDp) { android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable(); g.setColor(color); g.setCornerRadius(dp(radiusDp)); return g; }
+    private View dot(int color) { View v = new View(this); v.setBackground(pill(color, 6)); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(10), dp(10)); lp.setMarginEnd(dp(10)); lp.gravity = Gravity.CENTER_VERTICAL; v.setLayoutParams(lp); return v; }
+    private TextView text(String s, float sp, int color, boolean bold) { TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); if (bold) t.setTypeface(Typeface.DEFAULT_BOLD); return t; }
+    /** A row of a sheet: a coloured dot, a name, a detail in lighter type. */
+    private LinearLayout row(int color, String name, String detail) {
+        LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL); r.setPadding(dp(14), dp(10), dp(14), dp(10));
+        r.addView(dot(color)); TextView n = text(name, 15, cOnSurface(), false); n.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); r.addView(n);
+        if (detail != null && !detail.isEmpty()) { TextView d = text(detail, 13, cMuted(), false); d.setTextDirection(View.TEXT_DIRECTION_LTR); d.setMaxLines(2); d.setEllipsize(android.text.TextUtils.TruncateAt.END); d.setMaxWidth(dp(190)); r.addView(d); }
+        return r;
+    }
+    private Button chip(String label, boolean filled, View.OnClickListener on) {
+        Button b = new Button(this, null, android.R.attr.borderlessButtonStyle); b.setText(label); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setBackground(pill(filled ? cPrimary() : cTonal(), 20)); b.setTextColor(filled ? (dark() ? Color.rgb(56, 30, 114) : Color.WHITE) : cOnSurface()); b.setPadding(dp(18), 0, dp(18), 0); b.setMinHeight(dp(40)); b.setMinimumHeight(dp(40)); b.setOnClickListener(on);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)); lp.setMarginEnd(dp(8)); b.setLayoutParams(lp); return b;
+    }
+
+    /** The DoH sheet: the state with its light, the page, the app's proxy, each resolver with how it last fared (the
+     *  rows refilled live while a test runs), the last events — and Test, Turn on/off, Close. */
+    private android.app.Dialog dohSheet; private LinearLayout dohRows;
     private void dohDialog() {
-        boolean ar = ar(this); org.json.JSONObject st = KrDoh.status();
-        StringBuilder sb = new StringBuilder();
-        String prov = st.optString("provider", "off"); String state = st.optString("state", "off");
-        sb.append(ar ? "المزوِّد: " : "Resolver: ").append("off".equals(prov) ? (ar ? "معطَّل" : "off") : prov).append('\n');
-        sb.append(ar ? "الحالة: " : "State: ").append(ar ? (state.equals("ok") ? "متّصل" : state.equals("resolving") ? "يستعلم…" : state.equals("failed") ? "أخفق" : state.equals("idle") ? "جاهز" : "معطَّل") : state).append('\n');
-        if (!st.optString("lastResolver").isEmpty()) sb.append(ar ? "آخر عنوان أجاب: " : "Last answered from: ").append(st.optString("lastResolver")).append(st.optString("lastShape").isEmpty() ? "" : " · " + st.optString("lastShape")).append(st.optLong("lastMs", -1) >= 0 ? " (" + st.optLong("lastMs") + " ms)" : "").append('\n');
-        sb.append(ar ? "تقسيم تحيّة TLS: " : "Split TLS hello: ").append(st.optString("split", "auto")).append('\n');
-        if (!st.optString("lastError").isEmpty()) sb.append(ar ? "آخر خطأ: " : "Last error: ").append(st.optString("lastError")).append('\n');
-        sb.append(ar ? "استعلامات: " : "Queries: ").append(st.optLong("queries")).append(ar ? " · من الذاكرة: " : " · cached: ").append(st.optLong("hits")).append(ar ? " · أخفقت: " : " · failed: ").append(st.optLong("fails")).append(ar ? " · مواقع فُتحت عبره: " : " · sites unblocked: ").append(st.optLong("unblocked")).append('\n');
-        if (!pageHost.isEmpty()) sb.append(ar ? "هذه الصفحة: " : "This page: ").append(pageHost).append(!KrDoh.on() ? (ar ? " — DoH معطَّل" : " — DoH off") : KrDoh.isForced(pageHost) ? (ar ? " — عبر DoH (أُجبر: الشبكة تمنعه)" : " — through DoH (forced: the network blocks it)") : Boolean.TRUE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — عبر DoH (الشبكة تحجبه)" : " — through DoH (hidden by the network)") : Boolean.FALSE.equals(KrDoh.neededCached(pageHost)) ? (ar ? " — مباشرة (الشبكة تعطيه)" : " — direct (the network gives it)") : (ar ? " — لم يُفحَص بعد" : " — not checked yet")).append('\n');
+        boolean ar = ar(this);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this); sv.setBackground(pill(cSurface(), 28));
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(16), dp(10), dp(16), dp(12)); sv.addView(box);
+        View handle = new View(this); handle.setBackground(pill(cContainerHigh(), 2)); LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(dp(32), dp(4)); hl.gravity = Gravity.CENTER_HORIZONTAL; hl.bottomMargin = dp(10); box.addView(handle, hl);
+        TextView title = text("DNS over HTTPS", 20, cOnSurface(), true); box.addView(title);
+        dohRows = new LinearLayout(this); dohRows.setOrientation(LinearLayout.VERTICAL); box.addView(dohRows);
+        LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL); actions.setGravity(Gravity.END); actions.setPadding(0, dp(12), 0, 0);
+        actions.addView(chip(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل" : "Turn on"), false, v -> { String np = KrDoh.on() ? "off" : "auto"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); KtPlugin.applyDohProxy(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); if (wv != null) wv.reload(); if (dohSheet != null) dohSheet.dismiss(); }));
+        actions.addView(chip(ar ? "اختبار" : "Test", true, v -> { fillDoh(true); new Thread(() -> { KrDoh.probe(); h.post(() -> { paintDoh(); fillDoh(false); }); }, "kt-doh-probe").start(); }));
+        actions.addView(chip(ar ? "إغلاق" : "Close", false, v -> { if (dohSheet != null) dohSheet.dismiss(); }));
+        box.addView(actions);
+        fillDoh(false);
+        android.app.Dialog d = new android.app.Dialog(this); d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE); d.setContentView(sv);
+        android.view.Window w = d.getWindow(); if (w != null) { w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); w.setGravity(Gravity.BOTTOM); w.setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT, android.view.WindowManager.LayoutParams.WRAP_CONTENT); w.setDimAmount(0.45f); }
+        d.setOnDismissListener((x) -> { dohSheet = null; dohRows = null; }); dohSheet = d; d.show();
+    }
+    private void fillDoh(boolean testing) {
+        if (dohRows == null) return; boolean ar = ar(this); org.json.JSONObject st = KrDoh.status(); dohRows.removeAllViews();
+        String state = st.optString("state", "off"); String prov = st.optString("provider", "off");
+        int light = testing ? cWarn() : state.equals("ok") ? cGood() : state.equals("failed") ? cError() : state.equals("resolving") ? cWarn() : cMuted();
+        String stateText = testing ? (ar ? "يختبر المزوِّدين…" : "Testing the resolvers…") : !KrDoh.on() ? (ar ? "معطَّل" : "Off") : state.equals("ok") ? (ar ? "يعمل" : "Working") + (st.optString("lastResolver").isEmpty() ? "" : " · " + st.optString("lastResolver") + (st.optString("lastShape").isEmpty() ? "" : " · " + st.optString("lastShape")) + (st.optLong("lastMs", -1) >= 0 ? " · " + st.optLong("lastMs") + " ms" : "")) : state.equals("failed") ? (ar ? "أخفق: " : "Failed: ") + st.optString("lastError") : state.equals("resolving") ? (ar ? "يستعلم…" : "Resolving…") : (ar ? "جاهز، لم يُسأل بعد" : "Ready, nothing asked yet");
+        LinearLayout head = row(light, stateText, "off".equals(prov) ? "" : "auto".equals(prov) ? (ar ? "تلقائي" : "auto") : prov); head.setBackground(pill(cContainer(), 16)); LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); hp.topMargin = dp(10); dohRows.addView(head, hp);
+        if (!KrDoh.on()) { dohRows.addView(text(ar ? "تُسأل الأسماء عبر مزوِّدٍ مشفَّر، وتمرّ اتصالات هذا المتصفّح كلُّها بوكيل التطبيق، فتُفتح المواقع التي تحجبها الشبكة بالاسم." : "Names are asked of an encrypted resolver and every connection of this browser goes through the app's own proxy, so sites the network hides by name open all the same.", 13, cMuted(), false)); return; }
+        // the page, the proxy
+        if (!pageHost.isEmpty()) { boolean forced = KrDoh.isForced(pageHost); Boolean need = KrDoh.neededCached(pageHost); dohRows.addView(row(forced || Boolean.TRUE.equals(need) ? cGood() : Boolean.FALSE.equals(need) ? cMuted() : cWarn(), pageHost, forced ? (ar ? "عبر DoH — أُجبر" : "through DoH — forced") : Boolean.TRUE.equals(need) ? (ar ? "عبر DoH — الشبكة تحجبه" : "through DoH — hidden by the network") : Boolean.FALSE.equals(need) ? (ar ? "مباشرةً" : "direct") : (ar ? "لم يُفحَص بعد" : "not checked yet"))); }
+        org.json.JSONObject px = KrDohProxy.status();
+        dohRows.addView(row(px.optBoolean("running") ? cGood() : cError(), ar ? "وكيل التطبيق" : "App proxy", px.optBoolean("running") ? "127.0.0.1:" + px.optInt("port") + " · " + px.optLong("tunnels") + " · ↑" + human(px.optLong("up")) + " ↓" + human(px.optLong("down")) : (ar ? "لا يعمل" : "not running")));
+        dohRows.addView(row(cMuted(), ar ? "تقسيم تحيّة TLS" : "Split TLS hello", st.optString("split", "auto")));
+        // the resolvers
+        TextView sub = text(ar ? "المزوِّدون" : "Resolvers", 12, cMuted(), true); sub.setPadding(dp(14), dp(10), dp(14), dp(2)); dohRows.addView(sub);
+        org.json.JSONArray rs = st.optJSONArray("resolvers");
+        if (rs != null) for (int i = 0; i < rs.length(); i++) { org.json.JSONObject r = rs.optJSONObject(i); if (r == null) continue; boolean asked = r.optLong("ms", -1) >= 0 || r.optBoolean("ok"); dohRows.addView(row(testing ? cWarn() : !asked ? cMuted() : r.optBoolean("ok") ? cGood() : cError(), r.optString("id"), testing ? "…" : !asked ? (ar ? "لم يُسأل" : "not asked") : r.optBoolean("ok") ? r.optString("shape") + " · " + r.optLong("ms") + " ms" : r.optString("error"))); }
+        // the last events
         org.json.JSONArray log = st.optJSONArray("log");
         if (log != null && log.length() > 0) {
-            sb.append('\n').append(ar ? "آخر الأحداث:" : "Recent:").append('\n');
-            for (int i = log.length() - 1, n = 0; i >= 0 && n < 12; i--, n++) { org.json.JSONObject e = log.optJSONObject(i); if (e == null) continue; sb.append("• ").append(ago(e.optLong("at"))).append("  ").append(e.optString("kind")).append(' ').append(e.optString("host")); if (!e.optString("ip").isEmpty()) sb.append(" → ").append(e.optString("ip")); if (e.optLong("ms", -1) >= 0) sb.append(" ").append(e.optLong("ms")).append("ms"); if (!e.optString("msg").isEmpty()) sb.append(" ").append(e.optString("msg")); sb.append('\n'); }
+            TextView ev = text(ar ? "آخر الأحداث" : "Recent", 12, cMuted(), true); ev.setPadding(dp(14), dp(10), dp(14), dp(2)); dohRows.addView(ev);
+            for (int i = log.length() - 1, n = 0; i >= 0 && n < 8; i--, n++) { org.json.JSONObject e = log.optJSONObject(i); if (e == null) continue; String k = e.optString("kind"); int c = k.equals("fail") ? cError() : k.equals("resolve") || k.equals("unblock") || k.equals("force") ? cGood() : cMuted(); dohRows.addView(row(c, k + (e.optString("host").isEmpty() ? "" : " · " + e.optString("host")), ago(e.optLong("at")) + (e.optString("ip").isEmpty() ? "" : " → " + e.optString("ip")) + (e.optLong("ms", -1) >= 0 ? " " + e.optLong("ms") + "ms" : "") + (e.optString("msg").isEmpty() || e.optString("msg").equals("ok") || e.optString("msg").equals("start") ? "" : " " + e.optString("msg")))); }
         }
-        android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this).setTitle("DNS over HTTPS").setMessage(sb.toString());
-        b.setPositiveButton(ar ? "اختبار" : "Test", (d, w) -> { paintDoh(); new Thread(() -> { org.json.JSONObject r = KrDoh.probe(); h.post(() -> { paintDoh(); StringBuilder t = new StringBuilder(r.optBoolean("ok") ? (ar ? "يعمل عبر " : "Working via ") + r.optString("resolver") + " · " + r.optString("shape") + " (" + r.optLong("ms") + " ms)" : (ar ? "أخفق: " : "Failed: ") + r.optString("why", KrDoh.lastError)); org.json.JSONArray tr = r.optJSONArray("tries"); if (tr != null) for (int i = 0; i < tr.length(); i++) { org.json.JSONObject x = tr.optJSONObject(i); if (x != null) t.append('\n').append(x.optBoolean("ok") ? "✓ " : "✕ ").append(x.optString("resolver")).append(' ').append(x.optBoolean("ok") ? x.optString("shape") + " " + x.optLong("ms") + " ms" : x.optString("error")); } new android.app.AlertDialog.Builder(KtBrowserActivity.this).setTitle(ar ? "اختبار DoH" : "DoH test").setMessage(t.toString()).setPositiveButton(ar ? "إغلاق" : "Close", null).show(); }); }, "kt-doh-probe").start(); });
-        b.setNeutralButton(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل (تلقائي)" : "Turn on (auto)"), (d, w) -> { String np = KrDoh.on() ? "off" : "auto"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); if (wv != null) wv.reload(); });
-        b.setNegativeButton(ar ? "إغلاق" : "Close", null);
-        b.show();
     }
     /* The way to a download, kept with it: the pages and what was tapped on each (its words, its link, its kind), so
        a link that runs out (signed links: itch.io, cloud storage) can be got again by going the same way. */
@@ -121,30 +171,33 @@ public class KtBrowserActivity extends Activity {
     private boolean dark() { return (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES; }
     private Button btn(String label, View.OnClickListener on) {
         Button b = new Button(this, null, android.R.attr.borderlessButtonStyle); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setMinWidth(dp(44)); b.setMinimumWidth(dp(44)); b.setPadding(dp(8), 0, dp(8), 0);
-        b.setTextColor(dark() ? Color.rgb(226, 226, 230) : Color.rgb(30, 30, 34)); b.setOnClickListener(on); return b;
+        b.setTextColor(cOnSurface()); b.setOnClickListener(on); return b;
     }
     private static boolean ar(Activity a) { return "ar".equals(a.getResources().getConfiguration().getLocales().get(0).getLanguage()); }
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         boolean ar = ar(this); adBlock = getSharedPreferences("kt", MODE_PRIVATE).getBoolean("adblock", true);
-        int bg = dark() ? Color.rgb(23, 24, 26) : Color.rgb(246, 246, 248);
+        int bg = cSurface();
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(bg);
         root.setFitsSystemWindows(true);
-        LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL); top.setGravity(Gravity.CENTER_VERTICAL); top.setPadding(dp(4), dp(4), dp(4), dp(4));
+        LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL); top.setGravity(Gravity.CENTER_VERTICAL); top.setPadding(dp(6), dp(6), dp(6), dp(6));
+        // (Material 3: the address in a pill of the surface's container colour, the buttons borderless and round.)
         bar = new EditText(this); bar.setSingleLine(true); bar.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI); bar.setImeOptions(EditorInfo.IME_ACTION_GO); bar.setTextSize(14);
-        bar.setTextColor(dark() ? Color.WHITE : Color.BLACK); bar.setHint(ar ? "عنوان أو بحث" : "Address or search"); bar.setSelectAllOnFocus(true); bar.setTextDirection(View.TEXT_DIRECTION_LTR);
+        bar.setBackground(pill(cContainer(), 22)); bar.setPadding(dp(16), dp(9), dp(16), dp(9)); bar.setHintTextColor(cMuted());
+        bar.setTextColor(cOnSurface()); bar.setHint(ar ? "عنوان أو بحث" : "Address or search"); bar.setSelectAllOnFocus(true); bar.setTextDirection(View.TEXT_DIRECTION_LTR);
         bar.setOnEditorActionListener((v, id, ev) -> { if (id == EditorInfo.IME_ACTION_GO || (ev != null && ev.getKeyCode() == KeyEvent.KEYCODE_ENTER)) { go(bar.getText().toString()); return true; } return false; });
         top.addView(btn("✕", v -> finish()));
         top.addView(btn("‹", v -> { if (wv.canGoBack()) wv.goBack(); }));
         top.addView(btn("›", v -> { if (wv.canGoForward()) wv.goForward(); }));
-        top.addView(bar, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); bl.setMarginStart(dp(2)); bl.setMarginEnd(dp(2)); top.addView(bar, bl);
         top.addView(btn("↻", v -> wv.reload()));
-        doh = btn("DoH", v -> dohDialog()); doh.setTextSize(12); top.addView(doh); paintDoh();
-        Button grab = btn(ar ? "التقِط" : "Grab", v -> grab()); grab.setTypeface(Typeface.DEFAULT_BOLD); top.addView(grab);
+        doh = btn("DoH", v -> dohDialog()); doh.setTextSize(12); doh.setTypeface(Typeface.DEFAULT_BOLD); top.addView(doh); paintDoh();
+        Button grab = btn(ar ? "التقِط" : "Grab", v -> grab()); grab.setTypeface(Typeface.DEFAULT_BOLD); grab.setBackground(pill(cTonal(), 20)); grab.setTextColor(cOnSurface()); grab.setPadding(dp(14), 0, dp(14), 0); top.addView(grab, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)));
         top.addView(btn("⋮", v -> menu()));
         root.addView(top, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         prog = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); prog.setMax(100); prog.setIndeterminate(false);
+        prog.setProgressTintList(android.content.res.ColorStateList.valueOf(cPrimary())); prog.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.TRANSPARENT));
         root.addView(prog, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(3)));
         wv = new WebView(this); wv.addJavascriptInterface(new Trail(), "KtTrail");
         root.addView(wv, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -187,6 +240,13 @@ public class KtBrowserActivity extends Activity {
                 if (!netFail || KrDoh.isForced(host)) return;
                 KrDoh.force(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول مباشرةً — يُعاد عبر DoH" : "Unreachable directly — retrying through DoH");
                 h.postDelayed(() -> { if (wv != null) wv.loadUrl(r.getUrl().toString()); }, 300);
+            }
+            // (A certificate that is not the site's on a site the network gives as it is: a filter's page in its place.
+            // The site forced through the resolver and the split hello; the page asked again.)
+            @Override public void onReceivedSslError(WebView v, android.webkit.SslErrorHandler handler, android.net.http.SslError error) {
+                String host = null; try { host = android.net.Uri.parse(error.getUrl()).getHost(); } catch (Exception ignored) {}
+                if (KrDoh.on() && host != null && !KrDoh.isForced(host)) { handler.cancel(); KrDoh.force(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "شهادة غير شهادة الموقع — يُعاد عبر DoH" : "Not the site's certificate — retrying through DoH"); final String back = error.getUrl(); h.postDelayed(() -> { if (wv != null) wv.loadUrl(back); }, 300); return; }
+                handler.cancel();
             }
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); try { pageHost = android.net.Uri.parse(u).getHost(); if (pageHost == null) pageHost = ""; } catch (Exception e) { pageHost = ""; } paintDoh(); }
             // (Taps recorded as soon as the page shows, not only once it has finished loading: a page still loading its ads
