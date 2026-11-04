@@ -1,0 +1,1 @@
+var t="YoRu72/KurokawaReader",r=t.split("/")[0],s=t.split("/")[1],_=`https://${r.toLowerCase()}.github.io/${s}/`,e=o=>`https://raw.githubusercontent.com/${t}/main/repo/${o}`;export{t as a,_ as b,e as c};

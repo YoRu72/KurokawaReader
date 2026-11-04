@@ -8,20 +8,20 @@
 import { h, icon, iconButton, toast, openSheet, coverColors, pickButton } from '../ui/dom';
 import { t, localDigits, getLang, countChapters, countSeconds, countHours, countBooks, countVolumes, formatBytes } from '../i18n';
 import { navigate, back } from '../router';
-import { db, uid, FAV_TAG, chapterRead, type Book, type Folder, type TagDef } from '../db';
+import { db, uid, FAV_TAG, chapterRead, type Book, type TagDef } from '../db';
 import { importFiles, coverUrl } from '../library';
 import { setJump } from './reader';
-import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceChapter, type SourceFile } from '../sources/types';
+import { SourceError, type Source, type SourceBook, type SourceDetails, type SourceFilter, type FilterValues, type SourceTag, type SourceFile } from '../sources/types';
 import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
 import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '../sources/http';
-import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, RUNNABLE, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
+import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
 import { schedule, peekLog, coverSource, fullCover } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, saveNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, type UpdateReport } from '../sources/updates';
+import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 

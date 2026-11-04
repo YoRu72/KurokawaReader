@@ -20,6 +20,6 @@ to compare with the glyph codes the PDF used.
 
 `corpus/` has the sources of the varied test PDFs: `mkdocx.py` (Word-style documents: report, two columns,
 mixed Arabic/English table, CJK, landscape — saved as .docx, then `soffice --convert-to pdf`), LaTeX
-(`paper.tex` two-column with a formula, table and footnote; `t3.tex` Type 3 fonts; `xe.tex` XeLaTeX). Add
+(`paper.tex` two-column with a formula, table and footnote; `t3.tex` Type 3 fonts; `xe.tex` XeLaTeX), and `mkdesign.py` (what Canva and Figma export: every glyph placed on its own, wide tracking, rotated text, overlapping layers, a background picture, a title drawn as outlines — `design.pdf`). LibreOffice does not turn rotated text boxes; Word does. Add
 encrypted copies with `qpdf --encrypt`.
 Target on the reference Arabic books: same page count, mean baseline error under 2 pt.

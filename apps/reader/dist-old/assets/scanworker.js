@@ -1,0 +1,1 @@
+import{g as a}from"./chunk-chunk-ZK25DS5D.js";import"./chunk-chunk-AC6HCWTV.js";import"./chunk-chunk-O72S6HWG.js";self.addEventListener("message",n=>{let{id:s,m:r}=n.data;a(r).then(({res:e,transfer:o})=>self.postMessage({id:s,ok:!0,res:e},o),e=>self.postMessage({id:s,ok:!1,error:String(e?.message??e)}))});

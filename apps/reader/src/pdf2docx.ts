@@ -50,14 +50,15 @@ type Region = { cols: Block[][]; edges: [number, number][] };
 type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] };
 /** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
-export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
+/** Text set at an angle (a design's stamp, a label up the side): one text box, turned, in page points from the top-left. */
+type TextBox = { runs: Run[]; x: number; y: number; w: number; h: number; rot: number; line: number };
+export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
 const BASE = 0.8;
 // Word footnotes reflow nicely when the text is edited, but Word lays out the footnote area its own way;
 // keeping the notes in the page's flow reproduces the page exactly. Fidelity first.
-const REAL_FOOTNOTES = false;
 const EMU = 12700; // EMU per point
 const DIGITS = /^[\s(（[]*([0-9٠-٩۰-۹]+)[\s)）\]]*$/;
 const toInt = (s: string) => parseInt(s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x6f0)), 10);
@@ -744,7 +745,19 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   const glyphs = pieces.flatMap((p) => (p.codes ?? []).filter((u) => u[5] > 0 && u[1] && !/^\s+$/.test(u[1])));
   const avgAdv = glyphs.length ? glyphs.reduce((t, u) => t + u[5] * u[4], 0) / glyphs.length : 0;
   if ((globalThis as { krDebugLine?: string }).krDebugLine === 'cs') { const all = pieces.flatMap((p) => p.codes ?? []); const adv = all.reduce((t, u) => t + u[5] * u[4], 0); const lo = Math.min(...pieces.map((p) => p.l)), hi = Math.max(...pieces.map((p) => p.r)); console.warn('P2D cs', JSON.stringify(pieces.map((p) => p.text).join('|').slice(0, 40)), (hi - lo).toFixed(1), adv.toFixed(1), all.length, extras.length, midCs.toFixed(2)); }
-  const lineCs = Math.abs(midCs) >= 0.05 && avgAdv > 0 ? Math.max(80, Math.min(110, Math.round(100 * (1 + midCs / avgAdv)))) : undefined;
+  // Tracking as a design tool sets it — every glyph a wide, even step from the next (a poster's title) — is
+  // Word's expanded spacing, not a stretch: the glyphs are set apart by that much, and only a gap wider still
+  // (a space's width on top of the step) parts words. pdf.js had put a space in each step; those go.
+  const lineH = median(pieces.filter((p) => p.text.trim()).map((p) => p.h)) || 10;
+  const tracked = extras.length >= 4 && midCs > lineH * 0.06 && extras.filter((d) => Math.abs(d - midCs) < Math.max(0.6, midCs * 0.3)).length >= extras.length * 0.7 ? midCs : 0;
+  if (tracked) for (const p of pieces) {
+    const gl = (p.codes ?? []).filter((u) => u[5] > 0 && u[1] && !/^\s+$/.test(u[1])).sort((a, b) => a[2] - b[2]);
+    if (gl.length < 2 || gl.map((u) => u[1]).join('').replace(/\s+/g, '') !== p.text.replace(/\s+/g, '')) continue;
+    let text = gl[0][1];
+    for (let i = 1; i < gl.length; i++) { const a = gl[i - 1], b = gl[i]; const d = b[2] - (a[2] + a[5] * a[4]); text += (d > tracked + a[4] * 0.2 ? ' ' : '') + b[1]; }
+    p.text = text;
+  }
+  const lineCs = !tracked && Math.abs(midCs) >= 0.05 && avgAdv > 0 ? Math.max(80, Math.min(110, Math.round(100 * (1 + midCs / avgAdv)))) : undefined;
   const normalY = pieces.filter((p) => !p.sup && p.text.trim()).map((p) => p.y);
   const lineBase = normalY.length ? median(normalY) : null;
   for (const p of sorted) {
@@ -799,14 +812,14 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
       const cut = Math.min(trim, /\u0640$/.test(lastText) ? lead : lead - 1);
       if (cut > 0) text = text.slice(cut);
     }
-    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, cs: lineCs };
+    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
     const last = runs[runs.length - 1];
     if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push(seg = { ...look, text, tab, tabEnd: rtlLine ? p.l : p.r }); continue; }
     reach(p);
     if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank * 0.92 - p.h * 0.3) }); }
     if (space && last?.art) text = ` ${text}`;
     else if (space && last) last.text += ' ';
-    if (last && !last.spacing && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
+    if (last && (!last.spacing || (tracked && last.spacing === look.spacing && last.text !== ' ')) && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
     else if (space && last && last.text.endsWith(' ')) runs.push({ ...look, text });
     else runs.push({ ...look, text });
   }
@@ -1044,6 +1057,37 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
 
 /** Running heads and page numbers: each item centred on where its glyphs are, so a font's slightly different
  *  width cannot move it out of its ornament. */
+/** The turned glyphs gathered into lines — the same angle, the same baseline, in order along it, a space where a
+ *  gap is one — each a text box turned as the page turns it (Word turns a box about its centre, clockwise). */
+function turnedBoxes(items: { text: string; angle: number; e: number; f: number; w: number; h: number; font: string; color: string; bold: boolean }[], fonts: Map<string, FontInfo>, H: number): TextBox[] {
+  const out: TextBox[] = []; const used = new Set<number>();
+  for (let i = 0; i < items.length; i++) {
+    if (used.has(i)) continue; const a = items[i]; const cs = Math.cos(a.angle), sn = Math.sin(a.angle);
+    const along = (t: typeof a) => t.e * cs + t.f * sn, across = (t: typeof a) => -t.e * sn + t.f * cs;
+    const line = [i]; for (let j = i + 1; j < items.length; j++) { const b = items[j]; if (used.has(j) || Math.abs(b.angle - a.angle) > 0.02 || Math.abs(across(b) - across(a)) > a.h * 0.4 || Math.abs(b.h - a.h) > a.h * 0.5) continue; line.push(j); }
+    line.forEach((k) => used.add(k)); line.sort((x, y) => along(items[x]) - along(items[y]));
+    const runs: Run[] = []; let end = -Infinity; const first = items[line[0]]; let last = first;
+    for (const k of line) {
+      const t = items[k]; const start = along(t); let text = t.text;
+      if (end > -Infinity && start - end > t.h * 0.22 && !/^\s/.test(text) && !/\s$/.test(runs[runs.length - 1]?.text ?? '')) text = ' ' + text;
+      end = Math.max(end, start + t.w); last = along(t) + t.w > along(last) + last.w ? t : last;
+      const fi = fonts.get(t.font); const look = { font: fi?.family ?? 'Arial', size: Math.round(t.h * 2) / 2, bold: !!(fi?.bold || t.bold), italic: !!fi?.italic, color: t.color, rtl: isRtlText(text), sup: false };
+      const prev = runs[runs.length - 1];
+      if (prev && prev.font === look.font && prev.size === look.size && prev.bold === look.bold && prev.italic === look.italic && prev.color === look.color) prev.text += text; else runs.push({ text, ...look });
+    }
+    if (!runs.some((r) => r.text.trim())) continue;
+    const h = first.h; const L = h * 1.3; const w = Math.max(1, along(last) + last.w - along(first)) + h * 0.3;
+    // The baseline's start on the page (points, y down), and from it the centre of the unturned box: the box's
+    // baseline sits BASE·L below its top, and its left edge at the first glyph.
+    const p0x = first.e, p0y = H - first.f; const vx = -w / 2, vy = BASE * L - L / 2;
+    const rx = vx * cs + vy * sn, ry = -vx * sn + vy * cs;   // (v turned as the text is, in y-down coordinates)
+    const cx = p0x - rx, cy = p0y - ry;
+    // (Word places a turned shape by the top-left of its turned bounding box; the extent stays the unturned size.)
+    const bw = Math.abs(w * cs) + Math.abs(L * sn), bh = Math.abs(w * sn) + Math.abs(L * cs);
+    out.push({ runs, x: cx - bw / 2, y: cy - bh / 2, w, h: L, rot: -a.angle * 180 / Math.PI, line: L });
+  }
+  return out;
+}
 function pinnedFurniture(header: Line[], footer: Line[], fonts: Map<string, FontInfo>, H: number): Furniture[] {
   const furniture: Furniture[] = [];
   for (const l of [...header, ...footer]) {
@@ -1324,6 +1368,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const tc = await (prefetched.get(page) ?? page.getTextContent()); lap('text');
   prefetched.delete(page);
   const pieces: Piece[] = [];
+  const turnedItems: { text: string; angle: number; e: number; f: number; w: number; h: number; font: string; color: string; bold: boolean }[] = [];
   let spanSeq = 0;
   for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; hidden?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean }[]) {
     if (typeof it.str !== 'string') continue;
@@ -1335,6 +1380,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const conn = /^\u0640+$/.test(text) && it.width < (it.height || 10) * 0.12;
     const [a, b, , , e, f] = it.transform;
     const h = it.height || Math.hypot(a, b) || 10;
+    // (Text set at an angle — a poster's diagonal stamp, a label up its side — goes to a turned text box of its own.)
+    { const angle = Math.atan2(b, a); if (Math.abs(angle) > 0.03 && text.trim() && text !== '\u2009') { turnedItems.push({ text, angle, e, f, w: it.width, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold }); continue; } }
     // (A font met before under another name — the second copy's — is called by the first name here; the
     // drawing keeps the copy's own name, which is the one pdf.js draws with.)
     const drawnAs = it.fontName;
@@ -1469,6 +1516,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     // (Its place stays taken: a stand-in that sets nothing keeps the line's extent and its gaps true.)
     keepFonts.add(p.font); if (p.drawnAs) keepFonts.add(p.drawnAs); pieces[i] = { ...p, text: '\uFFFC', art: true, codes: undefined };
   }
+  const boxes = turnedBoxes(turnedItems, fonts, H);
   // Vertical writing (tategaki): its columns are read as paragraphs, set in a section whose text runs top
   // to bottom, columns right to left, as Word and LibreOffice set Japanese and Chinese; the pieces leave the
   // line reading below (a running head or folio across the page stays as it is).
@@ -1578,7 +1626,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const furnitureP: Furniture[] = [];
     const picsP = withGraphics ? await renderGraphics(page, 2, keepFonts, [], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
     page.cleanup();
-    return { vert, w: W, h: H, pics: picsP, furniture: furnitureP, placed, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: { top: 18, bottom: 18, left: 18, right: 18, header: 6, footer: 6 } };
+    return { vert, w: W, h: H, pics: picsP, boxes, furniture: furnitureP, placed, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: { top: 18, bottom: 18, left: 18, right: 18, header: 6, footer: 6 } };
   }
   if (gutter) {
     const [g0, g1] = gutter;
@@ -1652,7 +1700,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
     if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
     page.cleanup();
-    return { vert, w: W, h: H, pics: picsC, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
+    return { vert, w: W, h: H, pics: picsC, boxes, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
   }
   // Footnotes: below a short rule in the lower part of the page, in a smaller size.
   let notesLines: Line[] = [];
@@ -1754,7 +1802,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
   const notesAt = notesLines.length && notesRaw[0] ? H - notesLines[0].base - BASE * notesRaw[0].pitch : undefined;
-  return { vert, w: W, h: H, pics, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
+  return { vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
 }
 
 /* ------------------------------------------------------------------ */
@@ -2068,7 +2116,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       footerPinned = pinned(footerItems, firstTop, ftr);
       footerDist = Math.max(4, pg.h - footerPinned.end);
     }
-    const headerXml = (picRuns ? hairline(0, picRuns + W_.textRun('', { size: 2 })) : '') + headerPinned.paras + blocksFor(pg.header, null, hdr);
+    const boxRuns = (pg.boxes ?? []).map((bx, i) => W_.anchoredTextBox(Math.max(1, bx.w * 96 / 72), Math.max(1, bx.h * 96 / 72), bx.x * EMU, bx.y * EMU, bx.rot, W_.paragraph({ align: 'left', widowControl: false, indent: { left: 0, right: 0 }, spacing: { before: 0, after: 0, line: Math.round(bx.line * PT), lineRule: 'exact' } }, bx.runs.map((r) => runFor(r, null, hdr)).join('')), 100 + pg.pics.length + i, 5000 + i)).join('');
+    const headerXml = (picRuns || boxRuns ? hairline(0, picRuns + boxRuns + W_.textRun('', { size: 2 })) : '') + headerPinned.paras + blocksFor(pg.header, null, hdr);
     const footerXml = footerPinned.paras + blocksFor(pg.footer, null, ftr);
     // The pinned lines live in the page's header part with the decorations: positioned against the page, taking
     // no room, and keeping the body free to start like any page (LibreOffice mis-reads a section that opens

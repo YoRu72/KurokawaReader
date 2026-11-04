@@ -1,0 +1,1 @@
+function e(t){sessionStorage.setItem("kr.jump",JSON.stringify(t))}function r(){let t=sessionStorage.getItem("kr.jump");if(!t)return null;sessionStorage.removeItem("kr.jump");try{return JSON.parse(t)}catch{return null}}export{e as a,r as b};

@@ -170,6 +170,14 @@ export function anchoredImage(part: Part, data: Uint8Array, kind: 'png' | 'jpg',
   return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" allowOverlap="1" behindDoc="1" locked="1" layoutInCell="1" relativeHeight="${z}"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>${Math.round(xEmu)}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>${Math.round(yEmu)}</wp:posOffset></wp:positionV><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent t="0" r="0" b="0" l="0"/><wp:wrapNone/>${picXml(rId, cx, cy, part.doc.nextDrawing++)}</wp:anchor></w:drawing></w:r>`;
 }
 
+/** Text set at an angle (a stamp, a label up the side of a poster): a text box floating in front of the page,
+ *  turned by `rotDeg` (clockwise) about its centre, `w`×`h` CSS pixels, its unturned top-left at (xEmu, yEmu);
+ *  `paras` the paragraphs inside it. No frame, no fill, the words tight to the box. */
+export function anchoredTextBox(w: number, h: number, xEmu: number, yEmu: number, rotDeg: number, paras: string, z: number, id: number): string {
+  const cx = Math.round(w * EMU_PX), cy = Math.round(h * EMU_PX); const rot = Math.round((((rotDeg % 360) + 360) % 360) * 60000);
+  return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" allowOverlap="1" behindDoc="0" locked="1" layoutInCell="1" relativeHeight="${z}"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>${Math.round(xEmu)}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>${Math.round(yEmu)}</wp:posOffset></wp:positionV><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent t="0" r="0" b="0" l="0"/><wp:wrapNone/><wp:docPr id="${id}" name="" descr="" title=""/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm${rot ? ` rot="${rot}"` : ''}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr><wps:txbx><w:txbxContent>${paras}</w:txbxContent></wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`;
+}
+
 /* ---------- sections ---------- */
 
 export type PageSetup = { width: number; height: number; margin: { top: number; right: number; bottom: number; left: number; header: number; footer: number; gutter?: number }; textDirection?: 'tbRl' };

@@ -9,11 +9,11 @@ export interface JumpBack { remember(): void; dispose(): void }
 export function jumpBack<L>(root: HTMLElement, goTo: (loc: L) => void, current: () => L | null, scroller: HTMLElement): JumpBack {
   const stack: L[] = [];
   let pill: HTMLElement | null = null;
-  let hideTimer = 0, settled = 0;
+  let hideTimer = 0;
   const hide = () => { pill?.remove(); pill = null; };
   const show = () => {
     if (!stack.length) { hide(); return; }
-    if (!pill) { pill = h('button', { type: 'button', class: 'jump-back', onclick: () => { const loc = stack.pop(); if (loc !== undefined) { settled = 0; goTo(loc); } show(); } }, icon('undo'), h('span', null, t('backToPlace'))); root.appendChild(pill); }
+    if (!pill) { pill = h('button', { type: 'button', class: 'jump-back', onclick: () => { const loc = stack.pop(); if (loc !== undefined) goTo(loc); show(); } }, icon('undo'), h('span', null, t('backToPlace'))); root.appendChild(pill); }
     pill.querySelector('span')!.textContent = stack.length > 1 ? `${t('backToPlace')} · ${stack.length}` : t('backToPlace');
     window.clearTimeout(hideTimer);
     hideTimer = window.setTimeout(() => { stack.length = 0; hide(); }, 120000);

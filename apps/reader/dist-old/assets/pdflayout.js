@@ -1,0 +1,1 @@
+import{e as a,g as i}from"./chunk-chunk-5ST7S4OV.js";import"./chunk-chunk-6RI5TAT5.js";import"./chunk-chunk-O72S6HWG.js";self.onmessage=n=>{let{id:e,op:o,items:r,viewport:t,laid:m}=n.data;try{o==="text"?self.postMessage({id:e,text:a(r,t)}):self.postMessage({id:e,plan:i(r,t,m??t)})}catch(s){self.postMessage({id:e,error:String(s?.message??s)})}};

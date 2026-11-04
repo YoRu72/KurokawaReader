@@ -434,11 +434,6 @@ export function attachTranslator(host: TranslatorHost): Translator {
   }
 
   /** The kept translation of a paragraph, shown or not. */
-  function keptOf(el: HTMLElement, bookId: string): string | undefined {
-    const shown = translations.get(el); if (shown) return shown;
-    const src = sourceOf(el); const c = caches.get(bookId);
-    return c?.[translationKey(src, bookId)] ?? c?.[legacyTranslationKey(src)] ?? bySource.get(bookId)?.[srcKey(plainOfText(originals.get(el) ?? el.innerHTML))];
-  }
   /** Saved with the book: it opens translated every time — from the translations kept on this device, offline
    *  too — until the translation is turned off; the bar's state (shown or folded away) kept with it. */
   const keepKey = (id: string) => `trKeep:${id}`;
@@ -460,7 +455,6 @@ export function attachTranslator(host: TranslatorHost): Translator {
     sh.body.append(c);
   }
 
-  function htmlToText(html: string): string { const d = document.createElement('div'); d.innerHTML = html; return (d.innerText ?? d.textContent ?? '').trim(); }
 
   /* ---------- pill ---------- */
   let status: HTMLElement, toggleBtn: HTMLButtonElement;

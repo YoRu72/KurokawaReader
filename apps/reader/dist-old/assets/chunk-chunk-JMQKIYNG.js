@@ -1,0 +1,1 @@
+var t=null;function s(e,o=!1){let r=e;return r.krFast=!0,o&&(r.krSharedOps=!0),e}function n(){return t??=import("./chunk-pdf-5GXB5ZIJ.js").then(e=>(e.GlobalWorkerOptions.workerSrc=new URL("./pdf.worker.min.mjs",import.meta.url).href,e)),t}export{s as a,n as b};

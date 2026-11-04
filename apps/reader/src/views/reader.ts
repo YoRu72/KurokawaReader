@@ -11,7 +11,7 @@ import { attachRuler } from '../ui/ruler';
 import { jumpBack } from '../ui/jumpback';
 import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
-import { t, isRtlText, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
+import { t, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
 import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -40,7 +40,7 @@ import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
 import { toolbarSheet } from '../ui/toolbarconfig';
-import { shareFile, canvasToBlob, saveImage, copyImage } from '../ui/share';
+import { shareFile, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatform } from '../native';
 import type { HighlightColor } from '../ui/selection';
@@ -186,7 +186,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     bookTitle: (id) => docs.find((d) => d.book.id === id)?.book.title,
   });
   onDispose(() => translator.dispose());
-  const settings = getSettings();
   let allImages: ImageRef[] = [];
   // (Caches the position helpers use — declared before the first book renders: a place saved or restored while
   // the book is still opening uses them.)

@@ -81,7 +81,6 @@ export function scannerSheet(onDone?: () => void): void {
   let set = scanSettings();
   const gridEl = h('div', { class: 'page-grid scan-grid' });
   const status = h('p', { class: 'src' });
-  const rtlUi = document.documentElement.dir === 'rtl';
 
   // Every photo gets its tile at once; the photos are read several at a time, in worker threads (the way a
   // scanning app does it: decoded straight to a small working size, the page found there), and each tile fills

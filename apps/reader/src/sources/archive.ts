@@ -1,7 +1,7 @@
 // The Internet Archive (archive.org) as a source: its search API for the shelves and queries, its metadata
 // API for a book's page and files. Free to read, no key; the files come straight from the archive.
 import { fetchJson, fetchBytes } from './http';
-import { SourceError, type Source, type SourceFilter, type FilterValues, type SourcePage, type SourceBook, type SourceDetails, type SourceTag, type SourceFile } from './types';
+import { SourceError, type Source, type SourceFilter, type SourcePage, type SourceBook, type SourceDetails, type SourceTag, type SourceFile } from './types';
 import { getLang } from '../i18n';
 
 const API = (typeof localStorage !== 'undefined' && localStorage.getItem('kr.archive.base')) || 'https://archive.org';
