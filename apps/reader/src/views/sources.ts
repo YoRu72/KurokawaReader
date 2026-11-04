@@ -631,6 +631,27 @@ type Observe = (el: Element, fn: () => Promise<void>) => void;
 const HEAD = '\u0000head';
 /** A volume: its cover and contents (read from the file as the row comes near), its size, its button —
  *  "Download", the progress, then "Open" once it is in the library. */
+/** A hit inside a book's text (the Shamela search, as the site shows it): the book and its author, the page, the
+ *  passage with the matched words lit, «show more» bringing the paragraph itself from the page; a tap opens the page. */
+function hitRow(src: Source, b: SourceBook, q: string): HTMLElement {
+  const snippet = h('p', { class: 'hit-snippet', dir: 'auto' }); fillMarked(snippet, b.snippet ?? b.description ?? '');
+  const more = h('button', { type: 'button', class: 'btn text small hit-more', onclick: async (e: Event) => {
+    e.stopPropagation(); more.disabled = true; more.textContent = '…';
+    try { const [bookId, page] = b.id.split('#'); const { hitExcerpt } = await import('../sources/shamela'); fillMarked(snippet, await hitExcerpt(Number(bookId), Number(page), q)); snippet.classList.add('open'); more.remove(); }
+    catch { more.disabled = false; more.textContent = t('showMore'); }
+  } }, t('showMore'));
+  const el = h('div', { class: 'hit-row', role: 'button', tabindex: '0', onclick: () => navigate(bookPath(src.id, b.id)), onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') navigate(bookPath(src.id, b.id)); } },
+    h('div', { class: 'hit-head' }, h('span', { class: 'hit-title', dir: 'auto' }, b.title), b.badge ? h('span', { class: 'src-chip' }, b.badge) : null),
+    b.author ? h('span', { class: 'hit-author', dir: 'auto' }, b.author) : null,
+    snippet, more);
+  return el;
+}
+/** `html` holding only text and <mark>: put into `el` as text with the marks as highlighted spans (nothing else is let through). */
+function fillMarked(el: HTMLElement, html: string): void {
+  el.replaceChildren();
+  const parts = html.split(/(<\/?mark>)/); let lit = false;
+  for (const part of parts) { if (part === '<mark>') { lit = true; continue; } if (part === '</mark>') { lit = false; continue; } const text = part.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' '); if (!text) continue; el.append(lit ? h('mark', { class: 'hit-mark' }, text) : text); }
+}
 function volumeRow(src: Source, b: SourceBook, lib: Map<string, string>, observe: Observe, rows: Map<string, (bookId: string) => void>): HTMLElement {
   // The editions of the volume (the row's own first): the one in the library shown if there is one.
   const alts = b.alts?.length ? b.alts : [{ label: '', id: b.id, file: b.file! }];
@@ -866,7 +887,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
   newCoverScreen();
   let filters = filterValues(src);
   const key = `${src.id}|${q}|${shelf ?? ''}|${tags.join(',')}|${JSON.stringify(filters)}`;
-  const grid = h('div', { class: 'src-grid' });
+  const grid = h('div', { class: 'src-grid' + (src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? ' hits' : '') });
   const sentinel = h('div', { class: 'src-more' });
   const status = h('div', { class: 'src-status' });
   const tagRow = h('div', { class: 'folder-chips src-tags', hidden: true });
@@ -1025,6 +1046,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
     }
   };
   const card = (b: SourceBook): HTMLElement => {
+    if (b.look === 'hit') return hitRow(src, b, q);
     if (b.look === 'volume' && b.file) return volumeRow(src, b, lib, observe, rows);
     if (b.look === 'series') return seriesHead(src, b, lib, observe, rows);
     const [c1, c2] = coverColors(b.title);

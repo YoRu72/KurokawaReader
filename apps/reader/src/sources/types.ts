@@ -18,7 +18,9 @@ export interface SourceBook {
   openShelf?: string;
   /** How the item is drawn: a folder's card (its first volume's cover on it), a series' card at the head of
    *  its volumes (with a button to fetch them all), a volume as a row with its cover, contents and button. */
-  look?: 'folder' | 'series' | 'volume';
+  look?: 'folder' | 'series' | 'volume' | 'hit';
+  /** A hit inside a book's text (the Shamela search): the passage with the matched words wrapped in <mark>, the page it is on. */
+  snippet?: string; page?: number;
   /** The file a volume row fetches. */
   file?: SourceFile;
   /** The other editions of the same volume (a store's EPUB, a premium one, a scan…), the row's own first. */
