@@ -22,7 +22,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
 import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
-import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, type Cue, type AssRenderer } from './subs';
+import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, cuesToSrt, type Cue, type AssRenderer } from './subs';
 import { request } from '../http';
 import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
@@ -326,6 +326,10 @@ export function openPlayer(src: PlayerSource): void {
     st.setProperty('--sub-size', `${p.subSize}%`); st.setProperty('--sub-color', p.subColor); st.setProperty('--sub-pos', `${100 - p.subPos}%`); st.setProperty('--sub-font', p.subFont ? `"${p.subFont}", ` : '');
     st.setProperty('--sub-outline', p.subOutline); st.setProperty('--sub-outline-w', `${p.subOutlineWidth}px`); st.setProperty('--sub-bg-a', String(p.subBgOpacity / 100)); st.setProperty('--sub2-pos', `${p.sub2Pos}%`); st.setProperty('--sub2-size', `${p.sub2Size}%`);
     root.classList.toggle('sub-bold', p.subBold); root.classList.toggle('sub-italic', p.subItalic); root.dataset.subBg = p.subBackground;
+    // (Appearance: the accent, the seek bar, the shade, the title, the marks, the size — REX Player's page.)
+    if (p.accent) st.setProperty('--kt-accent', p.accent); else st.removeProperty('--kt-accent');
+    st.setProperty('--kt-dim', String(p.controlsDim / 100)); root.dataset.seek = p.seekStyle; root.dataset.size = p.controlSize;
+    title.hidden = !p.showTitle; root.classList.toggle('no-chapter-marks', !p.chapterMarks);
   }
   applySubStyle(); drawCustom();
   const nudgeSub = (d: number) => { subDelay = Math.round((subDelay + d) * 100) / 100; ass?.setOffset(-subDelay); remember(key, { subDelay }); flashText(t('subDelayNow', { s: subDelay.toFixed(1) })); };
@@ -348,16 +352,18 @@ export function openPlayer(src: PlayerSource): void {
     const label = SCREEN_LANGS.find(([c]) => c === target)?.[1] ?? target;
     let tr = tracks.find((x) => x.id === id);
     if (!tr) { tr = { id, name: `${src.name} → ${label}`, lang: target, cues: src.cues.map((c) => ({ ...c, text: '' })), fmt: 'srt' }; tracks = [...tracks, tr]; }
+    // (What was translated before — of this very subtitle — is kept on the device and taken up where it stopped.)
+    const { loadSaved, saveTranslation } = await import('./subtr'); const saved = await loadSaved(src, target); if (saved) saved.forEach((tx, i) => { if (tx && tr!.cues[i] && !tr!.cues[i].text) tr!.cues[i].text = tx; });
     secondary = keepOriginal ? src : null; await useTrack(tr);
     const now = video.currentTime; const order = src.cues.map((_, i) => i).filter((i) => !tr!.cues[i].text).sort((a, b) => { const fa = src.cues[a].end >= now, fb = src.cues[b].end >= now; return fa === fb ? src.cues[a].start - src.cues[b].start : fa ? -1 : 1; });
     let done = src.cues.length - order.length;
     try {
       for (let k = 0; k < order.length && !playerGone && translating === id; k += 30) {
         const part = order.slice(k, k + 30); const out = await translateTexts(part.map((i) => plain(src.cues[i].text)), cfg);
-        part.forEach((i, j) => { tr!.cues[i].text = out[j] ?? ''; }); done += part.length;
+        part.forEach((i, j) => { tr!.cues[i].text = out[j] ?? ''; }); done += part.length; void saveTranslation(src, target, tr!.cues.map((c) => c.text));
         status.textContent = t('subTrProgress', { n: localDigits(done), total: localDigits(src.cues.length) }); delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime);
       }
-      if (!playerGone) { status.textContent = t('subTrDone', { lang: label }); flashText(t('subTrDone', { lang: label })); }
+      if (!playerGone) { status.textContent = t('subTrDone', { lang: label }); flashText(t('subTrDone', { lang: label })); void saveTranslation(src, target, tr.cues.map((c) => c.text)); }
     } catch (e) { status.textContent = /deeplKey/.test(String((e as Error).message)) ? t('scrNeedEngine') : String((e as Error).message ?? e); }
     finally { if (translating === id) translating = null; }
   }
@@ -389,11 +395,16 @@ export function openPlayer(src: PlayerSource): void {
     const text = decodeSubtitle(bytes, getPrefs().subCodepage || undefined); const fmt = sniffFormat(name, text);
     if (fmt === 'unknown') { toast(t('subsUnknownFormat', { name }), 'error'); return null; }
     const tr: SubTrack = { id: `${name}:${bytes.length}`, name, lang, cues: parseCues(text, fmt), fmt, ass: fmt === 'ass' ? text : undefined };
-    tracks = [...tracks.filter((x) => x.id !== tr.id), tr]; return tr;
+    tracks = [...tracks.filter((x) => x.id !== tr.id), tr];
+    // (Its translations made before, kept on the device: tracks of their own, there without a connection.)
+    void import('./subtr').then(async ({ savedTargets, loadSaved }) => { const { SCREEN_LANGS } = await import('../screen/config'); for (const target of await savedTargets(tr)) { const texts = await loadSaved(tr, target); if (!texts || tracks.some((x) => x.id === `${tr.id}→${target}`)) continue; const label = SCREEN_LANGS.find(([c]) => c === target)?.[1] ?? target; tracks = [...tracks, { id: `${tr.id}→${target}`, name: `${tr.name} → ${label}`, lang: target, cues: tr.cues.map((c, i) => ({ ...c, text: texts[i] ?? '' })), fmt: 'srt' }]; } });
+    return tr;
   }
   async function loadSubtitleUrl(url: string, name: string, lang?: string) { try { const r = await request(url, { binary: true }); if (r.status >= 400) throw new Error(`HTTP ${r.status}`); const bytes = Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)); const tr = await addTrackFromBytes(name, bytes, lang); if (tr) { await useTrack(tr); toast(t('subsLoaded', { name })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
   // Subtitles that came with an online source: the default one (or the only one) turned on.
   void (async () => { const subs = src.subtitles ?? []; for (const sb of subs.slice(0, 12)) { try { const r = await request(sb.url, { binary: true }); if (r.status >= 400) continue; const tr = await addTrackFromBytes(sb.name, Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)), sb.lang); if (tr) offer(tr, !!sb.isDefault || subs.length === 1); } catch { /* one missing */ } } })();
+  // The subtitles inside the file itself (a Matroska's SRT/ASS tracks), read out by ffmpeg for the page's player.
+  void (async () => { if (mpv || !src.localPath) return; const { canReadEmbedded, embeddedSubs } = await import('./embedded'); if (!canReadEmbedded()) return; let n = 0; await embeddedSubs(src.localPath, (e) => { void addTrackFromBytes(e.name, e.bytes, e.lang).then((tr) => { if (tr && !playerGone) { n++; offer(tr, e.isDefault || n === 1); } }); }); })();
   // Subtitles beside a local file (same base name) are offered first.
   void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr) offer(tr, list.length === 1); } } })();
 
@@ -416,16 +427,22 @@ export function openPlayer(src: PlayerSource): void {
     const sw = (label: string, k: 'subBold' | 'subItalic' | 'subForceLtr', after?: () => void) => h('label', { class: 'row switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: p[k], onchange: (e: Event) => { updatePrefs({ [k]: (e.target as HTMLInputElement).checked }); applySubStyle(); after?.(); } }));
     // (A second line above — another track, or the original of a translation — and the translation itself.)
     const second = current ? h('div', { class: 'row' }, h('span', null, t('subSecond'), h('small', { class: 'src' }, t('subSecondHint'))), pickButton(t('subSecond'), [['', t('subsOff')], ...tracks.filter((x) => x !== current).map((x) => [x.id, x.name] as [string, string])], secondary?.id ?? '', (v) => { secondary = tracks.find((x) => x.id === v) ?? null; delete subTop.dataset.last; delete subBox.dataset.last; drawSubs(video.currentTime); }, t('close'))) : null;
+    // (The track as a file of its own — a translation kept, or a file's inner subtitle taken out —, and the
+    // translation shown with its original or by itself, or the original alone, in one tap.)
+    const exportRow = current?.cues.length ? h('div', { class: 'row-actions wrap' },
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const { saveText } = await import('../native'); const nm = `${current!.name.replace(/\.(srt|ass|ssa|vtt)$/i, '')}.srt`; await saveText(nm, cuesToSrt(current!.cues), 'application/x-subrip'); toast(t('subSaved', { name: nm })); } }, icon('download'), t('subExport')),
+      ...(current!.id.includes('→') ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const orig = tracks.find((x) => current!.id.startsWith(x.id + '→')); if (!orig) return; if (secondary === orig) { secondary = null; } else { secondary = orig; } delete subTop.dataset.last; delete subBox.dataset.last; drawSubs(video.currentTime); sh.close(); } }, icon('subtitles'), secondary && current!.id.startsWith(secondary.id + '→') ? t('subTrOnlyTranslation') : t('subTrWithOriginal')),
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const orig = tracks.find((x) => current!.id.startsWith(x.id + '→')); if (orig) { chosenByHand = true; secondary = null; void useTrack(orig); sh.close(); } } }, icon('undo'), t('subTrShowOriginal'))] : [])) : null;
     const trBox = h('div', { class: 'sub-tr' });
     if (current?.cues.length) void (async () => {
       const { loadScreen, saveScreen, SCREEN_LANGS } = await import('../screen/config'); const cfg = loadScreen(); const status = h('small', { class: 'src sub-tr-status', 'aria-live': 'polite' });
       let target = cfg.target; let keep = true; const src = current!;
-      trBox.append(h('h4', null, t('subTr')), h('p', { class: 'hint' }, t('subTrHint', { engine: cfg.engine === 'deepl' ? 'DeepL' : cfg.engine === 'ai' ? t('scrEngineAi') : 'Google' })),
+      trBox.append(h('h4', null, t('subTr')), h('p', { class: 'hint' }, t('subTrHint', { engine: cfg.engine === 'deepl' ? 'DeepL' : cfg.engine === 'ai' ? t('scrEngineAi') : 'Google' }), ' ', t('subTrSavedNote')),
         h('div', { class: 'row' }, h('span', null, t('scrTo')), pickButton(t('scrTo'), SCREEN_LANGS, target, (v) => { target = v; const c = loadScreen(); c.target = v; saveScreen(c); }, t('close'))),
         h('label', { class: 'row switch-row' }, h('span', null, t('subTrKeep')), h('input', { type: 'checkbox', checked: true, onchange: (e: Event) => { keep = (e.target as HTMLInputElement).checked; } })),
         h('button', { type: 'button', class: 'btn tonal', onclick: () => void translateTrack(src.id.includes('→') ? (tracks.find((x) => src.id.startsWith(x.id + '→')) ?? src) : src, target, keep, status) }, icon('translate'), t('subTrGo')), status);
     })();
-    sh.body.append(list, fileIn, actions, ...(second ? [second] : []), trBox,
+    sh.body.append(list, fileIn, actions, ...(exportRow ? [exportRow] : []), ...(second ? [second] : []), trBox,
       h('h4', null, t('subTiming')),
       h('div', { class: 'row' }, h('span', null, t('subDelay'), h('small', { class: 'src' }, t('subDelayHint'))), h('div', { class: 'progress-ctl' }, iconButton('minus', t('less'), () => nudge(-0.1)), delay, iconButton('plus', t('more'), () => nudge(0.1)))),
       h('div', { class: 'row' }, h('span', null, t('subSync'), h('small', { class: 'src' }, t('subSyncHint'))), h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => syncMark('heard') }, icon('speak'), t('subSyncHeardBtn')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { syncMark('seen'); delay.value = subDelay.toFixed(2); } }, icon('eye'), t('subSyncSeenBtn')))),
@@ -788,6 +805,9 @@ export function openPlayer(src: PlayerSource): void {
       if (keys.some((k) => ['normalize', 'mono', 'balance', 'audioDelay', 'volumeBoost'].includes(k))) applySound();
       if (keys.includes('aspect')) { aspect = getPrefs().aspect; applyAspect(); }
       if (keys.includes('showClock')) clock.hidden = !getPrefs().showClock;
+      if (keys.some((k) => ['accent', 'seekStyle', 'controlsDim', 'showTitle', 'chapterMarks', 'controlSize'].includes(k))) applySubStyle();
+      if (keys.includes('bar')) drawTools();
+      if (keys.includes('showRemaining')) onTime();
       if (keys.includes('repeat')) repeat = getPrefs().repeat;
       if (keys.includes('ambient')) ambientTick();
       if (keys.includes('pitchCorrection')) video.preservesPitch = getPrefs().pitchCorrection;
