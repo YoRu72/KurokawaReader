@@ -102,7 +102,9 @@ export interface AddOptions {
     /** Sidecars: yt-dlp's info.json written (for the .nfo), the thumbnail kept beside the file as a .jpg. */
     infoJson?: boolean; cover?: boolean;
     /** The cookie jar (a saved signed-in state) this download uses. */
-    cookieJar?: string };
+    cookieJar?: string;
+    /** The finished file's SHA-256 (when deduplication is on), and whether it became a link to an identical file. */
+    linked?: boolean };
 }
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }

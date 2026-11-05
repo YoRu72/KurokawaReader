@@ -8,6 +8,7 @@ import { APP_VERSION, REPO } from '../repo';
 export async function showLastCrash(): Promise<void> {
   const p = ktPlugin() as unknown as { lastCrash?(): Promise<{ text: string | null }> } | null;
   let text: string | null = null; try { text = (await p?.lastCrash?.())?.text ?? null; } catch { return; }
+  if (text) void import('../downloads/recorder').then((m) => m.record('crash', text!.slice(0, 300)));
   if (!text) return;
   const report = `Kurokawa Tools ${APP_VERSION}\n\n${text}`.slice(0, 6000);
   const close = () => { el.classList.add('leaving'); setTimeout(() => el.remove(), 180); };

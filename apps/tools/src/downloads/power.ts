@@ -12,7 +12,7 @@ export const powerOf = (): Power => getSettings().power ?? {};
 export async function applyPower(): Promise<void> {
   const p = powerOf();
   try {
-    if (nativePlatform() === 'android') await (ktPlugin() as unknown as { configure(o: Record<string, unknown>): Promise<void> } | null)?.configure({ wifiOnly: !!p.wifiOnly, batteryGuard: !!p.batteryGuard });
+    if (nativePlatform() === 'android') await (ktPlugin() as unknown as { configure(o: Record<string, unknown>): Promise<void> } | null)?.configure({ wifiOnly: !!p.wifiOnly, batteryGuard: !!p.batteryGuard, dedupe: !!getSettings().dedupe });
     else { const d = window.kurokawaTools as unknown as { desktopPrefs?(o: Record<string, unknown>): Promise<unknown> } | undefined; await d?.desktopPrefs?.({ keepAwake: p.keepAwake !== false, whenDone: p.whenDone ?? 'nothing', notifyDone: p.notifyDone !== false, tray: !!p.tray, hotkeys: p.hotkeys ?? {} }); }
   } catch { /* an older native side */ }
 }

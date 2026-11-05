@@ -11,7 +11,7 @@ import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
 import { addSheet } from './add';
 import { getSettings, onSettingsChange } from '../settings';
-import { nativePlatform } from '../native';
+import { nativePlatform, ktPlugin } from '../native';
 import { canArchive, isArchiveName } from '../archives';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 import { updateSettings } from '../settings';
@@ -326,5 +326,9 @@ function statsSheet(tasks: Task[]): void {
   const rows: [string, string][] = [[t('statsAllTime'), `${countItems(s.files)} · ${formatBytes(s.bytes)}`], [t('statsSince'), new Date(s.since).toLocaleDateString(document.documentElement.lang || undefined)],
     [t('statsInList'), countItems(tasks.length)], [t('filterDone'), localDigits(by((x) => x.state === 'done' || x.state === 'seeding'))], [t('filterActive'), localDigits(by((x) => ['downloading', 'metadata', 'checking', 'queued', 'paused'].includes(x.state)))], [t('filterFailed'), localDigits(by((x) => x.state === 'failed'))],
     [t('statsTorrents'), localDigits(by((x) => x.kind === 'torrent'))], [t('statsOnDisk'), formatBytes(size)]];
-  sh.body.append(h('div', { class: 'info-list' }, ...rows.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v)))));
+  const list = h('div', { class: 'info-list' }, ...rows.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v))));
+  sh.body.append(list);
+  // (The storage panel: what the deduplication index knows — files hashed, links made, bytes saved, what is still on disk.)
+  const p = ktPlugin() as unknown as { dedupeStats?(): Promise<{ hashed: number; links: number; saved: number; present: number; bytes: number }> } | null;
+  if (p?.dedupeStats) void p.dedupeStats().then((d) => { const more: [string, string][] = [[t('statsHashed'), countItems(d.hashed)], [t('statsLinked'), `${countItems(d.links)} · ${formatBytes(d.saved)}`], [t('statsIndexed'), `${countItems(d.present)} · ${formatBytes(d.bytes)}`]]; list.append(h('div', { class: 'files-sec' }, t('statsStorage')), ...more.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v)))); if (!getSettings().dedupe) list.append(h('p', { class: 'hint' }, t('dedupeOffHint'))); }).catch(() => undefined);
 }

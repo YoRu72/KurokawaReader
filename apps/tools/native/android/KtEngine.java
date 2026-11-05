@@ -94,6 +94,7 @@ final class KtEngine {
     private volatile String[] extraTrackers = TRACKERS; private volatile boolean addTrackers = true;
     /** Connections for one torrent (Hayase's 80); the session's budget is connections_limit. */
     private volatile int connsPerTorrent = 150;
+    /** Finished files hashed and identical ones hard-linked (Settings → Downloads). */ private volatile boolean dedupe = false;
     private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
     /** Connections over every file download at once (OmniGet's global budget): a new download gets what is left of it. */
@@ -498,6 +499,7 @@ final class KtEngine {
         if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
         if (o.has("connsTotal")) { int n = Math.max(20, o.optInt("connsTotal", 500)); try { SessionManager sm = session; if (sm != null && sm.isRunning()) { SettingsPack sp = new SettingsPack(); sp.connectionsLimit(n); sm.applySettings(sp); } } catch (Throwable ignored) {} }
         if (o.has("addTrackers")) addTrackers = o.optBoolean("addTrackers", true);
+        if (o.has("dedupe")) dedupe = o.optBoolean("dedupe", false);
         if (o.has("trackers")) { JSONArray a = o.optJSONArray("trackers"); if (a != null && a.length() > 0) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) { String u = a.optString(i, "").trim(); if (u.matches("(?i)^(udp|https?|wss?)://\\S+$")) l.add(u); } if (!l.isEmpty()) extraTrackers = l.toArray(new String[0]); } }
         if (o.has("torrentProxy")) torrentProxy = o.optBoolean("torrentProxy"); if (o.has("bindIface")) bindIface = o.optString("bindIface", "").trim(); if (o.has("anonymous")) anonymous = o.optBoolean("anonymous");
         if (session != null && session.isRunning()) {
@@ -620,6 +622,8 @@ final class KtEngine {
                 // (What the file really is, from its first bytes — sites that send every file as «.bin» or with no type —:
                 // its extension put right, so an APK is an APK, a video plays, a book opens.)
                 try { String nm = KrDownloader.withSniffed(x.name, KrDownloader.sniffExt(x.httpOut)); if (nm != null) { File to = new File(dir, nm); if (to.exists()) to = new File(dir, freeName(dir, nm)); if (x.httpOut.renameTo(to)) { x.name = to.getName(); x.httpOut = to; } } } catch (Throwable ignored) {}
+                // (The file hashed and, when its bytes are here already, made a link to them — when the setting says.)
+                if (dedupe) { try { JSONObject dd = KtDedupe.onDone(ctx, x.httpOut); if (x.meta == null) x.meta = new JSONObject(); if (dd.has("sha256")) x.meta.put("sha256", dd.getString("sha256")); if (dd.optBoolean("linked")) x.meta.put("linked", true); } catch (Throwable e) { Log.w(TAG, "dedupe", e); } }
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; scan(x);
             } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);

@@ -143,6 +143,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       toggle(t('clipboardWatch'), s.clipboardWatch, (v) => updateSettings({ clipboardWatch: v }), t('clipboardWatchHint')),
       h('div', { class: 'row' }, h('span', null, t('rulesTitle'), h('small', { class: 'src' }, t('rulesHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../downloads/rules').then((m) => m.rulesSheet()) }, icon('filter'), t('rulesEdit'))),
       ...(nativePlatform() === 'android' ? [h('div', { class: 'row' }, h('span', null, t('cookiesTitle'), h('small', { class: 'src' }, t('cookiesHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../downloads/cookies').then((m) => m.cookiesSheet()) }, icon('key'), t('cookiesManage')))] : []),
+      ...(nativePlatform() === 'android' ? [toggle(t('dedupe'), !!s.dedupe, (v) => { updateSettings({ dedupe: v }); void (ktPlugin() as unknown as { configure(o: Record<string, unknown>): Promise<void> } | null)?.configure({ dedupe: v }).catch(() => undefined); }, t('dedupeHint'))] : []),
       toggle(t('hlsNative'), s.hlsNative !== false, (v) => updateSettings({ hlsNative: v }), t('hlsNativeHint')),
       toggle(t('scheduleOn'), s.schedule.enabled, (v) => { updateSettings({ schedule: { ...getSettings().schedule, enabled: v } }); rerender(); void import('../downloads/prism').then((m) => m.startScheduler()); }, t('scheduleHint')),
       ...(s.schedule.enabled ? [h('div', { class: 'row' }, h('span', null, t('scheduleHours')), h('span', { class: 'row-actions', dir: 'ltr' }, h('input', { type: 'time', value: s.schedule.start, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, start: (e.target as HTMLInputElement).value } }) }), ' – ', h('input', { type: 'time', value: s.schedule.stop, onchange: (e: Event) => updateSettings({ schedule: { ...getSettings().schedule, stop: (e.target as HTMLInputElement).value } }) }))),
@@ -192,7 +193,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const f = h('input', { type: 'file', accept: '.json', onchange: async () => { const file = f.files?.[0]; if (!file) return; try { const m = await import('../backup'); const n = m.restoreBackup(await file.text()); toast(t('backupRestored', { n: localDigits(n) })); setTimeout(() => location.reload(), 1200); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }) as HTMLInputElement; f.click(); } }, icon('download'), t('restoreSettings')));
     const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
-      h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue'))));
+      h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue')),
+      h('button', { type: 'button', class: 'btn text small', onclick: () => void import('../downloads/recorder').then((m) => recorderSheet(m)) }, icon('history'), t('recorderTitle'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
     const anilist = s.addons.includes('anime') ? anilistCard(rerender) : null;
     // Watched episodes (Hayase's storage choices): kept, let go once watched, or some days after; the room they
@@ -411,4 +413,13 @@ export function addonTabs(addons: string[], index: { addons: AddonEntry[] } | nu
     if (cards.length || sources.length) out.push({ id: a.id, entry, cards, sources });
   }
   return out;
+}
+
+/** The flight recorder's sheet: the last events, redacted; the report copied, saved, or cleared. */
+function recorderSheet(m: typeof import('../downloads/recorder')): void {
+  const sh = openSheet(t('recorderTitle'), t('close')); const ev = m.events();
+  sh.body.append(h('p', { class: 'hint' }, t('recorderHint')), h('pre', { class: 'recorder-log', dir: 'ltr' }, ev.length ? ev.slice(-120).map((e) => `${new Date(e.t).toLocaleTimeString()} ${e.kind} ${e.text}`).join('\n') : t('recorderEmpty')));
+  sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { m.clear(); sh.close(); toast(t('done')); } }, t('clockClear')),
+    h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../native').then(async (n) => { const p = await n.saveText('kurokawa-tools-report.txt', m.report()); if (p) toast(t('recorderSaved')); }) }, icon('download'), t('save')),
+    h('button', { type: 'button', class: 'btn primary', onclick: () => void navigator.clipboard?.writeText(m.report()).then(() => toast(t('copied'))) }, icon('copy'), t('copy')));
 }

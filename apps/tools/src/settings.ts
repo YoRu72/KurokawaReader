@@ -23,6 +23,8 @@ export interface Settings {
   hlsNative?: boolean;
   /** A computer: a yt-dlp binary of the reader's own instead of the managed one (empty: managed). */
   videoBinaryPath?: string;
+  /** Finished files hashed; identical ones become hard links (the room taken once). Android. */
+  dedupe?: boolean;
   /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */
   rules?: import('./downloads/rules').Rule[];
   limits: Limits;
