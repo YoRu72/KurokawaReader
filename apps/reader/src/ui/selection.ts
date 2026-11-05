@@ -15,7 +15,7 @@ export interface SelectionActions {
   highlight(range: Range, text: string, color: HighlightColor): void;
   note(range: Range, text: string): void;
   speak(text: string): void;
-  textImage(text: string): void;
+  textImage(text: string, range?: Range): void;
   /** A text rule made from the words picked: taken out everywhere, or others put in their place. */
   textRule?(text: string): void;
   /** A term added to the translation glossary from the words picked. */
@@ -156,7 +156,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
       btn('translate', t('translateSelected'), () => { showTranslation(cur().text); hide(); }),
       btn('type', t('readings'), () => { showReadings(cur().text, actions.lang?.()); hide(); }),
       btn('note', t('note'), () => { const c = cur(); actions.note(c.range, c.text); document.getSelection()?.removeAllRanges(); hide(); }),
-      btn('images', t('textAsImage'), () => { actions.textImage(cur().text); hide(); }),
+      btn('images', t('textAsImage'), () => { const c = cur(); actions.textImage(c.text, c.range); hide(); }),
       btn('more', t('more'), () => { hide(); suppressed = true; moreSheet(cur().text, actions, () => { suppressed = false; }); }),
     );
     const el = h('div', { class: 'sel-toolbar', role: 'toolbar' }, colors, row);

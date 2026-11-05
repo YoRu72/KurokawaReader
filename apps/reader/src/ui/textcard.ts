@@ -9,7 +9,39 @@ import { isRtlText, t } from '../i18n';
 import { canvasToBlob, saveImage, shareFile, copyImage } from './share';
 import { h, icon, openSheet, toast } from './dom';
 
-export interface TextCardOptions { text: string; title: string; author?: string; appName: string; style?: 'plain' | 'card' }
+export interface TextCardOptions { text: string; title: string; author?: string; appName: string; style?: 'plain' | 'card';
+  /** A picture the selection touched (see pictureNear): drawn before the text, after it, or between its two parts. */
+  picture?: PictureNear; pictureOn?: boolean }
+/** A picture beside the words picked: inside the selection (the words before it and after it apart), right after
+ *  them, or right before them — with whether it is shown unasked: yes unless it only comes before. */
+export interface PictureNear { img: HTMLImageElement; where: 'inside' | 'after' | 'before'; before?: string; after?: string }
+const isPic = (n: Node): n is HTMLImageElement => n instanceof HTMLImageElement && n.naturalWidth > 0;
+const hasWords = (n: Node): boolean => n.nodeType === Node.TEXT_NODE && !!n.textContent?.trim();
+export function pictureNear(range: Range | undefined): PictureNear | null {
+  if (!range || range.collapsed) return null;
+  const root = range.commonAncestorContainer.ownerDocument ?? document;
+  // (A picture within the words picked: the first one.)
+  const walker = root.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_ELEMENT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (isPic(n) && range.intersectsNode(n) && range.comparePoint(n, 0) === 0) {
+    const r1 = range.cloneRange(); r1.setEndBefore(n); const r2 = range.cloneRange(); r2.setStartAfter(n);
+    return { img: n, where: 'inside', before: r1.toString().trim(), after: r2.toString().trim() };
+  }
+  // (The next thing after the words with anything in it: a picture, or words — then there is none after.)
+  const scan = (dir: 'forward' | 'back'): HTMLImageElement | null => {
+    const w = root.createTreeWalker(root.body ?? root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    w.currentNode = dir === 'forward' ? range.endContainer : range.startContainer;
+    for (let n = dir === 'forward' ? w.nextNode() : w.previousNode(), k = 0; n && k < 400; n = dir === 'forward' ? w.nextNode() : w.previousNode(), k++) {
+      if (dir === 'forward' ? range.comparePoint(n, 0) <= 0 : range.comparePoint(n, 0) >= 0) continue;
+      if (isPic(n)) return n;
+      if (hasWords(n)) return null;
+    }
+    return null;
+  };
+  const after = scan('forward'); if (after) return { img: after, where: 'after' };
+  const before = scan('back'); if (before) return { img: before, where: 'before' };
+  return null;
+}
+export const pictureOnByDefault = (p: PictureNear | null): boolean => !!p && p.where !== 'before';
 
 interface Look { bg: string; fg: string; dim: string; rule: string; font: string; fontRtl: string; size: number; lh: number; align: string }
 
@@ -93,13 +125,17 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
   const lh = Math.round(fontSize * L.lh);
   const measure = document.createElement('canvas').getContext('2d')!;
   measure.font = `${fontSize}px ${family}`;
-  const lines = wrap(measure, o.text.trim(), W - pad * 2);
-  const maxLines = 60;
-  const shown = lines.slice(0, maxLines);
-  if (lines.length > maxLines) shown[maxLines - 1] += ' …';
-
+  const pic = o.picture && o.pictureOn ? o.picture : null;
+  // (With a picture inside the words: the words before it and after it as two runs, the picture between.)
+  const runs: (string[] | 'pic')[] = [];
+  const wrapText = (tx: string) => { const ls = wrap(measure, tx.trim(), W - pad * 2); const maxLines = 60; const out = ls.slice(0, maxLines); if (ls.length > maxLines) out[maxLines - 1] += ' …'; return out; };
+  if (pic?.where === 'inside') { if (pic.before) runs.push(wrapText(pic.before)); runs.push('pic'); if (pic.after) runs.push(wrapText(pic.after)); }
+  else if (pic?.where === 'before') { runs.push('pic', wrapText(o.text)); }
+  else { runs.push(wrapText(o.text)); if (pic) runs.push('pic'); }
+  const picW = W - pad * 2; const picH = pic ? Math.round(Math.min(picW * (pic.img.naturalHeight / Math.max(1, pic.img.naturalWidth)), 1400)) : 0;
+  const gap = Math.round(lh * 0.8);
   const plain = (o.style ?? s.snapStyle) === 'plain';
-  const textH = shown.length * lh - (lh - fontSize);
+  const textH = runs.reduce((n, r, i) => n + (r === 'pic' ? picH : r.length * lh - (lh - fontSize)) + (i ? gap : 0), 0);
   const H = plain ? pad * 2 + textH : pad * 2 + 110 + textH + 150;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -120,7 +156,16 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
     ctx.fillText(rtl ? '«' : '“', x, pad + 70);
   }
   ctx.fillStyle = L.fg; ctx.font = `${fontSize}px ${family}`;
-  for (const line of shown) { ctx.fillText(line, x, y); y += lh; }
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i]; if (i) y += gap;
+    if (r === 'pic') {
+      // (The picture at the text's width, its corners rounded; one the page may not read is left out.)
+      const top = y - fontSize; ctx.save(); ctx.beginPath(); const rad = 18; ctx.roundRect(pad, top, picW, picH, rad); ctx.clip();
+      try { ctx.drawImage(pic!.img, pad, top, picW, picH); } catch { /* tainted: skipped */ } ctx.restore(); y += picH; continue;
+    }
+    for (const line of r) { ctx.fillText(line, x, y); y += lh; }
+    y -= lh - fontSize;
+  }
 
   if (!plain) {
     const titleRtl = isRtlText(o.title);
@@ -142,13 +187,20 @@ export async function renderTextCard(o: TextCardOptions): Promise<Blob> {
 }
 
 /** Preview the snapshot with Save / Share / Copy and a style switch. */
-export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card') => Promise<HTMLCanvasElement>): void {
+export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }): void {
   const sheet = openSheet(t('textAsImage'), t('close'));
   sheet.body.style.fontFamily = 'var(--font-ui)';
   const holder = h('div', { class: 'snap-holder' });
   const mount = (c: HTMLCanvasElement) => { holder.replaceChildren(c); c.className = 'snap-preview'; canvas = c; };
   mount(canvas);
   sheet.body.appendChild(holder);
+  let picOn = picture?.on ?? false;
+  // (A picture the words touched: shown with them, or not — on unless it only came before the words.)
+  if (picture?.has) {
+    const box = h('input', { type: 'checkbox', checked: picOn }) as HTMLInputElement;
+    box.addEventListener('change', async () => { picOn = box.checked; blob = null; mount(await rerender(getSettings().snapStyle, picOn)); });
+    sheet.body.appendChild(h('label', { class: 'check-row snap-pic-row' }, box, h('span', null, t('snapIncludePicture'))));
+  }
   let blob: Blob | null = null;
   const png = async () => blob ?? (blob = await canvasToBlob(canvas, 'image/png'));
   const styleBtn = h('button', { class: 'btn small', type: 'button' }, t(getSettings().snapStyle === 'plain' ? 'snapCard' : 'snapPlain'));
@@ -156,7 +208,7 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
     const next = getSettings().snapStyle === 'plain' ? 'card' : 'plain';
     updateSettings({ snapStyle: next }); blob = null;
     styleBtn.textContent = t(next === 'plain' ? 'snapCard' : 'snapPlain');
-    mount(await rerender(next));
+    mount(await rerender(next, picOn));
   });
   const copy = h('button', { class: 'btn small', type: 'button', onclick: async () => { if (await copyImage(await png())) toast(t('copied')); } }, icon('copy'), t('copyImage'));
   const share = h('button', { class: 'btn small', type: 'button', onclick: async () => { const b = await png(); sheet.close(); void shareFile(b, filename, title); } }, icon('share'), t('shareText'));

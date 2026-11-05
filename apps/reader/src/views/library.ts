@@ -858,7 +858,8 @@ export function libraryView(): HTMLElement {
   function renderResume() {
     clear(resume);
     const last = [...books].filter((b) => b.lastOpenedAt && !isDone(b)).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
-    resume.hidden = !last || selecting || !!query || !!activeFolder || !!tagFilter;
+    // (Inside a folder, a tag or a series the card is that place's own last-read book, drawn with the grid — not the library's.)
+    resume.hidden = !last || selecting || !!query || !!activeFolder || !!tagFilter || !!activeSeries;
     if (resume.hidden || !last) return;
     if (prewarmed !== last.id) { prewarmed = last.id; void import('../formats').then((m) => m.prewarm(last, () => db.getFile(last.id))); }
     const pct = Math.round((last.progress?.pct ?? 0) * 100);
@@ -902,7 +903,7 @@ export function libraryView(): HTMLElement {
       iconButton('close', t('hideQuotes'), () => { updateSettings({ showQuote: false }); renderQuote(); }));
   }
 
-  /** «Continue reading»: the book last read in this tag or folder, with where it stopped. */
+  /** «Continue reading»: the book last read in this tag, folder or series, with where it stopped. */
   function continueCard(book: Book): HTMLElement {
     const url = coverUrl(book); const [c1, c2] = coverColors(book.title);
     const pct = Math.round((book.progress?.pct ?? 0) * 100);
@@ -950,7 +951,7 @@ export function libraryView(): HTMLElement {
       tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
     if (getSettings().libraryView === 'cards' && !activeFolder && !activeSeries && !query && !tagFilter) { folders.forEach((f) => grid.appendChild(folderCard(f))); if (canScanWhole() && getSettings().deviceShelf) grid.appendChild(deviceCard()); }
     // Inside a tag or a folder: the book last read there, to pick up where it was left.
-    if ((tagFilter || activeFolder) && !query && !selecting) { const last = list.filter((b) => b.progress && (b.progress.pct ?? 0) < 0.98 && !b.done).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0]; if (last && last.lastOpenedAt) grid.appendChild(continueCard(last)); }
+    if ((tagFilter || activeFolder || activeSeries) && !query && !selecting) { const last = list.filter((b) => b.progress && (b.progress.pct ?? 0) < 0.98 && !b.done).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0]; if (last && last.lastOpenedAt) grid.appendChild(continueCard(last)); }
     // A big library's cards come in batches as the grid is scrolled (a thousand cards at once would hold the
     // page for seconds); the first batch fills the screen and more.
     // A series as one card (its volumes inside), where the shelf is the library's own page.

@@ -27,7 +27,7 @@ import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
-import { renderTextCanvas, showSnapshot } from '../ui/textcard';
+import { renderTextCanvas, showSnapshot, pictureNear, pictureOnByDefault } from '../ui/textcard';
 import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
@@ -894,18 +894,19 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     note: (range, text) => addNote(range, text),
     lang: () => currentLocator()?.doc.book.language ?? docs[0]?.book.language,
     speak: (text) => speak([text]),
-    textImage: (text) => void textImage(text),
+    textImage: (text, range) => void textImage(text, range),
     // (A rule made from the words: applied at once to the books open — see textrules.)
     glossary: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/glossarysheet').then((m) => m.termSheet({ from: text, book: { id: b.id, title: b.title } })); },
     textRule: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/textrulesheet').then((m) => m.ruleSheet({ find: text, book: { id: b.id, title: b.title }, made: (r) => { for (const d of docs) if (d.render && (!r.book || r.book === d.book.id)) applyTextRules(d.render.element, d.book.id, [r]); } })); },
   }));
 
-  async function textImage(text: string): Promise<void> {
+  async function textImage(text: string, range?: Range): Promise<void> {
     const cur = currentLocator();
     const book = cur?.doc.book ?? docs[0].book;
     try {
-      const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '' };
-      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style }));
+      const picture = pictureNear(range); const on = pictureOnByDefault(picture);
+      const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on };
+      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on }), { has: !!picture, on });
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 
@@ -1712,7 +1713,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
       });
     },
-    textImage: async (text) => { try { const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '' }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style) => renderTextCanvas({ ...opts, style })); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
+    textImage: async (text, range) => { try { const picture = pictureNear(range); const on = pictureOnByDefault(picture); const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on }), { has: !!picture, on }); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
   }));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
