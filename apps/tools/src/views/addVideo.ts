@@ -2,7 +2,7 @@
 // what it finds — the title and picture, the qualities, the audio, the subtitles, a playlist's videos — appears in
 // the same sheet to pick from. A page yt-dlp cannot read is downloaded as an ordinary link; a video site's page
 // without the add-on offers to add it there and then.
-import { h, icon } from '../ui/dom';
+import { h, icon, closeSheets } from '../ui/dom';
 import { t, formatBytes, localDigits, countVideos } from '../i18n';
 import { getSettings } from '../settings';
 import type { AddOptions } from '../engine/types';
@@ -72,7 +72,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
     el.hidden = false;
     el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoYtdlpMissingLong'))),
       h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; const { needAddon } = await import('../addons/need'); if (await needAddon(VIDEO_ADDON, t('addonWhyVideo'), { start: true })) { const u = url; url = null; check(u); } else b.disabled = false; } }, t('videoAddIt')),
-      h('button', { type: 'button', class: 'btn text small', onclick: () => { document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()); void import('../router').then((r) => r.navigate('/settings/addons')); } }, t('videoOpenAddons'))));
+      h('button', { type: 'button', class: 'btn text small', onclick: () => { closeSheets(); void import('../router').then((r) => r.navigate('/settings/addons')); } }, t('videoOpenAddons'))));
   };
   const check = (u: string | null) => {
     if (u === url) return; url = u; info = null; chosen = null; const my = ++token;

@@ -4,7 +4,7 @@ import './styles/tools.css';
 import './styles/anime.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, type Route } from './router';
-import { h, icon } from './ui/dom';
+import { h, icon, closeSheets } from './ui/dom';
 import { goBack, wirePcBack } from './ui/backstack';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
@@ -84,7 +84,7 @@ function mountInner(route: Route): void {
     kept.set(pd, { key: JSON.stringify(prevRoute), el: current, scroll: window.scrollY, inner: current.querySelector<HTMLElement>('.body')?.scrollTop ?? 0 });
     current.remove();
   } else { current?.dispose?.(); current?.remove(); }
-  document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove());
+  closeSheets();
   const back = kept.get(dest);
   if (back && back.key === key) {
     kept.delete(dest); current = back.el; app.appendChild(current);

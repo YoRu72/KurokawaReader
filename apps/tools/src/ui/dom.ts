@@ -191,20 +191,26 @@ export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200): 
 }
 
 /** A bottom sheet. Returns the body element and a close function. */
+/** Every open sheet closed the proper way (its listeners let go), not merely pulled out of the page. */
+export function closeSheets(): void {
+  document.querySelectorAll<HTMLElement & { __close?: () => void }>('.sheet').forEach((s) => { if (s.__close) s.__close(); else s.remove(); });
+  document.querySelectorAll('.sheet-scrim').forEach((s) => s.remove());
+}
 export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** Told once, however the sheet went (the button, the scrim, Escape, or `close`). */ onClose?: () => void } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
   // A stacked sheet opens above the current one (choice lists inside a form) instead of replacing it.
-  if (!opts.stack) document.querySelectorAll('.sheet, .sheet-scrim').forEach((s) => s.remove());
+  if (!opts.stack) closeSheets();
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
   let closed = false; const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
   // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
-  const onEsc = (e: KeyboardEvent) => { if (e.key !== 'Escape' || !el.isConnected) return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
+  const onEsc = (e: KeyboardEvent) => { if (!el.isConnected) { close(); return; } if (e.key !== 'Escape') return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
   window.addEventListener('keydown', onEsc, true);
   const el = h('div', { class: 'sheet' + (depth ? ' stacked' : ''), role: 'dialog', 'aria-label': title, style: depth ? { zIndex: String(70 + depth * 2) } : undefined },
     h('div', { class: 'sheet-head' }, h('h3', null, title), iconButton('close', closeLabel, close)),
     body, actions);
   const scrim = h('div', { class: 'scrim sheet-scrim', style: depth ? { zIndex: String(69 + depth * 2) } : undefined, onclick: close });
+  (el as HTMLElement & { __close?: () => void }).__close = close;
   document.body.append(scrim, el);
   return { body, actions, close, el };
 }

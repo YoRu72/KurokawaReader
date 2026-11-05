@@ -5,7 +5,7 @@ import './styles/base.css';
 import './styles/reader.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, lastMove, type Route } from './router';
-import { h } from './ui/dom';
+import { h, closeSheets } from './ui/dom';
 import { libraryView } from './views/library';
 import { applyChrome, onSettingsChange, getSettings, warmFonts } from './settings';
 import { loadFonts } from './fonts';
@@ -71,7 +71,7 @@ function mount(route: Route): void {
   if (current && currentPath && !currentPath.startsWith('/read/')) { try { states.set(currentPath, snapshot(current)); } catch { /* not kept */ } }
   current?.dispose?.();
   current?.remove();
-  document.querySelectorAll('.sheet, .sheet-scrim, .sel-toolbar, .lightbox').forEach((e) => e.remove());
+  closeSheets(); document.querySelectorAll('.sel-toolbar, .lightbox').forEach((e) => e.remove());
   switch (route.name) {
     // (Each view's code fetched when first wanted: the library alone at start.)
     case 'read': current = lazyView(() => import('./views/reader').then((m) => m.readerView(route.ids))); break;
