@@ -566,6 +566,22 @@ public class KtPlugin extends Plugin {
         });
     }
 
+    /* ---------- the Files add-on: files locked with a password (see KtVault) ---------- */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> vaultJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void vaultJob(PluginCall call) {
+        final String id = call.getString("id", "vj" + System.currentTimeMillis()); final boolean lock = !Boolean.FALSE.equals(call.getBoolean("lock", true)); final String pw = call.getString("password", ""); final boolean del = !Boolean.FALSE.equals(call.getBoolean("deleteAfter", true));
+        final java.util.List<File> paths = new java.util.ArrayList<>(); JSArray a = call.getArray("paths"); if (a != null) for (int i = 0; i < a.length(); i++) paths.add(fileOf(a.optString(i, "")));
+        if (pw.isEmpty()) { call.reject("password"); return; }
+        final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean(); vaultJobs.put(id, stop);
+        new Thread(() -> { try { KtVault.run(id, lock, paths, pw, del, stop, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }); } finally { vaultJobs.remove(id); } }, "kt-vault").start();
+        JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
+    }
+    @PluginMethod public void vaultCancel(PluginCall call) { java.util.concurrent.atomic.AtomicBoolean b = vaultJobs.get(call.getString("id", "")); if (b != null) b.set(true); call.resolve(); }
+    /** The name inside a locked file when the password opens it; «wrongPassword» otherwise. */
+    @PluginMethod public void vaultPeek(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String pw = call.getString("password", ""); bg.execute(() -> { String n = KtVault.peek(f, pw); if (n == null) call.reject("wrongPassword"); else { JSObject r = new JSObject(); r.put("name", n); call.resolve(r); } }); }
+    /** A locked file unlocked into the app's cache (for opening without leaving a plain copy beside it). */
+    @PluginMethod public void vaultOpen(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String pw = call.getString("password", ""); bg.execute(() -> { try { File dir = new File(getContext().getCacheDir(), "vault"); dir.mkdirs(); File out = KtVault.unlock(f, pw, dir, false, null); JSObject r = new JSObject(); r.put("path", out.getAbsolutePath()); r.put("name", out.getName()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+
     /* ---------- the Files add-on: a folder shared on the Wi-Fi (web + FTP, see KtFolderShare) ---------- */
     @PluginMethod public void folderShareStart(PluginCall call) {
         run(call, () -> {

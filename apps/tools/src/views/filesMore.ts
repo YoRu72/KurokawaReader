@@ -9,6 +9,7 @@ import { ktPlugin } from '../native';
 import type { Entry } from './files';
 
 type Plug = {
+  filesJob(o: { id?: string; op: 'copy' | 'move' | 'delete'; paths: string[]; dest?: string; conflict?: string }): Promise<{ id: string }>;
   filesSearch(o: { path: string; q: string; hidden?: boolean }): Promise<{ entries: Entry[] }>;
   filesTrash(o: { paths: string[] }): Promise<{ moved: string[]; failed: string[] }>; filesTrashList(): Promise<{ items: TrashItem[] }>; filesTrashRestore(o: { slot: string }): Promise<{ path: string }>; filesTrashEmpty(o: { slots?: string[]; olderThanDays?: number }): Promise<{ n: number }>;
   filesRename(o: { path: string; name: string }): Promise<{ ok: boolean; path: string }>;
@@ -236,4 +237,52 @@ export async function analyzerSheet(root: { name: string; path: string; total?: 
 export async function archiveProperties(rows: HTMLElement, e: Entry, line: (k: string, v: string) => HTMLElement): Promise<void> {
   if (e.dir || !/\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|001)$/i.test(e.name)) return;
   try { const { listArchive } = await import('../archives'); const info = await listArchive(e.path); const files = info.entries.filter((x) => !x.dir).length; const ratio = info.total > 0 && e.size > 0 ? Math.round((e.size / info.total) * 100) : 0; rows.append(line(t('filesArchive'), [info.format.toUpperCase(), countItems(files), info.total > 0 ? `${formatBytes(info.total)} ${t('filesInside')}` : '', ratio ? t('packedTo', { pct: localDigits(ratio) }) : '', info.encrypted ? t('encrypted') : ''].filter(Boolean).join(' · '))); } catch { /* not readable */ }
+}
+
+/* ---------- the vault: files locked with a password (AES-256-GCM, the name hidden inside) ---------- */
+type VPlug = Plug & { vaultJob(o: { id: string; lock: boolean; password: string; paths: string[]; deleteAfter: boolean }): Promise<{ id: string }>; vaultCancel(o: { id: string }): Promise<void>; vaultPeek(o: { path: string; password: string }): Promise<{ name: string }>; vaultOpen(o: { path: string; password: string }): Promise<{ path: string; name: string }> };
+const vplug = (): VPlug | null => { const p = plug() as unknown as VPlug | null; return p?.vaultJob ? p : null; };
+export const canVault = (): boolean => !!vplug();
+export const isLockedName = (n: string): boolean => /\.kurokawa$/i.test(n);
+/** The password kept for this session only (never written), so one unlock serves the next files. */
+let sessionPw = '';
+export const forgetVaultPassword = (): void => { sessionPw = ''; };
+function passwordSheet(title: string, hint: string, confirm: boolean, cb: (pw: string, deleteAfter: boolean) => void, deleteLabel?: string): void {
+  const sh = openSheet(title, t('cancel')); const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'new-password', value: sessionPw }) as HTMLInputElement; const pw2 = h('input', { type: 'password', dir: 'ltr', autocomplete: 'new-password' }) as HTMLInputElement; const del = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement;
+  sh.body.append(h('p', { class: 'hint' }, hint), h('label', { class: 'field' }, h('span', null, t('password')), pw), ...(confirm ? [h('label', { class: 'field' }, h('span', null, t('vaultAgain')), pw2)] : []), ...(deleteLabel ? [h('label', { class: 'check-row' }, del, h('span', null, deleteLabel))] : []));
+  sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { const v = pw.value; if (!v) { pw.focus(); return; } if (confirm && v !== pw2.value) { toast(t('vaultMismatch'), 'error'); pw2.focus(); return; } if (confirm && v.length < 4) { toast(t('vaultShort'), 'error'); return; } sessionPw = v; sh.close(); cb(v, del.checked); } }, icon('lock'), title));
+  setTimeout(() => (sessionPw ? (confirm ? pw2 : pw) : pw).focus(), 60);
+}
+/** Locks (or unlocks) a selection as a job; `started` draws the job row, `refresh` relists when it ends. */
+export function vaultSheet(lock: boolean, paths: string[], started: (id: string, label: string, cancel: () => void) => HTMLElement, refresh: () => void): void {
+  const p = vplug(); if (!p) return;
+  passwordSheet(lock ? t('vaultLock') : t('vaultUnlock'), lock ? t('vaultLockHint') : t('vaultUnlockHint'), lock, (pw, deleteAfter) => {
+    const id = `vj-${Date.now()}`; const el = started(id, lock ? t('vaultLocking', { n: localDigits(paths.length) }) : t('vaultUnlocking', { n: localDigits(paths.length) }), () => void p.vaultCancel({ id }));
+    void p.vaultJob({ id, lock, password: pw, paths, deleteAfter }).catch((e) => { el.remove(); toast(String((e as Error).message ?? e), 'error'); });
+    const sub = (ev: { id: string; status: string; message?: string }) => { if (ev.id !== id) return; if (ev.status === 'failed' && ev.message === 'wrongPassword') { sessionPw = ''; toast(t('wrongPassword'), 'error'); } if (ev.status !== 'progress') { el.remove(); refresh(); off.then((s) => s.remove()); } };
+    const off = (p as unknown as { addListener(e: string, f: (ev: { id: string; status: string; message?: string }) => void): Promise<{ remove(): void }> }).addListener('files', sub);
+  }, lock ? t('vaultDeleteSources') : t('vaultDeleteLocked'));
+}
+/** A locked file opened: the password asked (the session's tried first), the plain copy made in the cache and handed to `open`. */
+export async function openLocked(e: Entry, open: (local: Entry) => Promise<void>): Promise<void> {
+  const p = vplug(); if (!p) return;
+  const tryWith = async (pw: string) => { const r = await p.vaultOpen({ path: e.path, password: pw }); await open({ ...e, path: r.path, name: r.name }); };
+  if (sessionPw) { try { await tryWith(sessionPw); return; } catch { sessionPw = ''; } }
+  passwordSheet(t('vaultUnlock'), t('vaultOpenHint'), false, (pw) => { void tryWith(pw).catch((err) => { sessionPw = ''; toast(String((err as Error).message ?? err) === 'wrongPassword' ? t('wrongPassword') : String((err as Error).message ?? err), 'error'); }); });
+}
+
+/* ---------- hidden folders (kept out of the listing until shown again) and .nomedia ---------- */
+const HIDDEN = 'kt.files.hiddenPaths';
+export const hiddenPaths = (): string[] => { try { return JSON.parse(localStorage.getItem(HIDDEN) ?? '[]') as string[]; } catch { return []; } };
+export const hidePath = (p: string): void => { const a = hiddenPaths(); if (!a.includes(p)) a.push(p); try { localStorage.setItem(HIDDEN, JSON.stringify(a)); } catch { /* none */ } };
+export const unhidePath = (p: string): void => { try { localStorage.setItem(HIDDEN, JSON.stringify(hiddenPaths().filter((x) => x !== p))); } catch { /* none */ } };
+export function hiddenSheet(go: (p: string) => void, refresh: () => void): void {
+  const sh = openSheet(t('filesHiddenFolders'), t('close')); const draw = () => { const a = hiddenPaths(); sh.body.replaceChildren(h('p', { class: 'hint' }, a.length ? t('filesHiddenHint') : t('filesHiddenNone')), h('div', { class: 'dest-list' }, ...a.map((p) => h('div', { class: 'dest-row' }, icon('eyeOff'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, p.split('/').pop()), h('small', { class: 'src', dir: 'ltr' }, p)), iconButton('external', t('open'), () => { sh.close(); go(p); }), iconButton('eye', t('filesUnhide'), () => { unhidePath(p); draw(); refresh(); }))))); };
+  draw();
+}
+export async function toggleNomedia(dir: string): Promise<boolean> {
+  const pl = plug(); const path = `${dir}/.nomedia`;
+  // (A .nomedia already there is removed; else made — an empty file the media scanner honours.)
+  try { await pl.filesHead({ path, max: 1 }); await pl.filesJob({ op: 'delete', paths: [path], conflict: 'replace' }); return false; } catch { /* not there */ }
+  await pl.filesWrite({ path, text: '' }); return true;
 }

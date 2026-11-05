@@ -44,7 +44,7 @@ let clipboard: { op: 'copy' | 'move'; paths: string[] } | null = null;
 
 import { isRemote, parseRemote, listRemote, connections, connectionSheet, connectionMenu, scanSheet, withTrust, rplug, kindIcon, describe, canShareFolder, folderShareSheet, type Conn } from './filesRemote';
 const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|avif|svg)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
-const ICON: Record<string, string> = { video: 'film', audio: 'music', ebook: 'books', image: 'images', sub: 'subtitles', archive: 'archive', doc: 'file', other: 'file' };
+const ICON: Record<string, string> = { video: 'film', audio: 'music', ebook: 'books', image: 'images', sub: 'subtitles', archive: 'archive', doc: 'file', other: 'file', locked: 'lock' };
 const MIMES: [string, string, string][] = [['image/*', 'filesAsImage', 'images'], ['audio/*', 'filesAsMusic', 'music'], ['video/*', 'filesAsVideo', 'film'], ['text/plain', 'filesAsText', 'type'], ['application/pdf', 'filesAsDocument', 'file'], ['application/zip', 'filesAsArchive', 'archive'], ['*/*', 'filesAsAny', 'apps']];
 const mimeOf = (p: string): string => { const k = kindOfFile(p); if (/\.(txt|nfo|md|srt|ass|vtt|json|xml|log|csv|ini|cfg)$/i.test(p)) return 'text/plain'; if (/\.pdf$/i.test(p)) return 'application/pdf'; if (/\.apk$/i.test(p)) return 'application/vnd.android.package-archive'; return ({ video: 'video/*', audio: 'audio/*', image: 'image/*', ebook: 'application/epub+zip', archive: 'application/zip' } as Record<string, string>)[k] ?? '*/*'; };
 const parentOf = (p: string): string => p.replace(/\/+$/, '').replace(/\/[^/]*$/, '') || '/';
@@ -141,7 +141,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     drawCrumbs(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection;
     try {
       if (collection) { const pl = plug(); const r = pl ? await pl.filesCollection({ kind: collection, limit: 600 }) : { entries: [] }; if (gone) return; entries = r.entries; }
-      else { const r = await listDir(at); if (gone) return; entries = r.entries; if (!r.exists) { status.textContent = t('folderNotFound'); } if (r.truncated) toast(t('filesTruncated'), 'info'); }
+      else { const r = await listDir(at); if (gone) return; const hid = (await import('./filesMore')).hiddenPaths(); entries = hid.length ? r.entries.filter((e) => !hid.includes(e.path)) : r.entries; if (!r.exists) { status.textContent = t('folderNotFound'); } if (r.truncated) toast(t('filesTruncated'), 'info'); }
     }
     catch (e) { entries = []; status.textContent = String((e as Error).message ?? e); }
     draw(); drawSel();
@@ -158,7 +158,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     subEl.textContent = [dirs ? countFolders(dirs) : '', files ? countFiles(files) : ''].filter(Boolean).join(', '); status.textContent = '';
   };
   const row = (e: Entry): HTMLElement => {
-    const k = e.dir ? 'folder' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
+    const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
     const ic = h('span', { class: 'files-ic' + (thumbable && !isRemote(e.path) ? ' thumb' : ''), 'data-thumb': thumbable && plug() && !isRemote(e.path) ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
     const meta = e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
@@ -180,6 +180,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); draw(); drawSel(); }),
       iconButton('copy', t('filesCopy'), () => { clipboard = { op: 'copy', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCopied', { n: localDigits(n) })); leaveSel(); }),
       iconButton('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: localDigits(n) })); leaveSel(); }),
+      ...(plug() && !isRemote(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
       ...(po.peer?.() ? [iconButton('swap', t('filesToOtherPane'), () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); })] : []),
       iconButton('trash', t('delete'), () => void confirmDelete([...picked])),
       ...(one ? [iconButton('pen', t('rename'), () => renameSheet(one))] : []),
@@ -198,6 +199,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       return;
     }
     const k = kindOfFile(e.name); const pl = plug();
+    if (pl && /\.kurokawa$/i.test(e.name)) { const m = await import('./filesMore'); if (m.canVault()) { await m.openLocked(e, open); return; } }
     try {
       if (k === 'video' || k === 'audio') { const { openPlayer } = await import('./player'); const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(e.path); if (u) { await openPlayer(u, e.name, { localPath: e.path }); return; } }
       if (/\.(apk|apks|xapk|apkm)$/i.test(e.name)) { const m = await import('./apk'); if (m.canInstallApps()) { await m.installSheet(e.path); return; } }
@@ -264,6 +266,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       act('copy', t('filesCopy'), () => { clipboard = { op: 'copy', paths: [e.path] }; pasteBtn.hidden = false; toast(t('filesCopied', { n: '1' })); }),
       act('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [e.path] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: '1' })); }),
       act('pen', t('rename'), () => renameSheet(e)),
+      ...(pl ? [act('lock', /\.kurokawa$/i.test(e.name) ? t('vaultUnlock') : t('vaultLock'), () => void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!/\.kurokawa$/i.test(e.name), [e.path], jobRow, () => void load()); }))] : []),
+      ...(pl && e.dir ? [act('eyeOff', t('filesHideFolder'), () => void import('./filesMore').then((m) => { m.hidePath(e.path); toast(t('filesHiddenNow')); void load(); })), act('images', t('filesNomedia'), () => void import('./filesMore').then((m) => m.toggleNomedia(e.path)).then((on) => toast(on ? t('filesNomediaOn') : t('filesNomediaOff'))).catch((err) => toast(String((err as Error).message ?? err), 'error')))] : []),
       ...(pl && !e.dir && /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|001)$/i.test(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
       ...(pl ? [act('archive', t('filesCompress'), () => void compress([e.path]))] : []),
       act('check', t('filesSelect'), () => { selecting = true; picked.add(e.path); draw(); drawSel(); }),
@@ -290,6 +294,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       act('refresh', t('refresh'), () => void load()),
       ...(plug() ? [act('trash', t('filesTrashSetting'), () => void import('./filesMore').then((m) => { m.setTrashOn(!m.trashOn()); toast(m.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
       ...(window.matchMedia('(min-width: 840px)').matches ? [act('columns', prefs.dual ? t('filesOnePane') : t('filesTwoPanes'), () => { prefs.dual = !prefs.dual; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true); })] : []),
+      act('eyeOff', t('filesHiddenFolders'), () => void import('./filesMore').then((m) => m.hiddenSheet((p) => go(p), () => void load()))),
       ...(canShareFolder() && !isRemote(at) ? [act('wifi', t('fshareTitle'), () => void folderShareSheet(at, baseOf(at) || at))] : []),
       ...(plug() ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
       ...(plug() ? [act('key', t('archiveForgetPw'), () => void import('../archives').then((a) => { a.forgetPasswords(); a.setRememberPasswords(false); toast(t('done')); }))] : []),
