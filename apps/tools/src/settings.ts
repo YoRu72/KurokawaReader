@@ -23,6 +23,8 @@ export interface Settings {
   hlsNative?: boolean;
   /** A computer: a yt-dlp binary of the reader's own instead of the managed one (empty: managed). */
   videoBinaryPath?: string;
+  /** The last quick preset (Fast / Quality / Compact / Music) applied first next time. Default on. */
+  videoRememberPreset?: boolean;
   /** Finished files hashed; identical ones become hard links (the room taken once). Android. */
   dedupe?: boolean;
   /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */

@@ -8,7 +8,7 @@ import { getSettings } from '../settings';
 import { nativePlatform as getPlatform, ktPlugin } from '../native';
 import { noteChanges } from '../video/snapshots';
 import type { AddOptions } from '../engine/types';
-import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, videoEnabled, videoSupported, type PageInfo, type VideoChoice } from '../video/ytdlp';
+import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, videoEnabled, videoSupported, type PageInfo, type VideoChoice, type VideoInfo } from '../video/ytdlp';
 
 export type VideoPick = NonNullable<AddOptions['video']>;
 export interface VideoPanel {
@@ -39,8 +39,21 @@ export function videoPanel(onChange: () => void): VideoPanel {
   const part = { on: false, from: '', to: '', more: '' as string }; const chap = { split: false, match: '' }; let bilingual = false; let changeNote: string | null = null;
   let url: string | null = null; let info: PageInfo | null = null; let chosen: VideoChoice | null = null; let subs = false; let token = 0; let running: Promise<void> = Promise.resolve();
   const s = getSettings();
+  // Quick presets (a tap each): Fast — the smallest video that is still watchable (≤ 480p, smallest size);
+  // Quality — the best; Compact — ≤ 720p with the smallest size at that height; Music — audio only.
+  // The last preset used is remembered and applied first the next time, unless the settings' default is wanted.
+  type Preset = 'fast' | 'quality' | 'compact' | 'music' | '';
+  let preset: Preset = (() => { try { return (localStorage.getItem('kt.videoPreset') as Preset) || ''; } catch { return ''; } })();
+  const applyPreset = (i: VideoInfo, p: Preset) => {
+    const smallest = (xs: VideoChoice[]) => [...xs].sort((a, b) => (a.size ?? Infinity) - (b.size ?? Infinity))[0] ?? null;
+    if (p === 'music') chosen = i.audio[0] ?? null;
+    else if (p === 'quality') chosen = i.choices[0] ?? null;
+    else if (p === 'fast') { const low = i.choices.filter((c) => (c.height ?? 0) <= 480); chosen = smallest(low) ?? i.choices[i.choices.length - 1] ?? null; }
+    else if (p === 'compact') { const mid = i.choices.filter((c) => (c.height ?? 0) <= 720); const top = Math.max(0, ...mid.map((c) => c.height ?? 0)); chosen = smallest(mid.filter((c) => (c.height ?? 0) === top)) ?? mid[0] ?? i.choices[i.choices.length - 1] ?? null; }
+  };
   const pickDefault = (i: PageInfo) => {
     if (i.kind !== 'video') return;
+    if (preset && s.videoRememberPreset !== false) { applyPreset(i, preset); subs = s.subLangs.some((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`))); return; }
     const q = s.videoQuality;
     if (q === 'audio') chosen = i.audio[0] ?? null;
     else if (q === 'best') chosen = i.choices[0] ?? null;
@@ -67,6 +80,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
       h('div', { class: 'video-card' },
         i.thumbnail ? h('img', { class: 'video-thumb', src: i.thumbnail, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('span', { class: 'video-thumb none' }, icon('film')),
         h('div', { class: 'video-text' }, h('b', { dir: 'auto' }, i.title), meta ? h('small', { class: 'src', dir: 'auto' }, meta) : null, i.live ? h('span', { class: 'badge live' }, t('videoLive')) : null)),
+      (i.choices.length || i.audio.length) ? h('div', { class: 'chip-row wrap video-presets' }, ...([['fast', 'presetFast', 'flash'], ['quality', 'presetQuality', 'star'], ['compact', 'presetCompact', 'archive'], ['music', 'presetMusic', 'music']] as const).map(([p, label, ic]) => h('button', { type: 'button', class: 'chip small' + (preset === p ? ' on' : ''), 'aria-pressed': String(preset === p), onclick: () => { preset = preset === p ? '' : p; try { localStorage.setItem('kt.videoPreset', preset); } catch { /* none */ } if (preset) applyPreset(i, preset); else pickDefault(i); draw(); onChange(); } }, icon(ic), ' ', t(label)))) : null,
       i.choices.length ? h('div', { class: 'video-choices' }, h('span', { class: 'label' }, t('videoQuality')), h('div', { class: 'chip-row wrap' }, ...i.choices.map(chip))) : null,
       i.audio.length ? h('div', { class: 'video-choices' }, h('span', { class: 'label' }, t('videoAudioOnly')), h('div', { class: 'chip-row wrap' }, ...i.audio.map(chip))) : null,
       langs.length ? h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: subs, onchange: (e: Event) => { subs = (e.target as HTMLInputElement).checked; } }), h('span', null, t('videoSubs', { langs: langs.join('، ') }))) : null,
