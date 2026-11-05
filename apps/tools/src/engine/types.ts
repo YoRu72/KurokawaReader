@@ -64,7 +64,9 @@ export interface Task {
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
     hf?: string; sha256?: string;
     /** Waits for Wi-Fi (Android); not retried when it fails; a hidden file (a dot name); waits for the schedule's window. */
-    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean };
+    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean;
+    /** A stream fetched piece by piece (HLS): the pieces here of all, and the phase (variant, pieces, join, remux). */
+    hls?: boolean; frag?: number; frags?: number; phase?: string };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }

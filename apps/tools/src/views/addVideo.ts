@@ -5,6 +5,7 @@
 import { h, icon, closeSheets } from '../ui/dom';
 import { t, formatBytes, localDigits, countVideos } from '../i18n';
 import { getSettings } from '../settings';
+import { nativePlatform as getPlatform, ktPlugin } from '../native';
 import type { AddOptions } from '../engine/types';
 import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, videoEnabled, videoSupported, type PageInfo, type VideoChoice } from '../video/ytdlp';
 
@@ -28,7 +29,9 @@ export function preferredFormat(): Pick<VideoPick, 'format' | 'audioOnly' | 'lab
   return { format: `bestvideo[height<=${q}]+bestaudio/best[height<=${q}]`, label: `${q}p` };
 }
 /** A link worth asking yt-dlp about: a web page (a video site's, or any page not naming a file). */
-export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (isVideoHost(url) || /\.(m3u8|mpd)(\?|$)/i.test(url) || !looksLikeFile(url));
+export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (isVideoHost(url) || (/\.(m3u8|mpd)(\?|$)/i.test(url) && !nativeHls(url)) || !looksLikeFile(url));
+/** An HLS playlist the app fetches itself (pieces joined here), unless yt-dlp was chosen for streams. */
+export const nativeHls = (url: string): boolean => getPlatform() === 'android' && !!ktPlugin() && getSettings().hlsNative !== false && /\.m3u8(\?|#|$)/i.test(url);
 
 export function videoPanel(onChange: () => void): VideoPanel {
   const el = h('div', { class: 'video-panel', hidden: true });

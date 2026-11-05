@@ -543,6 +543,8 @@ final class KtEngine {
                     if (!"overwrite".equals(conflict)) { safe = freeName(dir, safe); x.name = safe; part = new File(dir, safe + ".part"); }
                 }
                 x.httpOut = new File(dir, safe);
+                // (A stream's playlist — HLS — is a list of pieces, not the video: fetched piece by piece and joined here.)
+                if (KtHls.looksLike(url) || (x.meta != null && x.meta.optBoolean("hls"))) { runHls(x, url, headers, dir, safe); return; }
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
                 final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = x.meta != null && x.meta.optBoolean("noRetry") ? 0 : retries; opt.state = state; opt.expectName = safe;
@@ -595,6 +597,8 @@ final class KtEngine {
                 else if (!host.isEmpty() && lim != null && lim < x.wantConnections && r.connections >= lim) { hostLimit.put(host, Math.min(x.wantConnections, lim + Math.max(1, lim / 10))); saveHosts(); }
                 if (x.cancel.get()) { x.downSpeed = 0; x.done = x.got.get(); persist(); return; }
                 if (r.total > 0 && part.length() != r.total) throw new IOException("incomplete");
+                // (What came is a playlist after all — a link with no «.m3u8» in it: the stream fetched from it.)
+                if (part.length() < (4 << 20) && "m3u8".equals(KrDownloader.sniffExt(part))) { part.delete(); state.delete(); x.got.set(0); x.done = 0; if (x.meta == null) x.meta = new JSONObject(); x.meta.put("hls", true); runHls(x, url, headers, dir, safe); return; }
                 // (A page saved where a media file was expected — a sign-in, an error, a storage's «<Error>» — is not kept as the file.)
                 if (KrDownloader.isPageNotMedia(part, x.name)) { part.delete(); throw new KrDownloader.WebPage(); }
                 if (x.httpOut.exists()) x.httpOut.delete();
@@ -609,6 +613,22 @@ final class KtEngine {
         }, "kt-http-" + x.id);
         x.httpThread.start();
         KtService.ensure(ctx);
+    }
+    /** The HLS way of a file download: pieces i/n and the phase on the task, the joined file kept as the task's file. */
+    private void runHls(Task x, String url, JSONObject headers, File dir, String safe) {
+        try {
+            if (x.meta == null) x.meta = new JSONObject();
+            int height = 0; try { String q = x.meta.optString("quality", ""); java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{3,4})").matcher(q); if (m.find()) height = Integer.parseInt(m.group(1)); } catch (Exception ignored) {}
+            File work = new File(stateDir, x.id + ".hls");
+            final long[] lastT = { 0, 0 };
+            KtHls.Result r = KtHls.run(ctx, url, new File(dir, safe), work, Math.max(1, Math.min(x.wantConnections, 8)), height, u -> open(u, headers, false), x.cancel, (piece, pieces, bytes, phase) -> {
+                x.got.set(bytes); x.done = bytes; if (pieces > 0) x.total = (long) (bytes * (double) pieces / Math.max(1, piece)); try { x.meta.put("frag", piece); x.meta.put("frags", pieces); x.meta.put("phase", phase); } catch (Exception ignored) {}
+                long now = System.currentTimeMillis(); if (now - lastT[0] >= 700) { x.downSpeed = lastT[0] == 0 ? 0 : (long) ((bytes - lastT[1]) / ((now - lastT[0]) / 1000.0)); lastT[0] = now; lastT[1] = bytes; tell(false); }
+            });
+            if (x.cancel.get() || r.out == null) { x.downSpeed = 0; persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this); return; }
+            x.httpOut = r.out; x.name = r.out.getName(); x.done = x.total = r.out.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; x.meta.remove("phase"); scan(x); KtHls.deleteTree(work);
+        } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); } x.downSpeed = 0; }
+        persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
     }
     /* ---------- the queue (Prism's): no more file downloads at once than set; the rest wait in their order ---------- */
     private int busyHttp() { int n = 0; for (Task t : snapshot()) if ("http".equals(t.kind) && "downloading".equals(t.state)) n++; return n; }

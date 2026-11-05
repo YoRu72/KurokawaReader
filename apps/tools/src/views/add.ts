@@ -9,7 +9,7 @@ import { isIos } from './ipa';
 import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin } from '../native';
-import { videoPanel, preferredFormat } from './addVideo';
+import { videoPanel, preferredFormat, nativeHls } from './addVideo';
 import { videoEnabled, isVideoHost } from '../video/ytdlp';
 import { probeUrl, splitName, type Probe } from '../downloads/probe';
 import { freeSpaceAt } from '../archives';
@@ -165,6 +165,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         // (A rule that fits the link: its folder, its «later» and «Wi‑Fi only», its connections — unless the reader chose otherwise here.)
         const { match, kindOf } = await import('../downloads/rules'); const rule = match(src, kindOf(src, !!src.url && isVideoHost(src.url)));
         if (rule?.then.later) meta.later = true; if (rule?.then.wifiOnly) meta.wifiOnly = true;
+        if (src.url && nativeHls(src.url)) { meta.hls = true; const q = rule?.then.quality || getSettings().videoQuality; if (/^\d+/.test(q)) meta.quality = `${parseInt(q, 10)}p`; }
         const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait || (!!rule?.then.later && !(await import('../downloads/prism')).inWindow()), connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
       }
