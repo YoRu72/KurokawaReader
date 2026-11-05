@@ -125,6 +125,8 @@ export interface Settings {
   videoSponsorMode?: 'off' | 'remove' | 'mark'; videoSponsorCats?: string[];
   /** Sidecars beside finished videos for media servers: a Kodi/Jellyfin .nfo (and the info.json kept), the cover picture. */
   sidecarNfo?: boolean; sidecarKeepJson?: boolean; sidecarCover?: boolean;
+  /** More beside a video: its comments and chapters as text, a live stream's chat; lyrics (.lrc from LRCLIB) beside music. */
+  videoRyd?: boolean; sidecarComments?: boolean; sidecarChapters?: boolean; sidecarLiveChat?: boolean; sidecarLyrics?: boolean;
   videoChapters?: boolean; videoTemplate?: string; videoNumber?: boolean; videoCookies?: string;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
 }

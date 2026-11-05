@@ -138,6 +138,8 @@ final class KtVideo {
         if (meta != null && meta.has("subs")) { r.addOption("--write-subs"); r.addOption("--sub-langs", meta.optString("subs")); r.addOption("--embed-subs"); if (meta.has("bilingual")) { r.addOption("--sub-format", "srt/best"); r.addOption("--convert-subs", "srt"); r.addOption("-k"); } }
         if (meta != null && meta.optBoolean("embedThumb", false)) r.addOption("--embed-thumbnail");
         if (meta != null && meta.optBoolean("infoJson", false)) { r.addOption("--write-info-json"); r.addOption("--no-clean-info-json"); }
+        if (meta != null && meta.optBoolean("comments", false)) r.addOption("--write-comments");
+        if (meta != null && meta.optBoolean("liveChat", false)) { r.addOption("--write-subs"); r.addOption("--sub-langs", (meta.has("subs") ? meta.optString("subs") + "," : "") + "live_chat"); }
         if (meta != null && meta.optBoolean("cover", false)) { r.addOption("--write-thumbnail"); r.addOption("--convert-thumbnails", "jpg"); r.addOption("-o", "thumbnail:" + new File(dir, (!outName.isEmpty() ? outName : tpl) + ".%(ext)s").getAbsolutePath()); }
         if (meta == null || meta.optBoolean("embedMeta", true)) r.addOption("--embed-metadata");
         // SponsorBlock: segments cut out, or only marked as chapters (the player skips them), of the categories chosen.

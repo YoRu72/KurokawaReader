@@ -41,13 +41,18 @@ const seen = new Set<string>();
 /** A finished video given its sidecars, once. */
 async function afterDone(x: Task): Promise<void> {
   if (seen.has(x.id)) return; seen.add(x.id);
-  const s = getSettings(); if (!s.sidecarNfo) return;
+  const s = getSettings(); if (!s.sidecarNfo && !s.sidecarComments && !s.sidecarChapters && !s.sidecarLyrics) return;
   const isVideoTask = x.kind === 'video' || x.meta?.kind === 'video' || !!x.meta?.anilistId || !!x.meta?.imdbId; if (!isVideoTask) return;
   const at = stemOf(x); if (!at) return;
   const infoPath = `${at.dir}/${at.stem}.info.json`; let info: Info = {};
   const raw = await readText(infoPath); if (raw) { try { info = JSON.parse(raw) as Info; } catch { /* none */ } }
   if (!raw && !x.meta?.anilistId && !x.meta?.imdbId && !x.meta?.title) return;
-  if (await writeText(`${at.dir}/${at.stem}.nfo`, nfoOf(info, x)) && raw && !s.sidecarKeepJson) await remove(infoPath);
+  const fx = info as Info & { chapters?: { start_time: number; end_time: number; title?: string }[]; comments?: { author?: string; text?: string; like_count?: number; timestamp?: number }[]; track?: string; artist?: string; album?: string };
+  const hms = (sec: number) => { sec = Math.round(sec); const hh = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), ss = sec % 60; return (hh ? `${hh}:` : '') + `${String(m).padStart(hh ? 2 : 1, '0')}:${String(ss).padStart(2, '0')}`; };
+  if (s.sidecarChapters && fx.chapters?.length) await writeText(`${at.dir}/${at.stem}.chapters.txt`, fx.chapters.map((c) => `${hms(c.start_time)} ${c.title ?? ''}`).join('\n') + '\n');
+  if (s.sidecarComments && fx.comments?.length) await writeText(`${at.dir}/${at.stem}.comments.txt`, fx.comments.map((c) => `${c.author ?? '?'}${c.like_count ? ` (+${c.like_count})` : ''}${c.timestamp ? ` · ${new Date(c.timestamp * 1000).toISOString().slice(0, 10)}` : ''}\n${(c.text ?? '').trim()}\n`).join('\n'));
+  if (s.sidecarLyrics && (x.meta?.kind === 'video' || x.kind === 'video') && (fx.track || fx.artist || info.title)) { try { const lrc = await lyrics(fx.track ?? info.title ?? '', fx.artist ?? info.uploader ?? '', fx.album, info.duration); if (lrc) await writeText(`${at.dir}/${at.stem}.lrc`, lrc); } catch { /* none */ } }
+  if (s.sidecarNfo && await writeText(`${at.dir}/${at.stem}.nfo`, nfoOf(info, x)) && raw && !s.sidecarKeepJson) await remove(infoPath); else if (!s.sidecarNfo && raw && !s.sidecarKeepJson) await remove(infoPath);
 }
 let on = false; const was = new Map<string, string>();
 /** Watches the engine; a task that turns «done» gets its sidecars. */
@@ -56,4 +61,15 @@ export function startSidecars(): void {
   let off: (() => void) | null = null;
   const watch = () => { off?.(); const eng = getEngine(); void eng.list().then((ts) => { for (const x of ts) was.set(x.id, x.state); }).catch(() => undefined); off = eng.onChange((tasks) => { for (const x of tasks) { const prev = was.get(x.id); was.set(x.id, x.state); if (x.state === 'done' && prev && prev !== 'done') void afterDone(x); } }); };
   watch(); onEngineChange(watch);
+}
+
+/** Synced lyrics from LRCLIB (open, no key): by track, artist and album; the title split on « - » when the site gave no track. */
+async function lyrics(title: string, artist: string, album?: string, duration?: number): Promise<string | null> {
+  const { request } = await import('../http');
+  let track = title, who = artist; const m = /^(.+?)\s+[-–—]\s+(.+)$/.exec(title); if (m && !artist) { who = m[1]; track = m[2]; }
+  track = track.replace(/\s*[([](official|lyrics?|audio|video|hd|4k|mv)[^)\]]*[)\]]/gi, '').trim(); if (!track) return null;
+  const q = `track_name=${encodeURIComponent(track)}&artist_name=${encodeURIComponent(who)}${album ? `&album_name=${encodeURIComponent(album)}` : ''}${duration ? `&duration=${Math.round(duration)}` : ''}`;
+  let r = await request(`https://lrclib.net/api/get?${q}`, { headers: { 'User-Agent': 'KurokawaTools (https://github.com/YoRu72/KurokawaReader)' } });
+  if (r.status === 404) { const s = await request(`https://lrclib.net/api/search?q=${encodeURIComponent(`${who} ${track}`.trim())}`, { headers: { 'User-Agent': 'KurokawaTools' } }); if (s.status !== 200) return null; const list = JSON.parse(s.body) as { syncedLyrics?: string; plainLyrics?: string }[]; const hit = list.find((x) => x.syncedLyrics) ?? list[0]; return hit?.syncedLyrics ?? hit?.plainLyrics ?? null; }
+  if (r.status !== 200) return null; const j = JSON.parse(r.body) as { syncedLyrics?: string; plainLyrics?: string }; return j.syncedLyrics ?? j.plainLyrics ?? null;
 }

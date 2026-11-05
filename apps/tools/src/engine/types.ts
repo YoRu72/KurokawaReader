@@ -100,7 +100,7 @@ export interface AddOptions {
     /** Two subtitle languages («en,ar») merged into one bilingual .srt beside the file. */
     bilingual?: string;
     /** Sidecars: yt-dlp's info.json written (for the .nfo), the thumbnail kept beside the file as a .jpg. */
-    infoJson?: boolean; cover?: boolean;
+    infoJson?: boolean; cover?: boolean; comments?: boolean; liveChat?: boolean;
     /** The cookie jar (a saved signed-in state) this download uses. */
     cookieJar?: string;
     /** The finished file's SHA-256 (when deduplication is on), and whether it became a link to an identical file. */

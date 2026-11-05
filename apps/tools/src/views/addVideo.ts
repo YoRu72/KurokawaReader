@@ -72,11 +72,14 @@ export function videoPanel(onChange: () => void): VideoPanel {
     const chip = (c: VideoChoice) => h('button', { type: 'button', class: `chip small${chosen?.id === c.id ? ' on' : ''}`, 'aria-pressed': String(chosen?.id === c.id), onclick: () => { chosen = c; draw(); onChange(); } },
       c.kind === 'audio' ? icon('music') : null, h('span', { dir: 'ltr' }, c.label), c.size ? h('small', { class: 'src' }, formatBytes(c.size)) : null);
     const meta = [i.uploader, dur(i.duration), i.site].filter(Boolean).join(' · '); const changed = changeNote;
+    // (Return YouTube Dislike: likes and dislikes of a YouTube video from its open API, when the setting asks.)
+    const rydLine = h('p', { class: 'src video-ryd', dir: 'ltr', hidden: true }); if (s.videoRyd !== false && /youtube/i.test(i.site ?? '') && i.id) void import('../http').then(({ request }) => request(`https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(i.id)}`).then((r) => { if (r.status !== 200) return; const j = JSON.parse(r.body) as { likes?: number; dislikes?: number }; if (j.likes === undefined) return; rydLine.hidden = false; rydLine.textContent = `👍 ${localDigits(j.likes)} · 👎 ${localDigits(j.dislikes ?? 0)}`; }).catch(() => undefined));
     const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
     el.replaceChildren(...[
       h('p', { class: 'video-ready' }, icon('check'), t('videoYtdlpReadyShort')),
       // (Seen before and not the same: said before it is fetched again.)
       changed ? h('p', { class: 'src danger video-changed', dir: 'auto' }, icon('alert'), ' ', t('mediaChanged'), ': ', changed) : null,
+      rydLine,
       h('div', { class: 'video-card' },
         i.thumbnail ? h('img', { class: 'video-thumb', src: i.thumbnail, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('span', { class: 'video-thumb none' }, icon('film')),
         h('div', { class: 'video-text' }, h('b', { dir: 'auto' }, i.title), meta ? h('small', { class: 'src', dir: 'auto' }, meta) : null, i.live ? h('span', { class: 'badge live' }, t('videoLive')) : null)),
@@ -114,7 +117,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
       onChange();
     });
   };
-  const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, sponsorMode: s.videoSponsorMode ?? (s.videoSponsor ? 'remove' : 'off'), sponsorCats: (s.videoSponsorCats ?? ['sponsor']).join(','), infoJson: s.sidecarNfo || undefined, cover: s.sidecarCover || undefined, chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
+  const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, sponsorMode: s.videoSponsorMode ?? (s.videoSponsor ? 'remove' : 'off'), sponsorCats: (s.videoSponsorCats ?? ['sponsor']).join(','), infoJson: (s.sidecarNfo || s.sidecarComments || s.sidecarChapters || s.sidecarLyrics) || undefined, cover: s.sidecarCover || undefined, comments: s.sidecarComments || undefined, liveChat: s.sidecarLiveChat || undefined, chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
   return {
     el, check, busy: () => running,
     picks() {

@@ -58,7 +58,7 @@ export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'c
   const outDir = android ? (await plug()!.clipsDir()).dir : path.replace(/[\\/][^\\/]*$/, '');
   const info = await probe(path);
   const choose = h('div', { class: 'chip-row wrap' }); let pick = '';
-  const formats: [string, string][] = kind === 'video' ? [['mp4', 'MP4 (H.264)'], ['mkv', 'MKV'], ['webm', 'WebM'], ['mp3', 'MP3'], ['m4a', 'M4A'], ['gif', 'GIF'], ['webp', 'WebP (animated)'], ['stab', t('convertSteady')], ['cut', t('convertCutSilence')], ['hevc', 'MP4 (H.265)']] : kind === 'audio' ? [['mp3', 'MP3'], ['m4a', 'M4A (AAC)'], ['flac', 'FLAC'], ['opus', 'Opus'], ['wav', 'WAV']] : [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']];
+  const formats: [string, string][] = kind === 'image' ? [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['x2', t('convertUpscale')]] : kind === 'video' ? [['mp4', 'MP4 (H.264)'], ['mkv', 'MKV'], ['webm', 'WebM'], ['mp3', 'MP3'], ['m4a', 'M4A'], ['gif', 'GIF'], ['webp', 'WebP (animated)'], ['stab', t('convertSteady')], ['cut', t('convertCutSilence')], ['hevc', 'MP4 (H.265)']] : kind === 'audio' ? [['mp3', 'MP3'], ['m4a', 'M4A (AAC)'], ['flac', 'FLAC'], ['opus', 'Opus'], ['wav', 'WAV'], ['r128', t('convertNormalise')]] : [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']];
   const targets: [string, string][] = [['8', '8 MB'], ['10', '10 MB · Discord'], ['16', '16 MB · WhatsApp'], ['25', '25 MB · Email'], ['50', '50 MB'], ['100', '100 MB']];
   const list = mode === 'convert' ? formats : kind === 'image' ? [['75', t('shrinkQuality', { n: 75 })], ['50', t('shrinkQuality', { n: 50 })], ['1920', t('shrinkWidth', { n: 1920 })], ['1280', t('shrinkWidth', { n: 1280 })]] as [string, string][] : targets;
   const draw = () => choose.replaceChildren(...list.map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (pick === k ? ' on' : ''), onclick: () => { pick = k; draw(); go.disabled = false; } }, l)));
@@ -85,6 +85,10 @@ export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'c
       else if (pick === 'opus') args.push('-vn', '-c:a', 'libopus', '-b:a', '160k');
       else if (pick === 'wav') args.push('-vn', '-c:a', 'pcm_s16le');
       else if (pick === 'jpg') args.push('-q:v', '2'); else if (pick === 'webp') args.push('-quality', '88');
+      // (Upscaled twice over, Lanczos — sharp, no invented detail; saved as PNG to keep it.)
+      else if (pick === 'x2') { ext = 'png'; tag = ' (2x)'; args.push('-vf', 'scale=iw*2:ih*2:flags=lanczos'); }
+      // (Loudness brought to the broadcast norm — EBU R128, −16 LUFS, true peak −1.5 dB — as one pass of ffmpeg's loudnorm; kept in the file's own kind.)
+      else if (pick === 'r128') { ext = /\.(mp3)$/i.test(name) ? 'mp3' : /\.(flac)$/i.test(name) ? 'flac' : /\.(opus|ogg)$/i.test(name) ? 'opus' : 'm4a'; tag = ' (normalised)'; args.push('-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', ...(ext === 'mp3' ? ['-c:a', 'libmp3lame', '-q:a', '2'] : ext === 'flac' ? ['-c:a', 'flac'] : ext === 'opus' ? ['-c:a', 'libopus', '-b:a', '160k'] : ['-c:a', 'aac', '-b:a', '256k'])); }
     } else if (kind === 'image') {
       ext = /\.(png)$/i.test(name) ? 'jpg' : (/\.(\w+)$/.exec(name)?.[1] ?? 'jpg').toLowerCase().replace('jpeg', 'jpg').replace(/heic|heif|bmp|tiff?|avif/, 'jpg');
       if (Number(pick) > 100) args.push('-vf', `scale='min(${pick},iw)':-2`, ...(ext === 'jpg' ? ['-q:v', '4'] : [])); else args.push(...(ext === 'jpg' ? ['-q:v', String(Math.round(2 + (100 - Number(pick)) / 8))] : ext === 'webp' ? ['-quality', pick] : []));
