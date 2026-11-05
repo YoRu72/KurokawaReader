@@ -54,7 +54,11 @@ export async function gql<T>(query: string, variables: Record<string, unknown> =
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const tk = token(); if (auth && tk) headers.Authorization = `Bearer ${tk}`;
   let r: Awaited<ReturnType<typeof request>>;
-  try { r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); } catch (e) { throw later(String((e as Error)?.message ?? e)); }
+  try {
+    r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
+    // (As Hayase does: a 429 waits what Retry-After says and a second more, a 5xx a second, then once again.)
+    if (r.status === 429 || r.status >= 500) { const ra = Number(r.headers['retry-after']); await new Promise((ok) => setTimeout(ok, r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000)); lastCall = Date.now(); r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); }
+  } catch (e) { throw later(String((e as Error)?.message ?? e)); }
   const busy = r.status === 429 || r.status >= 500 || r.status === 0;
   let json: { data?: T; errors?: { message: string; status?: number }[] } = {};
   try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`); }

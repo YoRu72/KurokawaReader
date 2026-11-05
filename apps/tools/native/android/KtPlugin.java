@@ -998,6 +998,11 @@ public class KtPlugin extends Plugin {
                 if (binary) ret.put("body", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)); else ret.put("body", new String(bytes, charsetOf(conn.getContentType(), bytes)));
                 JSObject hs = new JSObject(); for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) if (e.getKey() != null && !e.getValue().isEmpty()) hs.put(e.getKey().toLowerCase(), e.getValue().get(0));
                 ret.put("headers", hs); call.resolve(ret);
+            } catch (javax.net.ssl.SSLException e) {
+                // (Refused at the TLS handshake through the resolver's way: asked once more the plain way, kept a day.)
+                String host = ""; try { host = new URL(urlStr).getHost(); } catch (Exception ignored) {}
+                if (KrDoh.on() && !KrDoh.isDirect(host)) { KrDoh.goDirect(host); httpRequest(call); return; }
+                call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e);
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
         });
     }
