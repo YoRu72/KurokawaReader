@@ -111,17 +111,15 @@ final class KrDohProxy {
         catch (Throwable e) { KrDoh.note("proxy", host, null, -1, "unreachable: " + KrDoh.clean(String.valueOf(e.getMessage()))); reply(out, 502, "Bad Gateway"); return; }
         tunnels.incrementAndGet();
         // (Whether the hello is cut is settled before the page is told to go on: the web view sends it at once.)
-        final String h = host; final boolean split = cut(host); final boolean[] siteSpoke = { false }; boolean sent = false;
+        final String h = host; final boolean split = cut(host); final int way = KrDoh.wayOf(host, split); final boolean[] siteSpoke = { false }; final boolean[] alert = { false }; boolean sent = false;
         out.write("HTTP/1.1 200 Connection established\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush();
         client.setSoTimeout(0); site.setSoTimeout(0);
         try (Socket s = site) {
             OutputStream up = s.getOutputStream(); InputStream down = s.getInputStream();
             // (The first bytes from the page: the hello, cut in two on the wire when asked; whole otherwise.)
             byte[] first = hello(in); if (first == null) return; sent = true;
-            byte[][] two = split ? KrDoh.splitHello(first, 0, first.length, h) : null;
-            if (two != null) { up.write(two[0]); up.flush(); up.write(two[1]); } else up.write(first);
-            up.flush(); bytesUp.addAndGet(first.length);
-            Thread pump = new Thread(() -> { try { copy(down, out, bytesDown, siteSpoke); } catch (IOException ignored) {} finally { try { client.shutdownOutput(); } catch (IOException ignored) {} try { s.close(); } catch (IOException ignored) {} } }, "kt-proxy-down");
+            KrDoh.sendHello(s, up, first, h, way); bytesUp.addAndGet(first.length);
+            Thread pump = new Thread(() -> { try { copy(down, out, bytesDown, siteSpoke, alert); } catch (IOException ignored) {} finally { try { client.shutdownOutput(); } catch (IOException ignored) {} try { s.close(); } catch (IOException ignored) {} } }, "kt-proxy-down");
             pump.setDaemon(true); pump.start();
             try { copy(in, up, bytesUp, null); } catch (IOException ignored) {}
             try { s.shutdownOutput(); } catch (IOException ignored) {}
@@ -130,7 +128,11 @@ final class KrDohProxy {
         } finally {
             // (A tunnel the site never spoke on — reset or dropped before its first byte — on a name the network
             // gives as it is: a filter on the way; the site is forced through the split hello from now.)
-            if (sent && !siteSpoke[0] && !split && KrDoh.on()) { KrDoh.force(h); }
+            if (sent && KrDoh.on()) {
+                if (alert[0]) KrDoh.wayFailed(h, way, "alert");
+                else if (!siteSpoke[0]) { if (!split && way == 0) KrDoh.force(h); KrDoh.wayFailed(h, way, "silent"); }
+                else KrDoh.wayWorked(h, way);
+            }
         }
     }
     /** The page's first record (a TLS hello is one record: read whole, so the cut lands inside it), or whatever came first. */
@@ -143,9 +145,10 @@ final class KrDohProxy {
         while (p < rec.length) { int n = in.read(rec, p, rec.length - p); if (n < 0) return java.util.Arrays.copyOf(rec, p); p += n; }
         return rec;
     }
-    private static void copy(InputStream from, OutputStream to, AtomicLong count, boolean[] spoke) throws IOException {
-        byte[] b = new byte[1 << 15]; int n;
-        while ((n = from.read(b)) > 0) { if (spoke != null) spoke[0] = true; to.write(b, 0, n); to.flush(); count.addAndGet(n); }
+    private static void copy(InputStream from, OutputStream to, AtomicLong count, boolean[] spoke) throws IOException { copy(from, to, count, spoke, null); }
+    private static void copy(InputStream from, OutputStream to, AtomicLong count, boolean[] spoke, boolean[] alert) throws IOException {
+        byte[] b = new byte[1 << 15]; int n; boolean first = true;
+        while ((n = from.read(b)) > 0) { if (first) { first = false; if (alert != null && b[0] == 0x15) alert[0] = true; } if (spoke != null && !(alert != null && alert[0])) spoke[0] = true; to.write(b, 0, n); to.flush(); count.addAndGet(n); }
     }
 
     /** A plain request (GET http://site/path …): sent to the site by the address found, the answer carried back, the connection closed after. */
