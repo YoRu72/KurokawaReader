@@ -25,7 +25,7 @@ type Plug = {
   filesHead(o: { path: string; max?: number }): Promise<{ text: string; size: number }>;
   filesJob(o: { id?: string; op: 'copy' | 'move' | 'delete'; paths: string[]; dest?: string; conflict?: string }): Promise<{ id: string }>;
   filesCancel(o: { id: string }): Promise<void>; filesAnswer(o: { id: string; answer: string }): Promise<void>;
-  filesAccess(o: { ask?: boolean }): Promise<{ all: boolean }>;
+  filesAccess(o: { ask?: boolean }): Promise<{ all: boolean }>; filesCollection(o: { kind: string; limit?: number }): Promise<{ entries: Entry[] }>;
   sharedPending(): Promise<{ items: { uri: string; name: string; size: number; mime: string }[] }>; sharedSave(o: { dir: string; clear?: boolean }): Promise<{ saved: string[]; failed: string[]; dir: string }>; sharedClear(): Promise<void>;
   openChooser(o: { path: string; mime?: string; title: string }): Promise<void>; openWith(o: { path: string; mime: string; title: string }): Promise<void>; shareFile(o: { path: string; title: string }): Promise<void>;
   defaultDir(): Promise<{ dir: string }>;
@@ -38,7 +38,7 @@ export const canBrowseFiles = (): boolean => !!(plug() || desk()?.listDir);
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
 type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string };
 const PREFS = 'kt.files.prefs';
-const prefs: Prefs = { view: 'list', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
+const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
 const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
 let clipboard: { op: 'copy' | 'move'; paths: string[] } | null = null;
 
@@ -63,23 +63,32 @@ function sortEntries(list: Entry[]): Entry[] {
 const kindRe = (): RegExp | null => KINDS.find(([k]) => k === prefs.kind)?.[2] ?? null;
 
 /* ---------- the view ---------- */
-export function filesView(route: { p?: string; save?: string }): HTMLElement {
+const COLLECTIONS: [string, string, string][] = [['recent', 'filesRecent', 'history'], ['image', 'filesKindImages', 'images'], ['audio', 'filesKindMusic', 'music'], ['video', 'filesKindVideo', 'film'], ['doc', 'filesKindDocs', 'file'], ['archive', 'filesKindArchives', 'archive'], ['apk', 'filesKindApps', 'apps']];
+const BOOKMARKS = 'kt.files.bookmarks';
+const bookmarks = (): { name: string; path: string }[] => { try { return JSON.parse(localStorage.getItem(BOOKMARKS) ?? '[]') as { name: string; path: string }[]; } catch { return []; } };
+const saveBookmarks = (b: { name: string; path: string }[]) => { try { localStorage.setItem(BOOKMARKS, JSON.stringify(b)); } catch { /* none */ } };
+/** The day a file belongs to, for the section headers: today, yesterday, else its date. */
+const dayOf = (ms: number): string => { const d = new Date(ms); const now = new Date(); const same = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); if (same(d, now)) return t('today'); const y = new Date(now); y.setDate(y.getDate() - 1); if (same(d, y)) return t('yesterday'); return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); };
+
+export function filesView(route: { p?: string; save?: string; c?: string }): HTMLElement {
   const body = h('div', { class: 'files-body' });
   const crumbs = h('div', { class: 'files-crumbs', dir: 'ltr' }); const rootsRow = h('div', { class: 'chip-row files-roots' }); const kindRow = h('div', { class: 'chip-row files-kinds' });
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
   const search = h('input', { type: 'search', class: 'files-search', placeholder: t('filesSearchHere'), hidden: true, oninput: () => { query = search.value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
   const selBar = h('div', { class: 'files-selbar', hidden: true });
   const pasteBtn = iconButton('copy', t('filesPaste'), () => void paste()); pasteBtn.hidden = !clipboard;
+  const titleEl = h('span', { class: 'files-title', dir: 'auto' }, t('navFiles')); const subEl = h('small', { class: 'files-sub' });
+  const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
   const root = h('div', { class: 'view files-view' },
-    h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navFiles'))), h('div', { class: 'topbar-actions' },
+    h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' },
       iconButton('search', t('search'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       pasteBtn,
       iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
       iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
-    search, rootsRow, crumbs, kindRow, body, selBar) as HTMLElement & { dispose?: () => void };
+    search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
   body.append(listEl, status, jobsEl);
-  let at = route.p ?? prefs.last ?? ''; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
+  let at = route.p ?? (route.c ? '' : prefs.last ?? ''); let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const el = e.target as HTMLElement; io.unobserve(el); const p = el.dataset.thumb; if (p) void thumbInto(el, p); } }, { rootMargin: '300px 0px' });
   const thumbInto = async (el: HTMLElement, path: string) => { const pl = plug(); if (!pl) return; try { const r = await pl.filesThumb({ path, px: prefs.view === 'grid' ? 240 : 96 }); if (r.url && el.isConnected) { el.replaceChildren(h('img', { src: r.url, alt: '', loading: 'lazy' })); el.classList.add('has-img'); } } catch { /* the icon stays */ } };
 
@@ -94,6 +103,8 @@ export function filesView(route: { p?: string; save?: string }): HTMLElement {
   };
   const askAccess = async () => { const pl = plug(); if (!pl) return; const sh = openSheet(t('filesAccessTitle'), t('close')); sh.body.append(h('p', { class: 'hint' }, t('filesAccessHint'))); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void pl.filesAccess({ ask: true }); } }, icon('key'), t('filesAccessAllow'))); };
   const drawCrumbs = () => {
+    if (collection) { const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); return; }
+    titleEl.textContent = at === (roots.find((x) => x.path === at)?.path) ? (roots.find((x) => x.path === at)?.name ?? baseOf(at)) : baseOf(at) || t('navFiles');
     const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? '/'; const rest = at.slice(base.length).split('/').filter(Boolean);
     const parts: HTMLElement[] = [h('button', { type: 'button', class: 'crumb', onclick: () => go(base) }, r?.name ?? '/')];
     let acc = base; for (const seg of rest) { acc += `/${seg}`; const p = acc; parts.push(h('span', { class: 'crumb-sep' }, '›'), h('button', { type: 'button', class: 'crumb', onclick: () => go(p) }, seg)); }
@@ -102,26 +113,32 @@ export function filesView(route: { p?: string; save?: string }): HTMLElement {
   const drawKinds = () => kindRow.replaceChildren(...KINDS.map(([k, label]) => h('button', { type: 'button', class: 'chip small' + (prefs.kind === k ? ' on' : ''), onclick: () => { prefs.kind = k; savePrefs(); drawKinds(); draw(); } }, t(label as 'filesKindAll'))));
 
   // ---- the folder
-  const go = (path: string) => { if (gone) return; at = path.replace(/\/+$/, '') || '/'; prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
+  const go = (path: string) => { if (gone) return; collection = null; at = path.replace(/\/+$/, '') || '/'; prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
+  const openCollection = (kind: string) => { if (gone) return; collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; navigate(`/files?c=${kind}`, true); void load(); };
   const load = async () => {
-    drawCrumbs(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = '';
-    try { const r = await listDir(at); if (gone) return; entries = r.entries; if (!r.exists) { status.textContent = t('folderNotFound'); } if (r.truncated) toast(t('filesTruncated'), 'info'); }
+    drawCrumbs(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection;
+    try {
+      if (collection) { const pl = plug(); const r = pl ? await pl.filesCollection({ kind: collection, limit: 600 }) : { entries: [] }; if (gone) return; entries = r.entries; }
+      else { const r = await listDir(at); if (gone) return; entries = r.entries; if (!r.exists) { status.textContent = t('folderNotFound'); } if (r.truncated) toast(t('filesTruncated'), 'info'); }
+    }
     catch (e) { entries = []; status.textContent = String((e as Error).message ?? e); }
     draw(); drawSel();
   };
-  const shown = (): Entry[] => { const re = kindRe(); return sortEntries(entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query)))); };
+  const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
   const draw = () => {
     const list = shown(); listEl.className = `files-list ${prefs.view}`;
-    if (!list.length) { listEl.replaceChildren(h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
-    const frag = document.createDocumentFragment();
-    for (const e of list) frag.append(row(e));
+    if (!list.length) { subEl.textContent = ''; listEl.replaceChildren(h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
+    const frag = document.createDocumentFragment(); let lastDay = '';
+    const byDay = !!collection || prefs.sort === 'date';
+    for (const e of list) { if (byDay && !e.dir) { const day = dayOf(e.mtime); if (day !== lastDay) { lastDay = day; frag.append(h('div', { class: 'files-section' }, day)); } } frag.append(row(e)); }
     listEl.replaceChildren(frag);
-    const dirs = list.filter((e) => e.dir).length; status.textContent = `${countItems(list.length)}${dirs ? ` · ${countFolders(dirs)}` : ''}`;
+    const dirs = list.filter((e) => e.dir).length; const files = list.length - dirs;
+    subEl.textContent = [dirs ? countFolders(dirs) : '', files ? countFiles(files) : ''].filter(Boolean).join(', '); status.textContent = '';
   };
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
     const ic = h('span', { class: 'files-ic' + (thumbable ? ' thumb' : ''), 'data-thumb': thumbable && plug() ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
-    const meta = e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
+    const meta = e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'auto' }, e.name), h('small', { class: 'src' }, meta)),
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e); }));
@@ -168,6 +185,23 @@ export function filesView(route: { p?: string; save?: string }): HTMLElement {
     try { const r = await pl.filesHead({ path: e.path, max: 300000 }); pre.textContent = r.text + (r.size > 300000 ? `\n…` : ''); } catch (err) { pre.textContent = String((err as Error).message ?? err); }
   };
   const openAs = (e: Entry) => pickSheet(t('filesOpenAs'), MIMES.map(([m, l, ic]): [string, string, string] => [m, t(l as 'filesAsAny'), ic]), mimeOf(e.name), (m) => void plug()?.openWith({ path: e.path, mime: m, title: e.name }), t('close'));
+
+  // ---- the drawer: storages (with their used space), bookmarks, collections — Solid Explorer's, as a sheet from the side
+  const drawer = () => {
+    const sh = openSheet(t('navFiles'), t('close')); sh.el.classList.add('files-drawer');
+    const section = (label: string, ...kids: (HTMLElement | null)[]) => h('div', { class: 'files-drawer-section' }, h('small', { class: 'src files-drawer-label' }, label), ...kids);
+    const item = (ic: string, name: string, sub: string | HTMLElement | null, fn: () => void, extra?: HTMLElement) => h('button', { type: 'button', class: 'dest-row files-drawer-row', onclick: () => { sh.close(); fn(); } }, h('span', { class: 'files-drawer-ic' }, icon(ic)), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, name), sub ? (typeof sub === 'string' ? h('small', { class: 'src', dir: 'ltr' }, sub) : sub) : null), extra ?? null);
+    const storage = (r: Root) => { const used = r.total && r.free !== undefined ? Math.round(((r.total - r.free) / r.total) * 100) : null; return item(r.kind === 'app' ? 'download' : 'storage', r.name, used === null ? r.path : h('span', { class: 'files-usage' }, h('span', { class: 'files-usage-bar' }, h('i', { style: { width: `${used}%` } })), h('small', { class: 'src' }, t('filesFreeOf', { free: formatBytes(r.free!), total: formatBytes(r.total!) }))), () => { if (!r.readable) { void askAccess(); return; } go(r.path); }); };
+    const bm = bookmarks();
+    sh.body.append(section(t('filesStorages'), ...roots.map(storage)));
+    if (bm.length) sh.body.append(section(t('filesBookmarks'), ...bm.map((b) => item('bookmark', b.name, b.path, () => go(b.path), iconButton('close', t('delete'), (ev) => { ev.stopPropagation(); saveBookmarks(bookmarks().filter((x) => x.path !== b.path)); sh.close(); drawer(); })))));
+    if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))));
+  };
+  const fabSheet = () => {
+    const sh = openSheet(t('create'), t('close'));
+    const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
+    sh.body.append(h('div', { class: 'dest-list' }, act('folderPlus', t('newFolder'), () => newFolderSheet()), ...(clipboard ? [act('copy', t('filesPaste'), () => void paste())] : []), act('bookmarkAdd', t('filesBookmarkHere'), () => { const b = bookmarks(); if (!b.some((x) => x.path === at)) { b.push({ name: baseOf(at) || at, path: at }); saveBookmarks(b); } toast(t('filesBookmarked')); }), ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : [])));
+  };
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
   const itemSheet = (e: Entry) => {
@@ -294,7 +328,7 @@ export function filesView(route: { p?: string; save?: string }): HTMLElement {
   // ---- start
   let sub: { remove(): void } | null = null;
   const pl = plug(); if (pl) void listen<JobEvent>(pl as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
-  void (async () => { await loadRoots(); drawKinds(); if (!at) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
+  void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
   root.dispose = () => { gone = true; io.disconnect(); sub?.remove(); };
   return root;
 }

@@ -29,6 +29,7 @@ let fails = 0; const ok = (what, cond) => { console.log((cond ? 'ok   ' : 'FAIL 
       sharedPending: async () => ({ items: [{ uri: 'content://x/1', name: 'shared.pdf', size: 42000, mime: 'application/pdf' }] }), sharedSave: async ({ dir }) => { window.__calls.push('sharedSave:' + dir); return { saved: ['x'], failed: [], dir }; }, sharedClear: async () => {},
       openChooser: async ({ path }) => { window.__calls.push('open:' + path.split('/').pop()); }, openWith: async ({ mime }) => { window.__calls.push('openWith:' + mime); }, shareFile: async () => { window.__calls.push('share'); },
       filesHead: async () => ({ text: 'hello notes', size: 11 }),
+      filesCollection: async ({ kind }) => ({ entries: kind === 'recent' ? [{ name: 'new.png', path: '/storage/emulated/0/DCIM/new.png', dir: false, size: 100, mtime: Date.now() - 1000, ext: 'png' }, { name: 'old.mp4', path: '/storage/emulated/0/Movies/old.mp4', dir: false, size: 900, mtime: Date.now() - 86400000 * 3, ext: 'mp4' }] : [] }),
     }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: Kurokawa, Filesystem: {} }, PluginHeaders: [] };
     localStorage.setItem('kt.settings', JSON.stringify({ addons: ['files', 'archives'] }));
@@ -75,6 +76,11 @@ let fails = 0; const ok = (what, cond) => { console.log((cond ? 'ok   ' : 'FAIL 
   // Save to device
   await p.goto('http://localhost:5481/#/files?save=1'); await p.waitForSelector('.sheet:has-text("shared.pdf")'); await p.click('.sheet .btn:has-text("Save here")'); await p.waitForTimeout(300);
   ok('shared files saved here', (await p.evaluate(() => window.__calls.join(','))).includes('sharedSave:'));
+  // the drawer and a collection with its day sections
+  await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); ok('the drawer lists storages, collections', (await p.$$('.files-drawer .files-drawer-row')).length >= 9 && (await p.textContent('.files-drawer')).includes('free of'));
+  await p.click('.files-drawer .files-drawer-row:has-text("Recent files")'); await p.waitForTimeout(400);
+  ok('recent files in day sections', (await p.$$eval('.files-section', (e) => e.map((x) => x.textContent)))[0] === 'Today' && (await p.$$('.files-section')).length === 2 && (await p.textContent('.files-sub')).includes('2 files'));
+  await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-recent.png' });
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

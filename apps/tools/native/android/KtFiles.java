@@ -201,6 +201,31 @@ final class KtFiles {
         done[0] += sz; done[1]++; if (ev != null) progress(ev, j, done, total, f.getName(), lastTold, false);
     }
 
+    /* ---------- the collections: the phone's media index by kind, and what changed last ---------- */
+    /** `kind`: recent | image | audio | video | doc | apk | archive — the files of that kind from Android's media index, newest first. */
+    static JSONArray collection(Context ctx, String kind, int limit) {
+        JSONArray out = new JSONArray();
+        android.net.Uri uri = android.provider.MediaStore.Files.getContentUri("external");
+        String sel = null; String[] args = null;
+        switch (kind) {
+            case "image": sel = android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE + "=" + android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE; break;
+            case "audio": sel = android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE + "=" + android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO; break;
+            case "video": sel = android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE + "=" + android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO; break;
+            case "doc": sel = "(" + android.provider.MediaStore.Files.FileColumns.MIME_TYPE + " LIKE 'application/pdf' OR " + android.provider.MediaStore.Files.FileColumns.MIME_TYPE + " LIKE 'application/epub%' OR " + android.provider.MediaStore.Files.FileColumns.MIME_TYPE + " LIKE 'application/vnd.openxmlformats%' OR " + android.provider.MediaStore.Files.FileColumns.MIME_TYPE + " LIKE 'application/msword' OR " + android.provider.MediaStore.Files.FileColumns.MIME_TYPE + " LIKE 'text/%' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.epub' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.pdf')"; break;
+            case "apk": sel = "(" + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.apk' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.apks' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.xapk' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.apkm')"; break;
+            case "archive": sel = "(" + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.zip' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.7z' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.rar' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.tar' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.gz' OR " + android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE '%.xz')"; break;
+            default: sel = android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE + "!=" + android.provider.MediaStore.Files.FileColumns.MEDIA_TYPE_NONE + " OR " + android.provider.MediaStore.Files.FileColumns.MIME_TYPE + " IS NOT NULL";
+        }
+        String[] cols = { android.provider.MediaStore.Files.FileColumns.DATA, android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME, android.provider.MediaStore.Files.FileColumns.SIZE, android.provider.MediaStore.Files.FileColumns.DATE_MODIFIED };
+        try (android.database.Cursor c = ctx.getContentResolver().query(uri, cols, sel, args, android.provider.MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC")) {
+            if (c != null) while (c.moveToNext() && out.length() < limit) {
+                String path = c.getString(0); if (path == null) continue; File f = new File(path); if (!f.isFile()) continue;
+                JSONObject o = new JSONObject(); String name = c.getString(1) == null ? f.getName() : c.getString(1); o.put("name", name); o.put("path", path); o.put("dir", false); o.put("size", c.getLong(2)); o.put("mtime", c.getLong(3) * 1000); o.put("ext", extOf(name)); out.put(o);
+            }
+        } catch (Exception ignored) {}
+        return out;
+    }
+
     /* ---------- small things ---------- */
     static JSONObject mkdir(File d) throws Exception { JSONObject o = new JSONObject(); o.put("ok", d.isDirectory() || d.mkdirs()); o.put("path", d.getAbsolutePath()); return o; }
     static JSONObject rename(File f, String name) throws Exception {

@@ -570,6 +570,7 @@ public class KtPlugin extends Plugin {
         new Thread(() -> KtFiles.run(id, op, paths, dest, conflict, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-job").start();
         JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
     }
+    @PluginMethod public void filesCollection(PluginCall call) { final String kind = call.getString("kind", "recent"); final int limit = call.getInt("limit", 500); bg.execute(() -> { JSObject r = new JSObject(); r.put("entries", new JSArray(KtFiles.collection(getContext(), kind, limit).toString())); call.resolve(r); }); }
     @PluginMethod public void filesCancel(PluginCall call) { KtFiles.cancel(call.getString("id", "")); call.resolve(); }
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */
