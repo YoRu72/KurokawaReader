@@ -29,6 +29,8 @@ export interface Settings {
   coursesContinuous?: boolean;
   /** Convert on a computer: the hardware H.264 encoder (NVENC, VideoToolbox, QSV, AMF) when there is one. Default on. */
   convertHw?: boolean;
+  /** A computer: the local API on 127.0.0.1 for a command line, scripts and a browser extension — on/off, its token and port. */
+  localApi?: { on: boolean; token?: string; port?: number };
   /** Finished files hashed; identical ones become hard links (the room taken once). Android. */
   dedupe?: boolean;
   /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */

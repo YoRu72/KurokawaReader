@@ -12,6 +12,8 @@ export function startHotkeys(): void {
   const d = window.kurokawaTools as unknown as Desk & { videoBinary?(o: { path: string }): Promise<unknown> } | undefined; if (!d?.onHotkeyAdd) return;
   // (The reader's own yt-dlp, when one was chosen, told to the main process at start.)
   const own = getSettings().videoBinaryPath; if (own) void d.videoBinary?.({ path: own }).catch(() => undefined);
+  // (The local API brought up at start when it was left on.)
+  const la = getSettings().localApi; if (la?.on) void (d as unknown as { localApi?(o: { on: boolean; token?: string; port?: number }): Promise<unknown> }).localApi?.({ on: true, token: la.token, port: la.port }).catch(() => undefined);
   d.onOpenTask?.((id) => navigate(`/task/${id}`));
   d.onHotkeyAdd(async ({ mode, text }) => {
     const srcs = parseSources(text ?? ''); if (!srcs.length) { toast(t('hotkeyNothing'), 'error'); return; }

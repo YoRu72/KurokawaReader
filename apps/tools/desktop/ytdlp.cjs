@@ -82,6 +82,7 @@ function normalise(j) {
 
 /** Video jobs: each a task like the others, run by yt-dlp with its progress read from the progress template. */
 class VideoJobs {
+  has(id) { return this.tasks.has(id); }
   constructor(send) { this.send = send; this.tasks = new Map(); this.procs = new Map(); this.statePath = path.join(app.getPath('userData'), 'video-jobs.json'); this.load(); }
   load() { try { for (const t of JSON.parse(fs.readFileSync(this.statePath, 'utf8'))) { if (t.state === 'downloading' || t.state === 'queued') t.state = 'paused'; this.tasks.set(t.id, t); } } catch { /* none */ } }
   save() { try { fs.writeFileSync(this.statePath, JSON.stringify([...this.tasks.values()])); } catch { /* ignore */ } }

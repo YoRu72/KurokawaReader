@@ -336,6 +336,11 @@ ipcMain.handle('kt:videoInfo', (_e, o) => Ytdlp.info(String(o.url), o));
 ipcMain.handle('kt:videoReady', async (e) => { try { await Ytdlp.ensure((p) => e.sender.send('kt:update-progress', { pct: p.total ? Math.round((p.got / p.total) * 100) : 0, got: p.got, total: p.total, what: 'yt-dlp' })); return { ok: true, version: await Ytdlp.version() }; } catch (err) { return { ok: false, why: String(err.message) }; } });
 ipcMain.handle('kt:videoVersion', async () => ({ version: Ytdlp.haveBinary() ? await Ytdlp.version() : null, ready: Ytdlp.haveBinary() }));
 ipcMain.handle('kt:videoUpdate', async () => Ytdlp.update(true));
+ipcMain.handle('kt:localApi', (_e, o) => {
+  const L = require('./localapi.cjs');
+  if (o && o.on) { const st = L.start({ token: o.token, port: o.port }, { tasks: () => allTasks(), version: () => app.getVersion(), add: async (a) => { if (a.video || a.audio) return videos.add({ url: a.url, dir: a.dir || engine.defaultDir, paused: a.paused, meta: { audioOnly: !!a.audio, format: a.audio ? 'bestaudio/best' : undefined, title: a.name } }); return E().add({ source: { url: a.url }, dir: a.dir, name: a.name, paused: a.paused, connections: 8 }); }, act: async (id, act) => { if (act === 'pause') return (videos.has && videos.has(id)) ? videos.pause(id) : E().pause(id); if (act === 'resume') return (videos.has && videos.has(id)) ? videos.resume(id) : E().resume(id); return (videos.has && videos.has(id)) ? videos.remove(id, false) : E().remove(id, false); } }); return { ...st, on: true }; }
+  if (o && o.on === false) L.stop(); return L.state();
+});
 ipcMain.handle('kt:galleryList', async (_e, o) => { const G = require('./gallerydl.cjs'); await G.ensure(); return G.list(String(o.url), o); });
 ipcMain.handle('kt:galleryReady', async () => { const G = require('./gallerydl.cjs'); return { ready: G.haveBinary(), version: G.haveBinary() ? await G.version() : null }; });
 ipcMain.handle('kt:videoRollback', async () => ({ version: await Ytdlp.rollback() }));
