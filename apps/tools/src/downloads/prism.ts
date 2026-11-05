@@ -67,7 +67,7 @@ export function mediaInHtml(doc: Document, html: string, page: string): Link[] {
 
 /** A link found: on a page, or a post's media (with the name to save it under, a thumbnail, and whether it is a
  *  stream for the Video add-on). */
-type Link = { href: string; text: string; kind?: string; name?: string; thumb?: string; viaVideo?: boolean };
+type Link = { href: string; text: string; kind?: string; name?: string; thumb?: string; viaVideo?: boolean; size?: number; est?: boolean; type?: string; status?: number };
 export async function grabberSheet(start = '', project?: GrabProject, pre?: { links: { href: string; text: string; kind?: string }[]; title?: string; ua?: string }): Promise<void> {
   const sh = openSheet(t('grabTitle'), t('close'));
   const url = h('input', { type: 'url', dir: 'ltr', value: project?.url ?? start, placeholder: t('grabPasteHint'), title: t('grabPasteHint'), spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
@@ -129,10 +129,13 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   /** The kinds found, with «All» first and the links that are none of them (pages) under «Other». */
   const kindOf = (href: string) => KINDS.find((k) => k[2].test(href))?.[0] ?? 'other';
   const kindL = (x: Link) => x.kind ?? kindOf(x.href);
-  const drawChips = (counts: readonly (readonly [string, string, number])[]) => chips.replaceChildren(
+  const sizeChips = () => (links.some((x) => x.size) ? [h('span', { class: 'chip-sep' }), ...([0, 1, 10, 100] as const).map((mb) => h('button', { type: 'button', class: 'chip small' + (minBytes === mb * 1048576 ? ' on' : ''), onclick: () => { minBytes = mb * 1048576; drawChips(lastCounts); draw(); } }, mb ? `≥ ${localDigits(String(mb))} MB` : t('grabAnySize')))] : []);
+  let lastCounts: readonly (readonly [string, string, number])[] = [];
+  const drawChips = (counts: readonly (readonly [string, string, number])[]) => (lastCounts = counts, chips.replaceChildren(
     h('button', { type: 'button', class: 'chip small' + (kind === '' ? ' on' : ''), onclick: () => { kind = ''; drawChips(counts); draw(); } }, `${t('allFiles')} · ${localDigits(links.length)}`),
-    ...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); for (const x of shown()) chosen.add(x.href); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)));
-  const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links);
+    ...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); for (const x of shown()) chosen.add(x.href); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)), ...sizeChips()));
+  let minBytes = 0;
+  const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links).filter((x) => !minBytes || (x.size ?? 0) >= minBytes);
   const host = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
   const sync = () => {
     go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) });
@@ -148,7 +151,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
         h('span', { class: 'grab-count' }, t('grabSelectedN', { n: localDigits(picked) }))),
       ...xs.slice(0, 600).map((x) => { const nm = x.name ?? decodeURIComponent(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
         x.thumb ? h('img', { class: 'grab-thumb', src: x.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
-        h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href)].filter(Boolean).join(' · ')))); }));
+        h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href), x.size ? (x.est ? '~' : '') + formatBytes(x.size) : '', x.type && !/octet-stream/.test(x.type) ? x.type.replace(/^application\//, '') : '', x.status ? `HTTP ${x.status}` : ''].filter(Boolean).join(' · ')))); }));
     sync();
   };
   const fromPage = (ls: Link[]) => {

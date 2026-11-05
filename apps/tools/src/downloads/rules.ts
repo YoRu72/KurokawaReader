@@ -8,8 +8,8 @@ import type { Task } from '../engine/types';
 
 export interface Rule {
   id: string; name: string; on: boolean;
-  when: { host?: string; contains?: string; kind?: 'video' | 'torrent' | 'file' | 'any' };
-  then: { dir?: string; audioOnly?: boolean; subs?: string; later?: boolean; wifiOnly?: boolean; connections?: number; quality?: string };
+  when: { host?: string; contains?: string; kind?: 'video' | 'torrent' | 'file' | 'any'; /** At least this many MB (the browser's probe knows sizes). */ minMb?: number };
+  then: { dir?: string; audioOnly?: boolean; subs?: string; later?: boolean; wifiOnly?: boolean; connections?: number; quality?: string; /** A capture rule: what the app's browser sees that matches is added on sight, no sheet. */ capture?: boolean };
 }
 export const rules = (): Rule[] => ((getSettings() as { rules?: Rule[] }).rules ?? []);
 export const saveRules = (rs: Rule[]): void => { updateSettings({ rules: rs } as never); };
@@ -19,19 +19,20 @@ export const newRule = (): Rule => ({ id: `r${Date.now().toString(36)}`, name: '
 export function kindOf(src: { url?: string; magnet?: string; torrent?: unknown }, videoHost: boolean): 'video' | 'torrent' | 'file' { return src.magnet || src.torrent ? 'torrent' : videoHost ? 'video' : 'file'; }
 const hostOf = (u: string): string => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
 /** The first rule that fits, or null. */
-export function match(src: { url?: string; magnet?: string; torrent?: unknown }, kind: 'video' | 'torrent' | 'file'): Rule | null {
+export function match(src: { url?: string; magnet?: string; torrent?: unknown; size?: number }, kind: 'video' | 'torrent' | 'file'): Rule | null {
   const u = src.url ?? src.magnet ?? ''; const host = hostOf(u);
   for (const r of rules()) {
     if (!r.on) continue; const w = r.when;
     if (w.kind && w.kind !== 'any' && w.kind !== kind) continue;
     if (w.host && !(host === w.host.toLowerCase() || host.endsWith('.' + w.host.toLowerCase()))) continue;
     if (w.contains && !u.toLowerCase().includes(w.contains.toLowerCase())) continue;
+    if (w.minMb && !(src.size && src.size >= w.minMb * 1048576)) continue;
     return r;
   }
   return null;
 }
 /** Which rule a link would fall under, in words — the «test a link» box. */
-export const describe = (r: Rule): string => [r.when.kind && r.when.kind !== 'any' ? r.when.kind : '', r.when.host ? `host ${r.when.host}` : '', r.when.contains ? `“${r.when.contains}”` : ''].filter(Boolean).join(' · ') + ' → ' + [r.then.dir ? r.then.dir.split('/').pop() : '', r.then.audioOnly ? 'audio' : '', r.then.subs ? `subs ${r.then.subs}` : '', r.then.later ? 'later' : '', r.then.wifiOnly ? 'Wi‑Fi' : '', r.then.quality ? r.then.quality : ''].filter(Boolean).join(' · ');
+export const describe = (r: Rule): string => [r.when.kind && r.when.kind !== 'any' ? r.when.kind : '', r.when.host ? `host ${r.when.host}` : '', r.when.contains ? `“${r.when.contains}”` : '', r.when.minMb ? `≥ ${r.when.minMb} MB` : ''].filter(Boolean).join(' · ') + ' → ' + [r.then.capture ? 'capture' : '', r.then.dir ? r.then.dir.split('/').pop() : '', r.then.audioOnly ? 'audio' : '', r.then.subs ? `subs ${r.then.subs}` : '', r.then.later ? 'later' : '', r.then.wifiOnly ? 'Wi‑Fi' : '', r.then.quality ? r.then.quality : ''].filter(Boolean).join(' · ');
 
 /* ---------- a download's own clock ---------- */
 /** Each minute: a download whose start time came is resumed, one whose stop time came is paused (then unmarked). */
@@ -86,13 +87,14 @@ function ruleSheet(r: Rule, done: () => void): void {
   const dir = h('input', { type: 'text', value: r.then.dir ?? '', dir: 'ltr', placeholder: t('ruleDirHint'), autocapitalize: 'off', spellcheck: 'false' }) as HTMLInputElement;
   const subs = h('input', { type: 'text', value: r.then.subs ?? '', dir: 'ltr', placeholder: 'en,ar', autocapitalize: 'off', spellcheck: 'false' }) as HTMLInputElement;
   const conns = h('input', { type: 'number', value: r.then.connections ? String(r.then.connections) : '', min: '1', max: '32', placeholder: '8' }) as HTMLInputElement;
+  const minMb = h('input', { type: 'number', value: r.when.minMb ? String(r.when.minMb) : '', min: '0', placeholder: '0' }) as HTMLInputElement; const capture = h('input', { type: 'checkbox', checked: !!r.then.capture }) as HTMLInputElement;
   const audio = h('input', { type: 'checkbox', checked: !!r.then.audioOnly }) as HTMLInputElement; const later = h('input', { type: 'checkbox', checked: !!r.then.later }) as HTMLInputElement; const wifi = h('input', { type: 'checkbox', checked: !!r.then.wifiOnly }) as HTMLInputElement;
   const field = (label: string, el: HTMLElement) => h('label', { class: 'field' }, h('span', null, label), el);
-  sh.body.append(field(t('ruleName'), name), h('p', { class: 'files-sec' }, t('ruleWhen')), h('div', { class: 'chip-row files-filters' }, kindBtn), field(t('ruleHost'), host), field(t('ruleContains'), contains),
+  sh.body.append(field(t('ruleName'), name), h('p', { class: 'files-sec' }, t('ruleWhen')), h('div', { class: 'chip-row files-filters' }, kindBtn), field(t('ruleHost'), host), field(t('ruleContains'), contains), field(t('ruleMinMb'), minMb),
     h('p', { class: 'files-sec' }, t('ruleThen')), field(t('ruleDir'), dir), field(t('ruleSubs'), subs), field(t('connections'), conns),
-    h('label', { class: 'check-row' }, audio, h('span', null, t('ruleAudioOnly'))), h('label', { class: 'check-row' }, later, h('span', null, t('ruleLater'))), h('label', { class: 'check-row' }, wifi, h('span', null, t('ruleWifi'))));
+    h('label', { class: 'check-row' }, audio, h('span', null, t('ruleAudioOnly'))), h('label', { class: 'check-row' }, later, h('span', null, t('ruleLater'))), h('label', { class: 'check-row' }, wifi, h('span', null, t('ruleWifi'))), h('label', { class: 'check-row' }, capture, h('span', null, t('ruleCapture'), h('small', { class: 'src' }, t('ruleCaptureHint')))));
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
-    const next: Rule = { ...r, name: name.value.trim(), when: { kind: kind as Rule['when']['kind'], host: host.value.trim() || undefined, contains: contains.value.trim() || undefined }, then: { dir: dir.value.trim() || undefined, subs: subs.value.trim() || undefined, connections: Number(conns.value) || undefined, audioOnly: audio.checked || undefined, later: later.checked || undefined, wifiOnly: wifi.checked || undefined } };
+    const next: Rule = { ...r, name: name.value.trim(), when: { kind: kind as Rule['when']['kind'], host: host.value.trim() || undefined, contains: contains.value.trim() || undefined, minMb: Number(minMb.value) || undefined }, then: { capture: capture.checked || undefined, dir: dir.value.trim() || undefined, subs: subs.value.trim() || undefined, connections: Number(conns.value) || undefined, audioOnly: audio.checked || undefined, later: later.checked || undefined, wifiOnly: wifi.checked || undefined } };
     const all = rules(); const i = all.findIndex((x) => x.id === r.id); if (i >= 0) all[i] = next; else all.push(next); saveRules(all); sh.close(); done(); toast(t('ruleSaved'));
   } }, icon('check'), t('save')));
 }
