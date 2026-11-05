@@ -113,6 +113,8 @@ export interface Settings {
   videoQuality: 'best' | '2160' | '1440' | '1080' | '720' | '480' | 'audio'; videoContainer: 'mp4' | 'mkv' | 'webm'; videoEmbedThumb: boolean; videoSponsor: boolean;
   /** SponsorBlock: cut the segments out, or mark them as chapters; which categories (comma-separated yt-dlp names). */
   videoSponsorMode?: 'off' | 'remove' | 'mark'; videoSponsorCats?: string[];
+  /** Sidecars beside finished videos for media servers: a Kodi/Jellyfin .nfo (and the info.json kept), the cover picture. */
+  sidecarNfo?: boolean; sidecarKeepJson?: boolean; sidecarCover?: boolean;
   videoChapters?: boolean; videoTemplate?: string; videoNumber?: boolean; videoCookies?: string;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
 }

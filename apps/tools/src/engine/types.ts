@@ -96,7 +96,11 @@ export interface AddOptions {
     /** Chapters kept in the file; the file name's pattern (yt-dlp's); only a part («1:00-2:30»); a browser's cookies (desktop). */
     chapters?: boolean; template?: string; section?: string; cookies?: string;
     /** Parts by chapter name (a regular expression), the file split by its chapters, SponsorBlock's mode and categories. */
-    chapterMatch?: string; splitChapters?: boolean; sponsorMode?: 'off' | 'remove' | 'mark'; sponsorCats?: string };
+    chapterMatch?: string; splitChapters?: boolean; sponsorMode?: 'off' | 'remove' | 'mark'; sponsorCats?: string;
+    /** Two subtitle languages («en,ar») merged into one bilingual .srt beside the file. */
+    bilingual?: string;
+    /** Sidecars: yt-dlp's info.json written (for the .nfo), the thumbnail kept beside the file as a .jpg. */
+    infoJson?: boolean; cover?: boolean };
 }
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }

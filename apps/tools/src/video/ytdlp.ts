@@ -7,7 +7,7 @@ import { getSettings } from '../settings';
 
 export const VIDEO_ADDON = 'video';
 export interface VideoChoice { id: string; kind: 'video' | 'audio'; label: string; ext?: string; height?: number; fps?: number; size?: number; vcodec?: string; acodec?: string; note?: string }
-export interface VideoInfo { kind: 'video'; id: string; title: string; thumbnail?: string; duration?: number; site?: string; url: string; uploader?: string; choices: VideoChoice[]; audio: VideoChoice[]; subtitles: string[]; live: boolean; chapters: number }
+export interface VideoInfo { kind: 'video'; id: string; title: string; thumbnail?: string; duration?: number; site?: string; url: string; uploader?: string; choices: VideoChoice[]; audio: VideoChoice[]; subtitles: string[]; /** Languages with automatic captions only. */ autoSubs?: string[]; live: boolean; chapters: number }
 export interface PlaylistInfo { kind: 'playlist'; title: string; url: string; count: number; entries: { url: string; title?: string; duration?: number; id?: string }[] }
 export type PageInfo = VideoInfo | PlaylistInfo;
 
@@ -70,5 +70,5 @@ export function normalise(input: unknown): PageInfo {
     return { id: muxed ? f.format_id : `${f.format_id}+${best ? best.format_id : 'bestaudio'}`, kind: 'video', label: `${f.height ? `${f.height}p${f.fps && f.fps > 30 ? Math.round(f.fps) : ''}` : f.format_note ?? f.format_id}${hdr(f) ? ' HDR' : ''}`, ext: f.ext, height: f.height, fps: f.fps, size: sz || undefined, vcodec: f.vcodec, acodec: muxed ? f.acodec : best?.acodec, note: f.format_note };
   });
   const audio: VideoChoice[] = audios.slice(0, 4).map((f) => ({ id: f.format_id, kind: 'audio', label: `${Math.round(abr(f))} kbps ${f.acodec && f.acodec !== 'none' ? f.acodec.split('.')[0] : ''}`.trim(), ext: f.ext, size: size(f) || undefined, acodec: f.acodec }));
-  return { kind: 'video', id: j.id ?? '', title: j.title ?? '', thumbnail: j.thumbnail, duration: j.duration, site: j.extractor_key, url: j.webpage_url ?? j.original_url ?? '', uploader: j.uploader ?? j.channel, choices, audio, subtitles: Object.keys(j.subtitles ?? {}), live: !!j.is_live, chapters: (j.chapters ?? []).length };
+  return { kind: 'video', id: j.id ?? '', title: j.title ?? '', thumbnail: j.thumbnail, duration: j.duration, site: j.extractor_key, url: j.webpage_url ?? j.original_url ?? '', uploader: j.uploader ?? j.channel, choices, audio, subtitles: Object.keys(j.subtitles ?? {}), autoSubs: Object.keys((j as { automatic_captions?: Record<string, unknown> }).automatic_captions ?? {}).filter((k) => !(k in (j.subtitles ?? {}))), live: !!j.is_live, chapters: (j.chapters ?? []).length };
 }

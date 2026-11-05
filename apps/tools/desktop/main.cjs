@@ -217,6 +217,8 @@ ipcMain.handle('kt:captureUrl', (_e, o) => new Promise((resolve) => {
   w.on('closed', () => finish(null));
   w.loadURL(String(o.url));
 }));
+ipcMain.handle('kt:writeText', async (_e, o) => { await fs.promises.writeFile(String(o.path), String(o.text), 'utf8'); return { ok: true }; });
+ipcMain.handle('kt:removeFile', async (_e, p) => { await fs.promises.unlink(String(p)).catch(() => undefined); return { ok: true }; });
 ipcMain.handle('kt:readFile', async (_e, p) => { const b = await fs.promises.readFile(String(p)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
 
 /* ---------- archives ---------- */

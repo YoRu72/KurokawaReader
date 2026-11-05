@@ -83,7 +83,7 @@ final class KtVideo {
         init(ctx);
         Exception last = null; int step = meta != null && meta.has("ladderStep") ? meta.optInt("ladderStep", 0) : 0;
         for (int attempt = 0; attempt < LADDER.length; attempt++) {
-            try { return runOnce(ctx, id, url, dir, meta, pr, step); }
+            try { File out = runOnce(ctx, id, url, dir, meta, pr, step); if (out != null && meta != null && meta.has("bilingual")) { try { bilingual(out, meta.optString("bilingual")); } catch (Throwable e) { Log.w(TAG, "bilingual", e); } } return out; }
             catch (Exception e) {
                 last = e; if (cancelled(id)) throw e; int next = stepFor(e.getMessage(), step); if (next < 0 || next >= LADDER.length || next <= step) throw e;
                 step = next; pr.on(0, 0, 0, null, "retry: " + String.join(" ", LADDER[step]));
@@ -91,6 +91,29 @@ final class KtVideo {
         }
         throw last;
     }
+    /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
+    static void bilingual(File out, String pair) throws java.io.IOException {
+        String[] ls = pair.split(","); if (ls.length < 2) return;
+        String stem = out.getName().replaceAll("\\.[^.]+$", ""); File dir = out.getParentFile();
+        File a = subFile(dir, stem, ls[0]), b = subFile(dir, stem, ls[1]); if (a == null || b == null) return;
+        java.util.List<String[]> ca = cues(a), cb = cues(b); if (ca.isEmpty() || cb.isEmpty()) return;
+        StringBuilder sb = new StringBuilder(); int n = 1;
+        for (String[] x : ca) {
+            long s1 = ms(x[0]), e1 = ms(x[1]); StringBuilder other = new StringBuilder();
+            for (String[] y : cb) { long s2 = ms(y[0]), e2 = ms(y[1]); long ov = Math.min(e1, e2) - Math.max(s1, s2); if (ov > 0 && ov * 2 >= Math.min(e1 - s1, e2 - s2)) { if (other.length() > 0) other.append(' '); other.append(y[2].replace('\n', ' ')); } }
+            sb.append(n++).append('\n').append(x[0]).append(" --> ").append(x[1]).append('\n').append(x[2]); if (other.length() > 0) sb.append('\n').append(other); sb.append("\n\n");
+        }
+        File merged = new File(dir, stem + "." + ls[0] + "-" + ls[1] + ".srt");
+        try (java.io.Writer w = new java.io.OutputStreamWriter(new java.io.FileOutputStream(merged), java.nio.charset.StandardCharsets.UTF_8)) { w.write(sb.toString()); }
+    }
+    private static File subFile(File dir, String stem, String lang) { File[] k = dir.listFiles(); if (k == null) return null; for (File f : k) { String n = f.getName(); if (n.startsWith(stem + ".") && n.endsWith(".srt") && (n.equals(stem + "." + lang + ".srt") || n.matches(java.util.regex.Pattern.quote(stem + "." + lang) + "-[A-Za-z]+\\.srt"))) return f; } return null; }
+    private static final Pattern TIMES = Pattern.compile("(\\d{1,2}:\\d{2}:\\d{2}[,.]\\d{1,3})\\s*-->\\s*(\\d{1,2}:\\d{2}:\\d{2}[,.]\\d{1,3})");
+    static java.util.List<String[]> cues(File f) throws java.io.IOException {
+        String text = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8).replace("\r", ""); java.util.List<String[]> out = new java.util.ArrayList<>();
+        for (String block : text.split("\n\n+")) { String[] lines = block.trim().split("\n"); for (int i = 0; i < lines.length; i++) { Matcher m = TIMES.matcher(lines[i]); if (m.find()) { StringBuilder t = new StringBuilder(); for (int j = i + 1; j < lines.length; j++) { if (t.length() > 0) t.append('\n'); t.append(lines[j].replaceAll("<[^>]+>", "")); } if (t.length() > 0) out.add(new String[] { m.group(1), m.group(2), t.toString() }); break; } } }
+        return out;
+    }
+    private static long ms(String t) { String[] p = t.replace('.', ',').split("[:,]"); long h = Long.parseLong(p[0]), m = Long.parseLong(p[1]), s = Long.parseLong(p[2]); String f = p.length > 3 ? p[3] : "0"; while (f.length() < 3) f += "0"; return ((h * 60 + m) * 60 + s) * 1000 + Long.parseLong(f.substring(0, 3)); }
     private static final java.util.Set<String> stopped = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     private static boolean cancelled(String id) { return stopped.remove(id); }
     private static File runOnce(Context ctx, String id, String url, File dir, JSONObject meta, Progress pr, int step) throws Exception {
@@ -110,8 +133,10 @@ final class KtVideo {
         if (hd != null) for (java.util.Iterator<String> it = hd.keys(); it.hasNext(); ) { String k = it.next(); String v = hd.optString(k, ""); if (!k.isEmpty() && !v.isEmpty()) r.addOption("--add-header", k + ":" + v); }
         if (audioOnly) { r.addOption("-f", format.isEmpty() ? "bestaudio/best" : format); r.addOption("-x"); if (!container.isEmpty()) r.addOption("--audio-format", container); }
         else { r.addOption("-f", format.isEmpty() ? "bestvideo+bestaudio/best" : format + "/best"); r.addOption("--merge-output-format", container.isEmpty() ? "mp4" : container); }
-        if (meta != null && meta.has("subs")) { r.addOption("--write-subs"); r.addOption("--sub-langs", meta.optString("subs")); r.addOption("--embed-subs"); }
+        if (meta != null && meta.has("subs")) { r.addOption("--write-subs"); r.addOption("--sub-langs", meta.optString("subs")); r.addOption("--embed-subs"); if (meta.has("bilingual")) { r.addOption("--sub-format", "srt/best"); r.addOption("--convert-subs", "srt"); r.addOption("-k"); } }
         if (meta != null && meta.optBoolean("embedThumb", false)) r.addOption("--embed-thumbnail");
+        if (meta != null && meta.optBoolean("infoJson", false)) { r.addOption("--write-info-json"); r.addOption("--no-clean-info-json"); }
+        if (meta != null && meta.optBoolean("cover", false)) { r.addOption("--write-thumbnail"); r.addOption("--convert-thumbnails", "jpg"); r.addOption("-o", "thumbnail:" + new File(dir, (!outName.isEmpty() ? outName : tpl) + ".%(ext)s").getAbsolutePath()); }
         if (meta == null || meta.optBoolean("embedMeta", true)) r.addOption("--embed-metadata");
         // SponsorBlock: segments cut out, or only marked as chapters (the player skips them), of the categories chosen.
         String sbMode = meta != null ? meta.optString("sponsorMode", meta.optBoolean("sponsorblock", false) ? "remove" : "off") : "off"; String sbCats = meta != null ? meta.optString("sponsorCats", "sponsor") : "sponsor"; if (sbCats.isEmpty()) sbCats = "sponsor";
