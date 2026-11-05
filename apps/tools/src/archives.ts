@@ -48,9 +48,12 @@ export function extractArchiveJob(o: ExtractOptions, onProgress?: (p: ArchivePro
   return { id, done };
 }
 export async function cancelArchive(id: string): Promise<void> { const d = desk(); if (d) return d.archiveCancel(id); await plug()?.archiveCancel({ id }); }
-export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void): Promise<{ files: number; path: string; size: number }> {
+export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string }
+/** The formats the engine here can make (the desktop makes zips only, for now). */
+export const makeFormats = (): MakeOptions['format'][] => (desk() ? ['zip'] : ['zip', '7z', 'tar.gz', 'tar.xz', 'tar']);
+export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void, o: MakeOptions = {}): Promise<{ files: number; path: string; size: number }> {
   wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
-  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs }) : await plug()!.archiveCreate({ id, out, inputs }); } finally { listeners.delete(id); }
+  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
 }
 export async function pickFiles(multiple = false): Promise<string[]> {
   const d = desk(); if (d) return (await d.pickFile({ multiple })) ?? [];

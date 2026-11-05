@@ -710,3 +710,21 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-usage { display: flex; flex-direction: column; gap: 3px; }
 .files-usage-bar { height: 4px; border-radius: 2px; background: var(--md-surface-container-highest); overflow: hidden; width: 100%; }
 .files-usage-bar i { display: block; height: 100%; background: var(--md-primary); }
+.files-filters { padding: 6px 0; }
+.files-results .files-row { content-visibility: auto; }
+.files-search-sheet input[type=search] { width: 100%; border-radius: 22px; border: 0; padding: 10px 16px; background: var(--md-surface-container-high); color: var(--md-on-surface); font: inherit; }
+.files-preview { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; margin-top: 8px; }
+.files-preview-row { display: flex; flex-direction: column; padding: 6px 10px; border-radius: 10px; background: var(--md-surface-container); }
+.files-preview-row.bad { outline: 1px solid var(--md-error); }
+.files-sum { display: flex; align-items: center; gap: 8px; }
+.files-sum code { font-size: 11px; overflow-wrap: anywhere; flex: 1; }
+.files-editor .files-ta { width: 100%; min-height: 55vh; border: 0; border-radius: 12px; padding: 12px; background: var(--md-surface-container); color: var(--md-on-surface); font: 14px/1.5 var(--font-ui); resize: vertical; white-space: pre-wrap; }
+.files-editor .files-ta.nowrap { white-space: pre; overflow-x: auto; }
+.files-editor .files-ta.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+.files-ed-tools { align-items: center; gap: 4px; }
+.files-ed-status { margin-inline-start: auto; }
+.files-viewer .sheet-body { padding: 0; }
+.files-viewer-stage { height: 62vh; display: grid; place-items: center; overflow: hidden; background: #000; touch-action: none; border-radius: 12px; }
+.files-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; transition: transform .05s linear; user-select: none; }
+.files-viewer-bar { align-items: center; justify-content: center; gap: 12px; padding: 8px; }
+.files-trash-row .files-main { min-width: 0; }

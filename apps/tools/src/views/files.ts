@@ -81,7 +81,8 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
   const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
   const root = h('div', { class: 'view files-view' },
     h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' },
-      iconButton('search', t('search'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
+      iconButton('search', t('search'), () => { if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
+      iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       pasteBtn,
       iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
       iconButton('sort', t('sortBy'), () => sortSheet()),
@@ -173,7 +174,8 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       if (k === 'video' || k === 'audio') { const { openPlayer } = await import('./player'); const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(e.path); if (u) { await openPlayer(u, e.name, { localPath: e.path }); return; } }
       if (/\.(apk|apks|xapk|apkm)$/i.test(e.name)) { const m = await import('./apk'); if (m.canInstallApps()) { await m.installSheet(e.path); return; } }
       if (k === 'archive' || /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|001)$/i.test(e.name)) { const { browseArchive } = await import('./archiveBrowse'); void browseArchive(e.path); return; }
-      if (/\.(txt|nfo|md|log|json|xml|srt|ass|vtt|csv|ini|cfg)$/i.test(e.name) && e.size < 2_000_000 && pl) { await quickLook(e); return; }
+      if (/\.(txt|nfo|md|log|json|xml|srt|ass|vtt|csv|ini|cfg|yml|yaml|html?|css|js|ts|py|sh|java|kt|c|h|cpp)$/i.test(e.name) && e.size < 4_000_000 && pl) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return; }
+      if (k === 'image' && pl) { const m = await import('./filesMore'); const { localFileUrl } = await import('../player/files'); const pics = shown().filter((x) => !x.dir && kindOfFile(x.name) === 'image'); await m.imageViewer(pics, Math.max(0, pics.findIndex((x) => x.path === e.path)), localFileUrl, (x) => void confirmDelete([x.path])); return; }
       if (pl) { await pl.openChooser({ path: e.path, mime: mimeOf(e.name), title: e.name }); return; }
       const d = desk(); if (d?.openPath) { await d.openPath(e.path); return; }
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
@@ -195,7 +197,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
     const bm = bookmarks();
     sh.body.append(section(t('filesStorages'), ...roots.map(storage)));
     if (bm.length) sh.body.append(section(t('filesBookmarks'), ...bm.map((b) => item('bookmark', b.name, b.path, () => go(b.path), iconButton('close', t('delete'), (ev) => { ev.stopPropagation(); saveBookmarks(bookmarks().filter((x) => x.path !== b.path)); sh.close(); drawer(); })))));
-    if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))));
+    if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))), section('', item('trash', t('filesTrash'), null, () => void import('./filesMore').then((m) => m.trashSheet(() => void load())))));
   };
   const fabSheet = () => {
     const sh = openSheet(t('create'), t('close'));
@@ -215,7 +217,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       act('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [e.path] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: '1' })); }),
       act('pen', t('rename'), () => renameSheet(e)),
       ...(!e.dir && /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|001)$/i.test(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
-      act('archive', t('filesZip'), () => void zipSheet([e.path])),
+      act('archive', t('filesCompress'), () => void compress([e.path])),
       act('check', t('filesSelect'), () => { selecting = true; picked.add(e.path); draw(); drawSel(); }),
       act('info', t('properties'), () => void propertiesSheet(e)),
       act('trash', t('delete'), () => void confirmDelete([e.path]))));
@@ -223,7 +225,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
   const selectionSheet = () => {
     const sh = openSheet(countItems(picked.size), t('close')); const paths = [...picked];
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    sh.body.append(h('div', { class: 'dest-list' }, act('archive', t('filesZip'), () => void zipSheet(paths)), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } draw(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
+    sh.body.append(h('div', { class: 'dest-list' }, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void import('./filesMore').then((m) => m.batchRenameSheet(entries.filter((e) => picked.has(e.path)), () => { leaveSel(); void load(); }))), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } draw(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
   };
   const sortSheet = () => {
     const sh = openSheet(t('sortBy'), t('close'));
@@ -238,6 +240,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       act('check', t('filesSelectAll'), () => { selecting = true; for (const e of shown()) picked.add(e.path); draw(); drawSel(); }),
       act(prefs.hidden ? 'eye' : 'eye', prefs.hidden ? t('filesHideHidden') : t('filesShowHidden'), () => { prefs.hidden = !prefs.hidden; savePrefs(); void load(); }),
       act('refresh', t('refresh'), () => void load()),
+      ...(plug() ? [act('trash', t('filesTrashSetting'), () => void import('./filesMore').then((m) => { m.setTrashOn(!m.trashOn()); toast(m.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
       act('info', t('properties'), () => void propertiesSheet({ name: baseOf(at), path: at, dir: true, size: 0, mtime: 0 })),
       ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : []),
       ...(plug() && !allFiles ? [act('key', t('filesAccessAllow'), () => void askAccess())] : [])));
@@ -266,16 +269,20 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       const s = await pl.filesStat({ path: e.path, id: 'props' });
       sizeLine.lastElementChild!.textContent = e.dir || s.dir ? `${formatBytes(s.size)} · ${countFiles(s.files ?? 0)} · ${countFolders(s.folders ?? 0)}` : formatBytes(s.size);
       rows.append(line(t('fileDate'), formatDate(s.mtime)), ...(s.mime ? [line(t('filesKind'), s.mime)] : []), line(t('filesAccess'), [s.readable ? t('filesReadable') : '', s.writable ? t('filesWritable') : t('filesReadOnly')].filter(Boolean).join(' · ')));
+      const m = await import('./filesMore'); await m.richProperties(rows, e, line);
     } catch (err) { sizeLine.lastElementChild!.textContent = String((err as Error).message ?? err); }
   };
   const confirmDelete = async (paths: string[]) => {
     const pl = plug(); if (!pl) return; const sh = openSheet(t('delete'), t('cancel'));
-    sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: () => { sh.close(); leaveSel(); void startJob('delete', paths); } }, icon('trash'), t('delete')));
+    sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
+    const m = await import('./filesMore'); const toBin = m.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/'));
+    sh.body.append(h('p', { class: 'hint' }, toBin ? t('filesDeleteToTrash') : t('filesDeleteForeverHint')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { sh.close(); leaveSel(); if (!toBin) { void startJob('delete', paths); return; } try { const r = await m.toTrash(paths); if (r.failed.length) toast(t('filesSomeFailed', { n: localDigits(r.failed.length), why: r.failed[0] }), 'error'); else toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('delete')));
   };
   const shareMany = async (paths: string[]) => { const pl = plug(); if (!pl) return; if (paths.length === 1) { await pl.shareFile({ path: paths[0], title: baseOf(paths[0]) }).catch(() => undefined); return; } const { shareFiles } = await import('../ui/shareMany'); await shareFiles(paths); };
   const extractHere = async (e: Entry) => { const { extractArchiveJob } = await import('../archives'); const job = extractArchiveJob({ path: e.path, dest: parentOf(e.path), replace: 'ask' as never }); watchArchiveJob(job.id, job.done, e.name); };
   const watchArchiveJob = (id: string, done: Promise<unknown>, name: string) => { const el = jobRow(id, t('filesExtracting', { name }), () => void import('../archives').then((m) => m.cancelArchive(id))); done.then(() => { el.remove(); void load(); toast(t('filesExtracted', { name })); }, (err) => { el.remove(); toast(String((err as Error).message ?? err), 'error'); }); };
+  const compress = async (paths: string[]) => { const m = await import('./filesMore'); leaveSel(); await m.makeArchiveSheet(paths, at, (id, label, done, cancel) => { const el = jobRow(id, label, cancel); void done.then(() => el.remove(), () => el.remove()); }, () => void load()); };
   const zipSheet = async (paths: string[]) => {
     const { createZip } = await import('../archives'); const sh = openSheet(t('filesZip'), t('cancel'));
     const stem = paths.length === 1 ? baseOf(paths[0]).replace(/\.[^.]+$/, '') : baseOf(at) || 'archive';
@@ -327,7 +334,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
 
   // ---- start
   let sub: { remove(): void } | null = null;
-  const pl = plug(); if (pl) void listen<JobEvent>(pl as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
+  const pl = plug(); if (pl) { void listen<JobEvent>(pl as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; }); void import('./filesMore').then((m) => m.pruneTrash()); }
   void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
   root.dispose = () => { gone = true; io.disconnect(); sub?.remove(); };
   return root;

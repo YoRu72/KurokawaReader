@@ -226,6 +226,94 @@ final class KtFiles {
         return out;
     }
 
+    /* ---------- the recycle bin: a hidden folder on each storage, each item with where it came from ---------- */
+    static final String TRASH = ".kurokawa-trash";
+    /** The storage root `f` lies on (the phone's, a card's) — where its bin is. */
+    static File trashDirFor(Context ctx, File f) {
+        String p; try { p = f.getCanonicalPath(); } catch (IOException e) { p = f.getAbsolutePath(); }
+        File best = null; try { JSONArray rs = roots(ctx, KtEngine.defaultDirOf(ctx)).getJSONArray("roots"); for (int i = 0; i < rs.length(); i++) { String rp = rs.getJSONObject(i).optString("path"); String kind = rs.getJSONObject(i).optString("kind"); if (kind.equals("app")) continue; if (p.equals(rp) || p.startsWith(rp + "/")) if (best == null || rp.length() > best.getAbsolutePath().length()) best = new File(rp); } } catch (Exception ignored) {}
+        if (best == null) best = Environment.getExternalStorageDirectory();
+        return new File(best, TRASH);
+    }
+    /** `paths` moved into their storages' bins (a rename; copied and deleted across storages), each with a note of where it was. */
+    static JSONObject trash(Context ctx, List<File> paths, AtomicBoolean cancel) throws Exception {
+        JSONArray moved = new JSONArray(), failed = new JSONArray();
+        for (File f : paths) {
+            if (cancel != null && cancel.get()) break;
+            try {
+                File bin = trashDirFor(ctx, f); if (!bin.isDirectory() && !bin.mkdirs()) throw new IOException("cannot make the bin");
+                try { new File(bin, ".nomedia").createNewFile(); } catch (IOException ignored) {}
+                String id = System.currentTimeMillis() + "-" + Integer.toHexString(f.getAbsolutePath().hashCode()); File slot = new File(bin, id); if (!slot.mkdirs()) throw new IOException("cannot make the slot");
+                File to = new File(slot, f.getName()); long size = f.isFile() ? f.length() : 0;
+                if (!f.renameTo(to)) { Job j = new Job("trash"); long[] done = { 0, 0 }, total = { 0, 0 }; copyTree(f, to, j, done, total, (ev) -> {}, new long[1]); deleteTree(f, j, new long[2], new long[2], null, new long[1]); }
+                JSONObject meta = new JSONObject(); meta.put("from", f.getAbsolutePath()); meta.put("name", f.getName()); meta.put("at", System.currentTimeMillis()); meta.put("dir", to.isDirectory()); meta.put("size", size);
+                try (OutputStream o = new FileOutputStream(new File(slot, ".meta.json"))) { o.write(meta.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                moved.put(f.getAbsolutePath());
+            } catch (Exception e) { failed.put(f.getName() + ": " + e.getMessage()); }
+        }
+        JSONObject r = new JSONObject(); r.put("moved", moved); r.put("failed", failed); return r;
+    }
+    /** What the bins hold, newest first: the slot, the name, where it was, when, the size. */
+    static JSONArray trashList(Context ctx) throws Exception {
+        JSONArray out = new JSONArray(); JSONArray rs = roots(ctx, KtEngine.defaultDirOf(ctx)).getJSONArray("roots");
+        for (int i = 0; i < rs.length(); i++) {
+            if (rs.getJSONObject(i).optString("kind").equals("app")) continue; File bin = new File(rs.getJSONObject(i).optString("path"), TRASH); File[] slots = bin.listFiles(); if (slots == null) continue;
+            for (File slot : slots) { if (!slot.isDirectory()) continue; File mf = new File(slot, ".meta.json"); if (!mf.isFile()) continue; try { JSONObject m = new JSONObject(head(mf, 65536)); m.put("slot", slot.getAbsolutePath()); File item = new File(slot, m.optString("name")); m.put("path", item.getAbsolutePath()); m.put("exists", item.exists()); if (item.isFile()) m.put("size", item.length()); out.put(m); } catch (Exception ignored) {} }
+        }
+        List<JSONObject> l = new ArrayList<>(); for (int i = 0; i < out.length(); i++) l.add(out.getJSONObject(i)); l.sort((a, b) -> Long.compare(b.optLong("at"), a.optLong("at")));
+        JSONArray sorted = new JSONArray(); for (JSONObject o : l) sorted.put(o); return sorted;
+    }
+    /** A slot's item put back where it came from (beside it under another name when the place is taken). */
+    static JSONObject trashRestore(File slot) throws Exception {
+        JSONObject m = new JSONObject(head(new File(slot, ".meta.json"), 65536)); File item = new File(slot, m.optString("name")); File to = new File(m.optString("from"));
+        if (to.getParentFile() != null && !to.getParentFile().isDirectory()) to.getParentFile().mkdirs();
+        if (to.exists()) to = keepBoth(to);
+        if (!item.renameTo(to)) { Job j = new Job("restore"); long[] d = { 0, 0 }; copyTree(item, to, j, d, d, (ev) -> {}, new long[1]); deleteTree(item, j, new long[2], new long[2], null, new long[1]); }
+        deleteTree(slot, new Job("x"), new long[2], new long[2], null, new long[1]);
+        JSONObject r = new JSONObject(); r.put("path", to.getAbsolutePath()); return r;
+    }
+    /** Slots deleted for good: the ones named, or all, or those older than `olderThanMs`. */
+    static int trashEmpty(Context ctx, List<File> slots, long olderThanMs) throws Exception {
+        int n = 0;
+        if (slots != null) { for (File s : slots) { deleteTree(s, new Job("x"), new long[2], new long[2], null, new long[1]); n++; } return n; }
+        JSONArray all = trashList(ctx); long now = System.currentTimeMillis();
+        for (int i = 0; i < all.length(); i++) { JSONObject m = all.getJSONObject(i); if (olderThanMs <= 0 || now - m.optLong("at") > olderThanMs) { deleteTree(new File(m.optString("slot")), new Job("x"), new long[2], new long[2], null, new long[1]); n++; } }
+        return n;
+    }
+
+    /* ---------- what a file says about itself: a photo's EXIF, a recording's tags, an app's name and version ---------- */
+    static JSONObject meta(Context ctx, File f) throws Exception {
+        JSONObject o = new JSONObject(); String n = f.getName().toLowerCase(Locale.ROOT);
+        if (n.matches(".*\\.(jpe?g|png|webp|heic|dng|tiff?)$")) {
+            try {
+                android.media.ExifInterface ex = new android.media.ExifInterface(f.getAbsolutePath()); JSONObject e = new JSONObject();
+                String[][] tags = { { "make", android.media.ExifInterface.TAG_MAKE }, { "model", android.media.ExifInterface.TAG_MODEL }, { "aperture", android.media.ExifInterface.TAG_F_NUMBER }, { "exposure", android.media.ExifInterface.TAG_EXPOSURE_TIME }, { "iso", android.media.ExifInterface.TAG_ISO_SPEED_RATINGS }, { "focal", android.media.ExifInterface.TAG_FOCAL_LENGTH }, { "flash", android.media.ExifInterface.TAG_FLASH }, { "whiteBalance", android.media.ExifInterface.TAG_WHITE_BALANCE }, { "taken", android.media.ExifInterface.TAG_DATETIME_ORIGINAL }, { "software", android.media.ExifInterface.TAG_SOFTWARE }, { "width", android.media.ExifInterface.TAG_IMAGE_WIDTH }, { "height", android.media.ExifInterface.TAG_IMAGE_LENGTH }, { "orientation", android.media.ExifInterface.TAG_ORIENTATION } };
+                for (String[] t : tags) { String v = ex.getAttribute(t[1]); if (v != null && !v.isEmpty()) e.put(t[0], v); }
+                float[] ll = new float[2]; if (ex.getLatLong(ll)) { e.put("lat", ll[0]); e.put("lon", ll[1]); }
+                if (!e.has("width")) { BitmapFactory.Options bo = new BitmapFactory.Options(); bo.inJustDecodeBounds = true; BitmapFactory.decodeFile(f.getAbsolutePath(), bo); if (bo.outWidth > 0) { e.put("width", bo.outWidth); e.put("height", bo.outHeight); } }
+                o.put("exif", e);
+            } catch (Exception ignored) {}
+        } else if (n.matches(".*\\.(mp3|m4a|flac|ogg|opus|wav|aac|wma|mp4|mkv|webm|m4v|mov|avi|3gp|ts)$")) {
+            android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+            try {
+                r.setDataSource(f.getAbsolutePath()); JSONObject m = new JSONObject();
+                int[][] keys = { { android.media.MediaMetadataRetriever.METADATA_KEY_TITLE }, { android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST }, { android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM }, { android.media.MediaMetadataRetriever.METADATA_KEY_GENRE }, { android.media.MediaMetadataRetriever.METADATA_KEY_YEAR }, { android.media.MediaMetadataRetriever.METADATA_KEY_DURATION }, { android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE }, { android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH }, { android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT }, { android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE } };
+                String[] names = { "title", "artist", "album", "genre", "year", "duration", "bitrate", "width", "height", "mime" };
+                for (int i = 0; i < keys.length; i++) { String v = r.extractMetadata(keys[i][0]); if (v != null && !v.isEmpty()) m.put(names[i], v); }
+                o.put("media", m);
+            } catch (Exception ignored) {} finally { try { r.release(); } catch (Exception ignored) {} }
+        } else if (n.endsWith(".apk")) {
+            try { android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0); if (pi != null) { pi.applicationInfo.sourceDir = f.getAbsolutePath(); pi.applicationInfo.publicSourceDir = f.getAbsolutePath(); JSONObject a = new JSONObject(); a.put("label", String.valueOf(ctx.getPackageManager().getApplicationLabel(pi.applicationInfo))); a.put("package", pi.packageName); a.put("version", pi.versionName == null ? "" : pi.versionName); a.put("minSdk", Build.VERSION.SDK_INT >= 24 ? pi.applicationInfo.minSdkVersion : 0); a.put("targetSdk", pi.applicationInfo.targetSdkVersion); try { android.content.pm.PackageInfo inst = ctx.getPackageManager().getPackageInfo(pi.packageName, 0); a.put("installedVersion", inst.versionName); } catch (Exception ignored) {} o.put("apk", a); } } catch (Exception ignored) {}
+        }
+        return o;
+    }
+    /** Text written to a file (the editor's save), by way of a part file. */
+    static void write(File f, String text) throws IOException {
+        File part = new File(f.getParentFile(), f.getName() + ".ktpart");
+        try (OutputStream o = new FileOutputStream(part)) { o.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+        if (f.exists() && !f.delete()) { part.delete(); throw new IOException("cannot replace"); } if (!part.renameTo(f)) { part.delete(); throw new IOException("cannot write"); }
+    }
+
     /* ---------- small things ---------- */
     static JSONObject mkdir(File d) throws Exception { JSONObject o = new JSONObject(); o.put("ok", d.isDirectory() || d.mkdirs()); o.put("path", d.getAbsolutePath()); return o; }
     static JSONObject rename(File f, String name) throws Exception {

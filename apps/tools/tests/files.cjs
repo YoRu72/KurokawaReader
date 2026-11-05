@@ -28,7 +28,11 @@ let fails = 0; const ok = (what, cond) => { console.log((cond ? 'ok   ' : 'FAIL 
       filesCancel: async () => {}, filesAccess: async () => ({ all: true }),
       sharedPending: async () => ({ items: [{ uri: 'content://x/1', name: 'shared.pdf', size: 42000, mime: 'application/pdf' }] }), sharedSave: async ({ dir }) => { window.__calls.push('sharedSave:' + dir); return { saved: ['x'], failed: [], dir }; }, sharedClear: async () => {},
       openChooser: async ({ path }) => { window.__calls.push('open:' + path.split('/').pop()); }, openWith: async ({ mime }) => { window.__calls.push('openWith:' + mime); }, shareFile: async () => { window.__calls.push('share'); },
-      filesHead: async () => ({ text: 'hello notes', size: 11 }),
+      filesHead: async () => ({ text: 'hello notes', size: 11 }), filesWrite: async ({ path }) => { window.__calls.push('write:' + path.split('/').pop()); return { size: 1 }; },
+      filesSearch: async ({ path, q }) => { window.__calls.push('search:' + q + '@' + path); return { entries: [{ name: 'Movie.mkv', path: '/storage/emulated/0/Download/Kurokawa/Movie.mkv', dir: false, size: 734003200, mtime: Date.now() - 3600000, ext: 'mkv' }, { name: 'notes.txt', path: '/storage/emulated/0/Download/Kurokawa/notes.txt', dir: false, size: 1200, mtime: Date.now() - 86400000 * 40, ext: 'txt' }] }; },
+      filesTrash: async ({ paths }) => { window.__calls.push('trash:' + paths.length); return { moved: paths, failed: [] }; }, filesTrashList: async () => ({ items: [{ slot: '/s/1', name: 'gone.txt', from: '/storage/emulated/0/gone.txt', at: Date.now(), dir: false, size: 5, path: '/s/1/gone.txt', exists: true }] }), filesTrashRestore: async () => { window.__calls.push('restore'); return { path: '/x' }; }, filesTrashEmpty: async () => ({ n: 1 }),
+      filesMeta: async () => ({ exif: { make: 'Canon', model: 'EOS', aperture: '2.8', exposure: '0.004', iso: '100', width: 4000, height: 3000, lat: 24.7, lon: 46.7 } }), hashFile: async () => ({ md5: 'a'.repeat(32), sha1: 'b'.repeat(40), sha256: 'c'.repeat(64), size: 1 }),
+      archiveCreate: async (o) => { window.__calls.push('make:' + o.out.split('/').pop() + ':' + (o.format || 'zip') + ':' + o.level + (o.password ? ':pw' : '')); return { files: 1, path: o.out, size: 10 }; }, localUrl: async ({ path }) => ({ url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }), filesWallpaper: async () => { window.__calls.push('wallpaper'); },
       filesCollection: async ({ kind }) => ({ entries: kind === 'recent' ? [{ name: 'new.png', path: '/storage/emulated/0/DCIM/new.png', dir: false, size: 100, mtime: Date.now() - 1000, ext: 'png' }, { name: 'old.mp4', path: '/storage/emulated/0/Movies/old.mp4', dir: false, size: 900, mtime: Date.now() - 86400000 * 3, ext: 'mp4' }] : [] }),
     }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: Kurokawa, Filesystem: {} }, PluginHeaders: [] };
@@ -39,18 +43,20 @@ let fails = 0; const ok = (what, cond) => { console.log((cond ? 'ok   ' : 'FAIL 
   ok('the app folder is listed, folders first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,app.apk,Movie.mkv,notes.txt,pack.zip,photo.jpg,Song.mp3');
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-list.png' });
   // sort by size, turned round
-  await p.click('.topbar-actions button[aria-label]:nth-of-type(4)'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions button[aria-label]:nth-of-type(4)'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
+  await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
   ok('sorted by size, biggest first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).slice(0, 2).join(',') === 'Sub,Movie.mkv');
   // kind filter
   await p.click('.files-kinds .chip:nth-child(3)'); await p.waitForTimeout(150);
   ok('the Music chip keeps the song (and folders)', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,Song.mp3');
   await p.click('.files-kinds .chip:nth-child(1)'); await p.waitForTimeout(150);
   // search within
-  await p.click('.topbar-actions button[aria-label]:nth-of-type(1)'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
+  await p.click('.topbar-actions button[aria-label="Filter this folder"]'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
   ok('the search narrows', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Movie.mkv');
   await p.fill('.files-search', ''); await p.waitForTimeout(150);
   // open a text file: the quick look
-  await p.click('.files-row:has-text("notes.txt")'); await p.waitForSelector('.files-look'); ok('a text file is looked at in the app', (await p.textContent('.files-text')).includes('hello notes')); await p.click('.sheet .sheet-head button[aria-label="Close"]'); await p.waitForTimeout(300);
+  await p.click('.files-row:has-text("notes.txt")'); await p.waitForSelector('.files-editor'); ok('a text file opens in the editor', (await p.inputValue('.files-ta')).includes('hello notes'));
+  await p.fill('.files-ta', 'hello notes edited'); await p.click('.files-editor .btn:has-text("Save")'); await p.waitForTimeout(200); ok('the editor saves', (await p.evaluate(() => window.__calls.join(','))).includes('write:notes.txt'));
+  await p.click('.sheet .sheet-head button[aria-label="Close"]'); await p.waitForTimeout(300);
   // a folder opened: breadcrumbs
   await p.click('.files-row:has-text("Sub")'); await p.waitForTimeout(300);
   ok('breadcrumbs follow', (await p.$$eval('.files-crumbs .crumb', (e) => e.map((x) => x.textContent))).join('/') === 'Kurokawa/Sub');

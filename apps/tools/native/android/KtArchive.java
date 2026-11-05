@@ -519,6 +519,66 @@ public final class KtArchive {
         if (out.exists() && !out.delete()) throw new IOException("cannotReplace"); if (!part.renameTo(out)) throw new IOException("cannotRename");
         pr.on(total, total, ""); return n;
     }
+    /** What to make: the format (zip, 7z, tar, tar.gz, tar.xz), how hard to squeeze (0–9), a password (zip: AES-256 through zip4j; the others have none), the sources deleted after. */
+    public static final class MakeOptions { public String format = "zip"; public int level = 6; public String password; public boolean deleteAfter; public String comment; }
+    /** An archive of files and folders in the format asked; what gains nothing by squeezing is stored in a zip. */
+    public static int create(File out, List<File> inputs, MakeOptions o, Progress pr) throws IOException {
+        List<File[]> files = new ArrayList<>(); long total = 0;
+        for (File in : inputs) { if (in.isDirectory()) { collect(in, in.getName() + "/", files); } else files.add(new File[]{ in, new File(in.getName()) }); }
+        for (File[] p : files) total += p[0].length();
+        File part = new File(out.getPath() + ".part"); long done = 0; int n = 0; byte[] buf = new byte[1 << 16]; String fmt = o.format == null ? "zip" : o.format;
+        if (fmt.equals("zip") && o.password != null && !o.password.isEmpty()) {
+            // (zip4j: AES-256, the level asked; one file at a time so the progress is told.)
+            try (net.lingala.zip4j.ZipFile z = new net.lingala.zip4j.ZipFile(part, o.password.toCharArray())) {
+                for (File[] p : files) {
+                    if (pr.stopped()) throw new IOException("stopped");
+                    String name = p[1].getPath().replace('\\', '/'); pr.on(done, total, name);
+                    net.lingala.zip4j.model.ZipParameters zp = new net.lingala.zip4j.model.ZipParameters(); zp.setFileNameInZip(name); zp.setEncryptFiles(true); zp.setEncryptionMethod(net.lingala.zip4j.model.enums.EncryptionMethod.AES); zp.setAesKeyStrength(net.lingala.zip4j.model.enums.AesKeyStrength.KEY_STRENGTH_256);
+                    if (stored(name) || o.level == 0) zp.setCompressionMethod(net.lingala.zip4j.model.enums.CompressionMethod.STORE); else { zp.setCompressionMethod(net.lingala.zip4j.model.enums.CompressionMethod.DEFLATE); zp.setCompressionLevel(o.level <= 2 ? net.lingala.zip4j.model.enums.CompressionLevel.FASTEST : o.level <= 4 ? net.lingala.zip4j.model.enums.CompressionLevel.FAST : o.level <= 6 ? net.lingala.zip4j.model.enums.CompressionLevel.NORMAL : o.level <= 8 ? net.lingala.zip4j.model.enums.CompressionLevel.MAXIMUM : net.lingala.zip4j.model.enums.CompressionLevel.ULTRA); }
+                    z.addFile(p[0], zp); done += p[0].length(); n++;
+                }
+                if (o.comment != null && !o.comment.isEmpty()) z.setComment(o.comment);
+            }
+        } else if (fmt.equals("zip")) {
+            try (ZipOutputStream z = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(part), 1 << 16))) {
+                z.setLevel(Math.max(0, Math.min(9, o.level))); if (o.comment != null && !o.comment.isEmpty()) z.setComment(o.comment);
+                for (File[] p : files) {
+                    if (pr.stopped()) throw new IOException("stopped");
+                    String name = p[1].getPath().replace('\\', '/'); ZipEntry e = new ZipEntry(name); e.setTime(p[0].lastModified());
+                    if (stored(name) || o.level == 0) { e.setMethod(ZipEntry.STORED); e.setSize(p[0].length()); e.setCompressedSize(p[0].length()); CRC32 c = new CRC32(); try (InputStream in = new FileInputStream(p[0])) { int r; while ((r = in.read(buf)) > 0) c.update(buf, 0, r); } e.setCrc(c.getValue()); }
+                    z.putNextEntry(e); pr.on(done, total, name);
+                    try (InputStream in = new BufferedInputStream(new FileInputStream(p[0]), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { z.write(buf, 0, r); done += r; } }
+                    z.closeEntry(); n++;
+                }
+            }
+        } else if (fmt.equals("7z")) {
+            try (org.apache.commons.compress.archivers.sevenz.SevenZOutputFile z = new org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(part)) {
+                z.setContentMethods(Collections.singletonList(new org.apache.commons.compress.archivers.sevenz.SevenZMethodConfiguration(org.apache.commons.compress.archivers.sevenz.SevenZMethod.LZMA2, Math.max(0, Math.min(9, o.level)))));
+                for (File[] p : files) {
+                    if (pr.stopped()) throw new IOException("stopped");
+                    String name = p[1].getPath().replace('\\', '/'); SevenZArchiveEntry e = z.createArchiveEntry(p[0], name); z.putArchiveEntry(e); pr.on(done, total, name);
+                    try (InputStream in = new BufferedInputStream(new FileInputStream(p[0]), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { z.write(buf, 0, r); done += r; } }
+                    z.closeArchiveEntry(); n++;
+                }
+            }
+        } else {
+            OutputStream raw = new BufferedOutputStream(new FileOutputStream(part), 1 << 16);
+            OutputStream comp = fmt.equals("tar.gz") ? new org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream(raw) : fmt.equals("tar.xz") ? new org.apache.commons.compress.compressors.xz.XZCompressorOutputStream(raw, Math.max(0, Math.min(9, o.level))) : raw;
+            try (org.apache.commons.compress.archivers.tar.TarArchiveOutputStream t = new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(comp)) {
+                t.setLongFileMode(org.apache.commons.compress.archivers.tar.TarArchiveOutputStream.LONGFILE_POSIX); t.setBigNumberMode(org.apache.commons.compress.archivers.tar.TarArchiveOutputStream.BIGNUMBER_POSIX);
+                for (File[] p : files) {
+                    if (pr.stopped()) throw new IOException("stopped");
+                    String name = p[1].getPath().replace('\\', '/'); org.apache.commons.compress.archivers.tar.TarArchiveEntry e = new org.apache.commons.compress.archivers.tar.TarArchiveEntry(p[0], name); t.putArchiveEntry(e); pr.on(done, total, name);
+                    try (InputStream in = new BufferedInputStream(new FileInputStream(p[0]), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { t.write(buf, 0, r); done += r; } }
+                    t.closeArchiveEntry(); n++;
+                }
+            }
+        }
+        if (out.exists() && !out.delete()) throw new IOException("cannotReplace"); if (!part.renameTo(out)) throw new IOException("cannotRename");
+        if (o.deleteAfter) for (File in : inputs) deleteTree(in);
+        pr.on(total, total, ""); return n;
+    }
+    static void deleteTree(File f) { if (f.isDirectory()) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); } f.delete(); }
     static void collect(File dir, String prefix, List<File[]> out) { File[] kids = dir.listFiles(); if (kids == null) return; for (File k : kids) { if (k.isDirectory()) collect(k, prefix + k.getName() + "/", out); else out.add(new File[]{ k, new File(prefix + k.getName()) }); } }
     static boolean stored(String name) { return name.matches("(?i).*\\.(png|jpe?g|gif|webp|avif|mp4|mkv|webm|mp3|m4a|ogg|opus|flac|zip|7z|rar|gz|xz|bz2|apk|woff2?)$"); }
 }
