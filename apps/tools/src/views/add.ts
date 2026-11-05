@@ -1,7 +1,7 @@
 // A new download: links or magnets typed or pasted (several at once), a .torrent file chosen; the folder, the
 // name, the connections; for a torrent, its files picked once the metadata is here.
 import { h, icon, openSheet, toast } from '../ui/dom';
-import { t, formatBytes, countFiles } from '../i18n';
+import { t, formatBytes, countFiles, localDigits } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName } from '../engine';
 import type { Task, TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
@@ -108,7 +108,25 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   });
   sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
-  sh.actions.append(go);
+  // (A batch: every link looked at first — what is not a file, what needs a sign-in, what is gone, what is here already — and the sizes against the free space.)
+  const check = h('button', { type: 'button', class: 'btn tonal', hidden: true, onclick: () => void checkBatch() }, icon('check'), t('preflightCheck')) as HTMLButtonElement;
+  const checkBatch = async () => {
+    const srcs = sources(); if (srcs.length < 2) return; check.disabled = true; check.replaceChildren(icon('check'), t('preflightRunning'));
+    try {
+      const { preflight, addable } = await import('../downloads/preflight'); const { pageLike } = await import('./addVideo');
+      const r = await preflight(srcs, { dir: getSettings().downloadDir, videoEnabled: videoEnabled(), isVideoHost, pageLike });
+      const ps = openSheet(t('preflightTitle'), t('close'), { stack: true }); const boxes: [HTMLInputElement, TaskSource][] = [];
+      const VERDICT: Record<string, [string, string]> = { ok: ['check', 'preflightOk'], video: ['film', 'preflightVideo'], torrent: ['magnet', 'preflightTorrent'], unsupported: ['close', 'preflightUnsupported'], auth: ['key', 'preflightAuth'], notFound: ['alert', 'preflightNotFound'], page: ['globe', 'preflightPage'], have: ['folder', 'preflightHave'], error: ['alert', 'preflightError'] };
+      const counts = r.items.reduce((a, c) => { a[c.verdict] = (a[c.verdict] ?? 0) + 1; return a; }, {} as Record<string, number>);
+      ps.body.append(h('p', { class: 'hint' }, Object.entries(counts).map(([v, c]) => `${t(VERDICT[v][1] as 'preflightOk')}: ${localDigits(String(c))}`).join(' · ')),
+        h('p', { class: 'src' + (r.short ? ' danger' : '') }, icon('storage'), ' ', r.free >= 0 ? t('preflightSpace', { need: formatBytes(r.need), free: formatBytes(r.free) }) : t('preflightNeed', { need: formatBytes(r.need) }), r.short ? ` · ${t('storageShort')}` : ''),
+        h('div', { class: 'dest-list' }, ...r.items.map((c) => { const [ic, key] = VERDICT[c.verdict]; const cb = h('input', { type: 'checkbox', checked: addable(c.verdict) }) as HTMLInputElement; boxes.push([cb, c.src]); return h('label', { class: 'dest-row' + (addable(c.verdict) ? '' : ' off') }, cb, icon(ic), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'ltr' }, c.name || c.src.url || c.src.magnet || 'torrent'), h('small', { class: 'src' }, t(key as 'preflightOk') + (c.status ? ` · HTTP ${localDigits(String(c.status))}` : '') + (c.size ? ` · ${formatBytes(c.size)}` : '')))); })));
+      ps.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { for (const [cb] of boxes) cb.checked = !boxes.every(([b]) => b.checked); } }, t('preflightToggle')),
+        h('button', { type: 'button', class: 'btn primary', onclick: () => { const keep = boxes.filter(([cb]) => cb.checked).map(([, s]) => s); if (!keep.length) { toast(t('preflightNone'), 'error'); return; } ta.value = keep.map((s) => s.url ?? s.magnet ?? '').filter(Boolean).join('\n'); if (!keep.some((s) => s.torrent)) torrentFile = null; ps.close(); go.click(); } }, icon('download'), t('preflightAddChecked')));
+    } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+    check.disabled = false; check.replaceChildren(icon('check'), t('preflightCheck'));
+  };
+  sh.actions.append(check, go);
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
   const peekZip = async (u: string | null) => { if (!u || !/\.(zip|cbz|apks|xapk|apkm)(\?|$)/i.test(u)) { zipBox.hidden = true; zipFor = ''; return; } if (zipFor === u) return; zipFor = u; zipBox.hidden = false; zipBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('zipPeeking')}`)); const m = await import('../downloads/prism'); const r = await m.remoteZipEntries(u).catch(() => null); if (zipFor !== u) return; if (!r) { zipBox.hidden = true; return; } zipBox.replaceChildren(h('details', null, h('summary', null, `${t('archiveContents')} · ${countFiles(r.entries.length)} · ${formatBytes(r.total)}`), h('div', { class: 'file-rows' }, ...r.entries.slice(0, 300).map((e) => h('div', { class: 'file-row' }, h('span', { class: 'grow', dir: 'ltr' }, e.path), h('small', { class: 'src' }, formatBytes(e.size))))))); };
   const metadata = async () => {
@@ -129,8 +147,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   };
   // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
   const sources = (): TaskSource[] => { const ref = referer.value.trim(); const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)).map((x) => (ref && x.url ? { ...x, headers: { ...(x.headers ?? {}), Referer: ref } } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
-  let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => void metadata(), 600); });
-  if (initial) void metadata();
+  let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => void metadata(), 600); check.hidden = parseSources(ta.value).length < 2; });
+  if (initial) { void metadata(); check.hidden = parseSources(ta.value).length < 2; }
   go.addEventListener('click', async () => {
     const srcs = sources();
     if (!srcs.length) { toast(t('invalidLink'), 'error'); ta.focus(); return; }
