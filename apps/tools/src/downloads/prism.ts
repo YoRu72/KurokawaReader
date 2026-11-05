@@ -134,10 +134,18 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     ...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); for (const x of shown()) chosen.add(x.href); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)));
   const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links);
   const host = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
-  const sync = () => { go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) }); };
+  const sync = () => {
+    go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) });
+    const bar = list.querySelector<HTMLElement>('.grab-bar'); if (!bar) return; const xs = shown(); const picked = xs.filter((x) => chosen.has(x.href)).length; const [all, none] = bar.querySelectorAll('button');
+    all.disabled = picked === xs.length; none.disabled = !picked; bar.querySelector('.grab-count')!.textContent = t('grabSelectedN', { n: localDigits(picked) });
+  };
   const draw = () => {
     const xs = shown();
-    list.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: () => { const all = xs.every((x) => chosen.has(x.href)); xs.forEach((x) => (all ? chosen.delete(x.href) : chosen.add(x.href))); draw(); } }, t('allFiles')),
+    const picked = xs.filter((x) => chosen.has(x.href)).length;
+    list.replaceChildren(h('div', { class: 'grab-bar' },
+        h('button', { type: 'button', class: 'btn text small', disabled: picked === xs.length, onclick: () => { xs.forEach((x) => chosen.add(x.href)); draw(); } }, t('grabSelectAll', { n: localDigits(xs.length) })),
+        h('button', { type: 'button', class: 'btn text small', disabled: !picked, onclick: () => { xs.forEach((x) => chosen.delete(x.href)); draw(); } }, t('grabSelectNone')),
+        h('span', { class: 'grab-count' }, t('grabSelectedN', { n: localDigits(picked) }))),
       ...xs.slice(0, 600).map((x) => { const nm = x.name ?? decodeURIComponent(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
         x.thumb ? h('img', { class: 'grab-thumb', src: x.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
         h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href)].filter(Boolean).join(' · ')))); }));
