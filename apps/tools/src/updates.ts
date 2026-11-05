@@ -7,7 +7,7 @@
 import { h, icon, openSheet, toast } from './ui/dom';
 import { t, dateLocale, formatBytes, localDigits, countConnections, countVersions } from './i18n';
 import { getSettings, updateSettings } from './settings';
-import { APP_VERSION, TAG_PREFIX } from './repo';
+import { APP_VERSION, TAG_PREFIX, REPO } from './repo';
 import { releasesOf, suitableAsset, fetchAndInstall, keptDownload, downloadRunning, cmpVersion, installVia, setInstallVia, type Release, type Progress } from './installer';
 import { newerThan, whatsNew, versionChange, sha256Of } from './updateCore';
 import { openExternal, nativePlatform } from './native';
@@ -82,7 +82,7 @@ function notesSheet(title: string, list: Release[]): void { const sh = openSheet
 
 const shortTime = (sec: number) => (sec < 60 ? t('secShort', { n: localDigits(Math.max(1, Math.round(sec))) }) : t('minShort', { n: localDigits(Math.round(sec / 60)) }));
 export function showUpdateSheet(rel: Release): void {
-  const sh = openSheet(t('updateAvailable', { v: rel.version }), t('close')); sh.el.classList.add('update-sheet');
+  const sh = openSheet(cmpVersion(rel.version, APP_VERSION) > 0 ? t('updateAvailable', { v: rel.version }) : t('updateLatestIs', { v: rel.version }), t('close')); sh.el.classList.add('update-sheet');
   const list = since.length && since[0].version === rel.version ? since : [rel];
   sh.body.append(h('div', { class: 'upd-head' }, h('span', { class: 'upd-chip', dir: 'ltr' }, APP_VERSION), h('span', { class: 'upd-arrow' }, icon('arrowRight')), h('span', { class: 'upd-chip new', dir: 'ltr' }, rel.version),
     list.length > 1 ? h('small', { class: 'src' }, t('updateVersionsSince', { n: countVersions(list.length) })) : null),
@@ -105,7 +105,7 @@ export function showUpdateSheet(rel: Release): void {
     const parts = [p.total ? `${localDigits(p.pct)}${getLangPct()}` : '', p.total ? `${formatBytes(p.got)} / ${formatBytes(p.total)}` : formatBytes(p.got), p.speed ? t('perSecond', { n: formatBytes(p.speed) }) : '', p.speed && p.total > p.got ? t('timeLeft', { t: shortTime((p.total - p.got) / p.speed) }) : '', p.connections && p.connections > 1 ? countConnections(p.connections) : ''];
     status.textContent = parts.filter(Boolean).map((x) => `⁨${x}⁩`).join(' · ');
   };
-  const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('downloadInstall')) as HTMLButtonElement;
+  const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), cmpVersion(rel.version, APP_VERSION) > 0 ? t('downloadInstall') : t('updateReinstall')) as HTMLButtonElement;
   const cancel = h('button', { type: 'button', class: 'btn tonal', hidden: true, onclick: () => ctl?.abort() }, t('cancel')) as HTMLButtonElement;
   const later = h('button', { type: 'button', class: 'btn text', onclick: () => sh.close() }, t('later'));
   const skip = h('button', { type: 'button', class: 'btn text', onclick: () => { localStorage.setItem('kt.update.skip', rel.version); sh.close(); toast(t('versionSkipped', { v: rel.version })); } }, t('skipVersion'));
@@ -144,7 +144,16 @@ export function updateRows(row: (label: string, control: Node, hint?: string) =>
     catch (er) { status.textContent = /rate/.test(String((er as Error).message)) ? t('updateRateLimited') : navigator.onLine ? t('updateFailed') : t('updateOffline'); }
     b.disabled = false;
   } }, icon('refresh'), t('checkUpdates'));
-  return [row(t('version', { v: APP_VERSION }), check),
+  // (When the automatic check misses — a cached feed, a skipped version, a rate limit — the newest release is
+  // fetched straight from GitHub and offered, even the one already running, to install again.)
+  const latest = h('button', { type: 'button', class: 'btn text small', onclick: async (e: Event) => {
+    const b = e.currentTarget as HTMLButtonElement; b.disabled = true; status.textContent = t('checking');
+    try { localStorage.removeItem('kt.update.skip'); const all = await releasesOf(TAG_PREFIX, getSettings().updateChannel === 'beta'); const rel = all[0]; if (!rel) { status.textContent = t('updateFailed'); } else { since = newerThan(all, APP_VERSION); showUpdateSheet(rel); status.textContent = cmpVersion(rel.version, APP_VERSION) > 0 ? t('updateAvailable', { v: rel.version }) : t('updateLatestIs', { v: rel.version }); } }
+    catch (er) { status.textContent = /rate/.test(String((er as Error).message)) ? t('updateRateLimited') : navigator.onLine ? t('updateFailed') : t('updateOffline'); }
+    b.disabled = false;
+  } }, icon('download'), t('updateGetLatest'));
+  const page = h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/releases`) }, icon('external'), t('updateReleasesPage'));
+  return [row(t('version', { v: APP_VERSION }), check), h('div', { class: 'row-actions' }, latest, page), h('p', { class: 'hint' }, t('updateGetLatestHint')),
     toggle(t('autoCheck'), s.autoUpdateCheck, (v) => { updateSettings({ autoUpdateCheck: v }); scheduleAutoCheck(); }),
     pick(t('updateEvery'), [['launch', t('everyLaunch')], ['daily', t('everyDay')], ['weekly', t('everyWeek')]], s.updateEvery ?? 'launch', (v) => updateSettings({ updateEvery: v as 'launch' })),
     ...(nativePlatform() === 'android' ? [pick(t('updInstallWith'), [['app', t('updViaApp')], ['system', t('updViaSystem')]], installVia(), (v) => setInstallVia(v as 'app' | 'system'))] : []),
