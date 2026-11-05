@@ -178,7 +178,11 @@ export async function imageViewer(items: Entry[], index: number, urlOf: (p: stri
   const img = h('img', { class: 'files-viewer-img', alt: '', draggable: 'false' }) as HTMLImageElement; const stage = h('div', { class: 'files-viewer-stage' }, img); const counter = h('small', { class: 'src' });
   let scale = 1, tx = 0, ty = 0; const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
   const title = sh.el.querySelector('.sheet-head h3') as HTMLElement | null;
-  const show = async () => { const e = items[i]; if (title) title.textContent = e.name; counter.textContent = `${localDigits(i + 1)} / ${localDigits(items.length)}`; scale = 1; tx = ty = 0; apply(); img.src = (await urlOf(e.path)) ?? ''; };
+  // (What the web view cannot draw — HEIC/HEIF, TIFF — is decoded by the phone to a JPEG in the cache first.)
+  const needsDecode = (name: string) => /\.(heic|heif|hif|tiff?|wbmp)$/i.test(name);
+  const decodeIt = async (e: Entry): Promise<string | null> => { const p = pl as unknown as { filesDecode?(o: { path: string }): Promise<{ path: string }> } | null; if (!p?.filesDecode) return null; try { let local = e.path; if (/^arc:\/\//.test(e.path)) local = await (await import('./filesArc')).arcFetch(e.path); const r = await p.filesDecode({ path: local }); const { localFileUrl } = await import('../player/files'); return localFileUrl(r.path); } catch { return null; } };
+  let showing = 0;
+  const show = async () => { const my = ++showing; const e = items[i]; if (title) title.textContent = e.name; counter.textContent = `${localDigits(i + 1)} / ${localDigits(items.length)}`; scale = 1; tx = ty = 0; apply(); img.classList.add('loading'); const u = needsDecode(e.name) ? await decodeIt(e) : await urlOf(e.path); if (my !== showing) return; img.src = u ?? ''; img.classList.remove('loading'); img.onerror = () => { if (my !== showing) return; void decodeIt(e).then((d) => { if (d && my === showing) img.src = d; }); }; };
   // (Pointers: one drags when zoomed or swipes to the next picture; two pinch.)
   const pts = new Map<number, { x: number; y: number }>(); let startDist = 0, startScale = 1, sx = 0, sy = 0, stx = 0, sty = 0;
   stage.addEventListener('pointerdown', (ev) => { stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; } else { sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; } });

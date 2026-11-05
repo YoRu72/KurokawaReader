@@ -121,14 +121,27 @@ final class KtFiles {
         } catch (Throwable e) { return null; }
     }
 
+    /** A picture the web view cannot draw itself (HEIC/HEIF; a TIFF when the decoder knows it) decoded whole to a JPEG in the cache; its path. */
+    static File decode(Context ctx, File f) throws Exception {
+        File dir = new File(ctx.getCacheDir(), "kt-decoded"); dir.mkdirs();
+        File out = new File(dir, Integer.toHexString((f.getAbsolutePath() + "|" + f.lastModified()).hashCode()) + ".jpg"); if (out.length() > 0) return out;
+        Bitmap b = null;
+        if (Build.VERSION.SDK_INT >= 28) { try { android.graphics.ImageDecoder.Source src = android.graphics.ImageDecoder.createSource(f); b = android.graphics.ImageDecoder.decodeBitmap(src, (dec, info, s) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); int w = info.getSize().getWidth(), h = info.getSize().getHeight(); int max = 4096; if (w > max || h > max) { float k = Math.min(max / (float) w, max / (float) h); dec.setTargetSize(Math.round(w * k), Math.round(h * k)); } }); } catch (Throwable e) { Log.w(TAG, "decode: " + e); } }
+        if (b == null) b = BitmapFactory.decodeFile(f.getAbsolutePath());
+        if (b == null) throw new java.io.IOException("undecodable");
+        try (java.io.FileOutputStream o = new java.io.FileOutputStream(out)) { b.compress(Bitmap.CompressFormat.JPEG, 92, o); } finally { b.recycle(); }
+        File[] old = dir.listFiles(); if (old != null && old.length > 40) { java.util.Arrays.sort(old, (x, y) -> Long.compare(x.lastModified(), y.lastModified())); for (int i = 0; i < old.length - 30; i++) old[i].delete(); }
+        return out;
+    }
     static String thumb(Context ctx, File f, int px) {
         String key = f.getAbsolutePath() + "|" + f.lastModified() + "|" + px; String had = thumbs.get(key); if (had != null) return had;
         Bitmap b = null; String name = f.getName().toLowerCase(Locale.ROOT);
         try {
-            if (name.matches(".*\\.(jpe?g|png|webp|gif|bmp|heic|avif)$")) {
+            if (name.matches(".*\\.(jpe?g|png|webp|gif|bmp|heic|heif|hif|avif|tiff?|ico|wbmp)$")) {
                 BitmapFactory.Options o = new BitmapFactory.Options(); o.inJustDecodeBounds = true; BitmapFactory.decodeFile(f.getAbsolutePath(), o);
                 int s = 1; while (o.outWidth / s > px * 2 && o.outHeight / s > px * 2) s *= 2;
                 BitmapFactory.Options o2 = new BitmapFactory.Options(); o2.inSampleSize = s; Bitmap full = BitmapFactory.decodeFile(f.getAbsolutePath(), o2);
+                if (full == null && Build.VERSION.SDK_INT >= 28) { try { full = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(f), (dec, info, s2) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); dec.setTargetSampleSize(Math.max(1, Math.min(info.getSize().getWidth(), info.getSize().getHeight()) / Math.max(1, px * 2))); }); } catch (Throwable ignored) {} }
                 if (full != null) { b = ThumbnailUtils.extractThumbnail(full, px, px, ThumbnailUtils.OPTIONS_RECYCLE_INPUT); }
             } else if (name.matches(".*\\.(mp4|mkv|webm|m4v|mov|avi|3gp|ts|flv|wmv)$")) {
                 b = Build.VERSION.SDK_INT >= 29 ? ThumbnailUtils.createVideoThumbnail(f, new android.util.Size(px, px), null) : ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), android.provider.MediaStore.Images.Thumbnails.MINI_KIND);

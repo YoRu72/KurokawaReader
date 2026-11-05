@@ -23,6 +23,10 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
       remoteList: async ({ id, path }) => { if (!window.__trusted) throw new Error('hostkey:AB:CD:EF:01:23:45:67:89:ssh-ed25519'); if (path === '/') return { entries: [{ name: 'backup', dir: true, size: 0, mtime: 1760000000000 }, { name: 'iso.img', dir: false, size: 4e9, mtime: 1760000000000 }] }; return { entries: [{ name: 'old.tar', dir: false, size: 1e6, mtime: 1760000000000 }] }; },
       remoteJob: async ({ id, op, conn, paths, dest }) => { window.__calls.push(op + ':' + conn + ':' + paths.join('|') + '>' + dest); setTimeout(() => { (ls.files || []).forEach((f) => f({ id, status: 'done', done: 4e9, total: 4e9, files: 1, failed: [] })); }, 50); return { id }; },
       remoteCancel: async () => {}, remoteSave: async () => ({ id: 'nas' }), remoteRemove: async () => {}, remoteScanStop: async () => {},
+      // an archive: listed as a tree the browser walks; a picture inside streamed; a file taken out to the cache
+      archiveList: async ({ path }) => { window.__calls.push('arcList:' + path); return { format: 'zip', total: 3, encrypted: false, inPlaceOk: true, entries: [{ path: 'docs/readme.txt', size: 100, dir: false }, { path: 'pics/a.jpg', size: 2000, dir: false }, { path: 'pics/b.png', size: 3000, dir: false }, { path: 'clip.mp4', size: 50000, dir: false }] }; },
+      archiveEntryUrl: async ({ entry }) => ({ url: 'http://127.0.0.1:1/arc/x/' + entry }), archiveThumb: async () => ({ url: null }),
+      archiveExtract: async ({ id, only }) => { window.__calls.push('arcExtract:' + (only || []).join('|')); return { files: 1, dest: '/cache/arc' }; },
       filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'app', path: '/storage/emulated/0/Download/Kurokawa', name: 'Kurokawa', readable: true, free: 12e9, total: 64e9 }, { kind: 'phone', path: '/storage/emulated/0', name: 'Phone', readable: true, free: 12e9, total: 64e9 }] }),
       filesList: async ({ path }) => { const e = listOf(path); return { exists: !!e, entries: e || [] }; },
       filesThumb: async () => ({ url: null }),
@@ -119,6 +123,20 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="To the other pane"]'); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(600);
   ok('sent to the other pane: a copy job into DCIM', (await p.evaluate(() => window.__calls)).includes('copy:1>/storage/emulated/0/DCIM'), await p.evaluate(() => window.__calls.slice(-3)));
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-dual.png' });
+  // an archive entered as a folder: crumbs name it, its folders open, a picture inside opens the viewer, a sub-folder's crumb leads back
+  await p.setViewportSize({ width: 412, height: 900 }); await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa'); await p.waitForSelector('.files-row:has-text("pack.zip")'); await p.waitForTimeout(300);
+  await p.click('.files-row:has-text("pack.zip") .files-main'); await p.waitForSelector('.files-row:has-text("docs")', { timeout: 5000 });
+  ok('the zip opened as a folder (its root listed)', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'docs,pics,clip.mp4' && (await p.textContent('.files-crumbs')).includes('pack.zip'));
+  await p.click('.files-row:has-text("pics") .files-main'); await p.waitForSelector('.files-row:has-text("a.jpg")');
+  ok('a folder inside the zip entered, the crumbs follow', (await p.textContent('.files-crumbs')).includes('pics'));
+  await p.click('.files-row:has-text("a.jpg") .files-main'); await p.waitForSelector('.files-viewer', { timeout: 5000 });
+  ok('a picture inside the zip opens in the viewer, counted among its neighbours', (await p.textContent('.files-viewer')).includes('/ 2'));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  await p.click('.files-crumbs .crumb:has-text("pack.zip")'); await p.waitForSelector('.files-row:has-text("docs")'); ok('the crumb returns to the zip root', (await p.$$('.files-row')).length === 3);
+  // recent files in the drawer
+  await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.waitForTimeout(300);
+  ok("recent files sit in the drawer", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"new.png\")")));
+  await p.keyboard.press('Escape');
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
