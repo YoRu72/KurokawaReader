@@ -66,7 +66,9 @@ export interface Task {
     /** Waits for Wi-Fi (Android); not retried when it fails; a hidden file (a dot name); waits for the schedule's window. */
     wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean;
     /** A stream fetched piece by piece (HLS): the pieces here of all, and the phase (variant, pieces, join, remux). */
-    hls?: boolean; frag?: number; frags?: number; phase?: string };
+    hls?: boolean; frag?: number; frags?: number; phase?: string;
+    /** A video download's live facts from yt-dlp: resolution, codecs, container, approximate size, length in seconds. */
+    res?: string; vcodec?: string; acodec?: string; ext?: string; sizeApprox?: number; duration?: number };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }

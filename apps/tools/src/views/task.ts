@@ -9,6 +9,7 @@ import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { ktPlugin, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 import { t, localDigits } from '../i18n';
+import { liveLine } from '../downloads/live';
 import { getEngine, displayName, isVideo } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
@@ -35,7 +36,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
         link ? h('div', { class: 'kt-url' }, icon('link'), h('span', { class: 'sel', dir: 'ltr' }, link), h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyLink'), onclick: () => void navigator.clipboard?.writeText(link).then(() => toast(t('copied'))) }, icon('copy'))) : null,
         h('div', { class: 'kt-badges' }, h('span', { class: `kt-badge state-${x.state}` }, live ? h('span', { class: 'kt-live' }) : null, stateLabel(x.state)),
           x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null)));
-    const hlsLine = x.meta?.hls && x.state === 'downloading' ? h('p', { class: 'src' }, icon('film'), ' ', x.meta.frags ? t('hlsPieces', { i: localDigits(String(x.meta.frag ?? 0)), n: localDigits(String(x.meta.frags)) }) : '', x.meta.phase ? ` · ${phaseLabel(x.meta.phase)}` : '') : null;
+    const hlsLine = (x.meta?.hls || x.kind === 'video') && (x.state === 'downloading' || x.state === 'metadata') ? h('p', { class: 'src' }, icon('film'), ' ', liveLine(x)) : null;
     const acts = h('div', { class: 'task-detail-actions' });
     if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id) }, icon('play'), t('resume')));
     if (x.state !== 'done') acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/rules').then((m) => m.clockSheet(x)) }, icon('clock'), t('clockTitle')));
@@ -124,4 +125,3 @@ function remedies(x: Task): HTMLElement | null {
 }
 export const errorText = (e: string): string => (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e);
 
-const phaseLabel = (p: string): string => p.startsWith('variant ') ? t('hlsVariant', { q: p.slice(8) }) : p === 'pieces' ? t('hlsPhasePieces') : p === 'join' ? t('hlsPhaseJoin') : p === 'remux' ? t('hlsPhaseRemux') : p;

@@ -42,6 +42,22 @@ final class KtVideo {
         return res.getOut();
     }
     interface Progress { void on(long done, long total, long speed, String file, String detail); }
+    /** What is known live of a running download — phase (info/video/audio/merge/finish), fragment i/n, the stream's
+     *  resolution, codecs, container and approximate size — read by the engine on each progress call. */
+    static final java.util.Map<String, JSONObject> live = new java.util.concurrent.ConcurrentHashMap<>();
+    static final Pattern FRAG = Pattern.compile("\\(frag (\\d+)/(\\d+)\\)");
+    private static void note(String id, String line, String[] dest, int[] dests) {
+        try {
+            JSONObject o = live.get(id); if (o == null) { o = new JSONObject(); live.put(id, o); }
+            String l = line.trim();
+            if (l.startsWith("KT|")) { String[] p = l.split("\\|", -1); if (p.length >= 7) { if (!"NA".equals(p[1])) o.put("res", p[1]); if (!"NA".equals(p[2]) && !"none".equals(p[2])) o.put("vcodec", p[2].replaceAll("\\..*$", "")); if (!"NA".equals(p[3]) && !"none".equals(p[3])) o.put("acodec", p[3].replaceAll("\\..*$", "")); if (!"NA".equals(p[4])) o.put("ext", p[4]); try { o.put("sizeApprox", Long.parseLong(p[5])); } catch (Exception ignored) {} try { o.put("duration", (long) Double.parseDouble(p[6])); } catch (Exception ignored) {} } return; }
+            if (l.startsWith("[download] Destination:")) { dests[0]++; String f = l.substring(24).trim(); boolean audio = dests[0] > 1 || f.matches(".*\\.(m4a|opus|webm|mp3|ogg|aac)$") && dest[0] == null; o.put("phase", audio && dests[0] > 1 ? "audio" : "video"); o.remove("frag"); o.remove("frags"); return; }
+            if (l.startsWith("[Merger]")) { o.put("phase", "merge"); return; }
+            if (l.startsWith("[EmbedThumbnail]") || l.startsWith("[Metadata]") || l.startsWith("[ExtractAudio]") || l.startsWith("[SponsorBlock]") || l.startsWith("[ModifyChapters]") || l.startsWith("[FixupM3u8]") || l.startsWith("[VideoRemuxer]") || l.startsWith("[VideoConvertor]") || l.startsWith("[EmbedSubtitle]")) { o.put("phase", "finish"); return; }
+            if (l.startsWith("[info]") || l.startsWith("[youtube]") || l.startsWith("[generic]") || l.startsWith("[hlsnative]") || l.startsWith("[dashsegments]")) { if (!o.has("phase")) o.put("phase", "info"); }
+            Matcher f = FRAG.matcher(l); if (f.find()) { o.put("frag", Integer.parseInt(f.group(1))); o.put("frags", Integer.parseInt(f.group(2))); }
+        } catch (Exception ignored) {}
+    }
     /** Runs one download; blocks until it ends; `id` lets it be cancelled with cancel(). Throws on failure. */
     /** The exact arguments of the last attempt, by download id (shown as «the command», taken as the start of «edit and try again»). */
     static final java.util.Map<String, java.util.List<String>> lastCommand = new java.util.concurrent.ConcurrentHashMap<>();
@@ -99,11 +115,12 @@ final class KtVideo {
         { String[] st = LADDER[step]; for (int i = 0; i < st.length; i++) { if (st[i].startsWith("-") && i + 1 < st.length && !st[i + 1].startsWith("-")) r.addOption(st[i], st[++i]); else r.addOption(st[i]); } }
         String extra = meta != null ? meta.optString("extraArgs", "") : "";
         if (!extra.isEmpty()) { java.util.List<String> xs = splitArgs(extra); for (int i = 0; i < xs.size(); i++) { String a = xs.get(i); if (a.startsWith("-") && i + 1 < xs.size() && !xs.get(i + 1).startsWith("-")) { r.addOption(a, xs.get(++i)); } else r.addOption(a); } }
-        lastCommand.put(id, r.buildCommand());
-        final String[] dest = { null }; final long[] last = { 0 };
+        r.addOption("--print", "pre_process:KT|%(resolution)s|%(vcodec)s|%(acodec)s|%(ext)s|%(filesize_approx)s|%(duration)s");
+        lastCommand.put(id, r.buildCommand()); live.remove(id);
+        final String[] dest = { null }; final long[] last = { 0 }; final int[] dests = { 0 };
         YoutubeDLResponse res = YoutubeDL.getInstance().execute(r, id, (progress, eta, line) -> {
             try {
-                Matcher d = DEST.matcher(line.trim()); if (d.find()) dest[0] = d.group(1);
+                note(id, line, dest, dests); Matcher d = DEST.matcher(line.trim()); if (d.find()) dest[0] = d.group(1);
                 Matcher m = LINE.matcher(line); long total = 0, speed = 0, done = 0;
                 if (m.find()) { total = (long) (Double.parseDouble(m.group(2)) * unit(m.group(3))); done = (long) (total * Double.parseDouble(m.group(1)) / 100.0); if (m.group(4) != null) speed = (long) (Double.parseDouble(m.group(4)) * unit(m.group(5))); }
                 long now = System.currentTimeMillis(); if (now - last[0] > 300 || done >= total) { last[0] = now; pr.on(done, total, speed, dest[0] != null ? new File(dest[0]).getName() : null, line.startsWith("[download]") ? null : line.trim()); }
