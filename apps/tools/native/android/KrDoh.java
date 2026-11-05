@@ -212,6 +212,11 @@ final class KrDoh {
      *  requests: a site's check (Cloudflare) wants the browser's own connection. Kept ten minutes a name. */
     private static final Map<String, long[]> neededAt = new ConcurrentHashMap<>();
     private static final Map<String, Long> forced = new ConcurrentHashMap<>();
+    /** Sites whose TLS handshake failed through the resolver's way (AniList refusing the rewritten hello on some
+     *  networks) and answered the plain way: asked the plain way — the network's DNS, the hello as it is — for a day. */
+    private static final Map<String, Long> direct = new ConcurrentHashMap<>();
+    static void goDirect(String host) { if (host == null || host.isEmpty()) return; direct.put(host.toLowerCase(), System.currentTimeMillis() + 86_400_000L); note("direct", host, null, -1, "TLS refused through the resolver: the plain way"); }
+    static boolean isDirect(String host) { if (host == null) return false; Long until = direct.get(host.toLowerCase()); if (until == null) return false; if (until < System.currentTimeMillis()) { direct.remove(host.toLowerCase()); return false; } return true; }
     /** `host` (and its subdomains) sent through the resolver for an hour whatever the network's DNS says: the browser
      *  could not reach it the network's way (a reset, a timeout, a handshake refused — a filter reading names). */
     static void force(String host) {
@@ -379,7 +384,7 @@ final class KrDoh {
      * the caller follows them, by their own names). With DoH off, the plain connection.
      */
     static HttpURLConnection open(URL url) throws IOException {
-        if (!on()) return (HttpURLConnection) url.openConnection();
+        if (!on() || isDirect(url.getHost())) return (HttpURLConnection) url.openConnection();
         InetAddress[] ips = resolve(url.getHost());
         String sp = split; boolean frag = "always".equals(sp) || ("auto".equals(sp) && Boolean.TRUE.equals(neededCached(url.getHost())));
         HttpURLConnection c = connectTo(url, ips[0].getHostAddress(), frag);

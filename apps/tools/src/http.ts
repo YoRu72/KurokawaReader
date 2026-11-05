@@ -10,7 +10,29 @@ export async function request(url: string, init: HttpInit = {}): Promise<HttpRes
   const d = window.kurokawaTools as (typeof window.kurokawaTools & { http?(o: HttpInit & { url: string }): Promise<HttpResult> }) | undefined;
   if (d?.http) return d.http({ url, ...init });
   const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { httpRequest?(o: HttpInit & { url: string }): Promise<HttpResult> }) | null;
-  if (p?.httpRequest) return p.httpRequest({ url, ...init });
+  if (p?.httpRequest) {
+    // (A site whose TLS the phone's own client cannot get through — some networks refuse its hello, as AniList's
+    // «SSL handshake failure» — is asked through the web view's fetch instead, Chromium's own network stack, the way
+    // Hayase reaches AniList; that works for the sites that allow it (AniList, Cinemeta…), and the route is kept a day.)
+    const host = hostOf(url);
+    if (viaWeb(host)) { try { return await webFetch(url, init); } catch { forgetWeb(host); } }
+    try { return await p.httpRequest({ url, ...init }); }
+    catch (e) {
+      const m = String((e as Error)?.message ?? e);
+      if (!TLS_FAIL.test(m)) throw e;
+      try { const r = await webFetch(url, init); rememberWeb(host); return r; } catch { throw e; }
+    }
+  }
+  return webFetch(url, init);
+}
+const TLS_FAIL = /SSL|TLS|handshake|certificate|CertPath|Trust anchor|ECONNRESET|Connection reset|unexpected end of stream|EOF/i;
+const WEB_KEY = 'kt.http.web';
+const hostOf = (u: string): string => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
+const webHosts = (): Record<string, number> => { try { return JSON.parse(localStorage.getItem(WEB_KEY) ?? '{}') as Record<string, number>; } catch { return {}; } };
+const viaWeb = (host: string): boolean => { const at = webHosts()[host]; return !!at && Date.now() - at < 86400e3; };
+const rememberWeb = (host: string): void => { const w = webHosts(); w[host] = Date.now(); try { localStorage.setItem(WEB_KEY, JSON.stringify(w)); } catch { /* full */ } };
+const forgetWeb = (host: string): void => { const w = webHosts(); delete w[host]; try { localStorage.setItem(WEB_KEY, JSON.stringify(w)); } catch { /* full */ } };
+async function webFetch(url: string, init: HttpInit): Promise<HttpResult> {
   const r = await fetch(url, { method: init.method ?? 'GET', headers: init.headers, body: init.body ? (init.bodyBase64 ? Uint8Array.from(atob(init.body), (c) => c.charCodeAt(0)) : init.body) : undefined });
   const headers: Record<string, string> = {}; r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   const buf = new Uint8Array(await r.arrayBuffer());

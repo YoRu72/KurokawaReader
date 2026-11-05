@@ -347,6 +347,8 @@ body:has(.sheet) .get-card.watch-card { opacity: 0; pointer-events: none; }
 html.kt-mpv-on, html.kt-mpv-on body { background: transparent !important; }
 html.kt-mpv-on body > :not(.kt-player):not(.sheet):not(.scrim):not(.sheet-scrim):not(.toast):not(.get-card):not(dialog):not(script):not(style) { visibility: hidden !important; }
 html.kt-mpv-on .kt-player, html.kt-mpv-on .kt-stage { background: transparent !important; }
+/* (The stand-in element for mpv's picture is a «.kt-video», which the page paints black: see-through, or it is a black sheet over the picture.) */
+html.kt-mpv-on .kt-mpv-video, .kt-mpv-video { background: transparent !important; filter: none !important; }
 /* (The ambient glow fills the stage with an inset shadow: over mpv's picture, which is under the page, that is a black sheet.) */
 html.kt-mpv-on .kt-player.ambient .kt-stage { box-shadow: none !important; }
 .kt-mpv-video { position: absolute; inset: 0; pointer-events: none; }
@@ -363,7 +365,7 @@ html.kt-mpv-on .kt-player.ambient .kt-stage { box-shadow: none !important; }
 .kt-frame-info { font-variant-numeric: tabular-nums; text-align: center; font-size: 15px; margin: 4px 0 10px; }
 .kt-frame-row { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
 .kt-frame-row .chip { min-width: 56px; justify-content: center; font-variant-numeric: tabular-nums; }
-.kt-stats { position: absolute; top: 56px; inset-inline-start: 12px; z-index: 5; margin: 0; padding: 8px 10px; border-radius: 10px; background: rgb(0 0 0 / .6); color: #e8f0ff; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; pointer-events: none; white-space: pre; }
+.kt-player .kt-stats { position: absolute; top: 56px; inset-inline-start: 12px; z-index: 5; margin: 0; padding: 8px 10px; border-radius: 10px; background: rgb(0 0 0 / .6); color: #e8f0ff; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; pointer-events: none; white-space: pre; }
 kbd { display: inline-block; min-width: 2.2em; padding: 2px 8px; border-radius: 6px; background: var(--surface-2, rgba(127,127,127,.15)); font: 600 13px ui-monospace, Menlo, Consolas, monospace; text-align: center; }
 .search-history { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; }
 .search-history .hint svg { width: 14px; height: 14px; vertical-align: -2px; margin-inline-end: 4px; }
