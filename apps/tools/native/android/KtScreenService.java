@@ -387,6 +387,7 @@ public class KtScreenService extends Service {
         work.execute(() -> {
             try {
                 List<KtScreenA11y.Block> blocks = new ArrayList<>(); String read = s(cfg, "read", "auto"); boolean picture = false; int at = scrollY;
+                if ("text".equals(read) && !KtScreenA11y.declared(this)) read = "auto"; // (a build without the service: a picture then)
                 if (!"picture".equals(read) && KtScreenA11y.self != null) blocks = KtScreenA11y.read(area);
                 if (blocks.isEmpty() && !"text".equals(read)) {
                     if (!KtScreenCapture.ready()) {

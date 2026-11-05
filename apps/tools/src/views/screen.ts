@@ -19,7 +19,7 @@ export function accelerator(e: { key: string; code: string; ctrlKey: boolean; al
   return [...mods, k].join('+');
 }
 
-type Status = { sdk?: number; overlay: boolean; a11y: boolean; a11yLive?: boolean; running: boolean; capture: boolean; notify: boolean; battery: boolean; tile: boolean };
+type Status = { sdk?: number; overlay: boolean; a11y: boolean; a11yLive?: boolean; a11yBuild?: boolean; running: boolean; capture: boolean; notify: boolean; battery: boolean; tile: boolean };
 type Plug = {
   screenStatus?(): Promise<Status>; screenPermission?(o: { what: string }): Promise<void>; screenConfig?(o: { config: Record<string, unknown>; clearFixed?: boolean }): Promise<void>;
   screenStart?(): Promise<void>; screenStop?(): Promise<void>; screenTranslate?(o: { texts: string[]; config?: Record<string, unknown> }): Promise<{ texts: string[] }>;
@@ -27,6 +27,7 @@ type Plug = {
   screenShortcut?(o: { show?: boolean; pin?: boolean }): Promise<{ shown: boolean; pinned: boolean }>;
 };
 const plug = (): Plug | null => ktPlugin() as unknown as Plug | null;
+const A11Y_RELEASES = 'https://github.com/YoRu72/KurokawaReader/releases/latest';
 
 type PcStatus = { platform: string; on: boolean; keys: Record<string, { acc: string; ok: boolean }>; tray: boolean; auto: boolean; region: unknown; ocr: 'windows' | 'vision' | 'tesseract' | 'ai' | 'none' };
 type Desk = { screenConfig(o: { config: Record<string, unknown>; clearFixed?: boolean }): Promise<PcStatus>; screenStatus(): Promise<PcStatus>; screenAction(a: string): Promise<void>; screenOcrLangs(): Promise<{ kind: string; langs?: string[]; error?: string }> };
@@ -64,10 +65,13 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     state.textContent = !s.overlay ? t('scrNeedOverlay') : s.running ? t('scrRunning') : !engineReady(cfg) ? t('scrNeedEngine') : t('scrReady');
     steps.replaceChildren(
       step(s.overlay, t('scrStepOverlay'), t('scrStepOverlayHint'), 'overlay', true),
-      step(s.a11y, t('scrStepA11y'), t('scrStepA11yHint'), 'a11y', cfg.read === 'text'),
+      // (The ordinary build has no accessibility service — Play Protect blocks the install of an app from a file that
+      // declares one — so it reads the screen as a picture; the «-a11y» build, offered here, reads the text.)
+      ...(s.a11yBuild === false ? [h('div', { class: 'screen-step', 'data-step': 'a11yBuild' }, h('span', { class: 'screen-step-ic' }, icon('info')), h('span', { class: 'grow' }, h('b', null, t('scrNoA11yBuild')), h('small', { class: 'src' }, t('scrNoA11yBuildHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../native').then((n) => n.openExternal(A11Y_RELEASES)) }, t('scrGetA11yBuild')))]
+        : [step(s.a11y, t('scrStepA11y'), t('scrStepA11yHint'), 'a11y', cfg.read === 'text')]),
       // (Android 13+: an app installed from a file has its accessibility switch «restricted» until it is allowed
       // in the app's info page — ⋮ → Allow restricted settings.)
-      ...(!s.a11y && (s.sdk ?? 0) >= 33 ? [h('div', { class: 'screen-step', 'data-step': 'restricted' }, h('span', { class: 'screen-step-ic' }, icon('lock')), h('span', { class: 'grow' }, h('b', null, t('scrRestricted')), h('small', { class: 'src' }, t('scrRestrictedHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what: 'app' }) }, t('scrAppInfo')))] : []),
+      ...(!s.a11y && s.a11yBuild !== false && (s.sdk ?? 0) >= 33 ? [h('div', { class: 'screen-step', 'data-step': 'restricted' }, h('span', { class: 'screen-step-ic' }, icon('lock')), h('span', { class: 'grow' }, h('b', null, t('scrRestricted')), h('small', { class: 'src' }, t('scrRestrictedHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what: 'app' }) }, t('scrAppInfo')))] : []),
       step(s.notify, t('scrStepNotify'), t('scrStepNotifyHint'), 'app'),
       step(s.battery, t('scrStepBattery'), t('scrStepBatteryHint'), 'battery'),
       ...(s.tile ? [h('div', { class: 'screen-step', 'data-step': 'tile' }, h('span', { class: 'screen-step-ic' }, icon('grid')), h('span', { class: 'grow' }, h('b', null, t('scrStepTile')), h('small', { class: 'src' }, t('scrStepTileHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void plug()?.screenPermission?.({ what: 'tile' }) }, t('scrAddTile')))] : []));
@@ -163,7 +167,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     }
     // How the screen is read, and what a translation covers
     if (!PC) readCard.replaceChildren(h('h3', null, t('scrRead')),
-      segs(cfg.read, [['auto', t('scrReadAuto')], ['text', t('scrReadText')], ['picture', t('scrReadPicture')]], (v) => set((c) => { c.read = v; }, true), 'read'),
+      segs(cfg.read, ([['auto', t('scrReadAuto')], ...(st?.a11yBuild === false ? [] : [['text', t('scrReadText')]]), ['picture', t('scrReadPicture')]] as [typeof cfg.read, string][]), (v) => set((c) => { c.read = v; }, true), 'read'),
       h('p', { class: 'hint' }, cfg.read === 'text' ? t('scrReadTextHint') : cfg.read === 'picture' ? t('scrReadPictureHint') : t('scrReadAutoHint')),
       row(t('scrMode'), select(cfg.mode, [['full', t('scrModeFull')], ['fixed', t('scrModeFixed')]], (v) => set((c) => { c.mode = v; }), 'mode'), t('scrModeHint')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => { push({ clearFixed: true }); toast(t('scrFixedCleared')); } }, icon('close'), t('scrFixedClear')),

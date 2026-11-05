@@ -18,6 +18,13 @@ import java.util.List;
  */
 public class KtScreenA11y extends AccessibilityService {
     static volatile KtScreenA11y self;
+    private static Boolean declaredCache;
+    /** Whether this build declares the service at all (the «-a11y» build does; the ordinary one reads a picture instead). */
+    static boolean declared(android.content.Context c) {
+        Boolean d = declaredCache; if (d != null) return d;
+        try { c.getPackageManager().getServiceInfo(new android.content.ComponentName(c, KtScreenA11y.class), android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS); d = true; } catch (Throwable e) { d = false; }
+        declaredCache = d; return d;
+    }
 
     @Override protected void onServiceConnected() { self = this; }
     @Override public boolean onUnbind(android.content.Intent intent) { self = null; return super.onUnbind(intent); }

@@ -143,7 +143,7 @@ public class KtPlugin extends Plugin {
     /** What the floating translator may do now: appear on top, read the screen's text, a picture of it; running or not. */
     @PluginMethod public void screenStatus(PluginCall call) {
         android.content.Context c = getContext(); JSObject r = new JSObject();
-        r.put("overlay", android.provider.Settings.canDrawOverlays(c)); r.put("a11y", a11yOn(c)); r.put("a11yLive", KtScreenA11y.self != null); r.put("running", KtScreenService.self != null); r.put("capture", KtScreenCapture.ready());
+        r.put("overlay", android.provider.Settings.canDrawOverlays(c)); r.put("a11y", a11yOn(c)); r.put("a11yLive", KtScreenA11y.self != null); r.put("a11yBuild", KtScreenA11y.declared(c)); r.put("running", KtScreenService.self != null); r.put("capture", KtScreenCapture.ready());
         r.put("notify", androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled());
         try { android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(android.content.Context.POWER_SERVICE); r.put("battery", pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName())); } catch (Throwable e) { r.put("battery", false); }
         r.put("tile", Build.VERSION.SDK_INT >= 33); r.put("sdk", Build.VERSION.SDK_INT);
@@ -346,7 +346,7 @@ public class KtPlugin extends Plugin {
 
     /* ---------- the device, other apps ---------- */
     @PluginMethod public void deviceInfo(PluginCall call) {
-        JSObject r = new JSObject(); JSArray abis = new JSArray(); for (String a : Build.SUPPORTED_ABIS) abis.put(a); r.put("abis", abis); r.put("sdk", Build.VERSION.SDK_INT); call.resolve(r);
+        JSObject r = new JSObject(); JSArray abis = new JSArray(); for (String a : Build.SUPPORTED_ABIS) abis.put(a); r.put("abis", abis); r.put("sdk", Build.VERSION.SDK_INT); r.put("a11yBuild", KtScreenA11y.declared(getContext())); call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {
         JSObject r = new JSObject(); try { getContext().getPackageManager().getPackageInfo(call.getString("pkg", ""), 0); r.put("installed", true); } catch (PackageManager.NameNotFoundException e) { r.put("installed", false); } call.resolve(r);
