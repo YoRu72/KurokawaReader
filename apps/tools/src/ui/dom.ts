@@ -85,6 +85,8 @@ const PATHS: Record<string, string> = {
   fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+  swap: '<polyline points="16 3 21 8 16 13"/><line x1="4" y1="8" x2="21" y2="8"/><polyline points="8 21 3 16 8 11"/><line x1="20" y1="16" x2="3" y2="16"/>',
+  columns: '<rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/>',
   more: '<circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
@@ -237,7 +239,7 @@ export function pickSheet<T extends string>(title: string, options: [T, string, 
   const sh = openSheet(title, closeLabel, { stack: true });
   sh.body.style.fontFamily = 'var(--font-ui)';
   sh.body.append(h('div', { class: 'dest-list' }, ...options.map(([id, label, ic]) => h('label', { class: 'dest-row' + (id === value ? ' on' : '') },
-    h('input', { type: 'radio', name: 'kr-pick', checked: id === value, onchange: () => { sh.close(); onPick(id); } }),
+    h('input', { type: 'radio', name: 'kr-pick', checked: id === value, onclick: () => { sh.close(); onPick(id); } }),
     ic ? icon(ic) : h('span'), h('span', { class: 'name', dir: 'auto' }, label)))));
 }
 

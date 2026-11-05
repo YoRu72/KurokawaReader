@@ -93,6 +93,17 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('the analyzer reports by kind', (await p.textContent('.files-kinds-bars')).includes('Video'));
   await p.click('.files-an-tabs .chip:has-text("Doubles")'); await p.waitForTimeout(200); ok('doubles: all but the first ticked', (await p.$$eval('.files-dup-group input', (e) => e.map((x) => x.checked))).join() === 'false,true');
   await p.click('.files-an-tabs .chip:has-text("Biggest folders")'); await p.click('.files-analyzer .dest-row:has-text("Movies")'); await p.waitForTimeout(600); ok('a folder from the report is opened', (await p.textContent('.files-crumbs')).toLowerCase().includes('movies'), await p.textContent('.files-crumbs'));
+  // two panes on a wide screen: turned on from the menu, each with its own place; a selection sent across as a copy job
+  await p.click('.sheet-head button[aria-label="Close"]').catch(() => {});
+  await p.setViewportSize({ width: 1100, height: 800 }); await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0'); await p.waitForSelector('.files-row');
+  await p.click('.topbar button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Two panes")'); await p.waitForSelector('.files-dual'); await p.waitForTimeout(400);
+  ok('two panes drawn', (await p.$$('.files-dual .files-pane')).length === 2);
+  await p.click('.files-pane[data-side="b"] .files-row:has-text("DCIM")'); await p.waitForTimeout(400);
+  ok('the second pane went its own way', (await p.textContent('.files-pane[data-side="b"] .files-crumbs')).toLowerCase().includes('dcim') && !(await p.textContent('.files-pane[data-side="a"] .files-crumbs')).toLowerCase().includes('dcim'));
+  await p.click('.files-pane[data-side="a"] .files-row:has-text("readme.md") button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Select")'); await p.waitForTimeout(200);
+  await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="To the other pane"]'); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(600);
+  ok('sent to the other pane: a copy job into DCIM', (await p.evaluate(() => window.__calls)).includes('copy:1>/storage/emulated/0/DCIM'), await p.evaluate(() => window.__calls.slice(-3)));
+  await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-dual.png' });
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

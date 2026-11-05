@@ -735,3 +735,11 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 
 .grab-bar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:2px 0 6px}.grab-bar .grab-count{margin-inline-start:auto;font-size:12px;color:var(--on-surface-variant)}
 .kt-file-ic .kt-file-thumb { width: 40px; height: 40px; border-radius: 12px; object-fit: cover; }
+/* two panes side by side on a wide screen */
+.files-dual { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: 100%; }
+.files-dual.one { grid-template-columns: 1fr; }
+.files-dual .files-pane { min-width: 0; border-inline-end: 1px solid var(--md-outline-variant); }
+.files-dual .files-pane:last-child { border-inline-end: 0; }
+.files-dual .files-pane .files-fab { position: sticky; }
+.files-pane .files-body.drop-over { outline: 2px dashed var(--md-primary); outline-offset: -4px; border-radius: 16px; }
+.files-row[draggable="true"] { cursor: grab; }

@@ -13,7 +13,7 @@ export type Route =
   | { name: 'tvTitle'; type: 'movie' | 'series'; id: string; season?: number }
   | { name: 'videos'; tab?: string; folder?: string; srv?: string; p?: string }
   | { name: 'screen' }
-  | { name: 'files'; p?: string; save?: string; c?: string }
+  | { name: 'files'; p?: string; save?: string; c?: string; /** A stamp that only forces the page to be built anew (panes toggled). */ t?: string }
   | { name: 'install'; p: string };
 
 const listeners = new Set<(r: Route) => void>();
@@ -29,7 +29,7 @@ export function parseRoute(hash = location.hash): Route {
   if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };
   if (p.startsWith('/screen')) return { name: 'screen' };
-  if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined };
+  if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined, t: sp.get('t') ?? undefined };
   // (An app opened with «Kurokawa Installer»: the app's installer for it.)
   if (p.startsWith('/install') && sp.get('p')) return { name: 'install', p: sp.get('p')! };
   if (p.startsWith('/videos')) return { name: 'videos', tab: sp.get('tab') ?? undefined, folder: sp.get('folder') ?? undefined, srv: sp.get('srv') ?? undefined, p: sp.get('p') ?? undefined };

@@ -36,7 +36,7 @@ const desk = (): Desk | null => (window.kurokawaTools as unknown as Desk | undef
 export const canBrowseFiles = (): boolean => !!(plug() || desk()?.listDir);
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
-type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string };
+type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string };
 const PREFS = 'kt.files.prefs';
 const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
 const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
@@ -70,7 +70,24 @@ const saveBookmarks = (b: { name: string; path: string }[]) => { try { localStor
 /** The day a file belongs to, for the section headers: today, yesterday, else its date. */
 const dayOf = (ms: number): string => { const d = new Date(ms); const now = new Date(); const same = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); if (same(d, now)) return t('today'); const y = new Date(now); y.setDate(y.getDate() - 1); if (same(d, y)) return t('yesterday'); return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); };
 
+/** A pane of the Files page: its own place, selection and history. Standing alone it writes where it is into the
+ *  address; embedded (two panes) it keeps quiet and tells the other pane through `peer`. */
+export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void };
+type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null };
+/** Two panes when the reader asked and the screen is wide enough, else one. */
 export function filesView(route: { p?: string; save?: string; c?: string }): HTMLElement {
+  const wide = () => window.matchMedia('(min-width: 840px)').matches;
+  if (!prefs.dual || !wide() || route.save || route.c) return filesPane(route);
+  let a: Pane | null = null, b: Pane | null = null;
+  a = filesPane(route, { embedded: true, side: 'a', peer: () => b });
+  b = filesPane({ p: prefs.lastB ?? route.p }, { embedded: true, side: 'b', peer: () => a });
+  const root = h('div', { class: 'view files-dual' }, a, b) as HTMLElement & { dispose?: () => void };
+  const mq = window.matchMedia('(min-width: 840px)'); const onChange = () => { if (!mq.matches) { b?.dispose?.(); b?.remove(); root.classList.add('one'); } };
+  mq.addEventListener('change', onChange);
+  root.dispose = () => { mq.removeEventListener('change', onChange); a?.dispose?.(); b?.dispose?.(); };
+  return root;
+}
+export function filesPane(route: { p?: string; save?: string; c?: string }, po: PaneOpts = {}): Pane {
   const body = h('div', { class: 'files-body' });
   const crumbs = h('div', { class: 'files-crumbs', dir: 'ltr' }); const rootsRow = h('div', { class: 'chip-row files-roots' }); const kindRow = h('div', { class: 'chip-row files-kinds' });
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
@@ -84,12 +101,12 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       iconButton('search', t('search'), () => { if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       pasteBtn,
-      iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
+      iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); if (po.embedded) { draw(); po.peer?.()?.reload(); } else navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
       iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
     search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
   body.append(listEl, status, jobsEl);
-  let at = route.p ?? (route.c ? '' : prefs.last ?? ''); let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
+  let at = route.p ?? (route.c ? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? ''); let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const el = e.target as HTMLElement; io.unobserve(el); const p = el.dataset.thumb; if (p) void thumbInto(el, p); } }, { rootMargin: '300px 0px' });
   const thumbInto = async (el: HTMLElement, path: string) => { const pl = plug(); if (!pl) return; try { const r = await pl.filesThumb({ path, px: prefs.view === 'grid' ? 240 : 96 }); if (r.url && el.isConnected) { el.replaceChildren(h('img', { src: r.url, alt: '', loading: 'lazy' })); el.classList.add('has-img'); } } catch { /* the icon stays */ } };
 
@@ -114,8 +131,8 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
   const drawKinds = () => kindRow.replaceChildren(...KINDS.map(([k, label]) => h('button', { type: 'button', class: 'chip small' + (prefs.kind === k ? ' on' : ''), onclick: () => { prefs.kind = k; savePrefs(); drawKinds(); draw(); } }, t(label as 'filesKindAll'))));
 
   // ---- the folder
-  const go = (path: string) => { if (gone) return; collection = null; at = path.replace(/\/+$/, '') || '/'; prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
-  const openCollection = (kind: string) => { if (gone) return; collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; navigate(`/files?c=${kind}`, true); void load(); };
+  const go = (path: string) => { if (gone) return; collection = null; at = path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
+  const openCollection = (kind: string) => { if (gone) return; collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?c=${kind}`, true); void load(); };
   const load = async () => {
     drawCrumbs(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection;
     try {
@@ -145,6 +162,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e); }));
     onLongPress(el, () => { if (!selecting) { selecting = true; } toggle(e); });
     if (thumbable && plug()) io.observe(ic);
+    if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;
   };
 
@@ -158,6 +176,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); draw(); drawSel(); }),
       iconButton('copy', t('filesCopy'), () => { clipboard = { op: 'copy', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCopied', { n: localDigits(n) })); leaveSel(); }),
       iconButton('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: localDigits(n) })); leaveSel(); }),
+      ...(po.peer?.() ? [iconButton('swap', t('filesToOtherPane'), () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); })] : []),
       iconButton('trash', t('delete'), () => void confirmDelete([...picked])),
       ...(one ? [iconButton('pen', t('rename'), () => renameSheet(one))] : []),
       iconButton('share', t('share'), () => void shareMany([...picked])),
@@ -256,6 +275,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       act(prefs.hidden ? 'eye' : 'eye', prefs.hidden ? t('filesHideHidden') : t('filesShowHidden'), () => { prefs.hidden = !prefs.hidden; savePrefs(); void load(); }),
       act('refresh', t('refresh'), () => void load()),
       ...(plug() ? [act('trash', t('filesTrashSetting'), () => void import('./filesMore').then((m) => { m.setTrashOn(!m.trashOn()); toast(m.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
+      ...(window.matchMedia('(min-width: 840px)').matches ? [act('columns', prefs.dual ? t('filesOnePane') : t('filesTwoPanes'), () => { prefs.dual = !prefs.dual; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true); })] : []),
       ...(plug() ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
       ...(plug() ? [act('key', t('archiveForgetPw'), () => void import('../archives').then((a) => { a.forgetPasswords(); a.setRememberPasswords(false); toast(t('done')); }))] : []),
       act('info', t('properties'), () => void propertiesSheet({ name: baseOf(at), path: at, dir: true, size: 0, mtime: 0 })),
@@ -354,5 +374,14 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
   const pl = plug(); if (pl) { void listen<JobEvent>(pl as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; }); void import('./filesMore').then((m) => m.pruneTrash()); }
   void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
   root.dispose = () => { gone = true; io.disconnect(); sub?.remove(); };
-  return root;
+  const pane = root as unknown as Pane;
+  pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
+  pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };
+  if (po.embedded) {
+    root.classList.add('files-pane'); if (po.side) root.dataset.side = po.side;
+    body.addEventListener('dragover', (ev) => { if (ev.dataTransfer?.types.includes('text/kt-paths')) { ev.preventDefault(); ev.dataTransfer.dropEffect = ev.shiftKey ? 'move' : 'copy'; body.classList.add('drop-over'); } });
+    body.addEventListener('dragleave', () => body.classList.remove('drop-over'));
+    body.addEventListener('drop', (ev) => { body.classList.remove('drop-over'); const raw = ev.dataTransfer?.getData('text/kt-paths'); if (!raw) return; ev.preventDefault(); let ps: string[] = []; try { ps = JSON.parse(raw) as string[]; } catch { return; } void pane.dropIn(ev.shiftKey ? 'move' : 'copy', ps); });
+  }
+  return pane;
 }
