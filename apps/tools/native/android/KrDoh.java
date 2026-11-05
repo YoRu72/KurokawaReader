@@ -67,7 +67,7 @@ final class KrDoh {
         org.json.JSONObject o = new org.json.JSONObject();
         try {
             if (!on()) state = "off"; else if ("off".equals(state)) state = "idle";
-            o.put("provider", provider); o.put("split", split); o.put("state", state); o.put("queries", queries.get()); o.put("hits", hits.get()); o.put("fails", fails.get()); o.put("unblocked", unblocked.get());
+            o.put("provider", provider); o.put("split", split); o.put("state", state); o.put("ways", waysJson()); o.put("queries", queries.get()); o.put("hits", hits.get()); o.put("fails", fails.get()); o.put("unblocked", unblocked.get());
             o.put("lastResolver", lastResolver); o.put("lastShape", lastShape); o.put("lastMs", lastMs); o.put("lastAt", lastAt); o.put("lastError", lastError); o.put("cached", cache.size()); o.put("forced", forced.size());
             org.json.JSONArray rs = new org.json.JSONArray(); for (Resolver r : resolvers(provider)) { org.json.JSONObject x = new org.json.JSONObject(); x.put("id", r.id); x.put("url", r.url); x.put("ok", r.lastOk); x.put("ms", r.lastMs); x.put("shape", r.shape); x.put("error", r.lastError == null ? "" : r.lastError); rs.put(x); } o.put("resolvers", rs);
             org.json.JSONArray a = new org.json.JSONArray(); synchronized (log) { for (String j : log) a.put(new org.json.JSONObject(j)); } o.put("log", a);
@@ -133,8 +133,10 @@ final class KrDoh {
         if (chosen != null) out.add(chosen);
         String pref = preferred;
         if (!pref.isEmpty()) for (Resolver r : KNOWN) if (r.id.equals(pref) && !out.contains(r)) out.add(r);
-        for (Resolver r : KNOWN) if (!out.contains(r)) out.add(r);
-        return out;
+        List<Resolver> rest = new ArrayList<>(); for (Resolver r : KNOWN) if (!out.contains(r)) rest.add(r);
+        // (The rest by health: the ones that answered last, quickest first; the ones that failed last.)
+        java.util.Collections.sort(rest, (x, y) -> { int a = x.lastMs < 0 ? 1 : x.lastOk ? 0 : 2, b = y.lastMs < 0 ? 1 : y.lastOk ? 0 : 2; if (a != b) return a - b; return Long.compare(x.lastMs < 0 ? Long.MAX_VALUE : x.lastMs, y.lastMs < 0 ? Long.MAX_VALUE : y.lastMs); });
+        out.addAll(rest); return out;
     }
 
     private static final class Entry { final InetAddress[] ips; final long until; Entry(InetAddress[] ips, long until) { this.ips = ips; this.until = until; } }
@@ -146,7 +148,7 @@ final class KrDoh {
         if (isLiteral(host)) return new InetAddress[] { InetAddress.getByName(host) };
         String p = provider; String key = p + "|" + host.toLowerCase();
         Entry e = cache.get(key);
-        if (e != null && e.until > System.currentTimeMillis()) { hits.incrementAndGet(); return e.ips; }
+        if (e != null && e.until > System.currentTimeMillis()) { hits.incrementAndGet(); if (e.ips.length == 0) throw new java.net.UnknownHostException(host); return e.ips; }
         List<Resolver> rs = resolvers(p);
         if (rs.isEmpty()) return InetAddress.getAllByName(host);
         byte[] query = query(host, 1);
@@ -164,8 +166,11 @@ final class KrDoh {
                 long ms = System.currentTimeMillis() - t0; state = "ok"; lastResolver = a.from; lastShape = a.shape; lastMs = ms; lastAt = System.currentTimeMillis(); lastError = ""; preferred = r.id;
                 note("resolve", host, ips[0].getHostAddress(), ms, r.id + " " + a.shape);
                 return ips;
-            } catch (IOException ex) { last = ex; note("retry", host, r.id, -1, String.valueOf(ex.getMessage())); }
+            } catch (java.net.UnknownHostException nx) { cache.put(key, new Entry(new InetAddress[0], System.currentTimeMillis() + 60_000L)); state = "ok"; lastAt = System.currentTimeMillis(); note("none", host, null, System.currentTimeMillis() - t0, r.id); throw nx; }   // (a resolver answered: no such name — remembered a minute)
+            catch (IOException ex) { last = ex; note("retry", host, r.id, -1, String.valueOf(ex.getMessage())); }
         }
+        // (No resolver answered: an address known from before, however old, beats none.)
+        if (e != null && e.ips.length > 0) { note("stale", host, e.ips[0].getHostAddress(), System.currentTimeMillis() - t0, "no resolver answered"); return e.ips; }
         fails.incrementAndGet(); state = "failed"; lastError = last != null ? clean(last.getMessage()) : "unknown host"; lastAt = System.currentTimeMillis();
         note("fail", host, null, System.currentTimeMillis() - t0, lastError);
         throw last != null ? last : new java.net.UnknownHostException(host);
@@ -404,7 +409,7 @@ final class KrDoh {
         SniFactory(SSLSocketFactory base, String host, boolean frag) { this.base = base; this.host = host; this.frag = frag; }
         @Override public String[] getDefaultCipherSuites() { return base.getDefaultCipherSuites(); }
         @Override public String[] getSupportedCipherSuites() { return base.getSupportedCipherSuites(); }
-        @Override public Socket createSocket(Socket s, String h, int port, boolean autoClose) throws IOException { return name(base.createSocket(frag ? new SplitSocket(s, host) : s, host, port, autoClose)); }
+        @Override public Socket createSocket(Socket s, String h, int port, boolean autoClose) throws IOException { int way = wayOf(host, frag); return name(base.createSocket(way > 0 ? new SplitSocket(s, host, way) : new SplitSocket(s, host, 0), host, port, autoClose)); }
         @Override public Socket createSocket(String h, int port) throws IOException { return name(base.createSocket(h, port)); }
         @Override public Socket createSocket(String h, int port, InetAddress local, int localPort) throws IOException { return name(base.createSocket(h, port, local, localPort)); }
         @Override public Socket createSocket(InetAddress a, int port) throws IOException { return name(base.createSocket(a, port)); }
@@ -438,22 +443,103 @@ final class KrDoh {
         System.arraycopy(rec, off + 5, a, 5, cut); System.arraycopy(rec, off + 5 + cut, b, 5, recLen - cut);
         return new byte[][] { a, b };
     }
+    /* ---------- how a site's hello goes out: a ladder of ways, the one that works remembered a day per host ----------
+     *  plain — whole, as the page sent it.
+     *  split — two TLS records, the cut inside the site's name (a filter reading the first record reads none).
+     *  frag  — four small records with a breath between them (a filter that puts two together, not more).
+     *  tcp   — the record whole, but its first bytes in a packet of their own (a filter that reads one packet).
+     *  fake  — a decoy hello first, with a TTL too short to reach the site but long enough for the filter, then the
+     *          real one split (the filter judges the decoy, the site never sees it).
+     *  A site that answers with a TLS alert right after the hello, or never answers, moves to the next way; the one
+     *  that got an answer is kept. */
+    static final String[] WAYS = { "plain", "split", "frag", "tcp", "fake" };
+    static final Map<String, long[]> ways = new ConcurrentHashMap<>();   // host → {way, failures, since}
+    static volatile int fakeTtl = 5;
+    private static String wayKey(String host) { return host == null ? "" : host.toLowerCase(); }
+    /** The way to send `host`'s hello now. */
+    static int wayOf(String host, boolean cutWanted) {
+        if ("off".equals(split)) return 0;
+        long[] w = ways.get(wayKey(host)); if (w != null) { if (System.currentTimeMillis() - w[2] > 86_400_000L) ways.remove(wayKey(host)); else return (int) w[0]; }
+        return cutWanted || "always".equals(split) ? 1 : 0;
+    }
+    /** `way` got no proper answer from `host`: the next way from now (round the ladder; past the end, back to plain after a rest). */
+    static void wayFailed(String host, int way, String why) {
+        if ("off".equals(split)) return; String k = wayKey(host); long[] w = ways.get(k); if (w != null && w[0] != way) return;   // (already moved on)
+        int next = (way + 1) % WAYS.length; ways.put(k, new long[] { next, w == null ? 1 : w[1] + 1, System.currentTimeMillis() });
+        note("way", host, null, -1, WAYS[way] + " " + why + " → " + WAYS[next]);
+    }
+    /** `way` got an answer from `host`: kept. */
+    static void wayWorked(String host, int way) { String k = wayKey(host); long[] w = ways.get(k); if (w == null && way == 0) return; if (w == null || w[0] != way) ways.put(k, new long[] { way, 0, System.currentTimeMillis() }); }
+    static org.json.JSONArray waysJson() { org.json.JSONArray a = new org.json.JSONArray(); for (Map.Entry<String, long[]> e : ways.entrySet()) { try { org.json.JSONObject o = new org.json.JSONObject(); o.put("host", e.getKey()); o.put("way", WAYS[(int) e.getValue()[0]]); o.put("failures", e.getValue()[1]); a.put(o); } catch (Exception ignored) {} } return a; }
+    static int sniAt(byte[] rec, int off, int len, String host) { byte[] name = host.getBytes(java.nio.charset.StandardCharsets.US_ASCII); outer: for (int i = off + 5; i + name.length <= off + len; i++) { for (int j = 0; j < name.length; j++) if (rec[i + j] != name[j]) continue outer; return i - (off + 5); } return -1; }
+    /** The hello record `rec` cut into records at `cuts` (offsets into the body, ascending). */
+    static byte[][] cutRecord(byte[] rec, int off, int len, int[] cuts) {
+        int recLen = len - 5; List<byte[]> out = new ArrayList<>(); int from = 0;
+        for (int c : cuts) { if (c <= from || c >= recLen) continue; out.add(record(rec, off, from, c)); from = c; }
+        out.add(record(rec, off, from, recLen)); return out.toArray(new byte[0][]);
+    }
+    private static byte[] record(byte[] rec, int off, int from, int to) { byte[] b = new byte[5 + to - from]; b[0] = rec[off]; b[1] = rec[off + 1]; b[2] = rec[off + 2]; b[3] = (byte) ((to - from) >> 8); b[4] = (byte) (to - from); System.arraycopy(rec, off + 5 + from, b, 5, to - from); return b; }
+    private static void breath(int ms) { try { Thread.sleep(ms); } catch (InterruptedException ignored) {} }
+    /** The socket's packets' TTL (IPv4) or hop limit (IPv6) set; false when the system will not let us. */
+    static boolean ttl(Socket s, int ttl) {
+        try {
+            // (android.os / android.system by name, so this class also builds and runs off Android.)
+            Class<?> pfdC = Class.forName("android.os.ParcelFileDescriptor"); Object pfd = pfdC.getMethod("fromSocket", Socket.class).invoke(null, s); Object fd = pfdC.getMethod("getFileDescriptor").invoke(pfd);
+            Class<?> cons = Class.forName("android.system.OsConstants"); boolean v6 = s.getInetAddress() instanceof java.net.Inet6Address;
+            int level = cons.getField(v6 ? "IPPROTO_IPV6" : "IPPROTO_IP").getInt(null), opt = cons.getField(v6 ? "IPV6_UNICAST_HOPS" : "IP_TTL").getInt(null);
+            Class.forName("android.system.Os").getMethod("setsockoptInt", java.io.FileDescriptor.class, int.class, int.class, int.class).invoke(null, fd, level, opt, ttl);
+            return true;
+        } catch (Throwable e) { return false; }
+    }
+    /** `rec` (the page's first record) sent to `up` the `way` asked; a way that cannot be done here falls back to split. */
+    static void sendHello(Socket s, OutputStream up, byte[] rec, String host, int way) throws IOException {
+        boolean tls = rec.length > 5 && rec[0] == 0x16 && (((rec[3] & 0xff) << 8) | (rec[4] & 0xff)) == rec.length - 5;
+        if (!tls || way == 0) { up.write(rec); up.flush(); return; }
+        int at = sniAt(rec, 0, rec.length, host); int body = rec.length - 5; int nameLen = host.length();
+        switch (WAYS[way]) {
+            case "split": { byte[][] two = splitHello(rec, 0, rec.length, host); if (two == null) { up.write(rec); } else { up.write(two[0]); up.flush(); up.write(two[1]); } up.flush(); return; }
+            case "frag": { int a = at > 0 ? at : body / 3; int[] cuts = { Math.max(1, Math.min(a + 1, body - 1)), Math.max(2, Math.min(a + Math.max(2, nameLen / 2), body - 1)), Math.max(3, Math.min(a + nameLen + 1, body - 1)) }; for (byte[] r : cutRecord(rec, 0, rec.length, cuts)) { up.write(r); up.flush(); breath(6); } return; }
+            case "tcp": { int first = at > 0 ? Math.min(5 + at + 1, rec.length - 1) : 7; up.write(rec, 0, first); up.flush(); breath(40); up.write(rec, first, rec.length - first); up.flush(); return; }
+            case "fake": {
+                // (The decoy: the same record with another name's bytes and random session/randoms, sent with a short TTL.)
+                byte[] decoy = rec.clone(); java.security.SecureRandom rnd = new java.security.SecureRandom(); byte[] junk = new byte[32]; rnd.nextBytes(junk); if (decoy.length > 5 + 11 + 32) System.arraycopy(junk, 0, decoy, 5 + 11, 32);
+                if (at > 0) { byte[] other = "www.wikipedia.org".getBytes(java.nio.charset.StandardCharsets.US_ASCII); for (int i = 0; i < nameLen; i++) decoy[5 + at + i] = other[i % other.length]; }
+                boolean set = ttl(s, fakeTtl);
+                if (set) { up.write(decoy); up.flush(); breath(25); ttl(s, 64); }
+                byte[][] two = splitHello(rec, 0, rec.length, host); if (two == null) up.write(rec); else { up.write(two[0]); up.flush(); up.write(two[1]); } up.flush(); return;
+            }
+            default: up.write(rec); up.flush();
+        }
+    }
     /** A connected socket whose first write (the hello) goes out in two records; everything else as it is. */
     private static final class SplitSocket extends Socket {
-        private final Socket in; private final String host; private OutputStream out;
-        SplitSocket(Socket in, String host) { this.in = in; this.host = host; try { in.setTcpNoDelay(true); } catch (Exception ignored) {} }
+        private final Socket in; private final String host; private OutputStream out; private InputStream ins; final int way; private boolean sentHello = false;
+        SplitSocket(Socket in, String host, int way) { this.in = in; this.host = host; this.way = way; try { in.setTcpNoDelay(true); } catch (Exception ignored) {} }
         @Override public synchronized OutputStream getOutputStream() throws IOException {
             if (out == null) out = new FilterOutputStream(in.getOutputStream()) {
                 boolean first = true;
                 @Override public void write(int b) throws IOException { write(new byte[] { (byte) b }, 0, 1); }
                 @Override public void write(byte[] b, int off, int len) throws IOException {
-                    if (first) { first = false; byte[][] two = splitHello(b, off, len, host); if (two != null) { super.out.write(two[0]); super.out.flush(); super.out.write(two[1]); super.out.flush(); return; } }
+                    if (first) { first = false; sentHello = true; sendHello(in, super.out, java.util.Arrays.copyOfRange(b, off, off + len), host, way); return; }
                     super.out.write(b, off, len);
                 }
             };
             return out;
         }
-        @Override public InputStream getInputStream() throws IOException { return in.getInputStream(); }
+        /** The site's first bytes watched: an alert straight after the hello, or nothing at all, moves the host to the next way. */
+        @Override public synchronized InputStream getInputStream() throws IOException {
+            if (ins == null) ins = new java.io.FilterInputStream(in.getInputStream()) {
+                boolean first = true;
+                @Override public int read() throws IOException { byte[] one = new byte[1]; int n = read(one, 0, 1); return n == 1 ? one[0] & 0xff : -1; }
+                @Override public int read(byte[] b, int off, int len) throws IOException {
+                    int n; try { n = super.read(b, off, len); } catch (IOException e) { if (first && sentHello) { first = false; wayFailed(host, way, "reset"); } throw e; }
+                    if (first && n > 0) { first = false; if (b[off] == 0x15) wayFailed(host, way, "alert"); else wayWorked(host, way); }
+                    else if (first && n < 0 && sentHello) { first = false; wayFailed(host, way, "silent"); }
+                    return n;
+                }
+            };
+            return ins;
+        }
         @Override public void connect(java.net.SocketAddress a) throws IOException { in.connect(a); }
         @Override public void connect(java.net.SocketAddress a, int t) throws IOException { in.connect(a, t); }
         @Override public void bind(java.net.SocketAddress a) throws IOException { in.bind(a); }

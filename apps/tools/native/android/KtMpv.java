@@ -48,7 +48,8 @@ final class KtMpv {
         MPVLib.setOptionString("vo", voInUse);
         MPVLib.setOptionString("gpu-context", "android");
         MPVLib.setOptionString("opengl-es", "yes");
-        MPVLib.setOptionString("hwdec", "mediacodec,mediacodec-copy");
+        // (Direct MediaCodec output needs the «mediacodec_embed» vo; with the GPU vo it leaves the picture black on many phones while the sound plays. The copying path draws through the GPU — subtitles, filters and all.)
+        MPVLib.setOptionString("hwdec", "mediacodec-copy");
         MPVLib.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
         MPVLib.setOptionString("ao", "audiotrack,opensles");
         MPVLib.setOptionString("audio-set-media-role", "yes");

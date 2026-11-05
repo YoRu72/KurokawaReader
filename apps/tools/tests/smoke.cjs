@@ -8,7 +8,7 @@ const lang = process.argv[2] || 'en';
 (async () => {
   await new Promise((r) => server.listen(5480, r));
   const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], locale: lang }); const p = await ctx.newPage();
-  const errors = []; p.on('pageerror', (e) => errors.push(e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/favicon|api.github|raw.githubusercontent|net::/.test(m.text())) errors.push(m.text()); });
+  const errors = []; p.on('pageerror', (e) => errors.push(e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/favicon|api.github|raw.githubusercontent|net::|CORS policy/.test(m.text())) errors.push(m.text()); });
   await p.goto('http://localhost:5480/'); await p.evaluate((l) => localStorage.setItem('kr.lang', l), lang); await p.reload(); await p.waitForSelector('.downloads-view'); await p.waitForTimeout(400);
   ok('the downloads page opens, empty', !!(await p.$('.downloads-view .empty')) && (await p.$eval('.bottom-nav', (e) => e.children.length)) === 3);
   ok('the document direction follows the language', (await p.evaluate(() => document.documentElement.dir)) === (lang === 'ar' ? 'rtl' : 'ltr'));
@@ -17,6 +17,10 @@ const lang = process.argv[2] || 'en';
   ok('the video entry says where yt-dlp stands', menu.some((m) => /yt-dlp|Not available here|غير متاح هنا/.test(m)));
   await p.click('.fab-item >> nth=0'); await p.waitForSelector('.add-sheet'); await p.fill('.add-input', 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Test+Torrent\nhttps://example.org/file.zip');
   ok('the add sheet opens, with its options', !!(await p.$('.add-sheet .add-options')));
+  // The batch pre-flight: two links typed → a «check» button; the web's fetch cannot reach them, so each is reported as unreachable or unsupported and left unchecked.
+  await p.waitForTimeout(100); const checkBtn = await p.$('.add-sheet .sheet-actions .btn.tonal:not([hidden])');
+  ok('a batch shows a check button', !!checkBtn);
+  if (checkBtn) { await checkBtn.click(); await p.waitForSelector('.sheet .dest-list .dest-row', { timeout: 15000 }).catch(() => null); const rows = await p.$$eval('.sheet .dest-list .dest-row', (es) => es.map((e) => ({ on: e.querySelector('input').checked, text: e.textContent }))); ok('the pre-flight lists each link with a verdict (' + rows.length + ')', rows.length === 2 && rows.some((r) => r.on)); await p.keyboard.press('Escape'); await p.waitForTimeout(150); }
   await p.click('.add-sheet .btn.primary'); await p.waitForTimeout(600);
   const toastText = await p.$eval('.toast', (e) => e.textContent).catch(() => '');
   ok('on the web a magnet is refused with a word about engines; a link goes to the browser', /engine|محرك|aria2/.test(toastText));

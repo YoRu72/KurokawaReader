@@ -14,6 +14,8 @@ export const canPlayExternally = (): boolean => { const p = nativePlatform(); re
 
 export async function openPlayer(url: string, name: string, opts: PlayOpts = {}): Promise<void> {
   const how = canPlayExternally() ? await chooseHow() : 'app'; if (!how) return;
+  // (A video opened from a folder: its folder's other videos become the queue, in name order, when the player's setting says.)
+  if (!opts.playlist && opts.localPath && !opts.task) { try { const { getPrefs } = await import('../player/prefs'); if (getPrefs().autoQueueFolder !== false) { const { siblingFiles, localFileUrl } = await import('../player/files'); const sibs = (await siblingFiles(opts.localPath)).filter((p) => /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i.test(p)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); if (sibs.length > 1 && sibs.includes(opts.localPath)) { const pl = []; for (const p of sibs) { const u = p === opts.localPath ? url : await localFileUrl(p); if (u) pl.push({ url: u, name: p.split('/').pop() ?? p, localPath: p }); } if (pl.length > 1) opts = { ...opts, playlist: pl }; } } } catch { /* alone */ } }
   if (how === 'external' && (await external(url, name, opts.localPath))) return;
   if (!getSettings().addons.includes('player')) {
     // (Offered in the download card, with its ffmpeg; declined or offline: the system's own controls this time.)
@@ -23,6 +25,8 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
   // (The engine: mpv when it is here and not turned off — Settings → Player —, else the web view's own.)
   let engine: 'mpv' | 'web' = 'web';
   if (nativePlatform() === 'android' && getSettings().playerEngine !== 'web') { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; }
+  // (An MKV, AVI or other container the web view cannot decode — a black picture with sound at best — with no mpv here: the mpv pack offered once, the web view only if declined.)
+  if (nativePlatform() === 'android' && engine === 'web' && /\.(mkv|avi|wmv|flv|ts|m2ts|mpg|mpeg|ogv|rmvb)(\?|$)/i.test(opts.localPath ?? name ?? url)) { try { const { ensurePacks } = await import('../packs'); if (await ensurePacks(['mpv'], t('packWhyMpv'))) { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; } } catch { /* the web view then */ } }
   const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts, engine });
 }
 /** The question, unless a choice is remembered: another app, or the in-app player (with what it brings). */

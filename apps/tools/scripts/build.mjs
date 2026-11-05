@@ -49,7 +49,7 @@ const options = {
   entryPoints: { app: path.join(root, 'src/main.ts') },
   bundle: true, format: 'esm', platform: 'browser', target: ['es2022', 'chrome100', 'safari16', 'firefox110'],
   outdir: path.join(dist, 'assets'), entryNames: '[name]', splitting: true, chunkNames: 'chunk-[name]-[hash]', assetNames: 'fonts/[name]-[hash]',
-  minify: !watch && !process.env.NOMINIFY, sourcemap: watch || !!process.env.KR_MAPS,
+  minify: !watch && !process.env.NOMINIFY, charset: 'utf8', sourcemap: watch || !!process.env.KR_MAPS,
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' }, logLevel: 'info',
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(pkg.version), __REPO_SLUG__: JSON.stringify(process.env.GITHUB_REPOSITORY || 'YoRu72/KurokawaReader') },
 };

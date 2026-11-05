@@ -148,7 +148,7 @@ const buildOptions = {
   splitting: true,
   chunkNames: 'chunk-[name]-[hash]',
   assetNames: 'fonts/[name]-[hash]',
-  minify: !watch && !process.env.NOMINIFY,
+  minify: !watch && !process.env.NOMINIFY, charset: 'utf8',
   // (Source maps were a third of what the apps carry — 11 MB of 29 — and no reader uses them: made for a
   // development build, or when asked with KR_MAPS=1.)
   sourcemap: watch || !!process.env.KR_MAPS,
@@ -162,7 +162,7 @@ const buildOptions = {
 const runtimeOptions = {
   entryPoints: { 'ext-runtime': path.join(root, 'src/sources/ext/rt/runtime.ts') },
   bundle: true, format: 'iife', platform: 'browser', target: ['es2020', 'chrome90', 'safari15', 'firefox100'],
-  outdir: path.join(dist, 'assets'), entryNames: '[name]', minify: !watch && !process.env.NOMINIFY, sourcemap: false, logLevel: 'warning',
+  outdir: path.join(dist, 'assets'), entryNames: '[name]', minify: !watch && !process.env.NOMINIFY, charset: 'utf8', sourcemap: false, logLevel: 'warning',
 };
 
 await copyStatic();

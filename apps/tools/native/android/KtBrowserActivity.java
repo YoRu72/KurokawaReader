@@ -43,6 +43,41 @@ public class KtBrowserActivity extends Activity {
     public static final String EXTRA_URL = "url";
     /** Media the page asked for (a player's video, its playlist), seen as it loads. */
     private final Map<String, String> media = new LinkedHashMap<>();
+    /** What a probe learnt of each media address: its content type and size (an HLS playlist's size estimated from its lengths and bandwidth). */
+    private final Map<String, JSONObject> facts = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ExecutorService probes = java.util.concurrent.Executors.newFixedThreadPool(2);
+    /** A HEAD with the page's own headers (and cookies) for the type and the size; an HLS playlist read and its size estimated. */
+    private void probe(String u, Map<String, String> headers) {
+        probes.execute(() -> {
+            JSONObject o = new JSONObject();
+            try {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(u).openConnection(); c.setConnectTimeout(8000); c.setReadTimeout(8000); c.setInstanceFollowRedirects(true);
+                boolean hls = u.matches("(?i)^[^?#]*\\.m3u8(\\?.*)?$"); c.setRequestMethod(hls ? "GET" : "HEAD");
+                if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) { String k = e.getKey(); if (k != null && !k.equalsIgnoreCase("range") && !k.equalsIgnoreCase("host") && !k.equalsIgnoreCase("content-length")) try { c.setRequestProperty(k, e.getValue()); } catch (Exception ignored) {} }
+                try { String ck = android.webkit.CookieManager.getInstance().getCookie(u); if (ck != null && !ck.isEmpty()) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) {}
+                int code = c.getResponseCode(); if (code >= 400) { o.put("status", code); facts.put(u, o); return; }
+                String type = c.getHeaderField("Content-Type"); if (type != null) o.put("type", type.split(";")[0].trim());
+                if (hls) {
+                    String text = new String(readAll(c.getInputStream(), 1 << 20), java.nio.charset.StandardCharsets.UTF_8); long est = estimateHls(text, new java.net.URL(u), headers);
+                    if (est > 0) { o.put("size", est); o.put("est", true); }
+                } else { long len = c.getContentLengthLong(); if (len > 0) o.put("size", len); }
+                c.disconnect();
+            } catch (Exception e) { /* nothing learnt */ }
+            facts.put(u, o);
+        });
+    }
+    private static byte[] readAll(java.io.InputStream in, int max) throws java.io.IOException { java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0 && b.size() < max) b.write(buf, 0, n); in.close(); return b.toByteArray(); }
+    /** The playlist's size in bytes, estimated: the best variant's bandwidth × the media playlist's summed lengths. */
+    private static long estimateHls(String text, java.net.URL base, Map<String, String> headers) {
+        try {
+            long bw = 0; String variant = null; String pending = null;
+            for (String raw : text.split("\\r?\\n")) { String l = raw.trim(); if (l.startsWith("#EXT-X-STREAM-INF:")) { pending = l; continue; } if (l.isEmpty() || l.startsWith("#")) continue; if (pending != null) { java.util.regex.Matcher m = java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(pending); long b = m.find() ? Long.parseLong(m.group(1)) : 0; if (b > bw) { bw = b; variant = l; } pending = null; } }
+            String media = text;
+            if (variant != null) { java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(base, variant).openConnection(); c.setConnectTimeout(8000); c.setReadTimeout(8000); if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) { String k = e.getKey(); if (k != null && !k.equalsIgnoreCase("range") && !k.equalsIgnoreCase("host")) try { c.setRequestProperty(k, e.getValue()); } catch (Exception ignored) {} } media = new String(readAll(c.getInputStream(), 1 << 20), java.nio.charset.StandardCharsets.UTF_8); c.disconnect(); }
+            double secs = 0; for (String raw : media.split("\\r?\\n")) { String l = raw.trim(); if (l.startsWith("#EXTINF:")) { try { secs += Double.parseDouble(l.substring(8).split(",")[0].trim()); } catch (Exception ignored) {} } }
+            if (secs <= 0) return 0; if (bw <= 0) bw = 2_500_000; return (long) (secs * bw / 8);
+        } catch (Exception e) { return 0; }
+    }
     private WebView wv; private EditText bar; private ProgressBar prog;
     /** The DoH chip on the bar: grey off, amber while a name is being asked, green once the resolver answered (and
      *  this page's site came through it), red when the last ask failed. Tapped: the status and the last events. */
@@ -228,7 +263,7 @@ public class KtBrowserActivity extends Activity {
                 // (Ads and trackers, and the pop-under scripts that come with download sites: answered with nothing.)
                 if (adBlock && !r.isForMainFrame() && isAd(r.getUrl().getHost(), u)) { blocked++; return new WebResourceResponse("text/plain", "utf-8", 204, "No Content", java.util.Collections.emptyMap(), new java.io.ByteArrayInputStream(new byte[0])); }
                 String kind = mediaKind(u, r.getRequestHeaders());
-                if (kind != null) synchronized (media) { if (media.size() < 400 && !media.containsKey(u)) media.put(u, kind); }
+                if (kind != null) { boolean fresh; synchronized (media) { fresh = media.size() < 400 && !media.containsKey(u); if (fresh) media.put(u, kind); } if (fresh) probe(u, r.getRequestHeaders()); }
                 return super.shouldInterceptRequest(v, r);
             }
             // (A page the network's own way could not reach — reset, timed out, the handshake refused, the name unknown —
@@ -322,7 +357,7 @@ public class KtBrowserActivity extends Activity {
             try {
                 JSONObject page = new JSONObject(new JSONArray("[" + res + "]").getString(0));
                 JSONArray links = page.getJSONArray("links");
-                synchronized (media) { for (Map.Entry<String, String> e : media.entrySet()) { JSONObject l = new JSONObject(); l.put("href", e.getKey()); l.put("text", ""); l.put("kind", e.getValue() == null || e.getValue().isEmpty() ? "media" : e.getValue()); links.put(l); } }
+                synchronized (media) { for (Map.Entry<String, String> e : media.entrySet()) { JSONObject l = new JSONObject(); l.put("href", e.getKey()); l.put("text", ""); l.put("kind", e.getValue() == null || e.getValue().isEmpty() ? "media" : e.getValue()); JSONObject f = facts.get(e.getKey()); if (f != null) { if (f.has("type")) l.put("type", f.getString("type")); if (f.has("size")) l.put("size", f.getLong("size")); if (f.optBoolean("est")) l.put("est", true); if (f.has("status")) l.put("status", f.getInt("status")); } links.put(l); } }
                 JSONObject o = new JSONObject(); o.put("kind", "links"); o.put("url", page.optString("url")); o.put("title", page.optString("title")); o.put("links", links); o.put("ua", wv.getSettings().getUserAgentString());
                 KtPlugin.browserEvent(o);
                 finish();
@@ -371,5 +406,5 @@ public class KtBrowserActivity extends Activity {
     @Override protected void onPause() { super.onPause(); if (shown == this) shown = null; }
     @Override public void onBackPressed() { if (wv != null && wv.getWebChromeClient() != null && fullShown()) { wv.getWebChromeClient().onHideCustomView(); return; } if (wv != null && wv.canGoBack()) wv.goBack(); else super.onBackPressed(); }
     private boolean fullShown() { android.view.ViewGroup d = (android.view.ViewGroup) getWindow().getDecorView(); return d.getChildCount() > 1; }
-    @Override protected void onDestroy() { if (wv != null) { wv.stopLoading(); wv.destroy(); } super.onDestroy(); }
+    @Override protected void onDestroy() { probes.shutdownNow(); if (wv != null) { wv.stopLoading(); wv.destroy(); } super.onDestroy(); }
 }

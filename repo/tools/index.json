@@ -704,6 +704,33 @@
         "desktop"
       ],
       "icon": "translate"
+    },
+    {
+      "id": "courses",
+      "kind": "courses",
+      "name": "Courses",
+      "names": {
+        "ar": "الدورات",
+        "ja": "講座",
+        "ko": "강의",
+        "zh": "课程"
+      },
+      "description": "Online courses you are signed in to (Udemy and the other platforms yt-dlp reads): sign in through the app's browser once, read the course's outline, tick the sections and lectures you want, and download them numbered in order into one folder per course. Lectures protected by DRM are not taken; they are counted and reported.",
+      "descriptions": {
+        "ar": "الدورات التي سجّلت دخولك فيها (Udemy وغيرها ممّا تقرؤه yt-dlp): سجّل دخولك عبر متصفّح التطبيق مرّةً، واقرأ فهرس الدورة، وحدّد الأقسام والمحاضرات التي تريدها، ثم نزّلها مرقَّمةً بالترتيب في مجلّد لكلّ دورة. والمحاضرات المحميّة بـ DRM لا تُؤخذ، بل تُعدّ ويُبلَّغ عنها.",
+        "ja": "サインイン済みのオンライン講座（Udemy など yt-dlp が読めるサイト）。アプリのブラウザーで一度サインインし、講座の目次を読み、必要なセクションと講義にチェックを入れ、講座ごとのフォルダーに番号順でダウンロードします。DRM 保護の講義は取得せず、数えて報告します。",
+        "ko": "로그인한 온라인 강의(Udemy 등 yt-dlp가 읽는 플랫폼): 앱 브라우저로 한 번 로그인하고, 강의 목차를 읽어 원하는 섹션과 강의를 고르면 강의별 폴더에 번호순으로 받습니다. DRM으로 보호된 강의는 받지 않고 세어 알려 줍니다.",
+        "zh": "已登录的在线课程（Udemy 以及 yt-dlp 可读取的其他平台）：在应用内浏览器登录一次，读取课程大纲，勾选想要的章节和讲座，按顺序编号下载到每门课程各自的文件夹。受 DRM 保护的讲座不会获取，只计数并报告。"
+      },
+      "version": "0.1.0",
+      "icon": "books",
+      "platforms": [
+        "android",
+        "desktop"
+      ],
+      "requires": [
+        "video"
+      ]
     }
   ]
 }

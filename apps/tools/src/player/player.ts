@@ -24,6 +24,7 @@ import type { Task } from '../engine/types';
 import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
 import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, cuesToSrt, type Cue, type AssRenderer } from './subs';
 import { request } from '../http';
+import { ktPlugin } from '../native';
 import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
 import { Picture, FILTER_PRESETS, CROPS } from './vfx';
@@ -32,7 +33,13 @@ import { mpvVideo, mpvDone, type MpvControl } from './mpv';
 /** Two-letter language codes and the three-letter ones files often carry (mpv matches either). */
 const ISO3: Record<string, string> = { ar: 'ara', en: 'eng', ja: 'jpn', fr: 'fre,fra', de: 'ger,deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'chi,zho', ko: 'kor', tr: 'tur', fa: 'per,fas', ur: 'urd', hi: 'hin', id: 'ind', ms: 'may,msa', th: 'tha', vi: 'vie', nl: 'dut,nld', pl: 'pol', uk: 'ukr', sv: 'swe', he: 'heb' };
 /** The decoder's choices as mpv's options. */
-export const mpvExtra = (P: PlayerPrefs): Record<string, string> => ({ hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'hwcopy' ? 'mediacodec-copy' : 'mediacodec,mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.gpuNext ? 'gpu-next' : 'gpu' });
+export const mpvExtra = (P: PlayerPrefs): Record<string, string> => {
+  // (hw: MediaCodec through the GPU (copy) — the safe path; direct: MediaCodec straight to the surface with the «embed» vo (no subtitles drawn by mpv, the fastest on weak phones); sw: software.)
+  const o: Record<string, string> = { hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'direct' ? 'mediacodec' : 'mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.hwdec === 'direct' ? 'mediacodec_embed' : P.gpuNext ? 'gpu-next' : 'gpu' };
+  // (The reader's own mpv.conf lines, «key=value», last — they win over the choices above; comments and blanks skipped.)
+  for (const line of (P.mpvConf ?? '').split('\n')) { const l = line.trim(); if (!l || l.startsWith('#')) continue; const i = l.indexOf('='); if (i <= 0) { o[l] = 'yes'; continue; } o[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
+  return o;
+};
 const nativePlatformIs = (p: string): boolean => { const c = (window as unknown as { Capacitor?: { getPlatform?(): string } }).Capacitor; const k = (window as unknown as { kurokawaTools?: unknown }).kurokawaTools; return p === 'desktop' ? !!k : p === 'web' ? !k && (!c || c.getPlatform?.() === 'web') : c?.getPlatform?.() === p; };
 const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i;
 
@@ -66,14 +73,15 @@ export function openPlayer(src: PlayerSource): void {
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
   const mem = memoryOf(key);
   // ---- state
-  let controlsOn = true; let hideTimer = 0; let locked = false; let speed = P.defaultSpeed; let zoom = 1; let panX = 0, panY = 0; let aspect = mem?.aspect ?? P.aspect; let abA: number | null = null, abB: number | null = null;
+  let controlsOn = true; let hideTimer = 0; let locked = false; let speed = P.defaultSpeed; let zoom = 1; let panX = 0, panY = 0; let aspect = (P.rememberAspect !== false ? mem?.aspect : undefined) ?? P.aspect; let abA: number | null = null, abB: number | null = null;
   let repeat = P.repeat; let rotate = 0; let flipH = false, flipV = false; let crop = ''; let marks: Bookmark[] = mem?.marks ?? [];
   let tracks: SubTrack[] = []; let current: SubTrack | null = null; let secondary: SubTrack | null = null; let subDelay = P.subDelay; let ass: AssRenderer | null = null;
   let sound: SoundGraph | null = null; let preview: SeekPreview | null = null; let boost = 1; let brightness = P.rememberBrightness ? P.brightness : 1; let sleepAt = 0; let watchedSent = false; let fps = 0; let pictureOff = false;
   // ---- chrome
   const title = h('span', { class: 'kt-title grow', dir: 'auto' }, src.name);
   const clock = h('span', { class: 'kt-clock', hidden: !P.showClock });
-  const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), batchFiles().length > 1 ? iconButton('list', t('batchFiles'), () => batchSheet()) : null, iconButton('more', t('more'), () => moreSheet()));
+  const topToolBox = h('span', { class: 'kt-tools kt-top-tools' });
+  const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, topToolBox, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), batchFiles().length > 1 ? iconButton('list', t('batchFiles'), () => batchSheet()) : null, iconButton('more', t('more'), () => moreSheet()));
   const timeNow = h('span', { class: 'kt-time' }, '0:00'); const timeEnd = h('button', { type: 'button', class: 'kt-time end', title: t('showRemaining'), onclick: () => { const p = getPrefs(); if (p.showRemaining && !endsAt) { endsAt = true; } else { endsAt = false; updatePrefs({ showRemaining: !p.showRemaining }); } onTime(); } }, '–:––'); let endsAt = false;
   const bar = h('div', { class: 'kt-seek', role: 'slider', tabindex: '0', 'aria-label': t('seekBar') }, h('div', { class: 'kt-buf' }), h('div', { class: 'kt-played' }), h('div', { class: 'kt-knob' }), h('i', { class: 'kt-mark a', hidden: true }), h('i', { class: 'kt-mark b', hidden: true }));
   const playBtn = iconButton('play', t('play'), () => toggle()); playBtn.classList.add('kt-play');
@@ -99,6 +107,8 @@ export function openPlayer(src: PlayerSource): void {
   document.body.append(root);
   const pic = new Picture(video, root);
   const wake = navigator.wakeLock && P.keepScreenOn ? navigator.wakeLock.request('screen').catch(() => null) : null;
+  // (The system bars away while the player is up, as chosen; back when it closes.)
+  const barsPlug = ktPlugin() as unknown as { systemBars?(o: { mode: 'both' | 'status' | 'show' }): Promise<void> } | null; if (P.immersive !== 'none') void barsPlug?.systemBars?.({ mode: P.immersive === 'status' ? 'status' : 'both' }).catch(() => undefined);
   if (P.orientation !== 'auto') void (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock?.(P.orientation === 'landscape' ? 'landscape' : 'landscape-primary').catch(() => undefined);
   const clockTick = () => { clock.textContent = new Date().toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }); };
   clockTick(); const clockTimer = window.setInterval(clockTick, 20000);
@@ -232,7 +242,7 @@ export function openPlayer(src: PlayerSource): void {
     if (!moved) return;
     const r = stage.getBoundingClientRect(); const left = start.x < r.left + r.width / 2; const volSide = getPrefs().swapSides ? left : !left;
     if (gesture === 'none') { if (zoom > 1 && e.pointerType === 'touch') gesture = 'pinch'; else if (Math.abs(dx) > Math.abs(dy)) gesture = P.swipeSeek ? 'seek' : 'none'; else gesture = volSide ? (P.swipeVolume ? 'volume' : 'none') : (P.swipeBrightness ? 'bright' : 'none'); }
-    if (gesture === 'pinch') { panX += e.movementX; panY += e.movementY; applyTransform(); }
+    if (gesture === 'pinch' && getPrefs().panZoomed !== false) { panX += e.movementX; panY += e.movementY; applyTransform(); }
     else if (gesture === 'seek') { const dt = (dx / r.width) * Math.min(video.duration || 600, 600) * (getPrefs().swipeSensitivity / 100); const to = Math.max(0, Math.min(video.duration || 0, start.t + dt)); flashText(`${fmtTime(to)}  (${dt >= 0 ? '+' : '−'}${fmtTime(Math.abs(dt))})`, true); (stage as HTMLElement & { _seekTo?: number })._seekTo = to; if (canPreview()) { if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } showControls(); const rr = bar.parentElement!.getBoundingClientRect(); const br = bar.getBoundingClientRect(); const f = video.duration ? to / video.duration : 0; const rtl = getComputedStyle(bar).direction === 'rtl'; preview.show(to, (br.left - rr.left) + (rtl ? 1 - f : f) * br.width, rr.width); } }
     else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); flashText(`🔊 ${localDigits(Math.round(v * 100))}%`); }
     else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); applyFilters(); flashText(`☀ ${localDigits(Math.round(brightness * 100))}%`); if (getPrefs().rememberBrightness) updatePrefs({ brightness }); }
@@ -262,7 +272,7 @@ export function openPlayer(src: PlayerSource): void {
     const action = (z: number): TapAction => (z < 0 ? getPrefs().tapLeft : z > 0 ? getPrefs().tapRight : getPrefs().tapCentre);
     if (seekAcc.total && zone === seekAcc.side && action(zone) === 'seek') { window.clearTimeout(tapTimer); lastTap = now; runTap('seek', side); return; }
     if (now - lastTap < 300 && zone === lastTapZone) { window.clearTimeout(tapTimer); lastTap = now; runTap(action(zone), zone === 0 ? 0 : side); return; }
-    lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => { if (controlsOn) hideControls(); else showControls(); }, 280);
+    lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => { if (getPrefs().singleTap === 'playpause' && zone === 0) { if (video.paused) void video.play(); else video.pause(); return; } if (controlsOn) hideControls(); else showControls(); }, 280);
   };
   stage.addEventListener('pointerup', endPointer); stage.addEventListener('pointercancel', endPointer);
   stage.addEventListener('wheel', (e) => { if (locked) return; e.preventDefault(); if (e.ctrlKey) { zoom = Math.max(1, Math.min(6, zoom - e.deltaY / 500)); applyTransform(); } else setVolume(Math.max(0, Math.min(1 + P.volumeBoost / 100, (video.volume * boost) - e.deltaY / 1000))); showControls(); }, { passive: false });
@@ -430,7 +440,8 @@ export function openPlayer(src: PlayerSource): void {
     if (mpv) { const inFile = mpv.tracks().filter((x) => x.type === 'sub' && !x.external); if (inFile.length) list.append(h('h4', null, t('subsInVideo')), ...inFile.map((x) => h('label', { class: 'dest-row' + (x.selected && !current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: x.selected && !current, onchange: () => { chosenByHand = true; void useTrack(null).then(() => mpv.setTrack('sub', x.id)); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, x.title || x.lang || `#${x.id}`), h('small', { class: 'src' }, [(x.codec ?? '').toUpperCase(), x.lang].filter(Boolean).join(' · '))))); }
     const fileIn = h('input', { type: 'file', accept: '.srt,.ass,.ssa,.vtt,.sub,.txt', hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
-      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')));
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')),
+      ...(ktPlugin() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void localSubs(); } }, icon('folder'), t('subsOnPhone'))] : []));
     const delay = h('input', { type: 'number', step: '0.05', value: subDelay.toFixed(2), style: { width: '6em' }, onchange: () => { subDelay = Number(delay.value) || 0; ass?.setOffset(-subDelay); remember(key, { subDelay }); } }) as HTMLInputElement;
     const nudge = (d: number) => { nudgeSub(d); delay.value = subDelay.toFixed(2); };
     const size = h('input', { type: 'range', min: '40', max: '250', step: '5', value: String(p.subSize), oninput: () => { updatePrefs({ subSize: Number(size.value) }); applySubStyle(); } });
@@ -468,6 +479,43 @@ export function openPlayer(src: PlayerSource): void {
       sw(t('subBold'), 'subBold'), sw(t('subItalic'), 'subItalic'), sw(t('subForceLtr'), 'subForceLtr', () => { delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime); }),
       h('label', { class: 'row switch-row' }, h('span', null, t('subAssOverride'), h('small', { class: 'src' }, t('subAssOverrideHint'))), h('input', { type: 'checkbox', checked: p.subAssOverride, onchange: (e: Event) => { updatePrefs({ subAssOverride: (e.target as HTMLInputElement).checked }); void useTrack(current); } })),
       h('div', { class: 'row' }, h('span', null, t('subCodepage')), pickButton(t('subCodepage'), [['', t('subCodepageAuto')], ['windows-1256', 'Windows-1256 (Arabic)'], ['utf-8', 'UTF-8'], ['windows-1252', 'Windows-1252'], ['windows-1251', 'Windows-1251'], ['shift_jis', 'Shift_JIS'], ['euc-kr', 'EUC-KR'], ['gbk', 'GBK'], ['big5', 'Big5'], ['windows-1254', 'Windows-1254']], p.subCodepage, (v) => updatePrefs({ subCodepage: v }), t('close'))));
+  }
+  /** Subtitle files already on the phone for this series — beside the video, in Downloads, in any folder searched
+   *  by the series' name, and inside subtitle packs (.zip) — ranked by the episode, loaded in one tap. */
+  async function localSubs() {
+    const pl = ktPlugin() as unknown as { filesRoots(): Promise<{ roots: { path: string; readable: boolean }[] }>; filesSearch(o: { path: string; q: string; hidden?: boolean }): Promise<{ entries: { name: string; path: string; dir: boolean; size: number; mtime: number }[] }>; filesList(o: { path: string }): Promise<{ entries: { name: string; path: string; dir: boolean; size: number; mtime: number }[] }> } | null; if (!pl) return;
+    const { parseFilename } = await import('../anime/anitomy'); const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); const ep = m?.episode ?? parsed.episode; const title = (m?.title ?? parsed.title ?? '').trim();
+    const sh = openSheet(t('subsOnPhone'), t('close')); const q = h('input', { type: 'search', value: title, dir: 'auto', placeholder: t('subsOnPhoneHint') }) as HTMLInputElement; const list = h('div', { class: 'sub-list' }); const status = h('p', { class: 'src' });
+    sh.body.append(h('div', { class: 'row' }, q, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void run() }, icon('search'), t('search'))), status, list);
+    const isSub = (n: string) => /\.(ass|ssa|srt|vtt|sub)$/i.test(n); const isPack = (n: string) => /\.(zip|7z|rar)$/i.test(n);
+    const epOf = (n: string) => parseFilename(n).episode; const words = (x: string) => x.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2);
+    type Hit = { name: string; path: string; inside?: string; score: number; mtime: number };
+    const score = (name: string, path: string): number => { const w = words(q.value); const hay = (path + '/' + name).toLowerCase(); let sc = w.filter((x) => hay.includes(x)).length * 2; if (ep !== undefined && epOf(name) === ep) sc += 10; if (src.localPath && path.startsWith(src.localPath.replace(/\/[^/]*$/, ''))) sc += 3; if (/\.ass$/i.test(name)) sc += 1; return sc; };
+    const run = async () => {
+      status.textContent = t('loading'); list.replaceChildren(); const hits: Hit[] = []; const seen = new Set<string>();
+      try {
+        const roots = (await pl.filesRoots()).roots.filter((r) => r.readable); const dirs = new Set<string>(); if (src.localPath) dirs.add(src.localPath.replace(/\/[^/]*$/, ''));
+        for (const r of roots) { dirs.add(r.path); }
+        // (The video's own folder first, whole; then every root searched by each word of the name and by the subtitle extensions.)
+        if (src.localPath) { try { for (const e of (await pl.filesList({ path: src.localPath.replace(/\/[^/]*$/, '') })).entries) if (!e.dir && (isSub(e.name) || isPack(e.name)) && seen.add(e.path)) hits.push({ name: e.name, path: e.path, score: score(e.name, e.path) + 2, mtime: e.mtime }); } catch { /* none */ } }
+        const needles = [...new Set([...words(q.value).slice(0, 3), '.ass', '.srt'])];
+        for (const r of roots) for (const n of needles) { try { for (const e of (await pl.filesSearch({ path: r.path, q: n })).entries) if (!e.dir && (isSub(e.name) || (isPack(e.name) && /sub|ass|srt/i.test(e.name))) && seen.add(e.path)) hits.push({ name: e.name, path: e.path, score: score(e.name, e.path), mtime: e.mtime }); } catch { /* a root we cannot read */ } }
+        // (Subtitle packs opened: their files listed as hits too, each taken out when chosen.)
+        const { listArchive } = await import('../archives');
+        for (const hmm of hits.filter((x) => isPack(x.name)).slice(0, 8)) { try { const info = await listArchive(hmm.path); for (const e of info.entries) if (!e.dir && isSub(e.path)) hits.push({ name: e.path.split('/').pop() ?? e.path, path: hmm.path, inside: e.path, score: score(e.path, hmm.path), mtime: hmm.mtime }); } catch { /* not readable */ } }
+        const shown = hits.filter((x) => !isPack(x.name) || x.inside).sort((a, b) => b.score - a.score || b.mtime - a.mtime).slice(0, 80);
+        status.textContent = shown.length ? '' : t('noResults');
+        list.replaceChildren(...shown.map((x) => h('button', { type: 'button', class: 'result-row sub-row', onclick: async () => {
+          try {
+            let bytes: Uint8Array | null;
+            if (x.inside) { const { extractArchiveJob } = await import('../archives'); const job = extractArchiveJob({ path: x.path, dest: 'cache:', only: [x.inside], replace: 'replace' }); const r = await job.done; bytes = await readLocal(`${r.dest.replace(/[\\/]$/, '')}/${x.inside}`); }
+            else bytes = await readLocal(x.path);
+            if (!bytes) throw new Error(t('subsCantRead')); const tr = await addTrackFromBytes(x.name, bytes); if (tr) { chosenByHand = true; await useTrack(tr); sh.close(); toast(t('subsLoaded', { name: x.name })); }
+          } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+        } }, icon(x.inside ? 'archive' : 'subtitles'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, x.name), h('small', { class: 'src', dir: 'ltr' }, (x.inside ? `${x.path.split('/').pop()} › ` : '') + x.path.replace(/\/[^/]*$/, ''))), epOf(x.name) !== undefined ? h('span', { class: 'chip small' + (epOf(x.name) === ep ? ' on' : '') }, t('episodeN', { n: epOf(x.name)! })) : null)));
+      } catch (e) { status.textContent = String((e as Error).message ?? e); }
+    };
+    void run();
   }
   /** Subtitles for this very episode through the Subtitles add-on, loaded straight into the player. */
   async function findSubs() {
@@ -673,7 +721,15 @@ export function openPlayer(src: PlayerSource): void {
     const b = h('button', { type: 'button', class: (withLabel ? 'kt-tool' : 'icon-btn') + (x.on?.() ? ' on' : ''), title: x.label, 'aria-label': x.label, 'aria-pressed': x.on ? String(!!x.on()) : null, onclick: () => x.run() }, x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), withLabel ? h('span', null, x.label) : null);
     return b;
   }
-  function drawTools() { const want = getPrefs().bar; toolBox.replaceChildren(...want.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x))); }
+  function drawTools() {
+    const P2 = getPrefs(); const portrait = window.innerHeight > window.innerWidth; const ids = [...P2.bar, ...(portrait ? (P2.portraitTools ?? []) : [])];
+    toolBox.replaceChildren(...ids.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
+    topToolBox.replaceChildren(...(P2.topTools ?? []).map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
+    root.classList.toggle('seek-below', !!P2.seekBelowButtons); root.classList.toggle('glass', !!P2.glassControls); root.classList.toggle('reduce-motion', !!P2.reduceMotion); root.classList.toggle('always-dark', P2.alwaysDark !== false);
+  }
+  window.addEventListener('resize', drawTools);
+  // (The subtitles lifted over the control bar by its real height, whatever the layout gives it.)
+  const barRo = new ResizeObserver(() => { root.style.setProperty('--kt-bottom-h', `${bottom.getBoundingClientRect().height}px`); }); barRo.observe(bottom);
   /** The grid of every tool, as REX Player's legend shows them; and the bar's layout, chosen there. */
   function toolsSheet() {
     const sh = openSheet(t('playerTools'), t('close'));
@@ -711,8 +767,8 @@ export function openPlayer(src: PlayerSource): void {
     const sh = openSheet(t('toolDecoder'), t('close'));
     if (!mpv) { sh.body.append(h('p', { class: 'hint' }, t('decoderWebOnly'))); return; }
     const now = h('small', { class: 'src' }); void (ktPluginMpvGet('hwdec-current')).then((v) => { now.textContent = `${t('decoderNow')}: ${v && v !== 'no' ? v : t('decoderSoftware')}`; });
-    const choose = (v: PlayerPrefs['hwdec']) => { updatePrefs({ hwdec: v }); mpv.set('hwdec', mpvExtra(getPrefs()).hwdec); sh.close(); flashText(v === 'sw' ? t('decoderSoftware') : v === 'hwcopy' ? t('decoderHwCopy') : t('decoderHw')); };
-    sh.body.append(now, h('div', { class: 'dest-list' }, ...([['hw', t('decoderHw'), t('decoderHwHint')], ['hwcopy', t('decoderHwCopy'), t('decoderHwCopyHint')], ['sw', t('decoderSoftware'), t('decoderSoftwareHint')]] as [PlayerPrefs['hwdec'], string, string][]).map(([v, l, d]) => h('button', { type: 'button', class: 'dest-row' + (getPrefs().hwdec === v ? ' on' : ''), onclick: () => choose(v) }, icon('chip'), h('span', { class: 'grow' }, h('span', null, l), h('small', { class: 'src', style: { display: 'block' } }, d))))));
+    const choose = (v: PlayerPrefs['hwdec']) => { updatePrefs({ hwdec: v }); const ex = mpvExtra(getPrefs()); mpv.set('vo', ex.vo); mpv.set('hwdec', ex.hwdec); sh.close(); flashText(v === 'sw' ? t('decoderSoftware') : v === 'direct' ? t('decoderDirect') : t('decoderHw')); };
+    sh.body.append(now, h('div', { class: 'dest-list' }, ...([['hw', t('decoderHw'), t('decoderHwHint')], ['direct', t('decoderDirect'), t('decoderDirectHint')], ['sw', t('decoderSoftware'), t('decoderSoftwareHint')]] as [PlayerPrefs['hwdec'], string, string][]).map(([v, l, d]) => h('button', { type: 'button', class: 'dest-row' + (getPrefs().hwdec === v ? ' on' : ''), onclick: () => choose(v) }, icon('chip'), h('span', { class: 'grow' }, h('span', null, l), h('small', { class: 'src', style: { display: 'block' } }, d))))));
   }
   const ktPluginMpvGet = async (name: string): Promise<string | null> => { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { mpvGet?(o: { name: string }): Promise<{ value: string | null }> } | null; try { return (await kp?.mpvGet?.({ name }))?.value ?? null; } catch { return null; } };
   /** The screen's turn: as the phone is held, landscape, portrait — kept locked so. */
@@ -836,7 +892,7 @@ export function openPlayer(src: PlayerSource): void {
   ambientTick();
   // Chapters of a local file (ffprobe), marked on the bar; openings and endings among them become skips.
   let chapters: { start: number; end: number; title: string }[] = [];
-  const skips: { start: number; end: number; kind: 'op' | 'ed' | 'recap' }[] = [];
+  const skips: { start: number; end: number; kind: 'op' | 'ed' | 'recap' | 'sponsor' | 'silence'; label?: string }[] = [];
   let probed: Promise<unknown> | null = null;
   const probe = () => (probed ??= (async () => {
     if (!src.localPath) return null;
@@ -847,7 +903,13 @@ export function openPlayer(src: PlayerSource): void {
   void (async () => {
     const pr = await probe() as { chapters?: { start_time: string; end_time: string; tags?: { title?: string } }[] } | null;
     chapters = (pr?.chapters ?? []).map((c) => ({ start: Number(c.start_time), end: Number(c.end_time), title: c.tags?.title ?? '' })).filter((c) => isFinite(c.start) && c.end > c.start);
-    for (const c of chapters) { const k = /^(op|opening|intro)\b/i.test(c.title) ? 'op' : /^(ed|ending|outro|credits)\b/i.test(c.title) ? 'ed' : /recap|previously/i.test(c.title) ? 'recap' : null; if (k) skips.push({ start: c.start, end: c.end, kind: k }); }
+    for (const c of chapters) { const sb = /^\[SponsorBlock\]:?\s*(.*)$/i.exec(c.title); if (sb) { skips.push({ start: c.start, end: c.end, kind: 'sponsor', label: sb[1] }); continue; } const k = /^(op|opening|intro)\b/i.test(c.title) ? 'op' : /^(ed|ending|outro|credits)\b/i.test(c.title) ? 'ed' : /recap|previously/i.test(c.title) ? 'recap' : null; if (k) skips.push({ start: c.start, end: c.end, kind: k }); }
+    chapters = chapters.filter((c) => !/^\[SponsorBlock\]/i.test(c.title));
+    // (The SponsorBlock stretches drawn on the bar as coloured spans; the replay heatmap above it, from yt-dlp's info.json beside the file.)
+    const drawSegs = () => { const dur = video.duration || 0; if (!dur) return; bar.querySelectorAll('.kt-sb').forEach((x) => x.remove()); for (const s of skips) if (s.kind === 'sponsor') bar.append(h('i', { class: 'kt-sb', title: s.label ?? '', style: { insetInlineStart: `${(s.start / dur) * 100}%`, width: `${((s.end - s.start) / dur) * 100}%` } })); };
+    if (video.duration) drawSegs(); else video.addEventListener('loadedmetadata', drawSegs, { once: true });
+    if (src.localPath && getPrefs().heatmap) { void (async () => { const { readSidecar } = await import('../downloads/sidecars'); const raw = await readSidecar(src.localPath!.replace(/\.[^./]+$/, '') + '.info.json'); if (!raw) return; let hm: { start_time: number; end_time: number; value: number }[] = []; try { hm = (JSON.parse(raw) as { heatmap?: typeof hm }).heatmap ?? []; } catch { return; } if (!hm.length) return; const draw = () => { const dur = video.duration || 0; if (!dur) return; let heat = bar.querySelector('.kt-heat') as HTMLElement | null; if (!heat) { heat = h('div', { class: 'kt-heat' }); bar.append(heat); } heat.replaceChildren(...hm.map((x) => h('i', { style: { insetInlineStart: `${(x.start_time / dur) * 100}%`, width: `${((x.end_time - x.start_time) / dur) * 100}%`, height: `${Math.round(Math.max(0.08, Math.min(1, x.value)) * 100)}%` } }))); }; if (video.duration) draw(); else video.addEventListener('loadedmetadata', draw, { once: true }); })(); }
+    if (src.localPath && getPrefs().skipSilence) { void (async () => { const { silenceMap, canMapSilence } = await import('./silence'); if (!canMapSilence()) return; for (const s of await silenceMap(src.localPath!)) if (s.end - s.start >= 1.2) skips.push({ start: s.start, end: s.end, kind: 'silence' }); })(); }
     const draw = () => { const dur = video.duration || 0; if (!dur) return; bar.querySelectorAll('.kt-chapter').forEach((x) => x.remove()); for (const c of chapters.slice(1)) bar.append(h('i', { class: 'kt-chapter', style: { insetInlineStart: `${(c.start / dur) * 100}%` } })); };
     if (video.duration) draw(); else video.addEventListener('loadedmetadata', draw, { once: true });
   })();
@@ -866,11 +928,14 @@ export function openPlayer(src: PlayerSource): void {
   })();
   const skipped = new Set<number>();
   function skipCheck(c: number) {
-    const mode = getPrefs().autoSkip; const sk = mode === 'off' ? undefined : skips.find((x) => c >= x.start && c < x.end - 1);
+    const pp = getPrefs(); const modeOf = (k: typeof skips[number]['kind']) => (k === 'sponsor' ? pp.skipSponsor : k === 'silence' ? (pp.skipSilence ? 'auto' : 'off') : pp.autoSkip);
+    const sk = skips.find((x) => modeOf(x.kind) !== 'off' && c >= x.start && c < x.end - (x.kind === 'silence' ? 0.3 : 1));
     if (!sk) { skipOp.hidden = true; return; }
-    const i = skips.indexOf(sk);
-    if (mode === 'auto' && !skipped.has(i)) { skipped.add(i); video.currentTime = sk.end; flashText(t(sk.kind === 'op' ? 'skippedOpening' : sk.kind === 'ed' ? 'skippedEnding' : 'skippedRecap')); return; }
-    skipOp.hidden = false; skipOp.textContent = t(sk.kind === 'op' ? 'skipOpening' : sk.kind === 'ed' ? 'skipEnding' : 'skipRecap'); skipOp.onclick = () => { video.currentTime = sk.end; skipOp.hidden = true; };
+    const i = skips.indexOf(sk); const mode = modeOf(sk.kind);
+    if (sk.kind === 'silence') { if (!skipped.has(i)) { skipped.add(i); video.currentTime = sk.end - 0.2; } return; }
+    const label = (did: boolean) => (sk.kind === 'sponsor' ? (did ? t('skippedSponsor') : t('skipSponsorBtn')) + (sk.label ? ` · ${sk.label}` : '') : t(did ? (sk.kind === 'op' ? 'skippedOpening' : sk.kind === 'ed' ? 'skippedEnding' : 'skippedRecap') : (sk.kind === 'op' ? 'skipOpening' : sk.kind === 'ed' ? 'skipEnding' : 'skipRecap')));
+    if (mode === 'auto' && !skipped.has(i)) { skipped.add(i); video.currentTime = sk.end; flashText(label(true)); return; }
+    skipOp.hidden = false; skipOp.textContent = label(false); skipOp.onclick = () => { video.currentTime = sk.end; skipOp.hidden = true; };
   }
   // Dragging the subtitles up or down moves them (REX Player's way); the position is kept. A pinch on them
   // resizes them.
@@ -884,7 +949,7 @@ export function openPlayer(src: PlayerSource): void {
       subPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       if (subPointers.size >= 2 && pinch0 > 0) { const [a, b] = [...subPointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); const sz = Math.max(40, Math.min(250, Math.round((size0 * d) / pinch0 / 5) * 5)); if (top) updatePrefs({ sub2Size: sz }); else updatePrefs({ subSize: sz }); applySubStyle(); flashText(`${localDigits(sz)}%`, true); moved = true; return; }
       const dx = ev.clientX - x0, dy = ev.clientY - y0; if (!moved && Math.abs(dx) < 8 && Math.abs(dy) < 8) return; moved = true;
-      if (Math.abs(dx) > Math.abs(dy) * 1.5) { if (!swiped && Math.abs(dx) > 48) { swiped = true; subLine(dx > 0 !== (document.documentElement.dir === 'rtl') ? 1 : -1); } return; }
+      if (Math.abs(dx) > Math.abs(dy) * 1.5) { if (!swiped && Math.abs(dx) > 48 && getPrefs().subtitleSwipe !== false) { swiped = true; subLine(dx > 0 !== (document.documentElement.dir === 'rtl') ? 1 : -1); } return; }
       if (swiped) return; const d = ((y0 - ev.clientY) / r.height) * 100; if (top) updatePrefs({ sub2Pos: Math.max(0, Math.min(90, Math.round(p0 - d))) }); else updatePrefs({ subPos: Math.max(5, Math.min(100, Math.round(p0 - d))) }); applySubStyle(); };
     const up = (ev: PointerEvent) => { subPointers.delete(ev.pointerId); if (subPointers.size < 2) pinch0 = 0; box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); box.removeEventListener('pointercancel', up); };
     box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
@@ -895,6 +960,7 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- closing
   function close() {
+    barRo.disconnect();
     playerGone = true;
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (Opened by another app: the position and the length handed back to it, and the app steps aside.)
@@ -903,6 +969,7 @@ export function openPlayer(src: PlayerSource): void {
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
     window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
+    void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }
   root.addEventListener('kt-close', close);

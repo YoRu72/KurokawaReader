@@ -17,6 +17,24 @@ export interface Settings {
   /** Folders chosen lately in the Add sheet, newest first. */
   recentDirs?: string[];
   maxActive: number;
+  /** Connections over every file download at once (the phone's engine). */
+  connBudget?: number;
+  /** Streams (HLS playlists) fetched by the app itself — pieces joined here — rather than by yt-dlp. Default on. */
+  hlsNative?: boolean;
+  /** A computer: a yt-dlp binary of the reader's own instead of the managed one (empty: managed). */
+  videoBinaryPath?: string;
+  /** The last quick preset (Fast / Quality / Compact / Music) applied first next time. Default on. */
+  videoRememberPreset?: boolean;
+  /** Courses: lectures numbered continuously across the course (default), or anew in each section. */
+  coursesContinuous?: boolean;
+  /** Convert on a computer: the hardware H.264 encoder (NVENC, VideoToolbox, QSV, AMF) when there is one. Default on. */
+  convertHw?: boolean;
+  /** A computer: the local API on 127.0.0.1 for a command line, scripts and a browser extension — on/off, its token and port. */
+  localApi?: { on: boolean; token?: string; port?: number };
+  /** Finished files hashed; identical ones become hard links (the room taken once). Android. */
+  dedupe?: boolean;
+  /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */
+  rules?: import('./downloads/rules').Rule[];
   limits: Limits;
   seedAfterDone: boolean;
   listenPort: number;
@@ -81,7 +99,7 @@ export interface Settings {
   net?: Partial<import('./downloads/net').NetPrefs>;
   miniAuto?: boolean;
   /** A folder of fonts for styled subtitles (the Player add-on). */
-  playerFontsDir?: string; /** A computer's installed fonts used for styled subtitles (on unless turned off). */ playerSystemFonts?: boolean; /** Slow mode on: the limits it replaced, put back when it is turned off. */ slowMode?: { prev?: { down: number; up: number } }; /** Finished entries cleared from the list after this many days (0: never; the files stay). */ dlAutoClean?: number; /** When downloads may run (Wi-Fi only, not on a low battery) and the computer's side (kept awake, when all are done). */ power?: { wifiOnly?: boolean; batteryGuard?: boolean; keepAwake?: boolean; whenDone?: 'nothing' | 'quit' | 'sleep' | 'shutdown' }; /** The player's engine on Android: mpv (when its pack is here; the default) or the web view's own. */ playerEngine?: 'mpv' | 'web';
+  playerFontsDir?: string; /** A computer's installed fonts used for styled subtitles (on unless turned off). */ playerSystemFonts?: boolean; /** Slow mode on: the limits it replaced, put back when it is turned off. */ slowMode?: { prev?: { down: number; up: number } }; /** Finished entries cleared from the list after this many days (0: never; the files stay). */ dlAutoClean?: number; /** When downloads may run (Wi-Fi only, not on a low battery) and the computer's side (kept awake, when all are done). */ power?: import('./downloads/power').Power; /** The player's engine on Android: mpv (when its pack is here; the default) or the web view's own. */ playerEngine?: 'mpv' | 'web';
   /** More folders for the anime library. */
   animeLibraryDirs?: string[];
   /** Hayase's «hide spoilers»: episodes past the one you are on keep their titles and pictures hidden. */
@@ -105,6 +123,12 @@ export interface Settings {
   archiveKeepFree: number; archiveVerifyFirst: boolean; archiveCloseWhenDone: boolean;
   /** The Video add-on: the quality taken when none is picked, the container, the cover and sponsor-skip. */
   videoQuality: 'best' | '2160' | '1440' | '1080' | '720' | '480' | 'audio'; videoContainer: 'mp4' | 'mkv' | 'webm'; videoEmbedThumb: boolean; videoSponsor: boolean;
+  /** SponsorBlock: cut the segments out, or mark them as chapters; which categories (comma-separated yt-dlp names). */
+  videoSponsorMode?: 'off' | 'remove' | 'mark'; videoSponsorCats?: string[];
+  /** Sidecars beside finished videos for media servers: a Kodi/Jellyfin .nfo (and the info.json kept), the cover picture. */
+  sidecarNfo?: boolean; sidecarKeepJson?: boolean; sidecarCover?: boolean;
+  /** More beside a video: its comments and chapters as text, a live stream's chat; lyrics (.lrc from LRCLIB) beside music. */
+  videoRyd?: boolean; sidecarComments?: boolean; sidecarChapters?: boolean; sidecarLiveChat?: boolean; sidecarLyrics?: boolean;
   videoChapters?: boolean; videoTemplate?: string; videoNumber?: boolean; videoCookies?: string;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
 }

@@ -106,14 +106,42 @@ final class KtFiles {
 
     /* ---------- a small picture of a file (a photo, a video's frame, an app's icon) ---------- */
     static final Map<String, String> thumbs = new ConcurrentHashMap<>();
+    /** A small picture inside an archive, as a data: URL (pictures only; the entry is decoded from its stream). */
+    static String archiveThumb(File f, String password, String entry, int px) {
+        if (!entry.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(jpe?g|png|webp|gif|bmp)$")) return null;
+        try (KtArchive.Opened o = KtArchive.open(f, password, entry)) {
+            if (o.size > 24L << 20) return null;
+            byte[] bytes = new byte[(int) Math.max(0, o.size)]; int at = 0; while (at < bytes.length) { int n = o.in.read(bytes, at, bytes.length - at); if (n <= 0) break; at += n; }
+            android.graphics.BitmapFactory.Options bo = new android.graphics.BitmapFactory.Options(); bo.inJustDecodeBounds = true; android.graphics.BitmapFactory.decodeByteArray(bytes, 0, at, bo);
+            int s = 1; while (bo.outWidth / s > px * 2 && bo.outHeight / s > px * 2) s *= 2;
+            android.graphics.BitmapFactory.Options b2 = new android.graphics.BitmapFactory.Options(); b2.inSampleSize = s; android.graphics.Bitmap full = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, at, b2); if (full == null) return null;
+            android.graphics.Bitmap b = android.media.ThumbnailUtils.extractThumbnail(full, px, px, android.media.ThumbnailUtils.OPTIONS_RECYCLE_INPUT);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out); b.recycle();
+            return "data:image/jpeg;base64," + android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP);
+        } catch (Throwable e) { return null; }
+    }
+
+    /** A picture the web view cannot draw itself (HEIC/HEIF; a TIFF when the decoder knows it) decoded whole to a JPEG in the cache; its path. */
+    static File decode(Context ctx, File f) throws Exception {
+        File dir = new File(ctx.getCacheDir(), "kt-decoded"); dir.mkdirs();
+        File out = new File(dir, Integer.toHexString((f.getAbsolutePath() + "|" + f.lastModified()).hashCode()) + ".jpg"); if (out.length() > 0) return out;
+        Bitmap b = null;
+        if (Build.VERSION.SDK_INT >= 28) { try { android.graphics.ImageDecoder.Source src = android.graphics.ImageDecoder.createSource(f); b = android.graphics.ImageDecoder.decodeBitmap(src, (dec, info, s) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); int w = info.getSize().getWidth(), h = info.getSize().getHeight(); int max = 4096; if (w > max || h > max) { float k = Math.min(max / (float) w, max / (float) h); dec.setTargetSize(Math.round(w * k), Math.round(h * k)); } }); } catch (Throwable e) { android.util.Log.w("KtFiles", "decode: " + e); } }
+        if (b == null) b = BitmapFactory.decodeFile(f.getAbsolutePath());
+        if (b == null) throw new java.io.IOException("undecodable");
+        try (java.io.FileOutputStream o = new java.io.FileOutputStream(out)) { b.compress(Bitmap.CompressFormat.JPEG, 92, o); } finally { b.recycle(); }
+        File[] old = dir.listFiles(); if (old != null && old.length > 40) { java.util.Arrays.sort(old, (x, y) -> Long.compare(x.lastModified(), y.lastModified())); for (int i = 0; i < old.length - 30; i++) old[i].delete(); }
+        return out;
+    }
     static String thumb(Context ctx, File f, int px) {
         String key = f.getAbsolutePath() + "|" + f.lastModified() + "|" + px; String had = thumbs.get(key); if (had != null) return had;
         Bitmap b = null; String name = f.getName().toLowerCase(Locale.ROOT);
         try {
-            if (name.matches(".*\\.(jpe?g|png|webp|gif|bmp|heic|avif)$")) {
+            if (name.matches(".*\\.(jpe?g|png|webp|gif|bmp|heic|heif|hif|avif|tiff?|ico|wbmp)$")) {
                 BitmapFactory.Options o = new BitmapFactory.Options(); o.inJustDecodeBounds = true; BitmapFactory.decodeFile(f.getAbsolutePath(), o);
                 int s = 1; while (o.outWidth / s > px * 2 && o.outHeight / s > px * 2) s *= 2;
                 BitmapFactory.Options o2 = new BitmapFactory.Options(); o2.inSampleSize = s; Bitmap full = BitmapFactory.decodeFile(f.getAbsolutePath(), o2);
+                if (full == null && Build.VERSION.SDK_INT >= 28) { try { full = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(f), (dec, info, s2) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); dec.setTargetSampleSize(Math.max(1, Math.min(info.getSize().getWidth(), info.getSize().getHeight()) / Math.max(1, px * 2))); }); } catch (Throwable ignored) {} }
                 if (full != null) { b = ThumbnailUtils.extractThumbnail(full, px, px, ThumbnailUtils.OPTIONS_RECYCLE_INPUT); }
             } else if (name.matches(".*\\.(mp4|mkv|webm|m4v|mov|avi|3gp|ts|flv|wmv)$")) {
                 b = Build.VERSION.SDK_INT >= 29 ? ThumbnailUtils.createVideoThumbnail(f, new android.util.Size(px, px), null) : ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), android.provider.MediaStore.Images.Thumbnails.MINI_KIND);
@@ -224,6 +252,139 @@ final class KtFiles {
             }
         } catch (Exception ignored) {}
         return out;
+    }
+
+    /* ---------- the recycle bin: a hidden folder on each storage, each item with where it came from ---------- */
+    static final String TRASH = ".kurokawa-trash";
+    /** The storage root `f` lies on (the phone's, a card's) — where its bin is. */
+    static File trashDirFor(Context ctx, File f) {
+        String p; try { p = f.getCanonicalPath(); } catch (IOException e) { p = f.getAbsolutePath(); }
+        File best = null; try { JSONArray rs = roots(ctx, KtEngine.defaultDirOf(ctx)).getJSONArray("roots"); for (int i = 0; i < rs.length(); i++) { String rp = rs.getJSONObject(i).optString("path"); String kind = rs.getJSONObject(i).optString("kind"); if (kind.equals("app")) continue; if (p.equals(rp) || p.startsWith(rp + "/")) if (best == null || rp.length() > best.getAbsolutePath().length()) best = new File(rp); } } catch (Exception ignored) {}
+        if (best == null) best = Environment.getExternalStorageDirectory();
+        return new File(best, TRASH);
+    }
+    /** `paths` moved into their storages' bins (a rename; copied and deleted across storages), each with a note of where it was. */
+    static JSONObject trash(Context ctx, List<File> paths, AtomicBoolean cancel) throws Exception {
+        JSONArray moved = new JSONArray(), failed = new JSONArray();
+        for (File f : paths) {
+            if (cancel != null && cancel.get()) break;
+            try {
+                File bin = trashDirFor(ctx, f); if (!bin.isDirectory() && !bin.mkdirs()) throw new IOException("cannot make the bin");
+                try { new File(bin, ".nomedia").createNewFile(); } catch (IOException ignored) {}
+                String id = System.currentTimeMillis() + "-" + Integer.toHexString(f.getAbsolutePath().hashCode()); File slot = new File(bin, id); if (!slot.mkdirs()) throw new IOException("cannot make the slot");
+                File to = new File(slot, f.getName()); long size = f.isFile() ? f.length() : 0;
+                if (!f.renameTo(to)) { Job j = new Job("trash"); long[] done = { 0, 0 }, total = { 0, 0 }; copyTree(f, to, j, done, total, (ev) -> {}, new long[1]); deleteTree(f, j, new long[2], new long[2], null, new long[1]); }
+                JSONObject meta = new JSONObject(); meta.put("from", f.getAbsolutePath()); meta.put("name", f.getName()); meta.put("at", System.currentTimeMillis()); meta.put("dir", to.isDirectory()); meta.put("size", size);
+                try (OutputStream o = new FileOutputStream(new File(slot, ".meta.json"))) { o.write(meta.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                moved.put(f.getAbsolutePath());
+            } catch (Exception e) { failed.put(f.getName() + ": " + e.getMessage()); }
+        }
+        JSONObject r = new JSONObject(); r.put("moved", moved); r.put("failed", failed); return r;
+    }
+    /** What the bins hold, newest first: the slot, the name, where it was, when, the size. */
+    static JSONArray trashList(Context ctx) throws Exception {
+        JSONArray out = new JSONArray(); JSONArray rs = roots(ctx, KtEngine.defaultDirOf(ctx)).getJSONArray("roots");
+        for (int i = 0; i < rs.length(); i++) {
+            if (rs.getJSONObject(i).optString("kind").equals("app")) continue; File bin = new File(rs.getJSONObject(i).optString("path"), TRASH); File[] slots = bin.listFiles(); if (slots == null) continue;
+            for (File slot : slots) { if (!slot.isDirectory()) continue; File mf = new File(slot, ".meta.json"); if (!mf.isFile()) continue; try { JSONObject m = new JSONObject(head(mf, 65536)); m.put("slot", slot.getAbsolutePath()); File item = new File(slot, m.optString("name")); m.put("path", item.getAbsolutePath()); m.put("exists", item.exists()); if (item.isFile()) m.put("size", item.length()); out.put(m); } catch (Exception ignored) {} }
+        }
+        List<JSONObject> l = new ArrayList<>(); for (int i = 0; i < out.length(); i++) l.add(out.getJSONObject(i)); l.sort((a, b) -> Long.compare(b.optLong("at"), a.optLong("at")));
+        JSONArray sorted = new JSONArray(); for (JSONObject o : l) sorted.put(o); return sorted;
+    }
+    /** A slot's item put back where it came from (beside it under another name when the place is taken). */
+    static JSONObject trashRestore(File slot) throws Exception {
+        JSONObject m = new JSONObject(head(new File(slot, ".meta.json"), 65536)); File item = new File(slot, m.optString("name")); File to = new File(m.optString("from"));
+        if (to.getParentFile() != null && !to.getParentFile().isDirectory()) to.getParentFile().mkdirs();
+        if (to.exists()) to = keepBoth(to);
+        if (!item.renameTo(to)) { Job j = new Job("restore"); long[] d = { 0, 0 }; copyTree(item, to, j, d, d, (ev) -> {}, new long[1]); deleteTree(item, j, new long[2], new long[2], null, new long[1]); }
+        deleteTree(slot, new Job("x"), new long[2], new long[2], null, new long[1]);
+        JSONObject r = new JSONObject(); r.put("path", to.getAbsolutePath()); return r;
+    }
+    /** Slots deleted for good: the ones named, or all, or those older than `olderThanMs`. */
+    static int trashEmpty(Context ctx, List<File> slots, long olderThanMs) throws Exception {
+        int n = 0;
+        if (slots != null) { for (File s : slots) { deleteTree(s, new Job("x"), new long[2], new long[2], null, new long[1]); n++; } return n; }
+        JSONArray all = trashList(ctx); long now = System.currentTimeMillis();
+        for (int i = 0; i < all.length(); i++) { JSONObject m = all.getJSONObject(i); if (olderThanMs <= 0 || now - m.optLong("at") > olderThanMs) { deleteTree(new File(m.optString("slot")), new Job("x"), new long[2], new long[2], null, new long[1]); n++; } }
+        return n;
+    }
+
+    /* ---------- what a file says about itself: a photo's EXIF, a recording's tags, an app's name and version ---------- */
+    static JSONObject meta(Context ctx, File f) throws Exception {
+        JSONObject o = new JSONObject(); String n = f.getName().toLowerCase(Locale.ROOT);
+        if (n.matches(".*\\.(jpe?g|png|webp|heic|dng|tiff?)$")) {
+            try {
+                android.media.ExifInterface ex = new android.media.ExifInterface(f.getAbsolutePath()); JSONObject e = new JSONObject();
+                String[][] tags = { { "make", android.media.ExifInterface.TAG_MAKE }, { "model", android.media.ExifInterface.TAG_MODEL }, { "aperture", android.media.ExifInterface.TAG_F_NUMBER }, { "exposure", android.media.ExifInterface.TAG_EXPOSURE_TIME }, { "iso", android.media.ExifInterface.TAG_ISO_SPEED_RATINGS }, { "focal", android.media.ExifInterface.TAG_FOCAL_LENGTH }, { "flash", android.media.ExifInterface.TAG_FLASH }, { "whiteBalance", android.media.ExifInterface.TAG_WHITE_BALANCE }, { "taken", android.media.ExifInterface.TAG_DATETIME_ORIGINAL }, { "software", android.media.ExifInterface.TAG_SOFTWARE }, { "width", android.media.ExifInterface.TAG_IMAGE_WIDTH }, { "height", android.media.ExifInterface.TAG_IMAGE_LENGTH }, { "orientation", android.media.ExifInterface.TAG_ORIENTATION } };
+                for (String[] t : tags) { String v = ex.getAttribute(t[1]); if (v != null && !v.isEmpty()) e.put(t[0], v); }
+                float[] ll = new float[2]; if (ex.getLatLong(ll)) { e.put("lat", ll[0]); e.put("lon", ll[1]); }
+                if (!e.has("width")) { BitmapFactory.Options bo = new BitmapFactory.Options(); bo.inJustDecodeBounds = true; BitmapFactory.decodeFile(f.getAbsolutePath(), bo); if (bo.outWidth > 0) { e.put("width", bo.outWidth); e.put("height", bo.outHeight); } }
+                o.put("exif", e);
+            } catch (Exception ignored) {}
+        } else if (n.matches(".*\\.(mp3|m4a|flac|ogg|opus|wav|aac|wma|mp4|mkv|webm|m4v|mov|avi|3gp|ts)$")) {
+            android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+            try {
+                r.setDataSource(f.getAbsolutePath()); JSONObject m = new JSONObject();
+                int[][] keys = { { android.media.MediaMetadataRetriever.METADATA_KEY_TITLE }, { android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST }, { android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM }, { android.media.MediaMetadataRetriever.METADATA_KEY_GENRE }, { android.media.MediaMetadataRetriever.METADATA_KEY_YEAR }, { android.media.MediaMetadataRetriever.METADATA_KEY_DURATION }, { android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE }, { android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH }, { android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT }, { android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE } };
+                String[] names = { "title", "artist", "album", "genre", "year", "duration", "bitrate", "width", "height", "mime" };
+                for (int i = 0; i < keys.length; i++) { String v = r.extractMetadata(keys[i][0]); if (v != null && !v.isEmpty()) m.put(names[i], v); }
+                o.put("media", m);
+            } catch (Exception ignored) {} finally { try { r.release(); } catch (Exception ignored) {} }
+        } else if (n.endsWith(".apk")) {
+            try { android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0); if (pi != null) { pi.applicationInfo.sourceDir = f.getAbsolutePath(); pi.applicationInfo.publicSourceDir = f.getAbsolutePath(); JSONObject a = new JSONObject(); a.put("label", String.valueOf(ctx.getPackageManager().getApplicationLabel(pi.applicationInfo))); a.put("package", pi.packageName); a.put("version", pi.versionName == null ? "" : pi.versionName); a.put("minSdk", Build.VERSION.SDK_INT >= 24 ? pi.applicationInfo.minSdkVersion : 0); a.put("targetSdk", pi.applicationInfo.targetSdkVersion); try { android.content.pm.PackageInfo inst = ctx.getPackageManager().getPackageInfo(pi.packageName, 0); a.put("installedVersion", inst.versionName); } catch (Exception ignored) {} o.put("apk", a); } } catch (Exception ignored) {}
+        }
+        return o;
+    }
+    /** Text written to a file (the editor's save), by way of a part file. */
+    static void write(File f, String text) throws IOException {
+        File part = new File(f.getParentFile(), f.getName() + ".ktpart");
+        try (OutputStream o = new FileOutputStream(part)) { o.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+        if (f.exists() && !f.delete()) { part.delete(); throw new IOException("cannot replace"); } if (!part.renameTo(f)) { part.delete(); throw new IOException("cannot write"); }
+    }
+
+    /* ---------- the storage analyzer: what takes the room, what is doubled, old, screenshots, leftovers ---------- */
+    static final class Seen { final File f; final long size; Seen(File f, long size) { this.f = f; this.size = size; } }
+    static JSONObject analyze(File root, AtomicBoolean cancel, Events progress) throws Exception {
+        List<Seen> all = new ArrayList<>(); Map<String, long[]> byKind = new LinkedHashMap<>(); Map<String, long[]> byFolder = new LinkedHashMap<>();
+        long[] count = { 0 }; long[] lastTold = { 0 };
+        walkAnalyze(root, root, all, byKind, byFolder, count, cancel, progress, lastTold, 0);
+        JSONObject r = new JSONObject(); long total = 0; for (Seen x : all) total += x.size; r.put("total", total); r.put("files", all.size());
+        all.sort((a, b) -> Long.compare(b.size, a.size));
+        r.put("largest", seenList(all.subList(0, Math.min(60, all.size()))));
+        long year = System.currentTimeMillis() - 365L * 86400000; List<Seen> old = new ArrayList<>(); for (Seen x : all) if (x.f.lastModified() < year && x.size > 1 << 20) old.add(x); r.put("old", seenList(old.subList(0, Math.min(60, old.size()))));
+        List<Seen> shots = new ArrayList<>(); for (Seen x : all) { String p = x.f.getAbsolutePath(); if (p.contains("/Screenshots/") || x.f.getName().toLowerCase(Locale.ROOT).startsWith("screenshot")) shots.add(x); } r.put("screenshots", seenList(shots.subList(0, Math.min(200, shots.size())))); long sh = 0; for (Seen x : shots) sh += x.size; r.put("screenshotsSize", sh); r.put("screenshotsCount", shots.size());
+        List<Seen> temp = new ArrayList<>(); for (Seen x : all) { String n = x.f.getName().toLowerCase(Locale.ROOT); String p = x.f.getAbsolutePath(); if (n.endsWith(".part") || n.endsWith(".ktpart") || n.endsWith(".tmp") || n.endsWith(".temp") || n.endsWith(".crdownload") || n.endsWith(".log") || p.contains("/cache/") || p.contains("/.cache/") || p.contains("/.thumbnails/") || p.contains("/.trash") || p.contains("/.kurokawa-trash/")) temp.add(x); } r.put("temp", seenList(temp.subList(0, Math.min(200, temp.size())))); long tp = 0; for (Seen x : temp) tp += x.size; r.put("tempSize", tp); r.put("tempCount", temp.size());
+        List<Seen> apks = new ArrayList<>(); for (Seen x : all) if (x.f.getName().toLowerCase(Locale.ROOT).matches(".*\\.(apk|apks|xapk|apkm)$")) apks.add(x); r.put("apks", seenList(apks.subList(0, Math.min(60, apks.size()))));
+        // (Doubles: the same size, then the same first and last pieces, then the same whole hash — only then are two the same.)
+        Map<Long, List<Seen>> bySize = new java.util.HashMap<>(); for (Seen x : all) if (x.size >= 64 << 10) bySize.computeIfAbsent(x.size, k -> new ArrayList<>()).add(x);
+        JSONArray dups = new JSONArray(); long dupSize = 0; int groups = 0;
+        for (List<Seen> l : bySize.values()) { if (l.size() < 2 || (cancel != null && cancel.get()) || groups >= 80) continue; Map<String, List<Seen>> byHash = new java.util.HashMap<>(); for (Seen x : l) { String hsh = quickHash(x.f); if (hsh != null) byHash.computeIfAbsent(hsh, k -> new ArrayList<>()).add(x); } for (List<Seen> g : byHash.values()) { if (g.size() < 2) continue; JSONObject o = new JSONObject(); o.put("size", g.get(0).size); o.put("files", seenList(g)); dups.put(o); dupSize += g.get(0).size * (g.size() - 1); groups++; } }
+        r.put("duplicates", dups); r.put("duplicatesSize", dupSize);
+        JSONArray kinds = new JSONArray(); for (Map.Entry<String, long[]> e : byKind.entrySet()) { JSONObject o = new JSONObject(); o.put("kind", e.getKey()); o.put("size", e.getValue()[0]); o.put("count", e.getValue()[1]); kinds.put(o); } r.put("kinds", kinds);
+        List<Map.Entry<String, long[]>> folders = new ArrayList<>(byFolder.entrySet()); folders.sort((a, b) -> Long.compare(b.getValue()[0], a.getValue()[0]));
+        JSONArray fa = new JSONArray(); for (Map.Entry<String, long[]> e : folders.subList(0, Math.min(40, folders.size()))) { JSONObject o = new JSONObject(); o.put("path", e.getKey()); o.put("size", e.getValue()[0]); o.put("count", e.getValue()[1]); fa.put(o); } r.put("folders", fa);
+        return r;
+    }
+    private static JSONArray seenList(List<Seen> l) throws Exception { JSONArray a = new JSONArray(); for (Seen x : l) { JSONObject o = new JSONObject(); o.put("name", x.f.getName()); o.put("path", x.f.getAbsolutePath()); o.put("size", x.size); o.put("mtime", x.f.lastModified()); o.put("dir", false); o.put("ext", extOf(x.f.getName())); a.put(o); } return a; }
+    static String kindOf(String name) { String e = extOf(name); if (e.matches("jpe?g|png|gif|webp|bmp|heic|avif|svg")) return "image"; if (e.matches("mp3|m4a|flac|ogg|opus|wav|aac|wma")) return "audio"; if (e.matches("mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp")) return "video"; if (e.matches("pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr")) return "doc"; if (e.matches("zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001")) return "archive"; if (e.matches("apk|apks|xapk|apkm")) return "apk"; return "other"; }
+    private static void walkAnalyze(File root, File d, List<Seen> all, Map<String, long[]> byKind, Map<String, long[]> byFolder, long[] count, AtomicBoolean cancel, Events progress, long[] lastTold, int depth) {
+        if (depth > 24 || (cancel != null && cancel.get())) return; File[] k = d.listFiles(); if (k == null) return;
+        for (File c : k) {
+            if (cancel != null && cancel.get()) return;
+            if (c.isDirectory()) { if (c.getName().equals("Android") && depth == 0) continue; walkAnalyze(root, c, all, byKind, byFolder, count, cancel, progress, lastTold, depth + 1); continue; }
+            long sz = c.length(); all.add(new Seen(c, sz)); count[0]++;
+            String kind = kindOf(c.getName()); long[] kk = byKind.computeIfAbsent(kind, x -> new long[2]); kk[0] += sz; kk[1]++;
+            // (A file counts for its own folder and the ones above it, so a big folder shows whole.)
+            File f = c.getParentFile(); int up = 0; while (f != null && up < 3 && (f.getAbsolutePath().equals(root.getAbsolutePath()) || f.getAbsolutePath().startsWith(root.getAbsolutePath() + "/"))) { long[] ff = byFolder.computeIfAbsent(f.getAbsolutePath(), x -> new long[2]); ff[0] += sz; ff[1]++; if (f.getAbsolutePath().equals(root.getAbsolutePath())) break; f = f.getParentFile(); up++; }
+            long now = System.currentTimeMillis(); if (progress != null && now - lastTold[0] > 300) { lastTold[0] = now; try { JSONObject o = new JSONObject(); o.put("id", "analyze"); o.put("status", "progress"); o.put("files", count[0]); o.put("name", c.getName()); progress.on(o); } catch (Exception ignored) {} }
+        }
+    }
+    private static String quickHash(File f) {
+        try (java.io.RandomAccessFile r = new java.io.RandomAccessFile(f, "r")) {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1"); byte[] b = new byte[64 << 10]; int n = r.read(b); if (n > 0) md.update(b, 0, n);
+            long len = r.length(); if (len > (128 << 10)) { r.seek(len - (64 << 10)); n = r.read(b); if (n > 0) md.update(b, 0, n); r.seek(len / 2); n = r.read(b); if (n > 0) md.update(b, 0, n); }
+            StringBuilder sb = new StringBuilder(); for (byte x : md.digest()) sb.append(String.format("%02x", x)); return sb.toString();
+        } catch (Exception e) { return null; }
     }
 
     /* ---------- small things ---------- */

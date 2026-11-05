@@ -4,13 +4,14 @@
 import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countItems } from '../i18n';
+import { isStalled, phaseShort } from '../downloads/live';
 import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem } from '../engine';
 import { noteOf, countFinished, autoClean, retryFailed, exportList, importList, stats } from '../downloads/extras';
 import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
 import { addSheet } from './add';
 import { getSettings, onSettingsChange } from '../settings';
-import { nativePlatform } from '../native';
+import { nativePlatform, ktPlugin } from '../native';
 import { canArchive, isArchiveName } from '../archives';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 import { updateSettings } from '../settings';
@@ -30,6 +31,16 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const chips = h('div', { class: 'chips filter-chips' });
   const problem = platformEngineProblem();
   const note = problem ? h('p', { class: 'hint engine-note' }, icon('info'), t('engineUnavailable', { why: problem })) : null;
+  // (Downloads the last run left mid-way — the app killed, the phone off: offered back in one tap, once.)
+  const recovery = h('div', { class: 'hint recovery-note', hidden: true });
+  let recoveryDismissed = false;
+  const drawRecovery = () => {
+    const cut = tasks.filter((x) => x.meta?.interrupted && x.state !== 'done' && x.state !== 'downloading');
+    recovery.hidden = recoveryDismissed || !cut.length; if (recovery.hidden) return;
+    recovery.replaceChildren(icon('info'), h('span', { class: 'grow' }, t('recoveryNote', { n: countItems(cut.length) })),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { recoveryDismissed = true; recovery.hidden = true; for (const x of cut) { try { await getEngine().resume(x.id); } catch { /* one at a time */ } } } }, icon('play'), t('resumeAll')),
+      h('button', { type: 'button', class: 'btn text small', onclick: () => { recoveryDismissed = true; recovery.hidden = true; } }, t('dismiss')));
+  };
   const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus'), h('span', null, t('addDownload')));
   const title = h('div', { class: 'title' }, h('span', null, t('navDownloads')), h('small', { class: 'count' }));
   const err = (e: unknown) => toast(String((e as Error).message ?? e), 'error');
@@ -86,7 +97,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const toggleLimiter = () => { void import('../ui/dropzone').then((m) => m.toggleLimiter()); };
   const onLimits = () => drawStatus(); window.addEventListener('kt:limits', onLimits);
-  const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, searchRow, chips, statusBar, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, recovery, searchRow, chips, statusBar, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
 
   const FILTERS: [string, string][] = [['all', t('filterAll')], ['active', t('filterActive')], ['done', t('filterDone')], ['failed', t('filterFailed')]];
   const catOf = (x: Task) => categoryOf(displayName(x), x.kind);
@@ -102,7 +113,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const cards = new Map<string, HTMLElement>(); const heads = new Map<string, HTMLElement>();
   const draw = () => {
-    drawChips();
+    drawChips(); drawRecovery();
     const P = dlPrefs(); const vis = shown();
     optBtn.dataset.n = String(activeFilters(P));
     list.className = `task-list look-${P.look}`;
@@ -147,6 +158,10 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const show = dlPrefs().show; const parts: string[] = [x.heldBy === 'metered' ? t('heldMetered') : x.heldBy === 'battery' ? t('heldBattery') : stateLabel(x.state)];
     if (!show.size) { /* sizes hidden */ } else if (x.total) parts.push(t('bytesOf', { done: formatBytes(x.done), total: formatBytes(x.total) })); else if (x.done) parts.push(formatBytes(x.done));
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
+    if ((x.kind === 'video' || x.meta?.hls) && (x.state === 'downloading' || x.state === 'metadata')) { const m = x.meta ?? {}; if (m.frags) parts.push(t('hlsPieces', { i: localDigits(String(m.frag ?? 0)), n: localDigits(String(m.frags)) })); if (m.phase) parts.push(phaseShort(m.phase)); }
+    if (x.state === 'downloading' && isStalled(x)) parts.push(t('stalled'));
+    if (x.kind === 'torrent' && x.state === 'downloading' && x.readyFile !== undefined && x.readyFile >= 0) parts.push(`▶ ${t('readyToPlay')}`);
+    if (x.meta?.dhtFallback && x.state === 'downloading' && !x.peers && !x.seeds) parts.push(t('dhtAsked'));
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
     if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : x.error);
@@ -311,5 +326,9 @@ function statsSheet(tasks: Task[]): void {
   const rows: [string, string][] = [[t('statsAllTime'), `${countItems(s.files)} · ${formatBytes(s.bytes)}`], [t('statsSince'), new Date(s.since).toLocaleDateString(document.documentElement.lang || undefined)],
     [t('statsInList'), countItems(tasks.length)], [t('filterDone'), localDigits(by((x) => x.state === 'done' || x.state === 'seeding'))], [t('filterActive'), localDigits(by((x) => ['downloading', 'metadata', 'checking', 'queued', 'paused'].includes(x.state)))], [t('filterFailed'), localDigits(by((x) => x.state === 'failed'))],
     [t('statsTorrents'), localDigits(by((x) => x.kind === 'torrent'))], [t('statsOnDisk'), formatBytes(size)]];
-  sh.body.append(h('div', { class: 'info-list' }, ...rows.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v)))));
+  const list = h('div', { class: 'info-list' }, ...rows.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v))));
+  sh.body.append(list);
+  // (The storage panel: what the deduplication index knows — files hashed, links made, bytes saved, what is still on disk.)
+  const p = ktPlugin() as unknown as { dedupeStats?(): Promise<{ hashed: number; links: number; saved: number; present: number; bytes: number }> } | null;
+  if (p?.dedupeStats) void p.dedupeStats().then((d) => { const more: [string, string][] = [[t('statsHashed'), countItems(d.hashed)], [t('statsLinked'), `${countItems(d.links)} · ${formatBytes(d.saved)}`], [t('statsIndexed'), `${countItems(d.present)} · ${formatBytes(d.bytes)}`]]; list.append(h('div', { class: 'files-sec' }, t('statsStorage')), ...more.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v)))); if (!getSettings().dedupe) list.append(h('p', { class: 'hint' }, t('dedupeOffHint'))); }).catch(() => undefined);
 }

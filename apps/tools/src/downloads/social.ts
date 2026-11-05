@@ -5,13 +5,14 @@
 import { request } from '../http';
 
 export interface SocialItem { href: string; text: string; name?: string; thumb?: string; kind: 'image' | 'video' | 'gif'; viaVideo?: boolean }
-export interface SocialPost { site: 'x' | 'bluesky' | 'reddit'; title: string; author?: string; items: SocialItem[] }
+export interface SocialPost { site: 'x' | 'bluesky' | 'reddit' | 'telegram'; title: string; author?: string; items: SocialItem[] }
 
 const X_HOSTS = /(^|\.)(x|twitter|fxtwitter|fixupx|vxtwitter|fixvx|twittpr|nitter\.[a-z.]+|xcancel|d\.fxtwitter)\.com$|^nitter\.[a-z.]+$|^(mobile\.)?twitter\.com$/i;
 /** Which site a link is a post of (null: none of these). */
 export function socialOf(u: string): { site: SocialPost['site']; id: string; user?: string } | null {
   let url: URL; try { url = new URL(u.trim()); } catch { return null; }
   const host = url.hostname.replace(/^www\./, '');
+  const tg = /^\/(?:s\/)?([A-Za-z0-9_]{4,})\/(\d+)/.exec(url.pathname); if (tg && (host === 't.me' || host === 'telegram.me')) return { site: 'telegram', id: tg[2], user: tg[1] };
   const x = /\/status(?:es)?\/(\d{5,25})/.exec(url.pathname);
   if (x && (X_HOSTS.test(host) || /nitter/.test(host))) return { site: 'x', id: x[1], user: url.pathname.split('/')[1] };
   const b = /^\/profile\/([^/]+)\/post\/([a-z0-9]+)/i.exec(url.pathname);
@@ -91,9 +92,74 @@ async function fromReddit(id: string): Promise<SocialPost> {
   return { site: 'reddit', title: clip(p.title, 140), author: `u/${p.author}`, items };
 }
 
+/* ---------- Telegram: a public channel's post through its embed page (no account; private chats stay out) ---------- */
+const attr = (html: string, re: RegExp): string[] => { const out: string[] = []; for (const m of html.matchAll(re)) out.push(m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"')); return out; };
+async function fromTelegram(channel: string, id: string): Promise<SocialPost> {
+  const r = await request(`https://t.me/${channel}/${id}?embed=1&mode=tme`, { headers: { Accept: 'text/html' } }); if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
+  const html = r.body; const items: SocialItem[] = [];
+  const text = clip((/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? '').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' '), 140);
+  attr(html, /class="tgme_widget_message_photo_wrap[^"]*"[^>]*style="[^"]*background-image:url\('([^']+)'\)/g).forEach((u, i) => items.push({ href: u, kind: 'image', text: text || `${channel} · ${i + 1}`, name: `${channel}-${id}-${i + 1}.jpg` }));
+  attr(html, /<video[^>]+src="([^"]+)"/g).forEach((u, i) => items.push({ href: u, kind: /tgme_widget_message_video_player.*?round/.test(html) ? 'video' : 'video', text: text || channel, name: `${channel}-${id}${i ? `-${i + 1}` : ''}.mp4`, thumb: attr(html, /class="tgme_widget_message_video_thumb"[^>]*style="[^"]*background-image:url\('([^']+)'\)/g)[i] }));
+  if (!items.length && /tgme_widget_message_document/.test(html)) throw new Error('telegramDocument');
+  return { site: 'telegram', title: text || `${channel}/${id}`, author: `@${channel}`, items };
+}
+/** A public channel's recent posts (its t.me/s page): every photo and video of them, oldest first, for archiving. */
+export async function telegramChannel(channel: string, pages = 3): Promise<SocialItem[]> {
+  const out: SocialItem[] = []; let before = '';
+  for (let p = 0; p < pages; p++) {
+    const r = await request(`https://t.me/s/${channel}${before ? `?before=${before}` : ''}`, { headers: { Accept: 'text/html' } }); if (r.status !== 200) break;
+    const html = r.body; const posts = html.split(/<div class="tgme_widget_message_wrap/).slice(1); if (!posts.length) break;
+    const ids: number[] = [];
+    for (const post of posts) { const id = /data-post="[^"]+\/(\d+)"/.exec(post)?.[1] ?? ''; if (id) ids.push(Number(id)); const text = clip((/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(post)?.[1] ?? '').replace(/<[^>]+>/g, ' '), 60);
+      attr(post, /class="tgme_widget_message_photo_wrap[^"]*"[^>]*style="[^"]*background-image:url\('([^']+)'\)/g).forEach((u, i) => out.push({ href: u, kind: 'image', text: text || `${channel} · ${id}`, name: `${channel}-${id}-${i + 1}.jpg` }));
+      attr(post, /<video[^>]+src="([^"]+)"/g).forEach((u, i) => out.push({ href: u, kind: 'video', text: text || `${channel} · ${id}`, name: `${channel}-${id}${i ? `-${i + 1}` : ''}.mp4` })); }
+    const min = Math.min(...ids); if (!isFinite(min) || min <= 1) break; before = String(min);
+  }
+  const seen = new Set<string>(); return out.filter((x) => !seen.has(x.href) && seen.add(x.href)).reverse();
+}
+/* ---------- archives of a profile: Bluesky (public API) and Reddit (a user's posts or a subreddit, JSON) ---------- */
+export function feedOf(u: string): { site: 'bluesky' | 'reddit' | 'telegram'; name: string } | null {
+  let url: URL; try { url = new URL(u.trim()); } catch { return null; } const host = url.hostname.replace(/^www\./, '');
+  const b = /^\/profile\/([^/]+)\/?$/.exec(url.pathname); if (b && /(^|\.)bsky\.app$/.test(host)) return { site: 'bluesky', name: b[1] };
+  const rr = /^\/(?:u|user|r)\/([^/]+)\/?$/.exec(url.pathname); if (rr && /(^|\.)reddit\.com$/.test(host)) return { site: 'reddit', name: url.pathname.slice(1).replace(/\/$/, '') };
+  const tg = /^\/(?:s\/)?([A-Za-z0-9_]{4,})\/?$/.exec(url.pathname); if (tg && (host === 't.me' || host === 'telegram.me')) return { site: 'telegram', name: tg[1] };
+  return null;
+}
+/** A profile's media, newest first (as much as a few pages give). */
+export async function socialFeed(link: string, max = 200): Promise<{ title: string; items: SocialItem[] }> {
+  const f = feedOf(link); if (!f) return { title: '', items: [] };
+  if (f.site === 'telegram') return { title: `@${f.name}`, items: (await telegramChannel(f.name, 4)).slice(-max) };
+  if (f.site === 'bluesky') {
+    const items: SocialItem[] = []; let cursor = '';
+    for (let p = 0; p < 4 && items.length < max; p++) {
+      const d = await json<{ feed: { post: { uri: string; author: { handle: string }; record?: { text?: string }; embed?: BskyEmbed } }[]; cursor?: string }>(`https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(f.name)}&limit=50&filter=posts_with_media${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      for (const { post } of d.feed) { const id = post.uri.split('/').pop() ?? ''; const link2 = `https://bsky.app/profile/${post.author.handle}/post/${id}`; const text = post.record?.text ?? ''; const add = (e?: BskyEmbed) => { if (!e) return; e.images?.forEach((im, i) => items.push({ href: im.fullsize, kind: 'image', thumb: im.thumb, text: clip(im.alt || text, 60), name: `${post.author.handle}-${id}-${i + 1}.${/@(\w+)$/.exec(im.fullsize)?.[1] ?? 'jpg'}` })); if (e.playlist) items.push({ href: link2, kind: 'video', thumb: e.thumbnail, text: clip(text, 60), name: `${post.author.handle}-${id}.mp4`, viaVideo: true }); if (e.media) add(e.media); }; add(post.embed); }
+      if (!d.cursor) break; cursor = d.cursor;
+    }
+    return { title: `@${f.name}`, items: items.slice(0, max) };
+  }
+  const items: SocialItem[] = []; let after = '';
+  for (let p = 0; p < 4 && items.length < max; p++) {
+    const d = await json<{ data: { children: { data: RedditPost & { id: string; permalink: string } }[]; after?: string } }>(`https://www.reddit.com/${f.name}${/^r\//.test(f.name) ? '' : '/submitted'}.json?raw_json=1&limit=100${after ? `&after=${after}` : ''}`);
+    for (const { data: p0 } of d.data.children) { const sub = await fromRedditData(p0).catch(() => null); if (sub) items.push(...sub.items); }
+    if (!d.data.after) break; after = d.data.after;
+  }
+  return { title: f.name, items: items.slice(0, max) };
+}
+async function fromRedditData(p: RedditPost & { id: string; permalink: string }): Promise<SocialPost> {
+  const id = p.id; if (p.crosspost_parent_list?.length) p = { ...p, ...p.crosspost_parent_list[0], title: p.title, id, permalink: p.permalink };
+  const items: SocialItem[] = []; const t = clip(p.title, 60);
+  if (p.gallery_data && p.media_metadata) p.gallery_data.items.forEach((g, i) => { const m = p.media_metadata![g.media_id]; const u = m?.s?.mp4 ?? m?.s?.gif ?? m?.s?.u; if (u) items.push({ href: unesc(u), kind: m?.s?.mp4 || m?.s?.gif ? 'gif' : 'image', text: `${t} · ${i + 1}`, name: `${id}-${i + 1}.${extOf(unesc(u), 'jpg')}` }); });
+  else if (p.is_video && p.media?.reddit_video) items.push({ href: `https://www.reddit.com${p.permalink}`, kind: 'video', text: t, name: `${id}.mp4`, viaVideo: true });
+  else if (p.url_overridden_by_dest && /\.(jpe?g|png|gif|webp|mp4)(\?|$)/i.test(p.url_overridden_by_dest)) items.push({ href: p.url_overridden_by_dest, kind: /\.(gif|mp4)/i.test(p.url_overridden_by_dest) ? 'gif' : 'image', text: t });
+  else if (p.preview?.images?.[0]) items.push({ href: unesc(p.preview.images[0].source.url), kind: 'image', text: t, name: `${id}.jpg` });
+  return { site: 'reddit', title: clip(p.title, 140), author: `u/${p.author}`, items };
+}
+
 /** A post's media (throws with the site's answer when it cannot be read). */
 export async function socialPost(link: string): Promise<SocialPost | null> {
   const s = socialOf(link); if (!s) return null;
+  if (s.site === 'telegram') return fromTelegram(s.user!, s.id);
   if (s.site === 'x') return fromX(s.id);
   if (s.site === 'bluesky') return fromBluesky(s.user!, s.id, link);
   return fromReddit(s.id);

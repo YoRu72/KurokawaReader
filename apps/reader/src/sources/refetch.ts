@@ -7,7 +7,7 @@ import type { Source, SourceFile } from './types';
 async function sourceOf(id: string): Promise<Source | null> {
   if (id.startsWith('dir:')) {
     const { listRepos } = await import('./repos'); const { folderSource } = await import('./folder');
-    const repo = (await listRepos()).find((r) => r.kind === 'folder' && `dir:${r.key}` === id);
+    const repo = (await listRepos()).find((r) => (r.kind === 'folder' || r.kind === 'site') && `dir:${r.key}` === id);
     return repo ? folderSource(repo) : null;
   }
   const { archiveSource } = await import('./archive');

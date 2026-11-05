@@ -4,7 +4,7 @@ import './styles/tools.css';
 import './styles/anime.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, type Route } from './router';
-import { h, icon } from './ui/dom';
+import { h, icon, closeSheets } from './ui/dom';
 import { goBack, wirePcBack } from './ui/backstack';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
@@ -84,7 +84,7 @@ function mountInner(route: Route): void {
     kept.set(pd, { key: JSON.stringify(prevRoute), el: current, scroll: window.scrollY, inner: current.querySelector<HTMLElement>('.body')?.scrollTop ?? 0 });
     current.remove();
   } else { current?.dispose?.(); current?.remove(); }
-  document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove());
+  closeSheets();
   const back = kept.get(dest);
   if (back && back.key === key) {
     kept.delete(dest); current = back.el; app.appendChild(current);
@@ -103,6 +103,7 @@ function mountInner(route: Route): void {
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
     case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
+    case 'courses': current = lazyView(() => import('./views/courses').then((m) => m.coursesView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;
     case 'tvTitle': current = lazyView(() => import('./views/tvTitle').then((m) => m.tvTitleView(route.type, route.id, route.season))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q))); break;
@@ -151,6 +152,9 @@ else {
   setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
   { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
+  void import('./downloads/recorder').then((m) => m.startRecorder());
+  void import('./downloads/sidecars').then((m) => m.startSidecars());
+  void import('./downloads/hotkeys').then((m) => m.startHotkeys());
   void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
   if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
   if (getSettings().addons.includes('tv')) void import('./tv/auto').then((m) => m.startTvAuto());

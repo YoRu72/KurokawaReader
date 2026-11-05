@@ -7,7 +7,18 @@ const Ffmpeg = require('./ffmpeg.cjs');
 
 const ASSET = process.platform === 'win32' ? 'yt-dlp.exe' : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp_linux';
 const binDir = () => path.join(app.getPath('userData'), 'bin');
-const binPath = () => path.join(binDir(), process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+const managedPath = () => path.join(binDir(), process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+/** A binary of the reader's own choosing (Settings → Video → path), when it exists; else the managed one. */
+let customPath = ''; function setCustomPath(p) { customPath = p && fs.existsSync(p) ? p : ''; verCache = null; return !!customPath; }
+const binPath = () => customPath || managedPath();
+const isManaged = () => !customPath;
+/** Releases older than this are not run: a forced update instead (sites change; an old yt-dlp fails everywhere). */
+const MIN_VERSION = '2025.01.01';
+const olderThan = (a, b) => String(a || '').replace(/[^\d.]/g, '') < String(b || '').replace(/[^\d.]/g, '');
+/** The last three binaries kept beside the current one (yt-dlp.<version>.old) for a rollback when a release breaks a site. */
+const olds = () => { try { return fs.readdirSync(binDir()).filter((n) => /\.old$/.test(n)).map((n) => ({ name: n, version: n.replace(/^yt-dlp(\.exe)?\./, '').replace(/\.old$/, ''), at: fs.statSync(path.join(binDir(), n)).mtimeMs })).sort((a, b) => b.at - a.at); } catch { return []; } };
+async function keepOld() { if (!fs.existsSync(managedPath())) return; const v = (await versionOf(managedPath())) || String(Date.now()); const to = path.join(binDir(), `${path.basename(managedPath())}.${v}.old`); try { fs.copyFileSync(managedPath(), to); } catch { /* none */ } for (const o of olds().slice(3)) fs.rmSync(path.join(binDir(), o.name), { force: true }); }
+async function rollback() { const o = olds()[0]; if (!o) throw new Error('nothing to roll back to'); fs.copyFileSync(path.join(binDir(), o.name), managedPath()); if (process.platform !== 'win32') fs.chmodSync(managedPath(), 0o755); fs.rmSync(path.join(binDir(), o.name), { force: true }); verCache = null; try { const cur = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); fs.writeFileSync(stampPath(), JSON.stringify({ ...cur, checked: Date.now(), pinned: o.version })); } catch { /* none */ } return o.version; }
 const stampPath = () => path.join(binDir(), 'yt-dlp.stamp.json');
 let fetching = null;
 
@@ -18,19 +29,22 @@ async function fetchBinary(onProgress) {
     const sums = await (await net.fetch('https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS')).text();
     const want = sums.split('\n').map((l) => l.trim().split(/\s+/)).find((p) => p[1] === ASSET)?.[0];
     const res = await net.fetch(`https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ASSET}`); if (!res.ok || !res.body) throw new Error('yt-dlp: HTTP ' + res.status);
-    const total = Number(res.headers.get('content-length') || 0); const tmp = binPath() + '.part'; const out = fs.createWriteStream(tmp); const hash = crypto.createHash('sha256'); let got = 0;
+    const total = Number(res.headers.get('content-length') || 0); const tmp = managedPath() + '.part'; const out = fs.createWriteStream(tmp); const hash = crypto.createHash('sha256'); let got = 0;
     const reader = res.body.getReader(); for (;;) { const { done, value } = await reader.read(); if (done) break; out.write(Buffer.from(value)); hash.update(value); got += value.length; onProgress?.({ got, total }); }
     await new Promise((r) => out.end(r));
     if (want && hash.digest('hex') !== want) { fs.rmSync(tmp, { force: true }); throw new Error('yt-dlp: checksum mismatch'); }
-    fs.renameSync(tmp, binPath()); if (process.platform !== 'win32') fs.chmodSync(binPath(), 0o755);
+    await keepOld(); fs.renameSync(tmp, managedPath()); if (process.platform !== 'win32') fs.chmodSync(managedPath(), 0o755); verCache = null;
     fs.writeFileSync(stampPath(), JSON.stringify({ at: Date.now(), url: res.url }));
     return binPath();
   })().finally(() => { fetching = null; });
   return fetching;
 }
 function haveBinary() { return fs.existsSync(binPath()); }
-function version() { return new Promise((res) => execFile(binPath(), ['--version'], { timeout: 10000 }, (e, out) => res(e ? null : String(out).trim()))); }
-async function ensure(onProgress) { if (!haveBinary()) await fetchBinary(onProgress); return binPath(); }
+/** The version, asked of the binary once per file (keyed by its size and time): a start does not spawn yt-dlp again. */
+let verCache = null;
+function versionOf(bin) { return new Promise((res) => execFile(bin, ['--version'], { timeout: 10000 }, (e, out) => res(e ? null : String(out).trim()))); }
+async function version() { const bin = binPath(); let key = ''; try { const st = fs.statSync(bin); key = `${bin}|${st.size}|${st.mtimeMs}`; } catch { return null; } if (verCache && verCache.key === key) return verCache.v; const v = await versionOf(bin); verCache = { key, v }; return v; }
+async function ensure(onProgress) { if (!haveBinary()) await fetchBinary(onProgress); else if (isManaged()) { const v = await version(); if (v && olderThan(v, MIN_VERSION)) { try { await fetchBinary(onProgress); } catch { /* offline: the old one runs */ } } } return binPath(); }
 /** The newest release's tag (yt-dlp prints the same string for --version). */
 async function latestTag() { const r = await net.fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', { headers: { accept: 'application/vnd.github+json' } }); if (!r.ok) throw new Error('HTTP ' + r.status); return String((await r.json()).tag_name || '').trim(); }
 /** Brings the binary to the newest release when it is behind; `force` checks even if checked within the day. */
@@ -39,7 +53,7 @@ async function update(force = false) {
   let st = {}; try { st = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); } catch { /* none */ }
   if (!force && st.checked && Date.now() - st.checked < 86400000) return { version: await version(), updated: false };
   const [have, tag] = await Promise.all([version(), latestTag()]);
-  let updated = false; if (tag && have !== tag) { await fetchBinary(); updated = true; }
+  let updated = false; if (tag && have !== tag && (!st.pinned || olderThan(have, MIN_VERSION) || force)) { await fetchBinary(); updated = true; }
   try { const cur = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); fs.writeFileSync(stampPath(), JSON.stringify({ ...cur, checked: Date.now() })); } catch { /* ignore */ }
   return { version: await version(), latest: tag, updated };
 }
@@ -68,6 +82,7 @@ function normalise(j) {
 
 /** Video jobs: each a task like the others, run by yt-dlp with its progress read from the progress template. */
 class VideoJobs {
+  has(id) { return this.tasks.has(id); }
   constructor(send) { this.send = send; this.tasks = new Map(); this.procs = new Map(); this.statePath = path.join(app.getPath('userData'), 'video-jobs.json'); this.load(); }
   load() { try { for (const t of JSON.parse(fs.readFileSync(this.statePath, 'utf8'))) { if (t.state === 'downloading' || t.state === 'queued') t.state = 'paused'; this.tasks.set(t.id, t); } } catch { /* none */ } }
   save() { try { fs.writeFileSync(this.statePath, JSON.stringify([...this.tasks.values()])); } catch { /* ignore */ } }
@@ -86,16 +101,18 @@ class VideoJobs {
     const outTpl = m.outName ? path.join(t.dir, `${safe(m.outName)}.%(ext)s`) : m.template ? path.join(t.dir, `${m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - ` : ''}${tpl}.%(ext)s`) : path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
     const args = [...common(), '--newline', '--no-playlist', '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.filename)s', '-o', outTpl];
     if (m.audioOnly) args.push('-f', m.format || 'bestaudio/best', '-x', ...(m.container ? ['--audio-format', m.container] : [])); else args.push('-f', m.format ? `${m.format}/best` : 'bestvideo+bestaudio/best', ...(m.container ? ['--merge-output-format', m.container] : ['--merge-output-format', 'mp4']));
-    if (m.subs) args.push('--write-subs', '--sub-langs', m.subs, '--embed-subs'); if (m.embedThumb) args.push('--embed-thumbnail'); if (m.embedMeta !== false) args.push('--embed-metadata'); if (m.sponsorblock) args.push('--sponsorblock-remove', 'sponsor');
+    if (m.subs) { args.push('--write-subs', '--sub-langs', m.subs, '--embed-subs'); if (m.bilingual) args.push('--sub-format', 'srt/best', '--convert-subs', 'srt', '-k'); } if (m.embedThumb) args.push('--embed-thumbnail'); if (m.infoJson) args.push('--write-info-json', '--no-clean-info-json'); if (m.comments) args.push('--write-comments'); if (m.liveChat) args.push('--write-subs', '--sub-langs', (m.subs ? m.subs + ',' : '') + 'live_chat'); if (m.cover) args.push('--write-thumbnail', '--convert-thumbnails', 'jpg', '-o', `thumbnail:${path.join(t.dir, `${m.outName ? safe(m.outName) : tpl}.%(ext)s`)}`); if (m.embedMeta !== false) args.push('--embed-metadata'); { const mode = m.sponsorMode || (m.sponsorblock ? 'remove' : 'off'); const cats = m.sponsorCats || 'sponsor'; if (mode === 'remove') args.push('--sponsorblock-remove', cats); else if (mode === 'mark') args.push('--sponsorblock-mark', cats, '--embed-chapters'); }
     if (m.cookiesFromBrowser) args.push('--cookies-from-browser', m.cookiesFromBrowser);
     if (m.chapters) args.push('--embed-chapters');
-    if (m.section && /^[\d:.]+-[\d:.]+$/.test(m.section)) args.push('--download-sections', `*${m.section}`);
+    if (m.section) for (const sec of String(m.section).split(/\s*[,;]\s*/)) if (/^[\d:.]+-[\d:.]+$/.test(sec)) args.push('--download-sections', `*${sec}`);
+    if (m.chapterMatch) args.push('--download-sections', String(m.chapterMatch));
+    if (m.splitChapters) args.push('--split-chapters', '-o', `chapter:${path.join(t.dir, `${m.outName ? safe(m.outName) : tpl} - %(section_number)02d %(section_title)s.%(ext)s`)}`);
     for (const [k, v] of Object.entries(m.headers || {})) if (k && v) args.push('--add-header', `${k}:${v}`);
     args.push(t.source.url);
     const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); this.procs.set(id, p); let err = ''; let buf = ''; let last = 0;
     p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) { if (l.startsWith('KT|')) { const [, done, total, est, speed, eta, file] = l.split('|'); t.done = Number(done) || 0; t.total = Number(total) || Number(est) || 0; t.downSpeed = Number(speed) || 0; t.eta = Number(eta) || undefined; if (file && file !== 'NA') { const base = path.basename(file).replace(/\.f\d+\.(\w+)$/, '.$1').replace(/\.part$/, ''); t.files = [{ index: 0, path: base, size: t.total, done: t.done, priority: 1 }]; t.name = base.replace(/\.[^.]+$/, '') || t.name; } } else if (/\[(Merger|ExtractAudio|EmbedSubtitle|Metadata|ffmpeg)\]/.test(l)) { t.detail = l.replace(/^\[\w+\]\s*/, '').slice(0, 120); if (/Merging into "(.+)"/.test(l)) { const f = /Merging into "(.+)"/.exec(l)[1]; t.files = [{ index: 0, path: path.basename(f), size: t.total, done: t.total, priority: 1 }]; t.name = path.basename(f).replace(/\.[^.]+$/, ''); } } const now = Date.now(); if (now - last > 300) { last = now; this.emit(); } } });
     p.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); });
-    p.on('close', (code) => { this.procs.delete(id); const tt = this.tasks.get(id); if (!tt) return; if (tt.state === 'paused' || tt.state === 'removed') { /* asked */ } else if (code === 0) { tt.state = 'done'; tt.done = tt.total || tt.done; tt.doneAt = Date.now(); tt.downSpeed = 0; } else { tt.state = 'failed'; tt.error = (err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || `yt-dlp ${code}`).replace(/^ERROR:\s*/, '').slice(0, 300); } this.save(); this.emit(); });
+    p.on('close', (code) => { this.procs.delete(id); const tt = this.tasks.get(id); if (!tt) return; if (tt.state === 'paused' || tt.state === 'removed') { /* asked */ } else if (code === 0) { tt.state = 'done'; tt.done = tt.total || tt.done; tt.doneAt = Date.now(); tt.downSpeed = 0; if (m.bilingual && tt.files && tt.files[0]) { try { bilingual(path.join(tt.dir, tt.files[0].path || tt.files[0].name || ''), String(m.bilingual)); } catch (e) { /* the two files stay */ } } } else { tt.state = 'failed'; tt.error = (err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || `yt-dlp ${code}`).replace(/^ERROR:\s*/, '').slice(0, 300); } this.save(); this.emit(); });
   }
   pause(id) { const t = this.tasks.get(id); if (!t) return; t.state = 'paused'; t.downSpeed = 0; const p = this.procs.get(id); if (p) p.kill(); this.save(); this.emit(); }
   resume(id) { const t = this.tasks.get(id); if (!t) return; void this.start(id); }
@@ -104,4 +121,18 @@ class VideoJobs {
   stop() { for (const p of this.procs.values()) p.kill(); }
 }
 const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv)$/i;
-module.exports = { ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath };
+module.exports = { ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION };
+
+/* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
+const TIMES = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/;
+const ms = (t) => { const p = t.replace('.', ',').split(/[:,]/); return ((+p[0] * 60 + +p[1]) * 60 + +p[2]) * 1000 + +(p[3] || '0').padEnd(3, '0').slice(0, 3); };
+const cues = (f) => { const out = []; for (const block of fs.readFileSync(f, 'utf8').replace(/\r/g, '').split(/\n\n+/)) { const lines = block.trim().split('\n'); for (let i = 0; i < lines.length; i++) { const m = TIMES.exec(lines[i]); if (m) { const text = lines.slice(i + 1).map((l) => l.replace(/<[^>]+>/g, '')).join('\n'); if (text) out.push([m[1], m[2], text]); break; } } } return out; };
+function bilingual(out, pair) {
+  const [la, lb] = pair.split(','); if (!la || !lb) return; const dir = path.dirname(out); const stem = path.basename(out).replace(/\.[^.]+$/, '');
+  const find = (lang) => fs.readdirSync(dir).find((n) => n.startsWith(stem + '.') && n.endsWith('.srt') && (n === `${stem}.${lang}.srt` || new RegExp(`^${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.${lang}-[A-Za-z]+\\.srt$`).test(n)));
+  const fa = find(la), fb = find(lb); if (!fa || !fb) return; const ca = cues(path.join(dir, fa)), cb = cues(path.join(dir, fb)); if (!ca.length || !cb.length) return;
+  let n = 1; let text = '';
+  for (const [s, e, t] of ca) { const s1 = ms(s), e1 = ms(e); const other = cb.filter(([s2, e2]) => { const ov = Math.min(e1, ms(e2)) - Math.max(s1, ms(s2)); return ov > 0 && ov * 2 >= Math.min(e1 - s1, ms(e2) - ms(s2)); }).map((c) => c[2].replace(/\n/g, ' ')).join(' '); text += `${n++}\n${s} --> ${e}\n${t}${other ? '\n' + other : ''}\n\n`; }
+  fs.writeFileSync(path.join(dir, `${stem}.${la}-${lb}.srt`), text);
+}
+module.exports.bilingual = bilingual;

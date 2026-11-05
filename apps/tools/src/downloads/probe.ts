@@ -19,6 +19,8 @@ export interface Probe {
   /** A web page came where a file was expected (a sign-in, a check, an error page). */
   page?: boolean;
   finalUrl?: string;
+  /** The HTTP status the site answered (the HEAD's, else the range's), when it answered. */
+  status?: number;
 }
 
 const JUNK = /^(bin|dat|tmp|file|download|dl|php|aspx?|jsp|cgi|octet-stream|unknown|htm|html)$/;
@@ -93,9 +95,9 @@ const header = (hs: Record<string, string> | undefined, k: string): string | und
 /** The link looked at: a HEAD for the size and the name, then its first bytes (a range) for what it is. */
 export async function probeUrl(url: string, headers: Record<string, string> = {}): Promise<Probe> {
   let name = nameFromUrl(url); let size: number | undefined; let type: string | undefined; let resumable: boolean | undefined; let finalUrl: string | undefined;
-  let headOk = false;
+  let headOk = false; let status: number | undefined;
   try {
-    const r = await within(request(url, { method: 'HEAD', headers }), 8000);
+    const r = await within(request(url, { method: 'HEAD', headers }), 8000); status = r.status;
     if (r.status >= 200 && r.status < 400) {
       headOk = true; finalUrl = r.url;
       const len = Number(header(r.headers, 'content-length')); if (len > 0) size = len;
@@ -111,6 +113,7 @@ export async function probeUrl(url: string, headers: Record<string, string> = {}
   if (canRange) {
     try {
       const r = await within(request(url, { headers: { ...headers, Range: 'bytes=0-4095' }, binary: true }), 10000);
+      if (status === undefined || status === 405 || status === 501) status = r.status;
       if (r.status === 206 || r.status === 200) {
         const bytes = Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0));
         if (!headOk) {
@@ -125,5 +128,5 @@ export async function probeUrl(url: string, headers: Record<string, string> = {}
     } catch { /* the name decides */ }
   }
   if (weakExt(ext) && type && TYPES[type] && type !== 'application/octet-stream') { ext = TYPES[type]; extFrom = 'type'; }
-  return { size, name, stem, ext, extFrom, type, resumable, page, finalUrl };
+  return { size, name, stem, ext, extFrom, type, resumable, page, finalUrl, status };
 }

@@ -12,8 +12,9 @@ export type Route =
   | { name: 'tv'; tab?: string; q?: string }
   | { name: 'tvTitle'; type: 'movie' | 'series'; id: string; season?: number }
   | { name: 'videos'; tab?: string; folder?: string; srv?: string; p?: string }
+  | { name: 'courses'; url?: string }
   | { name: 'screen' }
-  | { name: 'files'; p?: string; save?: string; c?: string }
+  | { name: 'files'; p?: string; save?: string; c?: string; /** A stamp that only forces the page to be built anew (panes toggled). */ t?: string }
   | { name: 'install'; p: string };
 
 const listeners = new Set<(r: Route) => void>();
@@ -29,9 +30,10 @@ export function parseRoute(hash = location.hash): Route {
   if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };
   if (p.startsWith('/screen')) return { name: 'screen' };
-  if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined };
+  if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined, t: sp.get('t') ?? undefined };
   // (An app opened with «Kurokawa Installer»: the app's installer for it.)
   if (p.startsWith('/install') && sp.get('p')) return { name: 'install', p: sp.get('p')! };
+  if (p.startsWith('/courses')) return { name: 'courses', url: sp.get('url') ?? undefined };
   if (p.startsWith('/videos')) return { name: 'videos', tab: sp.get('tab') ?? undefined, folder: sp.get('folder') ?? undefined, srv: sp.get('srv') ?? undefined, p: sp.get('p') ?? undefined };
   if (p.startsWith('/tv')) return { name: 'tv', tab: sp.get('tab') ?? undefined, q: sp.get('q') ?? undefined };
   if (p.startsWith('/anime')) return { name: 'anime', tab: sp.get('tab') ?? undefined, q: sp.get('q') ?? undefined, genre: sp.get('genre') ?? undefined, tag: sp.get('tag') ?? undefined };
@@ -50,7 +52,7 @@ export function navigate(path: string, replace = false): void {
 /** The part of the app a place belongs to (the tab it lives under). */
 export function sectionOf(path: string): string {
   const p = path.split('?')[0];
-  if (p.startsWith('/anime')) return 'anime'; if (p.startsWith('/tv')) return 'tv'; if (p.startsWith('/videos')) return 'videos'; if (p.startsWith('/subs')) return 'subs'; if (p.startsWith('/files')) return 'files';
+  if (p.startsWith('/anime')) return 'anime'; if (p.startsWith('/tv')) return 'tv'; if (p.startsWith('/videos')) return 'videos'; if (p.startsWith('/courses')) return 'videos'; if (p.startsWith('/subs')) return 'subs'; if (p.startsWith('/files')) return 'files';
   if (p.startsWith('/settings') || p.startsWith('/addons')) return 'settings'; if (p.startsWith('/search')) return 'search';
   return 'downloads';
 }

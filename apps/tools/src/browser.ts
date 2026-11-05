@@ -2,8 +2,11 @@
 // the app's session): sites opened in it, a file a page downloads handed to the Add sheet with the site's cookies,
 // page and identity, and «Grab» bringing back what the page links to and the media it loaded, to pick from.
 import { ktPlugin, nativePlatform, listen } from './native';
+import { getEngine } from './engine';
+import { toast } from './ui/dom';
+import { t, countFiles } from './i18n';
 
-export interface BrowserLink { href: string; text: string; kind: string }
+export interface BrowserLink { href: string; text: string; kind: string; /** What the browser's probe learnt: the content type, the size (estimated for a playlist), a refusal. */ type?: string; size?: number; est?: boolean; status?: number }
 type Ev = { kind: 'download'; url: string; name?: string; referer?: string; ua?: string; cookie?: string; trail?: unknown[] } | { kind: 'relink'; id: string; ok: boolean; url?: string; referer?: string; ua?: string } | { kind: 'links'; url: string; title: string; links: BrowserLink[]; ua?: string };
 type Bridge = { browse?(o: { url: string }): Promise<unknown>; onBrowser?(cb: (o: Ev) => void): () => void };
 
@@ -29,7 +32,13 @@ export function startBrowserEvents(): void {
       // (A download whose link ran out waits for a new one from this browser: the first download caught goes to it.)
       const rl = relinkTarget(); if (rl) { clearRelink(); void import('./engine').then(async ({ getEngine }) => { const { toast } = await import('./ui/dom'); const { t } = await import('./i18n'); try { await getEngine().setUrl!(rl.id, o.url, Object.keys(headers).length ? headers : undefined); toast(t('relinked', { name: rl.name })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }); return; }
       void import('./views/add').then((m) => m.addSheet(o.url, { headers: Object.keys(headers).length ? headers : undefined, name: o.name }));
-    } else void import('./downloads/prism').then((m) => m.grabberSheet(o.url, undefined, { links: o.links, title: o.title, ua: o.ua }));
+    } else void import('./downloads/rules').then(async (R) => {
+      // (Capture rules: what matches one is added on sight, with the rule's folder and the page as referer; the rest goes to the grabber.)
+      const rest: BrowserLink[] = []; let caught = 0;
+      for (const l of o.links) { const kind = l.kind === 'video' || l.kind === 'media' ? 'video' : 'file'; const rule = /^https?:/i.test(l.href) ? R.match({ url: l.href, size: l.size }, kind) : null; if (rule?.then.capture) { try { await getEngine().add({ source: { url: l.href, headers: { Referer: o.url, ...(o.ua ? { 'User-Agent': o.ua } : {}) } }, dir: rule.then.dir || undefined, connections: rule.then.connections || 8, ...(rule.then.wifiOnly || rule.then.later ? { meta: { wifiOnly: rule.then.wifiOnly || undefined, later: rule.then.later || undefined } } : {}) }); caught++; } catch { rest.push(l); } } else rest.push(l); }
+      if (caught) toast(t('captureAdded', { n: countFiles(caught) }));
+      if (rest.length || !caught) void import('./downloads/prism').then((m) => m.grabberSheet(o.url, undefined, { links: rest, title: o.title, ua: o.ua }));
+    });
   };
   const d = window.kurokawaTools as unknown as Bridge | undefined;
   if (d?.onBrowser) { d.onBrowser(on); return; }

@@ -5,5 +5,5 @@
 set -e
 D=$(mktemp -d); HERE=$(cd "$(dirname "$0")" && pwd)
 for f in KrDoh KrDohProxy; do sed "s/^final class $f/public final class $f/; s/^package .*;//" "$HERE/../../native/android/$f.java" > "$D/$f.java"; done
-cp -r "$HERE/doh/." "$D/"; cd "$D"; javac -nowarn -d out org/json/*.java KrDoh.java KrDohProxy.java KtStream.java DT.java PT.java 2>/dev/null || javac -d out org/json/*.java KrDoh.java KrDohProxy.java KtStream.java DT.java PT.java
-java -cp out DT && java -cp out PT && echo "doh: all passed"
+cp -r "$HERE/doh/." "$D/"; cd "$D"; javac -nowarn -d out org/json/*.java KrDoh.java KrDohProxy.java KtStream.java DT.java PT.java WT.java 2>/dev/null || javac -d out org/json/*.java KrDoh.java KrDohProxy.java KtStream.java DT.java PT.java
+java -cp out DT && java -cp out PT && java -cp out WT && echo "doh: all passed"

@@ -185,7 +185,12 @@ await fs.copyFile(path.join(root, 'native/android/KrTtsService.java'), path.join
 await fs.copyFile(path.join(root, 'native/android/KrBrowser.java'), path.join(pkgDir, 'KrBrowser.java'));
 await fs.copyFile(path.join(root, 'native/android/KrPrint.java'), path.join(pkgDir, 'KrPrint.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join(pkgDir, 'KrDownloader.java'));
-await fs.copyFile(path.join(root, 'native/android/KrArchive.java'), path.join(pkgDir, 'KrArchive.java'));
+// The archive engine is the Tools app's (one engine, both apps — HatchZip's ways in one place): its source taken
+// from there and renamed into this package at build time; native/android/KrArchive.java is the fallback when the
+// Tools tree is absent (a checkout of this app alone).
+{ const shared = path.join(root, '..', 'tools', 'native', 'android', 'KtArchive.java'); let src = null; try { src = await fs.readFile(shared, 'utf8'); } catch { /* none */ }
+  if (src) await fs.writeFile(path.join(pkgDir, 'KrArchive.java'), src.replace(/^package app\.kurokawa\.tools;/m, 'package app.kurokawa.reader;').replace(/\bKtArchive\b/g, 'KrArchive').replace(/\bKtFiles\.keepBoth\b/g, 'KrArchive.keepBothFile'));
+  else await fs.copyFile(path.join(root, 'native/android/KrArchive.java'), path.join(pkgDir, 'KrArchive.java')); }
 await fs.copyFile(path.join(root, 'native/android/KrDoh.java'), path.join(pkgDir, 'KrDoh.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDohWeb.java'), path.join(pkgDir, 'KrDohWeb.java'));
 await fs.copyFile(path.join(root, 'native/android/KrInstaller.java'), path.join(pkgDir, 'KrInstaller.java'));

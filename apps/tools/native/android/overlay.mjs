@@ -26,6 +26,7 @@ if (!manifest.includes('FOREGROUND_SERVICE_DATA_SYNC')) {
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
@@ -113,6 +114,11 @@ if (!manifest.includes('KtScreenService')) {
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
     </service>
     <receiver android:name=".KtService$Actions" android:exported="false" />
+    <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="app.kurokawa.tools.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    <service android:name=".KtFolderShare$Fg" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Folder shared on the local network" /></service>
+    <service android:name=".KtFolderShare$TileSvc" android:exported="true" android:label="@string/kt_share_tile" android:icon="@android:drawable/stat_sys_upload" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+      <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+    </service>
     <service android:name=".KtScreenTile" android:exported="true" android:label="@string/kt_screen_tile" android:icon="@android:drawable/ic_menu_view" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
       <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
@@ -191,7 +197,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtDocumentsProvider.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtRemote.java', 'KtFolderShare.java', 'KtVault.java', 'KtVfs.java', 'KtCloud.java', 'KtHls.java', 'KtCookies.java', 'KtApps.java', 'KtDedupe.java', 'KtDub.java', 'KtDocumentsProvider.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }
@@ -214,10 +220,19 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "org.libtorrent4j:libtorrent4j-android-x86_64:${LIBTORRENT4J}"
     implementation "androidx.documentfile:documentfile:1.0.1"
     implementation "androidx.webkit:webkit:1.11.0"
+    implementation "androidx.core:core:1.13.1"
     implementation "org.apache.commons:commons-compress:1.27.1"
     implementation "org.tukaani:xz:1.10"
     implementation "com.github.junrar:junrar:7.5.5"
     implementation "net.lingala.zip4j:zip4j:2.11.5"
+    implementation "commons-net:commons-net:3.11.1"
+    implementation "com.github.mwiede:jsch:0.2.21"
+    implementation("com.hierynomus:smbj:0.13.0") { exclude group: "org.bouncycastle" }
+    implementation("com.rapid7.client:dcerpc:0.12.1") { exclude group: "org.bouncycastle" }
+    implementation "org.bouncycastle:bcprov-jdk18on:1.78.1"
+    implementation "androidx.security:security-crypto:1.1.0-alpha06"
+    implementation "dev.rikka.shizuku:api:13.1.5"
+    implementation "dev.rikka.shizuku:provider:13.1.5"
     implementation "io.github.junkfood02.youtubedl-android:library:0.18.1"
     implementation "io.github.junkfood02.youtubedl-android:common:0.18.1"   // (its unzip, used for the packs; the library has it only at run time)
     implementation "io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1"`);
@@ -225,7 +240,8 @@ if (!gradle.includes('libtorrent4j')) {
 // APK: they are packs (KtPacks.java) downloaded when an add-on needs them, built from the same bundles by the
 // release workflow. The small launchers stay (Android runs programs only from the APK's library folder).
 if (!gradle.includes('libpython.zip.so')) gradle = gradle.replace(/android \{/, `android {
-    packagingOptions { jniLibs { pickFirsts += ['**/libc++_shared.so']; excludes += ['**/libpython.zip.so', '**/libffmpeg.zip.so']; useLegacyPackaging = true } }`);
+    packagingOptions { jniLibs { pickFirsts += ['**/libc++_shared.so']; excludes += ['**/libpython.zip.so', '**/libffmpeg.zip.so']; useLegacyPackaging = true }
+      resources { excludes += ['META-INF/versions/**', 'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES', 'META-INF/*.kotlin_module', 'META-INF/INDEX.LIST', 'META-INF/io.netty.versions.properties']; pickFirsts += ['META-INF/MANIFEST.MF', 'module-info.class'] } }`);
 }
 if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/android \{/, `android {
@@ -252,8 +268,19 @@ if (!gradle.includes('splits {')) {
             signingConfig signingConfigs.release`);
 }
 // (libtorrent's JNI class must keep its name through R8.)
+// R8 on (as the Reader's build has it): unused classes of the libraries dropped, the APK a good deal smaller; what is
+// reached by name — the WebView bridge, the plugins, the native libraries' JNI classes, the libraries that look
+// themselves up by reflection — is kept by the rules below. The Tools compile check builds the release, so a rule
+// that strips too much shows there, not on release day.
+if (!gradle.includes('minifyEnabled true')) gradle = gradle.replace(/minifyEnabled false/, 'minifyEnabled true\n            shrinkResources true');
 if (!gradle.includes('proguard-kt.pro')) {
-  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class is.xyz.mpv.** { *; }\n-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-keep class com.yausername.** { *; }\n');
+  await fs.writeFile(path.join(app, 'proguard-kt.pro'), [
+    '-keep class app.kurokawa.tools.** { *; }', '-keep class com.getcapacitor.** { *; }', '-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }',
+    '-keep class is.xyz.mpv.** { *; }', '-keep class org.libtorrent4j.** { *; }', '-keep class com.yausername.** { *; }', '-keep class com.hierynomus.** { *; }', '-keep class net.engio.mbassy.** { *; }', '-keep class com.rapid7.** { *; }', '-keep class com.jcraft.jsch.** { *; }', '-keep class rikka.shizuku.** { *; }', '-keep class moe.shizuku.** { *; }', '-keep class net.lingala.zip4j.** { *; }', '-keep class org.apache.commons.net.** { *; }',
+    '-keep class androidx.security.crypto.** { *; }', '-keep class com.google.crypto.tink.** { *; }', '-keep class org.tukaani.xz.** { *; }',
+    '-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*',
+    '-dontwarn org.apache.commons.compress.**', '-dontwarn org.tukaani.xz.**', '-dontwarn com.github.junrar.**', '-dontwarn org.brotli.**', '-dontwarn com.github.luben.zstd.**', '-dontwarn org.bouncycastle.**', '-dontwarn org.slf4j.**', '-dontwarn com.hierynomus.**', '-dontwarn net.engio.**', '-dontwarn com.rapid7.**', '-dontwarn rikka.**', '-dontwarn javax.naming.**', '-dontwarn java.beans.**', '-dontwarn org.ietf.jgss.**', '-dontwarn com.google.errorprone.**', '-dontwarn org.apache.commons.net.**', '-dontwarn com.google.crypto.tink.**', '-dontwarn com.sun.jna.**', '-dontwarn org.apache.logging.**', '-dontwarn org.newsclub.net.**', '-dontwarn java.awt.**', '-dontwarn javax.swing.**', '-dontwarn sun.misc.**',
+  ].join('\n') + '\n');
   gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
 // (The screen translator's OCR: Google's text recognition through Play services — its models are fetched by the

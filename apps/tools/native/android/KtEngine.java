@@ -71,11 +71,13 @@ final class KtEngine {
         /** A torrent's pieces seen from afar (one digit 0–9 for each of 100 stretches: how much of it is here), how
          *  many pieces there are and are here, and when that was last read. */
         String pieceMap; int numPieces, havePieces; long mapAt;
+        /** The video file whose head and tail are here (playable while it comes), or -1; since when no peer was seen; the last DHT nudge. */
+        int readyFile = -1; long noPeersSince, dhtNudgeAt;
         int[] priorities; // per file: 0 skip, 1 normal, 2 high (null = all normal)
         // torrent
         TorrentHandle th; String magnet; byte[] torrentBytes; TorrentInfo info;
         // http
-        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName;
+        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName; /** This download's own speed limit (HTTP), live-adjustable. */ KrDownloader.Limiter limiter;
     }
 
     private final Context ctx;
@@ -92,13 +94,23 @@ final class KtEngine {
     private volatile String[] extraTrackers = TRACKERS; private volatile boolean addTrackers = true;
     /** Connections for one torrent (Hayase's 80); the session's budget is connections_limit. */
     private volatile int connsPerTorrent = 150;
+    /** Finished files hashed and identical ones hard-linked (Settings → Downloads). */ private volatile boolean dedupe = false;
     private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
+    /** Connections over every file download at once (OmniGet's global budget): a new download gets what is left of it. */
+    private int budget = 24;
+    /** Hosts that answer one request at a time well and many badly (YouTube, Instagram, TikTok, X, Reddit…): a pause between requests. */
+    private static final Map<String, Long> hostNextAt = new ConcurrentHashMap<>();
+    static long minIntervalOf(String host) { return host.matches("(.*\\.)?(youtube|googlevideo|instagram|cdninstagram|tiktok|tiktokcdn|twitter|x|twimg|reddit|redd|pinterest|pinimg)\\.(com|net|it)") ? 800 : 0; }
+    /** Waits its turn on a host that is given one request at a time; nothing for the rest. */
+    static void takeTurn(String host) { long iv = minIntervalOf(host); if (iv <= 0) return; long wait; synchronized (hostNextAt) { long now = System.currentTimeMillis(); long next = hostNextAt.getOrDefault(host, 0L); wait = Math.max(0, next - now); hostNextAt.put(host, Math.max(now, next) + iv); } if (wait > 0) try { Thread.sleep(wait); } catch (InterruptedException ignored) {} }
     /* Prism's connection settings: the name the app gives servers, tries per chunk, how long to wait, a proxy,
        and what to do when the file is there already. Plus what each server was found to accept. */
     static final String APP_UA = "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1";
     private volatile String ua = APP_UA, proxy = "", conflict = "rename", bindIface = ""; private volatile int retries = 5, timeoutS = 60; private volatile boolean torrentProxy = false, anonymous = false;
     private final Map<String, Integer> hostLimit = new ConcurrentHashMap<>();
+    /** The name the unreadable task list was kept under, when that happened at start (told once to the page). */
+    volatile String quarantined;
     private Thread ticker;
     private volatile long lastTell = 0;
     private final KtStream stream;
@@ -339,7 +351,7 @@ final class KtEngine {
         persist(); tell(true);
     }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
-    void setLimits(long down, long up) { SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
+    void setLimits(long down, long up) { KrDownloader.GLOBAL.set(down); SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
     /** A torrent's own settings on its handle: speed limits, its share of connections. */
     private void applyOwn(Task x) {
         try { TorrentHandle h = x.th; if (h == null || !h.isValid()) return; h.setDownloadLimit(x.limitDown > 0 ? x.limitDown : -1); h.setUploadLimit(x.limitUp > 0 ? x.limitUp : -1); h.swig().set_max_connections(connsPerTorrent > 0 ? connsPerTorrent : 16777215); } catch (Throwable e) { Log.w(TAG, "own", e); }
@@ -370,8 +382,16 @@ final class KtEngine {
     /** No stream read for a minute: the others back to their own limits. */
     private void releaseOthers() { if (!othersHeld || System.currentTimeMillis() - streamAt < 60000) return; othersHeld = false; streamHash = null; for (Task x : snapshot()) applyOwn(x); }
     void recheck(String id) { Task x = task(id); if (x != null && x.th != null && x.th.isValid()) { x.th.forceRecheck(); x.state = "checking"; tell(true); } }
+    /** Trackers given by the reader added to a torrent (those it has already skipped), then announced. */
+    int addTrackers(String id, java.util.List<String> urls) {
+        Task x = task(id); if (x == null || x.th == null || !x.th.isValid()) return 0;
+        java.util.List<org.libtorrent4j.AnnounceEntry> tr = x.th.trackers(); java.util.Set<String> have = new java.util.HashSet<>(); int tier = 0; for (org.libtorrent4j.AnnounceEntry e : tr) { have.add(e.url()); tier = Math.max(tier, e.tier() + 1); }
+        int n = 0; for (String u : urls) { u = u == null ? "" : u.trim(); if (u.isEmpty() || !u.matches("^(udp|https?|wss?)://.*") || !have.add(u)) continue; org.libtorrent4j.AnnounceEntry e = new org.libtorrent4j.AnnounceEntry(u); e.tier((short) tier); x.th.addTracker(e); n++; }
+        if (n > 0) { x.th.forceReannounce(); try { x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } catch (Throwable ignored) {} }
+        return n;
+    }
     void reannounce(String id) { Task x = task(id); if (x != null && x.th != null && x.th.isValid()) { x.th.forceReannounce(); try { x.th.swig().force_dht_announce(); } catch (Throwable ignored) {} } }
-    void setTaskLimits(String id, int down, int up) { Task x = task(id); if (x == null) return; x.limitDown = Math.max(0, down); x.limitUp = Math.max(0, up); applyOwn(x); persist(); tell(true); }
+    void setTaskLimits(String id, int down, int up) { Task x = task(id); if (x == null) return; x.limitDown = Math.max(0, down); x.limitUp = Math.max(0, up); applyOwn(x); if (x.limiter != null) x.limiter.set(x.limitDown); persist(); tell(true); }
     /** Watching a file while it comes (Seanime's order): its first 8 MB now, the next 24 MB soon, its last 4 MB
      *  early too (where a video keeps its index, which players read first to seek), then the rest in order. */
     void prepareStream(String id, int fileIndex) {
@@ -472,12 +492,14 @@ final class KtEngine {
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
+        if (o.has("connBudget")) budget = Math.max(4, Math.min(128, o.optInt("connBudget", 24)));
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
         if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", true)).apply(); } catch (Throwable ignored) {}   // (from the next start)
         if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
         if (o.has("connsTotal")) { int n = Math.max(20, o.optInt("connsTotal", 500)); try { SessionManager sm = session; if (sm != null && sm.isRunning()) { SettingsPack sp = new SettingsPack(); sp.connectionsLimit(n); sm.applySettings(sp); } } catch (Throwable ignored) {} }
         if (o.has("addTrackers")) addTrackers = o.optBoolean("addTrackers", true);
+        if (o.has("dedupe")) dedupe = o.optBoolean("dedupe", false);
         if (o.has("trackers")) { JSONArray a = o.optJSONArray("trackers"); if (a != null && a.length() > 0) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) { String u = a.optString(i, "").trim(); if (u.matches("(?i)^(udp|https?|wss?)://\\S+$")) l.add(u); } if (!l.isEmpty()) extraTrackers = l.toArray(new String[0]); } }
         if (o.has("torrentProxy")) torrentProxy = o.optBoolean("torrentProxy"); if (o.has("bindIface")) bindIface = o.optString("bindIface", "").trim(); if (o.has("anonymous")) anonymous = o.optBoolean("anonymous");
         if (session != null && session.isRunning()) {
@@ -506,10 +528,10 @@ final class KtEngine {
         x.state = "downloading"; x.error = null; KtService.ensure(ctx); tell(true);
         bg.execute(() -> {
             try {
-                File out = KtVideo.run(ctx, x.id, x.source.getString("url"), new File(x.dir), x.meta, (done, total, speed, file, detail) -> { if (total > 0) { x.total = total; x.done = done; } x.downSpeed = speed; if (file != null) { x.httpOut = new File(x.dir, file.replaceAll("\\.f\\d+\\.(\\w+)$", ".$1")); x.name = x.httpOut.getName().replaceAll("\\.[^.]+$", ""); } tell(false); });
+                File out = KtVideo.run(ctx, x.id, x.source.getString("url"), new File(x.dir), x.meta, (done, total, speed, file, detail) -> { if (total > 0) { x.total = total; x.done = done; } x.downSpeed = speed; JSONObject lv = KtVideo.live.get(x.id); if (lv != null && x.meta != null) { try { for (java.util.Iterator<String> it = lv.keys(); it.hasNext(); ) { String k = it.next(); x.meta.put(k, lv.get(k)); } } catch (Exception ignored) {} } if (file != null) { x.httpOut = new File(x.dir, file.replaceAll("\\.f\\d+\\.(\\w+)$", ".$1")); x.name = x.httpOut.getName().replaceAll("\\.[^.]+$", ""); } tell(false); });
                 if (x.paused) return;
                 if (out != null) { x.httpOut = out; x.name = out.getName().replaceAll("\\.[^.]+$", ""); if (out.exists()) { x.total = out.length(); } }
-                x.done = x.total; x.downSpeed = 0; x.state = "done"; x.doneAt = System.currentTimeMillis(); scan(x); persist(); tell(true); KtService.maybeStop(ctx, this);
+                x.done = x.total; x.downSpeed = 0; x.state = "done"; x.doneAt = System.currentTimeMillis(); KtVideo.live.remove(x.id); if (x.meta != null) { x.meta.remove("phase"); x.meta.remove("frag"); x.meta.remove("frags"); } scan(x); persist(); tell(true); KtService.maybeStop(ctx, this);
             } catch (Exception e) {
                 if (x.paused) { x.state = "paused"; } else { x.state = "failed"; x.error = errOf(e); }
                 x.downSpeed = 0; persist(); tell(true); KtService.maybeStop(ctx, this);
@@ -519,7 +541,10 @@ final class KtEngine {
     private void startHttp(Task x) {
         if (x.httpThread != null && x.httpThread.isAlive()) return;
         x.cancel = new AtomicBoolean(false); x.state = "downloading"; x.error = null;
-        final String url = x.source.optString("url"); final JSONObject headers = x.source.optJSONObject("headers");
+        final String url = x.source.optString("url"); JSONObject headers0 = x.source.optJSONObject("headers");
+        // (A cookie jar named for this download: its cookies for the host as the Cookie header, unless one was given.)
+        if (x.meta != null && !x.meta.optString("cookieJar", "").isEmpty()) { try { String ck = KtCookies.headerFor(ctx, x.meta.optString("cookieJar"), new URL(url).getHost()); if (!ck.isEmpty()) { JSONObject h2 = new JSONObject(); if (headers0 != null) { Iterator<String> it = headers0.keys(); while (it.hasNext()) { String k = it.next(); h2.put(k, headers0.get(k)); } } if (!h2.has("Cookie") && !h2.has("cookie")) h2.put("Cookie", ck); headers0 = h2; } } catch (Exception ignored) {} }
+        final JSONObject headers = headers0;
         x.httpThread = new Thread(() -> {
             try {
                 File dir = new File(x.dir); dir.mkdirs();
@@ -533,9 +558,12 @@ final class KtEngine {
                     if (!"overwrite".equals(conflict)) { safe = freeName(dir, safe); x.name = safe; part = new File(dir, safe + ".part"); }
                 }
                 x.httpOut = new File(dir, safe);
+                // (A stream's playlist — HLS — is a list of pieces, not the video: fetched piece by piece and joined here.)
+                if (KtHls.looksLike(url) || (x.meta != null && x.meta.optBoolean("hls"))) { runHls(x, url, headers, dir, safe); return; }
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
                 final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = x.meta != null && x.meta.optBoolean("noRetry") ? 0 : retries; opt.state = state; opt.expectName = safe;
+                if (x.limiter == null) x.limiter = new KrDownloader.Limiter(x.limitDown); else x.limiter.set(x.limitDown); opt.limiter = x.limiter;
                 // (The server's own name for the file — Content-Disposition, or the right extension for its type — taken
                 // as soon as the server answers, not at the end: an APK no longer shows as «.bin» while it comes.)
                 final File dirF = dir;
@@ -546,11 +574,23 @@ final class KtEngine {
                     x.name = nn; x.httpOut = new File(dirF, nn); x.autoName = false; persist(); tell(true); return new File(dirF, nn + ".part");
                 };
                 opt.cookies = (u, set) -> { try { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(u.toString(), c); } catch (Throwable ignored) {} };
-                final int conns = lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim));
+                // (What the host is known to take, and what the budget over every download leaves: the smaller.)
+                int inUse = 0; for (Task t : snapshot()) if (t != x && "http".equals(t.kind) && "downloading".equals(t.state)) inUse += Math.max(1, t.connections);
+                final int conns = Math.max(1, Math.min(lim == null ? x.wantConnections : Math.min(x.wantConnections, lim), Math.max(1, budget - inUse)));
                 final Runnable tick = () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } };
                 KrDownloader.Result r;
                 final File part0 = part;
                 try { r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                catch (KrDownloader.Status st403) {
+                    // (403 and nothing fetched yet: asked once more the way a browser following a link would — the site's
+                    // own origin as the referer, the fetch hints a navigation carries, a plain range — before giving up.)
+                    if (st403.code != 403 || x.got.get() > 0 || x.cancel.get()) throw st403;
+                    JSONObject h2 = new JSONObject(); if (headers != null) { Iterator<String> it = headers.keys(); while (it.hasNext()) { String k = it.next(); h2.put(k, headers.optString(k)); } }
+                    URL u0 = new URL(url); String origin = u0.getProtocol() + "://" + u0.getHost() + (u0.getPort() > 0 ? ":" + u0.getPort() : "") + "/";
+                    if (!h2.has("Referer") && !h2.has("referer")) h2.put("Referer", origin);
+                    h2.put("Sec-Fetch-Site", "same-origin"); h2.put("Sec-Fetch-Mode", "navigate"); h2.put("Sec-Fetch-Dest", "document"); h2.put("Sec-Fetch-User", "?1"); h2.put("Accept", "*/*"); h2.put("Accept-Language", "en-US,en;q=0.9");
+                    final JSONObject hh = h2; r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, hh, false), x.cancel, x.got, info, tick, opt);
+                }
                 catch (IOException e) {
                     // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
                     // tried once more by the network's own DNS.)
@@ -569,20 +609,44 @@ final class KtEngine {
                 if (x.autoName && r.fileName != null) { String n = r.fileName.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); if (want.exists() && !"overwrite".equals(conflict)) n = freeName(dir, n); x.name = n; x.httpOut = new File(dir, n); } x.autoName = false; }
                 // (A server that refused connections: asked no more than it accepted next time.)
                 if (r.refused && !host.isEmpty()) { hostLimit.put(host, Math.max(1, r.connections)); saveHosts(); }
+                // (A host that took every connection asked, with a limit learnt from before it: the limit grows a tenth — AIMD, so a refusal long past stops holding it down.)
+                else if (!host.isEmpty() && lim != null && lim < x.wantConnections && r.connections >= lim) { hostLimit.put(host, Math.min(x.wantConnections, lim + Math.max(1, lim / 10))); saveHosts(); }
                 if (x.cancel.get()) { x.downSpeed = 0; x.done = x.got.get(); persist(); return; }
                 if (r.total > 0 && part.length() != r.total) throw new IOException("incomplete");
+                // (What came is a playlist after all — a link with no «.m3u8» in it: the stream fetched from it.)
+                if (part.length() < (4 << 20) && "m3u8".equals(KrDownloader.sniffExt(part))) { part.delete(); state.delete(); x.got.set(0); x.done = 0; if (x.meta == null) x.meta = new JSONObject(); x.meta.put("hls", true); runHls(x, url, headers, dir, safe); return; }
+                // (A page saved where a media file was expected — a sign-in, an error, a storage's «<Error>» — is not kept as the file.)
+                if (KrDownloader.isPageNotMedia(part, x.name)) { part.delete(); throw new KrDownloader.WebPage(); }
                 if (x.httpOut.exists()) x.httpOut.delete();
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
                 // (What the file really is, from its first bytes — sites that send every file as «.bin» or with no type —:
                 // its extension put right, so an APK is an APK, a video plays, a book opens.)
                 try { String nm = KrDownloader.withSniffed(x.name, KrDownloader.sniffExt(x.httpOut)); if (nm != null) { File to = new File(dir, nm); if (to.exists()) to = new File(dir, freeName(dir, nm)); if (x.httpOut.renameTo(to)) { x.name = to.getName(); x.httpOut = to; } } } catch (Throwable ignored) {}
+                // (The file hashed and, when its bytes are here already, made a link to them — when the setting says.)
+                if (dedupe) { try { JSONObject dd = KtDedupe.onDone(ctx, x.httpOut); if (x.meta == null) x.meta = new JSONObject(); if (dd.has("sha256")) x.meta.put("sha256", dd.getString("sha256")); if (dd.optBoolean("linked")) x.meta.put("linked", true); } catch (Throwable e) { Log.w(TAG, "dedupe", e); } }
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; scan(x);
             } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         }, "kt-http-" + x.id);
         x.httpThread.start();
         KtService.ensure(ctx);
+    }
+    /** The HLS way of a file download: pieces i/n and the phase on the task, the joined file kept as the task's file. */
+    private void runHls(Task x, String url, JSONObject headers, File dir, String safe) {
+        try {
+            if (x.meta == null) x.meta = new JSONObject();
+            int height = 0; try { String q = x.meta.optString("quality", ""); java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{3,4})").matcher(q); if (m.find()) height = Integer.parseInt(m.group(1)); } catch (Exception ignored) {}
+            File work = new File(stateDir, x.id + ".hls");
+            final long[] lastT = { 0, 0 };
+            KtHls.Result r = KtHls.run(ctx, url, new File(dir, safe), work, Math.max(1, Math.min(x.wantConnections, 8)), height, u -> open(u, headers, false), x.cancel, (piece, pieces, bytes, phase) -> {
+                x.got.set(bytes); x.done = bytes; if (pieces > 0) x.total = (long) (bytes * (double) pieces / Math.max(1, piece)); try { x.meta.put("frag", piece); x.meta.put("frags", pieces); x.meta.put("phase", phase); } catch (Exception ignored) {}
+                long now = System.currentTimeMillis(); if (now - lastT[0] >= 700) { x.downSpeed = lastT[0] == 0 ? 0 : (long) ((bytes - lastT[1]) / ((now - lastT[0]) / 1000.0)); lastT[0] = now; lastT[1] = bytes; tell(false); }
+            });
+            if (x.cancel.get() || r.out == null) { x.downSpeed = 0; persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this); return; }
+            x.httpOut = r.out; x.name = r.out.getName(); x.done = x.total = r.out.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; x.meta.remove("phase"); scan(x); KtHls.deleteTree(work);
+        } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); } x.downSpeed = 0; }
+        persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
     }
     /* ---------- the queue (Prism's): no more file downloads at once than set; the rest wait in their order ---------- */
     private int busyHttp() { int n = 0; for (Task t : snapshot()) if ("http".equals(t.kind) && "downloading".equals(t.state)) n++; return n; }
@@ -614,6 +678,7 @@ final class KtEngine {
         x.source.put("url", url); if (headers != null && headers.length() > 0) x.source.put("headers", headers); x.paused = false; x.error = null; persist(); startHttp(x); tell(true);
     }
     private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
+        takeTurn(hostOf(u.toString()));
         java.net.Proxy px = proxyOf(proxy);
         HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
         // (The cookies the site set — here or in the app's browser, where a site's check is passed.)
@@ -666,7 +731,9 @@ final class KtEngine {
                 if (active) { try { for (org.libtorrent4j.PartialPieceInfo pp : x.th.getDownloadQueue()) { int got = pp.finished() + pp.writing(); partial += (long) got * 16384; if (pp.blocksInPiece() > 0) part.put(pp.pieceIndex(), got / (float) pp.blocksInPiece()); } } catch (Throwable ignored) {} }
                 x.done = Math.min(x.total > 0 ? x.total : Long.MAX_VALUE, st.totalWantedDone() + partial);
                 long nowMs = System.currentTimeMillis();
-                if (nowMs - x.mapAt > (active ? 1500 : 15000)) { x.mapAt = nowMs; try { pieceMap(x, part); } catch (Throwable ignored) {} } x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.seeds = st.numSeeds(); x.peers = Math.max(0, st.numPeers() - x.seeds);   // (libtorrent's peers count the seeds too)
+                if (nowMs - x.mapAt > (active ? 1500 : 15000)) { x.mapAt = nowMs; try { pieceMap(x, part); } catch (Throwable ignored) {} try { x.readyFile = readyFile(x); } catch (Throwable ignored) {} }
+                // (No peer for a while on a torrent under way: its trackers asked again and the DHT asked — turned on for the session if it was off — so a torrent whose trackers are dead still finds its swarm.)
+                if (active && st.numPeers() == 0 && !st.isFinished()) { if (x.noPeersSince == 0) x.noPeersSince = nowMs; else if (nowMs - x.noPeersSince > 45000 && nowMs - x.dhtNudgeAt > 90000) { x.dhtNudgeAt = nowMs; dhtFallback(x); } } else x.noPeersSince = 0; x.downSpeed = st.downloadPayloadRate(); x.upSpeed = st.uploadPayloadRate(); x.seeds = st.numSeeds(); x.peers = Math.max(0, st.numPeers() - x.seeds);   // (libtorrent's peers count the seeds too)
                 if (x.name == null || x.name.isEmpty() || "magnet".equals(x.name)) { String n = st.name(); if (n != null && !n.isEmpty()) x.name = n; }
                 if (x.paused) x.state = "paused";
                 else if (st.errorCode() != null && st.errorCode().isError()) { x.state = "failed"; x.error = errOf(st.errorCode().getMessage()); }
@@ -678,6 +745,28 @@ final class KtEngine {
                 }
             } catch (Exception ignored) {}
         }
+    }
+    /** The largest video file wanted whose first 8 MB and last 2 MB are here: playable while the rest comes. */
+    private int readyFile(Task x) {
+        TorrentInfo ti = x.th.torrentFile(); if (ti == null) return -1; FileStorage fs = ti.files(); Priority[] pr = x.th.filePriorities();
+        int best = -1; long bestSize = 0;
+        for (int i = 0; i < fs.numFiles(); i++) { if (pr != null && i < pr.length && pr[i] == Priority.IGNORE) continue; String p = fs.filePath(i).toLowerCase(java.util.Locale.ROOT); if (!p.matches(".*\\.(mkv|mp4|m4v|webm|avi|mov|ts|wmv|flv|mpg|mpeg)$")) continue; if (fs.fileSize(i) > bestSize) { bestSize = fs.fileSize(i); best = i; } }
+        if (best < 0) return -1;
+        TorrentStatus ps = x.th.status(TorrentHandle.QUERY_PIECES); org.libtorrent4j.PieceIndexBitfield bf = ps.pieces(); if (bf.size() <= 0) return -1;
+        long off = fs.fileOffset(best), size = fs.fileSize(best); int pl = ti.pieceLength(); if (pl <= 0) return -1;
+        long head = Math.min(size, 8L << 20), tail = Math.min(size, 2L << 20);
+        for (long b = off; b < off + head; b += pl) if (!bf.getBit((int) (b / pl))) return -1;
+        for (long b = off + size - tail; b < off + size; b += pl) if (!bf.getBit((int) (b / pl))) return -1;
+        if (!bf.getBit((int) ((off + size - 1) / pl))) return -1;
+        return best;
+    }
+    /** Trackers asked again and the DHT asked; the DHT turned on for this session when the settings had it off (noted on the task). */
+    private void dhtFallback(Task x) {
+        try {
+            if (!dht) { dht = true; SettingsPack sp = new SettingsPack(); sp.setBoolean(settings_pack.bool_types.enable_dht.swigValue(), true); session().applySettings(sp); }
+            if (x.meta == null) x.meta = new JSONObject(); x.meta.put("dhtFallback", true);
+            x.th.forceReannounce(); try { x.th.swig().force_dht_announce(); } catch (Throwable ignored) {}
+        } catch (Throwable e) { Log.w(TAG, "dht fallback", e); }
     }
     /** The pieces in a hundred stretches, each a digit for how much of it is here (partly filled pieces counted by
      *  their blocks); the count of pieces here. */
@@ -694,7 +783,7 @@ final class KtEngine {
             o.put("id", x.id); o.put("kind", x.kind); o.put("name", x.name == null ? "" : x.name); o.put("source", x.source); o.put("dir", x.dir); o.put("state", x.state); if (x.heldBy != null) o.put("heldBy", x.heldBy);
             o.put("done", x.done); o.put("total", x.total); o.put("downSpeed", x.downSpeed); o.put("upSpeed", x.upSpeed);
             if (x.downSpeed > 0 && x.total > x.done) o.put("eta", (x.total - x.done) / x.downSpeed);
-            if ("torrent".equals(x.kind)) { o.put("peers", x.peers); o.put("seeds", x.seeds); if (x.pieceMap != null) { o.put("pieceMap", x.pieceMap); o.put("numPieces", x.numPieces); o.put("havePieces", x.havePieces); } if (x.infoHash != null) o.put("infoHash", x.infoHash); } else { o.put("connections", x.connections);
+            if ("torrent".equals(x.kind)) { o.put("peers", x.peers); o.put("seeds", x.seeds); if (x.pieceMap != null) { o.put("pieceMap", x.pieceMap); o.put("numPieces", x.numPieces); o.put("havePieces", x.havePieces); } if (x.readyFile >= 0) o.put("readyFile", x.readyFile); if (x.infoHash != null) o.put("infoHash", x.infoHash); } else { o.put("connections", x.connections);
                 if (x.segs != null && "downloading".equals(x.state)) { JSONArray sa = new JSONArray(); synchronized (x.segs) { for (KrDownloader.Seg sg : x.segs) { JSONObject so = new JSONObject(); so.put("start", sg.start); so.put("pos", sg.pos); so.put("end", sg.end); so.put("speed", (long) sg.speed); so.put("active", sg.active); so.put("worker", sg.worker); sa.put(so); } } o.put("segments", sa); } }
             o.put("files", files(x)); o.put("sequential", x.sequential); if (x.limitDown > 0) o.put("limitDown", x.limitDown); if (x.limitUp > 0) o.put("limitUp", x.limitUp); if (x.error != null) o.put("error", x.error);
             o.put("addedAt", x.addedAt); if (x.doneAt > 0) o.put("doneAt", x.doneAt); if (x.meta != null) o.put("meta", x.meta); o.put("engine", "native");
@@ -830,6 +919,7 @@ final class KtEngine {
 
     /* ---------- kept across restarts ---------- */
     private final java.util.concurrent.ExecutorService bg = java.util.concurrent.Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "kt-video"); t.setDaemon(true); return t; });
+    void persistPublic() { persist(); tell(true); }
     private synchronized void persist() {
         try {
             JSONArray arr = new JSONArray();
@@ -847,15 +937,23 @@ final class KtEngine {
         File f = new File(stateDir, "tasks.json"), bak = new File(stateDir, "tasks.json.bak"); if (!f.exists() && !bak.exists()) return;
         try {
             // (The last good copy when this one cannot be read — a write cut short.)
-            JSONArray arr; try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); } catch (Exception e) { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(bak.toPath()), StandardCharsets.UTF_8)); }
+            JSONArray arr; try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); }
+            catch (Exception e) {
+                // (Neither copy readable: the broken file is kept aside under a dated name — never thrown away quietly — and the list starts empty.)
+                try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(bak.toPath()), StandardCharsets.UTF_8)); }
+                catch (Exception e2) { File q = new File(stateDir, "tasks.json.corrupt-" + System.currentTimeMillis()); try { if (f.exists()) java.nio.file.Files.move(f.toPath(), q.toPath()); } catch (Exception ignored) {} Log.w(TAG, "tasks.json unreadable, kept as " + q.getName()); quarantined = q.getName(); return; }
+            }
             boolean any = false;
             for (int i = 0; i < arr.length(); i++) { try {
                 JSONObject o = arr.getJSONObject(i); Task x = new Task();
                 x.id = o.getString("id"); x.kind = o.getString("kind"); x.name = o.optString("name"); x.source = o.optJSONObject("source"); if (x.source == null) x.source = new JSONObject(); x.dir = o.optString("dir"); x.state = o.optString("state", "paused");
                 x.limitDown = o.optInt("limitDown", 0); x.limitUp = o.optInt("limitUp", 0); x.done = o.optLong("done"); x.total = o.optLong("total"); x.addedAt = o.optLong("addedAt", System.currentTimeMillis()); x.doneAt = o.optLong("doneAt"); x.meta = o.optJSONObject("meta"); x.sequential = o.optBoolean("sequential"); x.paused = o.optBoolean("paused"); x.infoHash = o.optString("infoHash", null); x.error = o.optString("error", null); x.wantConnections = o.optInt("connections", 8);
                 JSONArray pr = o.optJSONArray("priorities"); if (pr != null) { x.priorities = new int[pr.length()]; for (int k = 0; k < pr.length(); k++) x.priorities[k] = pr.getInt(k); }
+                // (A download that was running when the app died comes back paused and marked: the page offers to resume them all.)
+                boolean wasRunning = "downloading".equals(x.state) || "queued".equals(x.state);
                 if ("http".equals(x.kind)) { x.httpOut = new File(x.dir, x.name); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
                 if ("video".equals(x.kind)) { String vf = o.optString("file", ""); if (!vf.isEmpty()) x.httpOut = new File(x.dir, vf); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
+                if (wasRunning && ("http".equals(x.kind) || "video".equals(x.kind))) { try { if (x.meta == null) x.meta = new JSONObject(); x.meta.put("interrupted", true); } catch (Exception ignored) {} }
                 tasks.put(x.id, x);
                 if ("torrent".equals(x.kind)) {
                     File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) { try { x.source.put("torrent", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(tf.toPath()), android.util.Base64.NO_WRAP)); } catch (Exception ignored) {} }

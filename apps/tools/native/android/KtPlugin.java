@@ -255,7 +255,15 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void torrentDetail(PluginCall call) { run(call, () -> call.resolve(new JSObject(engine().torrentDetail(call.getString("id", "")).toString()))); }
     @PluginMethod public void recheck(PluginCall call) { run(call, () -> { engine().recheck(call.getString("id", "")); call.resolve(); }); }
+    /* ---------- cookie jars ---------- */
+    @PluginMethod public void cookieJars(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); String host = call.getString("host", ""); r.put("list", JSArray.from(host.isEmpty() ? KtCookies.publicList(getContext()) : KtCookies.forHost(getContext(), host))); call.resolve(r); }); }
+    @PluginMethod public void cookieJarSave(PluginCall call) { run(call, () -> { JSONObject j = KtCookies.save(getContext(), call.getString("id", ""), call.getString("name", ""), call.getString("domain", ""), call.getString("text", ""), "text"); JSObject r = new JSObject(); r.put("id", j.optString("id")); r.put("count", j.optInt("count")); call.resolve(r); }); }
+    @PluginMethod public void cookieJarFromBrowser(PluginCall call) { run(call, () -> { JSONObject j = KtCookies.fromBrowser(getContext(), call.getString("id", ""), call.getString("name", ""), call.getString("url", "")); JSObject r = new JSObject(); r.put("id", j.optString("id")); r.put("count", j.optInt("count")); call.resolve(r); }); }
+    @PluginMethod public void cookieJarDelete(PluginCall call) { run(call, () -> { KtCookies.delete(getContext(), call.getString("id", "")); call.resolve(); }); }
+    @PluginMethod public void cookieJarTest(PluginCall call) { run(call, () -> { JSONObject j = KtCookies.test(getContext(), call.getString("id", ""), call.getString("url", "")); JSObject r = new JSObject(); r.put("ok", j.optBoolean("ok")); r.put("status", j.optInt("status")); call.resolve(r); }); }
     @PluginMethod public void reannounce(PluginCall call) { run(call, () -> { engine().reannounce(call.getString("id", "")); call.resolve(); }); }
+    /** Trackers added to one torrent (one a line), announced at once. */
+    @PluginMethod public void addTrackers(PluginCall call) { run(call, () -> { JSArray a = call.getArray("urls"); java.util.List<String> l = new java.util.ArrayList<>(); if (a != null) for (int i = 0; i < a.length(); i++) l.add(a.getString(i)); JSObject o = new JSObject(); o.put("added", engine().addTrackers(call.getString("id", ""), l)); call.resolve(o); }); }
     @PluginMethod public void setTaskLimits(PluginCall call) { run(call, () -> { engine().setTaskLimits(call.getString("id", ""), call.getInt("down", 0), call.getInt("up", 0)); call.resolve(); }); }
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
     @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { JSObject hd = call.getObject("headers", null); engine().setUrl(call.getString("id", ""), call.getString("url", ""), hd == null ? null : new JSONObject(hd.toString())); call.resolve(); }); }
@@ -301,6 +309,11 @@ public class KtPlugin extends Plugin {
         catch (Exception e) { call.reject(e.getMessage()); }
     }
     /** A download renamed — the file on disk (an HTTP download, a torrent's single file; a torrent's folder when it holds many) and its name. */
+    /** The exact yt-dlp arguments of a video download's last attempt, and the reader's own extra arguments for the next («edit and try again»). */
+    @PluginMethod public void videoCommand(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); java.util.List<String> cmd = KtVideo.lastCommand.get(call.getString("id", "")); r.put("command", cmd == null ? "" : String.join(" ", cmd)); KtEngine.Task x = engine().task(call.getString("id", "")); r.put("extraArgs", x != null && x.meta != null ? x.meta.optString("extraArgs", "") : ""); call.resolve(r); }); }
+    /** Keys written on (or, with null, taken off) a download's meta: its own clock, a note, anything the page keeps on it. */
+    @PluginMethod public void setTaskMeta(PluginCall call) { run(call, () -> { KtEngine.Task x = engine().task(call.getString("id", "")); if (x == null) throw new Exception("noTask"); if (x.meta == null) x.meta = new JSONObject(); JSObject patch = call.getObject("patch", new JSObject()); for (java.util.Iterator<String> it = patch.keys(); it.hasNext(); ) { String k = it.next(); Object v = patch.opt(k); if (v == null || v == JSONObject.NULL) x.meta.remove(k); else x.meta.put(k, v); } engine().persistPublic(); call.resolve(); }); }
+    @PluginMethod public void videoExtraArgs(PluginCall call) { run(call, () -> { KtEngine.Task x = engine().task(call.getString("id", "")); if (x == null) throw new Exception("noTask"); if (x.meta == null) x.meta = new JSONObject(); x.meta.put("extraArgs", call.getString("extraArgs", "")); engine().persistPublic(); call.resolve(); }); }
     @PluginMethod public void rename(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("name", engine().rename(call.getString("id", ""), call.getString("name", ""))); call.resolve(r); }); }
     static String mimeOf(String name) {
         String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase() : "";
@@ -476,10 +489,10 @@ public class KtPlugin extends Plugin {
         } catch (Throwable e) { return null; }
     }
     private static File fileOf(String p) { if (p.startsWith("file://")) p = Uri.parse(p).getPath(); return new File(p); }
-    @PluginMethod public void archiveList(PluginCall call) {
+    @PluginMethod public void archiveList(PluginCall call) { KtArchive.nameCharset = call.getString("charset", null);
         bg.execute(() -> { try { File f = fileOf(call.getString("path", "")); JSObject r = new JSObject(new org.json.JSONObject(KtArchive.list(f, call.getString("password", null)).toString()).toString()); r.put("resumable", KtArchive.hasJournal(f)); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } });
     }
-    @PluginMethod public void archiveExtract(PluginCall call) {
+    @PluginMethod public void archiveExtract(PluginCall call) { KtArchive.nameCharset = call.getString("charset", null);
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
         final File f = fileOf(call.getString("path", "")); final String destS = call.getString("dest", f.getParent()); final File dest = "cache:".equals(destS) ? new File(getContext().getCacheDir(), "archive-view") : fileOf(destS);
         final KtArchive.Options o = new KtArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)) && call.getArray("only") == null; o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
@@ -499,7 +512,7 @@ public class KtPlugin extends Plugin {
     /** HatchZip's other verbs: test (read every file, write nothing), restore (give up an extraction in place),
      *  the free space of a folder, and which of an archive's files already exist where it would go. */
     private KtArchive.Progress progressFor(String id, AtomicBoolean stop) { final long[] last = { 0 }; return new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } }; }
-    @PluginMethod public void archiveTest(PluginCall call) {
+    @PluginMethod public void archiveTest(PluginCall call) { KtArchive.nameCharset = call.getString("charset", null);
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
         final File f = fileOf(call.getString("path", ""));
         bg.execute(() -> { try { call.resolve(new JSObject(KtArchive.test(f, call.getString("password", null), progressFor(id, stop)).toString())); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } finally { archiveJobs.remove(id); } });
@@ -511,13 +524,27 @@ public class KtPlugin extends Plugin {
         bg.execute(() -> { JSArray out = new JSArray(); try { for (int i = 0; i < names.length(); i++) { String n = names.getString(i); if (new File(dest, n).isFile()) out.put(n); } } catch (Exception ignored) {} JSObject r = new JSObject(); r.put("existing", out); call.resolve(r); });
     }
     @PluginMethod public void archiveCancel(PluginCall call) { AtomicBoolean c = archiveJobs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
+    /** A folder pinned to the home screen (Android 8+): tapping it opens the Files page there. */
+    @PluginMethod public void filesShortcut(PluginCall call) {
+        final String path = call.getString("path", ""), name = call.getString("name", ""); if (path.isEmpty()) { call.reject("path"); return; }
+        try {
+            if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(getContext())) { call.reject("unsupported"); return; }
+            Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("kurokawatools://files?p=" + java.net.URLEncoder.encode(path, "UTF-8")), getContext(), MainActivity.class); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            androidx.core.content.pm.ShortcutInfoCompat sc = new androidx.core.content.pm.ShortcutInfoCompat.Builder(getContext(), "folder:" + path).setShortLabel(name.isEmpty() ? new File(path).getName() : name).setLongLabel(path).setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(getContext(), getContext().getApplicationInfo().icon)).setIntent(i).build();
+            boolean ok = androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(getContext(), sc, null);
+            JSObject r = new JSObject(); r.put("ok", ok); call.resolve(r);
+        } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage()); }
+    }
+    @PluginMethod public void archiveEntryUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().archiveEntryUrl(fileOf(call.getString("path", "")).getAbsolutePath(), call.getString("password", null), call.getString("entry", ""))); call.resolve(r); }); }
+    @PluginMethod public void archiveThumb(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String entry = call.getString("entry", ""), pw = call.getString("password", null); final int px = call.getInt("px", 96); bg.execute(() -> { JSObject r = new JSObject(); r.put("url", KtFiles.archiveThumb(f, pw, entry, px)); call.resolve(r); }); }
     @PluginMethod public void archiveCreate(PluginCall call) {
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
         final File out = fileOf(call.getString("out", "")); final java.util.List<File> ins = new java.util.ArrayList<>();
         try { JSArray a = call.getArray("inputs"); for (int i = 0; i < a.length(); i++) ins.add(fileOf(a.getString(i))); } catch (Exception e) { call.reject("inputs"); return; }
         bg.execute(() -> {
             final long[] last = { 0 };
-            try { int n = KtArchive.createZip(out, ins, new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } });
+            final KtArchive.MakeOptions mo = new KtArchive.MakeOptions(); mo.format = call.getString("format", "zip"); mo.level = call.getInt("level", 6); mo.password = call.getString("password", null); mo.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); mo.comment = call.getString("comment", null); mo.splitMb = call.getInt("splitMb", 0);
+            try { int n = KtArchive.create(out, ins, mo, new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } });
                 JSObject r = new JSObject(); r.put("files", n); r.put("path", out.getAbsolutePath()); r.put("size", out.length()); call.resolve(r);
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
             finally { if (!id.isEmpty()) archiveJobs.remove(id); }
@@ -552,11 +579,171 @@ public class KtPlugin extends Plugin {
         });
     }
 
+    /* ---------- the Files add-on: root / Shizuku and granted trees (see KtVfs) ---------- */
+    @PluginMethod public void vfsRoots(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); KtVfs.Shell sh = KtVfs.shell(getContext()); r.put("shell", sh == null ? null : sh.kind); r.put("trees", new JSArray(KtVfs.treeList(getContext()).toString())); r.put("shizuku", shizukuInstalled()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    private boolean shizukuInstalled() { try { getContext().getPackageManager().getPackageInfo("moe.shizuku.privileged.api", 0); return true; } catch (Exception e) { return false; } }
+    @PluginMethod public void vfsShizukuAsk(PluginCall call) { JSObject r = new JSObject(); r.put("asked", KtVfs.Shell.shizukuAsk()); call.resolve(r); }
+    @PluginMethod public void vfsList(PluginCall call) { final String path = call.getString("path", ""); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtVfs.list(getContext(), path).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsFetch(PluginCall call) { final String path = call.getString("path", ""), job = call.getString("jobId", "vf"); final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean(); KtRemote.JOBS.put(job, stop); bg.execute(() -> { try { File f = KtVfs.fetch(getContext(), path, stop); JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } finally { KtRemote.JOBS.remove(job); } }); }
+    @PluginMethod public void vfsMkdir(PluginCall call) { final String dir = call.getString("path", ""), name = call.getString("name", ""); bg.execute(() -> { try { KtVfs.mkdir(getContext(), dir, name); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsDelete(PluginCall call) { final java.util.List<String> paths = strings(call.getArray("paths")); bg.execute(() -> { try { for (String p : paths) KtVfs.delete(getContext(), p); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsRename(PluginCall call) { final String path = call.getString("path", ""), name = call.getString("name", ""); bg.execute(() -> { try { KtVfs.rename(getContext(), path, name); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsJob(PluginCall call) {
+        final String id = call.getString("id", "vj" + System.currentTimeMillis()), op = call.getString("op", "down"), dest = call.getString("dest", "/"); final java.util.List<String> paths = strings(call.getArray("paths")); final boolean del = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false));
+        new Thread(() -> KtVfs.transfer(getContext(), id, op, paths, dest, del, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-vfs-job").start();
+        JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
+    }
+    /** Root only: chmod / chown / a symbolic link / a mount remounted; `cmd` is one of those with its arguments checked here. */
+    @PluginMethod public void vfsRootOp(PluginCall call) {
+        final String what = call.getString("what", ""), path = call.getString("path", ""), arg = call.getString("arg", "");
+        bg.execute(() -> {
+            try {
+                String cmd;
+                switch (what) {
+                    case "chmod": if (!arg.matches("[0-7]{3,4}")) throw new Exception("badMode"); cmd = "chmod " + arg + " " + KtVfs.q(path); break;
+                    case "chown": if (!arg.matches("[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?")) throw new Exception("badOwner"); cmd = "chown " + arg + " " + KtVfs.q(path); break;
+                    case "link": cmd = "ln -s " + KtVfs.q(arg) + " " + KtVfs.q(path); break;
+                    case "remount": cmd = "mount -o remount," + (arg.equals("ro") ? "ro" : "rw") + " " + KtVfs.q(path); break;
+                    case "mounts": JSObject m = new JSObject(); m.put("mounts", new JSArray(KtVfs.mounts(getContext()).toString())); call.resolve(m); return;
+                    case "stat": cmd = "stat -c '%A %U:%G %s %Y %N' " + KtVfs.q(path); break;
+                    default: throw new Exception("unknown");
+                }
+                JSObject r = new JSObject(); r.put("out", KtVfs.rootRun(getContext(), cmd)); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** The system's picker on a folder tree (Android/data on 11+ needs it), the grant kept. */
+    @PluginMethod public void vfsGrant(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        String start = call.getString("start", ""); if (!start.isEmpty() && Build.VERSION.SDK_INT >= 26) { try { i.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:" + start)); } catch (Exception ignored) {} }
+        startActivityForResult(call, i, "treeGranted");
+    }
+    @ActivityCallback private void treeGranted(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); Uri tree = data != null ? data.getData() : null; if (tree == null) { call.reject("cancelled"); return; }
+        try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); } catch (Exception ignored) {}
+        try { JSObject r = new JSObject(); r.put("trees", new JSArray(KtVfs.treeList(getContext()).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @PluginMethod public void vfsForgetTree(PluginCall call) { KtVfs.forgetTree(getContext(), call.getInt("id", -1)); call.resolve(); }
+
+    /* ---------- the Files add-on: files locked with a password (see KtVault) ---------- */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> vaultJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void vaultJob(PluginCall call) {
+        final String id = call.getString("id", "vj" + System.currentTimeMillis()); final boolean lock = !Boolean.FALSE.equals(call.getBoolean("lock", true)); final String pw = call.getString("password", ""); final boolean del = !Boolean.FALSE.equals(call.getBoolean("deleteAfter", true));
+        final java.util.List<File> paths = new java.util.ArrayList<>(); JSArray a = call.getArray("paths"); if (a != null) for (int i = 0; i < a.length(); i++) paths.add(fileOf(a.optString(i, "")));
+        if (pw.isEmpty()) { call.reject("password"); return; }
+        final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean(); vaultJobs.put(id, stop);
+        new Thread(() -> { try { KtVault.run(id, lock, paths, pw, del, stop, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }); } finally { vaultJobs.remove(id); } }, "kt-vault").start();
+        JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
+    }
+    @PluginMethod public void vaultCancel(PluginCall call) { java.util.concurrent.atomic.AtomicBoolean b = vaultJobs.get(call.getString("id", "")); if (b != null) b.set(true); call.resolve(); }
+    /** The name inside a locked file when the password opens it; «wrongPassword» otherwise. */
+    @PluginMethod public void vaultPeek(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String pw = call.getString("password", ""); bg.execute(() -> { String n = KtVault.peek(f, pw); if (n == null) call.reject("wrongPassword"); else { JSObject r = new JSObject(); r.put("name", n); call.resolve(r); } }); }
+    /** A locked file unlocked into the app's cache (for opening without leaving a plain copy beside it). */
+    @PluginMethod public void vaultOpen(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String pw = call.getString("password", ""); bg.execute(() -> { try { File dir = new File(getContext().getCacheDir(), "vault"); dir.mkdirs(); File out = KtVault.unlock(f, pw, dir, false, null); JSObject r = new JSObject(); r.put("path", out.getAbsolutePath()); r.put("name", out.getName()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+
+    /* ---------- the Files add-on: a folder shared on the Wi-Fi (web + FTP, see KtFolderShare) ---------- */
+    @PluginMethod public void folderShareStart(PluginCall call) {
+        run(call, () -> {
+            File root = fileOf(call.getString("path", "")); boolean writable = Boolean.TRUE.equals(call.getBoolean("writable", false)), web = !Boolean.FALSE.equals(call.getBoolean("web", true)), ftp = !Boolean.FALSE.equals(call.getBoolean("ftp", true));
+            String user = call.getString("user", ""), pass = call.getString("pass", ""); int webPort = call.getInt("webPort", 8080), ftpPort = call.getInt("ftpPort", 2121);
+            KtFolderShare.get().start(getContext(), root, writable, web, ftp, user, pass, webPort, ftpPort);
+            getContext().getSharedPreferences("kt-fshare", android.content.Context.MODE_PRIVATE).edit().putString("root", root.getAbsolutePath()).putBoolean("writable", writable).putString("user", user).putString("pass", pass).putInt("webPort", webPort).putInt("ftpPort", ftpPort).apply();
+            call.resolve(JSObject.fromJSONObject(KtFolderShare.get().status()));
+        });
+    }
+    @PluginMethod public void folderShareStop(PluginCall call) { KtFolderShare.get().stop(getContext()); call.resolve(); }
+    @PluginMethod public void folderShareStatus(PluginCall call) { run(call, () -> call.resolve(JSObject.fromJSONObject(KtFolderShare.get().status()))); }
+
+    /* ---------- the Files add-on: network storages (see KtRemote) ---------- */
+    private static java.util.List<String> strings(JSArray a) { java.util.List<String> l = new java.util.ArrayList<>(); if (a != null) for (int i = 0; i < a.length(); i++) l.add(a.optString(i, "")); return l; }
+    @PluginMethod public void remoteConnections(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("list", new JSArray(KtRemote.publicList(getContext()).toString())); call.resolve(r); }); }
+    @PluginMethod public void remoteSave(PluginCall call) { run(call, () -> { JSONObject c = new JSONObject(call.getData().toString()); JSONObject saved = KtRemote.save(getContext(), c); JSObject r = new JSObject(); r.put("id", saved.getString("id")); call.resolve(r); }); }
+    @PluginMethod public void remoteRemove(PluginCall call) { run(call, () -> { KtRemote.remove(getContext(), call.getString("id", "")); call.resolve(); }); }
+    @PluginMethod public void remoteTrust(PluginCall call) { run(call, () -> { KtRemote.trust(getContext(), call.getString("id", ""), call.getString("fingerprint", "")); call.resolve(); }); }
+    /** Tries a connection: resolves with the root listing, or rejects with «login», «hostkey:<fp>:<type>», «cert:<fp>:<subject>» or the failure. */
+    @PluginMethod public void remoteTest(PluginCall call) { bg.execute(() -> { String id = call.getString("id", ""); try { KtRemote.drop(id); JSObject r = new JSObject(); r.put("entries", new JSArray(KtRemote.toJson(KtRemote.client(getContext(), id).list(call.getString("path", "/"))).toString())); call.resolve(r); } catch (Throwable e) { KtRemote.drop(id); call.reject(KtRemote.reason(e)); } }); }
+    @PluginMethod public void remoteList(PluginCall call) { bg.execute(() -> { final String id = call.getString("id", ""), path = call.getString("path", "/"); try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtRemote.toJson(KtRemote.with(getContext(), id, (c) -> c.list(path))).toString())); call.resolve(r); } catch (Throwable e) { call.reject(KtRemote.reason(e)); } }); }
+    @PluginMethod public void remoteMkdir(PluginCall call) { bg.execute(() -> { final String id = call.getString("id", ""), path = call.getString("path", "/"); try { KtRemote.with(getContext(), id, (c) -> { c.mkdir(path); return null; }); call.resolve(); } catch (Throwable e) { call.reject(KtRemote.reason(e)); } }); }
+    @PluginMethod public void remoteDelete(PluginCall call) { bg.execute(() -> { final String id = call.getString("id", ""); final java.util.List<String> paths = strings(call.getArray("paths")); final java.util.List<String> dirs = strings(call.getArray("dirs")); try { KtRemote.with(getContext(), id, (c) -> { for (String p : paths) c.delete(p, dirs.contains(p)); return null; }); call.resolve(); } catch (Throwable e) { call.reject(KtRemote.reason(e)); } }); }
+    @PluginMethod public void remoteRename(PluginCall call) { bg.execute(() -> { final String id = call.getString("id", ""), from = call.getString("path", ""), to = call.getString("to", ""); try { KtRemote.with(getContext(), id, (c) -> { c.rename(from, to); return null; }); call.resolve(); } catch (Throwable e) { call.reject(KtRemote.reason(e)); } }); }
+    /** A remote file into the app's cache; its local path (a «files» job with `jobId` reports the progress). */
+    @PluginMethod public void remoteFetch(PluginCall call) { bg.execute(() -> { final String id = call.getString("id", ""), path = call.getString("path", ""), job = call.getString("jobId", "rf"); final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean(); KtRemote.JOBS.put(job, stop); try { File f = KtRemote.fetch(getContext(), id, path, stop, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }, job); JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); r.put("size", f.length()); call.resolve(r); } catch (Throwable e) { call.reject(KtRemote.reason(e)); } finally { KtRemote.JOBS.remove(job); } }); }
+    /** down: remote `paths` into the local folder `dest`; up: local `paths` into the remote folder `dest`. Progress and the end on «files» with `id`. */
+    @PluginMethod public void remoteJob(PluginCall call) {
+        final String id = call.getString("id", "rj" + System.currentTimeMillis()), op = call.getString("op", "down"), conn = call.getString("conn", ""), dest = call.getString("dest", "/"); final java.util.List<String> paths = strings(call.getArray("paths")); final boolean del = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false));
+        new Thread(() -> KtRemote.transfer(getContext(), id, op, conn, paths, dest, del, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-remote-job").start();
+        JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
+    }
+    @PluginMethod public void remoteCancel(PluginCall call) { KtRemote.cancel(call.getString("id", "")); call.resolve(); }
+    private final java.util.concurrent.atomic.AtomicBoolean scanStop = new java.util.concurrent.atomic.AtomicBoolean();
+    /** OAuth for a cloud connection: the sign-in page opened in the app's own WebView, the code swapped for tokens, kept with the connection. */
+    private String oauthVerifier; private String oauthConn;
+    @PluginMethod public void remoteSignIn(PluginCall call) {
+        final String id = call.getString("id", "");
+        try { JSONObject c = KtRemote.get(getContext(), id); String[] b = KtCloud.beginAuth(c); oauthVerifier = b[1]; oauthConn = id; Intent i = new Intent(getContext(), KtAuthActivity.class); i.putExtra(KtAuthActivity.EXTRA_URL, b[0]); i.putExtra(KtAuthActivity.EXTRA_MARKER, "8976/oauth"); i.putExtra(KtAuthActivity.EXTRA_TITLE, c.optString("name", "")); startActivityForResult(call, i, "oauthDone"); }
+        catch (Exception e) { call.reject(KtRemote.reason(e)); }
+    }
+    @ActivityCallback private void oauthDone(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); String url = data == null ? null : data.getStringExtra(KtAuthActivity.RESULT_URL); if (url == null) { call.reject("cancelled"); return; }
+        final String v = oauthVerifier, id = oauthConn; oauthVerifier = null;
+        bg.execute(() -> { try { JSONObject c = KtRemote.get(getContext(), id); KtCloud.finishAuth(c, url, v); KtRemote.save(getContext(), c); KtRemote.drop(id); call.resolve(); } catch (Exception e) { call.reject(KtRemote.reason(e)); } });
+    }
+    /** Nextcloud Login Flow v2: the server's sign-in page in the WebView; polled until it hands over an app password. */
+    @PluginMethod public void remoteNextcloud(PluginCall call) {
+        final String id = call.getString("id", "");
+        bg.execute(() -> {
+            try {
+                JSONObject c = KtRemote.get(getContext(), id); final JSONObject begin = KtCloud.nextcloudBegin(c.getString("host"));
+                Intent i = new Intent(getContext(), KtAuthActivity.class); i.putExtra(KtAuthActivity.EXTRA_URL, begin.getString("login")); i.putExtra(KtAuthActivity.EXTRA_MARKER, "\u0000never"); i.putExtra(KtAuthActivity.EXTRA_TITLE, c.optString("name", "Nextcloud"));
+                nextcloudBegin = begin; nextcloudConn = id; getActivity().runOnUiThread(() -> startActivityForResult(call, i, "nextcloudDone"));
+                // (Polled in the background while the page is up: when the server answers, the activity is closed by the result.)
+                new Thread(() -> { try { for (int k = 0; k < 600 && nextcloudBegin == begin; k++) { Thread.sleep(2000); JSONObject got = KtCloud.nextcloudPoll(begin); if (got != null) { JSONObject cc = KtRemote.get(getContext(), id); cc.put("host", got.getString("server")); cc.put("user", got.getString("loginName")); cc.put("pass", got.getString("appPassword")); cc.put("kind", "nextcloud"); KtRemote.save(getContext(), cc); KtRemote.drop(id); nextcloudBegin = null; getActivity().runOnUiThread(() -> { android.app.Activity a = nextcloudActivity; if (a != null) a.finish(); }); call.resolve(); return; } } } catch (Exception e) { call.reject(KtRemote.reason(e)); } }, "kt-nc-poll").start();
+            } catch (Exception e) { call.reject(KtRemote.reason(e)); }
+        });
+    }
+    private JSONObject nextcloudBegin; private String nextcloudConn; static android.app.Activity nextcloudActivity;
+    @ActivityCallback private void nextcloudDone(PluginCall call, ActivityResult result) { if (nextcloudBegin != null) { nextcloudBegin = null; if (call != null) call.reject("cancelled"); } }
+    @PluginMethod public void remoteScan(PluginCall call) { scanStop.set(false); new Thread(() -> { try { JSObject r = new JSObject(); r.put("hosts", new JSArray(KtRemote.scan(getContext(), scanStop).toString())); r.put("mine", KtRemote.localIp()); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }, "kt-remote-scan").start(); }
+    @PluginMethod public void remoteScanStop(PluginCall call) { scanStop.set(true); call.resolve(); }
+
     /* ---------- the Files add-on: folders of the device (see KtFiles) ---------- */
     @PluginMethod public void filesList(PluginCall call) { final File d = fileOf(call.getString("path", "")); final boolean counts = Boolean.TRUE.equals(call.getBoolean("counts", false)), hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.list(d, counts, hidden))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void filesRoots(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.roots(getContext(), engine().defaultDir()))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> statRuns = new java.util.concurrent.ConcurrentHashMap<>();
     @PluginMethod public void filesStat(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String id = call.getString("id", ""); final java.util.concurrent.atomic.AtomicBoolean c = new java.util.concurrent.atomic.AtomicBoolean(); if (!id.isEmpty()) { java.util.concurrent.atomic.AtomicBoolean old = statRuns.put(id, c); if (old != null) old.set(true); } bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.stat(f, c))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } finally { statRuns.remove(id, c); } }); }
+    /* ---------- installed apps as folders ---------- */
+    /* ---------- a dub from a subtitle (the phone's voice), muxed into the video ---------- */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> dubs = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void dubMake(PluginCall call) {
+        final String id = call.getString("id", "dub"); final String lang = call.getString("lang", "en"); final String videoPath = call.getString("video", ""); final String outPath = call.getString("out", ""); final org.json.JSONArray cues;
+        try { cues = new org.json.JSONArray(call.getString("cues", "[]")); } catch (Exception e) { call.reject("cues"); return; }
+        final java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean(false); dubs.put(id, cancel);
+        bg.execute(() -> {
+            try {
+                File work = new File(getContext().getCacheDir(), "kt-dub/" + id); KtDub.Progress pr = (done, total, phase) -> { JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("phase", phase); notifyListeners("dub", ev); };
+                File wav = KtDub.speak(getContext(), cues, lang, work, pr, cancel); File out = new File(outPath);
+                pr.on(cues.length(), cues.length(), "mux");
+                File result = !videoPath.isEmpty() && new File(videoPath).isFile() ? KtDub.mux(getContext(), new File(videoPath), wav, lang, out) : KtDub.toM4a(getContext(), wav, out);
+                wav.delete(); JSObject r = new JSObject(); r.put("path", result.getAbsolutePath()); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+            finally { dubs.remove(id); }
+        });
+    }
+    @PluginMethod public void dubCancel(PluginCall call) { java.util.concurrent.atomic.AtomicBoolean c = dubs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
+    /** The text in a picture (ML Kit, the script chosen by the language given), for the image viewer's «copy text». */
+    @PluginMethod public void ocrFile(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String lang = call.getString("lang", "en"); bg.execute(() -> { try { android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath()); if (b == null) { call.reject("undecodable"); return; } java.util.List<KtScreenA11y.Block> blocks = KtScreenOcr.read(b, null, lang); b.recycle(); StringBuilder sb = new StringBuilder(); for (KtScreenA11y.Block bl : blocks) { if (sb.length() > 0) sb.append('\n'); sb.append(bl.text); } JSObject r = new JSObject(); r.put("text", sb.toString()); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    /** The system bars hidden while the player is up (both, the status bar only, or none), and shown again when it closes. */
+    @PluginMethod public void systemBars(PluginCall call) {
+        final String mode = call.getString("mode", "show");
+        getActivity().runOnUiThread(() -> { try { android.view.Window w = getActivity().getWindow(); androidx.core.view.WindowCompat.setDecorFitsSystemWindows(w, "show".equals(mode)); androidx.core.view.WindowInsetsControllerCompat c = androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView()); if ("show".equals(mode)) c.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()); else { c.setSystemBarsBehavior(androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); c.hide("status".equals(mode) ? androidx.core.view.WindowInsetsCompat.Type.statusBars() : androidx.core.view.WindowInsetsCompat.Type.systemBars()); } } catch (Throwable e) { android.util.Log.w("KtPlugin", "bars: " + e); } call.resolve(); });
+    }
+    @PluginMethod public void dedupeStats(PluginCall call) { run(call, () -> call.resolve(JSObject.fromJSONObject(KtDedupe.stats(getContext())))); }
+    @PluginMethod public void appsList(PluginCall call) { final boolean system = Boolean.TRUE.equals(call.getBoolean("system", false)); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("apps", JSArray.from(KtApps.list(getContext(), system))); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void appsIcon(PluginCall call) { final String pkg = call.getString("pkg", ""); bg.execute(() -> { JSObject r = new JSObject(); r.put("url", KtApps.icon(getContext(), pkg)); call.resolve(r); }); }
+    @PluginMethod public void appsDetail(PluginCall call) { final String pkg = call.getString("pkg", ""); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtApps.detail(getContext(), pkg))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void appsBackup(PluginCall call) { final String pkg = call.getString("pkg", ""); final File dest = fileOf(call.getString("dest", "")); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("path", KtApps.backup(getContext(), pkg, dest).getAbsolutePath()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void appsAct(PluginCall call) { final String pkg = call.getString("pkg", ""); final String what = call.getString("what", ""); try { if ("launch".equals(what)) KtApps.launch(getContext(), pkg); else if ("info".equals(what)) KtApps.info(getContext(), pkg); else if ("uninstall".equals(what)) KtApps.uninstall(getContext(), pkg); else { call.reject("what"); return; } call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }
+    @PluginMethod public void filesDecode(PluginCall call) { final File f = fileOf(call.getString("path", "")); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("path", KtFiles.decode(getContext(), f).getAbsolutePath()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void filesThumb(PluginCall call) { final File f = fileOf(call.getString("path", "")); final int px = call.getInt("px", 160); bg.execute(() -> { JSObject r = new JSObject(); r.put("url", KtFiles.thumb(getContext(), f, px)); call.resolve(r); }); }
     @PluginMethod public void filesMkdir(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.mkdir(fileOf(call.getString("path", ""))))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void filesRename(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.rename(fileOf(call.getString("path", "")), call.getString("name", "")))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
@@ -571,6 +758,20 @@ public class KtPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
     }
     @PluginMethod public void filesCollection(PluginCall call) { final String kind = call.getString("kind", "recent"); final int limit = call.getInt("limit", 500); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtFiles.collection(getContext(), kind, limit).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesTrash(PluginCall call) { final java.util.List<File> paths = new java.util.ArrayList<>(); JSArray a = call.getArray("paths"); if (a != null) for (int i = 0; i < a.length(); i++) paths.add(fileOf(a.optString(i, ""))); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.trash(getContext(), paths, null))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesTrashList(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("items", new JSArray(KtFiles.trashList(getContext()).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesTrashRestore(PluginCall call) { final File slot = fileOf(call.getString("slot", "")); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.trashRestore(slot))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesTrashEmpty(PluginCall call) { final java.util.List<File> slots = call.getArray("slots") == null ? null : new java.util.ArrayList<>(); JSArray a = call.getArray("slots"); if (a != null) for (int i = 0; i < a.length(); i++) slots.add(fileOf(a.optString(i, ""))); final long older = call.getInt("olderThanDays", 0) * 86400000L; bg.execute(() -> { try { JSObject r = new JSObject(); r.put("n", KtFiles.trashEmpty(getContext(), slots, older)); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesMeta(PluginCall call) { final File f = fileOf(call.getString("path", "")); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.meta(getContext(), f))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesWrite(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String text = call.getString("text", ""); bg.execute(() -> { try { KtFiles.write(f, text); JSObject r = new JSObject(); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    /** A picture set as the wallpaper (the system's chooser when it has one: home, lock or both). */
+    @PluginMethod public void filesWallpaper(PluginCall call) {
+        try { File f = fileOf(call.getString("path", "")); Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f); Intent i = android.app.WallpaperManager.getInstance(getContext()).getCropAndSetWallpaperIntent(u); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION); getContext().startActivity(i); call.resolve(); }
+        catch (Exception e) { try { File f = fileOf(call.getString("path", "")); android.app.WallpaperManager.getInstance(getContext()).setStream(new java.io.FileInputStream(f)); call.resolve(); } catch (Exception e2) { call.reject(String.valueOf(e2.getMessage())); } }
+    }
+    private final java.util.concurrent.atomic.AtomicBoolean analyzeStop = new java.util.concurrent.atomic.AtomicBoolean();
+    @PluginMethod public void filesAnalyze(PluginCall call) { final File root = fileOf(call.getString("path", "")); analyzeStop.set(false); new Thread(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.analyze(root, analyzeStop, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }, "kt-analyze").start(); }
+    @PluginMethod public void filesAnalyzeStop(PluginCall call) { analyzeStop.set(true); call.resolve(); }
     @PluginMethod public void filesCancel(PluginCall call) { KtFiles.cancel(call.getString("id", "")); call.resolve(); }
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */
@@ -732,8 +933,8 @@ public class KtPlugin extends Plugin {
     }
     /* ---------- yt-dlp (the video add-on): what a page offers, its version, and updating it ---------- */
     @PluginMethod public void videoInfo(PluginCall call) {
-        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false));
-        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
+        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false)); final String jar = call.getString("cookieJar", "");
+        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist, jar)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
     }
     @PluginMethod public void videoVersion(PluginCall call) { bg.execute(() -> { JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); r.put("ready", v != null); call.resolve(r); }); }
     @PluginMethod public void videoUpdate(PluginCall call) { bg.execute(() -> { KtVideo.update(getContext()); JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); call.resolve(r); }); }

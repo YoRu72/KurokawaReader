@@ -67,7 +67,7 @@ export function mediaInHtml(doc: Document, html: string, page: string): Link[] {
 
 /** A link found: on a page, or a post's media (with the name to save it under, a thumbnail, and whether it is a
  *  stream for the Video add-on). */
-type Link = { href: string; text: string; kind?: string; name?: string; thumb?: string; viaVideo?: boolean };
+type Link = { href: string; text: string; kind?: string; name?: string; thumb?: string; viaVideo?: boolean; size?: number; est?: boolean; type?: string; status?: number };
 export async function grabberSheet(start = '', project?: GrabProject, pre?: { links: { href: string; text: string; kind?: string }[]; title?: string; ua?: string }): Promise<void> {
   const sh = openSheet(t('grabTitle'), t('close'));
   const url = h('input', { type: 'url', dir: 'ltr', value: project?.url ?? start, placeholder: t('grabPasteHint'), title: t('grabPasteHint'), spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
@@ -87,10 +87,28 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return;
     const status = h('small', { class: 'src' }); list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), status));
     // (A post on X, Bluesky or Reddit: its media read from the site's API, at full quality — no page to crawl.)
-    const social = await import('./social'); const isPost = !!social.socialOf(u); depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    const social = await import('./social'); const feed = social.feedOf(u); const G = await import('./galleries'); const gal = G.galleryOf(u); const isPost = !!social.socialOf(u) || !!feed || !!gal; depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    // (A picture site: a booru's post or tag search, or — on a computer — any gallery gallery-dl reads.)
+    if (gal) {
+      status.textContent = ` ${t('grabGallery')}`;
+      try { const got = await G.gallery(u); if (!got.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+        fromPage(got.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb })));
+        list.prepend(h('p', { class: 'hint', dir: 'auto' }, `${got.title} · ${countFiles(got.items.length)}`));
+      } catch (e) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialFailed', { error: String((e as Error).message ?? e) }))); }
+      return;
+    }
+    // (A profile, a subreddit or a public Telegram channel: its recent media, newest first — the archiver.)
+    if (feed) {
+      status.textContent = ` ${t('grabFeed')}`;
+      try { const got = await social.socialFeed(u); if (!got.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+        fromPage(got.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb, viaVideo: x.viaVideo })));
+        list.prepend(h('p', { class: 'hint', dir: 'auto' }, `${got.title} · ${countFiles(got.items.length)}`));
+      } catch (e) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialFailed', { error: String((e as Error).message ?? e) }))); }
+      return;
+    }
     if (isPost) {
       status.textContent = ` ${t('grabSocial')}`;
-      try { const post = (await social.socialPost(u))!; if (!post.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+      try { const post = (await social.socialPost(u).catch((e) => { if (/telegramDocument/.test(String((e as Error).message))) throw new Error(t('grabTelegramDoc')); throw e; }))!; if (!post.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
         fromPage(post.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb, viaVideo: x.viaVideo })));
         list.prepend(h('p', { class: 'hint', dir: 'auto' }, [post.author, post.title].filter(Boolean).join(' · ')));
       } catch (e) { list.replaceChildren(h('div', { class: 'empty small' }, h('p', null, t('grabSocialFailed', { error: String((e as Error).message ?? e) })), ...(canBrowse() ? [h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); openBrowser(u); } }, icon('globe'), t('grabInBrowser'))] : []))); }
@@ -129,18 +147,29 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   /** The kinds found, with «All» first and the links that are none of them (pages) under «Other». */
   const kindOf = (href: string) => KINDS.find((k) => k[2].test(href))?.[0] ?? 'other';
   const kindL = (x: Link) => x.kind ?? kindOf(x.href);
-  const drawChips = (counts: readonly (readonly [string, string, number])[]) => chips.replaceChildren(
+  const sizeChips = () => (links.some((x) => x.size) ? [h('span', { class: 'chip-sep' }), ...([0, 1, 10, 100] as const).map((mb) => h('button', { type: 'button', class: 'chip small' + (minBytes === mb * 1048576 ? ' on' : ''), onclick: () => { minBytes = mb * 1048576; drawChips(lastCounts); draw(); } }, mb ? `≥ ${localDigits(String(mb))} MB` : t('grabAnySize')))] : []);
+  let lastCounts: readonly (readonly [string, string, number])[] = [];
+  const drawChips = (counts: readonly (readonly [string, string, number])[]) => (lastCounts = counts, chips.replaceChildren(
     h('button', { type: 'button', class: 'chip small' + (kind === '' ? ' on' : ''), onclick: () => { kind = ''; drawChips(counts); draw(); } }, `${t('allFiles')} · ${localDigits(links.length)}`),
-    ...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); for (const x of shown()) chosen.add(x.href); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)));
-  const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links);
+    ...counts.map(([k, label, n]) => h('button', { type: 'button', class: 'chip small' + (kind === k ? ' on' : ''), onclick: () => { kind = k; chosen.clear(); for (const x of shown()) chosen.add(x.href); drawChips(counts); draw(); } }, `${t(label as 'catVideo')} · ${localDigits(n)}`)), ...sizeChips()));
+  let minBytes = 0;
+  const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links).filter((x) => !minBytes || (x.size ?? 0) >= minBytes);
   const host = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
-  const sync = () => { go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) }); };
+  const sync = () => {
+    go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) });
+    const bar = list.querySelector<HTMLElement>('.grab-bar'); if (!bar) return; const xs = shown(); const picked = xs.filter((x) => chosen.has(x.href)).length; const [all, none] = bar.querySelectorAll('button');
+    all.disabled = picked === xs.length; none.disabled = !picked; bar.querySelector('.grab-count')!.textContent = t('grabSelectedN', { n: localDigits(picked) });
+  };
   const draw = () => {
     const xs = shown();
-    list.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: () => { const all = xs.every((x) => chosen.has(x.href)); xs.forEach((x) => (all ? chosen.delete(x.href) : chosen.add(x.href))); draw(); } }, t('allFiles')),
+    const picked = xs.filter((x) => chosen.has(x.href)).length;
+    list.replaceChildren(h('div', { class: 'grab-bar' },
+        h('button', { type: 'button', class: 'btn text small', disabled: picked === xs.length, onclick: () => { xs.forEach((x) => chosen.add(x.href)); draw(); } }, t('grabSelectAll', { n: localDigits(xs.length) })),
+        h('button', { type: 'button', class: 'btn text small', disabled: !picked, onclick: () => { xs.forEach((x) => chosen.delete(x.href)); draw(); } }, t('grabSelectNone')),
+        h('span', { class: 'grab-count' }, t('grabSelectedN', { n: localDigits(picked) }))),
       ...xs.slice(0, 600).map((x) => { const nm = x.name ?? decodeURIComponent(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
         x.thumb ? h('img', { class: 'grab-thumb', src: x.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
-        h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href)].filter(Boolean).join(' · ')))); }));
+        h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href), x.size ? (x.est ? '~' : '') + formatBytes(x.size) : '', x.type && !/octet-stream/.test(x.type) ? x.type.replace(/^application\//, '') : '', x.status ? `HTTP ${x.status}` : ''].filter(Boolean).join(' · ')))); }));
     sync();
   };
   const fromPage = (ls: Link[]) => {
@@ -155,11 +184,12 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   // (A post's media keep the names given them; a stream — a Bluesky or Reddit video — goes to the Video add-on.)
   go.addEventListener('click', async () => {
     go.disabled = true; let n = 0; let noVideo = 0;
-    const vid = await import('../video/ytdlp'); const { preferredFormat } = await import('../views/addVideo');
+    const vid = await import('../video/ytdlp'); const { preferredFormat, nativeHls } = await import('../views/addVideo');
     for (const href of chosen) {
       const l = links.find((x) => x.href === href);
       try {
         // (A stream's playlist or manifest — HLS, DASH — is a list of pieces, not the video: yt-dlp joins them.)
+        if (!l?.viaVideo && nativeHls(href)) { const q = getSettings().videoQuality; await getEngine().add({ source: pre ? { url: href, headers: hdrs } : { url: href }, name: l?.name, connections: 8, meta: { hls: true, quality: /^\d+$/.test(q) ? `${q}p` : undefined } }); n++; continue; }
         if (l?.viaVideo || /\.(m3u8|mpd)(\?|#|$)/i.test(href)) { if (!vid.videoEnabled()) { noVideo++; continue; } await getEngine().add({ source: { url: href }, video: { ...preferredFormat(), title: l?.text || undefined, embedThumb: getSettings().videoEmbedThumb, ...(pre && !l?.viaVideo ? { headers: hdrs } : {}) } }); n++; continue; }
         const [src] = parseSources(href); if (src) { await getEngine().add({ source: src.url && pre ? { ...src, headers: hdrs } : src, name: l?.name, connections: 8 }); n++; }
       } catch { /* the next */ }
@@ -225,6 +255,9 @@ let schedTimer = 0;
 export function startScheduler(): void {
   window.clearInterval(schedTimer);
   const tick = async () => {
+    // (Each download's own clock first — a start or a stop time of its own —, then the global window.)
+    try { const { tickClocks } = await import('./rules'); await tickClocks(); } catch { /* none */ }
+    try { if (getSettings().addons.includes('video')) { const { tick } = await import('../video/follow'); await tick(); } } catch { /* none */ }
     if (!getSettings().schedule.enabled) return; const eng = getEngine(); let tasks; try { tasks = await eng.list(); } catch { return; }
     const open = inWindow();
     for (const x of tasks) { const later = (x.meta as { later?: boolean } | undefined)?.later; if (!later || x.state === 'done') continue; try { if (open && x.state === 'paused') await eng.resume(x.id); else if (!open && (x.state === 'downloading' || x.state === 'queued' || x.state === 'metadata')) await eng.pause(x.id); } catch { /* the next */ } }

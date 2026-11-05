@@ -12,7 +12,7 @@ export type FileKind = 'video' | 'audio' | 'ebook' | 'image' | 'sub' | 'archive'
 const KINDS: [FileKind, RegExp][] = [
   ['audio', /\.(mp3|flac|m4a|aac|ogg|opus|wav|wma|alac|ape|mka)$/i],
   ['ebook', /\.(epub|mobi|azw3?|fb2|cbz|cbr|cb7|djvu|kfx)$/i],
-  ['image', /\.(jpe?g|png|gif|webp|bmp|avif|heic|tiff?)$/i],
+  ['image', /\.(jpe?g|png|gif|webp|bmp|avif|heic|heif|hif|tiff?|svg|ico|wbmp|jfif|apng)$/i],
   ['sub', /\.(ass|ssa|srt|vtt|sup|idx|sub)$/i],
   ['archive', /\.(zip|rar|7z|tar|gz|bz2|xz|zst|iso|r\d\d)$/i],
   ['doc', /\.(pdf|txt|nfo|docx?|md|html?|rtf)$/i],

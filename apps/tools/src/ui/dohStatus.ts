@@ -8,7 +8,7 @@ import { getSettings } from '../settings';
 
 export type DohEvent = { at: number; kind: string; host?: string; ip?: string; ms?: number; msg?: string; state?: string };
 export type DohResolver = { id: string; url: string; ok: boolean; ms: number; shape: string; error: string };
-export type DohStatus = { proxy?: { running: boolean; port: number; tunnels: number; open: number; up: number; down: number }; split?: string; lastShape?: string; forced?: number; resolvers?: DohResolver[]; provider: string; state: 'off' | 'idle' | 'resolving' | 'ok' | 'failed'; queries: number; hits: number; fails: number; unblocked: number; lastResolver: string; lastMs: number; lastAt: number; lastError: string; cached: number; log: DohEvent[]; probe?: { ok: boolean; resolver?: string; ms?: number; why?: string; tries?: { resolver: string; ok: boolean; ms?: number; error?: string; shape?: string; from?: string }[]; shape?: string } };
+export type DohStatus = { ways?: { host: string; way: string; failures: number }[]; proxy?: { running: boolean; port: number; tunnels: number; open: number; up: number; down: number }; split?: string; lastShape?: string; forced?: number; resolvers?: DohResolver[]; provider: string; state: 'off' | 'idle' | 'resolving' | 'ok' | 'failed'; queries: number; hits: number; fails: number; unblocked: number; lastResolver: string; lastMs: number; lastAt: number; lastError: string; cached: number; log: DohEvent[]; probe?: { ok: boolean; resolver?: string; ms?: number; why?: string; tries?: { resolver: string; ok: boolean; ms?: number; error?: string; shape?: string; from?: string }[]; shape?: string } };
 type Plug = { dohStatus(o: { probe?: boolean }): Promise<DohStatus>; addListener(ev: 'doh', fn: (e: DohEvent) => void): Promise<{ remove(): void }> };
 type Desk = { dohProbe?(): Promise<{ ok: boolean; ms?: number; resolver?: string; why?: string; ips?: string[] }> };
 
@@ -17,7 +17,7 @@ const desk = (): Desk | null => { const d = window.kurokawaTools as unknown as D
 export const canShowDoh = (): boolean => !!(plug() || desk());
 
 const ago = (at: number): string => { const s = Math.max(0, Math.round((Date.now() - at) / 1000)); return s < 60 ? t('secondsAgo', { n: localDigits(s) }) : s < 3600 ? t('minutesAgo', { n: localDigits(Math.floor(s / 60)) }) : t('hoursAgo', { n: localDigits(Math.floor(s / 3600)) }); };
-const kindLabel = (k: string): string => ({ resolve: t('dohEvResolve'), hit: t('dohEvHit'), retry: t('dohEvRetry'), fail: t('dohEvFail'), unblock: t('dohEvUnblock'), direct: t('dohEvDirect'), probe: t('dohEvProbe') } as Record<string, string>)[k] ?? k;
+const kindLabel = (k: string): string => ({ resolve: t('dohEvResolve'), hit: t('dohEvHit'), retry: t('dohEvRetry'), fail: t('dohEvFail'), unblock: t('dohEvUnblock'), direct: t('dohEvDirect'), probe: t('dohEvProbe'), way: t('dohEvWay'), stale: t('dohEvStale'), none: t('dohEvNone'), force: t('dohEvForce') } as Record<string, string>)[k] ?? k;
 
 /** The card; it keeps itself fresh while it is on the page. */
 export function dohStatusCard(): HTMLElement {
@@ -37,6 +37,9 @@ export function dohStatusCard(): HTMLElement {
     const px = st.proxy; const proxyLine = state === 'off' || !px ? null : h('div', { class: `doh-ev ${px.running ? 'k-resolve' : 'k-fail'}` }, h('span', { class: 'doh-kind' }, px.running ? '✓' : '✕'), h('span', { class: 'grow', dir: 'auto' }, px.running ? t('dohProxyOn', { port: String(px.port), n: localDigits(px.tunnels), up: formatBytes(px.up), down: formatBytes(px.down) }) : t('dohProxyOff')));
     const rs = state === 'off' ? [] : (st.resolvers ?? []).filter((r) => r.ms >= 0 || r.ok);
     table.replaceChildren(...(proxyLine ? [proxyLine] : []), ...(rs.length ? [h('small', { class: 'src' }, t('dohResolvers')), ...rs.map((r) => h('div', { class: `doh-ev ${r.ok ? 'k-resolve' : 'k-fail'}` }, h('span', { class: 'doh-kind' }, r.ok ? '✓' : '✕'), h('span', { dir: 'ltr', class: 'grow' }, `${r.id}${r.ok ? ` · ${r.shape} · ${localDigits(r.ms)} ms` : r.error ? ` · ${r.error}` : ''}`)))] : []));
+    // (Sites whose hello had to go out another way — the ladder's memory.)
+    const ways = state === 'off' ? [] : (st.ways ?? []).filter((w) => w.way !== 'plain' || w.failures > 0);
+    if (ways.length) table.append(h('small', { class: 'src' }, t('dohWays')), ...ways.slice(0, 12).map((w) => h('div', { class: 'doh-ev k-way' }, h('span', { class: 'doh-kind' }, '⇄'), h('span', { dir: 'ltr', class: 'grow' }, `${w.host} · ${t(('dohWay_' + w.way) as 'dohWay_split')}${w.failures ? ` · ${t('dohWayFailures', { n: localDigits(w.failures) })}` : ''}`))));
     const log = (st.log ?? []).slice(-10).reverse();
     feed.replaceChildren(...log.map((e) => h('div', { class: `doh-ev k-${e.kind}` }, h('small', { class: 'src' }, ago(e.at)), h('span', { class: 'doh-kind' }, kindLabel(e.kind)), h('span', { dir: 'ltr', class: 'grow' }, [e.host, e.ip ? `→ ${e.ip}` : '', e.ms !== undefined && e.ms >= 0 ? `${localDigits(e.ms)} ms` : '', e.msg && e.msg !== 'ok' && e.msg !== 'start' ? e.msg : ''].filter(Boolean).join(' ')))));
     if (!log.length && state !== 'off') feed.replaceChildren(h('p', { class: 'hint' }, t('dohNoEvents')));
