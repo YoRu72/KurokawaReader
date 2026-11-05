@@ -265,8 +265,19 @@ if (!gradle.includes('splits {')) {
             signingConfig signingConfigs.release`);
 }
 // (libtorrent's JNI class must keep its name through R8.)
+// R8 on (as the Reader's build has it): unused classes of the libraries dropped, the APK a good deal smaller; what is
+// reached by name — the WebView bridge, the plugins, the native libraries' JNI classes, the libraries that look
+// themselves up by reflection — is kept by the rules below. The Tools compile check builds the release, so a rule
+// that strips too much shows there, not on release day.
+if (!gradle.includes('minifyEnabled true')) gradle = gradle.replace(/minifyEnabled false/, 'minifyEnabled true\n            shrinkResources true');
 if (!gradle.includes('proguard-kt.pro')) {
-  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class is.xyz.mpv.** { *; }\n-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-dontwarn org.bouncycastle.**\n-dontwarn org.slf4j.**\n-dontwarn com.hierynomus.**\n-dontwarn net.engio.**\n-dontwarn com.rapid7.**\n-keep class com.hierynomus.** { *; }\n-keep class net.engio.mbassy.** { *; }\n-keep class com.jcraft.jsch.** { *; }\n-keep class rikka.shizuku.** { *; }\n-keep class moe.shizuku.** { *; }\n-dontwarn rikka.**\n-keep class com.yausername.** { *; }\n');
+  await fs.writeFile(path.join(app, 'proguard-kt.pro'), [
+    '-keep class app.kurokawa.tools.** { *; }', '-keep class com.getcapacitor.** { *; }', '-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }',
+    '-keep class is.xyz.mpv.** { *; }', '-keep class org.libtorrent4j.** { *; }', '-keep class com.yausername.** { *; }', '-keep class com.hierynomus.** { *; }', '-keep class net.engio.mbassy.** { *; }', '-keep class com.rapid7.** { *; }', '-keep class com.jcraft.jsch.** { *; }', '-keep class rikka.shizuku.** { *; }', '-keep class moe.shizuku.** { *; }', '-keep class net.lingala.zip4j.** { *; }', '-keep class org.apache.commons.net.** { *; }',
+    '-keep class androidx.security.crypto.** { *; }', '-keep class com.google.crypto.tink.** { *; }', '-keep class org.tukaani.xz.** { *; }',
+    '-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*',
+    '-dontwarn org.apache.commons.compress.**', '-dontwarn org.tukaani.xz.**', '-dontwarn com.github.junrar.**', '-dontwarn org.brotli.**', '-dontwarn com.github.luben.zstd.**', '-dontwarn org.bouncycastle.**', '-dontwarn org.slf4j.**', '-dontwarn com.hierynomus.**', '-dontwarn net.engio.**', '-dontwarn com.rapid7.**', '-dontwarn rikka.**', '-dontwarn javax.naming.**', '-dontwarn java.beans.**', '-dontwarn org.ietf.jgss.**', '-dontwarn com.google.errorprone.**', '-dontwarn org.apache.commons.net.**', '-dontwarn com.google.crypto.tink.**',
+  ].join('\n') + '\n');
   gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
 // (The screen translator's OCR: Google's text recognition through Play services — its models are fetched by the
