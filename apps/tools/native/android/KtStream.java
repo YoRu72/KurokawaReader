@@ -37,7 +37,7 @@ final class KtStream {
         return "http://127.0.0.1:" + port + "/" + taskId + "/" + fileIndex;
     }
     /** A content:// document's URL on this server (a video handed over by another app), served with ranges. */
-    synchronized String contentUrl(String uri) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/content?u=" + java.net.URLEncoder.encode(uri, "UTF-8"); }
+    synchronized String contentUrl(String uri) throws IOException { url("", 0); long e = System.currentTimeMillis() + 12L * 3600_000; return "http://127.0.0.1:" + port + "/content?u=" + java.net.URLEncoder.encode(uri, "UTF-8") + "&e=" + e + "&t=" + sign(uri, e); }
     /** Entries inside archives handed out by id (the password stays here, never in the URL): id → {archive, password, entry}. */
     private final java.util.Map<String, String[]> arcEntries = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<String, String[]>(64, 0.75f, true) { @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, String[]> e) { return size() > 200; } });
     /** A file inside an archive's URL on this server, read straight from the archive. */
@@ -46,7 +46,13 @@ final class KtStream {
         return "http://127.0.0.1:" + port + "/arc/" + id + "/" + java.net.URLEncoder.encode(entry.replaceAll(".*/", ""), "UTF-8").replace("+", "%20");
     }
     /** A local file's URL on this server. */
-    synchronized String fileUrl(String path) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/file?p=" + java.net.URLEncoder.encode(path, "UTF-8"); }
+    /** A local file's URL: signed and expiring (twelve hours), so nothing else on the phone can read files through this server by guessing a path. */
+    synchronized String fileUrl(String path) throws IOException { url("", 0); long e = System.currentTimeMillis() + 12L * 3600_000; return "http://127.0.0.1:" + port + "/file?p=" + java.net.URLEncoder.encode(path, "UTF-8") + "&e=" + e + "&t=" + sign(path, e); }
+    private final byte[] secret = new byte[32]; { new java.security.SecureRandom().nextBytes(secret); }
+    private String sign(String what, long e) { try { javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256"); mac.init(new javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256")); byte[] d = mac.doFinal((what + "|" + e).getBytes(StandardCharsets.UTF_8)); StringBuilder sb = new StringBuilder(); for (int i = 0; i < 12; i++) sb.append(String.format(java.util.Locale.US, "%02x", d[i])); return sb.toString(); } catch (Exception ex) { return ""; } }
+    /** The query's token checked against its path and expiry. */
+    private boolean signed(String what, java.util.Map<String, String> q) { try { long e = Long.parseLong(q.getOrDefault("e", "0")); if (e < System.currentTimeMillis()) return false; String t = q.getOrDefault("t", ""); return !t.isEmpty() && java.security.MessageDigest.isEqual(t.getBytes(StandardCharsets.US_ASCII), sign(what, e).getBytes(StandardCharsets.US_ASCII)); } catch (Exception ex) { return false; } }
+    private static java.util.Map<String, String> query(String path) { java.util.Map<String, String> m = new java.util.HashMap<>(); int q = path.indexOf('?'); if (q < 0) return m; for (String kv : path.substring(q + 1).split("&")) { int eq = kv.indexOf('='); if (eq <= 0) continue; try { m.put(kv.substring(0, eq), java.net.URLDecoder.decode(kv.substring(eq + 1), "UTF-8")); } catch (Exception ignored) {} } return m; }
 
     /** A remote stream's URL on this server, fetched with the headers it needs (a referer, a cookie): what an online
      *  source's `<video>` reads, since a web view cannot set those itself. HLS playlists are rewritten so their
@@ -136,7 +142,9 @@ final class KtStream {
             if (path.startsWith("/audio?")) { audio(path, req[0], sock, out); return; }
             // /content?u=<uri>: a document another app handed over (its file descriptor read with ranges when it seeks).
             if (path.startsWith("/content?u=")) {
-                android.net.Uri cu = android.net.Uri.parse(java.net.URLDecoder.decode(path.substring(11), "UTF-8"));
+                java.util.Map<String, String> cq = query(path); String cus = cq.getOrDefault("u", "");
+                if (!signed(cus, cq)) { out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                android.net.Uri cu = android.net.Uri.parse(cus);
                 android.os.ParcelFileDescriptor pfd;
                 try { pfd = engine.context().getContentResolver().openFileDescriptor(cu, "r"); } catch (Exception e) { pfd = null; }
                 if (pfd == null) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
@@ -154,7 +162,9 @@ final class KtStream {
             }
             // /file?p=<path>: any file of the device (the player's local files and their subtitles), served with ranges.
             if (path.startsWith("/file?p=")) {
-                File lf = new File(java.net.URLDecoder.decode(path.substring(8), "UTF-8"));
+                java.util.Map<String, String> q = query(path); String lp = q.getOrDefault("p", "");
+                if (!signed(lp, q)) { out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                File lf = new File(lp);
                 if (!lf.isFile()) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
                 long lsize = lf.length(); if (rangeEnd < 0 || rangeEnd >= lsize) rangeEnd = lsize - 1; if (rangeStart > rangeEnd) { out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + lsize + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
                 long llen = rangeEnd - rangeStart + 1;
