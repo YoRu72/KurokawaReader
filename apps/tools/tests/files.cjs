@@ -25,6 +25,10 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
       remoteCancel: async () => {}, remoteSave: async () => ({ id: 'nas' }), remoteRemove: async () => {}, remoteScanStop: async () => {},
       // an archive: listed as a tree the browser walks; a picture inside streamed; a file taken out to the cache
       archiveList: async ({ path }) => { window.__calls.push('arcList:' + path); return { format: 'zip', total: 3, encrypted: false, inPlaceOk: true, entries: [{ path: 'docs/readme.txt', size: 100, dir: false }, { path: 'pics/a.jpg', size: 2000, dir: false }, { path: 'pics/b.png', size: 3000, dir: false }, { path: 'clip.mp4', size: 50000, dir: false }] }; },
+      // installed apps: two user apps, one with splits; the app's folder lists its APKs and data folder
+      appsList: async ({ system }) => ({ apps: [{ pkg: 'org.example.notes', name: 'Notes', version: '2.1', versionCode: 21, size: 5e6, system: false, installedAt: 1750000000000, updatedAt: 1760000000000, splits: 0, enabled: true }, { pkg: 'org.example.game', name: 'Game', version: '1.0', versionCode: 1, size: 9e7, system: false, installedAt: 1750000000000, updatedAt: 1760000000000, splits: 2, enabled: true }, ...(system ? [{ pkg: 'com.android.settings', name: 'Settings', version: '14', versionCode: 34, size: 1e7, system: true, installedAt: 0, updatedAt: 0, splits: 0, enabled: true }] : [])] }),
+      appsIcon: async () => ({ url: null }), appsAct: async () => {},
+      appsDetail: async ({ pkg }) => ({ pkg, name: pkg === 'org.example.game' ? 'Game' : 'Notes', version: '1.0', apks: [{ name: 'base.apk', path: `/data/app/${pkg}/base.apk`, size: 4e7, mtime: 1760000000000 }, ...(pkg === 'org.example.game' ? [{ name: 'split_config.arm64_v8a.apk', path: `/data/app/${pkg}/split_config.arm64_v8a.apk`, size: 2e7, mtime: 1760000000000 }] : [])], data: `/storage/emulated/0/Android/data/${pkg}`, dataExists: true, dataReadable: false, obb: `/storage/emulated/0/Android/obb/${pkg}`, obbExists: pkg === 'org.example.game', obbReadable: true, media: '', mediaExists: false, nativeLibs: '', system: false, installedAt: 0, updatedAt: 1760000000000, installer: 'com.android.vending' }),
       archiveEntryUrl: async ({ entry }) => ({ url: 'http://127.0.0.1:1/arc/x/' + entry }), archiveThumb: async () => ({ url: null }),
       archiveExtract: async ({ id, only }) => { window.__calls.push('arcExtract:' + (only || []).join('|')); return { files: 1, dest: '/cache/arc' }; },
       filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'app', path: '/storage/emulated/0/Download/Kurokawa', name: 'Kurokawa', readable: true, free: 12e9, total: 64e9 }, { kind: 'phone', path: '/storage/emulated/0', name: 'Phone', readable: true, free: 12e9, total: 64e9 }] }),
@@ -133,6 +137,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('a picture inside the zip opens in the viewer, counted among its neighbours', (await p.textContent('.files-viewer')).includes('/ 2'));
   await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   await p.click('.files-crumbs .crumb:has-text("pack.zip")'); await p.waitForSelector('.files-row:has-text("docs")'); ok('the crumb returns to the zip root', (await p.$$('.files-row')).length === 3);
+  // the installed apps as a place: listed from the drawer, an app entered shows its APKs and folders, its sheet offers the backup
+  await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.click('.files-drawer .files-drawer-row:has-text("Installed apps")'); await p.waitForSelector('.files-row:has-text("Game")', { timeout: 8000 });
+  ok('the apps are listed with their packages', (await p.textContent('.files-row:has-text("Game")')).includes('org.example.game'));
+  await p.click('.files-row:has-text("Game") .files-main'); await p.waitForSelector('.files-row:has-text("base.apk")');
+  ok("an app's folder: its APKs, data and obb", (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',').includes('base.apk,split_config.arm64_v8a.apk') && (await p.textContent('.files-crumbs')).includes('Apps'));
+  await p.click('.files-crumbs .crumb:has-text("Apps")'); await p.waitForSelector('.files-row:has-text("Notes")');
+  await p.click('.files-row:has-text("Notes") button[aria-label="More"]'); await p.waitForSelector('.sheet .dest-row:has-text("Back up")', { timeout: 5000 });
+  ok("an app's sheet offers backup, launch, info, uninstall", (await p.$$('.sheet .dest-row')).length >= 6); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   // recent files in the drawer
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.waitForTimeout(300);
   ok("recent files sit in the drawer", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"new.png\")")));

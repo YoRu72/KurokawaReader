@@ -11,6 +11,8 @@ import { ktPlugin, listen, nativePlatform } from '../native';
 import { navigate } from '../router';
 import { kindOfFile } from './taskFiles';
 import { isArc, arcPath, parseArc, arcName, looksArchive } from './filesArc';
+import { isApps, appsPath, parseApps, appsAvailable } from './filesApps';
+type AppEntry = Entry & { pkg?: string; sub?: string; special?: 'data' | 'obb' | 'media' };
 
 export interface Entry { name: string; path: string; dir: boolean; size: number; mtime: number; ext?: string; hidden?: boolean; count?: number }
 interface Root { kind: string; path: string; name: string; readable: boolean; free?: number; total?: number; appFolder?: string }
@@ -58,6 +60,7 @@ async function askArcPassword(wrong: boolean): Promise<string | null> {
 }
 async function listDir(path: string): Promise<{ exists: boolean; entries: Entry[]; truncated?: boolean }> {
   if (isArc(path)) { const { arcList } = await import('./filesArc'); return arcList(path, askArcPassword); }
+  if (isApps(path)) { const { appsList } = await import('./filesApps'); return appsList(path); }
   if (isVirtual(path)) { const r = await vfs.list(path); return { exists: r.exists, entries: r.entries.filter((e) => prefs.hidden || !e.name.startsWith('.')) }; }
   const p = plug(); if (p) return p.filesList({ path, counts: prefs.counts !== false, hidden: prefs.hidden });
   const d = desk(); if (d?.listDir) { const r = await d.listDir(path); return { exists: true, entries: (r.entries ?? []).filter((e) => prefs.hidden || !e.name.startsWith('.')).map((e) => ({ ...e, ext: e.dir ? undefined : (e.name.split('.').pop() ?? '').toLowerCase() })) }; }
@@ -118,7 +121,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
   const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const el = e.target as HTMLElement; io.unobserve(el); const p = el.dataset.thumb; if (p) void thumbInto(el, p); } }, { rootMargin: '300px 0px' });
-  const thumbInto = async (el: HTMLElement, path: string) => { const pl = plug(); if (!pl) return; try { const px = prefs.view === 'grid' ? 240 : 96; const r = isArc(path) ? { url: await (await import('./filesArc')).arcThumb(path, px) } : await pl.filesThumb({ path, px }); if (r.url && el.isConnected) { el.replaceChildren(h('img', { src: r.url, alt: '', loading: 'lazy' })); el.classList.add('has-img'); } } catch { /* the icon stays */ } };
+  const thumbInto = async (el: HTMLElement, path: string) => { const pl = plug(); if (!pl) return; try { const px = prefs.view === 'grid' ? 240 : 96; const r = isArc(path) ? { url: await (await import('./filesArc')).arcThumb(path, px) } : isApps(path) ? { url: await (await import('./filesApps')).appIcon(parseApps(path).pkg) } : await pl.filesThumb({ path, px }); if (r.url && el.isConnected) { el.replaceChildren(h('img', { src: r.url, alt: '', loading: 'lazy' })); el.classList.add('has-img'); } } catch { /* the icon stays */ } };
 
   // ---- the storages and the way here
   const loadRoots = async () => {
@@ -143,15 +146,15 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const drawCrumbs = () => {
     if (collection) { const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); return; }
     titleEl.textContent = at === (roots.find((x) => x.path === at)?.path) ? (roots.find((x) => x.path === at)?.name ?? baseOf(at)) : baseOf(at) || t('navFiles');
-    const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? (isArc(at) ? arcPath(parseArc(at).archive) : isRemote(at) ? `remote://${parseRemote(at).id}` : at.startsWith('saf://') ? at.replace(/^(saf:\/\/[^/]*).*$/, '$1') : at.startsWith('root://') ? 'root://' : '/'); const rest = at.slice(base.length).split('/').filter(Boolean);
-    const parts: HTMLElement[] = [...(isArc(at) ? [h('button', { type: 'button', class: 'crumb', onclick: () => go(parentOf(parseArc(at).archive)) }, icon('archive')), h('span', { class: 'crumb-sep' }, '›')] : []), h('button', { type: 'button', class: 'crumb', onclick: () => go(base) }, isArc(at) ? arcName(at) : (r?.name ?? '/'))];
+    const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? (isApps(at) ? 'apps://' : isArc(at) ? arcPath(parseArc(at).archive) : isRemote(at) ? `remote://${parseRemote(at).id}` : at.startsWith('saf://') ? at.replace(/^(saf:\/\/[^/]*).*$/, '$1') : at.startsWith('root://') ? 'root://' : '/'); const rest = at.slice(base.length).split('/').filter(Boolean);
+    const parts: HTMLElement[] = [...(isArc(at) ? [h('button', { type: 'button', class: 'crumb', onclick: () => go(parentOf(parseArc(at).archive)) }, icon('archive')), h('span', { class: 'crumb-sep' }, '›')] : []), h('button', { type: 'button', class: 'crumb', onclick: () => go(base) }, isApps(at) ? t('appsTitle') : isArc(at) ? arcName(at) : (r?.name ?? '/'))];
     let acc = base; for (const seg of rest) { acc += `/${seg}`; const p = acc; parts.push(h('span', { class: 'crumb-sep' }, '›'), h('button', { type: 'button', class: 'crumb', onclick: () => go(p) }, seg)); }
     crumbs.replaceChildren(...parts); crumbs.scrollLeft = crumbs.scrollWidth;
   };
   const drawKinds = () => kindRow.replaceChildren(...KINDS.map(([k, label]) => h('button', { type: 'button', class: 'chip small' + (prefs.kind === k ? ' on' : ''), onclick: () => { prefs.kind = k; savePrefs(); drawKinds(); draw(); } }, t(label as 'filesKindAll'))));
 
   // ---- the folder
-  const go = (path: string) => { if (gone) return; collection = null; at = path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
+  const go = (path: string) => { if (gone) return; collection = null; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
   const openCollection = (kind: string) => { if (gone) return; collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?c=${kind}`, true); void load(); };
   const load = async () => {
     drawCrumbs(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection;
@@ -163,25 +166,29 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     draw(); drawSel();
   };
   const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
+  let moreIo: IntersectionObserver | null = null;
   const draw = () => {
     const list = shown(); listEl.className = `files-list ${prefs.view}${prefs.density === 'compact' ? ' compact' : ''}`; root.classList.toggle('eink', !!prefs.eink);
     if (!list.length) { subEl.textContent = ''; listEl.replaceChildren(h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
-    const frag = document.createDocumentFragment(); let lastDay = '';
-    const byDay = !!collection || prefs.sort === 'date';
-    for (const e of list) { if (byDay && !e.dir) { const day = dayOf(e.mtime); if (day !== lastDay) { lastDay = day; frag.append(h('div', { class: 'files-section' }, day)); } } frag.append(row(e)); }
-    listEl.replaceChildren(frag);
+    // (Big folders drawn in slices: the first screenfuls at once, the rest as the list is scrolled towards — a folder of
+    // twenty thousand entries opens as fast as one of twenty.)
+    const byDay = !!collection || prefs.sort === 'date'; let lastDay = ''; let drawn = 0; const CHUNK = 160;
+    const slice = (): DocumentFragment => { const frag = document.createDocumentFragment(); const end = Math.min(list.length, drawn + CHUNK); for (; drawn < end; drawn++) { const e = list[drawn]; if (byDay && !e.dir) { const day = dayOf(e.mtime); if (day !== lastDay) { lastDay = day; frag.append(h('div', { class: 'files-section' }, day)); } } frag.append(row(e)); } return frag; };
+    moreIo?.disconnect(); listEl.replaceChildren(slice());
+    if (drawn < list.length) { const sentinel = h('div', { class: 'files-more-sentinel' }); listEl.append(sentinel); moreIo = new IntersectionObserver((es) => { if (!es.some((x) => x.isIntersecting)) return; sentinel.before(slice()); if (drawn >= list.length) { moreIo?.disconnect(); moreIo = null; sentinel.remove(); } }, { root: null, rootMargin: '1200px 0px' }); moreIo.observe(sentinel); }
     const dirs = list.filter((e) => e.dir).length; const files = list.length - dirs;
     subEl.textContent = [dirs ? countFolders(dirs) : '', files ? countFiles(files) : ''].filter(Boolean).join(', '); status.textContent = '';
   };
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
-    const ic = h('span', { class: 'files-ic' + (thumbable && (!isVirtual(e.path) || isArc(e.path)) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': thumbable && plug() && (!isVirtual(e.path) || isArc(e.path)) && prefs.thumbs !== false ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
-    const meta = e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
+    const ae = e as AppEntry; const appIc = !!ae.pkg && isApps(e.path) && e.dir;
+    const ic = h('span', { class: 'files-ic' + ((thumbable && (!isVirtual(e.path) || isArc(e.path)) || appIc) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': (thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc ? e.path : undefined }, icon(e.dir ? (ae.special ? 'folder' : appIc ? 'apps' : 'folder') : ICON[k] ?? 'file'));
+    const meta = ae.sub ? (ae.pkg && e.dir && !ae.special ? `${ae.sub} · ${formatBytes(e.size)}` : ae.sub) : e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'auto' }, e.name), h('small', { class: 'src' }, meta)),
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e); }));
     onLongPress(el, () => { if (!selecting) { selecting = true; } toggle(e); });
-    if (thumbable && plug() && (!isVirtual(e.path) || isArc(e.path)) && prefs.thumbs !== false) io.observe(ic);
+    if (((thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc) && prefs.thumbs !== false) io.observe(ic);
     if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;
   };
@@ -208,6 +215,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- opening
   const open = async (e: Entry) => {
+    const ae = e as AppEntry;
+    if (ae.special) { const m = await import('./filesApps'); const to = m.resolveSpecial(ae, vroots.trees, vroots.shell); if (to) { go(to); return; } if (vplug()) { try { await vplug()!.vfsGrant({ start: ae.special === 'obb' ? 'Android/obb' : 'Android/data' }); await loadRoots(); const again = m.resolveSpecial(ae, vroots.trees, vroots.shell); if (again) go(again); } catch { /* declined */ } } else toast(t('appsNeedsGrant'), 'error'); return; }
     if (e.dir) { go(e.path); return; }
     if (isArc(e.path)) { const m = await import('./filesArc'); await openInArc(e, m); return; }
     if (isVirtual(e.path)) {
@@ -268,6 +277,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
         item('key', t('filesGrantAndroidData'), t('filesGrantHint'), () => void vplug()!.vfsGrant({ start: 'Android/data' }).then(redo).catch(() => undefined)),
         item('folderPlus', t('filesGrantAny'), null, () => void vplug()!.vfsGrant({}).then(redo).catch(() => undefined))));
     }
+    if (appsAvailable()) sh.body.append(section(t('appsTitle'), item('apps', t('appsTitle'), t('appsHint'), () => go('apps://'))));
     if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))), section('', item('trash', t('filesTrash'), null, () => void import('./filesMore').then((m) => m.trashSheet(() => void load())))));
   };
   /** chmod / chown / a symbolic link on a root:// entry, and the mounts (remounted read-write or back). */
@@ -302,6 +312,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
   const itemSheet = (e: Entry) => {
+    if ((e as AppEntry).pkg && isApps(e.path) && e.dir && !(e as AppEntry).special) { void import('./filesApps').then((m) => m.appSheet((e as AppEntry).pkg!, e.name, { go, pickDir: async () => { try { const { ktPlugin } = await import('../native'); return (await ktPlugin()?.pickDir())?.dir ?? null; } catch { return null; } }, defaultDir: `${roots.find((r) => r.kind === 'app')?.path ?? '/storage/emulated/0/Download/Kurokawa'}/Apps` })); return; }
     const pl = isVirtual(e.path) ? null : plug(); const sh = openSheet(e.name, t('close'));
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     sh.body.append(h('p', { class: 'src', dir: 'ltr' }, e.path), h('div', { class: 'dest-list' },
@@ -457,7 +468,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // The back button goes up a folder first when the reader asked for that.
   const onBack = (ev: KeyboardEvent) => { if (!prefs.backUp || ev.key !== 'Escape' && ev.key !== 'GoBack' && ev.key !== 'BrowserBack') return; if (document.querySelector('.sheet')) return; const r = roots.find((x) => at === x.path); if (collection || r || !at) return; ev.preventDefault(); ev.stopPropagation(); go(parentOf(at)); };
   window.addEventListener('keydown', onBack, true);
-  root.dispose = () => { gone = true; io.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { gone = true; io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };
