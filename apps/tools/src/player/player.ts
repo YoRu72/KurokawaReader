@@ -875,7 +875,7 @@ export function openPlayer(src: PlayerSource): void {
   ambientTick();
   // Chapters of a local file (ffprobe), marked on the bar; openings and endings among them become skips.
   let chapters: { start: number; end: number; title: string }[] = [];
-  const skips: { start: number; end: number; kind: 'op' | 'ed' | 'recap' }[] = [];
+  const skips: { start: number; end: number; kind: 'op' | 'ed' | 'recap' | 'sponsor' | 'silence'; label?: string }[] = [];
   let probed: Promise<unknown> | null = null;
   const probe = () => (probed ??= (async () => {
     if (!src.localPath) return null;
@@ -886,7 +886,13 @@ export function openPlayer(src: PlayerSource): void {
   void (async () => {
     const pr = await probe() as { chapters?: { start_time: string; end_time: string; tags?: { title?: string } }[] } | null;
     chapters = (pr?.chapters ?? []).map((c) => ({ start: Number(c.start_time), end: Number(c.end_time), title: c.tags?.title ?? '' })).filter((c) => isFinite(c.start) && c.end > c.start);
-    for (const c of chapters) { const k = /^(op|opening|intro)\b/i.test(c.title) ? 'op' : /^(ed|ending|outro|credits)\b/i.test(c.title) ? 'ed' : /recap|previously/i.test(c.title) ? 'recap' : null; if (k) skips.push({ start: c.start, end: c.end, kind: k }); }
+    for (const c of chapters) { const sb = /^\[SponsorBlock\]:?\s*(.*)$/i.exec(c.title); if (sb) { skips.push({ start: c.start, end: c.end, kind: 'sponsor', label: sb[1] }); continue; } const k = /^(op|opening|intro)\b/i.test(c.title) ? 'op' : /^(ed|ending|outro|credits)\b/i.test(c.title) ? 'ed' : /recap|previously/i.test(c.title) ? 'recap' : null; if (k) skips.push({ start: c.start, end: c.end, kind: k }); }
+    chapters = chapters.filter((c) => !/^\[SponsorBlock\]/i.test(c.title));
+    // (The SponsorBlock stretches drawn on the bar as coloured spans; the replay heatmap above it, from yt-dlp's info.json beside the file.)
+    const drawSegs = () => { const dur = video.duration || 0; if (!dur) return; bar.querySelectorAll('.kt-sb').forEach((x) => x.remove()); for (const s of skips) if (s.kind === 'sponsor') bar.append(h('i', { class: 'kt-sb', title: s.label ?? '', style: { insetInlineStart: `${(s.start / dur) * 100}%`, width: `${((s.end - s.start) / dur) * 100}%` } })); };
+    if (video.duration) drawSegs(); else video.addEventListener('loadedmetadata', drawSegs, { once: true });
+    if (src.localPath && getPrefs().heatmap) { void (async () => { const { readSidecar } = await import('../downloads/sidecars'); const raw = await readSidecar(src.localPath!.replace(/\.[^./]+$/, '') + '.info.json'); if (!raw) return; let hm: { start_time: number; end_time: number; value: number }[] = []; try { hm = (JSON.parse(raw) as { heatmap?: typeof hm }).heatmap ?? []; } catch { return; } if (!hm.length) return; const draw = () => { const dur = video.duration || 0; if (!dur) return; let heat = bar.querySelector('.kt-heat') as HTMLElement | null; if (!heat) { heat = h('div', { class: 'kt-heat' }); bar.append(heat); } heat.replaceChildren(...hm.map((x) => h('i', { style: { insetInlineStart: `${(x.start_time / dur) * 100}%`, width: `${((x.end_time - x.start_time) / dur) * 100}%`, height: `${Math.round(Math.max(0.08, Math.min(1, x.value)) * 100)}%` } }))); }; if (video.duration) draw(); else video.addEventListener('loadedmetadata', draw, { once: true }); })(); }
+    if (src.localPath && getPrefs().skipSilence) { void (async () => { const { silenceMap, canMapSilence } = await import('./silence'); if (!canMapSilence()) return; for (const s of await silenceMap(src.localPath!)) if (s.end - s.start >= 1.2) skips.push({ start: s.start, end: s.end, kind: 'silence' }); })(); }
     const draw = () => { const dur = video.duration || 0; if (!dur) return; bar.querySelectorAll('.kt-chapter').forEach((x) => x.remove()); for (const c of chapters.slice(1)) bar.append(h('i', { class: 'kt-chapter', style: { insetInlineStart: `${(c.start / dur) * 100}%` } })); };
     if (video.duration) draw(); else video.addEventListener('loadedmetadata', draw, { once: true });
   })();
@@ -905,11 +911,14 @@ export function openPlayer(src: PlayerSource): void {
   })();
   const skipped = new Set<number>();
   function skipCheck(c: number) {
-    const mode = getPrefs().autoSkip; const sk = mode === 'off' ? undefined : skips.find((x) => c >= x.start && c < x.end - 1);
+    const pp = getPrefs(); const modeOf = (k: typeof skips[number]['kind']) => (k === 'sponsor' ? pp.skipSponsor : k === 'silence' ? (pp.skipSilence ? 'auto' : 'off') : pp.autoSkip);
+    const sk = skips.find((x) => modeOf(x.kind) !== 'off' && c >= x.start && c < x.end - (x.kind === 'silence' ? 0.3 : 1));
     if (!sk) { skipOp.hidden = true; return; }
-    const i = skips.indexOf(sk);
-    if (mode === 'auto' && !skipped.has(i)) { skipped.add(i); video.currentTime = sk.end; flashText(t(sk.kind === 'op' ? 'skippedOpening' : sk.kind === 'ed' ? 'skippedEnding' : 'skippedRecap')); return; }
-    skipOp.hidden = false; skipOp.textContent = t(sk.kind === 'op' ? 'skipOpening' : sk.kind === 'ed' ? 'skipEnding' : 'skipRecap'); skipOp.onclick = () => { video.currentTime = sk.end; skipOp.hidden = true; };
+    const i = skips.indexOf(sk); const mode = modeOf(sk.kind);
+    if (sk.kind === 'silence') { if (!skipped.has(i)) { skipped.add(i); video.currentTime = sk.end - 0.2; } return; }
+    const label = (did: boolean) => (sk.kind === 'sponsor' ? (did ? t('skippedSponsor') : t('skipSponsorBtn')) + (sk.label ? ` · ${sk.label}` : '') : t(did ? (sk.kind === 'op' ? 'skippedOpening' : sk.kind === 'ed' ? 'skippedEnding' : 'skippedRecap') : (sk.kind === 'op' ? 'skipOpening' : sk.kind === 'ed' ? 'skipEnding' : 'skipRecap')));
+    if (mode === 'auto' && !skipped.has(i)) { skipped.add(i); video.currentTime = sk.end; flashText(label(true)); return; }
+    skipOp.hidden = false; skipOp.textContent = label(false); skipOp.onclick = () => { video.currentTime = sk.end; skipOp.hidden = true; };
   }
   // Dragging the subtitles up or down moves them (REX Player's way); the position is kept. A pinch on them
   // resizes them.

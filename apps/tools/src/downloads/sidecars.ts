@@ -10,6 +10,8 @@ type Desktop = { readFile?(p: string): Promise<ArrayBuffer>; writeText?(o: { pat
 const pl = () => ktPlugin() as unknown as FilesPlugin | null;
 const dt = () => window.kurokawaTools as unknown as Desktop | undefined;
 
+/** A small text file beside a download (the player reads yt-dlp's info.json for the heatmap). */
+export const readSidecar = (path: string): Promise<string | null> => readText(path);
 async function readText(path: string): Promise<string | null> {
   try { const p = pl(); if (p) { const s = await p.filesStat({ path }); if (!s.exists) return null; return (await p.filesHead({ path, max: 4 << 20 })).text; } const d = dt(); if (d?.readFile) return new TextDecoder().decode(await d.readFile(path)); } catch { /* none */ }
   return null;

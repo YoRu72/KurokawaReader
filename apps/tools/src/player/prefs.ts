@@ -10,7 +10,9 @@ export interface PlayerPrefs {
   aspect: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3' | '21:9';
   sleepTimer: number;
   /** REX Player's extras: a skip button's amount, skipping openings/endings (AniSkip, chapters), the picture's filters, the ambient glow, the remaining time, the double-tap zones' width (%), shuffle. */
-  skipAmount: number; autoSkip: 'off' | 'button' | 'auto'; filters: { brightness: number; contrast: number; saturation: number; hue: number; gamma: number; sharpness: number; temperature: number }; ambient: boolean; showRemaining: boolean; doubleTapArea: number; shuffle: boolean;
+  skipAmount: number; autoSkip: 'off' | 'button' | 'auto';
+  /** SponsorBlock chapters (yt-dlp's «mark» mode): a button, skipped on their own, or left; silences jumped over (Smart Speed); the replay heatmap drawn. */
+  skipSponsor: 'off' | 'button' | 'auto'; skipSilence: boolean; heatmap: boolean; filters: { brightness: number; contrast: number; saturation: number; hue: number; gamma: number; sharpness: number; temperature: number }; ambient: boolean; showRemaining: boolean; doubleTapArea: number; shuffle: boolean;
   /** Gestures (REX Player): what a double tap does on each side and in the middle, the sides swapped (volume on
    *  the left), how far a swipe seeks, a swipe while holding for speed changing it, the held speed remembered. */
   tapLeft: TapAction; tapCentre: TapAction; tapRight: TapAction; swapSides: boolean; swipeSensitivity: number; holdSwipeSpeed: boolean; rememberHoldSpeed: boolean;
@@ -50,7 +52,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   subSize: 100, subColor: '#ffffff', subBackground: 'shadow', subPos: 100, subFont: '', subBold: false, subCodepage: '', subAssOverride: false, subDelay: 0,
   resume: 'always', watchedAt: 90, markWatched: true, autoplayNext: true, keepScreenOn: true, orientation: 'auto',
   aspect: 'fit', sleepTimer: 0,
-  skipAmount: 85, autoSkip: 'button', filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
+  skipAmount: 85, autoSkip: 'button', skipSponsor: 'button', skipSilence: false, heatmap: true, filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
   bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, shotSubs: true,
