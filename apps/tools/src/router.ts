@@ -8,6 +8,7 @@ export type Route =
   | { name: 'addons' }
   | { name: 'anime'; tab?: string; q?: string; genre?: string; tag?: string }
   | { name: 'animeEntry'; id: number }
+  | { name: 'animeStudio'; id: number; studio?: string }
   | { name: 'subs'; q?: string }
   | { name: 'tv'; tab?: string; q?: string }
   | { name: 'tvTitle'; type: 'movie' | 'series'; id: string; season?: number }
@@ -26,6 +27,7 @@ export function parseRoute(hash = location.hash): Route {
   if (p.startsWith('/add') || p === '/open') return { name: 'add', u: sp.get('u') ?? undefined };
   if (p.startsWith('/search')) return { name: 'search', q: sp.get('q') ?? undefined, addon: sp.get('addon') ?? undefined };
   if (p.startsWith('/addons')) return { name: 'addons' };
+  const sto = /^\/anime\/studio\/(\d+)/.exec(p); if (sto) return { name: 'animeStudio', id: Number(sto[1]), studio: sp.get('name') ?? undefined };
   const an = /^\/anime\/(\d+)/.exec(p); if (an) return { name: 'animeEntry', id: Number(an[1]) };
   if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };

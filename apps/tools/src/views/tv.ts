@@ -9,7 +9,7 @@ import type { TvMeta, TvKind, Catalog } from '../tv/cinemeta';
 import { watchlist, watchingIds, nextUp } from '../tv/library';
 import { historyChips, remember as rememberSearch } from '../ui/searchHistory';
 
-export type TvTab = 'discover' | 'search' | 'watchlist';
+export type TvTab = 'discover' | 'browse' | 'search' | 'watchlist';
 const TAB_KEY = 'kt.tv.tab'; const PREF_KEY = 'kt.tv.discover';
 export function tvCard(m: { id: string; type: TvKind; name: string; poster?: string; year?: string; releaseInfo?: string; imdbRating?: string }, extra?: HTMLElement | null): HTMLElement {
   const facts = [m.type === 'movie' ? t('tvFilm') : t('tvSeries'), m.releaseInfo ?? m.year ?? '', m.imdbRating ? `★ ${localDigits(m.imdbRating)}` : ''].filter(Boolean).join(' · ');
@@ -24,7 +24,7 @@ export function tvView(tab?: TvTab, q?: string): HTMLElement & { dispose?: () =>
   const body = h('div', { class: 'body anime-body tv-body' }); const chips = h('div', { class: 'chips filter-chips' });
   const root = h('div', { class: 'view tv-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navTv'))), h('div', { class: 'topbar-actions' }, iconButton('settings', t('settings'), () => navigate('/settings/tv')))), chips, body) as HTMLElement & { dispose?: () => void };
   let token = 0;
-  const TABS: [TvTab, string, string][] = [['discover', t('tvDiscover'), 'star'], ['search', t('navSearch'), 'search'], ['watchlist', t('tvWatchlist'), 'bookmark']];
+  const TABS: [TvTab, string, string][] = [['discover', t('tvDiscover'), 'star'], ['browse', t('tvBrowse'), 'grid'], ['search', t('navSearch'), 'search'], ['watchlist', t('tvWatchlist'), 'bookmark']];
   const spinner = () => h('div', { class: 'center' }, h('div', { class: 'spinner' }));
   const fail = (e: unknown) => h('p', { class: 'empty small' }, String((e as Error)?.message ?? e));
   const grid = (ms: { id: string; type: TvKind; name: string; poster?: string; year?: string; releaseInfo?: string; imdbRating?: string }[]) => h('div', { class: 'anime-grid' }, ...ms.map((m) => tvCard(m)));
@@ -38,8 +38,10 @@ export function tvView(tab?: TvTab, q?: string): HTMLElement & { dispose?: () =>
     out.prepend(h('h3', { class: 'lib-h' }, t('continueWatching')), h('div', { class: 'cont-row' }, ...items));
   };
   const draw = () => {
-    drawChips(); const my = ++token; body.replaceChildren();
-    if (current === 'search') {
+    drawChips(); const my = ++token; body.replaceChildren(); body.classList.remove('dc-page'); root.classList.toggle('dc-on', current === 'discover');
+    if (current === 'discover') {
+      void import('./tvDiscover').then((m) => { if (my === token) m.tvDiscover(body, { live: () => my === token, browse: (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch { /* full */ } current = 'browse'; try { localStorage.setItem(TAB_KEY, 'browse'); } catch { /* none */ } navigate('/tv?tab=browse', true); draw(); body.scrollTop = 0; } }); });
+    } else if (current === 'search') {
       const input = h('input', { type: 'search', class: 'search-input', placeholder: t('tvSearchHint'), value: q ?? '', enterkeyhint: 'search' }) as HTMLInputElement; const results = h('div');
       let runs = 0;
       // (Tags and filters over the results: films or series, genres — a tap keeps only those with it —, a lowest rating,

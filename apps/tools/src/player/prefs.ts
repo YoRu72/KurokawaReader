@@ -79,7 +79,9 @@ export function updatePrefs(p: Partial<PlayerPrefs>): PlayerPrefs { prefs = { ..
 export function resetPrefs(keys: (keyof PlayerPrefs)[]): PlayerPrefs { const o: Partial<PlayerPrefs> = {}; for (const k of keys) (o as Record<string, unknown>)[k] = DEFAULT_PREFS[k]; return updatePrefs(o); }
 
 export interface Bookmark { t: number; label: string }
-export interface VideoMemory { pos: number; duration: number; sub?: string; subDelay?: number; speed?: number; zoom?: number; watched?: boolean; at: number; marks?: Bookmark[]; aspect?: PlayerPrefs['aspect']; audioDelay?: number; rotate?: number; flipH?: boolean; flipV?: boolean; crop?: string }
+export interface VideoMemory { pos: number; duration: number; sub?: string; subDelay?: number; speed?: number; zoom?: number; watched?: boolean; at: number; marks?: Bookmark[]; aspect?: PlayerPrefs['aspect']; audioDelay?: number; rotate?: number; flipH?: boolean; flipV?: boolean; crop?: string;
+  /** What the video is an episode of (Continue watching on the Anime and TV pages: how much of it is left). */
+  anilistId?: number; imdbId?: string; season?: number; episode?: number; show?: string; cover?: string }
 type Memory = Record<string, VideoMemory>;
 const memory = (): Memory => { try { return JSON.parse(localStorage.getItem(MEM) ?? '{}') as Memory; } catch { return {}; } };
 export const memoryOf = (key: string): VideoMemory | undefined => memory()[key];

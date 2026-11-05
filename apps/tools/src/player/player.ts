@@ -149,7 +149,7 @@ export function openPlayer(src: PlayerSource): void {
     if (abA !== null && abB !== null && c >= abB) video.currentTime = abA;
     timeNow.textContent = fmtTime(c); if (d) timeEnd.textContent = endsAt ? t('endsAt', { t: new Date(Date.now() + ((d - c) / (video.playbackRate || 1)) * 1000).toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }) }) : getPrefs().showRemaining ? `−${fmtTime((d - c) / (video.playbackRate || 1))}` : fmtTime(d); skipCheck(c); if (d) (bar.querySelector('.kt-played') as HTMLElement).style.width = `${(c / d) * 100}%`; (bar.querySelector('.kt-knob') as HTMLElement).style.insetInlineStart = d ? `${(c / d) * 100}%` : '0';
     drawSubs(c);
-    if (Math.floor(c) % 5 === 0) remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay });
+    if (Math.floor(c) % 5 === 0) { const m = src.task?.meta ?? src.meta; remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay, ...(m?.anilistId || m?.imdbId ? { anilistId: m.anilistId, imdbId: m.imdbId, season: m.season, episode: m.episode, show: m.title, cover: m.cover } : {}) }); }
     if (d && P.markWatched && !watchedSent && c / d * 100 >= P.watchedAt) markWatched(false);
     // (Halfway through an episode: the next one's best release starts coming — Seanime's and Hayase's preload.)
     if (d && !preloadSent && c / d >= 0.5) { preloadSent = true; const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode && getSettings().animePreloadNext !== false) void import('../anime/watch').then((w) => w.preloadNext(m.anilistId!, m.episode!)).catch(() => undefined); }

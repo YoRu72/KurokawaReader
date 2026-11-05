@@ -27,7 +27,7 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row');
   await p.click('.addon-row:has-text("TV & Movies") .btn'); await p.waitForSelector('.toast');
   check('installed', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.includes('tv')));
-  await p.waitForSelector('[data-dest="tv"]'); await p.click('[data-dest="tv"]'); await p.waitForSelector('.tv-card');
+  await p.waitForSelector('[data-dest="tv"]'); await p.click('[data-dest="tv"]'); await p.waitForSelector('.dc-poster'); await p.click('.chip:has-text("Browse")'); await p.waitForSelector('.tv-card');
   check('discover shows the catalogue', (await p.$$('.tv-card')).length === 2);
   await p.click('.tv-card >> nth=0'); await p.waitForSelector('.ep-row');
   check('series page with season 1 episodes', (await p.$$('.ep-row')).length === 3);
