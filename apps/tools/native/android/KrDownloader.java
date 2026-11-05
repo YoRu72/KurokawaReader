@@ -41,7 +41,25 @@ final class KrDownloader {
     private KrDownloader() {}
 
     /** What the engine sets: how many times a chunk is tried again, and where the progress is kept between runs. */
-    static final class Opts { int retries = 5; File state; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
+    /** A token bucket: bytes allowed per second, drawn by every reader before it reads (the global one over every download, a task's own over its segments); 0 lets everything through. */
+    static final class Limiter {
+        private volatile long rate; private double tokens; private long lastNs = System.nanoTime();
+        Limiter(long bytesPerSecond) { rate = bytesPerSecond; }
+        void set(long bytesPerSecond) { rate = Math.max(0, bytesPerSecond); }
+        long rate() { return rate; }
+        /** Blocks until `n` bytes may pass (at most a quarter second a turn, so a changed rate is felt soon). */
+        void take(int n) throws InterruptedException {
+            long r = rate; if (r <= 0) return;
+            for (;;) {
+                long wait;
+                synchronized (this) { long now = System.nanoTime(); tokens = Math.min(r, tokens + (now - lastNs) / 1e9 * r); lastNs = now; if (tokens >= n) { tokens -= n; return; } wait = (long) ((n - tokens) / r * 1000); }
+                Thread.sleep(Math.max(5, Math.min(250, wait)));
+            }
+        }
+    }
+    /** The limit over every HTTP download at once (set from the settings). */
+    static final Limiter GLOBAL = new Limiter(0);
+    static final class Opts { int retries = 5; File state; /** This download's own speed limit, when it has one. */ Limiter limiter; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
         /** Told the server's name and type as soon as it answers; the .part file to use from then on (null: as it is). */ java.util.function.BiFunction<String, String, File> named;
         /** Connections added while they help (Ookla's «connection scaling»): a few first, more while the speed still
          *  rises, none once it holds — a server that limits each connection is filled, one that does not is not
@@ -226,6 +244,8 @@ final class KrDownloader {
         res.finalUrl = at[0];
         res.fileName = dispositionName(probe.getHeaderField("Content-Disposition")); res.mime = probe.getContentType();
         // (A page in the file's place — a site's check or sign-in — said so, not saved under the file's name.)
+        // (A site's own check in the way — Cloudflare says so in a header — : a browser's work, not a download's.)
+        if ("challenge".equalsIgnoreCase(probe.getHeaderField("cf-mitigated"))) { probe.disconnect(); throw new WebPage(); }
         String ct = res.mime == null ? "" : res.mime.toLowerCase(java.util.Locale.ROOT);
         if ((ct.startsWith("text/html") || ct.startsWith("application/xhtml")) && opt.expectName != null && !opt.expectName.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(html?|xhtml|php|aspx?)$") && (code == 200 || code == 206 || code == 403 || code == 503 || code == 429)) {
             long len = -1; try { len = Long.parseLong(probe.getHeaderField("Content-Length")); } catch (Exception ignored) {}
@@ -243,7 +263,7 @@ final class KrDownloader {
             try { res.total = Long.parseLong(probe.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             got.set(0);
             try (InputStream in = probe.getInputStream(); RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
-                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1]);
+                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter);
             } finally { probe.disconnect(); }
             if (res.total < 0) res.total = got.get();
             return res;
@@ -258,7 +278,7 @@ final class KrDownloader {
             try { res.total = Long.parseLong(c.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             got.set(0);
             try (InputStream in = c.getInputStream(); RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
-                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1]);
+                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter);
             } finally { c.disconnect(); }
             if (res.total < 0) res.total = got.get();
             return res;
@@ -351,7 +371,7 @@ final class KrDownloader {
                                 if (rc != 206) throw new Status(rc);
                                 try (InputStream in = c.getInputStream()) {
                                     final long base = pos; final long[] w = wrote;
-                                    copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); if (fromStart) st.setPartial(seg.chunk, base + w[0] - chunkStart); long now = System.currentTimeMillis(); if (now - lastSave[0] > 3000) { lastSave[0] = now; st.write(opt.state); } tick.run(); }, wrote);
+                                    copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); if (fromStart) st.setPartial(seg.chunk, base + w[0] - chunkStart); long now = System.currentTimeMillis(); if (now - lastSave[0] > 3000) { lastSave[0] = now; st.write(opt.state); } tick.run(); }, wrote, opt.limiter);
                                 }
                                 pos += wrote[0]; wrote[0] = 0;
                                 // (An answer that ended early without an error is a failed attempt too.)
@@ -367,7 +387,8 @@ final class KrDownloader {
                                 // A server refusing one connection too many: this one stops, its part to the others.
                                 if ((sc == 429 || sc == 503) && alive.decrementAndGet() >= 1) { gone[0] = true; synchronized (seg) { seg.active = false; back.add(new long[]{ idx, pos, seg.stopAt - 1 }); } res.refused = true; res.connections = alive.get(); leave = true; break; } else if (sc == 429 || sc == 503) alive.incrementAndGet();
                                 if (attempt >= opt.retries) throw e;
-                                try { Thread.sleep(Math.min(8000L, 400L * (attempt + 1) * (sc == 429 || sc == 503 ? 3 : 1))); } catch (InterruptedException ie) { throw e; }
+                                long after = 0; try { String ra = c == null ? null : c.getHeaderField("Retry-After"); if (ra != null) { ra = ra.trim(); after = ra.matches("\\d+") ? Long.parseLong(ra) * 1000 : Math.max(0, java.util.Date.parse(ra) - System.currentTimeMillis()); } } catch (Throwable ignored) {}
+                                try { Thread.sleep(after > 0 ? Math.min(60000L, after) : Math.min(8000L, 400L * (attempt + 1) * (sc == 429 || sc == 503 ? 3 : 1))); } catch (InterruptedException ie) { throw e; }
                             } finally { if (c != null) c.disconnect(); }
                         }
                         synchronized (seg) { seg.pos = Math.min(pos, seg.stopAt); seg.active = false; seg.speed = 0; }
@@ -465,19 +486,26 @@ final class KrDownloader {
 
     /** Copies a part's bytes until its end — which may be brought nearer while it runs (its second half taken by
      *  another connection): only what is still this part's is written and counted. */
-    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException {
-        byte[] buf = new byte[1 << 17]; int r;
+    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException { copySeg(in, raf, seg, base, cancelled, got, tick, wrote, null); }
+    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own) throws IOException {
+        byte[] buf = new byte[1 << 17]; int r; boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);
         while (!cancelled.get()) {
             long left; synchronized (seg) { left = seg.stopAt - (base + wrote[0]); } if (left <= 0) break;
-            r = in.read(buf, 0, (int) Math.min(buf.length, left)); if (r <= 0) break;
+            int want = (int) Math.min(limited ? 1 << 14 : buf.length, left);
+            try { if (own != null) own.take(want); GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
+            r = in.read(buf, 0, want); if (r <= 0) break;
             synchronized (seg) { long allow = seg.stopAt - (base + wrote[0]); int n = (int) Math.min(r, Math.max(0, allow)); if (n > 0) { raf.seek(base + wrote[0]); raf.write(buf, 0, n); wrote[0] += n; got.addAndGet(n); seg.pos = base + wrote[0]; } if (n < r) break; }
             tick.run();
         }
     }
     /** Copies up to `max` bytes, counting them in `wrote[0]` as they are written. */
-    private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException {
-        byte[] buf = new byte[1 << 17]; int r;
-        while (wrote[0] < max && !cancelled.get() && (r = in.read(buf, 0, (int) Math.min(buf.length, max - wrote[0]))) > 0) {
+    private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException { copy(in, raf, max, cancelled, got, tick, wrote, null); }
+    private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own) throws IOException {
+        byte[] buf = new byte[1 << 17]; int r; boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);
+        while (wrote[0] < max && !cancelled.get()) {
+            int want = (int) Math.min(limited ? 1 << 14 : buf.length, max - wrote[0]);
+            try { if (own != null) own.take(want); GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
+            if ((r = in.read(buf, 0, want)) <= 0) break;
             raf.write(buf, 0, r); wrote[0] += r; got.addAndGet(r); tick.run();
         }
     }

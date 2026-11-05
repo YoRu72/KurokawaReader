@@ -77,7 +77,7 @@ final class KtEngine {
         // torrent
         TorrentHandle th; String magnet; byte[] torrentBytes; TorrentInfo info;
         // http
-        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName;
+        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName; /** This download's own speed limit (HTTP), live-adjustable. */ KrDownloader.Limiter limiter;
     }
 
     private final Context ctx;
@@ -351,7 +351,7 @@ final class KtEngine {
         persist(); tell(true);
     }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
-    void setLimits(long down, long up) { SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
+    void setLimits(long down, long up) { KrDownloader.GLOBAL.set(down); SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
     /** A torrent's own settings on its handle: speed limits, its share of connections. */
     private void applyOwn(Task x) {
         try { TorrentHandle h = x.th; if (h == null || !h.isValid()) return; h.setDownloadLimit(x.limitDown > 0 ? x.limitDown : -1); h.setUploadLimit(x.limitUp > 0 ? x.limitUp : -1); h.swig().set_max_connections(connsPerTorrent > 0 ? connsPerTorrent : 16777215); } catch (Throwable e) { Log.w(TAG, "own", e); }
@@ -391,7 +391,7 @@ final class KtEngine {
         return n;
     }
     void reannounce(String id) { Task x = task(id); if (x != null && x.th != null && x.th.isValid()) { x.th.forceReannounce(); try { x.th.swig().force_dht_announce(); } catch (Throwable ignored) {} } }
-    void setTaskLimits(String id, int down, int up) { Task x = task(id); if (x == null) return; x.limitDown = Math.max(0, down); x.limitUp = Math.max(0, up); applyOwn(x); persist(); tell(true); }
+    void setTaskLimits(String id, int down, int up) { Task x = task(id); if (x == null) return; x.limitDown = Math.max(0, down); x.limitUp = Math.max(0, up); applyOwn(x); if (x.limiter != null) x.limiter.set(x.limitDown); persist(); tell(true); }
     /** Watching a file while it comes (Seanime's order): its first 8 MB now, the next 24 MB soon, its last 4 MB
      *  early too (where a video keeps its index, which players read first to seek), then the rest in order. */
     void prepareStream(String id, int fileIndex) {
@@ -563,6 +563,7 @@ final class KtEngine {
                 final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
                 final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = x.meta != null && x.meta.optBoolean("noRetry") ? 0 : retries; opt.state = state; opt.expectName = safe;
+                if (x.limiter == null) x.limiter = new KrDownloader.Limiter(x.limitDown); else x.limiter.set(x.limitDown); opt.limiter = x.limiter;
                 // (The server's own name for the file — Content-Disposition, or the right extension for its type — taken
                 // as soon as the server answers, not at the end: an APK no longer shows as «.bin» while it comes.)
                 final File dirF = dir;
