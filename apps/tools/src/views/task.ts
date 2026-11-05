@@ -48,7 +48,8 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const audio = !video && /\.(mp3|m4a|flac|ogg|opus|wav|aac)$/i.test(x.files.find((f) => f.priority > 0)?.path ?? name);
     const mainPath = x.dir && !x.dir.startsWith('content:') ? `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/${(x.files.find((f) => f.priority > 0) ?? x.files[0]).path}` : (x.files[0]?.path ?? name)}`.replace(/\/+/g, '/') : '';
     const isApk = /\.(apk|apks|xapk|apkm)$/i.test(mainPath || name);
-    if (video && (eng.streamUrl || x.state === 'done')) acts.append(h('button', { type: 'button', class: x.state === 'done' ? 'btn primary' : 'btn tonal', onclick: () => void import('./player').then((m) => m.playTaskFile(x, video.index)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t(x.state === 'done' ? 'play' : 'stream')));
+    const ready = x.readyFile !== undefined && x.readyFile >= 0;
+    if (video && (eng.streamUrl || x.state === 'done')) acts.append(h('button', { type: 'button', class: x.state === 'done' || ready ? 'btn primary' : 'btn tonal', onclick: () => void import('./player').then((m) => m.playTaskFile(x, ready ? x.readyFile! : video.index)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t(x.state === 'done' ? 'play' : ready ? 'readyToPlay' : 'stream')));
     if (x.state === 'done' && eng.open) {
       if (audio && mainPath) acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void import('./player').then((m) => m.playTaskFile(x, x.files[0]?.index ?? 0)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t('play')));
       else if (isApk && nativePlatform() === 'android' && mainPath) acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void import('./apk').then((m) => m.installSheet(mainPath)) }, icon('apps'), t('install')));

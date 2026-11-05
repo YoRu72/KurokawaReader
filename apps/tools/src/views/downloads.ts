@@ -160,6 +160,8 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
     if ((x.kind === 'video' || x.meta?.hls) && (x.state === 'downloading' || x.state === 'metadata')) { const m = x.meta ?? {}; if (m.frags) parts.push(t('hlsPieces', { i: localDigits(String(m.frag ?? 0)), n: localDigits(String(m.frags)) })); if (m.phase) parts.push(phaseShort(m.phase)); }
     if (x.state === 'downloading' && isStalled(x)) parts.push(t('stalled'));
+    if (x.kind === 'torrent' && x.state === 'downloading' && x.readyFile !== undefined && x.readyFile >= 0) parts.push(`▶ ${t('readyToPlay')}`);
+    if (x.meta?.dhtFallback && x.state === 'downloading' && !x.peers && !x.seeds) parts.push(t('dhtAsked'));
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
     if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : x.error);

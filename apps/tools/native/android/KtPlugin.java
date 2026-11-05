@@ -256,6 +256,8 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void torrentDetail(PluginCall call) { run(call, () -> call.resolve(new JSObject(engine().torrentDetail(call.getString("id", "")).toString()))); }
     @PluginMethod public void recheck(PluginCall call) { run(call, () -> { engine().recheck(call.getString("id", "")); call.resolve(); }); }
     @PluginMethod public void reannounce(PluginCall call) { run(call, () -> { engine().reannounce(call.getString("id", "")); call.resolve(); }); }
+    /** Trackers added to one torrent (one a line), announced at once. */
+    @PluginMethod public void addTrackers(PluginCall call) { run(call, () -> { JSArray a = call.getArray("urls"); java.util.List<String> l = new java.util.ArrayList<>(); if (a != null) for (int i = 0; i < a.length(); i++) l.add(a.getString(i)); JSObject o = new JSObject(); o.put("added", engine().addTrackers(call.getString("id", ""), l)); call.resolve(o); }); }
     @PluginMethod public void setTaskLimits(PluginCall call) { run(call, () -> { engine().setTaskLimits(call.getString("id", ""), call.getInt("down", 0), call.getInt("up", 0)); call.resolve(); }); }
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
     @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { JSObject hd = call.getObject("headers", null); engine().setUrl(call.getString("id", ""), call.getString("url", ""), hd == null ? null : new JSONObject(hd.toString())); call.resolve(); }); }

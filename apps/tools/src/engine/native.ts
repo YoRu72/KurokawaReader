@@ -19,6 +19,7 @@ export class NativeEngine implements Engine {
   async torrentDetail(id: string) { return (await this.p.torrentDetail({ id })) as TorrentDetail; }
   recheck(id: string) { return this.p.recheck({ id }); }
   reannounce(id: string) { return this.p.reannounce({ id }); }
+  async addTrackers(id: string, urls: string[]) { return (await this.p.addTrackers({ id, urls })).added; }
   setTaskLimits(id: string, down: number, up: number) { return this.p.setTaskLimits({ id, down, up }); }
   setLimits(l: Limits) { return this.p.setLimits(l); }
   setUrl(id: string, url: string, headers?: Record<string, string>) { return this.p.setUrl({ id, url, headers }); }

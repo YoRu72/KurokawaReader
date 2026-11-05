@@ -1,7 +1,7 @@
 // A torrent up close (qBittorrent's and Flud's tabs, in one card): the swarm — seeds and peers connected and known —,
 // the peers sending and receiving now, the trackers and how each answered, and what can be done: check the files
 // again, ask every tracker and the DHT for peers now, and this download's own speed limits.
-import { h, icon, toast } from '../ui/dom';
+import { h, icon, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import type { Engine, TorrentDetail } from '../engine/types';
 
@@ -12,7 +12,8 @@ export function swarmCard(id: string, eng: Engine): { el: HTMLElement; dispose: 
   const limits = h('div', { class: 'swarm-limits' }); let limitsDrawn = false;
   const acts = h('div', { class: 'row-actions wrap' },
     eng.recheck ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void eng.recheck!(id).then(() => toast(t('swarmRechecking'))) }, icon('refresh'), t('swarmRecheck')) : null,
-    eng.reannounce ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void eng.reannounce!(id).then(() => { toast(t('swarmAnnounced')); void tick(); }) }, icon('wifi'), t('swarmReannounce')) : null);
+    eng.reannounce ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void eng.reannounce!(id).then(() => { toast(t('swarmAnnounced')); void tick(); }) }, icon('wifi'), t('swarmReannounce')) : null,
+    eng.addTrackers ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const s = openSheet(t('trackersAdd'), t('cancel'), { stack: true }); const ta = h('textarea', { rows: 6, dir: 'ltr', placeholder: 'udp://tracker.example.org:6969/announce', autocapitalize: 'off', spellcheck: 'false' }) as HTMLTextAreaElement; s.body.append(h('p', { class: 'hint' }, t('trackersAddHint')), ta); s.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.addTrackers!(id, ta.value.split(/\s+/).filter(Boolean)).then((n) => { toast(t('trackersAdded', { n: localDigits(String(n)) })); s.close(); void tick(); }).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('plus'), t('trackersAdd'))); } }, icon('plus'), t('trackersAdd')) : null);
   const peersBox = h('details', { class: 'swarm-sec' }, h('summary', null, t('swarmPeers')), peers);
   const trBox = h('details', { class: 'swarm-sec' }, h('summary', null, t('swarmTrackers')), trackers);
   const el = h('section', { class: 'card kt-swarm' }, h('h3', null, t('swarmTitle')), head, acts, limits, peersBox, trBox);

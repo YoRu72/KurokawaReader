@@ -60,6 +60,8 @@ export interface Task {
   segments?: { start: number; pos: number; end: number; speed?: number; active: boolean; worker: number }[];
   /** A torrent's pieces in a hundred stretches (a digit 0–9 each: how much of it is here), and the pieces here of all. */
   pieceMap?: string; numPieces?: number; havePieces?: number;
+  /** A torrent's video file whose head and tail are here: playable while the rest comes. */
+  readyFile?: number;
   meta?: { kind?: 'subtitle' | 'apk' | 'video'; lang?: string; archive?: string; debrid?: string; addon?: string; title?: string; episode?: number; batch?: boolean; anilistId?: number; imdbId?: string; cover?: string; season?: number; quality?: string; provider?: string; hash?: string; fileIdx?: number; /** Was running when the app died (the engine marks it at start; cleared when resumed or dismissed). */ interrupted?: boolean;
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
     hf?: string; sha256?: string;
@@ -68,7 +70,9 @@ export interface Task {
     /** A stream fetched piece by piece (HLS): the pieces here of all, and the phase (variant, pieces, join, remux). */
     hls?: boolean; frag?: number; frags?: number; phase?: string;
     /** A video download's live facts from yt-dlp: resolution, codecs, container, approximate size, length in seconds. */
-    res?: string; vcodec?: string; acodec?: string; ext?: string; sizeApprox?: number; duration?: number };
+    res?: string; vcodec?: string; acodec?: string; ext?: string; sizeApprox?: number; duration?: number;
+    /** The DHT was asked (turned on for the session) because no peer came by the trackers. */
+    dhtFallback?: boolean };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }
@@ -118,6 +122,8 @@ export interface Engine {
   recheck?(id: string): Promise<void>;
   /** Every tracker and the DHT asked for peers now. */
   reannounce?(id: string): Promise<void>;
+  /** Trackers added to one torrent; how many were new. */
+  addTrackers?(id: string, urls: string[]): Promise<number>;
   /** This download's own speed limits (bytes/s; 0 = none). */
   setTaskLimits?(id: string, down: number, up: number): Promise<void>;
   setLimits?(l: Limits): Promise<void>;
