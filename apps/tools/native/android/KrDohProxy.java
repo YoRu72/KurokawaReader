@@ -91,8 +91,10 @@ final class KrDohProxy {
     }
 
     /** The site's address, through the resolver; the connection to it. */
-    private static Socket connect(String host, int port) throws IOException {
-        InetAddress[] ips = KrDoh.on() ? KrDoh.resolve(host) : InetAddress.getAllByName(host);
+    private static Socket connect(String host, int port, boolean viaResolver) throws IOException {
+        // (Only a site the network hides — or one forced — is resolved through DoH; the others as the network gives them,
+        // as before the proxy: a healthy site's own address, its own CDN edge.)
+        InetAddress[] ips = KrDoh.on() && viaResolver ? KrDoh.resolve(host) : InetAddress.getAllByName(host);
         IOException last = null;
         for (int i = 0; i < Math.min(3, ips.length); i++) {
             Socket s = new Socket();
@@ -107,11 +109,15 @@ final class KrDohProxy {
         int k = target.lastIndexOf(':'); String host = k > 0 ? target.substring(0, k) : target; int port = 443; try { if (k > 0) port = Integer.parseInt(target.substring(k + 1)); } catch (NumberFormatException ignored) {}
         if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
         Socket site;
-        try { site = connect(host, port); }
+        // (A site the network gives as it is goes through untouched — its own address, its hello as the web view wrote it,
+        // no way of the ladder: the proxy exists for the sites the network hides, and rewriting a healthy site's hello is
+        // what AniList's servers refuse.)
+        final boolean split = cut(host) && !KrDoh.isDirect(host); final boolean pass = !split;
+        try { site = connect(host, port, split); }
         catch (Throwable e) { KrDoh.note("proxy", host, null, -1, "unreachable: " + KrDoh.clean(String.valueOf(e.getMessage()))); reply(out, 502, "Bad Gateway"); return; }
         tunnels.incrementAndGet();
         // (Whether the hello is cut is settled before the page is told to go on: the web view sends it at once.)
-        final String h = host; final boolean split = cut(host); final int way = KrDoh.wayOf(host, split); final boolean[] siteSpoke = { false }; final boolean[] alert = { false }; boolean sent = false;
+        final String h = host; final int way = pass ? 0 : KrDoh.wayOf(host, split); final boolean[] siteSpoke = { false }; final boolean[] alert = { false }; boolean sent = false;
         out.write("HTTP/1.1 200 Connection established\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush();
         client.setSoTimeout(0); site.setSoTimeout(0);
         try (Socket s = site) {
@@ -129,8 +135,17 @@ final class KrDohProxy {
             // (A tunnel the site never spoke on — reset or dropped before its first byte — on a name the network
             // gives as it is: a filter on the way; the site is forced through the split hello from now.)
             if (sent && KrDoh.on()) {
-                if (alert[0]) KrDoh.wayFailed(h, way, "alert");
-                else if (!siteSpoke[0]) { if (!split && way == 0) KrDoh.force(h); KrDoh.wayFailed(h, way, "silent"); }
+                if (pass) {
+                    // (Untouched and dropped unanswered twice in a few minutes — one alone is a page that gave up on a
+                    // picture — : a filter on the way, the site forced through the resolver from now. Refused with an
+                    // alert: the site's own answer, nothing to go around.)
+                    if (!alert[0] && !siteSpoke[0] && KrDoh.silentTwice(h)) KrDoh.force(h);
+                } else if (alert[0]) {
+                    // (A site forced or hidden refusing the rewritten hello: when the network gives it as it is, back to
+                    // the plain way for a day; else the next way of the ladder.)
+                    if (!Boolean.TRUE.equals(KrDoh.neededByDns(h))) { KrDoh.unforce(h); KrDoh.goDirect(h); } else KrDoh.wayFailed(h, way, "alert");
+                }
+                else if (!siteSpoke[0]) KrDoh.wayFailed(h, way, "silent");
                 else KrDoh.wayWorked(h, way);
             }
         }
@@ -157,7 +172,7 @@ final class KrDohProxy {
         if (url.regionMatches(true, 0, "http://", 0, 7)) { String rest = url.substring(7); int slash = rest.indexOf('/'); String hp = slash < 0 ? rest : rest.substring(0, slash); path = slash < 0 ? "/" : rest.substring(slash); int k = hp.lastIndexOf(':'); host = k > 0 ? hp.substring(0, k) : hp; try { if (k > 0) port = Integer.parseInt(hp.substring(k + 1)); } catch (NumberFormatException ignored) {} }
         else { String hp = headers.get("Host"); if (hp == null) { reply(out, 400, "Bad Request"); return; } int k = hp.lastIndexOf(':'); host = k > 0 ? hp.substring(0, k) : hp; try { if (k > 0) port = Integer.parseInt(hp.substring(k + 1)); } catch (NumberFormatException ignored) {} path = url; }
         Socket site;
-        try { site = connect(host, port); } catch (IOException e) { KrDoh.note("proxy", host, null, -1, "unreachable: " + e.getMessage()); reply(out, 502, "Bad Gateway"); return; }
+        try { site = connect(host, port, cut(host) && !KrDoh.isDirect(host)); } catch (IOException e) { KrDoh.note("proxy", host, null, -1, "unreachable: " + e.getMessage()); reply(out, 502, "Bad Gateway"); return; }
         tunnels.incrementAndGet();
         try (Socket s = site) {
             OutputStream up = s.getOutputStream(); InputStream down = s.getInputStream();

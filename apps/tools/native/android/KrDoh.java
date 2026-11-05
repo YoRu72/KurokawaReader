@@ -43,10 +43,20 @@ final class KrDoh {
 
     /** "off", "auto", a provider's name, or the address of a resolver ("https://…/dns-query"). */
     static volatile String provider = "off";
+    /** The app's browser's own choice, apart from the app's (Settings): it reaches the browser's pages only, through
+     *  KtDohWeb — the app's requests and the app's page never see it. */
+    static volatile String browserProvider = "off";
+    private static final ThreadLocal<Boolean> inBrowser = new ThreadLocal<>();
+    /** The choice in force for this thread: the browser's inside `browser(…)`, the app's elsewhere. */
+    static String prov() { return Boolean.TRUE.equals(inBrowser.get()) ? browserProvider : provider; }
+    interface Work<T> { T run() throws Exception; }
+    /** `w` done under the browser's own choice (its resolver, its forced sites). */
+    static <T> T browser(Work<T> w) throws Exception { Boolean was = inBrowser.get(); inBrowser.set(true); try { return w.run(); } finally { if (was == null) inBrowser.remove(); else inBrowser.set(was); } }
+    static boolean browserOn() { String p = browserProvider; return p != null && !p.isEmpty() && !"off".equals(p); }
     /** The TLS hello split in two: "auto" (for sites the network hides, and for the resolver when it did not answer whole), "always", "off". */
     static volatile String split = "auto";
 
-    static boolean on() { String p = provider; return p != null && !p.isEmpty() && !"off".equals(p); }
+    static boolean on() { String p = prov(); return p != null && !p.isEmpty() && !"off".equals(p); }
 
     /* ---------- what is going on, for the reader to see: counters, the last events, a listener ---------- */
     interface Listener { void on(String json); }
@@ -67,9 +77,9 @@ final class KrDoh {
         org.json.JSONObject o = new org.json.JSONObject();
         try {
             if (!on()) state = "off"; else if ("off".equals(state)) state = "idle";
-            o.put("provider", provider); o.put("split", split); o.put("state", state); o.put("ways", waysJson()); o.put("queries", queries.get()); o.put("hits", hits.get()); o.put("fails", fails.get()); o.put("unblocked", unblocked.get());
+            o.put("provider", prov()); o.put("split", split); o.put("state", state); o.put("ways", waysJson()); o.put("queries", queries.get()); o.put("hits", hits.get()); o.put("fails", fails.get()); o.put("unblocked", unblocked.get());
             o.put("lastResolver", lastResolver); o.put("lastShape", lastShape); o.put("lastMs", lastMs); o.put("lastAt", lastAt); o.put("lastError", lastError); o.put("cached", cache.size()); o.put("forced", forced.size());
-            org.json.JSONArray rs = new org.json.JSONArray(); for (Resolver r : resolvers(provider)) { org.json.JSONObject x = new org.json.JSONObject(); x.put("id", r.id); x.put("url", r.url); x.put("ok", r.lastOk); x.put("ms", r.lastMs); x.put("shape", r.shape); x.put("error", r.lastError == null ? "" : r.lastError); rs.put(x); } o.put("resolvers", rs);
+            org.json.JSONArray rs = new org.json.JSONArray(); for (Resolver r : resolvers(prov())) { org.json.JSONObject x = new org.json.JSONObject(); x.put("id", r.id); x.put("url", r.url); x.put("ok", r.lastOk); x.put("ms", r.lastMs); x.put("shape", r.shape); x.put("error", r.lastError == null ? "" : r.lastError); rs.put(x); } o.put("resolvers", rs);
             org.json.JSONArray a = new org.json.JSONArray(); synchronized (log) { for (String j : log) a.put(new org.json.JSONObject(j)); } o.put("log", a);
         } catch (Exception ignored) {}
         return o;
@@ -79,7 +89,7 @@ final class KrDoh {
         org.json.JSONObject o = new org.json.JSONObject();
         try {
             if (!on()) { o.put("ok", false); o.put("why", "off"); return o; }
-            List<Resolver> rs = resolvers(provider); if (rs.isEmpty()) { o.put("ok", false); o.put("why", "noResolver"); return o; }
+            List<Resolver> rs = resolvers(prov()); if (rs.isEmpty()) { o.put("ok", false); o.put("why", "noResolver"); return o; }
             state = "resolving"; note("probe", "example.com", null, -1, "start");
             final org.json.JSONArray tries = new org.json.JSONArray(); List<Thread> ts = new ArrayList<>();
             for (final Resolver r : rs) {
@@ -146,7 +156,7 @@ final class KrDoh {
     /** The addresses of `host`, asked of the resolvers (kept for their time to live, at least a minute). */
     static InetAddress[] resolve(String host) throws IOException {
         if (isLiteral(host)) return new InetAddress[] { InetAddress.getByName(host) };
-        String p = provider; String key = p + "|" + host.toLowerCase();
+        String p = prov(); String key = p + "|" + host.toLowerCase();
         Entry e = cache.get(key);
         if (e != null && e.until > System.currentTimeMillis()) { hits.incrementAndGet(); if (e.ips.length == 0) throw new java.net.UnknownHostException(host); return e.ips; }
         List<Resolver> rs = resolvers(p);
@@ -212,6 +222,11 @@ final class KrDoh {
      *  requests: a site's check (Cloudflare) wants the browser's own connection. Kept ten minutes a name. */
     private static final Map<String, long[]> neededAt = new ConcurrentHashMap<>();
     private static final Map<String, Long> forced = new ConcurrentHashMap<>();
+    /** The sites the app's browser forced (kept apart from the app's: they reach the browser's pages only). */
+    private static final Map<String, Long> browserForced = new ConcurrentHashMap<>();
+    private static Map<String, Long> forcedHere() { return Boolean.TRUE.equals(inBrowser.get()) ? browserForced : forced; }
+    static void forceBrowser(String host) { try { browser(() -> { force(host); return null; }); } catch (Exception ignored) {} }
+    static boolean isForcedBrowser(String host) { try { return browser(() -> isForced(host)); } catch (Exception e) { return false; } }
     /** Sites whose TLS handshake failed through the resolver's way (AniList refusing the rewritten hello on some
      *  networks) and answered the plain way: asked the plain way — the network's DNS, the hello as it is — for a day. */
     private static final Map<String, Long> direct = new ConcurrentHashMap<>();
@@ -221,21 +236,27 @@ final class KrDoh {
      *  could not reach it the network's way (a reset, a timeout, a handshake refused — a filter reading names). */
     static void force(String host) {
         if (host == null || host.isEmpty()) return;
-        String h = host.toLowerCase(); forced.put(h, System.currentTimeMillis() + 3600_000L);
+        String h = host.toLowerCase(); forcedHere().put(h, System.currentTimeMillis() + 3600_000L);
         for (String k : neededAt.keySet()) if (k.endsWith("|" + h) || k.endsWith("." + h)) neededAt.remove(k);
         unblocked.incrementAndGet(); note("force", host, null, -1, "unreachable");
     }
+    static void unforce(String host) { if (host == null) return; String h = host.toLowerCase(); forcedHere().remove(h); for (String k : neededAt.keySet()) if (k.endsWith("|" + h)) neededAt.remove(k); }
+    private static final Map<String, Long> silentAt = new ConcurrentHashMap<>();
+    /** A second unanswered drop of an untouched tunnel to `host` within five minutes. */
+    static boolean silentTwice(String host) { String h = host.toLowerCase(); long now = System.currentTimeMillis(); Long was = silentAt.put(h, now); return was != null && now - was < 300_000L; }
+    /** Whether the network's DNS hides `host` (as last looked at), forcing left out; null when not looked at yet. */
+    static Boolean neededByDns(String host) { long[] had = neededAt.get(prov() + "|" + host.toLowerCase()); return had == null || had[0] < System.currentTimeMillis() ? null : had[1] == 1; }
     static boolean isForced(String host) {
         if (host == null) return false; String h = host.toLowerCase(); long now = System.currentTimeMillis();
-        for (Map.Entry<String, Long> e : forced.entrySet()) { if (e.getValue() < now) { forced.remove(e.getKey()); continue; } if (h.equals(e.getKey()) || h.endsWith("." + e.getKey())) return true; }
+        Map<String, Long> fm = forcedHere(); for (Map.Entry<String, Long> e : fm.entrySet()) { if (e.getValue() < now) { fm.remove(e.getKey()); continue; } if (h.equals(e.getKey()) || h.endsWith("." + e.getKey())) return true; }
         return false;
     }
     /** What `needed` last found for `host`, when it looked within ten minutes; null when it has not (no network here). */
-    static Boolean neededCached(String host) { if (!on() || host == null) return null; if (isForced(host)) return true; long[] had = neededAt.get(provider + "|" + host.toLowerCase()); return had == null || had[0] <= System.currentTimeMillis() ? null : had[1] == 1; }
+    static Boolean neededCached(String host) { if (!on() || host == null) return null; if (isForced(host)) return true; long[] had = neededAt.get(prov() + "|" + host.toLowerCase()); return had == null || had[0] <= System.currentTimeMillis() ? null : had[1] == 1; }
     static boolean needed(String host) {
         if (!on() || isLiteral(host)) return false;
         if (isForced(host)) return true;
-        String key = provider + "|" + host.toLowerCase();
+        String key = prov() + "|" + host.toLowerCase();
         long[] had = neededAt.get(key);
         if (had != null && had[0] > System.currentTimeMillis()) return had[1] == 1;
         boolean need;

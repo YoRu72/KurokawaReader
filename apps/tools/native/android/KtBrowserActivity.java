@@ -90,7 +90,7 @@ public class KtBrowserActivity extends Activity {
     }
     private void paintDoh() {
         if (doh == null) return;
-        String st = KrDoh.on() ? KrDoh.state : "off"; boolean ar = ar(this);
+        String st = KrDoh.browserOn() ? KrDoh.state : "off"; boolean ar = ar(this);
         int c; String label;
         switch (st) {
             case "resolving": c = cWarn(); label = "DoH …"; break;
@@ -142,8 +142,8 @@ public class KtBrowserActivity extends Activity {
         TextView title = text("DNS over HTTPS", 20, cOnSurface(), true); box.addView(title);
         dohRows = new LinearLayout(this); dohRows.setOrientation(LinearLayout.VERTICAL); box.addView(dohRows);
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL); actions.setGravity(Gravity.END); actions.setPadding(0, dp(12), 0, 0);
-        actions.addView(chip(KrDoh.on() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل" : "Turn on"), false, v -> { String np = KrDoh.on() ? "off" : "auto"; KrDoh.provider = np; KrDoh.forget(); getSharedPreferences("kt", MODE_PRIVATE).edit().putString("doh", np).apply(); new Thread(KtPlugin::applyDohProxy, "kt-doh-apply").start(); paintDoh(); say(KrDoh.on() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); h.postDelayed(() -> { if (wv != null) wv.reload(); }, 900); if (dohSheet != null) dohSheet.dismiss(); }));
-        actions.addView(chip(ar ? "اختبار" : "Test", true, v -> { fillDoh(true); new Thread(() -> { KrDoh.probe(); h.post(() -> { paintDoh(); fillDoh(false); }); }, "kt-doh-probe").start(); }));
+        actions.addView(chip(KrDoh.browserOn() ? (ar ? "أوقِف" : "Turn off") : (ar ? "شغِّل" : "Turn on"), false, v -> { /* (the browser's own switch: kept apart from the app's Settings, which it neither reads nor changes) */ String np = KrDoh.browserOn() ? "off" : "auto"; KrDoh.browserProvider = np; getSharedPreferences("kt", MODE_PRIVATE).edit().putString("dohBrowser", np).apply(); paintDoh(); say(KrDoh.browserOn() ? (ar ? "DoH مُفعَّل — يُختار أسرع مزوِّد يجيب" : "DoH on — the fastest resolver that answers is used") : (ar ? "DoH معطَّل" : "DoH off")); h.postDelayed(() -> { if (wv != null) wv.reload(); }, 900); if (dohSheet != null) dohSheet.dismiss(); }));
+        actions.addView(chip(ar ? "اختبار" : "Test", true, v -> { fillDoh(true); new Thread(() -> { try { KrDoh.browser(() -> KrDoh.probe()); } catch (Exception ignored) {} h.post(() -> { paintDoh(); fillDoh(false); }); }, "kt-doh-probe").start(); }));
         actions.addView(chip(ar ? "إغلاق" : "Close", false, v -> { if (dohSheet != null) dohSheet.dismiss(); }));
         box.addView(actions);
         fillDoh(false);
@@ -152,14 +152,14 @@ public class KtBrowserActivity extends Activity {
         d.setOnDismissListener((x) -> { dohSheet = null; dohRows = null; }); dohSheet = d; d.show();
     }
     private void fillDoh(boolean testing) {
-        if (dohRows == null) return; boolean ar = ar(this); org.json.JSONObject st = KrDoh.status(); dohRows.removeAllViews();
+        if (dohRows == null) return; boolean ar = ar(this); org.json.JSONObject st; try { st = KrDoh.browser(KrDoh::status); } catch (Exception e) { st = new org.json.JSONObject(); } dohRows.removeAllViews();
         String state = st.optString("state", "off"); String prov = st.optString("provider", "off");
         int light = testing ? cWarn() : state.equals("ok") ? cGood() : state.equals("failed") ? cError() : state.equals("resolving") ? cWarn() : cMuted();
-        String stateText = testing ? (ar ? "يختبر المزوِّدين…" : "Testing the resolvers…") : !KrDoh.on() ? (ar ? "معطَّل" : "Off") : state.equals("ok") ? (ar ? "يعمل" : "Working") + (st.optString("lastResolver").isEmpty() ? "" : " · " + st.optString("lastResolver") + (st.optString("lastShape").isEmpty() ? "" : " · " + st.optString("lastShape")) + (st.optLong("lastMs", -1) >= 0 ? " · " + st.optLong("lastMs") + " ms" : "")) : state.equals("failed") ? (ar ? "أخفق: " : "Failed: ") + st.optString("lastError") : state.equals("resolving") ? (ar ? "يستعلم…" : "Resolving…") : (ar ? "جاهز، لم يُسأل بعد" : "Ready, nothing asked yet");
+        String stateText = testing ? (ar ? "يختبر المزوِّدين…" : "Testing the resolvers…") : !KrDoh.browserOn() ? (ar ? "معطَّل" : "Off") : state.equals("ok") ? (ar ? "يعمل" : "Working") + (st.optString("lastResolver").isEmpty() ? "" : " · " + st.optString("lastResolver") + (st.optString("lastShape").isEmpty() ? "" : " · " + st.optString("lastShape")) + (st.optLong("lastMs", -1) >= 0 ? " · " + st.optLong("lastMs") + " ms" : "")) : state.equals("failed") ? (ar ? "أخفق: " : "Failed: ") + st.optString("lastError") : state.equals("resolving") ? (ar ? "يستعلم…" : "Resolving…") : (ar ? "جاهز، لم يُسأل بعد" : "Ready, nothing asked yet");
         LinearLayout head = row(light, stateText, "off".equals(prov) ? "" : "auto".equals(prov) ? (ar ? "تلقائي" : "auto") : prov); head.setBackground(pill(cContainer(), 16)); LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); hp.topMargin = dp(10); dohRows.addView(head, hp);
-        if (!KrDoh.on()) { dohRows.addView(text(ar ? "تُسأل الأسماء عبر مزوِّدٍ مشفَّر، وتمرّ اتصالات هذا المتصفّح كلُّها بوكيل التطبيق، فتُفتح المواقع التي تحجبها الشبكة بالاسم." : "Names are asked of an encrypted resolver and every connection of this browser goes through the app's own proxy, so sites the network hides by name open all the same.", 13, cMuted(), false)); return; }
+        if (!KrDoh.browserOn()) { dohRows.addView(text(ar ? "لهذا المتصفّح وحده: تُسأل الأسماء عبر مزوِّدٍ مشفَّر، فتُفتح المواقع التي تحجبها الشبكة بالاسم. لا يمسّ إعداداتِ التطبيق ولا اتصالاتِه." : "For this browser alone: names are asked of an encrypted resolver, so sites the network hides by name open all the same. The app's own Settings and connections are not touched.", 13, cMuted(), false)); return; }
         // the page, the proxy
-        if (!pageHost.isEmpty()) { boolean forced = KrDoh.isForced(pageHost); Boolean need = KrDoh.neededCached(pageHost); dohRows.addView(row(forced || Boolean.TRUE.equals(need) ? cGood() : Boolean.FALSE.equals(need) ? cMuted() : cWarn(), pageHost, forced ? (ar ? "عبر DoH — أُجبر" : "through DoH — forced") : Boolean.TRUE.equals(need) ? (ar ? "عبر DoH — الشبكة تحجبه" : "through DoH — hidden by the network") : Boolean.FALSE.equals(need) ? (ar ? "مباشرةً" : "direct") : (ar ? "لم يُفحَص بعد" : "not checked yet"))); }
+        if (!pageHost.isEmpty()) { boolean forced = KrDoh.isForcedBrowser(pageHost); Boolean need; try { need = KrDoh.browser(() -> KrDoh.neededCached(pageHost)); } catch (Exception e) { need = null; } dohRows.addView(row(forced || Boolean.TRUE.equals(need) ? cGood() : Boolean.FALSE.equals(need) ? cMuted() : cWarn(), pageHost, forced ? (ar ? "عبر DoH — أُجبر" : "through DoH — forced") : Boolean.TRUE.equals(need) ? (ar ? "عبر DoH — الشبكة تحجبه" : "through DoH — hidden by the network") : Boolean.FALSE.equals(need) ? (ar ? "مباشرةً" : "direct") : (ar ? "لم يُفحَص بعد" : "not checked yet"))); }
         org.json.JSONObject px = KrDohProxy.status();
         dohRows.addView(row(px.optBoolean("running") ? cGood() : cError(), ar ? "وكيل التطبيق" : "App proxy", px.optBoolean("running") ? "127.0.0.1:" + px.optInt("port") + " · " + px.optLong("tunnels") + " · ↑" + human(px.optLong("up")) + " ↓" + human(px.optLong("down")) : (ar ? "لا يعمل" : "not running")));
         dohRows.addView(row(cMuted(), ar ? "تقسيم تحيّة TLS" : "Split TLS hello", st.optString("split", "auto")));
@@ -269,20 +269,20 @@ public class KtBrowserActivity extends Activity {
             // (A page the network's own way could not reach — reset, timed out, the handshake refused, the name unknown —
             // while DoH is on: its site forced through the resolver, with the hello split, and the page asked again, once.)
             @Override public void onReceivedError(WebView v, WebResourceRequest r, android.webkit.WebResourceError e) {
-                if (!r.isForMainFrame() || !KrDoh.on()) return;
+                if (!r.isForMainFrame() || !KrDoh.browserOn()) return;
                 int code = e.getErrorCode(); String host = r.getUrl().getHost(); if (host == null) return;
                 // (The web view could not reach the app's own proxy: it is let go of, and the page loaded the old way.)
                 if (String.valueOf(e.getDescription()).contains("PROXY") && KrDohProxy.running()) { KtPlugin.dropProxy(String.valueOf(e.getDescription())); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول إلى وكيل التطبيق — يُحمَّل بالطريقة القديمة" : "The app's proxy could not be reached — loading the old way"); h.postDelayed(() -> { if (wv != null) wv.loadUrl(r.getUrl().toString()); }, 300); return; }
                 boolean netFail = code == ERROR_CONNECT || code == ERROR_TIMEOUT || code == ERROR_FAILED_SSL_HANDSHAKE || code == ERROR_HOST_LOOKUP || code == ERROR_IO || code == ERROR_UNKNOWN;
-                if (!netFail || KrDoh.isForced(host)) return;
-                KrDoh.force(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول مباشرةً — يُعاد عبر DoH" : "Unreachable directly — retrying through DoH");
+                if (!netFail || KrDoh.isForcedBrowser(host)) return;
+                KrDoh.forceBrowser(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "تعذّر الوصول مباشرةً — يُعاد عبر DoH" : "Unreachable directly — retrying through DoH");
                 h.postDelayed(() -> { if (wv != null) wv.loadUrl(r.getUrl().toString()); }, 300);
             }
             // (A certificate that is not the site's on a site the network gives as it is: a filter's page in its place.
             // The site forced through the resolver and the split hello; the page asked again.)
             @Override public void onReceivedSslError(WebView v, android.webkit.SslErrorHandler handler, android.net.http.SslError error) {
                 String host = null; try { host = android.net.Uri.parse(error.getUrl()).getHost(); } catch (Exception ignored) {}
-                if (KrDoh.on() && host != null && !KrDoh.isForced(host)) { handler.cancel(); KrDoh.force(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "شهادة غير شهادة الموقع — يُعاد عبر DoH" : "Not the site's certificate — retrying through DoH"); final String back = error.getUrl(); h.postDelayed(() -> { if (wv != null) wv.loadUrl(back); }, 300); return; }
+                if (KrDoh.browserOn() && host != null && !KrDoh.isForcedBrowser(host)) { handler.cancel(); KrDoh.forceBrowser(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "شهادة غير شهادة الموقع — يُعاد عبر DoH" : "Not the site's certificate — retrying through DoH"); final String back = error.getUrl(); h.postDelayed(() -> { if (wv != null) wv.loadUrl(back); }, 300); return; }
                 handler.cancel();
             }
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); try { pageHost = android.net.Uri.parse(u).getHost(); if (pageHost == null) pageHost = ""; } catch (Exception e) { pageHost = ""; } paintDoh(); }
