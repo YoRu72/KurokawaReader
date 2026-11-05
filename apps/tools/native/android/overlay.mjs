@@ -239,7 +239,8 @@ if (!gradle.includes('libtorrent4j')) {
 // APK: they are packs (KtPacks.java) downloaded when an add-on needs them, built from the same bundles by the
 // release workflow. The small launchers stay (Android runs programs only from the APK's library folder).
 if (!gradle.includes('libpython.zip.so')) gradle = gradle.replace(/android \{/, `android {
-    packagingOptions { jniLibs { pickFirsts += ['**/libc++_shared.so']; excludes += ['**/libpython.zip.so', '**/libffmpeg.zip.so']; useLegacyPackaging = true } }`);
+    packagingOptions { jniLibs { pickFirsts += ['**/libc++_shared.so']; excludes += ['**/libpython.zip.so', '**/libffmpeg.zip.so']; useLegacyPackaging = true }
+      resources { excludes += ['META-INF/versions/**', 'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES', 'META-INF/*.kotlin_module', 'META-INF/INDEX.LIST', 'META-INF/io.netty.versions.properties']; pickFirsts += ['META-INF/MANIFEST.MF', 'module-info.class'] } }`);
 }
 if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/android \{/, `android {

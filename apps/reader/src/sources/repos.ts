@@ -12,7 +12,7 @@ import { fetchText, request } from './http';
 import { isListing, isH5ai, parseListing, folderName, forgetListings, forgetFolder } from './folder';
 import { SourceError } from './types';
 
-export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'folder' | 'unknown';
+export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'folder' | 'site' | 'unknown';
 export const KIND_APP: Record<RepoKind, string> = { lnreader: 'LNReader', mangayomi: 'Mangayomi', shosetsu: 'Shosetsu', ireader: 'IReader', mihon: 'Mihon / Tachiyomi', sora: 'Sora', suwatte: 'Suwatte', aidoku: 'Aidoku', paperback: 'Paperback', kotatsu: 'Kotatsu', folder: 'Web folder', unknown: '?' };
 /** The kinds whose extensions run in this reader. */
 export const RUNNABLE: RepoKind[] = ['lnreader', 'mangayomi'];
@@ -44,7 +44,7 @@ export interface Repo {
   count?: { novel: number; other: number };
   error?: string;
   /** A web folder's server, when known: h5ai lists its folders through its own API as well as its page. */
-  flavor?: 'h5ai';
+  flavor?: 'h5ai' | 'ranobe';
   /** A web folder added from an extension's manifest: the folder's address (the repo's `url` is the manifest). */
   folder?: string;
   /** The manifest's version. */
@@ -75,6 +75,7 @@ async function saveRepos(list: Repo[]): Promise<void> { cache = list; await db.s
 // like any other: fetched, installed, refreshed from there. Nothing of it is in the app itself.)
 const HIDDEN: Record<string, string> = {
   otl: addonUrl('reader/otl.json'),
+  ranobe: addonUrl('reader/ranobe.json'),
 };
 export const hiddenAddress = (given: string): string | undefined => HIDDEN[given.trim().toLowerCase()];
 
@@ -149,7 +150,7 @@ export function candidates(given: string): string[] {
 }
 
 /* ---------- reading an index ---------- */
-interface Parsed { kind: RepoKind; name?: string; items: ExtItem[]; count: { novel: number; other: number }; flavor?: 'h5ai'; folder?: string; version?: string; browser?: boolean; tags?: 'anilist' }
+interface Parsed { kind: RepoKind; name?: string; items: ExtItem[]; count: { novel: number; other: number }; flavor?: 'h5ai' | 'ranobe'; folder?: string; version?: string; browser?: boolean; tags?: 'anilist' }
 const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
 
 export function parseIndex(url: string, text: string): Parsed | null {
@@ -163,6 +164,11 @@ export function parseIndex(url: string, text: string): Parsed | null {
     const d = data as Record<string, unknown>;
     const folder = abs(str(d.url)); if (!/^https?:\/\//i.test(folder)) return null;
     return { kind: 'folder', name: str(d.name) || undefined, items: [], count: { novel: 0, other: 0 }, flavor: d.server === 'h5ai' ? 'h5ai' : undefined, folder: folder.endsWith('/') ? folder : `${folder}/`, version: str(d.version) || undefined, browser: d.browser === true || d.via === 'browser' || undefined, tags: d.tags === 'anilist' ? 'anilist' : undefined };
+  }
+  // A site this reader speaks itself (its API, its account), named by its manifest: {"kurokawa": "site", site, name, url}.
+  if (data && typeof data === 'object' && !Array.isArray(data) && (data as Record<string, unknown>).kurokawa === 'site' && typeof (data as Record<string, unknown>).url === 'string') {
+    const d = data as Record<string, unknown>; const site = abs(str(d.url)); if (!/^https?:\/\//i.test(site) || d.site !== 'ranobe') return null;
+    return { kind: 'site', name: str(d.name) || undefined, items: [], count: { novel: 0, other: 0 }, flavor: 'ranobe', folder: site.replace(/\/+$/, '') + '/', version: str(d.version) || undefined };
   }
   // LNReader: [{id, name, site, lang, version, url, iconUrl}]
   if (Array.isArray(data) && data.length && data.every((e) => e && typeof e === 'object' && typeof (e as Record<string, unknown>).id === 'string' && 'site' in (e as object) && 'url' in (e as object))) {
