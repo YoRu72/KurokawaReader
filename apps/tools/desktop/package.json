@@ -32,6 +32,8 @@
       "preload.cjs",
       "aria2.cjs",
       "sniff.cjs",
+      "localapi.cjs",
+      "gallerydl.cjs",
       "wifishare.cjs",
       "aria2rpc.cjs",
       "icon.png",
