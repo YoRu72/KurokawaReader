@@ -9,7 +9,7 @@ import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes, countFiles, localDigits } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
 import { nativePlatform, openFolder, canOpenFolder } from '../native';
-import { listArchive, extractArchiveJob, cancelArchive, createZip, pickFiles, parentOf, baseName, stem, testArchiveJob, restoreArchive, freeSpaceAt, existingIn, topLevel, type ArchiveInfo } from '../archives';
+import { listArchive, extractArchiveJob, cancelArchive, createZip, pickFiles, parentOf, baseName, stem, testArchiveJob, restoreArchive, freeSpaceAt, existingIn, topLevel, type ArchiveInfo, listArchiveAuto, savePassword, rememberPasswords, setRememberPasswords } from '../archives';
 
 /** The margin an extraction in place never uses: the setting, or 2 GB on a computer and 512 MB on a phone. */
 export const keepFreeNow = (): number => { const k = getSettings().archiveKeepFree; return k >= 0 ? k : nativePlatform() === 'desktop' ? 2 * 1024 ** 3 : 512 * 1024 ** 2; };
@@ -23,15 +23,15 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const sh = openSheet(baseName(path), t('close'));
   sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   let info: ArchiveInfo; let password = '';
-  const load = async () => { try { info = await listArchive(path, password || undefined); draw(); } catch (e) { const m = String((e as Error).message ?? e); if (/password/i.test(m)) { drawPassword(m); return; } sh.body.replaceChildren(h('p', { class: 'empty small' }, errText(m))); } };
-  const drawPassword = (why: string) => { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(why) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw)); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); };
+  const load = async () => { try { const r = await listArchiveAuto(path, password || undefined); info = r.info; password = r.password ?? ''; if (password) savePassword(password); draw(); } catch (e) { const m = String((e as Error).message ?? e); if (/password/i.test(m)) { drawPassword(m); return; } sh.body.replaceChildren(h('p', { class: 'empty small' }, errText(m))); } };
+  const drawPassword = (why: string) => { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(why) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: rememberPasswords(), onchange: (e: Event) => setRememberPasswords((e.target as HTMLInputElement).checked) }), h('span', null, t('archiveRememberPw')))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); };
   let destMode: 'here' | 'folder' | 'other' = 'here'; let other = ''; let inPlace = false; let replace: 'replace' | 'skip' | 'both' = 'both'; let deleteAfter = false; let verifyFirst = getSettings().archiveVerifyFirst;
   const destOf = () => (destMode === 'here' ? (topLevel(info.entries) === 'one' ? parentOf(path) : `${parentOf(path)}/${stem(baseName(path))}`) : destMode === 'folder' ? `${parentOf(path)}/${stem(baseName(path))}` : other);
   const draw = () => {
     const files = info.entries.filter((e) => !e.dir);
     if (info.unsafe) { sh.body.replaceChildren(h('p', { class: 'empty small' }, t('archiveUnsafe', { name: info.unsafe }))); sh.actions.replaceChildren(); return; }
     if (info.resumable) inPlace = true;
-    const summary = h('p', { class: 'src' }, [info.format.toUpperCase(), countFiles(files.length), info.total > 0 ? formatBytes(info.total) : '', info.encrypted ? t('encrypted') : '', info.resumable ? t('extractResumable') : '', info.sfv ? `.sfv ✓` : ''].filter(Boolean).join(' · '));
+    const summary = h('p', { class: 'src' }, [info.format.toUpperCase(), countFiles(files.length), info.total > 0 ? formatBytes(info.total) : '', info.encrypted ? t('encrypted') : '', info.volumes ? t('archiveVolumes', { n: localDigits(info.volumes) }) : '', info.resumable ? t('extractResumable') : '', info.sfv ? `.sfv ✓` : ''].filter(Boolean).join(' · '));
     const list = h('details', { class: 'entry-details' }, h('summary', null, t('archiveContents')), h('div', { class: 'entry-list' }, ...info.entries.slice(0, 300).map((e) => h('div', { class: 'entry-row' + (e.dir ? ' dir' : '') }, icon(e.dir ? 'folder' : 'file'), h('span', { class: 'grow', dir: 'ltr' }, e.path), e.dir || e.size < 0 ? null : h('small', { class: 'src' }, formatBytes(e.size)))), info.entries.length > 300 ? h('p', { class: 'src' }, t('andMore', { n: info.entries.length - 300 })) : null));
     const plan = h('div', { class: 'space-plan' });
     const conflicts = h('p', { class: 'src conflicts' });

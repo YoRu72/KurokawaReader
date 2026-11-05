@@ -2,10 +2,10 @@
 // its folders walked into and out of, a search across all it holds, sorted by name or size; a file opened by
 // itself (taken out to the app's cache, then shown by the in-app player or the app that opens its kind), or the
 // ticked files and folders taken out beside the archive — or everything, with the extraction sheet's choices.
-import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet, pickSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countFiles } from '../i18n';
 import { ktPlugin } from '../native';
-import { listArchive, extractArchiveJob, parentOf, baseName, stem, type ArchiveEntry, type ArchiveInfo } from '../archives';
+import { extractArchiveJob, nameCharsets, nameCharset, setNameCharset, parentOf, baseName, stem, type ArchiveEntry, type ArchiveInfo, listArchiveAuto, savePassword, rememberPasswords, setRememberPasswords } from '../archives';
 import { kindOfFile } from './taskFiles';
 
 const MIME: Record<string, string> = { video: 'video/*', audio: 'audio/*', image: 'image/*', ebook: 'application/epub+zip', doc: 'application/pdf' };
@@ -30,10 +30,10 @@ export async function browseArchive(path: string): Promise<void> {
   sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   let info: ArchiveInfo; let password = '';
   const load = async () => {
-    try { info = await listArchive(path, password || undefined); start(); }
+    try { const r = await listArchiveAuto(path, password || undefined); info = r.info; password = r.password ?? ''; if (password) savePassword(password); start(); }
     catch (e) {
       const m = String((e as Error).message ?? e);
-      if (/password/i.test(m)) { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(m) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw)); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); return; }
+      if (/password/i.test(m)) { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(m) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: rememberPasswords(), onchange: (e: Event) => setRememberPasswords((e.target as HTMLInputElement).checked) }), h('span', null, t('archiveRememberPw')))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); return; }
       sh.body.replaceChildren(h('p', { class: 'empty small' }, m === 'notArchive' ? t('notAnArchive') : m));
     }
   };
@@ -41,10 +41,11 @@ export async function browseArchive(path: string): Promise<void> {
     const root = treeOf(info.entries); let at = ''; let query = ''; let sort: 'name' | 'size' = 'name'; const picked = new Set<string>();
     const search = h('input', { type: 'search', class: 'kt-files-search', placeholder: t('archiveSearch'), oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
     const crumbs = h('div', { class: 'kt-files-crumbs' }); const list = h('div', { class: 'file-rows kt-files-list' }); const foot = h('p', { class: 'models-total' });
+    const charsetBtn = h('button', { type: 'button', class: 'chip small', title: t('archiveNames'), onclick: () => pickSheet(t('archiveNames'), nameCharsets.map(([v, l]): [string, string, string] => [v, l, 'text']), nameCharset(), (v) => { setNameCharset(v); void load(); }, t('close')) }, icon('text'), nameCharsets.find((c) => c[0] === nameCharset())?.[1] ?? 'Auto');
     const sortBtn = h('button', { type: 'button', class: 'chip small', onclick: () => { sort = sort === 'name' ? 'size' : 'name'; draw(); } });
     const files = info.entries.filter((e) => !e.dir);
     sh.body.replaceChildren(h('p', { class: 'src' }, [info.format.toUpperCase(), countFiles(files.length), info.total > 0 ? formatBytes(info.total) : '', info.encrypted ? t('encrypted') : ''].filter(Boolean).join(' · ')),
-      h('div', { class: 'kt-files-tools' }, search, h('div', { class: 'chip-row' }, sortBtn)), crumbs, list, foot);
+      h('div', { class: 'kt-files-tools' }, search, h('div', { class: 'chip-row' }, sortBtn, ...(info.format === 'zip' ? [charsetBtn] : []))), crumbs, list, foot);
     const takeOut = h('button', { type: 'button', class: 'btn primary', disabled: true, onclick: () => void extractPicked() }, icon('archive'), h('span', null, t('extractChosen'))) as HTMLButtonElement;
     sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void import('./extract').then((m) => m.extractSheet(path)); } }, icon('archive'), t('extractAll')), takeOut);
     const toggle = (key: string, on: boolean) => { if (on) picked.add(key); else picked.delete(key); draw(); };

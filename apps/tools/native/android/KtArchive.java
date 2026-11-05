@@ -46,9 +46,26 @@ public final class KtArchive {
     public interface Progress { void on(long done, long total, String file); boolean stopped(); }
 
     /* ---------- what kind ---------- */
-    /** The volumes of a split 7z («x.7z.001», «.002»…), in order, when `f` is one of them; else null. */
+    /** The charset of zip entry names that are not marked UTF-8: null means «guess» (UTF-8 when the bytes are valid UTF-8, else the system's). */
+    public static volatile String nameCharset;
+    static java.nio.charset.Charset legacyCharset(byte[] b, int off, int len) {
+        if (nameCharset != null && !nameCharset.isEmpty() && !nameCharset.equals("auto")) { try { return java.nio.charset.Charset.forName(nameCharset); } catch (Exception ignored) {} }
+        boolean ascii = true; for (int i = off; i < off + len; i++) if ((b[i] & 0x80) != 0) { ascii = false; break; }
+        if (ascii) return StandardCharsets.US_ASCII;
+        try { StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(ByteBuffer.wrap(b, off, len)); return StandardCharsets.UTF_8; } catch (Exception ignored) {}
+        String lang = java.util.Locale.getDefault().getLanguage();
+        try { return java.nio.charset.Charset.forName(lang.equals("ar") ? "windows-1256" : lang.equals("ja") ? "Shift_JIS" : lang.equals("ko") ? "EUC-KR" : lang.equals("zh") ? "GBK" : lang.equals("ru") || lang.equals("uk") ? "windows-1251" : "IBM437"); } catch (Exception e) { return StandardCharsets.ISO_8859_1; }
+    }
+    /** A zip made in volumes by zip4j/WinZip style («x.z01», «x.z02»…, «x.zip» last) — read through zip4j. */
+    static boolean splitZip(File f) { String n = f.getName(); if (!n.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) return false; return new File(f.getParentFile(), n.substring(0, n.length() - 4) + ".z01").isFile(); }
+    /** The archive's bytes, every volume of a split one joined. */
+    static InputStream rawStream(File f) throws IOException {
+        java.util.List<File> vols = volumesOf(f); if (vols == null) return new BufferedInputStream(new FileInputStream(f), 1 << 16);
+        return new BufferedInputStream(java.nio.channels.Channels.newInputStream(org.apache.commons.compress.utils.MultiReadOnlySeekableByteChannel.forFiles(vols.toArray(new File[0]))), 1 << 16);
+    }
+    /** The volumes of a split archive («x.7z.001», «x.tar.xz.002»…), in order, when `f` is one of them; else null. */
     static java.util.List<File> volumesOf(File f) {
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*\\.7z)\\.(\\d{3})$", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(f.getName()); if (!m.matches()) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*\\.(?:7z|tar|tar\\.gz|tgz|tar\\.xz|txz|tar\\.bz2|tbz2))\\.(\\d{3})$", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(f.getName()); if (!m.matches()) return null;
         java.util.List<File> out = new java.util.ArrayList<>(); File dir = f.getParentFile() == null ? new File(".") : f.getParentFile();
         for (int i = 1; ; i++) { File v = new File(dir, m.group(1) + "." + String.format(java.util.Locale.US, "%03d", i)); if (!v.isFile()) break; out.add(v); }
         return out.size() > 1 ? out : null;
@@ -62,9 +79,10 @@ public final class KtArchive {
     }
     public static String formatOf(File f) throws IOException {
         if (volumesOf(f) != null) { f = volumesOf(f).get(0); }
+        if (splitZip(f)) return "zip";
         byte[] b = new byte[8];
         try (RandomAccessFile r = new RandomAccessFile(f, "r")) { r.readFully(b, 0, (int) Math.min(8, r.length())); }
-        String n = f.getName().toLowerCase();
+        String n = f.getName().toLowerCase().replaceAll("\\.\\d{3}$", "");
         if (b[0] == 'P' && b[1] == 'K') return "zip";
         if (b[0] == '7' && b[1] == 'z' && (b[2] & 0xff) == 0xBC && (b[3] & 0xff) == 0xAF) return "7z";
         if (b[0] == 'R' && b[1] == 'a' && b[2] == 'r' && b[3] == '!') return "rar";
@@ -103,7 +121,7 @@ public final class KtArchive {
             ZipItem it = new ZipItem();
             int flags = u16(c, p + 8); it.method = u16(c, p + 10); it.crc = u32(c, p + 16); it.csize = u32(c, p + 20); it.usize = u32(c, p + 24);
             int nl = u16(c, p + 28), xl = u16(c, p + 30), cl = u16(c, p + 32); it.offset = u32(c, p + 42);
-            boolean utf8 = (flags & 0x800) != 0; it.name = new String(cd, p + 46, nl, utf8 ? StandardCharsets.UTF_8 : StandardCharsets.ISO_8859_1);
+            boolean utf8 = (flags & 0x800) != 0; it.name = new String(cd, p + 46, nl, utf8 ? StandardCharsets.UTF_8 : legacyCharset(cd, p + 46, nl));
             it.encrypted = (flags & 1) != 0;
             // ZIP64 extra field: the 0xffffffff values in order usize, csize, offset.
             int xp = p + 46 + nl, xe = xp + xl;
@@ -133,23 +151,32 @@ public final class KtArchive {
             // Half extracted in place: the directory lives in the tail file; what is left starts below the journal's mark.
             fmt = "zip"; long committed = new JSONObject(new String(readFile(new File(f.getPath() + ".kurokawa-unzip")), StandardCharsets.UTF_8)).getLong("committed");
             try (RandomAccessFile t = new RandomAccessFile(new File(f.getPath() + ".kurokawa-tail"), "r")) { for (ZipItem it : readZip(t).items) if (it.offset < committed) { arr.put(item(it.name, it.usize, it.csize, it.dir)); total += it.usize; } }
-        } else if ((fmt = formatOf(f)).equals("zip")) {
+        } else if ((fmt = formatOf(f)).equals("zip") && splitZip(f)) {
+            net.lingala.zip4j.ZipFile z = zip4j(f, password); for (net.lingala.zip4j.model.FileHeader h : z.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getUncompressedSize(), h.getCompressedSize(), h.isDirectory())); total += h.getUncompressedSize(); enc |= h.isEncrypted(); }
+        } else if (fmt.equals("zip")) {
             try (RandomAccessFile r = new RandomAccessFile(f, "r")) { for (ZipItem it : readZip(r).items) { arr.put(item(it.name, it.usize, it.csize, it.dir)); total += it.usize; enc |= it.encrypted; } }
         } else if (fmt.equals("7z")) {
             try (SevenZFile z = open7z(f, password == null ? null : password.toCharArray())) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
         } else if (fmt.equals("rar")) {
             try (com.github.junrar.Archive a = password != null && !password.isEmpty() ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) { for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), h.getFullPackSize(), h.isDirectory())); total += h.getFullUnpackSize(); enc |= h.isEncrypted(); } }
         } else if (fmt.startsWith("tar")) {
-            try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
+            try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
         } else { String inner = f.getName().replaceAll("\\.(gz|xz|bz2)$", ""); arr.put(item(inner, -1, f.length(), false)); }
         long largest = 0; java.util.Set<String> seen = new java.util.HashSet<>(); String dup = null, bad = null;
         for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); String n = e.getString("path"); if (unsafe(n) && bad == null) bad = n; if (!e.getBoolean("dir") && !seen.add(n.toLowerCase(java.util.Locale.ROOT)) && dup == null) dup = n; }
         JSONObject o = new JSONObject(); o.put("format", fmt); o.put("entries", arr); o.put("total", total); o.put("encrypted", enc);
-        o.put("inPlaceOk", (fmt.equals("zip") && !enc) || fmt.equals("tar")); o.put("largest", largest);
+        o.put("inPlaceOk", ((fmt.equals("zip") && !enc && !splitZip(f)) || fmt.equals("tar")) && volumesOf(f) == null);
+        if (splitZip(f) || volumesOf(f) != null) o.put("volumes", volumesOf(f) != null ? volumesOf(f).size() : countZipVolumes(f)); o.put("largest", largest);
         File dir = f.getAbsoluteFile().getParentFile(); if (dir != null) o.put("free", dir.getUsableSpace());
         if (bad != null) o.put("unsafe", bad); if (dup != null) o.put("duplicate", dup);
         File sfv = sfvOf(f); if (sfv != null) o.put("sfv", sfv.getName());
         return o;
+    }
+    static int countZipVolumes(File f) { String n = f.getName(); n = n.substring(0, n.length() - 4); int i = 1; while (new File(f.getParentFile(), n + String.format(java.util.Locale.US, ".z%02d", i)).isFile()) i++; return i; }
+    static net.lingala.zip4j.ZipFile zip4j(File f, String password) {
+        net.lingala.zip4j.ZipFile z = password != null && !password.isEmpty() ? new net.lingala.zip4j.ZipFile(f, password.toCharArray()) : new net.lingala.zip4j.ZipFile(f);
+        if (nameCharset != null && !nameCharset.isEmpty() && !nameCharset.equals("auto")) { try { z.setCharset(java.nio.charset.Charset.forName(nameCharset)); } catch (Exception ignored) {} }
+        return z;
     }
     static JSONObject item(String name, long size, long csize, boolean dir) throws Exception { JSONObject o = new JSONObject(); o.put("path", name); o.put("size", size); if (csize > 0) o.put("compressed", csize); o.put("dir", dir); return o; }
     static InputStream decompressor(String fmt, InputStream in) throws IOException {
@@ -176,7 +203,7 @@ public final class KtArchive {
         if (o.inPlace && fmt.equals("tar")) return extractTarInPlace(f, dest, o, pr);
         int n;
         if (fmt.equals("zip")) {
-            boolean enc; try (RandomAccessFile r = new RandomAccessFile(f, "r")) { enc = false; for (ZipItem it : readZip(r).items) enc |= it.encrypted; }
+            boolean enc = splitZip(f); if (!enc) try (RandomAccessFile r = new RandomAccessFile(f, "r")) { for (ZipItem it : readZip(r).items) enc |= it.encrypted; }
             if (enc) n = extractZip4j(f, dest, o, pr); else n = o.inPlace ? extractZipInPlace(f, dest, o, pr) : extractZip(f, dest, o, pr);
         } else if (fmt.equals("7z")) n = extract7z(f, dest, o, pr);
         else if (fmt.equals("rar")) n = extractRar(f, dest, o, pr);
@@ -470,7 +497,7 @@ public final class KtArchive {
     }
     static int extractTar(File f, File dest, String fmt, Options o, Progress pr) throws Exception {
         int n = 0; long done = 0, total = f.length() * (fmt.equals("tar") ? 1 : 3);
-        try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16)))) {
+        try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) {
             ArchiveEntry e;
             while ((e = t.getNextEntry()) != null) {
                 if (pr.stopped()) throw new IOException("stopped");
@@ -485,7 +512,7 @@ public final class KtArchive {
         pr.on(total, total, ""); return n;
     }
     static int extractZip4j(File f, File dest, Options o, Progress pr) throws Exception {
-        net.lingala.zip4j.ZipFile z = new net.lingala.zip4j.ZipFile(f); if (o.password != null && !o.password.isEmpty()) z.setPassword(o.password.toCharArray());
+        net.lingala.zip4j.ZipFile z = zip4j(f, o.password);
         if (z.isEncrypted() && (o.password == null || o.password.isEmpty())) throw new IOException("passwordNeeded");
         List<net.lingala.zip4j.model.FileHeader> hs = z.getFileHeaders(); long total = 0; for (net.lingala.zip4j.model.FileHeader h : hs) total += h.getUncompressedSize(); long done = 0; int n = 0;
         for (net.lingala.zip4j.model.FileHeader h : hs) {
@@ -520,13 +547,34 @@ public final class KtArchive {
         pr.on(total, total, ""); return n;
     }
     /** What to make: the format (zip, 7z, tar, tar.gz, tar.xz), how hard to squeeze (0–9), a password (zip: AES-256 through zip4j; the others have none), the sources deleted after. */
-    public static final class MakeOptions { public String format = "zip"; public int level = 6; public String password; public boolean deleteAfter; public String comment; }
+    public static final class MakeOptions { public String format = "zip"; public int level = 6; public String password; public boolean deleteAfter; public String comment; /** Volumes of this many MiB (0: one file). Zip: WinZip-style .z01…; others: .001, .002… */ public int splitMb; }
     /** An archive of files and folders in the format asked; what gains nothing by squeezing is stored in a zip. */
     public static int create(File out, List<File> inputs, MakeOptions o, Progress pr) throws IOException {
         List<File[]> files = new ArrayList<>(); long total = 0;
         for (File in : inputs) { if (in.isDirectory()) { collect(in, in.getName() + "/", files); } else files.add(new File[]{ in, new File(in.getName()) }); }
         for (File[] p : files) total += p[0].length();
         File part = new File(out.getPath() + ".part"); long done = 0; int n = 0; byte[] buf = new byte[1 << 16]; String fmt = o.format == null ? "zip" : o.format;
+        if (fmt.equals("zip") && o.splitMb > 0) {
+            // Volumes: zip4j writes «name.z01», «name.z02»… and «name.zip» last, in one go.
+            if (out.exists() && !out.delete()) throw new IOException("cannotReplace");
+            String stem = out.getName().replaceAll("(?i)\\.zip$", ""); for (int i = 1; i < 1000; i++) { File v = new File(out.getParentFile(), stem + String.format(java.util.Locale.US, ".z%02d", i)); if (!v.delete() && v.exists()) throw new IOException("cannotReplace"); }
+            try (net.lingala.zip4j.ZipFile z = o.password != null && !o.password.isEmpty() ? new net.lingala.zip4j.ZipFile(out, o.password.toCharArray()) : new net.lingala.zip4j.ZipFile(out)) {
+                net.lingala.zip4j.model.ZipParameters zp = new net.lingala.zip4j.model.ZipParameters();
+                if (o.password != null && !o.password.isEmpty()) { zp.setEncryptFiles(true); zp.setEncryptionMethod(net.lingala.zip4j.model.enums.EncryptionMethod.AES); zp.setAesKeyStrength(net.lingala.zip4j.model.enums.AesKeyStrength.KEY_STRENGTH_256); }
+                if (o.level == 0) zp.setCompressionMethod(net.lingala.zip4j.model.enums.CompressionMethod.STORE); else zp.setCompressionLevel(o.level <= 2 ? net.lingala.zip4j.model.enums.CompressionLevel.FASTEST : o.level <= 4 ? net.lingala.zip4j.model.enums.CompressionLevel.FAST : o.level <= 6 ? net.lingala.zip4j.model.enums.CompressionLevel.NORMAL : o.level <= 8 ? net.lingala.zip4j.model.enums.CompressionLevel.MAXIMUM : net.lingala.zip4j.model.enums.CompressionLevel.ULTRA);
+                net.lingala.zip4j.progress.ProgressMonitor pm = z.getProgressMonitor(); z.setRunInThread(true);
+                // zip4j splits only while creating, so everything is handed over at once; names are taken relative to the inputs' folder, so folders keep their shape.
+                File base = inputs.get(0).getAbsoluteFile().getParentFile(); zp.setDefaultFolderPath(base.getPath());
+                List<File> all = new ArrayList<>(); for (File[] q : files) all.add(q[0]);
+                z.createSplitZipFile(all, zp, true, Math.max(64L << 10, (long) o.splitMb << 20));
+                while (pm.getState() == net.lingala.zip4j.progress.ProgressMonitor.State.BUSY) { if (pr.stopped()) { pm.setCancelAllTasks(true); throw new IOException("stopped"); } pr.on(Math.min(total, total * pm.getPercentDone() / 100), total, String.valueOf(pm.getFileName())); try { Thread.sleep(150); } catch (InterruptedException e) { throw new IOException("stopped"); } }
+                if (pm.getResult() == net.lingala.zip4j.progress.ProgressMonitor.Result.ERROR) throw new IOException(pm.getException() != null ? String.valueOf(pm.getException().getMessage()) : "zipFailed");
+                if (o.comment != null && !o.comment.isEmpty()) z.setComment(o.comment);
+                n = files.size();
+            }
+            if (o.deleteAfter) for (File in : inputs) deleteTree(in);
+            pr.on(total, total, ""); return n;
+        }
         if (fmt.equals("zip") && o.password != null && !o.password.isEmpty()) {
             // (zip4j: AES-256, the level asked; one file at a time so the progress is told.)
             try (net.lingala.zip4j.ZipFile z = new net.lingala.zip4j.ZipFile(part, o.password.toCharArray())) {
@@ -553,7 +601,7 @@ public final class KtArchive {
             }
         } else if (fmt.equals("7z")) {
             try (org.apache.commons.compress.archivers.sevenz.SevenZOutputFile z = new org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(part)) {
-                z.setContentMethods(Collections.singletonList(new org.apache.commons.compress.archivers.sevenz.SevenZMethodConfiguration(org.apache.commons.compress.archivers.sevenz.SevenZMethod.LZMA2, Math.max(0, Math.min(9, o.level)))));
+                z.setContentMethods(Collections.singletonList(new org.apache.commons.compress.archivers.sevenz.SevenZMethodConfiguration(org.apache.commons.compress.archivers.sevenz.SevenZMethod.LZMA2, new org.tukaani.xz.LZMA2Options(Math.max(0, Math.min(9, o.level))))));
                 for (File[] p : files) {
                     if (pr.stopped()) throw new IOException("stopped");
                     String name = p[1].getPath().replace('\\', '/'); SevenZArchiveEntry e = z.createArchiveEntry(p[0], name); z.putArchiveEntry(e); pr.on(done, total, name);
@@ -574,11 +622,26 @@ public final class KtArchive {
                 }
             }
         }
+        if (o.splitMb > 0) {
+            // Volumes «name.7z.001», «.002»… (what 7-Zip and ZArchiver make and read); the one-piece file is cut up and removed.
+            long each = Math.max(64L << 10, (long) o.splitMb << 20); byte[] b = new byte[1 << 16];
+            try (InputStream in = new BufferedInputStream(new FileInputStream(part), 1 << 16)) {
+                for (int v = 1; ; v++) {
+                    File vol = new File(out.getPath() + String.format(java.util.Locale.US, ".%03d", v)); long wrote = 0; int r = -1;
+                    try (OutputStream os = new BufferedOutputStream(new FileOutputStream(vol), 1 << 16)) { while (wrote < each && (r = in.read(b, 0, (int) Math.min(b.length, each - wrote))) > 0) { os.write(b, 0, r); wrote += r; } }
+                    if (pr.stopped()) throw new IOException("stopped");
+                    if (wrote == 0 && v > 1) { vol.delete(); break; }
+                    if (r <= 0 && wrote < each) break;
+                }
+            }
+            part.delete();
+            if (o.deleteAfter) for (File in : inputs) deleteTree(in);
+            pr.on(total, total, ""); return n;
+        }
         if (out.exists() && !out.delete()) throw new IOException("cannotReplace"); if (!part.renameTo(out)) throw new IOException("cannotRename");
         if (o.deleteAfter) for (File in : inputs) deleteTree(in);
         pr.on(total, total, ""); return n;
     }
-    static void deleteTree(File f) { if (f.isDirectory()) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); } f.delete(); }
     static void collect(File dir, String prefix, List<File[]> out) { File[] kids = dir.listFiles(); if (kids == null) return; for (File k : kids) { if (k.isDirectory()) collect(k, prefix + k.getName() + "/", out); else out.add(new File[]{ k, new File(prefix + k.getName()) }); } }
     static boolean stored(String name) { return name.matches("(?i).*\\.(png|jpe?g|gif|webp|avif|mp4|mkv|webm|mp3|m4a|ogg|opus|flac|zip|7z|rar|gz|xz|bz2|apk|woff2?)$"); }
 }

@@ -476,10 +476,10 @@ public class KtPlugin extends Plugin {
         } catch (Throwable e) { return null; }
     }
     private static File fileOf(String p) { if (p.startsWith("file://")) p = Uri.parse(p).getPath(); return new File(p); }
-    @PluginMethod public void archiveList(PluginCall call) {
+    @PluginMethod public void archiveList(PluginCall call) { KtArchive.nameCharset = call.getString("charset", null);
         bg.execute(() -> { try { File f = fileOf(call.getString("path", "")); JSObject r = new JSObject(new org.json.JSONObject(KtArchive.list(f, call.getString("password", null)).toString()).toString()); r.put("resumable", KtArchive.hasJournal(f)); call.resolve(r); } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); } });
     }
-    @PluginMethod public void archiveExtract(PluginCall call) {
+    @PluginMethod public void archiveExtract(PluginCall call) { KtArchive.nameCharset = call.getString("charset", null);
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
         final File f = fileOf(call.getString("path", "")); final String destS = call.getString("dest", f.getParent()); final File dest = "cache:".equals(destS) ? new File(getContext().getCacheDir(), "archive-view") : fileOf(destS);
         final KtArchive.Options o = new KtArchive.Options(); o.inPlace = Boolean.TRUE.equals(call.getBoolean("inPlace", false)) && call.getArray("only") == null; o.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); o.replace = call.getString("replace", "replace"); o.password = call.getString("password", null);
@@ -499,7 +499,7 @@ public class KtPlugin extends Plugin {
     /** HatchZip's other verbs: test (read every file, write nothing), restore (give up an extraction in place),
      *  the free space of a folder, and which of an archive's files already exist where it would go. */
     private KtArchive.Progress progressFor(String id, AtomicBoolean stop) { final long[] last = { 0 }; return new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } }; }
-    @PluginMethod public void archiveTest(PluginCall call) {
+    @PluginMethod public void archiveTest(PluginCall call) { KtArchive.nameCharset = call.getString("charset", null);
         final String id = call.getString("id", ""); final AtomicBoolean stop = new AtomicBoolean(false); if (!id.isEmpty()) archiveJobs.put(id, stop);
         final File f = fileOf(call.getString("path", ""));
         bg.execute(() -> { try { call.resolve(new JSObject(KtArchive.test(f, call.getString("password", null), progressFor(id, stop)).toString())); } catch (Exception e) { call.reject(String.valueOf(e.getMessage()), e); } finally { archiveJobs.remove(id); } });
@@ -517,7 +517,7 @@ public class KtPlugin extends Plugin {
         try { JSArray a = call.getArray("inputs"); for (int i = 0; i < a.length(); i++) ins.add(fileOf(a.getString(i))); } catch (Exception e) { call.reject("inputs"); return; }
         bg.execute(() -> {
             final long[] last = { 0 };
-            final KtArchive.MakeOptions mo = new KtArchive.MakeOptions(); mo.format = call.getString("format", "zip"); mo.level = call.getInt("level", 6); mo.password = call.getString("password", null); mo.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); mo.comment = call.getString("comment", null);
+            final KtArchive.MakeOptions mo = new KtArchive.MakeOptions(); mo.format = call.getString("format", "zip"); mo.level = call.getInt("level", 6); mo.password = call.getString("password", null); mo.deleteAfter = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false)); mo.comment = call.getString("comment", null); mo.splitMb = call.getInt("splitMb", 0);
             try { int n = KtArchive.create(out, ins, mo, new KtArchive.Progress() { public void on(long done, long total, String file) { long now = System.currentTimeMillis(); if (now - last[0] < 250 && done < total) return; last[0] = now; JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("file", file); notifyListeners("archiveProgress", ev); } public boolean stopped() { return stop.get(); } });
                 JSObject r = new JSObject(); r.put("files", n); r.put("path", out.getAbsolutePath()); r.put("size", out.length()); call.resolve(r);
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }

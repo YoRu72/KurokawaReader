@@ -5,12 +5,12 @@ import { ktPlugin } from './native';
 import { uid } from './db';
 
 export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean }
-export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string }
+export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string; /** How many volumes a split archive has. */ volumes?: number }
 export interface ExtractOptions { path: string; /** A folder, or «cache:» for a look at one file (the app's own cache). */ dest?: string; /** Only these entries (and what is under these folders). */ only?: string[]; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; password?: string; verifyFirst?: boolean; keepFree?: number }
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
 
-type Bridge = { archiveList(o: { path: string; password?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<{ files: number; dest: string }>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
-type Plugin = { archiveList(o: { path: string; password?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<{ files: number; dest: string }>; archiveCancel(o: { id: string }): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<{ paths: string[] }>; addListener(ev: 'archiveProgress', fn: (p: ArchiveProgress) => void): Promise<{ remove(): void }> };
+type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<{ files: number; dest: string }>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
+type Plugin = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<{ files: number; dest: string }>; archiveCancel(o: { id: string }): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<{ paths: string[] }>; addListener(ev: 'archiveProgress', fn: (p: ArchiveProgress) => void): Promise<{ remove(): void }> };
 const desk = () => (window.kurokawaTools as unknown as Bridge | undefined)?.archiveList ? (window.kurokawaTools as unknown as Bridge) : null;
 const plug = () => { const p = ktPlugin() as unknown as Plugin | null; return p?.archiveList ? p : null; };
 
@@ -24,11 +24,30 @@ export function firstVolume(path: string): string {
 export const isLaterVolume = (n: string): boolean => firstVolume(n) !== n;
 export const isArchiveName = (n: string): boolean => ARCHIVE_RE.test(n);
 
-export async function listArchive(path: string, password?: string): Promise<ArchiveInfo> {
+export async function listArchive(path: string, password?: string, charset?: string): Promise<ArchiveInfo> {
   path = firstVolume(path);
-  const d = desk(); if (d) return d.archiveList({ path, password });
-  const p = plug(); if (p) return p.archiveList({ path, password });
+  const d = desk(); if (d) return d.archiveList({ path, password, charset: charset ?? nameCharset() });
+  const p = plug(); if (p) return p.archiveList({ path, password, charset: charset ?? nameCharset() });
   throw new Error('unsupported');
+}
+/** The charset of names in old zips: 'auto' (UTF-8 when valid, else the language's usual one) or a chosen one. */
+export const nameCharsets: [string, string][] = [['auto', 'Auto'], ['UTF-8', 'UTF-8'], ['IBM437', 'DOS (CP437)'], ['windows-1252', 'Windows (Latin)'], ['windows-1256', 'Windows (Arabic)'], ['windows-1251', 'Windows (Cyrillic)'], ['windows-1250', 'Windows (Central Europe)'], ['GBK', 'GBK (简体中文)'], ['Big5', 'Big5 (繁體中文)'], ['Shift_JIS', 'Shift_JIS (日本語)'], ['EUC-KR', 'EUC-KR (한국어)'], ['ISO-8859-1', 'ISO-8859-1']];
+export const nameCharset = (): string => localStorage.getItem('kt.archive.charset') || 'auto';
+export const setNameCharset = (c: string): void => { try { localStorage.setItem('kt.archive.charset', c); } catch { /* none */ } };
+/** Passwords kept (when the user asked): tried in turn on an encrypted archive before asking. */
+export const rememberPasswords = (): boolean => localStorage.getItem('kt.archive.rememberPw') === 'on';
+export const setRememberPasswords = (on: boolean): void => { try { localStorage.setItem('kt.archive.rememberPw', on ? 'on' : 'off'); if (!on) localStorage.removeItem('kt.archive.passwords'); } catch { /* none */ } };
+export const savedPasswords = (): string[] => { try { const a = JSON.parse(localStorage.getItem('kt.archive.passwords') ?? '[]') as unknown; return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } };
+export const savePassword = (pw: string): void => { if (!pw || !rememberPasswords()) return; const a = [pw, ...savedPasswords().filter((x) => x !== pw)].slice(0, 30); try { localStorage.setItem('kt.archive.passwords', JSON.stringify(a)); } catch { /* none */ } };
+export const forgetPasswords = (): void => { try { localStorage.removeItem('kt.archive.passwords'); } catch { /* none */ } };
+/** Lists; when a password is needed and none given, the saved ones are tried first; the one that opened it comes back. */
+export async function listArchiveAuto(path: string, password?: string): Promise<{ info: ArchiveInfo; password?: string }> {
+  try { return { info: await listArchive(path, password), password }; }
+  catch (e) {
+    if (password || !/password/i.test(String((e as Error).message ?? e))) throw e;
+    for (const pw of savedPasswords()) { try { return { info: await listArchive(path, pw), password: pw }; } catch { /* next */ } }
+    throw e;
+  }
 }
 const listeners = new Map<string, (p: ArchiveProgress) => void>(); let wired = false;
 function wire(): void {
@@ -48,7 +67,9 @@ export function extractArchiveJob(o: ExtractOptions, onProgress?: (p: ArchivePro
   return { id, done };
 }
 export async function cancelArchive(id: string): Promise<void> { const d = desk(); if (d) return d.archiveCancel(id); await plug()?.archiveCancel({ id }); }
-export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string }
+export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number }
+/** The volume sizes offered, in MiB (0: one file). */
+export const splitSizes: number[] = [0, 10, 25, 50, 100, 250, 700, 1024, 2048, 4096];
 /** The formats the engine here can make (the desktop makes zips only, for now). */
 export const makeFormats = (): MakeOptions['format'][] => (desk() ? ['zip'] : ['zip', '7z', 'tar.gz', 'tar.xz', 'tar']);
 export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void, o: MakeOptions = {}): Promise<{ files: number; path: string; size: number }> {
