@@ -314,6 +314,51 @@ final class KtFiles {
         if (f.exists() && !f.delete()) { part.delete(); throw new IOException("cannot replace"); } if (!part.renameTo(f)) { part.delete(); throw new IOException("cannot write"); }
     }
 
+    /* ---------- the storage analyzer: what takes the room, what is doubled, old, screenshots, leftovers ---------- */
+    static final class Seen { final File f; final long size; Seen(File f, long size) { this.f = f; this.size = size; } }
+    static JSONObject analyze(File root, AtomicBoolean cancel, Events progress) throws Exception {
+        List<Seen> all = new ArrayList<>(); Map<String, long[]> byKind = new LinkedHashMap<>(); Map<String, long[]> byFolder = new LinkedHashMap<>();
+        long[] count = { 0 }; long[] lastTold = { 0 };
+        walkAnalyze(root, root, all, byKind, byFolder, count, cancel, progress, lastTold, 0);
+        JSONObject r = new JSONObject(); long total = 0; for (Seen x : all) total += x.size; r.put("total", total); r.put("files", all.size());
+        all.sort((a, b) -> Long.compare(b.size, a.size));
+        r.put("largest", seenList(all.subList(0, Math.min(60, all.size()))));
+        long year = System.currentTimeMillis() - 365L * 86400000; List<Seen> old = new ArrayList<>(); for (Seen x : all) if (x.f.lastModified() < year && x.size > 1 << 20) old.add(x); r.put("old", seenList(old.subList(0, Math.min(60, old.size()))));
+        List<Seen> shots = new ArrayList<>(); for (Seen x : all) { String p = x.f.getAbsolutePath(); if (p.contains("/Screenshots/") || x.f.getName().toLowerCase(Locale.ROOT).startsWith("screenshot")) shots.add(x); } r.put("screenshots", seenList(shots.subList(0, Math.min(200, shots.size())))); long sh = 0; for (Seen x : shots) sh += x.size; r.put("screenshotsSize", sh); r.put("screenshotsCount", shots.size());
+        List<Seen> temp = new ArrayList<>(); for (Seen x : all) { String n = x.f.getName().toLowerCase(Locale.ROOT); String p = x.f.getAbsolutePath(); if (n.endsWith(".part") || n.endsWith(".ktpart") || n.endsWith(".tmp") || n.endsWith(".temp") || n.endsWith(".crdownload") || n.endsWith(".log") || p.contains("/cache/") || p.contains("/.cache/") || p.contains("/.thumbnails/") || p.contains("/.trash") || p.contains("/.kurokawa-trash/")) temp.add(x); } r.put("temp", seenList(temp.subList(0, Math.min(200, temp.size())))); long tp = 0; for (Seen x : temp) tp += x.size; r.put("tempSize", tp); r.put("tempCount", temp.size());
+        List<Seen> apks = new ArrayList<>(); for (Seen x : all) if (x.f.getName().toLowerCase(Locale.ROOT).matches(".*\\.(apk|apks|xapk|apkm)$")) apks.add(x); r.put("apks", seenList(apks.subList(0, Math.min(60, apks.size()))));
+        // (Doubles: the same size, then the same first and last pieces, then the same whole hash — only then are two the same.)
+        Map<Long, List<Seen>> bySize = new java.util.HashMap<>(); for (Seen x : all) if (x.size >= 64 << 10) bySize.computeIfAbsent(x.size, k -> new ArrayList<>()).add(x);
+        JSONArray dups = new JSONArray(); long dupSize = 0; int groups = 0;
+        for (List<Seen> l : bySize.values()) { if (l.size() < 2 || (cancel != null && cancel.get()) || groups >= 80) continue; Map<String, List<Seen>> byHash = new java.util.HashMap<>(); for (Seen x : l) { String hsh = quickHash(x.f); if (hsh != null) byHash.computeIfAbsent(hsh, k -> new ArrayList<>()).add(x); } for (List<Seen> g : byHash.values()) { if (g.size() < 2) continue; JSONObject o = new JSONObject(); o.put("size", g.get(0).size); o.put("files", seenList(g)); dups.put(o); dupSize += g.get(0).size * (g.size() - 1); groups++; } }
+        r.put("duplicates", dups); r.put("duplicatesSize", dupSize);
+        JSONArray kinds = new JSONArray(); for (Map.Entry<String, long[]> e : byKind.entrySet()) { JSONObject o = new JSONObject(); o.put("kind", e.getKey()); o.put("size", e.getValue()[0]); o.put("count", e.getValue()[1]); kinds.put(o); } r.put("kinds", kinds);
+        List<Map.Entry<String, long[]>> folders = new ArrayList<>(byFolder.entrySet()); folders.sort((a, b) -> Long.compare(b.getValue()[0], a.getValue()[0]));
+        JSONArray fa = new JSONArray(); for (Map.Entry<String, long[]> e : folders.subList(0, Math.min(40, folders.size()))) { JSONObject o = new JSONObject(); o.put("path", e.getKey()); o.put("size", e.getValue()[0]); o.put("count", e.getValue()[1]); fa.put(o); } r.put("folders", fa);
+        return r;
+    }
+    private static JSONArray seenList(List<Seen> l) throws Exception { JSONArray a = new JSONArray(); for (Seen x : l) { JSONObject o = new JSONObject(); o.put("name", x.f.getName()); o.put("path", x.f.getAbsolutePath()); o.put("size", x.size); o.put("mtime", x.f.lastModified()); o.put("dir", false); o.put("ext", extOf(x.f.getName())); a.put(o); } return a; }
+    static String kindOf(String name) { String e = extOf(name); if (e.matches("jpe?g|png|gif|webp|bmp|heic|avif|svg")) return "image"; if (e.matches("mp3|m4a|flac|ogg|opus|wav|aac|wma")) return "audio"; if (e.matches("mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp")) return "video"; if (e.matches("pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr")) return "doc"; if (e.matches("zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001")) return "archive"; if (e.matches("apk|apks|xapk|apkm")) return "apk"; return "other"; }
+    private static void walkAnalyze(File root, File d, List<Seen> all, Map<String, long[]> byKind, Map<String, long[]> byFolder, long[] count, AtomicBoolean cancel, Events progress, long[] lastTold, int depth) {
+        if (depth > 24 || (cancel != null && cancel.get())) return; File[] k = d.listFiles(); if (k == null) return;
+        for (File c : k) {
+            if (cancel != null && cancel.get()) return;
+            if (c.isDirectory()) { if (c.getName().equals("Android") && depth == 0) continue; walkAnalyze(root, c, all, byKind, byFolder, count, cancel, progress, lastTold, depth + 1); continue; }
+            long sz = c.length(); all.add(new Seen(c, sz)); count[0]++;
+            String kind = kindOf(c.getName()); long[] kk = byKind.computeIfAbsent(kind, x -> new long[2]); kk[0] += sz; kk[1]++;
+            // (A file counts for its own folder and the ones above it, so a big folder shows whole.)
+            File f = c.getParentFile(); int up = 0; while (f != null && up < 3 && (f.getAbsolutePath().equals(root.getAbsolutePath()) || f.getAbsolutePath().startsWith(root.getAbsolutePath() + "/"))) { long[] ff = byFolder.computeIfAbsent(f.getAbsolutePath(), x -> new long[2]); ff[0] += sz; ff[1]++; if (f.getAbsolutePath().equals(root.getAbsolutePath())) break; f = f.getParentFile(); up++; }
+            long now = System.currentTimeMillis(); if (progress != null && now - lastTold[0] > 300) { lastTold[0] = now; try { JSONObject o = new JSONObject(); o.put("id", "analyze"); o.put("status", "progress"); o.put("files", count[0]); o.put("name", c.getName()); progress.on(o); } catch (Exception ignored) {} }
+        }
+    }
+    private static String quickHash(File f) {
+        try (java.io.RandomAccessFile r = new java.io.RandomAccessFile(f, "r")) {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1"); byte[] b = new byte[64 << 10]; int n = r.read(b); if (n > 0) md.update(b, 0, n);
+            long len = r.length(); if (len > (128 << 10)) { r.seek(len - (64 << 10)); n = r.read(b); if (n > 0) md.update(b, 0, n); r.seek(len / 2); n = r.read(b); if (n > 0) md.update(b, 0, n); }
+            StringBuilder sb = new StringBuilder(); for (byte x : md.digest()) sb.append(String.format("%02x", x)); return sb.toString();
+        } catch (Exception e) { return null; }
+    }
+
     /* ---------- small things ---------- */
     static JSONObject mkdir(File d) throws Exception { JSONObject o = new JSONObject(); o.put("ok", d.isDirectory() || d.mkdirs()); o.put("path", d.getAbsolutePath()); return o; }
     static JSONObject rename(File f, String name) throws Exception {

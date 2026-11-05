@@ -583,6 +583,9 @@ public class KtPlugin extends Plugin {
         try { File f = fileOf(call.getString("path", "")); Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f); Intent i = android.app.WallpaperManager.getInstance(getContext()).getCropAndSetWallpaperIntent(u); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION); getContext().startActivity(i); call.resolve(); }
         catch (Exception e) { try { File f = fileOf(call.getString("path", "")); android.app.WallpaperManager.getInstance(getContext()).setStream(new java.io.FileInputStream(f)); call.resolve(); } catch (Exception e2) { call.reject(String.valueOf(e2.getMessage())); } }
     }
+    private final java.util.concurrent.atomic.AtomicBoolean analyzeStop = new java.util.concurrent.atomic.AtomicBoolean();
+    @PluginMethod public void filesAnalyze(PluginCall call) { final File root = fileOf(call.getString("path", "")); analyzeStop.set(false); new Thread(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.analyze(root, analyzeStop, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }, "kt-analyze").start(); }
+    @PluginMethod public void filesAnalyzeStop(PluginCall call) { analyzeStop.set(true); call.resolve(); }
     @PluginMethod public void filesCancel(PluginCall call) { KtFiles.cancel(call.getString("id", "")); call.resolve(); }
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */

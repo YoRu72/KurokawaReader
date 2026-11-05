@@ -190,3 +190,47 @@ export async function imageViewer(items: Entry[], index: number, urlOf: (p: stri
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const e = items[i]; sh.close(); onDelete(e); } }, icon('trash'), t('delete')));
   await show();
 }
+
+/* ---------- the storage analyzer ---------- */
+type Report = { total: number; files: number; largest: Entry[]; old: Entry[]; screenshots: Entry[]; screenshotsSize: number; screenshotsCount: number; temp: Entry[]; tempSize: number; tempCount: number; apks: Entry[]; duplicates: { size: number; files: Entry[] }[]; duplicatesSize: number; kinds: { kind: string; size: number; count: number }[]; folders: { path: string; size: number; count: number }[] };
+type APlug = Plug & { filesAnalyze(o: { path: string }): Promise<Report>; filesAnalyzeStop(): Promise<void>; addListener(ev: string, fn: (d: { id: string; status: string; files?: number; name?: string }) => void): Promise<{ remove(): void }> };
+const KIND_LABEL: Record<string, string> = { image: 'filesKindImages', audio: 'filesKindMusic', video: 'filesKindVideo', doc: 'filesKindDocs', archive: 'filesKindArchives', apk: 'filesKindApps', other: 'filesKindOther' };
+export async function analyzerSheet(root: { name: string; path: string; total?: number; free?: number }, open: (e: Entry) => void, goTo: (dir: string) => void, del: (paths: string[]) => void): Promise<void> {
+  const pl = plug() as APlug; const sh = openSheet(t('filesAnalyzer'), t('close')); sh.el.classList.add('files-analyzer');
+  const status = h('p', { class: 'hint', dir: 'auto' }, t('filesAnalyzing', { name: root.name })); const body = h('div'); sh.body.append(status, body);
+  const sub = await pl.addListener('files', (d) => { if (d.id === 'analyze' && d.status === 'progress') status.textContent = `${t('filesAnalyzing', { name: root.name })} · ${countItems(d.files ?? 0)} · ${d.name ?? ''}`; });
+  sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void pl.filesAnalyzeStop() }, t('cancel')));
+  let rep: Report;
+  try { rep = await pl.filesAnalyze({ path: root.path }); } catch (err) { status.textContent = String((err as Error).message ?? err); sub.remove(); return; }
+  sub.remove(); sh.actions.replaceChildren();
+  const used = root.total && root.free !== undefined ? root.total - root.free : rep.total;
+  status.replaceChildren(h('b', null, `${formatBytes(rep.total)} · ${countItems(rep.files)}`), h('br'), h('small', { class: 'src' }, root.total ? t('filesFreeOf', { free: formatBytes(root.free ?? 0), total: formatBytes(root.total) }) + ` · ${t('filesUsed')} ${formatBytes(used)}` : ''));
+  // the tabs
+  const tabs: [string, string, () => HTMLElement][] = [
+    ['kinds', t('filesByKind'), () => h('div', { class: 'files-kinds-bars' }, ...rep.kinds.sort((a, b) => b.size - a.size).map((k) => h('div', { class: 'files-kind-row' }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('span', null, t((KIND_LABEL[k.kind] ?? 'filesKindOther') as 'filesKindOther')), h('small', { class: 'src' }, `${formatBytes(k.size)} · ${countItems(k.count)}`)), h('div', { class: 'files-usage-bar' }, h('i', { style: { width: `${rep.total ? Math.round((k.size / rep.total) * 100) : 0}%` } })))))],
+    ['folders', t('filesBiggestFolders'), () => h('div', { class: 'dest-list' }, ...rep.folders.map((f) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); goTo(f.path); } }, icon('folder'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, baseOf(f.path) || f.path), h('small', { class: 'src', dir: 'ltr' }, f.path)), h('small', { class: 'src' }, `${formatBytes(f.size)} · ${countItems(f.count)}`))))],
+    ['largest', t('filesLargestFiles'), () => fileList(rep.largest)],
+    ['dups', `${t('filesDuplicates')} · ${formatBytes(rep.duplicatesSize)}`, () => h('div', null, h('p', { class: 'hint' }, t('filesDuplicatesHint')), ...rep.duplicates.map((g) => h('div', { class: 'files-dup-group' }, h('small', { class: 'src' }, `${formatBytes(g.size)} × ${localDigits(g.files.length)}`), fileList(g.files, g.files.slice(1).map((x) => x.path)))))],
+    ['old', t('filesOldFiles'), () => fileList(rep.old)],
+    ['shots', `${t('filesScreenshots')} · ${formatBytes(rep.screenshotsSize)}`, () => fileList(rep.screenshots)],
+    ['temp', `${t('filesLeftovers')} · ${formatBytes(rep.tempSize)}`, () => fileList(rep.temp)],
+    ['apks', t('filesKindApps'), () => fileList(rep.apks)],
+  ];
+  function fileList(items: Entry[], preselect: string[] = []): HTMLElement {
+    const picked = new Set(preselect); const bar = h('div', { class: 'row', style: { gap: '8px', alignItems: 'center', margin: '6px 0' } });
+    const drawBar = () => bar.replaceChildren(h('button', { type: 'button', class: 'chip small', onclick: () => { for (const e of items) picked.add(e.path); redraw(); } }, t('filesSelectAll')), h('button', { type: 'button', class: 'chip small', onclick: () => { picked.clear(); redraw(); } }, t('filesNone')), h('span', { class: 'grow' }), h('button', { type: 'button', class: 'btn small primary danger', disabled: !picked.size, onclick: () => { sh.close(); del([...picked]); } }, icon('trash'), `${t('delete')} (${localDigits(picked.size)})`));
+    const list = h('div', { class: 'dest-list' });
+    const redraw = () => { drawBar(); list.replaceChildren(...items.map((e) => h('label', { class: 'dest-row' + (picked.has(e.path) ? ' on' : '') }, h('input', { type: 'checkbox', checked: picked.has(e.path), onchange: (ev: Event) => { if ((ev.target as HTMLInputElement).checked) picked.add(e.path); else picked.delete(e.path); redraw(); } }), h('span', { class: 'grow files-main', onclick: (ev: Event) => { ev.preventDefault(); sh.close(); open(e); } }, h('span', { class: 'name', dir: 'auto' }, e.name), h('small', { class: 'src', dir: 'ltr' }, `${formatBytes(e.size)} · ${formatDate(e.mtime)} · ${e.path.slice(0, e.path.length - e.name.length - 1)}`))))); if (!items.length) list.append(h('p', { class: 'hint' }, t('filesNothingHere'))); };
+    redraw(); return h('div', null, bar, list);
+  }
+  const chips = h('div', { class: 'chip-row files-an-tabs' }); const pane = h('div');
+  let cur = 'kinds';
+  const drawTabs = () => { chips.replaceChildren(...tabs.map(([k, label]) => h('button', { type: 'button', class: 'chip small' + (cur === k ? ' on' : ''), onclick: () => { cur = k; drawTabs(); pane.replaceChildren(tabs.find(([x]) => x === k)![2]()); } }, label))); };
+  drawTabs(); pane.replaceChildren(tabs[0][2]()); body.append(chips, pane);
+}
+
+/** An archive's facts for the properties sheet: the format, how many files, the size inside, how far squeezed. */
+export async function archiveProperties(rows: HTMLElement, e: Entry, line: (k: string, v: string) => HTMLElement): Promise<void> {
+  if (e.dir || !/\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|001)$/i.test(e.name)) return;
+  try { const { listArchive } = await import('../archives'); const info = await listArchive(e.path); const files = info.entries.filter((x) => !x.dir).length; const ratio = info.total > 0 && e.size > 0 ? Math.round((e.size / info.total) * 100) : 0; rows.append(line(t('filesArchive'), [info.format.toUpperCase(), countItems(files), info.total > 0 ? `${formatBytes(info.total)} ${t('filesInside')}` : '', ratio ? t('packedTo', { pct: localDigits(ratio) }) : '', info.encrypted ? t('encrypted') : ''].filter(Boolean).join(' · '))); } catch { /* not readable */ }
+}
