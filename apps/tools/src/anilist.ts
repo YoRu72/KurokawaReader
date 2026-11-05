@@ -25,7 +25,7 @@ export interface Anime {
   format?: string; status?: string; episodes?: number | null; duration?: number | null;
   season?: Season; seasonYear?: number; startDate?: AlDate; endDate?: AlDate;
   genres: string[]; score?: number; popularity?: number; description?: string; isAdult: boolean; url: string;
-  studio?: string; trailer?: { id: string; site: string; thumbnail?: string };
+  studio?: string; studioId?: number; trailer?: { id: string; site: string; thumbnail?: string };
   nextAiring?: Airing; schedule?: Airing[];
   streaming?: { title: string; url: string; site: string; thumbnail?: string }[];
   links?: { site: string; url: string; type?: string }[];
@@ -76,7 +76,7 @@ export async function link(tk: string): Promise<AlUser> {
 /* ---------- media ---------- */
 const strip = (html?: string | null) => (html ?? '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
 type RawEntry = { id: number; status: AlStatus; progress: number; score: number; startedAt?: AlDate; completedAt?: AlDate } | null;
-type Raw = { id: number; idMal?: number; title: { romaji?: string; english?: string; native?: string; userPreferred?: string }; synonyms?: string[]; coverImage?: { large?: string; extraLarge?: string; color?: string }; bannerImage?: string; format?: string; status?: string; episodes?: number | null; duration?: number | null; season?: Season; seasonYear?: number; startDate?: AlDate; endDate?: AlDate; genres?: string[]; averageScore?: number; popularity?: number; description?: string; isAdult?: boolean; siteUrl: string; studios?: { nodes: { name: string }[] }; trailer?: { id: string; site: string; thumbnail?: string } | null; nextAiringEpisode?: Airing | null; airingSchedule?: { nodes: Airing[] }; streamingEpisodes?: { title: string; url: string; site: string; thumbnail?: string }[]; externalLinks?: { site: string; url: string; type?: string }[]; relations?: { edges: { relationType: string; node: { id: number; title: { userPreferred?: string; romaji?: string }; format?: string } }[] }; mediaListEntry?: RawEntry };
+type Raw = { id: number; idMal?: number; title: { romaji?: string; english?: string; native?: string; userPreferred?: string }; synonyms?: string[]; coverImage?: { large?: string; extraLarge?: string; color?: string }; bannerImage?: string; format?: string; status?: string; episodes?: number | null; duration?: number | null; season?: Season; seasonYear?: number; startDate?: AlDate; endDate?: AlDate; genres?: string[]; averageScore?: number; popularity?: number; description?: string; isAdult?: boolean; siteUrl: string; studios?: { nodes: { id?: number; name: string }[] }; trailer?: { id: string; site: string; thumbnail?: string } | null; nextAiringEpisode?: Airing | null; airingSchedule?: { nodes: Airing[] }; streamingEpisodes?: { title: string; url: string; site: string; thumbnail?: string }[]; externalLinks?: { site: string; url: string; type?: string }[]; relations?: { edges: { relationType: string; node: { id: number; title: { userPreferred?: string; romaji?: string }; format?: string } }[] }; mediaListEntry?: RawEntry };
 const entryOf = (e?: RawEntry): AlEntry | undefined => (e ? { id: e.id, status: e.status, progress: e.progress, score: e.score, startedAt: e.startedAt, completedAt: e.completedAt } : undefined);
 /** The title shown: the user's AniList preference when linked, else English, then romaji. */
 const pick = (m: Raw) => m.title.userPreferred || m.title.english || m.title.romaji || m.title.native || '';
@@ -85,11 +85,11 @@ const toAnime = (m: Raw): Anime => ({
   cover: m.coverImage?.extraLarge ?? m.coverImage?.large, banner: m.bannerImage ?? undefined, color: m.coverImage?.color ?? undefined,
   format: m.format, status: m.status, episodes: m.episodes, duration: m.duration, season: m.season, seasonYear: m.seasonYear, startDate: m.startDate, endDate: m.endDate,
   genres: m.genres ?? [], score: m.averageScore, popularity: m.popularity, description: strip(m.description), isAdult: !!m.isAdult, url: m.siteUrl,
-  studio: m.studios?.nodes?.[0]?.name, trailer: m.trailer ?? undefined, nextAiring: m.nextAiringEpisode ?? undefined, schedule: m.airingSchedule?.nodes,
+  studio: m.studios?.nodes?.[0]?.name, studioId: m.studios?.nodes?.[0]?.id, trailer: m.trailer ?? undefined, nextAiring: m.nextAiringEpisode ?? undefined, schedule: m.airingSchedule?.nodes,
   streaming: m.streamingEpisodes, links: m.externalLinks, relations: m.relations?.edges.map((e) => ({ relation: e.relationType, id: e.node.id, title: e.node.title.userPreferred || e.node.title.romaji || '', format: e.node.format })), entry: entryOf(m.mediaListEntry),
 });
 const CARD = 'id idMal title { romaji english native userPreferred } synonyms coverImage { large extraLarge color } format status episodes season seasonYear startDate { year month day } genres averageScore popularity isAdult siteUrl nextAiringEpisode { airingAt episode } mediaListEntry { id status progress score startedAt { year month day } completedAt { year month day } }';
-const FULL = `${CARD} duration endDate { year month day } bannerImage description(asHtml: false) studios(isMain: true) { nodes { name } } trailer { id site thumbnail } airingSchedule(perPage: 50) { nodes { airingAt episode } } streamingEpisodes { title url site thumbnail } externalLinks { site url type } relations { edges { relationType(version: 2) node { id title { userPreferred romaji } format } } }`;
+const FULL = `${CARD} duration endDate { year month day } bannerImage description(asHtml: false) studios(isMain: true) { nodes { id name } } trailer { id site thumbnail } airingSchedule(perPage: 50) { nodes { airingAt episode } } streamingEpisodes { title url site thumbnail } externalLinks { site url type } relations { edges { relationType(version: 2) node { id title { userPreferred romaji } format } } }`;
 
 export async function search(q: string, opts: { adult?: boolean; page?: number } = {}): Promise<Anime[]> {
   const d = await gql<{ Page: { media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean) { Page(page: $page, perPage: 20) { media(search: $q, type: ANIME, sort: SEARCH_MATCH, isAdult: $adult) { ${CARD} } } }`, { q, page: opts.page ?? 1, adult: opts.adult ? undefined : false });
@@ -98,7 +98,7 @@ export async function search(q: string, opts: { adult?: boolean; page?: number }
 /** AniList's search with its filters (Hayase's and Senpwai's): words, genres, tags (all must match; some can be
  *  left out), format, status, season and year, sort — any of them alone browses by it. Answers are kept a few
  *  minutes, so going back and forth costs no request. */
-export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean }
+export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean; /** A decade or span of years (first and last year). */ from?: number; to?: number }
 const searchCache = new Map<string, { at: number; v: { media: Anime[]; hasNext: boolean; used?: string } }>();
 /** Other ways to put what was typed, for when it finds nothing: a release's file name read for its title; «season 2»,
  *  «2nd season», «part 2», «S2», an episode and a year dropped; punctuation made spaces; then the first words only. */
@@ -114,8 +114,9 @@ export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Ani
   const v: Record<string, unknown> = { page, adult: f.adult ? undefined : false, sort: [f.sort || (f.q ? 'SEARCH_MATCH' : 'POPULARITY_DESC')] };
   if (f.q?.trim()) v.q = f.q.trim(); if (f.genres?.length) v.genres = f.genres; if (f.tags?.length) v.tags = f.tags; if (f.notTags?.length) v.notTags = f.notTags;
   if (f.formats?.length) v.formats = f.formats; if (f.status) v.status = f.status; if (f.season) v.season = f.season; if (f.year) v.year = f.year; if (f.minScore) v.minScore = f.minScore; if (f.onList !== undefined) v.onList = f.onList;
+  if (f.from) v.from = f.from * 10000; if (f.to) v.to = (f.to + 1) * 10000;
   const key = JSON.stringify(v); const had = searchCache.get(key); if (had && Date.now() - had.at < 5 * 60000) return had.v;
-  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList) { ${CARD} } } }`, vars);
+  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars);
   let d = await ask(v); let used: string | undefined;
   // (Nothing for the words as typed — a file's name, «Season 2», a subtitle, a typo's last word —: the same search with
   // the words cleaned up, then shortened; the results say which words found them.)
@@ -234,3 +235,65 @@ export async function idsOf(anilistId: number): Promise<IdMap> {
   idCache.set(anilistId, out); return out;
 }
 const num = (v: unknown): number | undefined => (typeof v === 'number' && v > 0 ? v : undefined);
+
+/* ---------- Discover ---------- */
+export interface DiscoverData { trending: Anime[]; airing: (Anime & { sequel?: boolean })[]; season: Anime[]; top: Anime[]; movies: Anime[] }
+let discoverCache: { at: number; key: string; v: DiscoverData } | null = null;
+/** The Discover page's rows in one request: trending (with banners for the hero), airing now, this season, the best
+ *  rated, the popular films. Kept ten minutes. */
+export async function discover(adult = false): Promise<DiscoverData> {
+  const { season, year } = seasonOf(); const key = `${season}${year}${adult}`;
+  if (discoverCache && discoverCache.key === key && Date.now() - discoverCache.at < 10 * 60000) return discoverCache.v;
+  const A = adult ? '' : ', isAdult: false';
+  const d = await gql<{ trending: { media: Raw[] }; airing: { media: (Raw & { prequels?: { edges: { relationType: string }[] } })[] }; season: { media: Raw[] }; top: { media: Raw[] }; movies: { media: Raw[] } }>(`query ($season: MediaSeason, $year: Int) {
+    trending: Page(perPage: 20) { media(type: ANIME, sort: [TRENDING_DESC]${A}) { ${CARD} bannerImage description(asHtml: false) duration studios(isMain: true) { nodes { id name } } } }
+    airing: Page(perPage: 24) { media(type: ANIME, status: RELEASING, sort: [POPULARITY_DESC]${A}) { ${CARD} prequels: relations { edges { relationType(version: 2) } } } }
+    season: Page(perPage: 24) { media(type: ANIME, season: $season, seasonYear: $year, sort: [POPULARITY_DESC]${A}) { ${CARD} } }
+    top: Page(perPage: 20) { media(type: ANIME, sort: [SCORE_DESC], popularity_greater: 20000${A}) { ${CARD} } }
+    movies: Page(perPage: 20) { media(type: ANIME, format: MOVIE, sort: [POPULARITY_DESC]${A}) { ${CARD} } } }`, { season, year });
+  const v: DiscoverData = {
+    trending: d.trending.media.map(toAnime), season: d.season.media.map(toAnime), top: d.top.media.map(toAnime), movies: d.movies.media.map(toAnime),
+    airing: d.airing.media.map((m) => ({ ...toAnime(m), sequel: !!m.prequels?.edges.some((e) => e.relationType === 'PREQUEL') })),
+  };
+  discoverCache = { at: Date.now(), key, v }; return v;
+}
+export interface Art { image?: string; color?: string }
+const ART_KEY = 'kt.anime.art';
+/** A picture for each tile (the best known show of a genre, a season, a decade): asked for in one request, kept three days. */
+export async function tileArt(want: { key: string; filter: string }[]): Promise<Record<string, Art>> {
+  let kept: { at: number; v: Record<string, Art> } = { at: 0, v: {} }; try { kept = JSON.parse(localStorage.getItem(ART_KEY) ?? 'null') ?? kept; } catch { /* first time */ }
+  const fresh = Date.now() - kept.at < 3 * 86400e3; const missing = want.filter((w) => !fresh || !(w.key in kept.v)); if (!missing.length) return kept.v;
+  const alias = (k: string) => 'a' + k.replace(/[^a-zA-Z0-9]/g, '_');
+  const q = `query { ${missing.map((w) => `${alias(w.key)}: Page(perPage: 1) { media(type: ANIME, sort: [POPULARITY_DESC], isAdult: false, ${w.filter}) { bannerImage coverImage { extraLarge color } } }`).join(' ')} }`;
+  const d = await gql<Record<string, { media: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] }>>(q, {}, false);
+  const v = fresh ? { ...kept.v } : {};
+  for (const w of missing) { const m = d[alias(w.key)]?.media?.[0]; v[w.key] = { image: m?.bannerImage ?? m?.coverImage?.extraLarge, color: m?.coverImage?.color }; }
+  try { localStorage.setItem(ART_KEY, JSON.stringify({ at: fresh ? kept.at : Date.now(), v })); } catch { /* full */ }
+  return v;
+}
+/* ---------- studios ---------- */
+export interface Studio { id: number; name: string; animation: boolean; favourites?: number; image?: string; color?: string; count?: number }
+type RawStudio = { id: number; name: string; isAnimationStudio: boolean; favourites?: number; media?: { pageInfo?: { total?: number }; nodes: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] } };
+const toStudio = (s: RawStudio): Studio => ({ id: s.id, name: s.name, animation: s.isAnimationStudio, favourites: s.favourites, image: s.media?.nodes?.[0]?.bannerImage ?? s.media?.nodes?.[0]?.coverImage?.extraLarge, color: s.media?.nodes?.[0]?.coverImage?.color, count: s.media?.pageInfo?.total });
+const STUDIO_FIELDS = 'id name isAnimationStudio favourites media(sort: [POPULARITY_DESC], isMain: true, perPage: 1) { nodes { bannerImage coverImage { extraLarge color } } }';
+/** Studios by name, the closest first (the animation studios before the producers). */
+export async function searchStudios(q: string): Promise<Studio[]> {
+  const d = await gql<{ Page: { studios: RawStudio[] } }>(`query ($q: String) { Page(perPage: 12) { studios(search: $q, sort: [SEARCH_MATCH]) { ${STUDIO_FIELDS} } } }`, { q }, false);
+  const all = d.Page.studios.map(toStudio); return [...all.filter((s) => s.animation), ...all.filter((s) => !s.animation)];
+}
+const FAMOUS = ['MAPPA', 'ufotable', 'Kyoto Animation', 'Madhouse', 'Production I.G', 'Bones', 'Wit Studio', 'A-1 Pictures', 'CloverWorks', 'Trigger', 'Shaft', 'Pierrot', 'Toei Animation', 'Sunrise', 'David Production', 'Science SARU', 'P.A. Works', 'J.C.Staff', 'Studio Ghibli', 'Kinema Citrus'];
+const STUDIOS_KEY = 'kt.anime.studios';
+/** The best known studios, each with its id and its best known show's picture (asked once, kept a week). */
+export async function famousStudios(): Promise<Studio[]> {
+  try { const k = JSON.parse(localStorage.getItem(STUDIOS_KEY) ?? 'null') as { at: number; v: Studio[] } | null; if (k && Date.now() - k.at < 7 * 86400e3 && k.v.length) return k.v; } catch { /* first time */ }
+  const d = await gql<Record<string, RawStudio | null>>(`query { ${FAMOUS.map((n, i) => `s${i}: Studio(search: ${JSON.stringify(n)}) { ${STUDIO_FIELDS} }`).join(' ')} }`, {}, false);
+  const seen = new Set<number>(); const v: Studio[] = [];
+  FAMOUS.forEach((_, i) => { const s = d[`s${i}`]; if (s && !seen.has(s.id)) { seen.add(s.id); v.push(toStudio(s)); } });
+  try { localStorage.setItem(STUDIOS_KEY, JSON.stringify({ at: Date.now(), v })); } catch { /* full */ }
+  return v;
+}
+/** A studio's works: the page asked for, in the order chosen, its own productions only or with the ones it helped on. */
+export async function studioWorks(id: number, o: { page?: number; sort?: string; mainOnly?: boolean } = {}): Promise<{ studio: Studio; media: Anime[]; hasNext: boolean; total?: number }> {
+  const d = await gql<{ Studio: RawStudio & { works: { pageInfo: { hasNextPage: boolean; total?: number }; nodes: Raw[] } } }>(`query ($id: Int, $page: Int, $sort: [MediaSort], $main: Boolean) { Studio(id: $id) { ${STUDIO_FIELDS} works: media(page: $page, perPage: 30, sort: $sort, isMain: $main) { pageInfo { hasNextPage total } nodes { ${CARD} } } } }`, { id, page: o.page ?? 1, sort: [o.sort ?? 'POPULARITY_DESC'], main: o.mainOnly ? true : undefined }, true);
+  const s = d.Studio; return { studio: toStudio(s), media: s.works.nodes.filter((m) => m.siteUrl).map(toAnime), hasNext: s.works.pageInfo.hasNextPage, total: s.works.pageInfo.total };
+}
