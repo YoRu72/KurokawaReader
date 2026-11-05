@@ -19,6 +19,8 @@ export interface Settings {
   maxActive: number;
   /** Connections over every file download at once (the phone's engine). */
   connBudget?: number;
+  /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */
+  rules?: import('./downloads/rules').Rule[];
   limits: Limits;
   seedAfterDone: boolean;
   listenPort: number;

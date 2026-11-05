@@ -37,6 +37,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
           x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null)));
     const acts = h('div', { class: 'task-detail-actions' });
     if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id) }, icon('play'), t('resume')));
+    if (x.state !== 'done') acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/rules').then((m) => m.clockSheet(x)) }, icon('clock'), t('clockTitle')));
     else if (x.state !== 'done' && eng.can.pause) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void eng.pause(x.id) }, icon('pause'), t('pause')));
     // What the main file is decides the first button: a video or a sound plays in the app, an app installs, an
     // archive opens inside, anything else goes to the system's viewer; «Open with…» offers every app; «Show in

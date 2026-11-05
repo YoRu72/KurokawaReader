@@ -233,6 +233,8 @@ let schedTimer = 0;
 export function startScheduler(): void {
   window.clearInterval(schedTimer);
   const tick = async () => {
+    // (Each download's own clock first — a start or a stop time of its own —, then the global window.)
+    try { const { tickClocks } = await import('./rules'); await tickClocks(); } catch { /* none */ }
     if (!getSettings().schedule.enabled) return; const eng = getEngine(); let tasks; try { tasks = await eng.list(); } catch { return; }
     const open = inWindow();
     for (const x of tasks) { const later = (x.meta as { later?: boolean } | undefined)?.later; if (!later || x.state === 'done') continue; try { if (open && x.state === 'paused') await eng.resume(x.id); else if (!open && (x.state === 'downloading' || x.state === 'queued' || x.state === 'metadata')) await eng.pause(x.id); } catch { /* the next */ } }

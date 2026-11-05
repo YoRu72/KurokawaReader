@@ -150,7 +150,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     try {
       await video.busy();
       const picks = video.picks();
-      if (picks) { for (const p of picks) await eng.add({ source: { url: p.url }, dir: videoDir, paused: paused.checked, video: p.video }); toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
+      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     try {
       for (const src of srcs) {
@@ -162,7 +162,10 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         const wait = later.checked && !(await import('../downloads/prism')).inWindow();
         const fullName = srcs.length === 1 && name.value.trim() ? `${hidden.checked && !name.value.trim().startsWith('.') ? '.' : ''}${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` : undefined;
         const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true; if (!retry.checked) meta.noRetry = true; if (hidden.checked) meta.hidden = true;
-        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (catDir ?? getSettings().downloadDir ?? undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait, connections: Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
+        // (A rule that fits the link: its folder, its «later» and «Wi‑Fi only», its connections — unless the reader chose otherwise here.)
+        const { match, kindOf } = await import('../downloads/rules'); const rule = match(src, kindOf(src, !!src.url && isVideoHost(src.url)));
+        if (rule?.then.later) meta.later = true; if (rule?.then.wifiOnly) meta.wifiOnly = true;
+        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait || (!!rule?.then.later && !(await import('../downloads/prism')).inWindow()), connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
       }
       sh.close();
