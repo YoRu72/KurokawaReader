@@ -286,3 +286,38 @@ export async function toggleNomedia(dir: string): Promise<boolean> {
   try { await pl.filesHead({ path, max: 1 }); await pl.filesJob({ op: 'delete', paths: [path], conflict: 'replace' }); return false; } catch { /* not there */ }
   await pl.filesWrite({ path, text: '' }); return true;
 }
+
+/* ---------- the Files settings: how the page looks and behaves, with a backup of it all ---------- */
+export async function filesSettingsSheet(at: string, apply: () => void): Promise<void> {
+  const { prefs, savePrefs } = await import('./files'); const { getSettings, updateSettings } = await import('../settings'); const { navigate } = await import('../router');
+  const sh = openSheet(t('filesSettings'), t('close'));
+  const row = (label: string, el: HTMLElement, hint?: string) => h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), el);
+  const tog = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => row(label, h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => { set((e.target as HTMLInputElement).checked); savePrefs(); apply(); } }), hint);
+  const sec = (title: string) => h('p', { class: 'files-sec' }, title);
+  const viewBtn = pickButton(t('filesDefaultView'), [['grid', t('filesGrid')], ['list', t('filesListView')]], prefs.view, (v) => { prefs.view = v as 'grid' | 'list'; savePrefs(); apply(); }, t('close'));
+  const sortBtn = pickButton(t('sortBy'), [['name', t('sortName')], ['date', t('sortDate')], ['size', t('sortSize')], ['type', t('sortType')]], prefs.sort, (v) => { prefs.sort = v as typeof prefs.sort; savePrefs(); apply(); }, t('close'));
+  const densBtn = pickButton(t('filesDensity'), [['comfortable', t('filesComfortable')], ['compact', t('filesCompact')]], prefs.density ?? 'comfortable', (v) => { prefs.density = v as 'comfortable' | 'compact'; savePrefs(); apply(); }, t('close'));
+  const s = getSettings();
+  const toneBtn = pickButton(t('filesTheme'), [['auto', t('filesThemeAuto')], ['light', t('filesThemeLight')], ['dark', t('filesThemeDark')], ['black', t('filesThemeBlack')]], s.uiMode === 'light' ? 'light' : s.uiMode === 'dark' ? (s.darkTone === 'black' ? 'black' : 'dark') : 'auto', (v) => { updateSettings({ uiMode: v === 'auto' ? 'auto' : v === 'light' ? 'light' : 'dark', darkTone: v === 'black' ? 'black' : s.darkTone === 'black' ? 'default' : s.darkTone } as never); }, t('close'));
+  const home = h('div', { class: 'row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesHomeFolder')), h('small', { class: 'src', dir: 'ltr' }, prefs.home || t('filesHomeNone'))), h('button', { type: 'button', class: 'btn text small', onclick: () => { prefs.home = at; savePrefs(); (home.querySelector('small') as HTMLElement).textContent = at; toast(t('filesHomeSet')); } }, t('filesUseThis')), h('button', { type: 'button', class: 'btn text small', onclick: () => { prefs.home = undefined; savePrefs(); (home.querySelector('small') as HTMLElement).textContent = t('filesHomeNone'); } }, t('reset')));
+  sh.body.append(
+    sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, toneBtn),
+    tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
+    sec(t('filesBehaviour')), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesBackUp'), !!prefs.backUp, (v) => { prefs.backUp = v; }, t('filesBackUpHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
+    sec(t('filesBackup')), h('p', { class: 'hint' }, t('filesBackupHint')));
+  sh.actions.append(
+    h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
+      const data = { kind: 'kurokawa-files-settings', v: 1, prefs, bookmarks: JSON.parse(localStorage.getItem('kt.files.bookmarks') ?? '[]') as unknown, hidden: hiddenPaths(), trash: trashOn(), charset: localStorage.getItem('kt.archive.charset') ?? 'auto' };
+      const text = JSON.stringify(data, null, 2); const pl = plug() as unknown as { filesWrite?(o: { path: string; text: string }): Promise<unknown>; shareFile?(o: { path: string; title: string }): Promise<void> };
+      if (pl.filesWrite) { const path = `${at}/kurokawa-files-settings.json`; try { await pl.filesWrite({ path, text }); toast(t('filesBackupSaved', { name: 'kurokawa-files-settings.json' })); apply(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
+      else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'kurokawa-files-settings.json'; a.click(); }
+    } }, icon('download'), t('filesBackupSave')),
+    h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
+      const { pickFiles } = await import('../archives'); const ps = await pickFiles(false).catch(() => [] as string[]); if (!ps.length) return;
+      try { const r = await plug().filesHead({ path: ps[0], max: 2_000_000 }); const d = JSON.parse(r.text) as { kind?: string; prefs?: Record<string, unknown>; bookmarks?: unknown; hidden?: string[]; trash?: boolean; charset?: string };
+        if (d.kind !== 'kurokawa-files-settings') throw new Error(t('filesBackupNotOurs'));
+        Object.assign(prefs, d.prefs ?? {}); savePrefs(); if (Array.isArray(d.bookmarks)) localStorage.setItem('kt.files.bookmarks', JSON.stringify(d.bookmarks)); if (Array.isArray(d.hidden)) localStorage.setItem('kt.files.hiddenPaths', JSON.stringify(d.hidden)); if (typeof d.trash === 'boolean') setTrashOn(d.trash); if (d.charset) localStorage.setItem('kt.archive.charset', d.charset);
+        toast(t('filesBackupRestored')); sh.close(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true);
+      } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+    } }, icon('upload'), t('filesBackupRestore')));
+}

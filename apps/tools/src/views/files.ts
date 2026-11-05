@@ -36,10 +36,11 @@ const desk = (): Desk | null => (window.kurokawaTools as unknown as Desk | undef
 export const canBrowseFiles = (): boolean => !!(plug() || desk()?.listDir);
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
-type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string };
+export type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string;
+  /** The folder the page opens on (empty: the last one when `rememberLast`, else the first storage). */ home?: string; rememberLast?: boolean; counts?: boolean; thumbs?: boolean; density?: 'comfortable' | 'compact'; confirmDelete?: boolean; keepOn?: boolean; eink?: boolean; backUp?: boolean };
 const PREFS = 'kt.files.prefs';
-const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
-const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
+export const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
+export const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
 let clipboard: { op: 'copy' | 'move'; paths: string[] } | null = null;
 
 import { isRemote, isVirtual, parseRemote, connections, connectionSheet, connectionMenu, scanSheet, rplug, vplug, vfs, vfsRoots, kindIcon, describe, canShareFolder, folderShareSheet, type Conn, type VRoots } from './filesRemote';
@@ -53,7 +54,7 @@ const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() ?? 
 /* ---------- the listing ---------- */
 async function listDir(path: string): Promise<{ exists: boolean; entries: Entry[]; truncated?: boolean }> {
   if (isVirtual(path)) { const r = await vfs.list(path); return { exists: r.exists, entries: r.entries.filter((e) => prefs.hidden || !e.name.startsWith('.')) }; }
-  const p = plug(); if (p) return p.filesList({ path, counts: true, hidden: prefs.hidden });
+  const p = plug(); if (p) return p.filesList({ path, counts: prefs.counts !== false, hidden: prefs.hidden });
   const d = desk(); if (d?.listDir) { const r = await d.listDir(path); return { exists: true, entries: (r.entries ?? []).filter((e) => prefs.hidden || !e.name.startsWith('.')).map((e) => ({ ...e, ext: e.dir ? undefined : (e.name.split('.').pop() ?? '').toLowerCase() })) }; }
   return { exists: false, entries: [] };
 }
@@ -108,7 +109,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       iconButton('more', t('more'), () => moreSheet()))),
     search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
   body.append(listEl, status, jobsEl);
-  let at = route.p ?? (route.c ? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? ''); let remotes: Conn[] = [];
+  let at = route.p ?? (route.c ? '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? '')); let remotes: Conn[] = [];
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
   const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const el = e.target as HTMLElement; io.unobserve(el); const p = el.dataset.thumb; if (p) void thumbInto(el, p); } }, { rootMargin: '300px 0px' });
@@ -150,7 +151,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
   const draw = () => {
-    const list = shown(); listEl.className = `files-list ${prefs.view}`;
+    const list = shown(); listEl.className = `files-list ${prefs.view}${prefs.density === 'compact' ? ' compact' : ''}`; root.classList.toggle('eink', !!prefs.eink);
     if (!list.length) { subEl.textContent = ''; listEl.replaceChildren(h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
     const frag = document.createDocumentFragment(); let lastDay = '';
     const byDay = !!collection || prefs.sort === 'date';
@@ -161,13 +162,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
-    const ic = h('span', { class: 'files-ic' + (thumbable && !isVirtual(e.path) ? ' thumb' : ''), 'data-thumb': thumbable && plug() && !isVirtual(e.path) ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
+    const ic = h('span', { class: 'files-ic' + (thumbable && !isVirtual(e.path) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': thumbable && plug() && !isVirtual(e.path) && prefs.thumbs !== false ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
     const meta = e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'auto' }, e.name), h('small', { class: 'src' }, meta)),
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e); }));
     onLongPress(el, () => { if (!selecting) { selecting = true; } toggle(e); });
-    if (thumbable && plug() && !isVirtual(e.path)) io.observe(ic);
+    if (thumbable && plug() && !isVirtual(e.path) && prefs.thumbs !== false) io.observe(ic);
     if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;
   };
@@ -323,6 +324,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       act('refresh', t('refresh'), () => void load()),
       ...(plug() ? [act('trash', t('filesTrashSetting'), () => void import('./filesMore').then((m) => { m.setTrashOn(!m.trashOn()); toast(m.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
       ...(window.matchMedia('(min-width: 840px)').matches ? [act('columns', prefs.dual ? t('filesOnePane') : t('filesTwoPanes'), () => { prefs.dual = !prefs.dual; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true); })] : []),
+      act('settings', t('filesSettings'), () => void import('./filesMore').then((m) => m.filesSettingsSheet(at, () => { void loadRoots(); void load(); }))),
       act('eyeOff', t('filesHiddenFolders'), () => void import('./filesMore').then((m) => m.hiddenSheet((p) => go(p), () => void load()))),
       ...(canShareFolder() && !isVirtual(at) ? [act('wifi', t('fshareTitle'), () => void folderShareSheet(at, baseOf(at) || at))] : []),
       ...(plug() && !isVirtual(at) ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
@@ -359,7 +361,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     } catch (err) { sizeLine.lastElementChild!.textContent = String((err as Error).message ?? err); }
   };
   const confirmDelete = async (paths: string[]) => {
-    const pl = plug(); if (!pl) return; const sh = openSheet(t('delete'), t('cancel'));
+    const pl = plug(); if (!pl) return;
+    if (prefs.confirmDelete === false) { const m0 = await import('./filesMore'); if (m0.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p))) { leaveSel(); try { const r = await m0.toTrash(paths); toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } return; } }
+    const sh = openSheet(t('delete'), t('cancel'));
     sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
     const m = await import('./filesMore'); const toBin = m.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p));
     sh.body.append(h('p', { class: 'hint' }, toBin ? t('filesDeleteToTrash') : t('filesDeleteForeverHint')));
@@ -431,7 +435,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let sub: { remove(): void } | null = null;
   const pl = plug(); if (pl) { void listen<JobEvent>(pl as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; }); void import('./filesMore').then((m) => m.pruneTrash()); }
   void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
-  root.dispose = () => { gone = true; io.disconnect(); sub?.remove(); };
+  let wake: { release(): Promise<void> } | null = null;
+  if (prefs.keepOn) void (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen').then((w) => { wake = w; }).catch(() => undefined);
+  // The back button goes up a folder first when the reader asked for that.
+  const onBack = (ev: KeyboardEvent) => { if (!prefs.backUp || ev.key !== 'Escape' && ev.key !== 'GoBack' && ev.key !== 'BrowserBack') return; if (document.querySelector('.sheet')) return; const r = roots.find((x) => at === x.path); if (collection || r || !at) return; ev.preventDefault(); ev.stopPropagation(); go(parentOf(at)); };
+  window.addEventListener('keydown', onBack, true);
+  root.dispose = () => { gone = true; io.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };

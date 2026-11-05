@@ -114,7 +114,7 @@ if (!manifest.includes('KtScreenService')) {
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
     </service>
     <receiver android:name=".KtService$Actions" android:exported="false" />
-    <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="${applicationId}.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="app.kurokawa.tools.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     <service android:name=".KtFolderShare$Fg" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Folder shared on the local network" /></service>
     <service android:name=".KtFolderShare$TileSvc" android:exported="true" android:label="@string/kt_share_tile" android:icon="@android:drawable/stat_sys_upload" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>

@@ -747,3 +747,11 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .fshare-blocks { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
 .fshare-block { display: grid; gap: 8px; justify-items: center; max-width: 100%; }
 .qr-box.small svg { width: 160px; height: 160px; }
+.files-sec { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--md-primary); margin: 14px 0 4px; }
+.files-list.compact .files-row { padding-block: 4px; min-height: 40px; }
+.files-list.compact .files-ic { width: 32px; height: 32px; border-radius: 9px; }
+.files-list.compact.grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+/* e-ink: nothing moves, edges stay hard, the contrast goes up */
+.files-view.eink, .files-view.eink * { transition: none !important; animation: none !important; box-shadow: none !important; }
+.files-view.eink .files-row, .files-view.eink .chip, .files-view.eink .files-ic { border-radius: 4px; border: 1px solid var(--md-outline); }
+.files-view.eink .files-row.picked { background: var(--md-on-surface); color: var(--md-surface); }
