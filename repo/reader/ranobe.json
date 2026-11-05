@@ -1,0 +1,10 @@
+{
+  "kurokawa": "site",
+  "site": "ranobe",
+  "id": "ranobe",
+  "name": "Ranobe",
+  "version": "0.1.0",
+  "url": "https://staging.ranobe.app/",
+  "lang": "en",
+  "description": "Officially translated light novels, read with an account on the site."
+}

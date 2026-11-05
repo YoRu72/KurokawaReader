@@ -13,7 +13,7 @@ import { isListing, isH5ai, parseListing, folderName, forgetListings, forgetFold
 import { SourceError } from './types';
 
 export type RepoKind = 'lnreader' | 'mangayomi' | 'shosetsu' | 'ireader' | 'mihon' | 'sora' | 'suwatte' | 'aidoku' | 'paperback' | 'kotatsu' | 'folder' | 'site' | 'unknown';
-export const KIND_APP: Record<RepoKind, string> = { lnreader: 'LNReader', mangayomi: 'Mangayomi', shosetsu: 'Shosetsu', ireader: 'IReader', mihon: 'Mihon / Tachiyomi', sora: 'Sora', suwatte: 'Suwatte', aidoku: 'Aidoku', paperback: 'Paperback', kotatsu: 'Kotatsu', folder: 'Web folder', unknown: '?' };
+export const KIND_APP: Record<RepoKind, string> = { lnreader: 'LNReader', mangayomi: 'Mangayomi', shosetsu: 'Shosetsu', ireader: 'IReader', mihon: 'Mihon / Tachiyomi', sora: 'Sora', suwatte: 'Suwatte', aidoku: 'Aidoku', paperback: 'Paperback', kotatsu: 'Kotatsu', folder: 'Web folder', site: 'Site', unknown: '?' };
 /** The kinds whose extensions run in this reader. */
 export const RUNNABLE: RepoKind[] = ['lnreader', 'mangayomi'];
 
@@ -317,8 +317,8 @@ export async function refreshRepo(key: string): Promise<{ repo: Repo; updated: E
   const repos = await listRepos(); const r = repos.find((x) => x.key === key); if (!r) throw new SourceError('noRepo', 'parse');
   // (A folder has no index of extensions: its manifest, if it came from one, is read again; its listings are
   // fetched again as they are opened.)
-  if (r.kind === 'folder') {
-    if (r.folder) { const p = parseIndex(r.url, await fetchText(r.url)); if (p?.kind === 'folder' && p.folder) { r.folder = p.folder; r.flavor = p.flavor; r.version = p.version; r.browser = p.browser; r.tags = p.tags; if (p.name) r.name = p.name; } }
+  if (r.kind === 'folder' || r.kind === 'site') {
+    if (r.folder && r.kind === 'folder') { const p = parseIndex(r.url, await fetchText(r.url)); if (p?.kind === 'folder' && p.folder) { r.folder = p.folder; r.flavor = p.flavor; r.version = p.version; r.browser = p.browser; r.tags = p.tags; if (p.name) r.name = p.name; } }
     forgetListings(r.folder ?? r.url); r.fetchedAt = Date.now(); r.error = undefined; await saveRepos([...repos]); return { repo: r, updated: [] };
   }
   const text = await fetchText(r.url);

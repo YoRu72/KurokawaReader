@@ -78,7 +78,7 @@ export function ranobeSource(repo: Repo): Source {
   const pageHtml = async (path: string): Promise<string> => {
     const r = await api<unknown>(repo, path);
     if (r.status === 401 || r.status === 403 || /\/auth\?/.test(r.headers.location ?? '') || /name="email"[\s\S]*name="password"/.test(r.text.slice(0, 60000)) && !/novel|volume/i.test(r.text.slice(0, 2000))) { try { localStorage.removeItem(key(repo, 'in')); } catch { /* none */ } await ensureSignedIn(repo); return (await api<unknown>(repo, path)).text; }
-    if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'network');
+    if (r.status >= 400) throw new SourceError(`HTTP ${r.status}`, 'http', r.status);
     return r.text;
   };
   return {

@@ -34,7 +34,7 @@ export async function targetOf(link: string, repos?: Repo[]): Promise<LinkTarget
   const all = repos ?? await listRepos().catch(() => [] as Repo[]);
   const hits: { id: string; site: string; kind: string }[] = [];
   for (const r of all) {
-    if (r.kind === 'folder') continue;
+    if (r.kind === 'folder' || r.kind === 'site') continue;
     for (const i of (repos ? r.items : installedItems(r)).filter((x) => x.runnable && x.site)) {
       // (Its site as given, and with or without "www.": a link copied from a phone may have either.)
       const sites = new Set([trim(i.site), trim(i.site).replace('://www.', '://'), trim(i.site).replace(/:\/\/(?!www\.)/, '://www.')]);

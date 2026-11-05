@@ -64,8 +64,9 @@ const DIR_PREFIX = 'dir:';
 const isDir = (id: string) => id.startsWith(DIR_PREFIX);
 /** The source of a web folder the reader added, by its id. */
 async function folderSourceFor(srcId: string): Promise<Source> {
-  const repo = (await listRepos()).find((r) => r.kind === 'folder' && `${DIR_PREFIX}${r.key}` === srcId);
+  const repo = (await listRepos()).find((r) => (r.kind === 'folder' || r.kind === 'site') && `${DIR_PREFIX}${r.key}` === srcId);
   if (!repo) throw new SourceError('noRepo', 'parse');
+  if (repo.kind === 'site') { const { ranobeSource } = await import('../sources/ranobe'); return ranobeSource(repo); }
   return folderSource(repo);
 }
 
@@ -216,7 +217,7 @@ function hubView(): HTMLElement & { dispose?: () => void } {
       return;
     }
     // (Folders of books apart from the repositories of extensions: two kinds of source, said so.)
-    const folders = repos.filter((r) => r.kind === 'folder'); const exts = repos.filter((r) => r.kind !== 'folder');
+    const folders = repos.filter((r) => r.kind === 'folder' || r.kind === 'site'); const exts = repos.filter((r) => r.kind !== 'folder' && r.kind !== 'site');
     if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
     if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
     // (Light novels trending on AniList, a tap from a search of the reader's sources — once there are some.)
@@ -367,7 +368,7 @@ function folderSection(r: Repo, redraw: () => void): HTMLElement {
     h('span', { class: 'source-icon' }, icon('folder')),
     h('span', { class: 'source-text' }, h('b', { dir: 'auto' }, r.name), h('small', { dir: 'ltr' }, where)),
     icon('chevronRight'));
-  card.append(h('div', { class: 'repo-head' }, head, iconButton('more', t('more'), () => repoMenu(r, redraw))), h('p', { class: 'source-desc', dir: 'auto' }, t('folderSourceDesc')));
+  card.append(h('div', { class: 'repo-head' }, head, iconButton('more', t('more'), () => repoMenu(r, redraw))), h('p', { class: 'source-desc', dir: 'auto' }, r.kind === 'site' ? t('ranobeDesc') : t('folderSourceDesc')));
   if (r.error) card.append(h('p', { class: 'hint warn' }, r.error));
   return card;
 }
@@ -432,9 +433,9 @@ function addRepoSheet(after: () => void, kind: 'repo' | 'ext' | 'folder' = 'repo
       const runnable = repo.items.filter((i) => i.runnable).length;
       // (The name kept whole inside a sentence of the other direction.)
       const name = `⁨${repo.name}⁩`;
-      toast(repo.kind === 'folder' ? t('folderAdded', { name }) : runnable ? t('repoAdded', { name, n: localDigits(runnable) }) : t('repoAddedNotRunnable', { name, app: KIND_APP[repo.kind] }), 'info', 4000);
+      toast(repo.kind === 'folder' || repo.kind === 'site' ? t('folderAdded', { name }) : runnable ? t('repoAdded', { name, n: localDigits(runnable) }) : t('repoAddedNotRunnable', { name, app: KIND_APP[repo.kind] }), 'info', 4000);
       // (A repository just added: its list opens, to pick the extensions wanted from it.)
-      if (repo.kind !== 'folder' && runnable) extensionPicker(repo, after);
+      if (repo.kind !== 'folder' && repo.kind !== 'site' && runnable) extensionPicker(repo, after);
     } catch (e) {
       const err = e as SourceError;
       const at = err instanceof SourceError ? /^noIndexAt:(\d+):(.*):(https?:.*)$/.exec(err.message) : null;
