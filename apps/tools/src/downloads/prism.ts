@@ -87,7 +87,16 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return;
     const status = h('small', { class: 'src' }); list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), status));
     // (A post on X, Bluesky or Reddit: its media read from the site's API, at full quality — no page to crawl.)
-    const social = await import('./social'); const feed = social.feedOf(u); const isPost = !!social.socialOf(u) || !!feed; depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    const social = await import('./social'); const feed = social.feedOf(u); const G = await import('./galleries'); const gal = G.galleryOf(u); const isPost = !!social.socialOf(u) || !!feed || !!gal; depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    // (A picture site: a booru's post or tag search, or — on a computer — any gallery gallery-dl reads.)
+    if (gal) {
+      status.textContent = ` ${t('grabGallery')}`;
+      try { const got = await G.gallery(u); if (!got.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+        fromPage(got.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb })));
+        list.prepend(h('p', { class: 'hint', dir: 'auto' }, `${got.title} · ${countFiles(got.items.length)}`));
+      } catch (e) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialFailed', { error: String((e as Error).message ?? e) }))); }
+      return;
+    }
     // (A profile, a subreddit or a public Telegram channel: its recent media, newest first — the archiver.)
     if (feed) {
       status.textContent = ` ${t('grabFeed')}`;

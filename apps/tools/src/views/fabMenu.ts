@@ -29,6 +29,7 @@ export function fabMenu(anchor: HTMLElement): void {
     ...(eng.can.torrents ? [item('file', t('pickTorrentFile'), null, () => addSheet('', { pickTorrent: true }))] : []),
     videoItem,
     item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))),
+    item('list', t('manifestTitle'), t('manifestFabHint'), () => void import('./manifest').then((m) => m.manifestSheet())),
     item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())),
     ...(getSettings().addons.includes('courses') ? [item('books', t('coursesTitle'), t('coursesFabHint'), () => navigate('/courses'))] : []),
     ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []),

@@ -10,6 +10,7 @@ import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin } from '../native';
 import { videoPanel, preferredFormat, nativeHls } from './addVideo';
+import { galleryOf } from '../downloads/galleries';
 import { videoEnabled, isVideoHost } from '../video/ytdlp';
 import { probeUrl, splitName, type Probe } from '../downloads/probe';
 import { freeSpaceAt } from '../archives';
@@ -106,7 +107,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   // (A link to an iOS app, on an iPhone: offered to the installer — SideStore, AltStore, TrollStore.)
   const peekIpa = (u: string | null): boolean => { if (!u || !/\.ipa(\?|$)/i.test(u) || !isIos()) return false; hfBox.hidden = false; hfBox.replaceChildren(icon('apps'), h('span', { class: 'grow' }, t('ipaOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./ipa').then((m) => m.ipaSheet({ url: u })); } }, t('ipaInstallIt'))); return true; };
   const peekHf = (u: string | null) => peekIpa(u) || void import('../hf/hf').then((HF) => {
-    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u))) return; hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
+    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
   sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
