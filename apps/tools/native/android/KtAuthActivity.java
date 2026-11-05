@@ -10,11 +10,12 @@ import android.webkit.WebViewClient;
 /** A sign-in page in a WebView of its own: finishes with the first address carrying the marker (the token
  *  AniList puts in its pin page's address). Only the address is read; the page's content is never touched. */
 public class KtAuthActivity extends Activity {
+    @Override protected void onDestroy() { if (KtPlugin.nextcloudActivity == this) KtPlugin.nextcloudActivity = null; super.onDestroy(); }
     public static final String EXTRA_URL = "url", EXTRA_MARKER = "marker", EXTRA_TITLE = "title", RESULT_URL = "result";
     private boolean done = false;
 
     @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
+        super.onCreate(b); KtPlugin.nextcloudActivity = this;
         String url = getIntent().getStringExtra(EXTRA_URL), marker = getIntent().getStringExtra(EXTRA_MARKER), title = getIntent().getStringExtra(EXTRA_TITLE);
         if (title != null) setTitle(title);
         WebView wv = new WebView(this);

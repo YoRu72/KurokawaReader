@@ -51,7 +51,7 @@ final class KtRemote {
     static JSONObject save(Context ctx, JSONObject c) throws Exception {
         JSONArray a = all(ctx); String id = c.optString("id", ""); if (id.isEmpty()) { id = "r" + Long.toString(System.currentTimeMillis(), 36); c.put("id", id); }
         JSONArray out = new JSONArray(); boolean put = false;
-        for (int i = 0; i < a.length(); i++) { JSONObject o = a.getJSONObject(i); if (o.getString("id").equals(id)) { if (c.optString("pass", "").isEmpty() && !c.has("passCleared")) c.put("pass", o.optString("pass", "")); if (c.optString("key", "").isEmpty()) c.put("key", o.optString("key", "")); if (!c.has("trust")) c.put("trust", o.optString("trust", "")); out.put(c); put = true; } else out.put(o); }
+        for (int i = 0; i < a.length(); i++) { JSONObject o = a.getJSONObject(i); if (o.getString("id").equals(id)) { if (c.optString("pass", "").isEmpty() && !c.has("passCleared")) c.put("pass", o.optString("pass", "")); if (c.optString("key", "").isEmpty()) c.put("key", o.optString("key", "")); if (!c.has("trust")) c.put("trust", o.optString("trust", "")); for (String k : new String[] { "access", "refresh", "expires", "clientSecret" }) if (!c.has(k) && o.has(k)) c.put(k, o.get(k)); out.put(c); put = true; } else out.put(o); }
         if (!put) out.put(c);
         prefs(ctx).edit().putString("list", out.toString()).apply(); Client cl = OPEN.remove(id); if (cl != null) cl.close(); return c;
     }
@@ -59,7 +59,7 @@ final class KtRemote {
     static void trust(Context ctx, String id, String fp) throws Exception { JSONObject c = get(ctx, id); c.put("trust", fp); save(ctx, c); }
     static JSONArray publicList(Context ctx) throws Exception {
         JSONArray a = all(ctx), out = new JSONArray();
-        for (int i = 0; i < a.length(); i++) { JSONObject o = new JSONObject(a.getJSONObject(i).toString()); o.remove("pass"); o.remove("key"); o.put("hasPass", !a.getJSONObject(i).optString("pass", "").isEmpty()); o.put("hasKey", !a.getJSONObject(i).optString("key", "").isEmpty()); out.put(o); }
+        for (int i = 0; i < a.length(); i++) { JSONObject o = new JSONObject(a.getJSONObject(i).toString()); o.remove("pass"); o.remove("key"); o.remove("access"); o.remove("refresh"); o.remove("clientSecret"); o.put("signedIn", !a.getJSONObject(i).optString("refresh", "").isEmpty() || !a.getJSONObject(i).optString("access", "").isEmpty()); o.put("hasPass", !a.getJSONObject(i).optString("pass", "").isEmpty()); o.put("hasKey", !a.getJSONObject(i).optString("key", "").isEmpty()); out.put(o); }
         return out;
     }
 
@@ -85,7 +85,10 @@ final class KtRemote {
             case "ftp": case "ftps": c = new Ftp(o, kind.equals("ftps")); break;
             case "sftp": c = new Sftp(o); break;
             case "smb": c = new Smb(o); break;
-            case "webdav": c = new Dav(o); break;
+            case "webdav": case "nextcloud": c = new Dav(o); break;
+            case "gdrive": c = new KtCloud.GDrive(ctx, o); break;
+            case "dropbox": c = new KtCloud.Dropbox(ctx, o); break;
+            case "onedrive": c = new KtCloud.OneDrive(ctx, o); break;
             default: throw new IOException("unknownKind");
         }
         OPEN.put(id, c); return c;
@@ -228,6 +231,7 @@ final class KtRemote {
         final JSONObject o; final String base; final String auth;
         Dav(JSONObject o) throws Exception {
             this.o = o; String u = o.getString("host"); if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u; if (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+            if (o.optString("kind", "").equals("nextcloud") && !u.contains("/remote.php/")) u = u + "/remote.php/dav/files/" + enc(o.optString("user", ""));
             base = u; auth = o.optString("user", "").isEmpty() ? null : "Basic " + android.util.Base64.encodeToString((o.optString("user", "") + ":" + o.optString("pass", "")).getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
             HttpURLConnection c = req("PROPFIND", "/", 0); c.setRequestProperty("Depth", "0"); int code = c.getResponseCode(); if (code == 401) throw new IOException("login"); if (code >= 400) throw new IOException("http " + code); c.disconnect();
         }
@@ -273,6 +277,7 @@ final class KtRemote {
         @Override public void close() {}
     }
 
+    static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20"); } catch (Exception e) { return s; } }
     /* ---------- trust: the system's roots, else a certificate the reader accepted by its fingerprint ---------- */
     static javax.net.ssl.X509TrustManager trustManager(final JSONObject o) throws Exception {
         javax.net.ssl.TrustManagerFactory tf = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm()); tf.init((java.security.KeyStore) null);

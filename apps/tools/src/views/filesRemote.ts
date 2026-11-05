@@ -5,13 +5,13 @@ import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
 import { t, localDigits } from '../i18n';
 import { ktPlugin } from '../native';
 
-export interface Conn { id: string; kind: 'ftp' | 'ftps' | 'sftp' | 'smb' | 'webdav'; name: string; host: string; port?: number; path?: string; user?: string; domain?: string; share?: string; hasPass?: boolean; hasKey?: boolean; trust?: string }
+export interface Conn { id: string; kind: 'ftp' | 'ftps' | 'sftp' | 'smb' | 'webdav' | 'nextcloud' | 'gdrive' | 'dropbox' | 'onedrive'; name: string; host: string; port?: number; path?: string; user?: string; domain?: string; share?: string; clientId?: string; hasPass?: boolean; hasKey?: boolean; signedIn?: boolean; trust?: string }
 type REntry = { name: string; dir: boolean; size: number; mtime: number };
 type RPlug = {
   remoteConnections(): Promise<{ list: Conn[] }>; remoteSave(c: Partial<Conn> & { pass?: string; key?: string }): Promise<{ id: string }>; remoteRemove(o: { id: string }): Promise<void>; remoteTrust(o: { id: string; fingerprint: string }): Promise<void>;
   remoteTest(o: { id: string; path?: string }): Promise<{ entries: REntry[] }>; remoteList(o: { id: string; path: string }): Promise<{ entries: REntry[] }>; remoteMkdir(o: { id: string; path: string }): Promise<void>;
   remoteDelete(o: { id: string; paths: string[]; dirs: string[] }): Promise<void>; remoteRename(o: { id: string; path: string; to: string }): Promise<void>; remoteFetch(o: { id: string; path: string; jobId?: string }): Promise<{ path: string; size: number }>;
-  remoteJob(o: { id?: string; op: 'down' | 'up'; conn: string; paths: string[]; dest: string; deleteAfter?: boolean }): Promise<{ id: string }>; remoteCancel(o: { id: string }): Promise<void>; remoteScan(): Promise<{ hosts: { ip: string; ports: number[]; name?: string }[]; mine: string }>; remoteScanStop(): Promise<void>;
+  remoteJob(o: { id?: string; op: 'down' | 'up'; conn: string; paths: string[]; dest: string; deleteAfter?: boolean }): Promise<{ id: string }>; remoteSignIn(o: { id: string }): Promise<void>; remoteNextcloud(o: { id: string }): Promise<void>; remoteCancel(o: { id: string }): Promise<void>; remoteScan(): Promise<{ hosts: { ip: string; ports: number[]; name?: string }[]; mine: string }>; remoteScanStop(): Promise<void>;
 };
 export const rplug = (): RPlug | null => { const p = ktPlugin() as unknown as RPlug | null; return p?.remoteConnections ? p : null; };
 
@@ -39,8 +39,11 @@ export const vfs = {
 /** `remote://<id>/<path>` taken apart. */
 export const parseRemote = (p: string): { id: string; path: string } => { const m = /^remote:\/\/([^/]+)(\/.*)?$/.exec(p); return { id: m?.[1] ?? '', path: m?.[2] || '/' }; };
 export const remotePath = (id: string, path: string): string => `remote://${id}${path.startsWith('/') ? path : '/' + path}`.replace(/\/+$/, '') || `remote://${id}`;
-const KIND_LABEL: Record<Conn['kind'], string> = { ftp: 'FTP', ftps: 'FTPS', sftp: 'SFTP', smb: 'SMB', webdav: 'WebDAV' };
-const PORTS: Record<Conn['kind'], number> = { ftp: 21, ftps: 21, sftp: 22, smb: 445, webdav: 443 };
+const KIND_LABEL: Record<Conn['kind'], string> = { ftp: 'FTP', ftps: 'FTPS', sftp: 'SFTP', smb: 'SMB', webdav: 'WebDAV', nextcloud: 'Nextcloud / ownCloud', gdrive: 'Google Drive', dropbox: 'Dropbox', onedrive: 'OneDrive' };
+const PORTS: Record<Conn['kind'], number> = { ftp: 21, ftps: 21, sftp: 22, smb: 445, webdav: 443, nextcloud: 443, gdrive: 443, dropbox: 443, onedrive: 443 };
+const CLOUD: Conn['kind'][] = ['gdrive', 'dropbox', 'onedrive'];
+const CLIENT_HELP: Record<string, string> = { gdrive: 'https://console.cloud.google.com/apis/credentials', dropbox: 'https://www.dropbox.com/developers/apps', onedrive: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade' };
+const REDIRECT: Record<string, string> = { gdrive: 'http://127.0.0.1:8976/oauth', dropbox: 'http://localhost:8976/oauth', onedrive: 'http://localhost:8976/oauth' };
 
 let cache: Conn[] | null = null;
 export async function connections(): Promise<Conn[]> { const p = rplug(); if (!p) return []; if (cache) return cache; try { const r = await p.remoteConnections(); cache = Array.isArray(r?.list) ? r.list : []; } catch { cache = []; } return cache; }
@@ -68,7 +71,7 @@ export async function withTrust<T>(id: string, fn: () => Promise<T>): Promise<T>
     return fn();
   }
 }
-const friendly = (m: string): string => (m === 'login' ? t('remoteLoginFailed') : m === 'noConnection' ? t('remoteGone') : m === 'sharesUnlisted' ? t('remoteSharesUnlisted') : m);
+const friendly = (m: string): string => (m === 'clientIdNeeded' ? t('remoteClientIdNeeded') : m === 'login' ? t('remoteLoginFailed') : m === 'noConnection' ? t('remoteGone') : m === 'sharesUnlisted' ? t('remoteSharesUnlisted') : m);
 
 /* ---------- the wizard: a kind, the server, the account; tried before it is kept ---------- */
 export function connectionSheet(existing: Conn | null, done: () => void): void {
@@ -84,23 +87,32 @@ export function connectionSheet(existing: Conn | null, done: () => void): void {
   const domain = h('input', { type: 'text', value: existing?.domain ?? '', dir: 'ltr', autocapitalize: 'off', placeholder: 'WORKGROUP' }) as HTMLInputElement;
   const share = h('input', { type: 'text', value: existing?.share ?? '', dir: 'ltr', autocapitalize: 'off', placeholder: t('remoteShareHint') }) as HTMLInputElement;
   const key = h('textarea', { rows: '4', dir: 'ltr', spellcheck: 'false', placeholder: existing?.hasKey ? t('remoteKeyKept') : '-----BEGIN OPENSSH PRIVATE KEY-----' }) as HTMLTextAreaElement;
-  const kindBtn = pickButton(t('remoteKind'), (Object.keys(KIND_LABEL) as Conn['kind'][]).map((k): [string, string] => [k, KIND_LABEL[k]]), kind, (v) => { const was = PORTS[kind]; kind = v as Conn['kind']; if (Number(port.value) === was) port.value = String(PORTS[kind]); layout(); }, t('close'));
+  const clientId = h('input', { type: 'text', value: existing?.clientId ?? '', dir: 'ltr', autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off', placeholder: t('remoteClientIdHint') }) as HTMLInputElement;
+  const clientSecret = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off', placeholder: t('remoteClientSecretHint') }) as HTMLInputElement;
+  const helpLink = h('a', { class: 'src', target: '_blank', rel: 'noopener', dir: 'ltr' }, '');
+  const kindBtn = pickButton(t('remoteKind'), (Object.keys(KIND_LABEL) as Conn['kind'][]).map((k): [string, string] => [k, KIND_LABEL[k]]), kind, (v) => { const was = PORTS[kind]; kind = v as Conn['kind']; if (Number(port.value) === was) port.value = String(PORTS[kind]); layout(); buttons(); }, t('close'));
   const field = (label: string, el: HTMLElement, hint?: string) => h('label', { class: 'field' }, h('span', null, label), el, hint ? h('small', { class: 'src' }, hint) : null);
   const rowDomain = field(t('remoteDomain'), domain); const rowShare = field(t('remoteShare'), share, t('remoteShareWhy')); const rowKey = field(t('remoteKey'), key, t('remoteKeyWhy')); const rowPath = field(t('remoteStartPath'), path); const rowPort = field(t('remotePort'), port);
-  const layout = () => { rowDomain.hidden = kind !== 'smb'; rowShare.hidden = kind !== 'smb'; rowKey.hidden = kind !== 'sftp'; rowPort.hidden = kind === 'webdav'; };
+  const rowHost = field(t('remoteHost'), host, t('remoteHostHint')); const rowUser = field(t('remoteUser'), user); const rowPass = field(t('password'), pass, t('remotePassWhy'));
+  const rowClient = h('div', null, h('p', { class: 'hint' }, t('remoteCloudHint')), field(t('remoteClientId'), clientId), field(t('remoteClientSecret'), clientSecret, t('remoteClientSecretWhy')), h('p', { class: 'hint', dir: 'ltr' }, t('remoteRedirectHint'), ' ', h('code', { class: 'sel' }, REDIRECT[kind] ?? '')), helpLink);
+  const layout = () => { const cloud = CLOUD.includes(kind); rowDomain.hidden = kind !== 'smb'; rowShare.hidden = kind !== 'smb'; rowKey.hidden = kind !== 'sftp'; rowPort.hidden = kind === 'webdav' || kind === 'nextcloud' || cloud; rowHost.hidden = cloud; rowUser.hidden = cloud || kind === 'nextcloud'; rowPass.hidden = cloud || kind === 'nextcloud'; rowPath.hidden = kind === 'nextcloud'; rowClient.hidden = !cloud; if (cloud) { helpLink.href = CLIENT_HELP[kind]; helpLink.textContent = t('remoteClientWhere'); (rowClient.querySelector('code') as HTMLElement).textContent = REDIRECT[kind]; } (rowHost.querySelector('span') as HTMLElement).textContent = kind === 'webdav' || kind === 'nextcloud' ? 'URL' : t('remoteHost'); };
   layout();
-  sh.body.append(h('div', { class: 'chip-row files-filters' }, kindBtn), field(t('remoteName'), name), field(kind === 'webdav' ? 'URL' : t('remoteHost'), host, t('remoteHostHint')), rowPort, rowPath, field(t('remoteUser'), user), field(t('password'), pass, t('remotePassWhy')), rowDomain, rowShare, rowKey);
+  sh.body.append(h('div', { class: 'chip-row files-filters' }, kindBtn), field(t('remoteName'), name), rowHost, rowPort, rowPath, rowUser, rowPass, rowDomain, rowShare, rowKey, rowClient);
   const save = async (test: boolean) => {
-    if (!host.value.trim()) { toast(t('remoteHostNeeded'), 'error'); host.focus(); return; }
-    const c = { id: existing?.id ?? '', kind, name: name.value.trim() || `${KIND_LABEL[kind]} · ${host.value.trim()}`, host: host.value.trim(), port: Number(port.value) || PORTS[kind], path: path.value.trim() || '/', user: user.value.trim(), pass: pass.value, domain: domain.value.trim(), share: share.value.trim(), key: key.value.trim() };
+    const cloud = CLOUD.includes(kind);
+    if (!cloud && !host.value.trim()) { toast(t('remoteHostNeeded'), 'error'); host.focus(); return; }
+    if (cloud && !clientId.value.trim()) { toast(t('remoteClientIdNeeded'), 'error'); clientId.focus(); return; }
+    const c = { id: existing?.id ?? '', kind, name: name.value.trim() || (cloud ? KIND_LABEL[kind] : `${KIND_LABEL[kind]} · ${host.value.trim()}`), host: cloud ? kind : host.value.trim(), port: Number(port.value) || PORTS[kind], path: path.value.trim() || '/', user: user.value.trim(), pass: pass.value, domain: domain.value.trim(), share: share.value.trim(), key: key.value.trim(), clientId: clientId.value.trim(), ...(clientSecret.value ? { clientSecret: clientSecret.value } : {}) };
     const busy = h('div', { class: 'center' }, h('div', { class: 'spinner small' })); sh.actions.replaceChildren(busy);
     try {
       const r = await p.remoteSave(c); forget();
-      if (test) { await withTrust(r.id, () => p.remoteTest({ id: r.id, path: c.path })); toast(t('remoteConnected')); }
+      if (test && cloud) { await p.remoteSignIn({ id: r.id }); toast(t('remoteSignedIn')); }
+      else if (test && kind === 'nextcloud') { await p.remoteNextcloud({ id: r.id }); toast(t('remoteSignedIn')); }
+      else if (test) { await withTrust(r.id, () => p.remoteTest({ id: r.id, path: c.path })); toast(t('remoteConnected')); }
       sh.close(); done();
-    } catch (e) { toast(friendly(String((e as Error).message ?? e)), 'error', 6000); buttons(); if (!existing) { /* kept anyway, so the reader can fix it */ } }
+    } catch (e) { const m = String((e as Error).message ?? e); if (m !== 'cancelled') toast(friendly(m), 'error', 6000); buttons(); }
   };
-  const buttons = () => sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => void save(false) }, t('save')), h('button', { type: 'button', class: 'btn primary', onclick: () => void save(true) }, icon('check'), t('remoteTestAndSave')));
+  const buttons = () => sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => void save(false) }, t('save')), h('button', { type: 'button', class: 'btn primary', onclick: () => void save(true) }, icon('check'), CLOUD.includes(kind) || kind === 'nextcloud' ? t('remoteSignInAndSave') : t('remoteTestAndSave')));
   buttons(); setTimeout(() => (existing ? host : name).focus(), 60);
 }
 /** The LAN searched for servers; one tapped becomes a new connection with its kind guessed from the port. */
@@ -118,13 +130,15 @@ export function connectionMenu(c: Conn, done: () => void): void {
   const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
   sh.body.append(h('p', { class: 'hint', dir: 'ltr' }, `${KIND_LABEL[c.kind]} · ${c.host}${c.port ? ':' + c.port : ''}${c.path && c.path !== '/' ? c.path : ''}`), h('div', { class: 'dest-list' },
     row('pen', t('remoteEdit'), () => connectionSheet(c, done)),
+    ...(CLOUD.includes(c.kind) ? [row('key', c.signedIn ? t('remoteSignInAgain') : t('remoteSignIn'), () => void p.remoteSignIn({ id: c.id }).then(() => { forget(); toast(t('remoteSignedIn')); done(); }, (e) => { if (String((e as Error).message) !== 'cancelled') toast(friendly(String((e as Error).message ?? e)), 'error', 6000); }))] : []),
+    ...(c.kind === 'nextcloud' ? [row('key', t('remoteSignInAgain'), () => void p.remoteNextcloud({ id: c.id }).then(() => { forget(); toast(t('remoteSignedIn')); done(); }, (e) => { if (String((e as Error).message) !== 'cancelled') toast(friendly(String((e as Error).message ?? e)), 'error', 6000); }))] : []),
     ...(c.trust ? [row('shield', t('remoteForgetTrust'), () => void p.remoteTrust({ id: c.id, fingerprint: '' }).then(() => { forget(); done(); }))] : []),
     row('trash', t('delete'), () => void p.remoteRemove({ id: c.id }).then(() => { forget(); done(); toast(t('done')); }))));
 }
-export const kindIcon = (k: Conn['kind']): string => (k === 'smb' ? 'storage' : k === 'webdav' ? 'cloud' : 'globe');
+export const kindIcon = (k: Conn['kind']): string => (k === 'smb' ? 'storage' : k === 'webdav' || k === 'nextcloud' || CLOUD.includes(k) ? 'cloud' : 'globe');
 export const kindLabel = (k: Conn['kind']): string => KIND_LABEL[k];
 /** The bar's text for a remote root. */
-export const describe = (c: Conn): string => `${KIND_LABEL[c.kind]} · ${c.host}`;
+export const describe = (c: Conn): string => (CLOUD.includes(c.kind) ? `${KIND_LABEL[c.kind]}${c.signedIn ? '' : ' · ' + t('remoteNotSignedIn')}` : `${KIND_LABEL[c.kind]} · ${c.host}`);
 export const remoteDeleteOrToast = async (paths: string[], dirs: string[]): Promise<void> => { const p = rplug(); if (!p) return; const { id } = parseRemote(paths[0]); await withTrust(id, () => p.remoteDelete({ id, paths: paths.map((x) => parseRemote(x).path), dirs: dirs.map((x) => parseRemote(x).path) })); };
 
 /* ---------- this folder shared on the Wi‑Fi: a web page and an FTP server, with a QR for each ---------- */

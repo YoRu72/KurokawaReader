@@ -663,6 +663,33 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void remoteCancel(PluginCall call) { KtRemote.cancel(call.getString("id", "")); call.resolve(); }
     private final java.util.concurrent.atomic.AtomicBoolean scanStop = new java.util.concurrent.atomic.AtomicBoolean();
+    /** OAuth for a cloud connection: the sign-in page opened in the app's own WebView, the code swapped for tokens, kept with the connection. */
+    private String oauthVerifier; private String oauthConn;
+    @PluginMethod public void remoteSignIn(PluginCall call) {
+        final String id = call.getString("id", "");
+        try { JSONObject c = KtRemote.get(getContext(), id); String[] b = KtCloud.beginAuth(c); oauthVerifier = b[1]; oauthConn = id; Intent i = new Intent(getContext(), KtAuthActivity.class); i.putExtra(KtAuthActivity.EXTRA_URL, b[0]); i.putExtra(KtAuthActivity.EXTRA_MARKER, "8976/oauth"); i.putExtra(KtAuthActivity.EXTRA_TITLE, c.optString("name", "")); startActivityForResult(call, i, "oauthDone"); }
+        catch (Exception e) { call.reject(KtRemote.reason(e)); }
+    }
+    @ActivityCallback private void oauthDone(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); String url = data == null ? null : data.getStringExtra(KtAuthActivity.RESULT_URL); if (url == null) { call.reject("cancelled"); return; }
+        final String v = oauthVerifier, id = oauthConn; oauthVerifier = null;
+        bg.execute(() -> { try { JSONObject c = KtRemote.get(getContext(), id); KtCloud.finishAuth(c, url, v); KtRemote.save(getContext(), c); KtRemote.drop(id); call.resolve(); } catch (Exception e) { call.reject(KtRemote.reason(e)); } });
+    }
+    /** Nextcloud Login Flow v2: the server's sign-in page in the WebView; polled until it hands over an app password. */
+    @PluginMethod public void remoteNextcloud(PluginCall call) {
+        final String id = call.getString("id", "");
+        bg.execute(() -> {
+            try {
+                JSONObject c = KtRemote.get(getContext(), id); final JSONObject begin = KtCloud.nextcloudBegin(c.getString("host"));
+                Intent i = new Intent(getContext(), KtAuthActivity.class); i.putExtra(KtAuthActivity.EXTRA_URL, begin.getString("login")); i.putExtra(KtAuthActivity.EXTRA_MARKER, "\u0000never"); i.putExtra(KtAuthActivity.EXTRA_TITLE, c.optString("name", "Nextcloud"));
+                nextcloudBegin = begin; nextcloudConn = id; getActivity().runOnUiThread(() -> startActivityForResult(call, i, "nextcloudDone"));
+                // (Polled in the background while the page is up: when the server answers, the activity is closed by the result.)
+                new Thread(() -> { try { for (int k = 0; k < 600 && nextcloudBegin == begin; k++) { Thread.sleep(2000); JSONObject got = KtCloud.nextcloudPoll(begin); if (got != null) { JSONObject cc = KtRemote.get(getContext(), id); cc.put("host", got.getString("server")); cc.put("user", got.getString("loginName")); cc.put("pass", got.getString("appPassword")); cc.put("kind", "nextcloud"); KtRemote.save(getContext(), cc); KtRemote.drop(id); nextcloudBegin = null; getActivity().runOnUiThread(() -> { android.app.Activity a = nextcloudActivity; if (a != null) a.finish(); }); call.resolve(); return; } } } catch (Exception e) { call.reject(KtRemote.reason(e)); } }, "kt-nc-poll").start();
+            } catch (Exception e) { call.reject(KtRemote.reason(e)); }
+        });
+    }
+    private JSONObject nextcloudBegin; private String nextcloudConn; static android.app.Activity nextcloudActivity;
+    @ActivityCallback private void nextcloudDone(PluginCall call, ActivityResult result) { if (nextcloudBegin != null) { nextcloudBegin = null; if (call != null) call.reject("cancelled"); } }
     @PluginMethod public void remoteScan(PluginCall call) { scanStop.set(false); new Thread(() -> { try { JSObject r = new JSObject(); r.put("hosts", new JSArray(KtRemote.scan(getContext(), scanStop).toString())); r.put("mine", KtRemote.localIp()); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }, "kt-remote-scan").start(); }
     @PluginMethod public void remoteScanStop(PluginCall call) { scanStop.set(true); call.resolve(); }
 
