@@ -17,6 +17,8 @@ export interface Settings {
   /** Folders chosen lately in the Add sheet, newest first. */
   recentDirs?: string[];
   maxActive: number;
+  /** Connections over every file download at once (the phone's engine). */
+  connBudget?: number;
   limits: Limits;
   seedAfterDone: boolean;
   listenPort: number;

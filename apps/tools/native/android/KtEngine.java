@@ -94,6 +94,13 @@ final class KtEngine {
     private volatile int connsPerTorrent = 150;
     private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
+    /** Connections over every file download at once (OmniGet's global budget): a new download gets what is left of it. */
+    private int budget = 24;
+    /** Hosts that answer one request at a time well and many badly (YouTube, Instagram, TikTok, X, Reddit…): a pause between requests. */
+    private static final Map<String, Long> hostNextAt = new ConcurrentHashMap<>();
+    static long minIntervalOf(String host) { return host.matches("(.*\\.)?(youtube|googlevideo|instagram|cdninstagram|tiktok|tiktokcdn|twitter|x|twimg|reddit|redd|pinterest|pinimg)\\.(com|net|it)") ? 800 : 0; }
+    /** Waits its turn on a host that is given one request at a time; nothing for the rest. */
+    static void takeTurn(String host) { long iv = minIntervalOf(host); if (iv <= 0) return; long wait; synchronized (hostNextAt) { long now = System.currentTimeMillis(); long next = hostNextAt.getOrDefault(host, 0L); wait = Math.max(0, next - now); hostNextAt.put(host, Math.max(now, next) + iv); } if (wait > 0) try { Thread.sleep(wait); } catch (InterruptedException ignored) {} }
     /* Prism's connection settings: the name the app gives servers, tries per chunk, how long to wait, a proxy,
        and what to do when the file is there already. Plus what each server was found to accept. */
     static final String APP_UA = "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1";
@@ -472,6 +479,7 @@ final class KtEngine {
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
+        if (o.has("connBudget")) budget = Math.max(4, Math.min(128, o.optInt("connBudget", 24)));
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
         if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", true)).apply(); } catch (Throwable ignored) {}   // (from the next start)
@@ -546,11 +554,23 @@ final class KtEngine {
                     x.name = nn; x.httpOut = new File(dirF, nn); x.autoName = false; persist(); tell(true); return new File(dirF, nn + ".part");
                 };
                 opt.cookies = (u, set) -> { try { android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance(); for (String c : set) cm.setCookie(u.toString(), c); } catch (Throwable ignored) {} };
-                final int conns = lim == null ? x.wantConnections : Math.max(1, Math.min(x.wantConnections, lim));
+                // (What the host is known to take, and what the budget over every download leaves: the smaller.)
+                int inUse = 0; for (Task t : snapshot()) if (t != x && "http".equals(t.kind) && "downloading".equals(t.state)) inUse += Math.max(1, t.connections);
+                final int conns = Math.max(1, Math.min(lim == null ? x.wantConnections : Math.min(x.wantConnections, lim), Math.max(1, budget - inUse)));
                 final Runnable tick = () -> { x.total = info.total; x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } };
                 KrDownloader.Result r;
                 final File part0 = part;
                 try { r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                catch (KrDownloader.Status st403) {
+                    // (403 and nothing fetched yet: asked once more the way a browser following a link would — the site's
+                    // own origin as the referer, the fetch hints a navigation carries, a plain range — before giving up.)
+                    if (st403.code != 403 || x.got.get() > 0 || x.cancel.get()) throw st403;
+                    JSONObject h2 = new JSONObject(); if (headers != null) { Iterator<String> it = headers.keys(); while (it.hasNext()) { String k = it.next(); h2.put(k, headers.optString(k)); } }
+                    URL u0 = new URL(url); String origin = u0.getProtocol() + "://" + u0.getHost() + (u0.getPort() > 0 ? ":" + u0.getPort() : "") + "/";
+                    if (!h2.has("Referer") && !h2.has("referer")) h2.put("Referer", origin);
+                    h2.put("Sec-Fetch-Site", "same-origin"); h2.put("Sec-Fetch-Mode", "navigate"); h2.put("Sec-Fetch-Dest", "document"); h2.put("Sec-Fetch-User", "?1"); h2.put("Accept", "*/*"); h2.put("Accept-Language", "en-US,en;q=0.9");
+                    final JSONObject hh = h2; r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, hh, false), x.cancel, x.got, info, tick, opt);
+                }
                 catch (IOException e) {
                     // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
                     // tried once more by the network's own DNS.)
@@ -569,8 +589,12 @@ final class KtEngine {
                 if (x.autoName && r.fileName != null) { String n = r.fileName.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); if (want.exists() && !"overwrite".equals(conflict)) n = freeName(dir, n); x.name = n; x.httpOut = new File(dir, n); } x.autoName = false; }
                 // (A server that refused connections: asked no more than it accepted next time.)
                 if (r.refused && !host.isEmpty()) { hostLimit.put(host, Math.max(1, r.connections)); saveHosts(); }
+                // (A host that took every connection asked, with a limit learnt from before it: the limit grows a tenth — AIMD, so a refusal long past stops holding it down.)
+                else if (!host.isEmpty() && lim != null && lim < x.wantConnections && r.connections >= lim) { hostLimit.put(host, Math.min(x.wantConnections, lim + Math.max(1, lim / 10))); saveHosts(); }
                 if (x.cancel.get()) { x.downSpeed = 0; x.done = x.got.get(); persist(); return; }
                 if (r.total > 0 && part.length() != r.total) throw new IOException("incomplete");
+                // (A page saved where a media file was expected — a sign-in, an error, a storage's «<Error>» — is not kept as the file.)
+                if (KrDownloader.isPageNotMedia(part, x.name)) { part.delete(); throw new KrDownloader.WebPage(); }
                 if (x.httpOut.exists()) x.httpOut.delete();
                 if (!part.renameTo(x.httpOut)) throw new IOException("cannot keep the file");
                 state.delete();
@@ -614,6 +638,7 @@ final class KtEngine {
         x.source.put("url", url); if (headers != null && headers.length() > 0) x.source.put("headers", headers); x.paused = false; x.error = null; persist(); startHttp(x); tell(true);
     }
     private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
+        takeTurn(hostOf(u.toString()));
         java.net.Proxy px = proxyOf(proxy);
         HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
         // (The cookies the site set — here or in the app's browser, where a site's check is passed.)

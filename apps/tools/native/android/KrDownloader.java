@@ -85,6 +85,14 @@ final class KrDownloader {
         if (head.startsWith("G") && n > 376 && (b[188] & 255) == 0x47 && (b[376] & 255) == 0x47) return "ts";
         return null;
     }
+    /** A file named as media or an archive whose first bytes are a web page or an XML error (what a storage answers
+     *  when a link expired): the download was a page, not the file. */
+    static boolean isPageNotMedia(File f, String name) {
+        if (name == null || !name.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(mp4|mkv|webm|avi|mov|m4v|ts|mp3|m4a|flac|ogg|opus|wav|aac|zip|7z|rar|apk|xapk|apkm|pdf|epub|cbz|jpe?g|png|gif|webp|iso|exe|msi|dmg|tar|gz|xz)$")) return false;
+        byte[] b = new byte[1024]; int n = 0; try (java.io.FileInputStream in = new java.io.FileInputStream(f)) { int r; while (n < b.length && (r = in.read(b, n, b.length - n)) > 0) n += r; } catch (IOException e) { return false; }
+        if (n < 16) return false; String head = new String(b, 0, n, java.nio.charset.StandardCharsets.ISO_8859_1).trim().toLowerCase(java.util.Locale.ROOT);
+        return head.startsWith("<!doctype html") || head.startsWith("<html") || (head.startsWith("<?xml") && head.contains("<error")) || head.startsWith("{\"error\"") || head.startsWith("<error");
+    }
     /** A ZIP's kind from its entries: an APK, an app bundle (XAPK, APKM, APKS), an e-book, an Office file, or a ZIP. */
     private static String zipKind(File f) {
         try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(f)) {

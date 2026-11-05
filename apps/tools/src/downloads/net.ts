@@ -21,7 +21,7 @@ export const validProxy = (s: string): boolean => !s.trim() || /^((https?|socks[
 
 export async function applyNet(p = netPrefs()): Promise<void> {
   const net = engineNet(p);
-  try { const d = window.kurokawaTools as unknown as { configure?(o: Record<string, unknown>): Promise<void> } | undefined; if (d?.configure) await d.configure({ net }); else await ktPlugin()?.configure({ net }); } catch { /* the engine is not up yet */ }
+  try { const d = window.kurokawaTools as unknown as { configure?(o: Record<string, unknown>): Promise<void> } | undefined; if (d?.configure) await d.configure({ net }); else { const { getSettings } = await import('../settings'); await ktPlugin()?.configure({ net, connBudget: getSettings().connBudget ?? 24 } as never); } } catch { /* the engine is not up yet */ }
 }
 /** Whether files are there (the computer or the phone); undefined where it cannot be asked. */
 export async function existing(paths: string[]): Promise<boolean[] | undefined> {
