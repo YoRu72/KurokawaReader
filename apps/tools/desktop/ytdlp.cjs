@@ -86,10 +86,12 @@ class VideoJobs {
     const outTpl = m.outName ? path.join(t.dir, `${safe(m.outName)}.%(ext)s`) : m.template ? path.join(t.dir, `${m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - ` : ''}${tpl}.%(ext)s`) : path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
     const args = [...common(), '--newline', '--no-playlist', '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.filename)s', '-o', outTpl];
     if (m.audioOnly) args.push('-f', m.format || 'bestaudio/best', '-x', ...(m.container ? ['--audio-format', m.container] : [])); else args.push('-f', m.format ? `${m.format}/best` : 'bestvideo+bestaudio/best', ...(m.container ? ['--merge-output-format', m.container] : ['--merge-output-format', 'mp4']));
-    if (m.subs) args.push('--write-subs', '--sub-langs', m.subs, '--embed-subs'); if (m.embedThumb) args.push('--embed-thumbnail'); if (m.embedMeta !== false) args.push('--embed-metadata'); if (m.sponsorblock) args.push('--sponsorblock-remove', 'sponsor');
+    if (m.subs) args.push('--write-subs', '--sub-langs', m.subs, '--embed-subs'); if (m.embedThumb) args.push('--embed-thumbnail'); if (m.embedMeta !== false) args.push('--embed-metadata'); { const mode = m.sponsorMode || (m.sponsorblock ? 'remove' : 'off'); const cats = m.sponsorCats || 'sponsor'; if (mode === 'remove') args.push('--sponsorblock-remove', cats); else if (mode === 'mark') args.push('--sponsorblock-mark', cats, '--embed-chapters'); }
     if (m.cookiesFromBrowser) args.push('--cookies-from-browser', m.cookiesFromBrowser);
     if (m.chapters) args.push('--embed-chapters');
-    if (m.section && /^[\d:.]+-[\d:.]+$/.test(m.section)) args.push('--download-sections', `*${m.section}`);
+    if (m.section) for (const sec of String(m.section).split(/\s*[,;]\s*/)) if (/^[\d:.]+-[\d:.]+$/.test(sec)) args.push('--download-sections', `*${sec}`);
+    if (m.chapterMatch) args.push('--download-sections', String(m.chapterMatch));
+    if (m.splitChapters) args.push('--split-chapters', '-o', `chapter:${path.join(t.dir, `${m.outName ? safe(m.outName) : tpl} - %(section_number)02d %(section_title)s.%(ext)s`)}`);
     for (const [k, v] of Object.entries(m.headers || {})) if (k && v) args.push('--add-header', `${k}:${v}`);
     args.push(t.source.url);
     const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); this.procs.set(id, p); let err = ''; let buf = ''; let last = 0;

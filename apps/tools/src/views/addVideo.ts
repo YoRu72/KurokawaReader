@@ -35,7 +35,7 @@ export const nativeHls = (url: string): boolean => getPlatform() === 'android' &
 
 export function videoPanel(onChange: () => void): VideoPanel {
   const el = h('div', { class: 'video-panel', hidden: true });
-  const part = { on: false, from: '', to: '' };
+  const part = { on: false, from: '', to: '', more: '' as string }; const chap = { split: false, match: '' };
   let url: string | null = null; let info: PageInfo | null = null; let chosen: VideoChoice | null = null; let subs = false; let token = 0; let running: Promise<void> = Promise.resolve();
   const s = getSettings();
   const pickDefault = (i: PageInfo) => {
@@ -69,7 +69,11 @@ export function videoPanel(onChange: () => void): VideoPanel {
       langs.length ? h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: subs, onchange: (e: Event) => { subs = (e.target as HTMLInputElement).checked; } }), h('span', null, t('videoSubs', { langs: langs.join('، ') }))) : null,
       // Only a part (Prism's): from–to, as 1:30 or 1:02:00.
       i.duration && !i.live ? h('div', { class: 'video-part' }, h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: part.on, onchange: (e: Event) => { part.on = (e.target as HTMLInputElement).checked; draw(); onChange(); } }), h('span', null, t('videoPart'))),
-        part.on ? h('span', { class: 'video-part-range', dir: 'ltr' }, h('input', { type: 'text', inputmode: 'numeric', value: part.from || '0:00', placeholder: '0:00', 'aria-label': t('videoPartFrom'), oninput: (e: Event) => { part.from = (e.target as HTMLInputElement).value; } }), '–', h('input', { type: 'text', inputmode: 'numeric', value: part.to || dur(i.duration).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), placeholder: '1:00', 'aria-label': t('videoPartTo'), oninput: (e: Event) => { part.to = (e.target as HTMLInputElement).value; } })) : null) : null].filter((x): x is NonNullable<typeof x> => !!x));
+        part.on ? h('span', { class: 'video-part-range', dir: 'ltr' }, h('input', { type: 'text', inputmode: 'numeric', value: part.from || '0:00', placeholder: '0:00', 'aria-label': t('videoPartFrom'), oninput: (e: Event) => { part.from = (e.target as HTMLInputElement).value; } }), '–', h('input', { type: 'text', inputmode: 'numeric', value: part.to || dur(i.duration).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), placeholder: '1:00', 'aria-label': t('videoPartTo'), oninput: (e: Event) => { part.to = (e.target as HTMLInputElement).value; } })) : null,
+        part.on ? h('input', { type: 'text', class: 'video-part-more', dir: 'ltr', value: part.more, placeholder: t('videoPartMoreHint'), 'aria-label': t('videoPartMore'), oninput: (e: Event) => { part.more = (e.target as HTMLInputElement).value; } }) : null) : null,
+      // Chapters: the file split into one file a chapter, or only the chapters whose names match a pattern.
+      i.duration && !i.live ? h('div', { class: 'video-part' }, h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: chap.split, onchange: (e: Event) => { chap.split = (e.target as HTMLInputElement).checked; } }), h('span', null, t('videoSplitChapters'))),
+        h('input', { type: 'text', class: 'video-part-more', dir: 'auto', value: chap.match, placeholder: t('videoChapterMatchHint'), 'aria-label': t('videoChapterMatch'), oninput: (e: Event) => { chap.match = (e.target as HTMLInputElement).value; } })) : null].filter((x): x is NonNullable<typeof x> => !!x));
   };
   const offerAddon = () => {
     el.hidden = false;
@@ -90,7 +94,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
       onChange();
     });
   };
-  const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
+  const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, sponsorMode: s.videoSponsorMode ?? (s.videoSponsor ? 'remove' : 'off'), sponsorCats: (s.videoSponsorCats ?? ['sponsor']).join(','), chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
   return {
     el, check, busy: () => running,
     picks() {
@@ -98,8 +102,9 @@ export function videoPanel(onChange: () => void): VideoPanel {
       if (info.kind === 'playlist') return info.entries.filter((e) => e.url).map((e, n) => ({ url: e.url, video: { ...base(preferredFormat().audioOnly), ...preferredFormat(), title: e.title, playlistIndex: s.videoNumber === false ? undefined : n + 1 } }));
       const i = info; const c = chosen;
       const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
-      const sec = part.on && part.from.trim() && part.to.trim() ? `${part.from.trim()}-${part.to.trim()}` : undefined;
-      return [{ url: i.url || url, video: { ...base(c?.kind === 'audio'), format: c?.id, audioOnly: c?.kind === 'audio', label: c?.label, title: i.title, site: i.site, thumbnail: i.thumbnail, subs: subs && langs.length ? langs.join(',') : undefined, section: sec } }];
+      const sec = part.on && part.from.trim() && part.to.trim() ? [`${part.from.trim()}-${part.to.trim()}`, ...part.more.split(/[,;\s]+/).filter((r) => /^[\d:.]+-[\d:.]+$/.test(r))].join(',') : undefined;
+      const chapterMatch = chap.match.trim() ? chap.match.trim() : undefined;
+      return [{ url: i.url || url, video: { ...base(c?.kind === 'audio'), format: c?.id, audioOnly: c?.kind === 'audio', label: c?.label, title: i.title, site: i.site, thumbnail: i.thumbnail, subs: subs && langs.length ? langs.join(',') : undefined, section: sec, chapterMatch, splitChapters: chap.split || undefined } }];
     },
   };
 }

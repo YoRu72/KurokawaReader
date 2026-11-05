@@ -94,7 +94,9 @@ export interface AddOptions {
   /** A page for yt-dlp (the Video add-on): the format chosen and what the list shows. */
   video?: { format?: string; title?: string; site?: string; label?: string; audioOnly?: boolean; container?: string; subs?: string; thumbnail?: string; playlistIndex?: number; embedThumb?: boolean; sponsorblock?: boolean; headers?: Record<string, string>; outName?: string;
     /** Chapters kept in the file; the file name's pattern (yt-dlp's); only a part («1:00-2:30»); a browser's cookies (desktop). */
-    chapters?: boolean; template?: string; section?: string; cookies?: string };
+    chapters?: boolean; template?: string; section?: string; cookies?: string;
+    /** Parts by chapter name (a regular expression), the file split by its chapters, SponsorBlock's mode and categories. */
+    chapterMatch?: string; splitChapters?: boolean; sponsorMode?: 'off' | 'remove' | 'mark'; sponsorCats?: string };
 }
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }

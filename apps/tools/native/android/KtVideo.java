@@ -102,7 +102,10 @@ final class KtVideo {
         String tpl = meta != null ? meta.optString("template", "") : ""; if (tpl.isEmpty() || tpl.contains("/") || tpl.contains("\\") || tpl.contains("..")) tpl = "%(title)s [%(id)s]";
         r.addOption("-o", new File(dir, !outName.isEmpty() ? outName + ".%(ext)s" : (idx > 0 ? String.format("%02d - ", idx) : "") + tpl + ".%(ext)s").getAbsolutePath());
         if (meta != null && meta.optBoolean("chapters", false)) r.addOption("--embed-chapters");
-        String section = meta != null ? meta.optString("section", "") : ""; if (section.matches("[\\d:.]+-[\\d:.]+")) r.addOption("--download-sections", "*" + section);
+        // Parts: time ranges (several, «1:30-2:00»), or chapters whose names match; the file split by its chapters when asked.
+        String section = meta != null ? meta.optString("section", "") : ""; for (String sec : section.split("\\s*[,;]\\s*")) { if (sec.matches("[\\d:.]+-[\\d:.]+")) r.addOption("--download-sections", "*" + sec); }
+        String chapterMatch = meta != null ? meta.optString("chapterMatch", "") : ""; if (!chapterMatch.isEmpty()) r.addOption("--download-sections", chapterMatch);
+        if (meta != null && meta.optBoolean("splitChapters", false)) { r.addOption("--split-chapters"); r.addOption("-o", "chapter:" + new File(dir, (!outName.isEmpty() ? outName : tpl) + " - %(section_number)02d %(section_title)s.%(ext)s").getAbsolutePath()); }
         JSONObject hd = meta != null ? meta.optJSONObject("headers") : null;
         if (hd != null) for (java.util.Iterator<String> it = hd.keys(); it.hasNext(); ) { String k = it.next(); String v = hd.optString(k, ""); if (!k.isEmpty() && !v.isEmpty()) r.addOption("--add-header", k + ":" + v); }
         if (audioOnly) { r.addOption("-f", format.isEmpty() ? "bestaudio/best" : format); r.addOption("-x"); if (!container.isEmpty()) r.addOption("--audio-format", container); }
@@ -110,7 +113,9 @@ final class KtVideo {
         if (meta != null && meta.has("subs")) { r.addOption("--write-subs"); r.addOption("--sub-langs", meta.optString("subs")); r.addOption("--embed-subs"); }
         if (meta != null && meta.optBoolean("embedThumb", false)) r.addOption("--embed-thumbnail");
         if (meta == null || meta.optBoolean("embedMeta", true)) r.addOption("--embed-metadata");
-        if (meta != null && meta.optBoolean("sponsorblock", false)) r.addOption("--sponsorblock-remove", "sponsor");
+        // SponsorBlock: segments cut out, or only marked as chapters (the player skips them), of the categories chosen.
+        String sbMode = meta != null ? meta.optString("sponsorMode", meta.optBoolean("sponsorblock", false) ? "remove" : "off") : "off"; String sbCats = meta != null ? meta.optString("sponsorCats", "sponsor") : "sponsor"; if (sbCats.isEmpty()) sbCats = "sponsor";
+        if ("remove".equals(sbMode)) r.addOption("--sponsorblock-remove", sbCats); else if ("mark".equals(sbMode)) { r.addOption("--sponsorblock-mark", sbCats); r.addOption("--embed-chapters"); }
         // The step of the ladder, then the reader's own arguments («edit and try again»: whole words, split on spaces, quotes kept together).
         { String[] st = LADDER[step]; for (int i = 0; i < st.length; i++) { if (st[i].startsWith("-") && i + 1 < st.length && !st[i + 1].startsWith("-")) r.addOption(st[i], st[++i]); else r.addOption(st[i]); } }
         String extra = meta != null ? meta.optString("extraArgs", "") : "";
