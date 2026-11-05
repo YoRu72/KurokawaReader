@@ -152,6 +152,7 @@ else {
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
   { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   void import('./downloads/sidecars').then((m) => m.startSidecars());
+  void import('./downloads/hotkeys').then((m) => m.startHotkeys());
   void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
   if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
   if (getSettings().addons.includes('tv')) void import('./tv/auto').then((m) => m.startTvAuto());

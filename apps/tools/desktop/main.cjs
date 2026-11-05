@@ -2,7 +2,7 @@
 // engine), takes magnets and .torrent files from the system, and updates itself from the repository's tools-v*
 // releases.
 'use strict';
-const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, dialog } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu, dialog, Tray, Notification, globalShortcut, clipboard, nativeImage } = require('electron');
 if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.tools');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -34,7 +34,27 @@ function loadState() { try { return JSON.parse(fs.readFileSync(statePath(), 'utf
 function saveState() { if (!win) return; try { const b = win.getNormalBounds(); fs.writeFileSync(statePath(), JSON.stringify({ ...loadState(), ...b, maximized: win.isMaximized() })); } catch { /* ignore */ } }
 /* ---------- the computer's side of the downloads: a progress bar on the taskbar / dock, a count on the dock,
    the computer kept awake while they run, and what to do when they are all done ---------- */
-let awakeId = -1; const deskPrefs = { keepAwake: true, whenDone: 'nothing' }; let wasActive = false;
+let awakeId = -1; const deskPrefs = { keepAwake: true, whenDone: 'nothing', notifyDone: true, tray: false, hotkeys: {} }; let wasActive = false;
+/* ---------- the downloads' tray icon (the speed over all of them in its tooltip), finished-download notices, clipboard hotkeys ---------- */
+let dlTray = null; const doneSeen = new Set(); const human = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${Math.round(n)} B`);
+function trayUpdate(moving) {
+  if (!deskPrefs.tray) { if (dlTray) { dlTray.destroy(); dlTray = null; } return; }
+  try {
+    if (!dlTray) { dlTray = new Tray(nativeImage.createFromPath(path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png')).resize({ width: 18, height: 18 })); dlTray.on('click', () => { if (win) { win.show(); win.focus(); } }); dlTray.setContextMenu(Menu.buildFromTemplate([{ label: 'Kurokawa Tools', click: () => { if (win) { win.show(); win.focus(); } } }, { type: 'separator' }, { label: 'Quit', click: () => { quitting = true; app.quit(); } }])); }
+    const down = moving.reduce((n, x) => n + (Number(x.downSpeed) || 0), 0);
+    dlTray.setToolTip(moving.length ? `Kurokawa Tools · ↓ ${human(down)}/s · ${moving.length}` : 'Kurokawa Tools');
+  } catch { /* no tray here */ }
+}
+function notifyDone(tasks) {
+  if (!deskPrefs.notifyDone || !Notification.isSupported()) return;
+  for (const x of tasks) { if (x.state !== 'done' || doneSeen.has(x.id)) continue; doneSeen.add(x.id); if (!wasActiveIds.has(x.id)) continue; try { const n = new Notification({ title: x.name || 'Download finished', body: x.total ? human(x.total) : '', silent: false }); n.on('click', () => { if (win) { win.show(); win.focus(); } send('kt:openTask', x.id); }); n.show(); } catch { /* none */ } }
+}
+const wasActiveIds = new Set();
+/** The clipboard hotkeys: each takes the clipboard's text and hands it to the page with its mode (video, audio only, clip). */
+function hotkeysApply() {
+  try { globalShortcut.unregisterAll(); } catch { /* none */ }
+  for (const [mode, acc] of Object.entries(deskPrefs.hotkeys || {})) { if (!acc) continue; try { globalShortcut.register(String(acc), () => { const text = clipboard.readText(); send('kt:hotkeyAdd', { mode, text }); if (win) { win.show(); win.focus(); } }); } catch { /* a bad or taken shortcut */ } }
+}
 function onDesktopTasks(tasks) {
   if (!Array.isArray(tasks) || !win || win.isDestroyed()) return;
   const moving = tasks.filter((x) => ['downloading', 'metadata', 'checking'].includes(x.state));
@@ -46,6 +66,7 @@ function onDesktopTasks(tasks) {
   if ((!moving.length || !deskPrefs.keepAwake) && awakeId >= 0) { try { powerSaveBlocker.stop(awakeId); } catch { /* gone */ } awakeId = -1; }
   // (All done — something was running and nothing is now, none failed in between —: as chosen.)
   if (wasActive && !moving.length && !tasks.some((x) => x.state === 'queued') && deskPrefs.whenDone !== 'nothing') whenAllDone(deskPrefs.whenDone);
+  for (const x of moving) wasActiveIds.add(x.id); trayUpdate(moving); notifyDone(tasks);
   wasActive = moving.length > 0;
 }
 function whenAllDone(what) {
@@ -272,7 +293,7 @@ ipcMain.handle('kt:fontIndex', async (_e, dirs) => {
   }
   return out;
 });
-ipcMain.handle('kt:desktopPrefs', (_e, o) => { if (o && typeof o === 'object') { if ('keepAwake' in o) deskPrefs.keepAwake = !!o.keepAwake; if (['nothing', 'quit', 'sleep', 'shutdown'].includes(o.whenDone)) deskPrefs.whenDone = o.whenDone; } return deskPrefs; });
+ipcMain.handle('kt:desktopPrefs', (_e, o) => { if (o && typeof o === 'object') { if ('keepAwake' in o) deskPrefs.keepAwake = !!o.keepAwake; if (['nothing', 'quit', 'sleep', 'shutdown'].includes(o.whenDone)) deskPrefs.whenDone = o.whenDone; if ('notifyDone' in o) deskPrefs.notifyDone = !!o.notifyDone; if ('tray' in o) { deskPrefs.tray = !!o.tray; trayUpdate([]); } if (o.hotkeys && typeof o.hotkeys === 'object') { deskPrefs.hotkeys = o.hotkeys; hotkeysApply(); } } return deskPrefs; });
 ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(E(), String(o.id), Number(o.fileIndex) || 0) }));
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
