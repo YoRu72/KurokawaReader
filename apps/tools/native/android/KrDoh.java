@@ -225,6 +225,12 @@ final class KrDoh {
         for (String k : neededAt.keySet()) if (k.endsWith("|" + h) || k.endsWith("." + h)) neededAt.remove(k);
         unblocked.incrementAndGet(); note("force", host, null, -1, "unreachable");
     }
+    static void unforce(String host) { if (host == null) return; String h = host.toLowerCase(); forced.remove(h); for (String k : neededAt.keySet()) if (k.endsWith("|" + h)) neededAt.remove(k); }
+    private static final Map<String, Long> silentAt = new ConcurrentHashMap<>();
+    /** A second unanswered drop of an untouched tunnel to `host` within five minutes. */
+    static boolean silentTwice(String host) { String h = host.toLowerCase(); long now = System.currentTimeMillis(); Long was = silentAt.put(h, now); return was != null && now - was < 300_000L; }
+    /** Whether the network's DNS hides `host` (as last looked at), forcing left out; null when not looked at yet. */
+    static Boolean neededByDns(String host) { long[] had = neededAt.get(provider + "|" + host.toLowerCase()); return had == null || had[0] < System.currentTimeMillis() ? null : had[1] == 1; }
     static boolean isForced(String host) {
         if (host == null) return false; String h = host.toLowerCase(); long now = System.currentTimeMillis();
         for (Map.Entry<String, Long> e : forced.entrySet()) { if (e.getValue() < now) { forced.remove(e.getKey()); continue; } if (h.equals(e.getKey()) || h.endsWith("." + e.getKey())) return true; }
