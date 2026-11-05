@@ -15,7 +15,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The app's web views with DNS over HTTPS (see KrDoh): while the reader has a resolver chosen, the requests
+ * The app's browser with its own DNS over HTTPS (see KrDoh.browserProvider — apart from the app's choice in Settings,
+ * which neither reads nor changes it): while the browser's switch is on, the requests
  * (GET: pages, pictures, scripts, styles) to a site the network's DNS hides are made by the app, the site asked
  * at the address the resolver gave, and handed to the page — the site opens all the same. A request the
  * app cannot make for the page (a form sent, an error on the way) goes the web view's own way.
@@ -23,7 +24,10 @@ import java.util.Map;
 class KtDohWeb extends WebViewClient {
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
-        if (!KrDoh.on() || KrDohProxy.running()) return null;   // (with the proxy on, every connection already goes through the resolver)
+        if (!KrDoh.browserOn()) return null;   // (the browser's own switch: the app's Settings play no part here)
+        try { return KrDoh.browser(() -> intercept(req)); } catch (Exception e) { return null; }
+    }
+    private static WebResourceResponse intercept(WebResourceRequest req) {
         String scheme = req.getUrl() != null ? req.getUrl().getScheme() : null;
         if (!"GET".equalsIgnoreCase(req.getMethod()) || scheme == null || !(scheme.equals("http") || scheme.equals("https"))) return null;
         // (Only a site the network's DNS hides: the others go the web view's own way — see KrDoh.needed.)

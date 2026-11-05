@@ -6,7 +6,7 @@ import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, type Route } from './router';
 import { h, icon, closeSheets } from './ui/dom';
 import { goBack, wirePcBack } from './ui/backstack';
-import { applyChrome, onSettingsChange, getSettings, updateSettings } from './settings';
+import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
 import { scheduleAutoCheck } from './updates';
@@ -153,9 +153,9 @@ else {
   setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
   { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined);
-    // (The phone: the Settings are what decides — «off» sent as much as a resolver, so a switch turned on elsewhere and
-    // never shown in the Settings cannot stay on unseen — and a switch turned in the app's browser is written back to them.)
-    void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown>; addListener?(ev: 'doh', fn: (e: { kind: string; msg?: string }) => void): Promise<unknown> } | null; if (!kp?.setDoh) return; void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); void kp.addListener?.('doh', (e) => { if (e.kind === 'provider' && e.msg && e.msg !== getSettings().doh) updateSettings({ doh: e.msg }); }); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
+    // (The phone: the app's Settings alone decide the app's DNS over HTTPS — «off» sent as much as a resolver, so the old
+    // browser switch, which wrote the app's choice, cannot keep it on unseen. The browser has its own switch now.)
+    void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   void import('./ui/imgRetry').then((m) => m.startImgRetry());
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
