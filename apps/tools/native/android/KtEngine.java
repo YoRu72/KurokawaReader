@@ -106,6 +106,8 @@ final class KtEngine {
     static final String APP_UA = "Mozilla/5.0 (Linux; Android 13) KurokawaTools/0.1";
     private volatile String ua = APP_UA, proxy = "", conflict = "rename", bindIface = ""; private volatile int retries = 5, timeoutS = 60; private volatile boolean torrentProxy = false, anonymous = false;
     private final Map<String, Integer> hostLimit = new ConcurrentHashMap<>();
+    /** The name the unreadable task list was kept under, when that happened at start (told once to the page). */
+    volatile String quarantined;
     private Thread ticker;
     private volatile long lastTell = 0;
     private final KtStream stream;
@@ -872,15 +874,23 @@ final class KtEngine {
         File f = new File(stateDir, "tasks.json"), bak = new File(stateDir, "tasks.json.bak"); if (!f.exists() && !bak.exists()) return;
         try {
             // (The last good copy when this one cannot be read — a write cut short.)
-            JSONArray arr; try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); } catch (Exception e) { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(bak.toPath()), StandardCharsets.UTF_8)); }
+            JSONArray arr; try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); }
+            catch (Exception e) {
+                // (Neither copy readable: the broken file is kept aside under a dated name — never thrown away quietly — and the list starts empty.)
+                try { arr = new JSONArray(new String(java.nio.file.Files.readAllBytes(bak.toPath()), StandardCharsets.UTF_8)); }
+                catch (Exception e2) { File q = new File(stateDir, "tasks.json.corrupt-" + System.currentTimeMillis()); try { if (f.exists()) java.nio.file.Files.move(f.toPath(), q.toPath()); } catch (Exception ignored) {} Log.w(TAG, "tasks.json unreadable, kept as " + q.getName()); quarantined = q.getName(); return; }
+            }
             boolean any = false;
             for (int i = 0; i < arr.length(); i++) { try {
                 JSONObject o = arr.getJSONObject(i); Task x = new Task();
                 x.id = o.getString("id"); x.kind = o.getString("kind"); x.name = o.optString("name"); x.source = o.optJSONObject("source"); if (x.source == null) x.source = new JSONObject(); x.dir = o.optString("dir"); x.state = o.optString("state", "paused");
                 x.limitDown = o.optInt("limitDown", 0); x.limitUp = o.optInt("limitUp", 0); x.done = o.optLong("done"); x.total = o.optLong("total"); x.addedAt = o.optLong("addedAt", System.currentTimeMillis()); x.doneAt = o.optLong("doneAt"); x.meta = o.optJSONObject("meta"); x.sequential = o.optBoolean("sequential"); x.paused = o.optBoolean("paused"); x.infoHash = o.optString("infoHash", null); x.error = o.optString("error", null); x.wantConnections = o.optInt("connections", 8);
                 JSONArray pr = o.optJSONArray("priorities"); if (pr != null) { x.priorities = new int[pr.length()]; for (int k = 0; k < pr.length(); k++) x.priorities[k] = pr.getInt(k); }
+                // (A download that was running when the app died comes back paused and marked: the page offers to resume them all.)
+                boolean wasRunning = "downloading".equals(x.state) || "queued".equals(x.state);
                 if ("http".equals(x.kind)) { x.httpOut = new File(x.dir, x.name); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
                 if ("video".equals(x.kind)) { String vf = o.optString("file", ""); if (!vf.isEmpty()) x.httpOut = new File(x.dir, vf); if (!"done".equals(x.state)) { x.state = "paused"; x.paused = true; } }
+                if (wasRunning && ("http".equals(x.kind) || "video".equals(x.kind))) { try { if (x.meta == null) x.meta = new JSONObject(); x.meta.put("interrupted", true); } catch (Exception ignored) {} }
                 tasks.put(x.id, x);
                 if ("torrent".equals(x.kind)) {
                     File tf = new File(stateDir, x.id + ".torrent"); if (tf.exists()) { try { x.source.put("torrent", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(tf.toPath()), android.util.Base64.NO_WRAP)); } catch (Exception ignored) {} }

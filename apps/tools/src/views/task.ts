@@ -7,11 +7,12 @@ import { filesCard, type FilesCard } from './taskFiles';
 import { canArchive, isArchiveName } from '../archives';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { ktPlugin, nativePlatform } from '../native';
-import { t } from '../i18n';
+import { getSettings } from '../settings';
+import { t, localDigits } from '../i18n';
 import { getEngine, displayName, isVideo } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
-import { back } from '../router';
+import { back, navigate } from '../router';
 import { stateLabel } from './downloads';
 import { historyOf, fileMap, lanes, speedChart, logList, meter, infoList } from './taskmap';
 import { categoryOf } from '../downloads/categories';
@@ -73,7 +74,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, errorText(x.error), /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'row-actions wrap expired-acts' },
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
-        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : null) : h('span'), acts),
+        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : h('span'), acts),
       panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
@@ -94,5 +95,16 @@ function relinkCard(x: Task): HTMLElement {
   const has = !!trailOf(x); const on = has && autoRelinkOn(x.id);
   const box = h('input', { type: 'checkbox', checked: on, disabled: !has, 'data-act': 'auto-relink', onchange: (e: Event) => { setAutoRelink(x.id, (e.target as HTMLInputElement).checked); if ((e.target as HTMLInputElement).checked && expired(x)) replayTrail(x); } });
   return h('section', { class: 'card relink-card' }, h('label', { class: 'row switch-row' }, h('span', null, t('autoRelink'), h('small', { class: 'src' }, has ? t('autoRelinkHint') : t('autoRelinkNoWay'))), box));
+}
+/** The rest of the failures classified, each with the one thing that mends it (OmniGet's root-cause buttons):
+ *  no room → the storage analyzer or another folder; busy (429 / 5xx) → tried again after a wait; a name the
+ *  network will not resolve, or an unreachable site → tried through the resolver (DoH); a cut-short file → tried again. */
+function remedies(x: Task): HTMLElement | null {
+  const e = x.error ?? ''; const eng = getEngine(); const again = (label: string) => h('button', { type: 'button', class: 'btn tonal small', onclick: () => void eng.resume(x.id).catch(() => undefined) }, icon('refresh'), label);
+  if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
+  if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
+  if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), again(t('retry')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
+  if (/^HTTP 4(04|10)$/.test(e)) return null;
+  return again(t('retry'));
 }
 export const errorText = (e: string): string => (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e);

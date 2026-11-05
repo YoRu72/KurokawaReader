@@ -30,6 +30,16 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const chips = h('div', { class: 'chips filter-chips' });
   const problem = platformEngineProblem();
   const note = problem ? h('p', { class: 'hint engine-note' }, icon('info'), t('engineUnavailable', { why: problem })) : null;
+  // (Downloads the last run left mid-way — the app killed, the phone off: offered back in one tap, once.)
+  const recovery = h('div', { class: 'hint recovery-note', hidden: true });
+  let recoveryDismissed = false;
+  const drawRecovery = () => {
+    const cut = tasks.filter((x) => x.meta?.interrupted && x.state !== 'done' && x.state !== 'downloading');
+    recovery.hidden = recoveryDismissed || !cut.length; if (recovery.hidden) return;
+    recovery.replaceChildren(icon('info'), h('span', { class: 'grow' }, t('recoveryNote', { n: countItems(cut.length) })),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { recoveryDismissed = true; recovery.hidden = true; for (const x of cut) { try { await getEngine().resume(x.id); } catch { /* one at a time */ } } } }, icon('play'), t('resumeAll')),
+      h('button', { type: 'button', class: 'btn text small', onclick: () => { recoveryDismissed = true; recovery.hidden = true; } }, t('dismiss')));
+  };
   const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus'), h('span', null, t('addDownload')));
   const title = h('div', { class: 'title' }, h('span', null, t('navDownloads')), h('small', { class: 'count' }));
   const err = (e: unknown) => toast(String((e as Error).message ?? e), 'error');
@@ -86,7 +96,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const toggleLimiter = () => { void import('../ui/dropzone').then((m) => m.toggleLimiter()); };
   const onLimits = () => drawStatus(); window.addEventListener('kt:limits', onLimits);
-  const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, searchRow, chips, statusBar, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view downloads-view' }, h('header', { class: 'topbar' }, title, actions), h('div', { class: 'body' }, note, recovery, searchRow, chips, statusBar, empty, list), selectBar, fab) as HTMLElement & { dispose?: () => void };
 
   const FILTERS: [string, string][] = [['all', t('filterAll')], ['active', t('filterActive')], ['done', t('filterDone')], ['failed', t('filterFailed')]];
   const catOf = (x: Task) => categoryOf(displayName(x), x.kind);
@@ -102,7 +112,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const cards = new Map<string, HTMLElement>(); const heads = new Map<string, HTMLElement>();
   const draw = () => {
-    drawChips();
+    drawChips(); drawRecovery();
     const P = dlPrefs(); const vis = shown();
     optBtn.dataset.n = String(activeFilters(P));
     list.className = `task-list look-${P.look}`;
