@@ -6,6 +6,7 @@ import { h, icon, closeSheets } from '../ui/dom';
 import { t, formatBytes, localDigits, countVideos } from '../i18n';
 import { getSettings } from '../settings';
 import { nativePlatform as getPlatform, ktPlugin } from '../native';
+import { noteChanges } from '../video/snapshots';
 import type { AddOptions } from '../engine/types';
 import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, videoEnabled, videoSupported, type PageInfo, type VideoChoice } from '../video/ytdlp';
 
@@ -35,7 +36,7 @@ export const nativeHls = (url: string): boolean => getPlatform() === 'android' &
 
 export function videoPanel(onChange: () => void): VideoPanel {
   const el = h('div', { class: 'video-panel', hidden: true });
-  const part = { on: false, from: '', to: '', more: '' as string }; const chap = { split: false, match: '' }; let bilingual = false;
+  const part = { on: false, from: '', to: '', more: '' as string }; const chap = { split: false, match: '' }; let bilingual = false; let changeNote: string | null = null;
   let url: string | null = null; let info: PageInfo | null = null; let chosen: VideoChoice | null = null; let subs = false; let token = 0; let running: Promise<void> = Promise.resolve();
   const s = getSettings();
   const pickDefault = (i: PageInfo) => {
@@ -57,10 +58,12 @@ export function videoPanel(onChange: () => void): VideoPanel {
     const i = info;
     const chip = (c: VideoChoice) => h('button', { type: 'button', class: `chip small${chosen?.id === c.id ? ' on' : ''}`, 'aria-pressed': String(chosen?.id === c.id), onclick: () => { chosen = c; draw(); onChange(); } },
       c.kind === 'audio' ? icon('music') : null, h('span', { dir: 'ltr' }, c.label), c.size ? h('small', { class: 'src' }, formatBytes(c.size)) : null);
-    const meta = [i.uploader, dur(i.duration), i.site].filter(Boolean).join(' · ');
+    const meta = [i.uploader, dur(i.duration), i.site].filter(Boolean).join(' · '); const changed = changeNote;
     const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
     el.replaceChildren(...[
       h('p', { class: 'video-ready' }, icon('check'), t('videoYtdlpReadyShort')),
+      // (Seen before and not the same: said before it is fetched again.)
+      changed ? h('p', { class: 'src danger video-changed', dir: 'auto' }, icon('alert'), ' ', t('mediaChanged'), ': ', changed) : null,
       h('div', { class: 'video-card' },
         i.thumbnail ? h('img', { class: 'video-thumb', src: i.thumbnail, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('span', { class: 'video-thumb none' }, icon('film')),
         h('div', { class: 'video-text' }, h('b', { dir: 'auto' }, i.title), meta ? h('small', { class: 'src', dir: 'auto' }, meta) : null, i.live ? h('span', { class: 'badge live' }, t('videoLive')) : null)),
@@ -90,7 +93,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
     if (!videoEnabled()) { if (videoSupported() && isVideoHost(u)) offerAddon(); else { el.hidden = true; el.replaceChildren(); } onChange(); return; }
     el.hidden = false; el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('videoChecking')}`));
     const playlist = /[?&]list=|\/playlist\b|\/sets\/|\/album\//i.test(u) && !/[?&]v=/.test(u);
-    running = pageInfo(u, playlist).then((got) => { if (my !== token) return; info = got; pickDefault(got); draw(); onChange(); }, () => {
+    running = pageInfo(u, playlist).then((got) => { if (my !== token) return; info = got; changeNote = got.kind === 'video' ? noteChanges(got) : null; pickDefault(got); draw(); onChange(); }, () => {
       if (my !== token) return;
       // Not a page yt-dlp reads: an ordinary download, said quietly only when a video site was expected.
       if (isVideoHost(u)) { el.replaceChildren(h('p', { class: 'src small' }, t('videoFallback'))); } else { el.hidden = true; el.replaceChildren(); }
