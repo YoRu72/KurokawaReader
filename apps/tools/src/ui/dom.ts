@@ -189,13 +189,13 @@ export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200): 
 }
 
 /** A bottom sheet. Returns the body element and a close function. */
-export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
+export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** Told once, however the sheet went (the button, the scrim, Escape, or `close`). */ onClose?: () => void } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
   // A stacked sheet opens above the current one (choice lists inside a form) instead of replacing it.
   if (!opts.stack) document.querySelectorAll('.sheet, .sheet-scrim').forEach((s) => s.remove());
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
-  const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); };
+  let closed = false; const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
   // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
   const onEsc = (e: KeyboardEvent) => { if (e.key !== 'Escape' || !el.isConnected) return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
   window.addEventListener('keydown', onEsc, true);

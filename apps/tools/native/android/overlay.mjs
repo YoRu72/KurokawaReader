@@ -219,6 +219,11 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "org.tukaani:xz:1.10"
     implementation "com.github.junrar:junrar:7.5.5"
     implementation "net.lingala.zip4j:zip4j:2.11.5"
+    implementation "commons-net:commons-net:3.11.1"
+    implementation "com.github.mwiede:jsch:0.2.21"
+    implementation "com.hierynomus:smbj:0.13.0"
+    implementation "com.rapid7.client:dcerpc:0.12.1"
+    implementation "androidx.security:security-crypto:1.1.0-alpha06"
     implementation "io.github.junkfood02.youtubedl-android:library:0.18.1"
     implementation "io.github.junkfood02.youtubedl-android:common:0.18.1"   // (its unzip, used for the packs; the library has it only at run time)
     implementation "io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1"`);
@@ -254,7 +259,7 @@ if (!gradle.includes('splits {')) {
 }
 // (libtorrent's JNI class must keep its name through R8.)
 if (!gradle.includes('proguard-kt.pro')) {
-  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class is.xyz.mpv.** { *; }\n-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-keep class com.yausername.** { *; }\n');
+  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class is.xyz.mpv.** { *; }\n-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-dontwarn org.bouncycastle.**\n-dontwarn org.slf4j.**\n-dontwarn com.hierynomus.**\n-dontwarn net.engio.**\n-dontwarn com.rapid7.**\n-keep class com.hierynomus.** { *; }\n-keep class net.engio.mbassy.** { *; }\n-keep class com.jcraft.jsch.** { *; }\n-keep class com.yausername.** { *; }\n');
   gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
 // (The screen translator's OCR: Google's text recognition through Play services — its models are fetched by the

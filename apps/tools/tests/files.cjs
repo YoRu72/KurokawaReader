@@ -17,6 +17,12 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
     const ls = {}; window.__calls = [];
     const Kurokawa = new Proxy({
       addListener: async (ev, fn) => { (ls[ev] = ls[ev] || []).push(fn); return { remove() { ls[ev] = ls[ev].filter((f) => f !== fn); } }; },
+      // a network storage: one SFTP connection whose host key is new (asked once), two folders, a download job
+      remoteConnections: async () => ({ list: [{ id: 'nas', kind: 'sftp', name: 'NAS', host: '192.168.1.5', port: 22, path: '/', user: 'kuro', hasPass: true }] }),
+      remoteTrust: async ({ fingerprint }) => { window.__trusted = fingerprint; },
+      remoteList: async ({ id, path }) => { if (!window.__trusted) throw new Error('hostkey:AB:CD:EF:01:23:45:67:89:ssh-ed25519'); if (path === '/') return { entries: [{ name: 'backup', dir: true, size: 0, mtime: 1760000000000 }, { name: 'iso.img', dir: false, size: 4e9, mtime: 1760000000000 }] }; return { entries: [{ name: 'old.tar', dir: false, size: 1e6, mtime: 1760000000000 }] }; },
+      remoteJob: async ({ id, op, conn, paths, dest }) => { window.__calls.push(op + ':' + conn + ':' + paths.join('|') + '>' + dest); setTimeout(() => { (ls.files || []).forEach((f) => f({ id, status: 'done', done: 4e9, total: 4e9, files: 1, failed: [] })); }, 50); return { id }; },
+      remoteCancel: async () => {}, remoteSave: async () => ({ id: 'nas' }), remoteRemove: async () => {}, remoteScanStop: async () => {},
       filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'app', path: '/storage/emulated/0/Download/Kurokawa', name: 'Kurokawa', readable: true, free: 12e9, total: 64e9 }, { kind: 'phone', path: '/storage/emulated/0', name: 'Phone', readable: true, free: 12e9, total: 64e9 }] }),
       filesList: async ({ path }) => { const e = listOf(path); return { exists: !!e, entries: e || [] }; },
       filesThumb: async () => ({ url: null }),
@@ -41,7 +47,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   });
   await p.goto('http://localhost:5481/#/files'); await p.waitForSelector('.files-view'); await p.waitForTimeout(700);
   ok('the storages are drawn', (await p.$$('.files-roots .chip')).length === 2);
-  ok('the app folder is listed, folders first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,app.apk,Movie.mkv,notes.txt,pack.zip,photo.jpg,Song.mp3');
+  ok('the app folder is listed, folders first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,app.apk,Movie.mkv,notes.txt,pack.zip,photo.jpg,Song.mp3', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(','));
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-list.png' });
   // sort by size, turned round
   await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
@@ -93,6 +99,15 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('the analyzer reports by kind', (await p.textContent('.files-kinds-bars')).includes('Video'));
   await p.click('.files-an-tabs .chip:has-text("Doubles")'); await p.waitForTimeout(200); ok('doubles: all but the first ticked', (await p.$$eval('.files-dup-group input', (e) => e.map((x) => x.checked))).join() === 'false,true');
   await p.click('.files-an-tabs .chip:has-text("Biggest folders")'); await p.click('.files-analyzer .dest-row:has-text("Movies")'); await p.waitForTimeout(600); ok('a folder from the report is opened', (await p.textContent('.files-crumbs')).toLowerCase().includes('movies'), await p.textContent('.files-crumbs'));
+  // the network: the connection in the drawer; its new host key asked about once; a remote file copied into the phone as a download job
+  await p.click('.sheet-head button[aria-label="Close"]').catch(() => {});
+  await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); ok('the network connection is in the drawer', !!(await p.$('.files-drawer .files-drawer-row:has-text("NAS")')));
+  await p.click('.files-drawer .files-drawer-row:has-text("NAS")'); await p.waitForSelector('.remote-fp'); ok('a new host key is put to the reader', (await p.textContent('.remote-fp')).includes('AB:CD:EF'));
+  await p.click('.sheet .btn.primary'); await p.waitForSelector('.files-row:has-text("iso.img")'); ok('the server is listed after the trust', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'backup,iso.img');
+  await p.click('.files-row:has-text("iso.img") button[aria-label="More"]'); await p.click('.sheet .dest-row:nth-child(2)'); await p.waitForTimeout(200);
+  await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.click('.files-drawer .files-drawer-row:has-text("Kurokawa")'); await p.waitForSelector('.files-row:has-text("Movie.mkv")');
+  await p.click('.topbar button[aria-label="Paste here"]'); await p.waitForTimeout(400);
+  ok('pasting a remote file here is a download job', (await p.evaluate(() => window.__calls)).includes('down:nas:/iso.img>/storage/emulated/0/Download/Kurokawa'), await p.evaluate(() => window.__calls.slice(-2)));
   // two panes on a wide screen: turned on from the menu, each with its own place; a selection sent across as a copy job
   await p.click('.sheet-head button[aria-label="Close"]').catch(() => {});
   await p.setViewportSize({ width: 1100, height: 800 }); await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0'); await p.waitForSelector('.files-row');

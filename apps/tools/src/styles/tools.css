@@ -743,3 +743,4 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-dual .files-pane .files-fab { position: sticky; }
 .files-pane .files-body.drop-over { outline: 2px dashed var(--md-primary); outline-offset: -4px; border-radius: 16px; }
 .files-row[draggable="true"] { cursor: grab; }
+.remote-fp { font: 12px/1.5 ui-monospace, monospace; background: var(--md-surface-container-high); padding: 10px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-all; }
