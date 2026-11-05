@@ -42,7 +42,7 @@ const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, k
 const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
 let clipboard: { op: 'copy' | 'move'; paths: string[] } | null = null;
 
-import { isRemote, parseRemote, listRemote, connections, connectionSheet, connectionMenu, scanSheet, withTrust, rplug, kindIcon, describe, canShareFolder, folderShareSheet, type Conn } from './filesRemote';
+import { isRemote, isVirtual, parseRemote, connections, connectionSheet, connectionMenu, scanSheet, rplug, vplug, vfs, vfsRoots, kindIcon, describe, canShareFolder, folderShareSheet, type Conn, type VRoots } from './filesRemote';
 const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|avif|svg)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
 const ICON: Record<string, string> = { video: 'film', audio: 'music', ebook: 'books', image: 'images', sub: 'subtitles', archive: 'archive', doc: 'file', other: 'file', locked: 'lock' };
 const MIMES: [string, string, string][] = [['image/*', 'filesAsImage', 'images'], ['audio/*', 'filesAsMusic', 'music'], ['video/*', 'filesAsVideo', 'film'], ['text/plain', 'filesAsText', 'type'], ['application/pdf', 'filesAsDocument', 'file'], ['application/zip', 'filesAsArchive', 'archive'], ['*/*', 'filesAsAny', 'apps']];
@@ -52,7 +52,7 @@ const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() ?? 
 
 /* ---------- the listing ---------- */
 async function listDir(path: string): Promise<{ exists: boolean; entries: Entry[]; truncated?: boolean }> {
-  if (isRemote(path)) { const r = await listRemote(path); return { exists: r.exists, entries: r.entries.filter((e) => prefs.hidden || !e.name.startsWith('.')) }; }
+  if (isVirtual(path)) { const r = await vfs.list(path); return { exists: r.exists, entries: r.entries.filter((e) => prefs.hidden || !e.name.startsWith('.')) }; }
   const p = plug(); if (p) return p.filesList({ path, counts: true, hidden: prefs.hidden });
   const d = desk(); if (d?.listDir) { const r = await d.listDir(path); return { exists: true, entries: (r.entries ?? []).filter((e) => prefs.hidden || !e.name.startsWith('.')).map((e) => ({ ...e, ext: e.dir ? undefined : (e.name.split('.').pop() ?? '').toLowerCase() })) }; }
   return { exists: false, entries: [] };
@@ -109,7 +109,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
   body.append(listEl, status, jobsEl);
   let at = route.p ?? (route.c ? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? ''); let remotes: Conn[] = [];
-  const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
+  let vroots: VRoots = { shell: null, trees: [], shizuku: false };
+  const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const el = e.target as HTMLElement; io.unobserve(el); const p = el.dataset.thumb; if (p) void thumbInto(el, p); } }, { rootMargin: '300px 0px' });
   const thumbInto = async (el: HTMLElement, path: string) => { const pl = plug(); if (!pl) return; try { const r = await pl.filesThumb({ path, px: prefs.view === 'grid' ? 240 : 96 }); if (r.url && el.isConnected) { el.replaceChildren(h('img', { src: r.url, alt: '', loading: 'lazy' })); el.classList.add('has-img'); } } catch { /* the icon stays */ } };
 
@@ -118,16 +119,17 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const pl = plug();
     if (pl) { try { const r = await pl.filesRoots(); roots = r.roots; allFiles = r.allFiles; } catch { roots = []; } }
     else { const d = desk(); const home = d?.homeDir ? await d.homeDir().catch(() => '') : ''; roots = home ? [{ kind: 'phone', path: home, name: t('filesHome'), readable: true }] : []; }
-    rootsRow.replaceChildren(...roots.filter((r) => r.kind !== 'remote').map((r) => h('button', { type: 'button', class: 'chip' + (at === r.path || at.startsWith(r.path + '/') ? ' on' : ''), onclick: () => { if (!r.readable) { void askAccess(); return; } go(r.path); } },
+    rootsRow.replaceChildren(...roots.filter((r) => r.kind !== 'remote' && r.kind !== 'saf' && r.kind !== 'root').map((r) => h('button', { type: 'button', class: 'chip' + (at === r.path || at.startsWith(r.path + '/') ? ' on' : ''), onclick: () => { if (!r.readable) { void askAccess(); return; } go(r.path); } },
       icon(r.kind === 'app' ? 'download' : r.kind === 'sd' ? 'storage' : r.kind === 'usb' ? 'storage' : 'storage'), h('span', null, r.name), r.free !== undefined ? h('small', { class: 'src' }, ` ${formatBytes(r.free)}`) : null)));
     remotes = await connections(); for (const c of remotes) roots.push({ kind: 'remote', path: `remote://${c.id}`, name: c.name, readable: true });
+    vroots = await vfsRoots(); if (vroots.shell) roots.push({ kind: 'root', path: 'root://', name: t('filesRootStorage'), readable: true }); for (const tr of vroots.trees) roots.push({ kind: 'saf', path: `saf://${tr.id}`, name: tr.name, readable: true });
     if (!at) { at = roots[0]?.path ?? ''; }
   };
   const askAccess = async () => { const pl = plug(); if (!pl) return; const sh = openSheet(t('filesAccessTitle'), t('close')); sh.body.append(h('p', { class: 'hint' }, t('filesAccessHint'))); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void pl.filesAccess({ ask: true }); } }, icon('key'), t('filesAccessAllow'))); };
   const drawCrumbs = () => {
     if (collection) { const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); return; }
     titleEl.textContent = at === (roots.find((x) => x.path === at)?.path) ? (roots.find((x) => x.path === at)?.name ?? baseOf(at)) : baseOf(at) || t('navFiles');
-    const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? (isRemote(at) ? `remote://${parseRemote(at).id}` : '/'); const rest = at.slice(base.length).split('/').filter(Boolean);
+    const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? (isRemote(at) ? `remote://${parseRemote(at).id}` : at.startsWith('saf://') ? at.replace(/^(saf:\/\/[^/]*).*$/, '$1') : at.startsWith('root://') ? 'root://' : '/'); const rest = at.slice(base.length).split('/').filter(Boolean);
     const parts: HTMLElement[] = [h('button', { type: 'button', class: 'crumb', onclick: () => go(base) }, r?.name ?? '/')];
     let acc = base; for (const seg of rest) { acc += `/${seg}`; const p = acc; parts.push(h('span', { class: 'crumb-sep' }, '›'), h('button', { type: 'button', class: 'crumb', onclick: () => go(p) }, seg)); }
     crumbs.replaceChildren(...parts); crumbs.scrollLeft = crumbs.scrollWidth;
@@ -159,13 +161,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
-    const ic = h('span', { class: 'files-ic' + (thumbable && !isRemote(e.path) ? ' thumb' : ''), 'data-thumb': thumbable && plug() && !isRemote(e.path) ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
+    const ic = h('span', { class: 'files-ic' + (thumbable && !isVirtual(e.path) ? ' thumb' : ''), 'data-thumb': thumbable && plug() && !isVirtual(e.path) ? e.path : undefined }, icon(e.dir ? 'folder' : ICON[k] ?? 'file'));
     const meta = e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'auto' }, e.name), h('small', { class: 'src' }, meta)),
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e); }));
     onLongPress(el, () => { if (!selecting) { selecting = true; } toggle(e); });
-    if (thumbable && plug() && !isRemote(e.path)) io.observe(ic);
+    if (thumbable && plug() && !isVirtual(e.path)) io.observe(ic);
     if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;
   };
@@ -180,7 +182,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); draw(); drawSel(); }),
       iconButton('copy', t('filesCopy'), () => { clipboard = { op: 'copy', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCopied', { n: localDigits(n) })); leaveSel(); }),
       iconButton('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: localDigits(n) })); leaveSel(); }),
-      ...(plug() && !isRemote(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
+      ...(plug() && !isVirtual(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
       ...(po.peer?.() ? [iconButton('swap', t('filesToOtherPane'), () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); })] : []),
       iconButton('trash', t('delete'), () => void confirmDelete([...picked])),
       ...(one ? [iconButton('pen', t('rename'), () => renameSheet(one))] : []),
@@ -193,9 +195,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // ---- opening
   const open = async (e: Entry) => {
     if (e.dir) { go(e.path); return; }
-    if (isRemote(e.path)) {
-      const rp = rplug(); if (!rp) return; const { id, path } = parseRemote(e.path); const jid = `rf-${Date.now()}`; const el = jobRow(jid, t('remoteFetching', { name: e.name }), () => void rp.remoteCancel({ id: jid }));
-      try { const r = await withTrust(id, () => rp.remoteFetch({ id, path, jobId: jid })); el.remove(); await open({ ...e, path: r.path }); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); }
+    if (isVirtual(e.path)) {
+      const jid = `rf-${Date.now()}`; const el = jobRow(jid, t('remoteFetching', { name: e.name }), () => void vfs.cancel(jid));
+      try { const r = await vfs.fetch(e.path, jid); el.remove(); await open({ ...e, path: r.path }); } catch (err) { el.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); }
       return;
     }
     const k = kindOfFile(e.name); const pl = plug();
@@ -241,8 +243,34 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       sh.body.append(section(t('remoteNetwork'), ...remotes.map((c) => item(kindIcon(c.kind), c.name, describe(c), () => go(`remote://${c.id}`), iconButton('more', t('more'), (ev) => { ev.stopPropagation(); connectionMenu(c, () => void loadRoots()); }))),
         item('plus', t('remoteAdd'), null, () => connectionSheet(null, redo)), item('search', t('remoteScan'), t('remoteScanHint'), () => scanSheet(redo))));
     }
+    if (vplug()) {
+      const redo = () => { sh.close(); void loadRoots().then(() => drawer()); };
+      sh.body.append(section(t('filesSystem'),
+        ...(vroots.shell ? [item('terminal', t('filesRootStorage'), vroots.shell === 'root' ? t('filesViaRoot') : t('filesViaShizuku'), () => go('root://'))] : [item('terminal', t('filesRootStorage'), vroots.shizuku ? t('filesShizukuAsk') : t('filesNoRoot'), () => { if (vroots.shizuku) void vplug()!.vfsShizukuAsk().then(() => setTimeout(redo, 1500)); else toast(t('filesNoRootHint'), 'info', 5000); })]),
+        ...vroots.trees.map((tr) => item('folder', tr.name, t('filesGrantedTree'), () => go(`saf://${tr.id}`), iconButton('close', t('filesForgetTree'), (ev) => { ev.stopPropagation(); void vplug()!.vfsForgetTree({ id: tr.id }).then(redo); }))),
+        item('key', t('filesGrantAndroidData'), t('filesGrantHint'), () => void vplug()!.vfsGrant({ start: 'Android/data' }).then(redo).catch(() => undefined)),
+        item('folderPlus', t('filesGrantAny'), null, () => void vplug()!.vfsGrant({}).then(redo).catch(() => undefined))));
+    }
     if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))), section('', item('trash', t('filesTrash'), null, () => void import('./filesMore').then((m) => m.trashSheet(() => void load())))));
   };
+  /** chmod / chown / a symbolic link on a root:// entry, and the mounts (remounted read-write or back). */
+  const rootOpsSheet = (e: Entry) => {
+    const v = vplug(); if (!v) return; const real = e.path.replace(/^root:\/\//, '/'); const sh = openSheet(e.name, t('close'));
+    const cur = h('pre', { class: 'files-text', dir: 'ltr' }, '…'); void v.vfsRootOp({ what: 'stat', path: real }).then((r) => { cur.textContent = (r.out ?? '').trim(); }, (err) => { cur.textContent = String((err as Error).message ?? err); });
+    const mode = h('input', { type: 'text', dir: 'ltr', inputmode: 'numeric', placeholder: '0644', maxlength: '4' }) as HTMLInputElement; const owner = h('input', { type: 'text', dir: 'ltr', placeholder: 'root:root', autocapitalize: 'off' }) as HTMLInputElement; const link = h('input', { type: 'text', dir: 'ltr', placeholder: '/sdcard/link-name', autocapitalize: 'off' }) as HTMLInputElement;
+    const run = async (what: string, path: string, arg: string) => { try { await v.vfsRootOp({ what, path, arg }); toast(t('done')); void load(); sh.close(); } catch (err) { toast(String((err as Error).message ?? err), 'error', 5000); } };
+    sh.body.append(h('p', { class: 'src', dir: 'ltr' }, real), cur,
+      h('div', { class: 'row' }, h('label', { class: 'field grow' }, h('span', null, 'chmod'), mode), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void run('chmod', real, mode.value.trim()) }, t('apply'))),
+      h('div', { class: 'row' }, h('label', { class: 'field grow' }, h('span', null, 'chown'), owner), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void run('chown', real, owner.value.trim()) }, t('apply'))),
+      h('div', { class: 'row' }, h('label', { class: 'field grow' }, h('span', null, t('filesSymlinkAt')), link), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void run('link', link.value.trim(), real) }, t('create'))));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => mountsSheet() }, icon('storage'), t('filesMounts')));
+  };
+  const mountsSheet = () => {
+    const v = vplug(); if (!v) return; const sh = openSheet(t('filesMounts'), t('close')); const list = h('div', { class: 'dest-list' }); sh.body.append(h('p', { class: 'hint' }, t('filesMountsHint')), list);
+    const draw = () => void v.vfsRootOp({ what: 'mounts' }).then((r) => list.replaceChildren(...(r.mounts ?? []).map((m) => h('div', { class: 'dest-row' }, icon('storage'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'ltr' }, m.point), h('small', { class: 'src', dir: 'ltr' }, `${m.device} · ${m.type} · ${m.ro ? 'ro' : 'rw'}`)), h('button', { type: 'button', class: 'btn text small', onclick: () => void v.vfsRootOp({ what: 'remount', path: m.point, arg: m.ro ? 'rw' : 'ro' }).then(draw, (err) => toast(String((err as Error).message ?? err), 'error')) }, m.ro ? 'rw' : 'ro')))), (err) => list.replaceChildren(h('p', { class: 'empty small' }, String((err as Error).message ?? err))));
+    draw();
+  };
+  const friendlyVfs = (m: string): string => (m === 'noRoot' ? t('filesNoRootHint') : m === 'noAccess' ? t('filesNoAccess') : m);
   /** The folder on the home screen (Android 8+): the launcher asks the reader to confirm. */
   const pinHome = async (path: string, name: string) => {
     const pl = plug() as unknown as { filesShortcut?(o: { path: string; name: string }): Promise<{ ok: boolean }> } | null;
@@ -257,7 +285,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
   const itemSheet = (e: Entry) => {
-    const pl = isRemote(e.path) ? null : plug(); const sh = openSheet(e.name, t('close'));
+    const pl = isVirtual(e.path) ? null : plug(); const sh = openSheet(e.name, t('close'));
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     sh.body.append(h('p', { class: 'src', dir: 'ltr' }, e.path), h('div', { class: 'dest-list' },
       act('external', t('open'), () => void open(e)),
@@ -267,6 +295,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       act('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [e.path] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: '1' })); }),
       act('pen', t('rename'), () => renameSheet(e)),
       ...(pl ? [act('lock', /\.kurokawa$/i.test(e.name) ? t('vaultUnlock') : t('vaultLock'), () => void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!/\.kurokawa$/i.test(e.name), [e.path], jobRow, () => void load()); }))] : []),
+      ...(e.path.startsWith('root://') ? [act('terminal', t('filesPermissions'), () => rootOpsSheet(e))] : []),
       ...(pl && e.dir ? [act('eyeOff', t('filesHideFolder'), () => void import('./filesMore').then((m) => { m.hidePath(e.path); toast(t('filesHiddenNow')); void load(); })), act('images', t('filesNomedia'), () => void import('./filesMore').then((m) => m.toggleNomedia(e.path)).then((on) => toast(on ? t('filesNomediaOn') : t('filesNomediaOff'))).catch((err) => toast(String((err as Error).message ?? err), 'error')))] : []),
       ...(pl && !e.dir && /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|001)$/i.test(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
       ...(pl ? [act('archive', t('filesCompress'), () => void compress([e.path]))] : []),
@@ -295,8 +324,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ...(plug() ? [act('trash', t('filesTrashSetting'), () => void import('./filesMore').then((m) => { m.setTrashOn(!m.trashOn()); toast(m.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
       ...(window.matchMedia('(min-width: 840px)').matches ? [act('columns', prefs.dual ? t('filesOnePane') : t('filesTwoPanes'), () => { prefs.dual = !prefs.dual; savePrefs(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true); })] : []),
       act('eyeOff', t('filesHiddenFolders'), () => void import('./filesMore').then((m) => m.hiddenSheet((p) => go(p), () => void load()))),
-      ...(canShareFolder() && !isRemote(at) ? [act('wifi', t('fshareTitle'), () => void folderShareSheet(at, baseOf(at) || at))] : []),
-      ...(plug() ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
+      ...(canShareFolder() && !isVirtual(at) ? [act('wifi', t('fshareTitle'), () => void folderShareSheet(at, baseOf(at) || at))] : []),
+      ...(plug() && !isVirtual(at) ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
       ...(plug() ? [act('key', t('archiveForgetPw'), () => void import('../archives').then((a) => { a.forgetPasswords(); a.setRememberPasswords(false); toast(t('done')); }))] : []),
       act('info', t('properties'), () => void propertiesSheet({ name: baseOf(at), path: at, dir: true, size: 0, mtime: 0 })),
       ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : []),
@@ -305,13 +334,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const renameSheet = (e: Entry) => {
     const pl = plug(); if (!pl) return; const sh = openSheet(t('rename'), t('cancel')); const inp = h('input', { type: 'text', value: e.name, dir: 'auto' }) as HTMLInputElement;
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name || name === e.name) { sh.close(); return; } try { if (isRemote(e.path)) { const { id, path } = parseRemote(e.path); await withTrust(id, () => rplug()!.remoteRename({ id, path, to: `${parentOf(path) === '/' ? '' : parentOf(path)}/${name}` })); } else await pl.filesRename({ path: e.path, name }); sh.close(); leaveSel(); void load(); } catch (err) { toast(String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('rename')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name || name === e.name) { sh.close(); return; } try { if (isVirtual(e.path)) { await vfs.rename(e.path, name); } else await pl.filesRename({ path: e.path, name }); sh.close(); leaveSel(); void load(); } catch (err) { toast(String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('rename')));
     setTimeout(() => { inp.focus(); const dot = e.dir ? -1 : e.name.lastIndexOf('.'); inp.setSelectionRange(0, dot > 0 ? dot : e.name.length); }, 50);
   };
   const newFolderSheet = () => {
     const pl = plug(); if (!pl) return; const sh = openSheet(t('newFolder'), t('cancel')); const inp = h('input', { type: 'text', dir: 'auto', placeholder: t('folderNamePlaceholder') }) as HTMLInputElement;
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name) return; try { if (isRemote(at)) { const { id, path } = parseRemote(at); await withTrust(id, () => rplug()!.remoteMkdir({ id, path: `${path === '/' ? '' : path}/${name}` })); } else { const r = await pl.filesMkdir({ path: `${at}/${name}` }); if (!r.ok) throw new Error(t('filesCannotMake')); } sh.close(); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('create')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name) return; try { if (isVirtual(at)) { await vfs.mkdir(at, name); } else { const r = await pl.filesMkdir({ path: `${at}/${name}` }); if (!r.ok) throw new Error(t('filesCannotMake')); } sh.close(); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('create')));
     setTimeout(() => inp.focus(), 50);
   };
   const propertiesSheet = async (e: Entry) => {
@@ -332,7 +361,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const confirmDelete = async (paths: string[]) => {
     const pl = plug(); if (!pl) return; const sh = openSheet(t('delete'), t('cancel'));
     sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
-    const m = await import('./filesMore'); const toBin = m.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isRemote(p));
+    const m = await import('./filesMore'); const toBin = m.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p));
     sh.body.append(h('p', { class: 'hint' }, toBin ? t('filesDeleteToTrash') : t('filesDeleteForeverHint')));
     sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { sh.close(); leaveSel(); if (!toBin) { void startJob('delete', paths); return; } try { const r = await m.toTrash(paths); if (r.failed.length) toast(t('filesSomeFailed', { n: localDigits(r.failed.length), why: r.failed[0] }), 'error'); else toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('delete')));
   };
@@ -355,13 +384,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string) => {
     const pl = plug(); if (!pl) return; const id = `fj-${Date.now()}`;
-    const rp = rplug(); const srcRemote = paths.some(isRemote), dstRemote = !!dest && isRemote(dest);
-    if (rp && op === 'delete' && srcRemote) { const { id: cid } = parseRemote(paths[0]); const dirs = paths.filter((p) => entries.find((e) => e.path === p)?.dir); try { await withTrust(cid, () => rp.remoteDelete({ id: cid, paths: paths.map((p) => parseRemote(p).path), dirs: dirs.map((p) => parseRemote(p).path) })); toast(t('filesDeleted', { n: localDigits(paths.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } return; }
-    if (rp && (srcRemote || dstRemote) && op !== 'delete') {
-      if (srcRemote && dstRemote) { toast(t('remoteNoBetween'), 'error'); return; }
-      const cid = parseRemote(srcRemote ? paths[0] : dest!).id; const label = srcRemote ? t('remoteDownloading', { n: localDigits(paths.length) }) : t('remoteUploading', { n: localDigits(paths.length) });
-      jobRow(id, label, () => void rp.remoteCancel({ id }));
-      try { await withTrust(cid, () => rp.remoteJob({ id, op: srcRemote ? 'down' : 'up', conn: cid, paths: srcRemote ? paths.map((p) => parseRemote(p).path) : paths, dest: srcRemote ? dest! : parseRemote(dest!).path, deleteAfter: op === 'move' })); } catch (err) { jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); }
+    const srcV = paths.some(isVirtual), dstV = !!dest && isVirtual(dest);
+    if (op === 'delete' && srcV) { const dirs = paths.filter((p) => entries.find((e) => e.path === p)?.dir); try { await vfs.delete(paths, dirs); toast(t('filesDeleted', { n: localDigits(paths.length) })); void load(); } catch (err) { toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); } return; }
+    if ((srcV || dstV) && op !== 'delete') {
+      if (srcV && dstV) { toast(t('remoteNoBetween'), 'error'); return; }
+      const label = srcV ? t('remoteDownloading', { n: localDigits(paths.length) }) : t('remoteUploading', { n: localDigits(paths.length) });
+      jobRow(id, label, () => void vfs.cancel(id));
+      try { await vfs.job(id, srcV ? 'down' : 'up', paths, dest!, op === 'move'); } catch (err) { jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); }
       return;
     }
     const label = op === 'delete' ? t('filesDeleting', { n: localDigits(paths.length) }) : op === 'move' ? t('filesMoving', { n: localDigits(paths.length) }) : t('filesCopying', { n: localDigits(paths.length) });

@@ -114,6 +114,7 @@ if (!manifest.includes('KtScreenService')) {
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
     </service>
     <receiver android:name=".KtService$Actions" android:exported="false" />
+    <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="${applicationId}.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     <service android:name=".KtFolderShare$Fg" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Folder shared on the local network" /></service>
     <service android:name=".KtFolderShare$TileSvc" android:exported="true" android:label="@string/kt_share_tile" android:icon="@android:drawable/stat_sys_upload" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
@@ -196,7 +197,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtRemote.java', 'KtFolderShare.java', 'KtVault.java', 'KtDocumentsProvider.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtRemote.java', 'KtFolderShare.java', 'KtVault.java', 'KtVfs.java', 'KtDocumentsProvider.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }
@@ -228,6 +229,8 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "com.hierynomus:smbj:0.13.0"
     implementation "com.rapid7.client:dcerpc:0.12.1"
     implementation "androidx.security:security-crypto:1.1.0-alpha06"
+    implementation "dev.rikka.shizuku:api:13.1.5"
+    implementation "dev.rikka.shizuku:provider:13.1.5"
     implementation "io.github.junkfood02.youtubedl-android:library:0.18.1"
     implementation "io.github.junkfood02.youtubedl-android:common:0.18.1"   // (its unzip, used for the packs; the library has it only at run time)
     implementation "io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1"`);
@@ -263,7 +266,7 @@ if (!gradle.includes('splits {')) {
 }
 // (libtorrent's JNI class must keep its name through R8.)
 if (!gradle.includes('proguard-kt.pro')) {
-  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class is.xyz.mpv.** { *; }\n-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-dontwarn org.bouncycastle.**\n-dontwarn org.slf4j.**\n-dontwarn com.hierynomus.**\n-dontwarn net.engio.**\n-dontwarn com.rapid7.**\n-keep class com.hierynomus.** { *; }\n-keep class net.engio.mbassy.** { *; }\n-keep class com.jcraft.jsch.** { *; }\n-keep class com.yausername.** { *; }\n');
+  await fs.writeFile(path.join(app, 'proguard-kt.pro'), '-keep class is.xyz.mpv.** { *; }\n-keep class org.libtorrent4j.swig.libtorrent_jni {*;}\n-keep class org.libtorrent4j.** { *; }\n-dontwarn org.apache.commons.compress.**\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.junrar.**\n-dontwarn org.brotli.**\n-dontwarn com.github.luben.zstd.**\n-dontwarn org.bouncycastle.**\n-dontwarn org.slf4j.**\n-dontwarn com.hierynomus.**\n-dontwarn net.engio.**\n-dontwarn com.rapid7.**\n-keep class com.hierynomus.** { *; }\n-keep class net.engio.mbassy.** { *; }\n-keep class com.jcraft.jsch.** { *; }\n-keep class rikka.shizuku.** { *; }\n-keep class moe.shizuku.** { *; }\n-dontwarn rikka.**\n-keep class com.yausername.** { *; }\n');
   gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
 // (The screen translator's OCR: Google's text recognition through Play services — its models are fetched by the

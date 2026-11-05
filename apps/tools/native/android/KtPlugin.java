@@ -566,6 +566,52 @@ public class KtPlugin extends Plugin {
         });
     }
 
+    /* ---------- the Files add-on: root / Shizuku and granted trees (see KtVfs) ---------- */
+    @PluginMethod public void vfsRoots(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); KtVfs.Shell sh = KtVfs.shell(getContext()); r.put("shell", sh == null ? null : sh.kind); r.put("trees", new JSArray(KtVfs.treeList(getContext()).toString())); r.put("shizuku", shizukuInstalled()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    private boolean shizukuInstalled() { try { getContext().getPackageManager().getPackageInfo("moe.shizuku.privileged.api", 0); return true; } catch (Exception e) { return false; } }
+    @PluginMethod public void vfsShizukuAsk(PluginCall call) { JSObject r = new JSObject(); r.put("asked", KtVfs.Shell.shizukuAsk()); call.resolve(r); }
+    @PluginMethod public void vfsList(PluginCall call) { final String path = call.getString("path", ""); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtVfs.list(getContext(), path).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsFetch(PluginCall call) { final String path = call.getString("path", ""), job = call.getString("jobId", "vf"); final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean(); KtRemote.JOBS.put(job, stop); bg.execute(() -> { try { File f = KtVfs.fetch(getContext(), path, stop); JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } finally { KtRemote.JOBS.remove(job); } }); }
+    @PluginMethod public void vfsMkdir(PluginCall call) { final String dir = call.getString("path", ""), name = call.getString("name", ""); bg.execute(() -> { try { KtVfs.mkdir(getContext(), dir, name); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsDelete(PluginCall call) { final java.util.List<String> paths = strings(call.getArray("paths")); bg.execute(() -> { try { for (String p : paths) KtVfs.delete(getContext(), p); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsRename(PluginCall call) { final String path = call.getString("path", ""), name = call.getString("name", ""); bg.execute(() -> { try { KtVfs.rename(getContext(), path, name); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void vfsJob(PluginCall call) {
+        final String id = call.getString("id", "vj" + System.currentTimeMillis()), op = call.getString("op", "down"), dest = call.getString("dest", "/"); final java.util.List<String> paths = strings(call.getArray("paths")); final boolean del = Boolean.TRUE.equals(call.getBoolean("deleteAfter", false));
+        new Thread(() -> KtVfs.transfer(getContext(), id, op, paths, dest, del, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-vfs-job").start();
+        JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
+    }
+    /** Root only: chmod / chown / a symbolic link / a mount remounted; `cmd` is one of those with its arguments checked here. */
+    @PluginMethod public void vfsRootOp(PluginCall call) {
+        final String what = call.getString("what", ""), path = call.getString("path", ""), arg = call.getString("arg", "");
+        bg.execute(() -> {
+            try {
+                String cmd;
+                switch (what) {
+                    case "chmod": if (!arg.matches("[0-7]{3,4}")) throw new Exception("badMode"); cmd = "chmod " + arg + " " + KtVfs.q(path); break;
+                    case "chown": if (!arg.matches("[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?")) throw new Exception("badOwner"); cmd = "chown " + arg + " " + KtVfs.q(path); break;
+                    case "link": cmd = "ln -s " + KtVfs.q(arg) + " " + KtVfs.q(path); break;
+                    case "remount": cmd = "mount -o remount," + (arg.equals("ro") ? "ro" : "rw") + " " + KtVfs.q(path); break;
+                    case "mounts": JSObject m = new JSObject(); m.put("mounts", new JSArray(KtVfs.mounts(getContext()).toString())); call.resolve(m); return;
+                    case "stat": cmd = "stat -c '%A %U:%G %s %Y %N' " + KtVfs.q(path); break;
+                    default: throw new Exception("unknown");
+                }
+                JSObject r = new JSObject(); r.put("out", KtVfs.rootRun(getContext(), cmd)); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** The system's picker on a folder tree (Android/data on 11+ needs it), the grant kept. */
+    @PluginMethod public void vfsGrant(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        String start = call.getString("start", ""); if (!start.isEmpty() && Build.VERSION.SDK_INT >= 26) { try { i.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:" + start)); } catch (Exception ignored) {} }
+        startActivityForResult(call, i, "treeGranted");
+    }
+    @ActivityCallback private void treeGranted(PluginCall call, ActivityResult result) {
+        if (call == null) return; Intent data = result.getData(); Uri tree = data != null ? data.getData() : null; if (tree == null) { call.reject("cancelled"); return; }
+        try { getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); } catch (Exception ignored) {}
+        try { JSObject r = new JSObject(); r.put("trees", new JSArray(KtVfs.treeList(getContext()).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @PluginMethod public void vfsForgetTree(PluginCall call) { KtVfs.forgetTree(getContext(), call.getInt("id", -1)); call.resolve(); }
+
     /* ---------- the Files add-on: files locked with a password (see KtVault) ---------- */
     private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> vaultJobs = new java.util.concurrent.ConcurrentHashMap<>();
     @PluginMethod public void vaultJob(PluginCall call) {

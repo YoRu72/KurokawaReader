@@ -16,6 +16,26 @@ type RPlug = {
 export const rplug = (): RPlug | null => { const p = ktPlugin() as unknown as RPlug | null; return p?.remoteConnections ? p : null; };
 
 export const isRemote = (p: string): boolean => p.startsWith('remote://');
+/** Any place that is not a plain path: a network storage, the root shell, or a granted tree. */
+export const isVirtual = (p: string): boolean => /^(remote|root|saf):\/\//.test(p);
+type VfsPlug = { vfsRoots(): Promise<{ shell: 'root' | 'shizuku' | null; trees: { id: number; uri: string; name: string }[]; shizuku: boolean }>; vfsShizukuAsk(): Promise<{ asked: boolean }>; vfsList(o: { path: string }): Promise<{ entries: (REntry & { mode?: string; owner?: string; link?: string })[] }>; vfsFetch(o: { path: string; jobId?: string }): Promise<{ path: string; size: number }>; vfsMkdir(o: { path: string; name: string }): Promise<void>; vfsDelete(o: { paths: string[] }): Promise<void>; vfsRename(o: { path: string; name: string }): Promise<void>; vfsJob(o: { id?: string; op: 'down' | 'up'; paths: string[]; dest: string; deleteAfter?: boolean }): Promise<{ id: string }>; vfsRootOp(o: { what: string; path?: string; arg?: string }): Promise<{ out?: string; mounts?: { device: string; point: string; type: string; ro: boolean }[] }>; vfsGrant(o: { start?: string }): Promise<{ trees: { id: number; uri: string; name: string }[] }>; vfsForgetTree(o: { id: number }): Promise<void> };
+export const vplug = (): VfsPlug | null => { const p = ktPlugin() as unknown as VfsPlug | null; return p?.vfsRoots ? p : null; };
+export type VRoots = { shell: 'root' | 'shizuku' | null; trees: { id: number; uri: string; name: string }[]; shizuku: boolean };
+export async function vfsRoots(): Promise<VRoots> { const p = vplug(); if (!p) return { shell: null, trees: [], shizuku: false }; try { const r = await p.vfsRoots(); return { shell: r?.shell ?? null, trees: Array.isArray(r?.trees) ? r.trees : [], shizuku: !!r?.shizuku }; } catch { return { shell: null, trees: [], shizuku: false }; } }
+/* One face over the three: list, fetch into the cache, transfer jobs, folders, delete, rename. */
+export const vfs = {
+  async list(path: string) { if (isRemote(path)) return listRemote(path); const p = vplug(); if (!p) return { exists: false, entries: [] }; const r = await p.vfsList({ path }); const base = path.replace(/\/+$/, ''); return { exists: true, entries: r.entries.map((e) => ({ ...e, path: `${base}/${e.name}`, ext: e.dir ? undefined : (e.name.split('.').pop() ?? '').toLowerCase() })) }; },
+  async fetch(path: string, jobId: string) { if (isRemote(path)) { const { id, path: rp } = parseRemote(path); return withTrust(id, () => rplug()!.remoteFetch({ id, path: rp, jobId })); } return vplug()!.vfsFetch({ path, jobId }); },
+  cancel(jobId: string) { return (rplug() ?? ({ remoteCancel: async () => undefined } as { remoteCancel(o: { id: string }): Promise<void> })).remoteCancel({ id: jobId }); },
+  async job(id: string, op: 'down' | 'up', paths: string[], dest: string, deleteAfter: boolean) {
+    const v = isRemote(op === 'down' ? paths[0] : dest);
+    if (v) { const cid = parseRemote(op === 'down' ? paths[0] : dest).id; return withTrust(cid, () => rplug()!.remoteJob({ id, op, conn: cid, paths: op === 'down' ? paths.map((p) => parseRemote(p).path) : paths, dest: op === 'down' ? dest : parseRemote(dest).path, deleteAfter })); }
+    return vplug()!.vfsJob({ id, op, paths, dest, deleteAfter });
+  },
+  async mkdir(dir: string, name: string) { if (isRemote(dir)) { const { id, path } = parseRemote(dir); return withTrust(id, () => rplug()!.remoteMkdir({ id, path: `${path === '/' ? '' : path}/${name}` })); } return vplug()!.vfsMkdir({ path: dir, name }); },
+  async delete(paths: string[], dirs: string[]) { if (isRemote(paths[0])) { const { id } = parseRemote(paths[0]); return withTrust(id, () => rplug()!.remoteDelete({ id, paths: paths.map((x) => parseRemote(x).path), dirs: dirs.map((x) => parseRemote(x).path) })); } return vplug()!.vfsDelete({ paths }); },
+  async rename(path: string, name: string) { if (isRemote(path)) { const { id, path: rp } = parseRemote(path); const parent = rp.replace(/\/[^/]*$/, ''); return withTrust(id, () => rplug()!.remoteRename({ id, path: rp, to: `${parent}/${name}` })); } return vplug()!.vfsRename({ path, name }); },
+};
 /** `remote://<id>/<path>` taken apart. */
 export const parseRemote = (p: string): { id: string; path: string } => { const m = /^remote:\/\/([^/]+)(\/.*)?$/.exec(p); return { id: m?.[1] ?? '', path: m?.[2] || '/' }; };
 export const remotePath = (id: string, path: string): string => `remote://${id}${path.startsWith('/') ? path : '/' + path}`.replace(/\/+$/, '') || `remote://${id}`;
