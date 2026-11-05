@@ -38,6 +38,16 @@ public class ArcT {
     try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(az), java.nio.charset.Charset.forName("windows-1256"))) { z.putNextEntry(new java.util.zip.ZipEntry("كتاب.txt")); z.write(1); z.closeEntry(); }
     KtArchive.nameCharset = "windows-1256"; li = KtArchive.list(az, null); ok("Arabic name with windows-1256", li.getJSONArray("entries").getJSONObject(0).getString("path").equals("كتاب.txt"));
     KtArchive.nameCharset = "auto"; java.util.Locale.setDefault(new java.util.Locale("ar")); li = KtArchive.list(az, null); ok("Arabic name guessed from the language", li.getJSONArray("entries").getJSONObject(0).getString("path").equals("كتاب.txt"));
+    // open: a stored entry seeked, a deflated one streamed, a 7z one walked
+    File oz = new File(d, "open.zip");
+    try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(oz))) {
+      java.util.zip.ZipEntry st = new java.util.zip.ZipEntry("stored.bin"); st.setMethod(java.util.zip.ZipEntry.STORED); st.setSize(big.length); st.setCompressedSize(big.length); java.util.zip.CRC32 c = new java.util.zip.CRC32(); c.update(big); st.setCrc(c.getValue()); z.putNextEntry(st); z.write(big); z.closeEntry();
+      z.putNextEntry(new java.util.zip.ZipEntry("dir/deflated.txt")); z.write("0123456789".getBytes()); z.closeEntry();
+    }
+    try (KtArchive.Opened o = KtArchive.open(oz, null, "stored.bin")) { ok("stored entry is seekable, size right", o.seekable && o.size == big.length); o.seekTo(1000); byte[] b = new byte[16]; int n = o.in.read(b); ok("seeked read matches", n == 16 && Arrays.equals(Arrays.copyOf(b, 16), Arrays.copyOfRange(big, 1000, 1016))); }
+    try (KtArchive.Opened o = KtArchive.open(oz, null, "dir/deflated.txt")) { o.seekTo(4); ok("deflated entry read past", new String(o.in.readAllBytes()).equals("456789")); }
+    try (KtArchive.Opened o = KtArchive.open(new File(d, "s.7z.001"), null, "src/sub/a.txt")) { ok("7z entry walked: " + o.size, o.size == 5 && new String(o.in.readAllBytes()).equals("hello")); }
+    try { KtArchive.open(oz, null, "missing"); ok("missing entry refused", false); } catch (java.io.FileNotFoundException e) { ok("missing entry refused", true); }
     System.out.println(fails == 0 ? "all passed" : fails + " failed"); System.exit(fails == 0 ? 0 : 1);
   }
 }

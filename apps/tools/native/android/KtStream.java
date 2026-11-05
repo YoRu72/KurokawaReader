@@ -38,6 +38,13 @@ final class KtStream {
     }
     /** A content:// document's URL on this server (a video handed over by another app), served with ranges. */
     synchronized String contentUrl(String uri) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/content?u=" + java.net.URLEncoder.encode(uri, "UTF-8"); }
+    /** Entries inside archives handed out by id (the password stays here, never in the URL): id → {archive, password, entry}. */
+    private final java.util.Map<String, String[]> arcEntries = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<String, String[]>(64, 0.75f, true) { @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, String[]> e) { return size() > 200; } });
+    /** A file inside an archive's URL on this server, read straight from the archive. */
+    synchronized String archiveEntryUrl(String archive, String password, String entry) throws IOException {
+        url("", 0); String id = java.util.UUID.randomUUID().toString().replace("-", ""); arcEntries.put(id, new String[] { archive, password == null ? "" : password, entry });
+        return "http://127.0.0.1:" + port + "/arc/" + id + "/" + java.net.URLEncoder.encode(entry.replaceAll(".*/", ""), "UTF-8").replace("+", "%20");
+    }
     /** A local file's URL on this server. */
     synchronized String fileUrl(String path) throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/file?p=" + java.net.URLEncoder.encode(path, "UTF-8"); }
 
@@ -110,6 +117,22 @@ final class KtStream {
             String[] parts = path.replaceFirst("^/", "").split("/");
             BufferedOutputStream out = new BufferedOutputStream(rawOut, 1 << 16);
             if (path.startsWith("/proxy?")) { proxy(path, req[0], rawRange, out); return; }
+            // /arc/<id>: a file inside an archive, read straight from it (ranges by seeking in a stored zip entry, by reading past otherwise).
+            if (path.startsWith("/arc/")) {
+                String[] ent = arcEntries.get(path.substring(5).split("[?]")[0]);
+                if (ent == null) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                try (KtArchive.Opened o = KtArchive.open(new File(ent[0]), ent[1], ent[2])) {
+                    long lsize = o.size; String mime = mimeOf(ent[2]);
+                    if (lsize < 0) { out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); if (!"HEAD".equals(req[0])) { byte[] b = new byte[1 << 16]; int n; while ((n = o.in.read(b)) > 0) out.write(b, 0, n); } out.flush(); return; }
+                    if (rangeEnd < 0 || rangeEnd >= lsize) rangeEnd = lsize - 1; if (rangeStart > rangeEnd) { out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + lsize + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+                    long llen = rangeEnd - rangeStart + 1;
+                    out.write(((ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + rangeStart + "-" + rangeEnd + "/" + lsize + "\r\n" : "HTTP/1.1 200 OK\r\n") + "Content-Type: " + mime + "\r\nAccept-Ranges: bytes\r\nContent-Length: " + llen + "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    if ("HEAD".equals(req[0])) { out.flush(); return; }
+                    if (rangeStart > 0) o.seekTo(rangeStart);
+                    byte[] b = new byte[1 << 16]; long left = llen; while (left > 0) { int n = o.in.read(b, 0, (int) Math.min(b.length, left)); if (n <= 0) break; out.write(b, 0, n); left -= n; }
+                    out.flush(); return;
+                } catch (java.io.FileNotFoundException e) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+            }
             if (path.startsWith("/audio?")) { audio(path, req[0], sock, out); return; }
             // /content?u=<uri>: a document another app handed over (its file descriptor read with ranges when it seeks).
             if (path.startsWith("/content?u=")) {

@@ -734,3 +734,4 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-dup-group { margin: 8px 0; padding: 6px 8px; border-radius: 12px; background: var(--md-surface-container-low); }
 
 .grab-bar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:2px 0 6px}.grab-bar .grab-count{margin-inline-start:auto;font-size:12px;color:var(--on-surface-variant)}
+.kt-file-ic .kt-file-thumb { width: 40px; height: 40px; border-radius: 12px; object-fit: cover; }

@@ -106,6 +106,21 @@ final class KtFiles {
 
     /* ---------- a small picture of a file (a photo, a video's frame, an app's icon) ---------- */
     static final Map<String, String> thumbs = new ConcurrentHashMap<>();
+    /** A small picture inside an archive, as a data: URL (pictures only; the entry is decoded from its stream). */
+    static String archiveThumb(File f, String password, String entry, int px) {
+        if (!entry.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(jpe?g|png|webp|gif|bmp)$")) return null;
+        try (KtArchive.Opened o = KtArchive.open(f, password, entry)) {
+            if (o.size > 24L << 20) return null;
+            byte[] bytes = new byte[(int) Math.max(0, o.size)]; int at = 0; while (at < bytes.length) { int n = o.in.read(bytes, at, bytes.length - at); if (n <= 0) break; at += n; }
+            android.graphics.BitmapFactory.Options bo = new android.graphics.BitmapFactory.Options(); bo.inJustDecodeBounds = true; android.graphics.BitmapFactory.decodeByteArray(bytes, 0, at, bo);
+            int s = 1; while (bo.outWidth / s > px * 2 && bo.outHeight / s > px * 2) s *= 2;
+            android.graphics.BitmapFactory.Options b2 = new android.graphics.BitmapFactory.Options(); b2.inSampleSize = s; android.graphics.Bitmap full = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, at, b2); if (full == null) return null;
+            android.graphics.Bitmap b = android.media.ThumbnailUtils.extractThumbnail(full, px, px, android.media.ThumbnailUtils.OPTIONS_RECYCLE_INPUT);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out); b.recycle();
+            return "data:image/jpeg;base64," + android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP);
+        } catch (Throwable e) { return null; }
+    }
+
     static String thumb(Context ctx, File f, int px) {
         String key = f.getAbsolutePath() + "|" + f.lastModified() + "|" + px; String had = thumbs.get(key); if (had != null) return had;
         Bitmap b = null; String name = f.getName().toLowerCase(Locale.ROOT);

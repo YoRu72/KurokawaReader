@@ -172,7 +172,7 @@ export async function editorSheet(e: Entry, refresh: () => void): Promise<void> 
 }
 
 /* ---------- the picture viewer: pinch to zoom, swipe between the folder's pictures ---------- */
-export async function imageViewer(items: Entry[], index: number, urlOf: (p: string) => Promise<string | null>, onDelete: (e: Entry) => void): Promise<void> {
+export async function imageViewer(items: Entry[], index: number, urlOf: (p: string) => Promise<string | null>, onDelete: (e: Entry) => void, o: { readOnly?: boolean } = {}): Promise<void> {
   const pl = plug(); let i = index; const sh = openSheet(items[i].name, t('close')); sh.el.classList.add('files-viewer');
   const img = h('img', { class: 'files-viewer-img', alt: '', draggable: 'false' }) as HTMLImageElement; const stage = h('div', { class: 'files-viewer-stage' }, img); const counter = h('small', { class: 'src' });
   let scale = 1, tx = 0, ty = 0; const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
@@ -186,7 +186,7 @@ export async function imageViewer(items: Entry[], index: number, urlOf: (p: stri
   stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
   stage.addEventListener('dblclick', () => { scale = scale > 1 ? 1 : 2.5; tx = ty = 0; apply(); });
   sh.body.append(stage, h('div', { class: 'row files-viewer-bar' }, iconButton('chevronLeft', t('previous'), () => { i = (i - 1 + items.length) % items.length; void show(); }), counter, iconButton('chevronRight', t('next'), () => { i = (i + 1) % items.length; void show(); })));
-  sh.actions.append(
+  if (!o.readOnly) sh.actions.append(
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.shareFile({ path: items[i].path, title: items[i].name }) }, icon('share'), t('share')),
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.filesWallpaper({ path: items[i].path }).then(() => toast(t('filesWallpaperSet'))).catch((err) => toast(String((err as Error).message ?? err), 'error')) }, icon('images'), t('filesSetWallpaper')),
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.openWith({ path: items[i].path, mime: 'image/*', title: items[i].name }) }, icon('external'), t('openWith')),

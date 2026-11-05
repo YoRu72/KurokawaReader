@@ -5,7 +5,7 @@
 import { h, icon, iconButton, toast, openSheet, pickSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countFiles } from '../i18n';
 import { ktPlugin } from '../native';
-import { extractArchiveJob, nameCharsets, nameCharset, setNameCharset, parentOf, baseName, stem, type ArchiveEntry, type ArchiveInfo, listArchiveAuto, savePassword, rememberPasswords, setRememberPasswords } from '../archives';
+import { extractArchiveJob, entryUrl, entryThumb, nameCharsets, nameCharset, setNameCharset, parentOf, baseName, stem, type ArchiveEntry, type ArchiveInfo, listArchiveAuto, savePassword, rememberPasswords, setRememberPasswords } from '../archives';
 import { kindOfFile } from './taskFiles';
 
 const MIME: Record<string, string> = { video: 'video/*', audio: 'audio/*', image: 'image/*', ebook: 'application/epub+zip', doc: 'application/pdf' };
@@ -39,6 +39,7 @@ export async function browseArchive(path: string): Promise<void> {
   };
   const start = () => {
     const root = treeOf(info.entries); let at = ''; let query = ''; let sort: 'name' | 'size' = 'name'; const picked = new Set<string>();
+    const thumbs = (() => { const want = new WeakMap<Element, string>(); const io = new IntersectionObserver((es) => { for (const x of es) { if (!x.isIntersecting) continue; io.unobserve(x.target); const p = want.get(x.target); if (!p) continue; void entryThumb(path, p, 96, password || undefined).then((u) => { if (u && x.target.isConnected) x.target.replaceChildren(h('img', { src: u, alt: '', class: 'kt-file-thumb' })); }); } }, { root: null, rootMargin: '200px' }); return { observe: (el: Element, p: string) => { want.set(el, p); io.observe(el); } }; })();
     const search = h('input', { type: 'search', class: 'kt-files-search', placeholder: t('archiveSearch'), oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
     const crumbs = h('div', { class: 'kt-files-crumbs' }); const list = h('div', { class: 'file-rows kt-files-list' }); const foot = h('p', { class: 'models-total' });
     const charsetBtn = h('button', { type: 'button', class: 'chip small', title: t('archiveNames'), onclick: () => pickSheet(t('archiveNames'), nameCharsets.map(([v, l]): [string, string, string] => [v, l, 'text']), nameCharset(), (v) => { setNameCharset(v); void load(); }, t('close')) }, icon('text'), nameCharsets.find((c) => c[0] === nameCharset())?.[1] ?? 'Auto');
@@ -52,8 +53,9 @@ export async function browseArchive(path: string): Promise<void> {
     const box = (key: string, label: string) => h('input', { type: 'checkbox', class: 'kt-file-box', checked: picked.has(key), 'aria-label': label, onclick: (e: Event) => e.stopPropagation(), onchange: (e: Event) => toggle(key, (e.target as HTMLInputElement).checked) });
     const fileRow = (e: ArchiveEntry, showDir: boolean) => {
       const name = e.path.split('/').pop() ?? e.path; const dir = showDir ? e.path.slice(0, e.path.length - name.length).replace(/\/$/, '') : '';
-      return h('div', { class: 'file-row kt-file', role: 'button', tabindex: '0', onclick: () => void openOne(e) },
-        h('span', { class: 'kt-file-ic' }, icon(ICON[kindOfFile(e.path)] ?? 'file')),
+      const ic = h('span', { class: 'kt-file-ic' }, icon(ICON[kindOfFile(e.path)] ?? 'file'));
+      if (kindOfFile(e.path) === 'image' && e.size > 0 && e.size < 24 << 20) thumbs.observe(ic, e.path);
+      return h('div', { class: 'file-row kt-file', role: 'button', tabindex: '0', onclick: () => void openOne(e) }, ic,
         h('span', { class: 'grow kt-file-main' }, h('span', { class: 'kt-file-name', dir: 'auto' }, name), h('small', { class: 'src', dir: 'auto' }, [e.size >= 0 ? formatBytes(e.size) : '', e.compressed && e.size > 0 ? t('packedTo', { pct: localDigits(Math.round((e.compressed / e.size) * 100)) }) : '', dir].filter(Boolean).join(' · '))),
         iconButton('external', t('open'), () => void openOne(e)), box(e.path, name));
     };
@@ -83,9 +85,16 @@ export async function browseArchive(path: string): Promise<void> {
       takeOut.disabled = !n; (takeOut.lastChild as HTMLElement).textContent = n ? t('extractChosenN', { n: localDigits(n) }) : t('extractChosen');
       foot.textContent = n ? t('selectedFiles', { n: localDigits(n), total: localDigits(files.length) }) : '';
     }
-    // One file, taken out to the app's cache and opened.
+    // Pictures, video and audio play straight from the archive (nothing written); the rest is taken out to the app's cache and opened.
     async function openOne(e: ArchiveEntry) {
-      const name = e.path.split('/').pop() ?? e.path; const busy = toast(t('archiveOpening', { name }));
+      const name = e.path.split('/').pop() ?? e.path; const k0 = kindOfFile(e.path);
+      if (k0 === 'image') {
+        const pics = files.filter((x) => kindOfFile(x.path) === 'image' && (query ? x.path.toLowerCase().includes(query) : x.path.slice(0, x.path.lastIndexOf('/') + 1).replace(/\/$/, '') === at));
+        const u0 = await entryUrl(path, e.path, password || undefined);
+        if (u0) { const m = await import('./filesMore'); await m.imageViewer(pics.map((x) => ({ name: x.path.split('/').pop() ?? x.path, path: x.path, dir: false, size: x.size, mtime: 0 })), Math.max(0, pics.indexOf(e)), (p) => entryUrl(path, p, password || undefined), () => undefined, { readOnly: true }); return; }
+      }
+      if (k0 === 'video' || k0 === 'audio') { const u = await entryUrl(path, e.path, password || undefined); if (u) { const { openPlayer } = await import('./player'); await openPlayer(u, name); return; } }
+      const busy = toast(t('archiveOpening', { name }));
       try {
         const job = extractArchiveJob({ path, dest: 'cache:', only: [e.path], replace: 'replace', password: password || undefined });
         const r = await job.done; void busy; const local = `${r.dest.replace(/[\\/]$/, '')}/${e.path}`; const k = kindOfFile(e.path);

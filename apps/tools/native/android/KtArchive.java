@@ -253,12 +253,50 @@ public final class KtArchive {
         throw new IOException("unsupportedMethod " + it.method + " " + it.name);
     }
     static final class RangeStream extends InputStream {
-        final RandomAccessFile r; long pos; final long end; final byte[] one = new byte[1];
-        RangeStream(RandomAccessFile r, long start, long len) { this.r = r; this.pos = start; this.end = start + len; }
+        final RandomAccessFile r; long pos; final long start, end; final byte[] one = new byte[1];
+        RangeStream(RandomAccessFile r, long start, long len) { this.r = r; this.start = start; this.pos = start; this.end = start + len; }
         @Override public int read() throws IOException { return read(one, 0, 1) == 1 ? one[0] & 0xff : -1; }
         @Override public int read(byte[] b, int off, int len) throws IOException { if (pos >= end) return -1; r.seek(pos); int n = r.read(b, off, (int) Math.min(len, end - pos)); if (n > 0) pos += n; return n; }
     }
 
+    /* ---------- one entry, opened without extracting ---------- */
+    /** An entry's bytes and size. A plain zip is reached by random access (an entry stored uncompressed can even be
+     *  seeked: `seekable`); anything else is walked to the entry and streamed. Nothing is written to the disk. */
+    public static final class Opened implements java.io.Closeable {
+        public final InputStream in; public final long size; public final boolean seekable; private final java.io.Closeable owner;
+        Opened(InputStream in, long size, boolean seekable, java.io.Closeable owner) { this.in = in; this.size = size; this.seekable = seekable; this.owner = owner; }
+        /** Skips to `at` (a seekable entry jumps; the others read past). */
+        public void seekTo(long at) throws IOException { if (seekable) ((RangeStream) in).pos = ((RangeStream) in).start + at; else { long left = at; byte[] b = new byte[1 << 16]; while (left > 0) { int n = in.read(b, 0, (int) Math.min(b.length, left)); if (n <= 0) break; left -= n; } } }
+        @Override public void close() throws IOException { try { in.close(); } finally { if (owner != null) owner.close(); } }
+    }
+    public static Opened open(File f, String password, String entry) throws Exception {
+        String fmt = formatOf(f); entry = entry.replace('\\', '/');
+        if (fmt.equals("zip") && !splitZip(f)) {
+            RandomAccessFile r = new RandomAccessFile(f, "r"); boolean ok = false;
+            try {
+                for (ZipItem it : readZip(r).items) {
+                    if (it.dir || !it.name.equals(entry)) continue;
+                    if (it.encrypted) break;
+                    InputStream in = entryStream(r, it); ok = true; return new Opened(in, it.usize, it.method == 0, r);
+                }
+            } finally { if (!ok) r.close(); }
+        }
+        // Walked: the streams are handed over one by one; ours is kept and the rest of the walk stopped by a pipe.
+        final java.io.PipedInputStream pin = new java.io.PipedInputStream(1 << 18); final java.io.PipedOutputStream pout = new java.io.PipedOutputStream(pin);
+        final long[] size = { -1 }; final Exception[] err = { null }; final java.util.concurrent.CountDownLatch found = new java.util.concurrent.CountDownLatch(1); final String want = entry;
+        Thread t = new Thread(() -> {
+            try {
+                walk(f, password, (n, sz, in) -> {
+                    if (!n.replace('\\', '/').equals(want)) return true;
+                    size[0] = sz; found.countDown(); byte[] b = new byte[1 << 16]; int k; try { while ((k = in.read(b)) > 0) pout.write(b, 0, k); } catch (IOException e) { /* the reader went away */ } return false;
+                });
+                if (size[0] < 0) err[0] = new java.io.FileNotFoundException(want);
+            } catch (Exception e) { err[0] = e; }
+            finally { found.countDown(); try { pout.close(); } catch (IOException ignored) {} }
+        }, "kt-arc-open"); t.setDaemon(true); t.start();
+        found.await(); if (err[0] != null) throw err[0];
+        return new Opened(pin, size[0], false, null);
+    }
     /* ---------- walking an archive: each file as a stream, in the archive's own order ---------- */
     public interface Visitor { /** False stops the walk. The stream need not be read, and is closed after. */ boolean entry(String name, long size, InputStream in) throws Exception; }
     /** Every file of a ZIP (encrypted too), 7z, RAR or tar, one stream at a time and nothing written to the disk

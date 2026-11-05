@@ -66,6 +66,16 @@ export function extractArchiveJob(o: ExtractOptions, onProgress?: (p: ArchivePro
   const d = desk(); const done = (d ? d.archiveExtract({ ...o, id }) : plug()!.archiveExtract({ ...o, id })).finally(() => listeners.delete(id));
   return { id, done };
 }
+/** A file inside an archive, read straight from it over the app's stream server (phone only); null elsewhere. */
+export async function entryUrl(path: string, entry: string, password?: string): Promise<string | null> {
+  const p = ktPlugin() as unknown as { archiveEntryUrl?(o: { path: string; entry: string; password?: string }): Promise<{ url: string }> } | null;
+  if (!p?.archiveEntryUrl) return null; try { return (await p.archiveEntryUrl({ path: firstVolume(path), entry, password })).url; } catch { return null; }
+}
+/** A small picture of an image inside an archive (phone only). */
+export async function entryThumb(path: string, entry: string, px: number, password?: string): Promise<string | null> {
+  const p = ktPlugin() as unknown as { archiveThumb?(o: { path: string; entry: string; px: number; password?: string }): Promise<{ url: string | null }> } | null;
+  if (!p?.archiveThumb) return null; try { return (await p.archiveThumb({ path: firstVolume(path), entry, px, password })).url; } catch { return null; }
+}
 export async function cancelArchive(id: string): Promise<void> { const d = desk(); if (d) return d.archiveCancel(id); await plug()?.archiveCancel({ id }); }
 export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number }
 /** The volume sizes offered, in MiB (0: one file). */
