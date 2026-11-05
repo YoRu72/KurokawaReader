@@ -106,3 +106,32 @@ export const kindLabel = (k: Conn['kind']): string => KIND_LABEL[k];
 /** The bar's text for a remote root. */
 export const describe = (c: Conn): string => `${KIND_LABEL[c.kind]} · ${c.host}`;
 export const remoteDeleteOrToast = async (paths: string[], dirs: string[]): Promise<void> => { const p = rplug(); if (!p) return; const { id } = parseRemote(paths[0]); await withTrust(id, () => p.remoteDelete({ id, paths: paths.map((x) => parseRemote(x).path), dirs: dirs.map((x) => parseRemote(x).path) })); };
+
+/* ---------- this folder shared on the Wi‑Fi: a web page and an FTP server, with a QR for each ---------- */
+type SharePlug = { folderShareStart(o: { path: string; writable: boolean; web: boolean; ftp: boolean; user: string; pass: string }): Promise<ShareStatus>; folderShareStop(): Promise<void>; folderShareStatus(): Promise<ShareStatus> };
+type ShareStatus = { running: boolean; web: string | null; ftp: string | null; root: string | null; writable: boolean; sent: number; received: number; hits: number; ftpLogins: number; user: string };
+const splug = (): SharePlug | null => { const p = ktPlugin() as unknown as SharePlug | null; return p?.folderShareStart ? p : null; };
+export const canShareFolder = (): boolean => !!splug();
+export async function folderShareSheet(path: string, name: string): Promise<void> {
+  const p = splug(); if (!p) return; const sh = openSheet(t('fshareTitle'), t('close'));
+  const { formatBytes } = await import('../i18n');
+  let st: ShareStatus | null = null; try { st = await p.folderShareStatus(); } catch { /* none */ }
+  const writable = h('input', { type: 'checkbox', checked: st?.writable ?? false }) as HTMLInputElement; const web = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement; const ftp = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement;
+  const user = h('input', { type: 'text', value: st?.user ?? localStorage.getItem('kt.fshare.user') ?? '', dir: 'ltr', autocapitalize: 'off', autocomplete: 'off', placeholder: t('fshareUserHint') }) as HTMLInputElement;
+  const pass = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off', placeholder: t('fsharePassHint') }) as HTMLInputElement;
+  const form = h('div', null, h('p', { class: 'hint' }, t('fshareHint', { name })),
+    h('label', { class: 'check-row' }, web, h('span', null, t('fshareWeb'))), h('label', { class: 'check-row' }, ftp, h('span', null, t('fshareFtp'))), h('label', { class: 'check-row' }, writable, h('span', null, t('fshareWritable'))),
+    h('label', { class: 'field' }, h('span', null, t('remoteUser')), user), h('label', { class: 'field' }, h('span', null, t('password')), pass), h('p', { class: 'hint' }, t('fshareSecurity')));
+  const live = h('div'); let timer = 0;
+  const showLive = async (s: ShareStatus) => {
+    const { qrSvg } = await import('../ui/qr'); const blocks: HTMLElement[] = [];
+    for (const [label, url] of [[t('fshareWeb'), s.web], [t('fshareFtp'), s.ftp]] as [string, string | null][]) { if (!url) continue; const qr = h('div', { class: 'qr-box small' }); qr.innerHTML = qrSvg(url, 160); blocks.push(h('div', { class: 'fshare-block' }, h('b', null, label), qr, h('div', { class: 'kt-url' }, icon('link'), h('code', { class: 'sel', dir: 'ltr' }, url), h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyLink'), onclick: () => void navigator.clipboard?.writeText(url).then(() => toast(t('copied'))) }, icon('copy'))))); }
+    const stat = h('p', { class: 'src' });
+    live.replaceChildren(h('p', { class: 'hint', dir: 'auto' }, s.root ?? ''), h('div', { class: 'fshare-blocks' }, ...blocks), stat, ...(s.user ? [h('p', { class: 'hint', dir: 'ltr' }, `FTP · ${s.user}`)] : []));
+    const tick = async () => { const x = await p.folderShareStatus().catch(() => null); if (!x) return; stat.textContent = t('fshareStats', { hits: localDigits(x.hits + x.ftpLogins), sent: formatBytes(x.sent), got: formatBytes(x.received) }); if (!x.running) { clearInterval(timer); showForm(); } }; void tick(); clearInterval(timer); timer = window.setInterval(() => void tick(), 2000);
+    sh.body.replaceChildren(live); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: async () => { clearInterval(timer); await p.folderShareStop().catch(() => undefined); showForm(); } }, icon('close'), t('wifiShareStop')));
+  };
+  const showForm = () => { sh.body.replaceChildren(form); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: async () => { if (!web.checked && !ftp.checked) { toast(t('fshareOneNeeded'), 'error'); return; } try { localStorage.setItem('kt.fshare.user', user.value.trim()); } catch { /* none */ } try { const s = await p.folderShareStart({ path, writable: writable.checked, web: web.checked, ftp: ftp.checked, user: user.value.trim(), pass: pass.value }); if (!s.web && !s.ftp) { toast(t('wifiShareNoNetwork'), 'error'); return; } void showLive(s); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('wifi'), t('fshareStart'))); };
+  if (st?.running) void showLive(st); else showForm();
+  const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); clearInterval(timer); } }); mo.observe(document.body, { childList: true });
+}

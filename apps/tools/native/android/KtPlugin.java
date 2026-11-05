@@ -566,6 +566,19 @@ public class KtPlugin extends Plugin {
         });
     }
 
+    /* ---------- the Files add-on: a folder shared on the Wi-Fi (web + FTP, see KtFolderShare) ---------- */
+    @PluginMethod public void folderShareStart(PluginCall call) {
+        run(call, () -> {
+            File root = fileOf(call.getString("path", "")); boolean writable = Boolean.TRUE.equals(call.getBoolean("writable", false)), web = !Boolean.FALSE.equals(call.getBoolean("web", true)), ftp = !Boolean.FALSE.equals(call.getBoolean("ftp", true));
+            String user = call.getString("user", ""), pass = call.getString("pass", ""); int webPort = call.getInt("webPort", 8080), ftpPort = call.getInt("ftpPort", 2121);
+            KtFolderShare.get().start(getContext(), root, writable, web, ftp, user, pass, webPort, ftpPort);
+            getContext().getSharedPreferences("kt-fshare", android.content.Context.MODE_PRIVATE).edit().putString("root", root.getAbsolutePath()).putBoolean("writable", writable).putString("user", user).putString("pass", pass).putInt("webPort", webPort).putInt("ftpPort", ftpPort).apply();
+            call.resolve(JSObject.fromJSONObject(KtFolderShare.get().status()));
+        });
+    }
+    @PluginMethod public void folderShareStop(PluginCall call) { KtFolderShare.get().stop(getContext()); call.resolve(); }
+    @PluginMethod public void folderShareStatus(PluginCall call) { run(call, () -> call.resolve(JSObject.fromJSONObject(KtFolderShare.get().status()))); }
+
     /* ---------- the Files add-on: network storages (see KtRemote) ---------- */
     private static java.util.List<String> strings(JSArray a) { java.util.List<String> l = new java.util.ArrayList<>(); if (a != null) for (int i = 0; i < a.length(); i++) l.add(a.optString(i, "")); return l; }
     @PluginMethod public void remoteConnections(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("list", new JSArray(KtRemote.publicList(getContext()).toString())); call.resolve(r); }); }

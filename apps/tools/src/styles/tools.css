@@ -744,3 +744,6 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-pane .files-body.drop-over { outline: 2px dashed var(--md-primary); outline-offset: -4px; border-radius: 16px; }
 .files-row[draggable="true"] { cursor: grab; }
 .remote-fp { font: 12px/1.5 ui-monospace, monospace; background: var(--md-surface-container-high); padding: 10px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-all; }
+.fshare-blocks { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+.fshare-block { display: grid; gap: 8px; justify-items: center; max-width: 100%; }
+.qr-box.small svg { width: 160px; height: 160px; }
