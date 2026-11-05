@@ -86,6 +86,8 @@ export const zh: Partial<Strings> = {
   reviewPicks: "添加前检查所选", reviewUnsure: "不确定", reviewChange: "更换", reviewFinding: "正在查找每集的版本…", reviewAdd: "添加 {n}", reviewCountdown: "所选都很明确：{n} 秒后添加（点列表可停止）。",
   navTv: "影视", tvAddWatchlist: "加入待看", tvAddedWl: "已加入待看", tvAutoAdded: "{title}：已添加 S{s}E{e}", tvBestHint: "按 设置 → 影视 中的画质与偏好", tvCached: "云端已有", tvCast: "演员", tvDirector: "导演", tvDiscover: "发现", tvFilm: "电影", tvFilmsPl: "电影", tvFollow: "追剧", tvFollowHint: "新剧集上线后自动下载，从这一集起，按此画质。", tvInWatchlist: "已在待看", tvPack: "合集", tvRemovedWl: "已移出待看", tvSearchHint: "搜索电影和剧集", tvSeason: "季", tvSeasonN: "第 {n} 季", tvSeasonSeen: "本季已看", tvSeries: "剧集", tvSeriesPl: "剧集", tvSpecials: "特别篇", tvTrailer: "预告片", tvWatch: "观看", tvWatchlist: "待看", tvWatchlistEmpty: "待看列表为空：在作品页面添加。",
   tvSettingsHint: "电影和剧集来自 Cinemeta，种子来自按此设置的 Torrentio。", tvProviders: "站点", tvSort: "排序", tvSortQualitySize: "画质再大小", tvSortQuality: "画质", tvLeaveOut: "排除", tvLanguage: "优先语言", tvLanguageHint: "此语言的版本排在前面。", tvUseDebrid: "使用 Debrid 附加组件的密钥", tvUseDebridHint: "链接会被解析为直接下载。", tvCustom: "Torrentio 配置", tvCustomHint: "粘贴其配置页给出的地址，原样使用。", tvFollowed: "已追的剧",
+  grabFeed: "正在读取该账号的近期媒体…",
+  grabTelegramDoc: "此帖子带的是文件而非图片或视频；Telegram 只向已登录的客户端提供文件。",
   coursesTitle: "课程",
   coursesFabHint: "按章节下载已登录的课程",
   coursesHint: "在应用内浏览器登录平台一次（其 Cookie 成为一个罐），粘贴课程链接，读取大纲，勾选想要的。受 DRM 保护的讲座不会获取，会以一句话失败并计数。",

@@ -87,10 +87,19 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return;
     const status = h('small', { class: 'src' }); list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), status));
     // (A post on X, Bluesky or Reddit: its media read from the site's API, at full quality — no page to crawl.)
-    const social = await import('./social'); const isPost = !!social.socialOf(u); depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    const social = await import('./social'); const feed = social.feedOf(u); const isPost = !!social.socialOf(u) || !!feed; depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    // (A profile, a subreddit or a public Telegram channel: its recent media, newest first — the archiver.)
+    if (feed) {
+      status.textContent = ` ${t('grabFeed')}`;
+      try { const got = await social.socialFeed(u); if (!got.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+        fromPage(got.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb, viaVideo: x.viaVideo })));
+        list.prepend(h('p', { class: 'hint', dir: 'auto' }, `${got.title} · ${countFiles(got.items.length)}`));
+      } catch (e) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialFailed', { error: String((e as Error).message ?? e) }))); }
+      return;
+    }
     if (isPost) {
       status.textContent = ` ${t('grabSocial')}`;
-      try { const post = (await social.socialPost(u))!; if (!post.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
+      try { const post = (await social.socialPost(u).catch((e) => { if (/telegramDocument/.test(String((e as Error).message))) throw new Error(t('grabTelegramDoc')); throw e; }))!; if (!post.items.length) { list.replaceChildren(h('p', { class: 'empty small' }, t('grabSocialNone'))); return; }
         fromPage(post.items.map((x) => ({ href: x.href, text: x.text, kind: x.kind === 'image' ? 'images' : 'video', name: x.name, thumb: x.thumb, viaVideo: x.viaVideo })));
         list.prepend(h('p', { class: 'hint', dir: 'auto' }, [post.author, post.title].filter(Boolean).join(' · ')));
       } catch (e) { list.replaceChildren(h('div', { class: 'empty small' }, h('p', null, t('grabSocialFailed', { error: String((e as Error).message ?? e) })), ...(canBrowse() ? [h('button', { type: 'button', class: 'btn primary small', onclick: () => { sh.close(); openBrowser(u); } }, icon('globe'), t('grabInBrowser'))] : []))); }

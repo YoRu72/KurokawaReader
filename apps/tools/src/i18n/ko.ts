@@ -86,6 +86,8 @@ export const ko: Partial<Strings> = {
   reviewPicks: "추가하기 전에 선택 확인", reviewUnsure: "불확실", reviewChange: "바꾸기", reviewFinding: "각 화의 릴리스를 찾는 중…", reviewAdd: "{n} 추가", reviewCountdown: "선택이 모두 확실합니다: {n}초 뒤 추가(목록을 누르면 멈춤).",
   navTv: "TV·영화", tvAddWatchlist: "보관함에 추가", tvAddedWl: "보관함에 추가했습니다", tvAutoAdded: "{title}: S{s}E{e} 추가", tvBestHint: "설정 → TV·영화의 화질과 선호에 따라", tvCached: "클라우드에 있음", tvCast: "출연", tvDirector: "감독", tvDiscover: "둘러보기", tvFilm: "영화", tvFilmsPl: "영화", tvFollow: "팔로우", tvFollowHint: "새 에피소드가 나오면 이 화부터 이 화질로 자동으로 받습니다.", tvInWatchlist: "보관함에 있음", tvPack: "팩", tvRemovedWl: "보관함에서 뺐습니다", tvSearchHint: "영화와 시리즈 검색", tvSeason: "시즌", tvSeasonN: "시즌 {n}", tvSeasonSeen: "시즌 다 봄", tvSeries: "시리즈", tvSeriesPl: "시리즈", tvSpecials: "스페셜", tvTrailer: "예고편", tvWatch: "보기", tvWatchlist: "보관함", tvWatchlistEmpty: "보관함이 비어 있습니다: 작품 페이지에서 추가하세요.",
   tvSettingsHint: "영화와 시리즈는 Cinemeta에서, 토렌트는 이 설정의 Torrentio에서 옵니다.", tvProviders: "사이트", tvSort: "정렬", tvSortQualitySize: "화질 다음 크기", tvSortQuality: "화질", tvLeaveOut: "제외", tvLanguage: "우선 언어", tvLanguageHint: "이 언어 릴리스를 먼저 보여 줍니다.", tvUseDebrid: "Debrid 부가 기능 키 사용", tvUseDebridHint: "링크가 직접 다운로드로 풀려 돌아옵니다.", tvCustom: "Torrentio 설정", tvCustomHint: "설정 페이지가 주는 주소를 붙이면 그대로 씁니다.", tvFollowed: "팔로우한 시리즈",
+  grabFeed: "프로필의 최근 미디어를 읽는 중…",
+  grabTelegramDoc: "이 게시물은 사진이나 동영상이 아닌 파일입니다. Telegram은 로그인한 클라이언트에만 파일을 줍니다.",
   coursesTitle: "강의",
   coursesFabHint: "로그인한 강의를 섹션별로",
   coursesHint: "앱 브라우저에서 플랫폼에 한 번 로그인하고(그 쿠키가 보관함이 됩니다) 강의 링크를 붙여 넣어 목차를 읽은 뒤 원하는 것을 고르세요. DRM으로 보호된 강의는 받지 않으며, 한마디와 함께 실패하고 집계됩니다.",
