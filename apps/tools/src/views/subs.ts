@@ -16,7 +16,7 @@ const kindName = (k: TitleCard['kind']) => t(k === 'anime' ? 'kindAnime' : k ===
 
 export function subsView(q?: string): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'body subs-body' });
-  const root = h('div', { class: 'view subs-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navSubs'))), h('div', { class: 'topbar-actions' }, iconButton('puzzle', t('addons'), () => navigate('/settings/addons')))), body) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view subs-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navSubs'))), h('div', { class: 'topbar-actions' }, iconButton('pen', t('wsTitle'), () => void import('../subs/workshop').then((m) => m.workshopSheet())), iconButton('puzzle', t('addons'), () => navigate('/settings/addons')))), body) as HTMLElement & { dispose?: () => void };
   const input = h('input', { type: 'search', class: 'search-input', placeholder: t('subsSearchHint'), value: q ?? '', enterkeyhint: 'search' }) as HTMLInputElement;
   const cards = h('div', { class: 'title-cards' }); const picked = h('div'); const results = h('div', { class: 'subs-results' });
   body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); void find(); } }, input), cards, picked, results);

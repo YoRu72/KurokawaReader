@@ -759,3 +759,4 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .cmd-text { max-height: 140px; overflow: auto; font-size: 11px; }
 .recorder-log { max-height: 50vh; overflow: auto; font-size: 11px; white-space: pre-wrap; word-break: break-all; background: var(--md-surface-container); border-radius: 12px; padding: 10px; }
 .courses-outline { margin-top: 10px; } .courses-head { margin: 10px 0 4px; display: flex; flex-direction: column; } .courses-section { margin-top: 10px; } .courses-lecture { padding-inline-start: 18px; }
+.ws-list { max-height: 48vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; } .ws-cue { padding: 6px 8px; border-radius: 10px; background: var(--md-surface-container); } .ws-text { white-space: pre-wrap; min-height: 1.2em; outline: none; } .ws-text:focus { background: var(--md-surface-container-high); border-radius: 6px; } .ws-tools { gap: 8px; align-items: center; }

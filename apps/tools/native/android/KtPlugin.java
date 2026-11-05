@@ -712,6 +712,24 @@ public class KtPlugin extends Plugin {
     private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> statRuns = new java.util.concurrent.ConcurrentHashMap<>();
     @PluginMethod public void filesStat(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String id = call.getString("id", ""); final java.util.concurrent.atomic.AtomicBoolean c = new java.util.concurrent.atomic.AtomicBoolean(); if (!id.isEmpty()) { java.util.concurrent.atomic.AtomicBoolean old = statRuns.put(id, c); if (old != null) old.set(true); } bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.stat(f, c))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } finally { statRuns.remove(id, c); } }); }
     /* ---------- installed apps as folders ---------- */
+    /* ---------- a dub from a subtitle (the phone's voice), muxed into the video ---------- */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> dubs = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void dubMake(PluginCall call) {
+        final String id = call.getString("id", "dub"); final String lang = call.getString("lang", "en"); final String videoPath = call.getString("video", ""); final String outPath = call.getString("out", ""); final org.json.JSONArray cues;
+        try { cues = new org.json.JSONArray(call.getString("cues", "[]")); } catch (Exception e) { call.reject("cues"); return; }
+        final java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean(false); dubs.put(id, cancel);
+        bg.execute(() -> {
+            try {
+                File work = new File(getContext().getCacheDir(), "kt-dub/" + id); KtDub.Progress pr = (done, total, phase) -> { JSObject ev = new JSObject(); ev.put("id", id); ev.put("done", done); ev.put("total", total); ev.put("phase", phase); notifyListeners("dub", ev); };
+                File wav = KtDub.speak(getContext(), cues, lang, work, pr, cancel); File out = new File(outPath);
+                pr.on(cues.length(), cues.length(), "mux");
+                File result = !videoPath.isEmpty() && new File(videoPath).isFile() ? KtDub.mux(getContext(), new File(videoPath), wav, lang, out) : KtDub.toM4a(getContext(), wav, out);
+                wav.delete(); JSObject r = new JSObject(); r.put("path", result.getAbsolutePath()); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+            finally { dubs.remove(id); }
+        });
+    }
+    @PluginMethod public void dubCancel(PluginCall call) { java.util.concurrent.atomic.AtomicBoolean c = dubs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
     @PluginMethod public void dedupeStats(PluginCall call) { run(call, () -> call.resolve(JSObject.fromJSONObject(KtDedupe.stats(getContext())))); }
     @PluginMethod public void appsList(PluginCall call) { final boolean system = Boolean.TRUE.equals(call.getBoolean("system", false)); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("apps", JSArray.from(KtApps.list(getContext(), system))); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void appsIcon(PluginCall call) { final String pkg = call.getString("pkg", ""); bg.execute(() -> { JSObject r = new JSObject(); r.put("url", KtApps.icon(getContext(), pkg)); call.resolve(r); }); }
