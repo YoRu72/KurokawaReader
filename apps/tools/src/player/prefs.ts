@@ -24,7 +24,7 @@ export interface PlayerPrefs {
   accent: string; seekStyle: 'thin' | 'thick' | 'wave' | 'simple' | 'rounded'; controlsDim: number; showTitle: boolean; chapterMarks: boolean; controlSize: 'small' | 'normal' | 'large';
   /** Decoder (mpv): hardware (MediaCodec), hardware with copying (works with filters and screenshots), software; GPU
    *  debanding; the newer renderer. */
-  hwdec: 'hw' | 'hwcopy' | 'sw'; deband: boolean; gpuNext: boolean;
+  hwdec: 'hw' | 'hwcopy' | 'sw' | 'direct'; deband: boolean; gpuNext: boolean;
   /** Audio: the preferred languages (two-letter codes, in order), the channels (as the file has them, or down to stereo). */
   audioLangs: string[]; audioChannels: 'auto' | 'stereo';
   /** Subtitles fetched by themselves when the video has none in the preferred languages (the Subtitles add-on). */
@@ -65,7 +65,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
   bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, shotSubs: true,
   repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true,
-  topTools: [], portraitTools: [], seekBelowButtons: false, singleTap: 'controls', panZoomed: true, subtitleSwipe: true, rememberAspect: true, autoQueueFolder: true, immersive: 'both', reduceMotion: false, glassControls: false, alwaysDark: true, mpvConf: '',
+  topTools: ['chapters'], portraitTools: [], seekBelowButtons: false, singleTap: 'controls', panZoomed: true, subtitleSwipe: true, rememberAspect: true, autoQueueFolder: true, immersive: 'both', reduceMotion: false, glassControls: false, alwaysDark: true, mpvConf: '',
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,
   rotate: 0, flipH: false, flipV: false, crop: '', filterPreset: '',

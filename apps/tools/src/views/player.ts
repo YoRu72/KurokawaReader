@@ -25,6 +25,8 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
   // (The engine: mpv when it is here and not turned off — Settings → Player —, else the web view's own.)
   let engine: 'mpv' | 'web' = 'web';
   if (nativePlatform() === 'android' && getSettings().playerEngine !== 'web') { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; }
+  // (An MKV, AVI or other container the web view cannot decode — a black picture with sound at best — with no mpv here: the mpv pack offered once, the web view only if declined.)
+  if (nativePlatform() === 'android' && engine === 'web' && /\.(mkv|avi|wmv|flv|ts|m2ts|mpg|mpeg|ogv|rmvb)(\?|$)/i.test(opts.localPath ?? name ?? url)) { try { const { ensurePacks } = await import('../packs'); if (await ensurePacks(['mpv'], t('packWhyMpv'))) { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; } } catch { /* the web view then */ } }
   const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts, engine });
 }
 /** The question, unless a choice is remembered: another app, or the in-app player (with what it brings). */

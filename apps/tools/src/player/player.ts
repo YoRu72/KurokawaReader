@@ -34,7 +34,8 @@ import { mpvVideo, mpvDone, type MpvControl } from './mpv';
 const ISO3: Record<string, string> = { ar: 'ara', en: 'eng', ja: 'jpn', fr: 'fre,fra', de: 'ger,deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'chi,zho', ko: 'kor', tr: 'tur', fa: 'per,fas', ur: 'urd', hi: 'hin', id: 'ind', ms: 'may,msa', th: 'tha', vi: 'vie', nl: 'dut,nld', pl: 'pol', uk: 'ukr', sv: 'swe', he: 'heb' };
 /** The decoder's choices as mpv's options. */
 export const mpvExtra = (P: PlayerPrefs): Record<string, string> => {
-  const o: Record<string, string> = { hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'hwcopy' ? 'mediacodec-copy' : 'mediacodec,mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.gpuNext ? 'gpu-next' : 'gpu' };
+  // (hw: MediaCodec through the GPU (copy) — the safe path; direct: MediaCodec straight to the surface with the «embed» vo (no subtitles drawn by mpv, the fastest on weak phones); sw: software.)
+  const o: Record<string, string> = { hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'direct' ? 'mediacodec' : 'mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.hwdec === 'direct' ? 'mediacodec_embed' : P.gpuNext ? 'gpu-next' : 'gpu' };
   // (The reader's own mpv.conf lines, «key=value», last — they win over the choices above; comments and blanks skipped.)
   for (const line of (P.mpvConf ?? '').split('\n')) { const l = line.trim(); if (!l || l.startsWith('#')) continue; const i = l.indexOf('='); if (i <= 0) { o[l] = 'yes'; continue; } o[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
   return o;
@@ -727,6 +728,8 @@ export function openPlayer(src: PlayerSource): void {
     root.classList.toggle('seek-below', !!P2.seekBelowButtons); root.classList.toggle('glass', !!P2.glassControls); root.classList.toggle('reduce-motion', !!P2.reduceMotion); root.classList.toggle('always-dark', P2.alwaysDark !== false);
   }
   window.addEventListener('resize', drawTools);
+  // (The subtitles lifted over the control bar by its real height, whatever the layout gives it.)
+  const barRo = new ResizeObserver(() => { root.style.setProperty('--kt-bottom-h', `${bottom.getBoundingClientRect().height}px`); }); barRo.observe(bottom);
   /** The grid of every tool, as REX Player's legend shows them; and the bar's layout, chosen there. */
   function toolsSheet() {
     const sh = openSheet(t('playerTools'), t('close'));
@@ -764,8 +767,8 @@ export function openPlayer(src: PlayerSource): void {
     const sh = openSheet(t('toolDecoder'), t('close'));
     if (!mpv) { sh.body.append(h('p', { class: 'hint' }, t('decoderWebOnly'))); return; }
     const now = h('small', { class: 'src' }); void (ktPluginMpvGet('hwdec-current')).then((v) => { now.textContent = `${t('decoderNow')}: ${v && v !== 'no' ? v : t('decoderSoftware')}`; });
-    const choose = (v: PlayerPrefs['hwdec']) => { updatePrefs({ hwdec: v }); mpv.set('hwdec', mpvExtra(getPrefs()).hwdec); sh.close(); flashText(v === 'sw' ? t('decoderSoftware') : v === 'hwcopy' ? t('decoderHwCopy') : t('decoderHw')); };
-    sh.body.append(now, h('div', { class: 'dest-list' }, ...([['hw', t('decoderHw'), t('decoderHwHint')], ['hwcopy', t('decoderHwCopy'), t('decoderHwCopyHint')], ['sw', t('decoderSoftware'), t('decoderSoftwareHint')]] as [PlayerPrefs['hwdec'], string, string][]).map(([v, l, d]) => h('button', { type: 'button', class: 'dest-row' + (getPrefs().hwdec === v ? ' on' : ''), onclick: () => choose(v) }, icon('chip'), h('span', { class: 'grow' }, h('span', null, l), h('small', { class: 'src', style: { display: 'block' } }, d))))));
+    const choose = (v: PlayerPrefs['hwdec']) => { updatePrefs({ hwdec: v }); const ex = mpvExtra(getPrefs()); mpv.set('vo', ex.vo); mpv.set('hwdec', ex.hwdec); sh.close(); flashText(v === 'sw' ? t('decoderSoftware') : v === 'direct' ? t('decoderDirect') : t('decoderHw')); };
+    sh.body.append(now, h('div', { class: 'dest-list' }, ...([['hw', t('decoderHw'), t('decoderHwHint')], ['direct', t('decoderDirect'), t('decoderDirectHint')], ['sw', t('decoderSoftware'), t('decoderSoftwareHint')]] as [PlayerPrefs['hwdec'], string, string][]).map(([v, l, d]) => h('button', { type: 'button', class: 'dest-row' + (getPrefs().hwdec === v ? ' on' : ''), onclick: () => choose(v) }, icon('chip'), h('span', { class: 'grow' }, h('span', null, l), h('small', { class: 'src', style: { display: 'block' } }, d))))));
   }
   const ktPluginMpvGet = async (name: string): Promise<string | null> => { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { mpvGet?(o: { name: string }): Promise<{ value: string | null }> } | null; try { return (await kp?.mpvGet?.({ name }))?.value ?? null; } catch { return null; } };
   /** The screen's turn: as the phone is held, landscape, portrait — kept locked so. */
@@ -957,6 +960,7 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- closing
   function close() {
+    barRo.disconnect();
     playerGone = true;
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (Opened by another app: the position and the length handed back to it, and the app steps aside.)

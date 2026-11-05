@@ -107,7 +107,7 @@
 .kt-ass { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .kt-subs { position: absolute; inset-inline: 6%; bottom: calc(10% + var(--sub-pos)); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; text-align: center; transition: bottom .2s; }
 .kt-subs.top { bottom: auto; top: 6%; }
-.kt-player:not(.hide-ui) .kt-subs:not(.top) { bottom: calc(10% + var(--sub-pos) + 64px); }
+.kt-player:not(.hide-ui) .kt-subs:not(.top) { bottom: max(calc(10% + var(--sub-pos)), calc(var(--kt-bottom-h, 110px) + 10px + var(--sub-pos))); }
 .kt-cue { font: 600 calc(22px * var(--sub-size) / 100) / 1.35 var(--sub-font) var(--font-ui), system-ui, sans-serif; color: var(--sub-color); padding: 2px 8px; border-radius: 6px; white-space: pre-wrap; }
 .kt-player.sub-bold .kt-cue { font-weight: 800; }
 .kt-player[data-sub-bg='shadow'] .kt-cue { text-shadow: 0 0 4px #000, 0 2px 3px #000, 0 0 10px rgb(0 0 0 / .8); }
