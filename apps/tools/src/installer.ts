@@ -30,9 +30,12 @@ type Asset = RelAsset;
 export async function suitableAsset(rel: Release): Promise<Asset | undefined> {
   const platform = nativePlatform();
   if (platform === 'android') {
-    const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { deviceInfo?(): Promise<{ abis: string[] }> }) | null;
-    const abis = p?.deviceInfo ? (await p.deviceInfo().catch(() => ({ abis: [] as string[] }))).abis : [];
-    return abis.map((abi) => rel.assets.find((a) => a.name.endsWith(`-${abi}.apk`))).find(Boolean) ?? rel.assets.find((a) => a.name.endsWith('-universal.apk')) ?? rel.assets.find((a) => a.name.endsWith('.apk'));
+    const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { deviceInfo?(): Promise<{ abis: string[]; a11yBuild?: boolean }> }) | null;
+    const info: { abis: string[]; a11yBuild?: boolean } = p?.deviceInfo ? await p.deviceInfo().catch(() => ({ abis: [] as string[] })) : { abis: [] };
+    // (The build installed decides the build offered: the «-a11y» one — the screen translator's accessibility service —
+    // stays a11y, the ordinary one stays ordinary; the two are signed alike, so either installs over the other.)
+    const suffix = info.a11yBuild ? '-a11y.apk' : '.apk'; const fits = (a: Asset) => a.name.endsWith(suffix) && (info.a11yBuild || !a.name.endsWith('-a11y.apk'));
+    return info.abis.map((abi) => rel.assets.find((a) => a.name.endsWith(`-${abi}${suffix}`))).find(Boolean) ?? rel.assets.find((a) => a.name.endsWith(`-universal${suffix}`)) ?? rel.assets.find(fits) ?? rel.assets.find((a) => a.name.endsWith('.apk'));
   }
   if (platform === 'ios') return rel.assets.find((a) => a.name.endsWith('.ipa'));
   if (platform === 'desktop') {

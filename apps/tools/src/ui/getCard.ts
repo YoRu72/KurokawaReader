@@ -21,7 +21,12 @@ let current: { el: HTMLElement; finish: (v: boolean) => void } | null = null;
 export function getCard(o: GetCardOptions): Promise<boolean> {
   current?.finish(false);
   return new Promise((resolve) => {
-    let done = false; const finish = (v: boolean) => { if (done) return; done = true; el.classList.add('leaving'); setTimeout(() => el.remove(), 180); if (current?.el === el) current = null; resolve(v); };
+    // (A card that is not downloading — waiting for «Get it», or failed and offering Retry — leaves with the page it was
+    // asked on; a running download keeps its card wherever the reader goes.)
+    const onRoute = () => { if (!running) finish(false); };
+    let done = false; const finish = (v: boolean) => { if (done) return; done = true; window.removeEventListener('hashchange', onRoute); el.classList.add('leaving'); setTimeout(() => el.remove(), 180); if (current?.el === el) current = null; resolve(v); };
+    window.addEventListener('hashchange', onRoute);
+    let running = false;
     const total = o.steps.reduce((s, x) => s + (x.size ?? 0), 0);
     const overall = h('div', { class: 'task-bar' }, h('i', { style: { width: '0%' } })); overall.hidden = true;
     const rows = o.steps.map((s) => { const bar = h('div', { class: 'task-bar thin' }, h('i', { style: { width: '0%' } })); const line = h('small', null, s.size ? formatBytes(s.size) : ''); return { s, bar, line, el: h('div', { class: 'get-step' }, h('span', { class: 'grow' }, s.label), line, bar) }; });
@@ -32,7 +37,7 @@ export function getCard(o: GetCardOptions): Promise<boolean> {
       h('div', { class: 'get-head' }, h('span', { class: 'get-ic' }, icon(o.icon)), h('div', { class: 'grow' }, h('b', null, o.title), h('small', null, o.why))),
       h('div', { class: 'get-steps' }, ...rows.map((r) => r.el)), overall, status, h('div', { class: 'get-actions' }, later, get));
     document.body.append(el); current = { el, finish };
-    let running = false; const sizes = rows.map((r) => r.s.size ?? 0); const got = rows.map(() => 0);
+    const sizes = rows.map((r) => r.s.size ?? 0); const got = rows.map(() => 0);
     later.addEventListener('click', () => { if (running) o.cancel?.(); finish(false); });
     get.addEventListener('click', async () => {
       running = true; get.disabled = true; later.textContent = t('cancel'); overall.hidden = false; status.hidden = true; el.classList.add('running');

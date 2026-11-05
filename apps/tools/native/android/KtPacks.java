@@ -41,26 +41,46 @@ final class KtPacks {
         if (!valid(name)) throw new IllegalArgumentException("pack " + name);
         File tmp = new File(ctx.getCacheDir(), "pack-" + name + ".zip");
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            HttpURLConnection c = null; URL u = new URL(url);
-            for (int hop = 0; hop < 8; hop++) {
-                c = KrDoh.open(u); c.setInstanceFollowRedirects(false); c.setConnectTimeout(20000); c.setReadTimeout(60000);
-                c.setRequestProperty("User-Agent", "KurokawaTools");
-                int code = c.getResponseCode();
-                if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) { u = new URL(u, c.getHeaderField("Location")); c.disconnect(); continue; }
-                if (code != 200) throw new java.io.IOException("HTTP " + code);
-                break;
+            // (GitHub answers 5xx and times out now and then: the fetch is tried up to six times with a growing pause, taking
+            // up where it stopped (a Range from the bytes already here), through the resolver on the way the site is reached.)
+            long done = 0, total = -1, lastTell = 0; java.io.IOException last = null; tmp.delete();
+            for (int attempt = 0; attempt < 6; attempt++) {
+                if (cancel != null && cancel.get()) throw new InterruptedException("cancelled");
+                if (attempt > 0) { try { Thread.sleep(Math.min(20000L, 1500L * (1L << (attempt - 1)))); } catch (InterruptedException ie) { throw new InterruptedException("cancelled"); } }
+                HttpURLConnection c = null; URL u = new URL(url);
+                try {
+                    boolean resume = done > 0;
+                    for (int hop = 0; hop < 8; hop++) {
+                        c = attempt % 2 == 1 ? (HttpURLConnection) u.openConnection() : KrDoh.open(u); c.setInstanceFollowRedirects(false); c.setConnectTimeout(20000); c.setReadTimeout(60000);
+                        c.setRequestProperty("User-Agent", "KurokawaTools"); if (resume) c.setRequestProperty("Range", "bytes=" + done + "-");
+                        int code = c.getResponseCode();
+                        if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) { u = new URL(u, c.getHeaderField("Location")); c.disconnect(); c = null; continue; }
+                        if (resume && code == 200) { done = 0; tmp.delete(); resume = false; }
+                        else if (code != 200 && code != 206) { c.disconnect(); c = null; throw new java.io.IOException("HTTP " + code); }
+                        break;
+                    }
+                    if (c == null) throw new java.io.IOException("too many redirects");
+                    if (total < 0 || !resume) { long len = c.getContentLengthLong(); total = len > 0 ? len + (resume ? done : 0) : -1; }
+                    try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(tmp, resume)) {
+                        byte[] buf = new byte[1 << 16]; int n;
+                        while ((n = in.read(buf)) > 0) {
+                            if (cancel != null && cancel.get()) throw new InterruptedException("cancelled");
+                            out.write(buf, 0, n); done += n;
+                            long now = System.currentTimeMillis(); if (pr != null && now - lastTell > 250) { lastTell = now; pr.on(done, total); }
+                        }
+                    }
+                    if (total > 0 && done < total) throw new java.io.IOException("cut short");
+                    last = null; break;
+                } catch (java.io.IOException e) {
+                    last = e; String m = String.valueOf(e.getMessage());
+                    // (A plain refusal — not found, forbidden — is final; a 5xx, a timeout, a reset or a short answer is tried again.)
+                    if (m.matches("HTTP 4\\d\\d")) throw e;
+                } finally { if (c != null) c.disconnect(); }
             }
-            long total = c.getContentLengthLong(); long done = 0, lastTell = 0;
-            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(tmp)) {
-                byte[] buf = new byte[1 << 16]; int n;
-                while ((n = in.read(buf)) > 0) {
-                    if (cancel != null && cancel.get()) throw new InterruptedException("cancelled");
-                    out.write(buf, 0, n); md.update(buf, 0, n); done += n;
-                    long now = System.currentTimeMillis(); if (pr != null && now - lastTell > 250) { lastTell = now; pr.on(done, total); }
-                }
-            } finally { c.disconnect(); }
+            if (last != null) throw last;
             if (pr != null) pr.on(done, total);
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = new java.io.FileInputStream(tmp)) { byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) md.update(buf, 0, n); }
             StringBuilder hex = new StringBuilder(); for (byte b : md.digest()) hex.append(String.format("%02x", b));
             if (sha256 != null && !sha256.isEmpty() && !hex.toString().equalsIgnoreCase(sha256)) throw new java.io.IOException("checksum");
             File d = dir(ctx, name); deleteTree(d); d.mkdirs();

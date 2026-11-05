@@ -23,12 +23,35 @@ async function install({ name, url, sha256, version }, onProgress) {
   const d = dir(name); fs.mkdirSync(d, { recursive: true });
   const tmp = path.join(d, 'download.gz');
   try {
-    const r = await net.fetch(url, { signal: ctl.signal }); if (!r.ok) throw new Error('HTTP ' + r.status);
-    const total = Number(r.headers.get('content-length') || 0); const out = fs.createWriteStream(tmp); const hash = crypto.createHash('sha256'); let done = 0, last = 0;
-    const reader = r.body.getReader();
-    for (;;) { const { done: end, value } = await reader.read(); if (end) break; const b = Buffer.from(value); hash.update(b); done += b.length; if (!out.write(b)) await new Promise((ok) => out.once('drain', ok)); const now = Date.now(); if (now - last > 250) { last = now; onProgress({ name, done, total }); } }
-    await new Promise((ok, no) => out.end((e) => (e ? no(e) : ok())));
+    // (GitHub answers 5xx and times out now and then: up to six tries with a growing pause, each taking up where the
+    // last stopped when the server honours a Range; a 4xx is final.)
+    let done = 0, total = 0, last = 0, lastErr = null; fs.rmSync(tmp, { force: true });
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (ctl.signal.aborted) throw new Error('cancelled');
+      if (attempt > 0) await new Promise((ok) => setTimeout(ok, Math.min(20000, 1500 * 2 ** (attempt - 1))));
+      let out = null;
+      try {
+        const resume = done > 0;
+        const r = await net.fetch(url, { signal: ctl.signal, headers: resume ? { Range: 'bytes=' + done + '-' } : {} });
+        let append = resume;
+        if (resume && r.status === 200) { done = 0; append = false; fs.rmSync(tmp, { force: true }); }
+        else if (r.status !== 200 && r.status !== 206) throw new Error('HTTP ' + r.status);
+        if (!append || !total) { const len = Number(r.headers.get('content-length') || 0); total = len > 0 ? len + (append ? done : 0) : 0; }
+        out = fs.createWriteStream(tmp, { flags: append ? 'a' : 'w' });
+        const reader = r.body.getReader();
+        for (;;) { const { done: end, value } = await reader.read(); if (end) break; const b = Buffer.from(value); done += b.length; if (!out.write(b)) await new Promise((ok) => out.once('drain', ok)); const now = Date.now(); if (now - last > 250) { last = now; onProgress({ name, done, total }); } }
+        await new Promise((ok, no) => out.end((e) => (e ? no(e) : ok()))); out = null;
+        if (total && done < total) throw new Error('cut short');
+        lastErr = null; break;
+      } catch (e) {
+        if (out) { try { await new Promise((ok) => out.end(ok)); } catch { /* closed */ } }
+        if (ctl.signal.aborted) throw new Error('cancelled');
+        lastErr = e; if (/^HTTP 4\d\d$/.test(String(e.message))) throw e;
+      }
+    }
+    if (lastErr) throw lastErr;
     onProgress({ name, done, total });
+    const hash = crypto.createHash('sha256'); await new Promise((ok, no) => fs.createReadStream(tmp).on('data', (b) => hash.update(b)).on('error', no).on('end', ok));
     if (sha256 && hash.digest('hex') !== String(sha256).toLowerCase()) throw new Error('checksum');
     const dest = ffmpegPath(); const part = dest + '.part';
     await new Promise((ok, no) => fs.createReadStream(tmp).pipe(zlib.createGunzip()).on('error', no).pipe(fs.createWriteStream(part, { mode: 0o755 })).on('error', no).on('finish', ok));

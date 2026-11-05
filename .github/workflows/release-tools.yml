@@ -96,6 +96,19 @@ jobs:
           mkdir -p out; V=${{ needs.version.outputs.v }}
           for f in android/app/build/outputs/apk/release/*.apk; do base=$(basename "$f"); abi=$(echo "$base" | sed -E 's/app-(.*)-release.*\.apk/\1/'); cp "$f" "out/KurokawaTools-$V-$abi.apk"; done
           ls -la out
+      # (The «-a11y» variant declares the screen translator's accessibility service — the one thing Google Play Protect
+      # blocks an app installed from a file for — so the ordinary APKs leave it out and read the screen as a picture.)
+      - name: Build the a11y variant (the screen translator's accessibility service declared)
+        shell: bash
+        run: |
+          set -o pipefail
+          node native/android/a11y.mjs
+          cd android && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/android-a11y.log | grep -vE "^\s*$" | tail -n 200
+      - name: Collect the a11y APKs
+        run: |
+          V=${{ needs.version.outputs.v }}
+          for f in android/app/build/outputs/apk/release/*.apk; do base=$(basename "$f"); abi=$(echo "$base" | sed -E 's/app-(.*)-release.*\.apk/\1/'); cp "$f" "out/KurokawaTools-$V-$abi-a11y.apk"; done
+          ls -la out
       - name: Packs (Python and ffmpeg, downloaded by the app when an add-on needs them)
         run: python3 scripts/packs.py out && ls -la out
       - name: The mpv pack (the Player add-on's engine, from mpv-android's release)
@@ -249,6 +262,7 @@ jobs:
             echo "| Android (most phones) | \`*-arm64-v8a.apk\` |"
             echo "| Android (older 32-bit phones) | \`*-armeabi-v7a.apk\` |"
             echo "| Android (any, larger) | \`*-universal.apk\` |"
+            echo "| Android, a11y variant | \`*-a11y.apk\` — the same app with the screen translator's accessibility service (reads the screen's exact text); Google Play Protect may ask you to allow it. The ordinary APKs read the screen as a picture and install without a question |"
             echo "| Windows | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
             echo "| macOS | \`*-mac-universal.dmg\` (unsigned: right-click → Open the first time; torrents need \`brew install aria2\`) |"
             echo "| Linux | \`*-linux-x64.AppImage\` (chmod +x, then run) |"

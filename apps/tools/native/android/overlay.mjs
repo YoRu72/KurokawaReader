@@ -6,6 +6,10 @@ import path from 'node:path';
 
 const root = path.resolve(new URL('../..', import.meta.url).pathname);
 const app = path.join(root, 'android', 'app');
+// (The accessibility service that reads the screen's text for the screen translator is declared only in the «-a11y»
+// build (KT_A11Y=1, or `node native/android/a11y.mjs` on a prepared project): Google Play Protect blocks the install of
+// an app from a file that declares one, so the ordinary build reads the screen as a picture instead.)
+import { A11Y_SERVICE } from './a11y.mjs';
 const pkgDir = path.join(app, 'src/main/java/app/kurokawa/tools');
 const LIBTORRENT4J = '2.1.0-39';
 
@@ -106,11 +110,7 @@ if (!manifest.includes('KtScreenService')) {
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <application`);
   manifest = manifest.replace('</application>', `    <service android:name=".KtScreenService" android:exported="false" android:foregroundServiceType="specialUse|mediaProjection"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="A floating translator bubble the user opened over other apps" /></service>
-    <service android:name=".KtScreenA11y" android:exported="false" android:label="@string/kt_screen_a11y_label" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-      <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
-      <meta-data android:name="android.accessibilityservice" android:resource="@xml/kt_screen_a11y" />
-    </service>
-    <service android:name=".KtDownloadsTile" android:exported="true" android:label="@string/kt_downloads_tile" android:icon="@android:drawable/stat_sys_download" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+${process.env.KT_A11Y === '1' ? A11Y_SERVICE : ''}    <service android:name=".KtDownloadsTile" android:exported="true" android:label="@string/kt_downloads_tile" android:icon="@android:drawable/stat_sys_download" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
     </service>
     <receiver android:name=".KtService$Actions" android:exported="false" />

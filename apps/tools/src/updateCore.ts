@@ -48,7 +48,7 @@ export async function listReleases(o: { repo: string; prefix: string; appName: s
 }
 /** The files a release has, by the names the release workflow gives them (sizes unknown). */
 export function conventionalAssets(repo: string, app: string, tag: string, v: string): RelAsset[] {
-  const names = ['arm64-v8a.apk', 'armeabi-v7a.apk', 'x86_64.apk', 'universal.apk', 'win-x64.exe', 'win-x64-portable.exe', 'mac-universal.dmg', 'linux-x86_64.AppImage', 'ios-unsigned.ipa'].map((x) => `${app}-${v}-${x}`).concat(`${app}-web.zip`);
+  const names = ['arm64-v8a.apk', 'armeabi-v7a.apk', 'x86_64.apk', 'universal.apk', 'arm64-v8a-a11y.apk', 'armeabi-v7a-a11y.apk', 'x86_64-a11y.apk', 'universal-a11y.apk', 'win-x64.exe', 'win-x64-portable.exe', 'mac-universal.dmg', 'linux-x86_64.AppImage', 'ios-unsigned.ipa'].map((x) => `${app}-${v}-${x}`).concat(`${app}-web.zip`);
   return names.map((name) => ({ name, url: `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${name}`, size: 0 }));
 }
 const unescapeXml = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
