@@ -16,7 +16,7 @@ export const keepFreeNow = (): number => { const k = getSettings().archiveKeepFr
 const errText = (m: string): string => {
   if (m === 'noSpace') return t('noSpace'); if (m === 'notArchive') return t('notAnArchive');
   const [k, ...rest] = m.split(' '); const what = rest.join(' ');
-  return k === 'unsafePath' ? t('archiveUnsafe', { name: what }) : k === 'duplicateEntry' ? t('archiveDuplicate', { name: what }) : k === 'damaged' ? t('archiveDamaged', { names: what }) : k === 'sfvMismatch' ? t('archiveSfvBad', { names: what }) : k === 'crcMismatch' ? t('archiveDamaged', { names: what }) : m;
+  return k === 'unsafePath' ? t('archiveUnsafe', { name: what }) : k === 'duplicateEntry' ? t('archiveDuplicate', { name: what }) : k === 'damaged' ? t('archiveDamaged', { names: what }) : k === 'sfvMismatch' ? t('archiveSfvBad', { names: what }) : k === 'crcMismatch' ? t('archiveDamaged', { names: what }) : k === 'overlapping' ? t('archiveOverlap', { name: what }) : k === 'hardLinked' ? t('archiveHardLinked') : m;
 };
 
 export async function extractSheet(path: string, opts: { onDone?: (dest: string) => void; queue?: string[] } = {}): Promise<void> {
@@ -73,7 +73,14 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const progressUi = (title: string) => {
     const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src', dir: 'ltr' }, ''); const pct = h('b', null, '0%');
     sh.body.replaceChildren(h('div', { class: 'extract-progress' }, h('div', { class: 'row' }, h('span', null, title), pct), bar, line));
-    return (p: { done: number; total: number; file: string }) => { const f = p.total ? p.done / p.total : 0; (bar.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`; pct.textContent = `${localDigits(Math.round(f * 100))}%`; line.textContent = p.file; };
+    // (The speed over the last few seconds and the time left from it — HatchZip's task window.)
+    const stat = h('p', { class: 'src', dir: 'auto' }, ''); (sh.body.firstChild as HTMLElement).append(stat); const t0 = Date.now(); let lastT = t0, lastDone = 0, speed = 0;
+    return (p: { done: number; total: number; file: string }) => {
+      const f = p.total ? p.done / p.total : 0; (bar.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`; pct.textContent = `${localDigits(Math.round(f * 100))}%`; line.textContent = p.file;
+      const now = Date.now(); if (now - lastT >= 1000) { const inst = ((p.done - lastDone) * 1000) / (now - lastT); speed = speed ? speed * 0.6 + inst * 0.4 : inst; lastT = now; lastDone = p.done; }
+      const left = speed > 0 && p.total > p.done ? (p.total - p.done) / speed : -1;
+      stat.textContent = [speed > 0 ? `${formatBytes(speed)}/s` : '', left >= 0 ? t('archiveTimeLeft', { t: left < 60 ? `${localDigits(Math.ceil(left))} s` : left < 3600 ? `${localDigits(Math.ceil(left / 60))} min` : `${localDigits(Math.floor(left / 3600))} h ${localDigits(Math.ceil((left % 3600) / 60))} min` }) : '', p.total ? `${formatBytes(p.done)} / ${formatBytes(p.total)}` : ''].filter(Boolean).join(' · ');
+    };
   };
   const failed = (m: string) => { sh.body.replaceChildren(h('p', { class: 'empty small' }, errText(m))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { void load(); } }, t('back'))); };
   const runTest = async () => {

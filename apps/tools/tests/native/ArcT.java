@@ -48,6 +48,30 @@ public class ArcT {
     try (KtArchive.Opened o = KtArchive.open(oz, null, "dir/deflated.txt")) { o.seekTo(4); ok("deflated entry read past", new String(o.in.readAllBytes()).equals("456789")); }
     try (KtArchive.Opened o = KtArchive.open(new File(d, "s.7z.001"), null, "src/sub/a.txt")) { ok("7z entry walked: " + o.size, o.size == 5 && new String(o.in.readAllBytes()).equals("hello")); }
     try { KtArchive.open(oz, null, "missing"); ok("missing entry refused", false); } catch (java.io.FileNotFoundException e) { ok("missing entry refused", true); }
+    // a zip cut into byte volumes (.zip.001…), extracted in place: volumes vanish from the end, one at a time
+    File whole = new File(d, "vol.zip"); byte[][] parts = new byte[6][]; try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(whole))) { z.setLevel(0); for (int i = 0; i < 6; i++) { parts[i] = new byte[100 * 1024]; new Random(10 + i).nextBytes(parts[i]); z.putNextEntry(new java.util.zip.ZipEntry("p" + i + ".bin")); z.write(parts[i]); z.closeEntry(); } }
+    byte[] all = Files.readAllBytes(whole.toPath()); whole.delete(); int per = 150 * 1024; int nv = 0; for (int at = 0; at < all.length; at += per) { Files.write(new File(d, String.format(java.util.Locale.US, "vol.zip.%03d", ++nv)).toPath(), Arrays.copyOfRange(all, at, Math.min(all.length, at + per))); }
+    File first = new File(d, "vol.zip.001"); org.json.JSONObject vi = KtArchive.list(first, null);
+    ok("byte-split zip listed through its volumes: " + vi.optInt("volumes") + " volumes, " + vi.getJSONArray("entries").length() + " entries", vi.optInt("volumes") == nv && vi.getJSONArray("entries").length() == 6 && vi.getBoolean("inPlaceOk"));
+    KtArchive.BATCH_COUNT = 1; final int[] seen = { nv }; final boolean[] shrank = { false };
+    KtArchive.Options ip = new KtArchive.Options(); ip.inPlace = true; ip.keepFree = 0; File vdest = new File(d, "vol-out");
+    int got = KtArchive.extract(first, vdest, ip, new KtArchive.Progress() { public void on(long dn, long t, String f2) { int now = 0; for (int i = 1; i <= 6; i++) if (new File(d, String.format(java.util.Locale.US, "vol.zip.%03d", i)).exists()) now++; if (now < seen[0]) shrank[0] = true; seen[0] = Math.min(seen[0], now); } public boolean stopped() { return false; } });
+    boolean wholeOut = got == 6; for (int i = 0; i < 6 && wholeOut; i++) wholeOut = Arrays.equals(Files.readAllBytes(new File(vdest, "p" + i + ".bin").toPath()), parts[i]);
+    boolean gone = true; for (int i = 1; i <= nv; i++) if (new File(d, String.format(java.util.Locale.US, "vol.zip.%03d", i)).exists()) gone = false;
+    ok("in place over volumes: every file whole, volumes removed as they emptied, none left", wholeOut && shrank[0] && gone);
+    KtArchive.BATCH_COUNT = 64;
+    // bzip2 entries (as 7-Zip writes them): read through commons-compress over the same bytes
+    byte[] plain = "bzip2 inside a zip, many times over, many times over, many times over".getBytes(); java.io.ByteArrayOutputStream cbo = new java.io.ByteArrayOutputStream(); try (org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream bo = new org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream(cbo)) { bo.write(plain); }
+    File bz = new File(d, "bz.zip"); try (org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream z = new org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream(bz)) { org.apache.commons.compress.archivers.zip.ZipArchiveEntry e = new org.apache.commons.compress.archivers.zip.ZipArchiveEntry("text.txt"); e.setMethod(org.apache.commons.compress.archivers.zip.ZipMethod.BZIP2.getCode()); e.setSize(plain.length); e.setCompressedSize(cbo.size()); java.util.zip.CRC32 cc = new java.util.zip.CRC32(); cc.update(plain); e.setCrc(cc.getValue()); z.addRawArchiveEntry(e, new java.io.ByteArrayInputStream(cbo.toByteArray())); }
+    File bzOut = new File(d, "bz-out"); int nb = KtArchive.extract(bz, bzOut, new KtArchive.Options(), P); ok("a bzip2 zip entry extracted", nb == 1 && new String(Files.readAllBytes(new File(bzOut, "text.txt").toPath())).startsWith("bzip2 inside"));
+    org.json.JSONObject tb = KtArchive.test(bz, null, P); ok("…and tested", tb.getJSONArray("bad").length() == 0);
+    // overlapping entries: the second's header inside the first's data — refused in place, allowed when kept
+    File ov = new File(d, "overlap.zip"); try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(ov))) { z.setLevel(0); z.putNextEntry(new java.util.zip.ZipEntry("a.bin")); z.write(new byte[5000]); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("b.bin")); z.write(new byte[10]); z.closeEntry(); }
+    byte[] ob = Files.readAllBytes(ov.toPath()); // (the directory's offset of b.bin pointed into a.bin's data: found by its name in the directory and lowered)
+    int cd = -1; for (int i = ob.length - 22; i >= 0; i--) if (ob[i] == 0x50 && ob[i + 1] == 0x4b && ob[i + 2] == 1 && ob[i + 3] == 2 && new String(ob, i + 46, 5, "ISO-8859-1").equals("b.bin")) { cd = i; break; }
+    ok("crafted overlap set up", cd > 0); if (cd > 0) { int off = (ob[cd + 42] & 0xff) | ((ob[cd + 43] & 0xff) << 8) | ((ob[cd + 44] & 0xff) << 16) | ((ob[cd + 45] & 0xff) << 24); int bad = off - 100; ob[cd + 42] = (byte) bad; ob[cd + 43] = (byte) (bad >> 8); ob[cd + 44] = (byte) (bad >> 16); ob[cd + 45] = (byte) (bad >> 24); Files.write(ov.toPath(), ob); }
+    org.json.JSONObject oi = KtArchive.list(ov, null); ok("overlapping entries seen, in place refused", oi.has("overlap") && !oi.getBoolean("inPlaceOk"));
+    try { KtArchive.Options o2 = new KtArchive.Options(); o2.inPlace = true; KtArchive.extract(ov, new File(d, "ov-out"), o2, P); ok("in place over an overlap refused", false); } catch (IOException e) { ok("in place over an overlap refused: " + e.getMessage(), e.getMessage().startsWith("overlapping")); }
     System.out.println(fails == 0 ? "all passed" : fails + " failed"); System.exit(fails == 0 ? 0 : 1);
   }
 }
