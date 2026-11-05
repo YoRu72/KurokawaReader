@@ -196,8 +196,23 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
     const storage = (r: Root) => { const used = r.total && r.free !== undefined ? Math.round(((r.total - r.free) / r.total) * 100) : null; return item(r.kind === 'app' ? 'download' : 'storage', r.name, used === null ? r.path : h('span', { class: 'files-usage' }, h('span', { class: 'files-usage-bar' }, h('i', { style: { width: `${used}%` } })), h('small', { class: 'src' }, t('filesFreeOf', { free: formatBytes(r.free!), total: formatBytes(r.total!) }))), () => { if (!r.readable) { void askAccess(); return; } go(r.path); }); };
     const bm = bookmarks();
     sh.body.append(section(t('filesStorages'), ...roots.map(storage), ...(plug() ? [item('chart', t('filesAnalyzer'), t('filesAnalyzerHint'), () => pickSheet(t('filesAnalyzer'), roots.filter((r) => r.readable).map((r): [string, string, string] => [r.path, r.name, 'storage']), roots[0]?.path ?? '', (path) => { const r = roots.find((x) => x.path === path)!; void import('./filesMore').then((m) => m.analyzerSheet(r, (e) => void open(e), (d) => go(d), (paths) => void confirmDelete(paths))); }, t('close')))] : [])));
-    if (bm.length) sh.body.append(section(t('filesBookmarks'), ...bm.map((b) => item('bookmark', b.name, b.path, () => go(b.path), iconButton('close', t('delete'), (ev) => { ev.stopPropagation(); saveBookmarks(bookmarks().filter((x) => x.path !== b.path)); sh.close(); drawer(); })))));
+    // Bookmarks: opened by a tap; the kebab edits (a name, pinned to the home screen, moved up, removed).
+    const bmMenu = (b: { name: string; path: string }) => {
+      const m = openSheet(b.name, t('close')); const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { m.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
+      m.body.append(h('div', { class: 'dest-list' },
+        row('pen', t('rename'), () => { const r = openSheet(t('rename'), t('cancel')); const inp = h('input', { type: 'text', value: b.name, dir: 'auto' }) as HTMLInputElement; r.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp)); r.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { const name = inp.value.trim() || b.name; saveBookmarks(bookmarks().map((x) => (x.path === b.path ? { ...x, name } : x))); r.close(); sh.close(); drawer(); } }, icon('check'), t('rename'))); setTimeout(() => inp.focus(), 50); }),
+        ...(plug() ? [row('pin', t('filesPinHome'), () => void pinHome(b.path, b.name))] : []),
+        row('up', t('filesMoveUp'), () => { const a = bookmarks(); const i = a.findIndex((x) => x.path === b.path); if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; saveBookmarks(a); } sh.close(); drawer(); }),
+        row('trash', t('delete'), () => { saveBookmarks(bookmarks().filter((x) => x.path !== b.path)); sh.close(); drawer(); })));
+    };
+    if (bm.length) sh.body.append(section(t('filesBookmarks'), ...bm.map((b) => item('bookmark', b.name, b.path, () => go(b.path), iconButton('more', t('more'), (ev) => { ev.stopPropagation(); bmMenu(b); })))));
     if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))), section('', item('trash', t('filesTrash'), null, () => void import('./filesMore').then((m) => m.trashSheet(() => void load())))));
+  };
+  /** The folder on the home screen (Android 8+): the launcher asks the reader to confirm. */
+  const pinHome = async (path: string, name: string) => {
+    const pl = plug() as unknown as { filesShortcut?(o: { path: string; name: string }): Promise<{ ok: boolean }> } | null;
+    if (!pl?.filesShortcut) { toast(t('filesPinUnsupported'), 'error'); return; }
+    try { const r = await pl.filesShortcut({ path, name }); if (!r.ok) toast(t('filesPinUnsupported'), 'error'); } catch { toast(t('filesPinUnsupported'), 'error'); }
   };
   const fabSheet = () => {
     const sh = openSheet(t('create'), t('close'));
@@ -241,6 +256,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
       act(prefs.hidden ? 'eye' : 'eye', prefs.hidden ? t('filesHideHidden') : t('filesShowHidden'), () => { prefs.hidden = !prefs.hidden; savePrefs(); void load(); }),
       act('refresh', t('refresh'), () => void load()),
       ...(plug() ? [act('trash', t('filesTrashSetting'), () => void import('./filesMore').then((m) => { m.setTrashOn(!m.trashOn()); toast(m.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
+      ...(plug() ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
       ...(plug() ? [act('key', t('archiveForgetPw'), () => void import('../archives').then((a) => { a.forgetPasswords(); a.setRememberPasswords(false); toast(t('done')); }))] : []),
       act('info', t('properties'), () => void propertiesSheet({ name: baseOf(at), path: at, dir: true, size: 0, mtime: 0 })),
       ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : []),

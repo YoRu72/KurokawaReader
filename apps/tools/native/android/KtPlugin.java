@@ -511,6 +511,17 @@ public class KtPlugin extends Plugin {
         bg.execute(() -> { JSArray out = new JSArray(); try { for (int i = 0; i < names.length(); i++) { String n = names.getString(i); if (new File(dest, n).isFile()) out.put(n); } } catch (Exception ignored) {} JSObject r = new JSObject(); r.put("existing", out); call.resolve(r); });
     }
     @PluginMethod public void archiveCancel(PluginCall call) { AtomicBoolean c = archiveJobs.get(call.getString("id", "")); if (c != null) c.set(true); call.resolve(); }
+    /** A folder pinned to the home screen (Android 8+): tapping it opens the Files page there. */
+    @PluginMethod public void filesShortcut(PluginCall call) {
+        final String path = call.getString("path", ""), name = call.getString("name", ""); if (path.isEmpty()) { call.reject("path"); return; }
+        try {
+            if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(getContext())) { call.reject("unsupported"); return; }
+            Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("kurokawatools://files?p=" + java.net.URLEncoder.encode(path, "UTF-8")), getContext(), MainActivity.class); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            androidx.core.content.pm.ShortcutInfoCompat sc = new androidx.core.content.pm.ShortcutInfoCompat.Builder(getContext(), "folder:" + path).setShortLabel(name.isEmpty() ? new File(path).getName() : name).setLongLabel(path).setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(getContext(), getContext().getApplicationInfo().icon)).setIntent(i).build();
+            boolean ok = androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(getContext(), sc, null);
+            JSObject r = new JSObject(); r.put("ok", ok); call.resolve(r);
+        } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage()); }
+    }
     @PluginMethod public void archiveEntryUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().archiveEntryUrl(fileOf(call.getString("path", "")).getAbsolutePath(), call.getString("password", null), call.getString("entry", ""))); call.resolve(r); }); }
     @PluginMethod public void archiveThumb(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String entry = call.getString("entry", ""), pw = call.getString("password", null); final int px = call.getInt("px", 96); bg.execute(() -> { JSObject r = new JSObject(); r.put("url", KtFiles.archiveThumb(f, pw, entry, px)); call.resolve(r); }); }
     @PluginMethod public void archiveCreate(PluginCall call) {
