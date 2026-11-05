@@ -385,7 +385,7 @@ final class KtEngine {
     int addTrackers(String id, java.util.List<String> urls) {
         Task x = task(id); if (x == null || x.th == null || !x.th.isValid()) return 0;
         java.util.List<org.libtorrent4j.AnnounceEntry> tr = x.th.trackers(); java.util.Set<String> have = new java.util.HashSet<>(); int tier = 0; for (org.libtorrent4j.AnnounceEntry e : tr) { have.add(e.url()); tier = Math.max(tier, e.tier() + 1); }
-        int n = 0; for (String u : urls) { u = u == null ? "" : u.trim(); if (u.isEmpty() || !u.matches("^(udp|https?|wss?)://.*") || !have.add(u)) continue; org.libtorrent4j.AnnounceEntry e = new org.libtorrent4j.AnnounceEntry(u); e.tier(tier); x.th.addTracker(e); n++; }
+        int n = 0; for (String u : urls) { u = u == null ? "" : u.trim(); if (u.isEmpty() || !u.matches("^(udp|https?|wss?)://.*") || !have.add(u)) continue; org.libtorrent4j.AnnounceEntry e = new org.libtorrent4j.AnnounceEntry(u); e.tier((short) tier); x.th.addTracker(e); n++; }
         if (n > 0) { x.th.forceReannounce(); try { x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } catch (Throwable ignored) {} }
         return n;
     }
