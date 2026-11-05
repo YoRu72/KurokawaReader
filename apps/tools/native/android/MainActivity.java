@@ -43,13 +43,27 @@ public class MainActivity extends BridgeActivity {
             if (isMedia(intent, d)) { handMedia(intent, d); return; }
             if ("magnet".equals(d.getScheme()) || "http".equals(d.getScheme()) || "https".equals(d.getScheme())) u = d.toString();
             else if ("content".equals(d.getScheme()) || "file".equals(d.getScheme())) u = readTorrent(d);
-        } else if (Intent.ACTION_SEND.equals(action)) {
-            Uri s = intent.getParcelableExtra(Intent.EXTRA_STREAM);
-            if (s != null) u = readTorrent(s); else { String text = intent.getStringExtra(Intent.EXTRA_TEXT); if (text != null) u = text.trim(); }
+        } else if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            // (Files shared to «Save to device» — the alias .KtSave — or anything shared that is not a torrent: kept for
+            // the Files page to save where the reader chooses.)
+            boolean toSave = intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtSave");
+            java.util.List<Uri> us = new java.util.ArrayList<>();
+            if (Intent.ACTION_SEND_MULTIPLE.equals(action)) { java.util.ArrayList<Uri> l = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM); if (l != null) us.addAll(l); }
+            else { Uri s = intent.getParcelableExtra(Intent.EXTRA_STREAM); if (s != null) us.add(s); }
+            if (toSave || us.size() > 1 || (us.size() == 1 && !isTorrentLike(intent, us.get(0)))) {
+                if (us.isEmpty()) { String text = intent.getStringExtra(Intent.EXTRA_TEXT); if (text != null) u = text.trim(); }
+                else { KtPlugin.sharedIn(us); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/files?save=1'", null), 400); return; }
+            } else if (!us.isEmpty()) u = readTorrent(us.get(0));
+            else { String text = intent.getStringExtra(Intent.EXTRA_TEXT); if (text != null) u = text.trim(); }
         }
         if (u == null) return;
         final String link = u;
         if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/open?u='+encodeURIComponent(" + org.json.JSONObject.quote(link) + ")", null), 400);
+    }
+    private boolean isTorrentLike(Intent intent, Uri d) {
+        String type = intent.getType(); if (type != null && type.contains("bittorrent")) return true;
+        try { String t = getContentResolver().getType(d); if (t != null && t.contains("bittorrent")) return true; } catch (Throwable ignored) {}
+        return nameOf(d).toLowerCase(java.util.Locale.ROOT).endsWith(".torrent");
     }
     private boolean isMedia(Intent intent, Uri d) {
         if (intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtPlayer")) return true;

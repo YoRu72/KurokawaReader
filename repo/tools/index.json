@@ -584,6 +584,27 @@
       ]
     },
     {
+      "id": "files",
+      "kind": "files",
+      "name": "Files",
+      "names": {
+        "ar": "الملفات",
+        "ja": "ファイル",
+        "ko": "파일",
+        "zh": "文件"
+      },
+      "description": "A file manager: the phone, its cards and the app's folder; list or grid, sort and filter by kind, search; open in the app or with any app (or as a kind); copy, cut, paste, delete, rename, zip, extract, share, properties; Kurokawa Tools in every app's file picker, and «Save to device» in every app's share sheet.",
+      "descriptions": {
+        "ar": "مدير ملفات: الهاتف وبطاقاته ومجلد التطبيق؛ قائمة أو شبكة، ترتيب وتصفية بالنوع، بحث؛ فتح في التطبيق أو بأي تطبيق (أو بوصفه نوعًا)؛ نسخ وقص ولصق وحذف وإعادة تسمية وضغط واستخراج ومشاركة وخصائص؛ أدوات كوروكاوا في منتقي الملفات في كل تطبيق، و«احفظ في الجهاز» في قائمة المشاركة في كل تطبيق."
+      },
+      "version": "0.1.0",
+      "icon": "folder",
+      "platforms": [
+        "android",
+        "desktop"
+      ]
+    },
+    {
       "id": "debrid",
       "kind": "debrid",
       "name": "Debrid",

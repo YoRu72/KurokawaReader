@@ -552,6 +552,58 @@ public class KtPlugin extends Plugin {
         });
     }
 
+    /* ---------- the Files add-on: folders of the device (see KtFiles) ---------- */
+    @PluginMethod public void filesList(PluginCall call) { final File d = fileOf(call.getString("path", "")); final boolean counts = Boolean.TRUE.equals(call.getBoolean("counts", false)), hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.list(d, counts, hidden))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesRoots(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.roots(getContext(), engine().defaultDir()))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> statRuns = new java.util.concurrent.ConcurrentHashMap<>();
+    @PluginMethod public void filesStat(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String id = call.getString("id", ""); final java.util.concurrent.atomic.AtomicBoolean c = new java.util.concurrent.atomic.AtomicBoolean(); if (!id.isEmpty()) { java.util.concurrent.atomic.AtomicBoolean old = statRuns.put(id, c); if (old != null) old.set(true); } bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.stat(f, c))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } finally { statRuns.remove(id, c); } }); }
+    @PluginMethod public void filesThumb(PluginCall call) { final File f = fileOf(call.getString("path", "")); final int px = call.getInt("px", 160); bg.execute(() -> { JSObject r = new JSObject(); r.put("url", KtFiles.thumb(getContext(), f, px)); call.resolve(r); }); }
+    @PluginMethod public void filesMkdir(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.mkdir(fileOf(call.getString("path", ""))))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesRename(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.rename(fileOf(call.getString("path", "")), call.getString("name", "")))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesSearch(PluginCall call) { final File d = fileOf(call.getString("path", "")); final String q = call.getString("q", ""); final boolean hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false)); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtFiles.search(d, q, hidden, null).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesHead(PluginCall call) { final File f = fileOf(call.getString("path", "")); final int max = call.getInt("max", 200000); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("text", KtFiles.head(f, max)); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    /** A job — copy, move or delete `paths` (into `dest`) — run in the background; its progress, its questions (a name taken) and its end come as «files» events with its id. */
+    @PluginMethod public void filesJob(PluginCall call) {
+        final String id = call.getString("id", String.valueOf(System.currentTimeMillis())); final String op = call.getString("op", "copy"); final String conflict = call.getString("conflict", "ask");
+        final java.util.List<File> paths = new java.util.ArrayList<>(); JSArray a = call.getArray("paths"); if (a != null) for (int i = 0; i < a.length(); i++) paths.add(fileOf(a.optString(i, "")));
+        final File dest = call.getString("dest", null) == null ? null : fileOf(call.getString("dest", ""));
+        new Thread(() -> KtFiles.run(id, op, paths, dest, conflict, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-job").start();
+        JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
+    }
+    @PluginMethod public void filesCancel(PluginCall call) { KtFiles.cancel(call.getString("id", "")); call.resolve(); }
+    @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
+    /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */
+    @PluginMethod public void filesAccess(PluginCall call) {
+        boolean all = Build.VERSION.SDK_INT >= 30 ? android.os.Environment.isExternalStorageManager() : getContext().checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        if (!all && Boolean.TRUE.equals(call.getBoolean("ask", false))) {
+            try { if (Build.VERSION.SDK_INT >= 30) { Intent i = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getContext().getPackageName())); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); } else if (getActivity() != null) getActivity().requestPermissions(new String[] { android.Manifest.permission.READ_EXTERNAL_STORAGE, android.Manifest.permission.WRITE_EXTERNAL_STORAGE }, 4712); } catch (Exception ignored) {}
+        }
+        JSObject r = new JSObject(); r.put("all", all); call.resolve(r);
+    }
+    /* Shared to «Save to device»: what other apps sent (kept until saved or dismissed), and the saving. */
+    static final java.util.List<Uri> shared = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+    static void sharedIn(java.util.List<Uri> us) { shared.addAll(us); KtPlugin p = self; if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
+    @PluginMethod public void sharedPending(PluginCall call) {
+        bg.execute(() -> { JSArray a = new JSArray(); synchronized (shared) { for (Uri u : shared) { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); JSObject o = new JSObject(); o.put("uri", u.toString()); o.put("name", String.valueOf(m.get("name"))); o.put("size", (Long) m.get("size")); o.put("mime", m.get("mime") == null ? "" : String.valueOf(m.get("mime"))); a.put(o); } } JSObject r = new JSObject(); r.put("items", a); call.resolve(r); });
+    }
+    @PluginMethod public void sharedSave(PluginCall call) {
+        final File dir = fileOf(call.getString("dir", engine().defaultDir().getAbsolutePath())); final boolean clear = !Boolean.FALSE.equals(call.getBoolean("clear", true));
+        bg.execute(() -> {
+            JSArray saved = new JSArray(); JSArray failed = new JSArray(); java.util.List<Uri> us; synchronized (shared) { us = new java.util.ArrayList<>(shared); }
+            for (Uri u : us) { try { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); File f = KtFiles.saveShared(getContext(), u, dir, String.valueOf(m.get("name"))); saved.put(f.getAbsolutePath()); try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { f.getAbsolutePath() }, null, null); } catch (Throwable ignored) {} } catch (Exception e) { failed.put(String.valueOf(e.getMessage())); } }
+            if (clear) shared.clear();
+            JSObject r = new JSObject(); r.put("saved", saved); r.put("failed", failed); r.put("dir", dir.getAbsolutePath()); call.resolve(r);
+        });
+    }
+    /** Several files to the system's share sheet at once. */
+    @PluginMethod public void shareFiles(PluginCall call) {
+        try { JSArray a = call.getArray("paths"); java.util.ArrayList<Uri> us = new java.util.ArrayList<>(); if (a != null) for (int i = 0; i < a.length(); i++) { File f = fileOf(a.optString(i, "")); if (f.isFile()) us.add(FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f)); }
+            if (us.isEmpty()) { call.reject("nothing"); return; } Intent i = new Intent(Intent.ACTION_SEND_MULTIPLE); i.setType("*/*"); i.putParcelableArrayListExtra(Intent.EXTRA_STREAM, us); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent ch = Intent.createChooser(i, call.getString("title", "")); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve(); }
+        catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @PluginMethod public void sharedClear(PluginCall call) { shared.clear(); call.resolve(); }
+
     /* ---------- the Files add-on: folders of the device ---------- */
     @PluginMethod public void listDir(PluginCall call) {
         bg.execute(() -> {

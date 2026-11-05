@@ -35,6 +35,18 @@ if (!manifest.includes('FOREGROUND_SERVICE_DATA_SYNC')) {
   manifest = manifest.replace('</application>', `    <service android:name=".KtService" android:exported="false" android:foregroundServiceType="dataSync|specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Downloads and torrents the user started, kept going while the app is in the background" /></service>
     <activity android:name=".KtAuthActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     <activity android:name=".KtBrowserActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" android:windowSoftInputMode="adjustResize" />
+    <!-- Kurokawa Tools in every app's file picker (Open / Save), and «Save to device» in every app's share sheet -->
+    <provider android:name=".KtDocumentsProvider" android:authorities="app.kurokawa.tools.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+      <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+    </provider>
+    <activity-alias android:name=".KtSave" android:targetActivity=".MainActivity" android:exported="true" android:label="@string/kt_save" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
+      <intent-filter android:label="@string/kt_save">
+        <action android:name="android.intent.action.SEND" />
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
+    </activity-alias>
     </application>`);
 }
 if (!manifest.includes('android:scheme="magnet"')) {
@@ -179,7 +191,7 @@ try {
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtDocumentsProvider.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }

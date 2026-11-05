@@ -31,6 +31,7 @@ const DESTS = (): [string, string, string, () => void][] => [
   ...(getSettings().addons.includes('anime') ? [['anime', 'tv', 'navAnime', () => goTab('anime', '/anime')] as [string, string, string, () => void]] : []),
   ...(getSettings().addons.includes('tv') ? [['tv', 'film', 'navTv', () => goTab('tv', '/tv')] as [string, string, string, () => void]] : []),
   ...(getSettings().addons.includes('player') && getSettings().videosTab !== false ? [['videos', 'playCircle', 'navVideos', () => goTab('videos', '/videos')] as [string, string, string, () => void]] : []),
+  ...(getSettings().addons.includes('files') ? [['files', 'folder', 'navFiles', () => goTab('files', '/files')] as [string, string, string, () => void]] : []),
   ...(getSettings().addons.includes('subtitles') ? [['subs', 'subtitles', 'navSubs', () => goTab('subs', '/subs')] as [string, string, string, () => void]] : []),
   ['settings', 'settings', 'navSettings', () => goTab('settings', '/settings')],
 ];
@@ -47,7 +48,7 @@ function buildNav(): HTMLElement {
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }
 function placeNav(): void {
-  nav?.remove(); nav = buildNav(); nav.dataset.addons = getSettings().addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player').sort().join() + (getSettings().videosTab === false ? '-' : ''); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
+  nav?.remove(); nav = buildNav(); nav.dataset.addons = getSettings().addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (getSettings().videosTab === false ? '-' : ''); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
   document.documentElement.classList.toggle('pc', isPc());
   if (isPc()) document.body.prepend(nav); else document.body.append(nav);
   markNav(parseRoute());
@@ -100,6 +101,7 @@ function mountInner(route: Route): void {
     case 'animeEntry': current = lazyView(() => import('./views/animeEntry').then((m) => m.animeEntryView(route.id))); break;
     case 'install': { const pth = route.p; current = downloadsView(); setTimeout(() => void import('./views/apk').then((m) => m.installSheet(pth)), 80); break; }
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
+    case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;
     case 'tvTitle': current = lazyView(() => import('./views/tvTitle').then((m) => m.tvTitleView(route.type, route.id, route.season))); break;
@@ -138,7 +140,7 @@ else {
   placeNav();
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
-  onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
+  onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
   if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
   void import('./downloads/power').then((m) => m.applyPower());
