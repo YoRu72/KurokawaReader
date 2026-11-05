@@ -33,7 +33,12 @@ import { mpvVideo, mpvDone, type MpvControl } from './mpv';
 /** Two-letter language codes and the three-letter ones files often carry (mpv matches either). */
 const ISO3: Record<string, string> = { ar: 'ara', en: 'eng', ja: 'jpn', fr: 'fre,fra', de: 'ger,deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'chi,zho', ko: 'kor', tr: 'tur', fa: 'per,fas', ur: 'urd', hi: 'hin', id: 'ind', ms: 'may,msa', th: 'tha', vi: 'vie', nl: 'dut,nld', pl: 'pol', uk: 'ukr', sv: 'swe', he: 'heb' };
 /** The decoder's choices as mpv's options. */
-export const mpvExtra = (P: PlayerPrefs): Record<string, string> => ({ hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'hwcopy' ? 'mediacodec-copy' : 'mediacodec,mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.gpuNext ? 'gpu-next' : 'gpu' });
+export const mpvExtra = (P: PlayerPrefs): Record<string, string> => {
+  const o: Record<string, string> = { hwdec: P.hwdec === 'sw' ? 'no' : P.hwdec === 'hwcopy' ? 'mediacodec-copy' : 'mediacodec,mediacodec-copy', deband: P.deband ? 'yes' : 'no', 'audio-channels': P.audioChannels === 'stereo' ? 'stereo' : 'auto-safe', vo: P.gpuNext ? 'gpu-next' : 'gpu' };
+  // (The reader's own mpv.conf lines, «key=value», last — they win over the choices above; comments and blanks skipped.)
+  for (const line of (P.mpvConf ?? '').split('\n')) { const l = line.trim(); if (!l || l.startsWith('#')) continue; const i = l.indexOf('='); if (i <= 0) { o[l] = 'yes'; continue; } o[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
+  return o;
+};
 const nativePlatformIs = (p: string): boolean => { const c = (window as unknown as { Capacitor?: { getPlatform?(): string } }).Capacitor; const k = (window as unknown as { kurokawaTools?: unknown }).kurokawaTools; return p === 'desktop' ? !!k : p === 'web' ? !k && (!c || c.getPlatform?.() === 'web') : c?.getPlatform?.() === p; };
 const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i;
 
@@ -67,14 +72,15 @@ export function openPlayer(src: PlayerSource): void {
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
   const mem = memoryOf(key);
   // ---- state
-  let controlsOn = true; let hideTimer = 0; let locked = false; let speed = P.defaultSpeed; let zoom = 1; let panX = 0, panY = 0; let aspect = mem?.aspect ?? P.aspect; let abA: number | null = null, abB: number | null = null;
+  let controlsOn = true; let hideTimer = 0; let locked = false; let speed = P.defaultSpeed; let zoom = 1; let panX = 0, panY = 0; let aspect = (P.rememberAspect !== false ? mem?.aspect : undefined) ?? P.aspect; let abA: number | null = null, abB: number | null = null;
   let repeat = P.repeat; let rotate = 0; let flipH = false, flipV = false; let crop = ''; let marks: Bookmark[] = mem?.marks ?? [];
   let tracks: SubTrack[] = []; let current: SubTrack | null = null; let secondary: SubTrack | null = null; let subDelay = P.subDelay; let ass: AssRenderer | null = null;
   let sound: SoundGraph | null = null; let preview: SeekPreview | null = null; let boost = 1; let brightness = P.rememberBrightness ? P.brightness : 1; let sleepAt = 0; let watchedSent = false; let fps = 0; let pictureOff = false;
   // ---- chrome
   const title = h('span', { class: 'kt-title grow', dir: 'auto' }, src.name);
   const clock = h('span', { class: 'kt-clock', hidden: !P.showClock });
-  const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), batchFiles().length > 1 ? iconButton('list', t('batchFiles'), () => batchSheet()) : null, iconButton('more', t('more'), () => moreSheet()));
+  const topToolBox = h('span', { class: 'kt-tools kt-top-tools' });
+  const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, topToolBox, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), batchFiles().length > 1 ? iconButton('list', t('batchFiles'), () => batchSheet()) : null, iconButton('more', t('more'), () => moreSheet()));
   const timeNow = h('span', { class: 'kt-time' }, '0:00'); const timeEnd = h('button', { type: 'button', class: 'kt-time end', title: t('showRemaining'), onclick: () => { const p = getPrefs(); if (p.showRemaining && !endsAt) { endsAt = true; } else { endsAt = false; updatePrefs({ showRemaining: !p.showRemaining }); } onTime(); } }, '–:––'); let endsAt = false;
   const bar = h('div', { class: 'kt-seek', role: 'slider', tabindex: '0', 'aria-label': t('seekBar') }, h('div', { class: 'kt-buf' }), h('div', { class: 'kt-played' }), h('div', { class: 'kt-knob' }), h('i', { class: 'kt-mark a', hidden: true }), h('i', { class: 'kt-mark b', hidden: true }));
   const playBtn = iconButton('play', t('play'), () => toggle()); playBtn.classList.add('kt-play');
@@ -100,6 +106,8 @@ export function openPlayer(src: PlayerSource): void {
   document.body.append(root);
   const pic = new Picture(video, root);
   const wake = navigator.wakeLock && P.keepScreenOn ? navigator.wakeLock.request('screen').catch(() => null) : null;
+  // (The system bars away while the player is up, as chosen; back when it closes.)
+  const barsPlug = ktPlugin() as unknown as { systemBars?(o: { mode: 'both' | 'status' | 'show' }): Promise<void> } | null; if (P.immersive !== 'none') void barsPlug?.systemBars?.({ mode: P.immersive === 'status' ? 'status' : 'both' }).catch(() => undefined);
   if (P.orientation !== 'auto') void (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock?.(P.orientation === 'landscape' ? 'landscape' : 'landscape-primary').catch(() => undefined);
   const clockTick = () => { clock.textContent = new Date().toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }); };
   clockTick(); const clockTimer = window.setInterval(clockTick, 20000);
@@ -233,7 +241,7 @@ export function openPlayer(src: PlayerSource): void {
     if (!moved) return;
     const r = stage.getBoundingClientRect(); const left = start.x < r.left + r.width / 2; const volSide = getPrefs().swapSides ? left : !left;
     if (gesture === 'none') { if (zoom > 1 && e.pointerType === 'touch') gesture = 'pinch'; else if (Math.abs(dx) > Math.abs(dy)) gesture = P.swipeSeek ? 'seek' : 'none'; else gesture = volSide ? (P.swipeVolume ? 'volume' : 'none') : (P.swipeBrightness ? 'bright' : 'none'); }
-    if (gesture === 'pinch') { panX += e.movementX; panY += e.movementY; applyTransform(); }
+    if (gesture === 'pinch' && getPrefs().panZoomed !== false) { panX += e.movementX; panY += e.movementY; applyTransform(); }
     else if (gesture === 'seek') { const dt = (dx / r.width) * Math.min(video.duration || 600, 600) * (getPrefs().swipeSensitivity / 100); const to = Math.max(0, Math.min(video.duration || 0, start.t + dt)); flashText(`${fmtTime(to)}  (${dt >= 0 ? '+' : '−'}${fmtTime(Math.abs(dt))})`, true); (stage as HTMLElement & { _seekTo?: number })._seekTo = to; if (canPreview()) { if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } showControls(); const rr = bar.parentElement!.getBoundingClientRect(); const br = bar.getBoundingClientRect(); const f = video.duration ? to / video.duration : 0; const rtl = getComputedStyle(bar).direction === 'rtl'; preview.show(to, (br.left - rr.left) + (rtl ? 1 - f : f) * br.width, rr.width); } }
     else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); flashText(`🔊 ${localDigits(Math.round(v * 100))}%`); }
     else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); applyFilters(); flashText(`☀ ${localDigits(Math.round(brightness * 100))}%`); if (getPrefs().rememberBrightness) updatePrefs({ brightness }); }
@@ -263,7 +271,7 @@ export function openPlayer(src: PlayerSource): void {
     const action = (z: number): TapAction => (z < 0 ? getPrefs().tapLeft : z > 0 ? getPrefs().tapRight : getPrefs().tapCentre);
     if (seekAcc.total && zone === seekAcc.side && action(zone) === 'seek') { window.clearTimeout(tapTimer); lastTap = now; runTap('seek', side); return; }
     if (now - lastTap < 300 && zone === lastTapZone) { window.clearTimeout(tapTimer); lastTap = now; runTap(action(zone), zone === 0 ? 0 : side); return; }
-    lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => { if (controlsOn) hideControls(); else showControls(); }, 280);
+    lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => { if (getPrefs().singleTap === 'playpause' && zone === 0) { if (video.paused) void video.play(); else video.pause(); return; } if (controlsOn) hideControls(); else showControls(); }, 280);
   };
   stage.addEventListener('pointerup', endPointer); stage.addEventListener('pointercancel', endPointer);
   stage.addEventListener('wheel', (e) => { if (locked) return; e.preventDefault(); if (e.ctrlKey) { zoom = Math.max(1, Math.min(6, zoom - e.deltaY / 500)); applyTransform(); } else setVolume(Math.max(0, Math.min(1 + P.volumeBoost / 100, (video.volume * boost) - e.deltaY / 1000))); showControls(); }, { passive: false });
@@ -712,7 +720,13 @@ export function openPlayer(src: PlayerSource): void {
     const b = h('button', { type: 'button', class: (withLabel ? 'kt-tool' : 'icon-btn') + (x.on?.() ? ' on' : ''), title: x.label, 'aria-label': x.label, 'aria-pressed': x.on ? String(!!x.on()) : null, onclick: () => x.run() }, x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), withLabel ? h('span', null, x.label) : null);
     return b;
   }
-  function drawTools() { const want = getPrefs().bar; toolBox.replaceChildren(...want.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x))); }
+  function drawTools() {
+    const P2 = getPrefs(); const portrait = window.innerHeight > window.innerWidth; const ids = [...P2.bar, ...(portrait ? (P2.portraitTools ?? []) : [])];
+    toolBox.replaceChildren(...ids.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
+    topToolBox.replaceChildren(...(P2.topTools ?? []).map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
+    root.classList.toggle('seek-below', !!P2.seekBelowButtons); root.classList.toggle('glass', !!P2.glassControls); root.classList.toggle('reduce-motion', !!P2.reduceMotion); root.classList.toggle('always-dark', P2.alwaysDark !== false);
+  }
+  window.addEventListener('resize', drawTools);
   /** The grid of every tool, as REX Player's legend shows them; and the bar's layout, chosen there. */
   function toolsSheet() {
     const sh = openSheet(t('playerTools'), t('close'));
@@ -932,7 +946,7 @@ export function openPlayer(src: PlayerSource): void {
       subPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       if (subPointers.size >= 2 && pinch0 > 0) { const [a, b] = [...subPointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); const sz = Math.max(40, Math.min(250, Math.round((size0 * d) / pinch0 / 5) * 5)); if (top) updatePrefs({ sub2Size: sz }); else updatePrefs({ subSize: sz }); applySubStyle(); flashText(`${localDigits(sz)}%`, true); moved = true; return; }
       const dx = ev.clientX - x0, dy = ev.clientY - y0; if (!moved && Math.abs(dx) < 8 && Math.abs(dy) < 8) return; moved = true;
-      if (Math.abs(dx) > Math.abs(dy) * 1.5) { if (!swiped && Math.abs(dx) > 48) { swiped = true; subLine(dx > 0 !== (document.documentElement.dir === 'rtl') ? 1 : -1); } return; }
+      if (Math.abs(dx) > Math.abs(dy) * 1.5) { if (!swiped && Math.abs(dx) > 48 && getPrefs().subtitleSwipe !== false) { swiped = true; subLine(dx > 0 !== (document.documentElement.dir === 'rtl') ? 1 : -1); } return; }
       if (swiped) return; const d = ((y0 - ev.clientY) / r.height) * 100; if (top) updatePrefs({ sub2Pos: Math.max(0, Math.min(90, Math.round(p0 - d))) }); else updatePrefs({ subPos: Math.max(5, Math.min(100, Math.round(p0 - d))) }); applySubStyle(); };
     const up = (ev: PointerEvent) => { subPointers.delete(ev.pointerId); if (subPointers.size < 2) pinch0 = 0; box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); box.removeEventListener('pointercancel', up); };
     box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
@@ -951,6 +965,7 @@ export function openPlayer(src: PlayerSource): void {
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
     window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
+    void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
   }
   root.addEventListener('kt-close', close);

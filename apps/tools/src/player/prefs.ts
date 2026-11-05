@@ -21,7 +21,7 @@ export interface PlayerPrefs {
   /** REX Player's layout: the buttons on the bar, in their order (the rest in the tools menu). */
   bar: string[];
   /** Appearance (REX Player's page): the accent colour (empty: the app's), the seek bar's look, how dark the controls' shade is, the title shown, the chapter marks on the bar, the controls' size. */
-  accent: string; seekStyle: 'thin' | 'thick' | 'wave'; controlsDim: number; showTitle: boolean; chapterMarks: boolean; controlSize: 'small' | 'normal' | 'large';
+  accent: string; seekStyle: 'thin' | 'thick' | 'wave' | 'simple' | 'rounded'; controlsDim: number; showTitle: boolean; chapterMarks: boolean; controlSize: 'small' | 'normal' | 'large';
   /** Decoder (mpv): hardware (MediaCodec), hardware with copying (works with filters and screenshots), software; GPU
    *  debanding; the newer renderer. */
   hwdec: 'hw' | 'hwcopy' | 'sw'; deband: boolean; gpuNext: boolean;
@@ -44,6 +44,14 @@ export interface PlayerPrefs {
   rotate: 0 | 90 | 180 | 270; flipH: boolean; flipV: boolean; crop: string; filterPreset: string;
   /** REX Player's custom buttons: your own on the bar — seek by, a speed, a time to jump to, A/B, a screenshot, the next subtitle or audio track. */
   customButtons: { act: 'seek' | 'speed' | 'jump' | 'ab' | 'shot' | 'sub' | 'audio' | 'subline'; v?: number }[];
+  /** REX Player's layout groups: the tools on the top bar's end (besides the bottom bar's `bar`), and the extra ones shown only upright (portrait). */
+  topTools: string[]; portraitTools: string[]; seekBelowButtons: boolean;
+  /** Gestures: what one tap does; panning the picture when zoomed; a swipe up or down on the subtitle for the next or previous line. */
+  singleTap: 'controls' | 'playpause'; panZoomed: boolean; subtitleSwipe: boolean;
+  /** Playback: the aspect remembered per video; a video opened from a folder gets its folder's videos as the queue; the system bars (immersive); fewer animations; glass controls; the player always dark. */
+  rememberAspect: boolean; autoQueueFolder: boolean; immersive: 'both' | 'status' | 'none'; reduceMotion: boolean; glassControls: boolean; alwaysDark: boolean;
+  /** Decoder: extra mpv options, one «key=value» a line (an mpv.conf of the reader's own), applied when a video opens. */
+  mpvConf: string;
 }
 export const DEFAULT_FILTERS: PlayerPrefs['filters'] = { brightness: 100, contrast: 100, saturation: 100, hue: 0, gamma: 100, sharpness: 0, temperature: 0 };
 export const DEFAULT_PREFS: PlayerPrefs = {
@@ -57,6 +65,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
   bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, shotSubs: true,
   repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true,
+  topTools: [], portraitTools: [], seekBelowButtons: false, singleTap: 'controls', panZoomed: true, subtitleSwipe: true, rememberAspect: true, autoQueueFolder: true, immersive: 'both', reduceMotion: false, glassControls: false, alwaysDark: true, mpvConf: '',
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,
   rotate: 0, flipH: false, flipV: false, crop: '', filterPreset: '',

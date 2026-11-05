@@ -220,6 +220,7 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "org.libtorrent4j:libtorrent4j-android-x86_64:${LIBTORRENT4J}"
     implementation "androidx.documentfile:documentfile:1.0.1"
     implementation "androidx.webkit:webkit:1.11.0"
+    implementation "androidx.core:core:1.13.1"
     implementation "org.apache.commons:commons-compress:1.27.1"
     implementation "org.tukaani:xz:1.10"
     implementation "com.github.junrar:junrar:7.5.5"

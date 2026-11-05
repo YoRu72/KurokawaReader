@@ -392,3 +392,12 @@ kbd { display: inline-block; min-width: 2.2em; padding: 2px 8px; border-radius: 
 .pp-layout .icon-btn.small { width: 32px; height: 32px; font-size: 16px; }
 .pp-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
 .pp-hidden { display: none !important; }
+/* REX Player's extra looks: the seek bar under the buttons, glass controls, fewer animations, always dark, more seek styles */
+.kt-player.seek-below .kt-bottom { display: flex; flex-direction: column-reverse; }
+.kt-player.glass .kt-top, .kt-player.glass .kt-bottom { backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); background: rgb(20 20 24 / .35) !important; }
+.kt-player.reduce-motion *, .kt-player.reduce-motion *::before, .kt-player.reduce-motion *::after { transition: none !important; animation: none !important; }
+.kt-player.always-dark { color-scheme: dark; --md-surface: #111; --md-on-surface: #eee; }
+.kt-player[data-seek='simple'] .kt-knob { display: none; } .kt-player[data-seek='simple'] .kt-seek::before, .kt-player[data-seek='simple'] .kt-buf, .kt-player[data-seek='simple'] .kt-played { height: 2px; top: 13px; border-radius: 0; }
+.kt-player[data-seek='rounded'] .kt-seek::before, .kt-player[data-seek='rounded'] .kt-buf, .kt-player[data-seek='rounded'] .kt-played { height: 10px; top: 9px; border-radius: 5px; }
+.kt-player[data-seek='rounded'] .kt-knob { width: 20px; height: 20px; top: 4px; margin-inline-start: -10px; border-radius: 50%; box-shadow: 0 0 0 3px rgb(255 255 255 / .25); }
+.kt-top-tools { display: inline-flex; gap: 2px; } .pp-layout-group { padding: 6px 0; border-bottom: 1px solid rgb(128 128 128 / .15); } .pp-layout-group .dest-row { cursor: grab; }
