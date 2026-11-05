@@ -9,7 +9,9 @@ import { getSettings } from '../settings';
 import { navigate } from '../router';
 type Desk = { onHotkeyAdd?(cb: (p: { mode: string; text: string }) => void): () => void; onOpenTask?(cb: (id: string) => void): () => void };
 export function startHotkeys(): void {
-  const d = window.kurokawaTools as unknown as Desk | undefined; if (!d?.onHotkeyAdd) return;
+  const d = window.kurokawaTools as unknown as Desk & { videoBinary?(o: { path: string }): Promise<unknown> } | undefined; if (!d?.onHotkeyAdd) return;
+  // (The reader's own yt-dlp, when one was chosen, told to the main process at start.)
+  const own = getSettings().videoBinaryPath; if (own) void d.videoBinary?.({ path: own }).catch(() => undefined);
   d.onOpenTask?.((id) => navigate(`/task/${id}`));
   d.onHotkeyAdd(async ({ mode, text }) => {
     const srcs = parseSources(text ?? ''); if (!srcs.length) { toast(t('hotkeyNothing'), 'error'); return; }

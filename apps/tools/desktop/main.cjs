@@ -336,6 +336,8 @@ ipcMain.handle('kt:videoInfo', (_e, o) => Ytdlp.info(String(o.url), o));
 ipcMain.handle('kt:videoReady', async (e) => { try { await Ytdlp.ensure((p) => e.sender.send('kt:update-progress', { pct: p.total ? Math.round((p.got / p.total) * 100) : 0, got: p.got, total: p.total, what: 'yt-dlp' })); return { ok: true, version: await Ytdlp.version() }; } catch (err) { return { ok: false, why: String(err.message) }; } });
 ipcMain.handle('kt:videoVersion', async () => ({ version: Ytdlp.haveBinary() ? await Ytdlp.version() : null, ready: Ytdlp.haveBinary() }));
 ipcMain.handle('kt:videoUpdate', async () => Ytdlp.update(true));
+ipcMain.handle('kt:videoRollback', async () => ({ version: await Ytdlp.rollback() }));
+ipcMain.handle('kt:videoBinary', async (_e, o) => { if (o && typeof o.path === 'string') Ytdlp.setCustomPath(o.path); return { path: Ytdlp.binPath(), managed: Ytdlp.isManaged(), olds: Ytdlp.olds().map((x) => x.version), min: Ytdlp.MIN_VERSION }; });
 ipcMain.handle('kt:isVideoHost', (_e, u) => { try { return Ytdlp.VIDEO_HOSTS.test(new URL(String(u)).hostname); } catch { return false; } });
 
 /* ---------- the player: ffmpeg for clips, files beside a video, a file's bytes ---------- */

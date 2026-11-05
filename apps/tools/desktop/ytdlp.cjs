@@ -7,7 +7,18 @@ const Ffmpeg = require('./ffmpeg.cjs');
 
 const ASSET = process.platform === 'win32' ? 'yt-dlp.exe' : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp_linux';
 const binDir = () => path.join(app.getPath('userData'), 'bin');
-const binPath = () => path.join(binDir(), process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+const managedPath = () => path.join(binDir(), process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+/** A binary of the reader's own choosing (Settings → Video → path), when it exists; else the managed one. */
+let customPath = ''; function setCustomPath(p) { customPath = p && fs.existsSync(p) ? p : ''; verCache = null; return !!customPath; }
+const binPath = () => customPath || managedPath();
+const isManaged = () => !customPath;
+/** Releases older than this are not run: a forced update instead (sites change; an old yt-dlp fails everywhere). */
+const MIN_VERSION = '2025.01.01';
+const olderThan = (a, b) => String(a || '').replace(/[^\d.]/g, '') < String(b || '').replace(/[^\d.]/g, '');
+/** The last three binaries kept beside the current one (yt-dlp.<version>.old) for a rollback when a release breaks a site. */
+const olds = () => { try { return fs.readdirSync(binDir()).filter((n) => /\.old$/.test(n)).map((n) => ({ name: n, version: n.replace(/^yt-dlp(\.exe)?\./, '').replace(/\.old$/, ''), at: fs.statSync(path.join(binDir(), n)).mtimeMs })).sort((a, b) => b.at - a.at); } catch { return []; } };
+async function keepOld() { if (!fs.existsSync(managedPath())) return; const v = (await versionOf(managedPath())) || String(Date.now()); const to = path.join(binDir(), `${path.basename(managedPath())}.${v}.old`); try { fs.copyFileSync(managedPath(), to); } catch { /* none */ } for (const o of olds().slice(3)) fs.rmSync(path.join(binDir(), o.name), { force: true }); }
+async function rollback() { const o = olds()[0]; if (!o) throw new Error('nothing to roll back to'); fs.copyFileSync(path.join(binDir(), o.name), managedPath()); if (process.platform !== 'win32') fs.chmodSync(managedPath(), 0o755); fs.rmSync(path.join(binDir(), o.name), { force: true }); verCache = null; try { const cur = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); fs.writeFileSync(stampPath(), JSON.stringify({ ...cur, checked: Date.now(), pinned: o.version })); } catch { /* none */ } return o.version; }
 const stampPath = () => path.join(binDir(), 'yt-dlp.stamp.json');
 let fetching = null;
 
@@ -18,19 +29,22 @@ async function fetchBinary(onProgress) {
     const sums = await (await net.fetch('https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS')).text();
     const want = sums.split('\n').map((l) => l.trim().split(/\s+/)).find((p) => p[1] === ASSET)?.[0];
     const res = await net.fetch(`https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ASSET}`); if (!res.ok || !res.body) throw new Error('yt-dlp: HTTP ' + res.status);
-    const total = Number(res.headers.get('content-length') || 0); const tmp = binPath() + '.part'; const out = fs.createWriteStream(tmp); const hash = crypto.createHash('sha256'); let got = 0;
+    const total = Number(res.headers.get('content-length') || 0); const tmp = managedPath() + '.part'; const out = fs.createWriteStream(tmp); const hash = crypto.createHash('sha256'); let got = 0;
     const reader = res.body.getReader(); for (;;) { const { done, value } = await reader.read(); if (done) break; out.write(Buffer.from(value)); hash.update(value); got += value.length; onProgress?.({ got, total }); }
     await new Promise((r) => out.end(r));
     if (want && hash.digest('hex') !== want) { fs.rmSync(tmp, { force: true }); throw new Error('yt-dlp: checksum mismatch'); }
-    fs.renameSync(tmp, binPath()); if (process.platform !== 'win32') fs.chmodSync(binPath(), 0o755);
+    await keepOld(); fs.renameSync(tmp, managedPath()); if (process.platform !== 'win32') fs.chmodSync(managedPath(), 0o755); verCache = null;
     fs.writeFileSync(stampPath(), JSON.stringify({ at: Date.now(), url: res.url }));
     return binPath();
   })().finally(() => { fetching = null; });
   return fetching;
 }
 function haveBinary() { return fs.existsSync(binPath()); }
-function version() { return new Promise((res) => execFile(binPath(), ['--version'], { timeout: 10000 }, (e, out) => res(e ? null : String(out).trim()))); }
-async function ensure(onProgress) { if (!haveBinary()) await fetchBinary(onProgress); return binPath(); }
+/** The version, asked of the binary once per file (keyed by its size and time): a start does not spawn yt-dlp again. */
+let verCache = null;
+function versionOf(bin) { return new Promise((res) => execFile(bin, ['--version'], { timeout: 10000 }, (e, out) => res(e ? null : String(out).trim()))); }
+async function version() { const bin = binPath(); let key = ''; try { const st = fs.statSync(bin); key = `${bin}|${st.size}|${st.mtimeMs}`; } catch { return null; } if (verCache && verCache.key === key) return verCache.v; const v = await versionOf(bin); verCache = { key, v }; return v; }
+async function ensure(onProgress) { if (!haveBinary()) await fetchBinary(onProgress); else if (isManaged()) { const v = await version(); if (v && olderThan(v, MIN_VERSION)) { try { await fetchBinary(onProgress); } catch { /* offline: the old one runs */ } } } return binPath(); }
 /** The newest release's tag (yt-dlp prints the same string for --version). */
 async function latestTag() { const r = await net.fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', { headers: { accept: 'application/vnd.github+json' } }); if (!r.ok) throw new Error('HTTP ' + r.status); return String((await r.json()).tag_name || '').trim(); }
 /** Brings the binary to the newest release when it is behind; `force` checks even if checked within the day. */
@@ -39,7 +53,7 @@ async function update(force = false) {
   let st = {}; try { st = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); } catch { /* none */ }
   if (!force && st.checked && Date.now() - st.checked < 86400000) return { version: await version(), updated: false };
   const [have, tag] = await Promise.all([version(), latestTag()]);
-  let updated = false; if (tag && have !== tag) { await fetchBinary(); updated = true; }
+  let updated = false; if (tag && have !== tag && (!st.pinned || olderThan(have, MIN_VERSION) || force)) { await fetchBinary(); updated = true; }
   try { const cur = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); fs.writeFileSync(stampPath(), JSON.stringify({ ...cur, checked: Date.now() })); } catch { /* ignore */ }
   return { version: await version(), latest: tag, updated };
 }
@@ -106,7 +120,7 @@ class VideoJobs {
   stop() { for (const p of this.procs.values()) p.kill(); }
 }
 const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv)$/i;
-module.exports = { ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath };
+module.exports = { ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION };
 
 /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
 const TIMES = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/;

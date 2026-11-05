@@ -21,6 +21,8 @@ export interface Settings {
   connBudget?: number;
   /** Streams (HLS playlists) fetched by the app itself — pieces joined here — rather than by yt-dlp. Default on. */
   hlsNative?: boolean;
+  /** A computer: a yt-dlp binary of the reader's own instead of the managed one (empty: managed). */
+  videoBinaryPath?: string;
   /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */
   rules?: import('./downloads/rules').Rule[];
   limits: Limits;
