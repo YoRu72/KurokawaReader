@@ -91,6 +91,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     h('label', { class: 'check-row' }, seq, h('span', null, t('sequential'))),
     ...(getSettings().schedule.enabled ? [h('label', { class: 'check-row' }, later, h('span', null, t('downloadLater')))] : []),
     h('label', { class: 'field row' }, h('span', { class: 'label' }, t('connections')), conn));
+  // (A cookie jar for this download — the jars that fit the link's site first — once the link is known.)
+  let cookieJar = ''; const jarRow = h('div'); opts.append(jarRow); let jarHost = '';
+  const refreshJar = async () => { const u = parseSources(ta.value)[0]?.url ?? ''; let host = ''; try { host = u ? new URL(u).host : ''; } catch { host = ''; } if (host === jarHost) return; jarHost = host; cookieJar = ''; const { jarPicker } = await import('../downloads/cookies'); const el = host ? await jarPicker(host, (id) => { cookieJar = id; }) : null; jarRow.replaceChildren(...(el ? [el] : [])); };
   void showStorage();
   // Through a debrid service (the Debrid add-on with a key): the cloud fetches it, the app downloads the result.
   const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
@@ -147,8 +150,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   };
   // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
   const sources = (): TaskSource[] => { const ref = referer.value.trim(); const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)).map((x) => (ref && x.url ? { ...x, headers: { ...(x.headers ?? {}), Referer: ref } } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
-  let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => void metadata(), 600); check.hidden = parseSources(ta.value).length < 2; });
-  if (initial) { void metadata(); check.hidden = parseSources(ta.value).length < 2; }
+  let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => { void metadata(); void refreshJar(); }, 600); check.hidden = parseSources(ta.value).length < 2; });
+  if (initial) { void metadata(); void refreshJar(); check.hidden = parseSources(ta.value).length < 2; }
   go.addEventListener('click', async () => {
     const srcs = sources();
     if (!srcs.length) { toast(t('invalidLink'), 'error'); ta.focus(); return; }
@@ -168,7 +171,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     try {
       await video.busy();
       const picks = video.picks();
-      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
+      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(cookieJar ? { cookieJar } : {}), ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     try {
       for (const src of srcs) {
@@ -183,6 +186,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         // (A rule that fits the link: its folder, its «later» and «Wi‑Fi only», its connections — unless the reader chose otherwise here.)
         const { match, kindOf } = await import('../downloads/rules'); const rule = match(src, kindOf(src, !!src.url && isVideoHost(src.url)));
         if (rule?.then.later) meta.later = true; if (rule?.then.wifiOnly) meta.wifiOnly = true;
+        if (cookieJar) meta.cookieJar = cookieJar;
         if (src.url && nativeHls(src.url)) { meta.hls = true; const q = rule?.then.quality || getSettings().videoQuality; if (/^\d+/.test(q)) meta.quality = `${parseInt(q, 10)}p`; }
         const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait || (!!rule?.then.later && !(await import('../downloads/prism')).inWindow()), connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));

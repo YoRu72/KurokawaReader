@@ -255,6 +255,12 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void torrentDetail(PluginCall call) { run(call, () -> call.resolve(new JSObject(engine().torrentDetail(call.getString("id", "")).toString()))); }
     @PluginMethod public void recheck(PluginCall call) { run(call, () -> { engine().recheck(call.getString("id", "")); call.resolve(); }); }
+    /* ---------- cookie jars ---------- */
+    @PluginMethod public void cookieJars(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); String host = call.getString("host", ""); r.put("list", JSArray.from(host.isEmpty() ? KtCookies.publicList(getContext()) : KtCookies.forHost(getContext(), host))); call.resolve(r); }); }
+    @PluginMethod public void cookieJarSave(PluginCall call) { run(call, () -> { JSONObject j = KtCookies.save(getContext(), call.getString("id", ""), call.getString("name", ""), call.getString("domain", ""), call.getString("text", ""), "text"); JSObject r = new JSObject(); r.put("id", j.optString("id")); r.put("count", j.optInt("count")); call.resolve(r); }); }
+    @PluginMethod public void cookieJarFromBrowser(PluginCall call) { run(call, () -> { JSONObject j = KtCookies.fromBrowser(getContext(), call.getString("id", ""), call.getString("name", ""), call.getString("url", "")); JSObject r = new JSObject(); r.put("id", j.optString("id")); r.put("count", j.optInt("count")); call.resolve(r); }); }
+    @PluginMethod public void cookieJarDelete(PluginCall call) { run(call, () -> { KtCookies.delete(getContext(), call.getString("id", "")); call.resolve(); }); }
+    @PluginMethod public void cookieJarTest(PluginCall call) { run(call, () -> { JSONObject j = KtCookies.test(getContext(), call.getString("id", ""), call.getString("url", "")); JSObject r = new JSObject(); r.put("ok", j.optBoolean("ok")); r.put("status", j.optInt("status")); call.resolve(r); }); }
     @PluginMethod public void reannounce(PluginCall call) { run(call, () -> { engine().reannounce(call.getString("id", "")); call.resolve(); }); }
     /** Trackers added to one torrent (one a line), announced at once. */
     @PluginMethod public void addTrackers(PluginCall call) { run(call, () -> { JSArray a = call.getArray("urls"); java.util.List<String> l = new java.util.ArrayList<>(); if (a != null) for (int i = 0; i < a.length(); i++) l.add(a.getString(i)); JSObject o = new JSObject(); o.put("added", engine().addTrackers(call.getString("id", ""), l)); call.resolve(o); }); }

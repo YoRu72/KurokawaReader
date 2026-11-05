@@ -66,7 +66,7 @@ export interface Task {
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
     hf?: string; sha256?: string;
     /** Waits for Wi-Fi (Android); not retried when it fails; a hidden file (a dot name); waits for the schedule's window. */
-    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean;
+    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean; cookieJar?: string;
     /** A stream fetched piece by piece (HLS): the pieces here of all, and the phase (variant, pieces, join, remux). */
     hls?: boolean; frag?: number; frags?: number; phase?: string;
     /** A video download's live facts from yt-dlp: resolution, codecs, container, approximate size, length in seconds. */
@@ -100,7 +100,9 @@ export interface AddOptions {
     /** Two subtitle languages («en,ar») merged into one bilingual .srt beside the file. */
     bilingual?: string;
     /** Sidecars: yt-dlp's info.json written (for the .nfo), the thumbnail kept beside the file as a .jpg. */
-    infoJson?: boolean; cover?: boolean };
+    infoJson?: boolean; cover?: boolean;
+    /** The cookie jar (a saved signed-in state) this download uses. */
+    cookieJar?: string };
 }
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }

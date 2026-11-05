@@ -539,7 +539,10 @@ final class KtEngine {
     private void startHttp(Task x) {
         if (x.httpThread != null && x.httpThread.isAlive()) return;
         x.cancel = new AtomicBoolean(false); x.state = "downloading"; x.error = null;
-        final String url = x.source.optString("url"); final JSONObject headers = x.source.optJSONObject("headers");
+        final String url = x.source.optString("url"); JSONObject headers0 = x.source.optJSONObject("headers");
+        // (A cookie jar named for this download: its cookies for the host as the Cookie header, unless one was given.)
+        if (x.meta != null && !x.meta.optString("cookieJar", "").isEmpty()) { try { String ck = KtCookies.headerFor(ctx, x.meta.optString("cookieJar"), new URL(url).getHost()); if (!ck.isEmpty()) { JSONObject h2 = new JSONObject(); if (headers0 != null) { Iterator<String> it = headers0.keys(); while (it.hasNext()) { String k = it.next(); h2.put(k, headers0.get(k)); } } if (!h2.has("Cookie") && !h2.has("cookie")) h2.put("Cookie", ck); headers0 = h2; } } catch (Exception ignored) {} }
+        final JSONObject headers = headers0;
         x.httpThread = new Thread(() -> {
             try {
                 File dir = new File(x.dir); dir.mkdirs();

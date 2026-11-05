@@ -145,6 +145,7 @@ final class KtVideo {
         { String[] st = LADDER[step]; for (int i = 0; i < st.length; i++) { if (st[i].startsWith("-") && i + 1 < st.length && !st[i + 1].startsWith("-")) r.addOption(st[i], st[++i]); else r.addOption(st[i]); } }
         String extra = meta != null ? meta.optString("extraArgs", "") : "";
         if (!extra.isEmpty()) { java.util.List<String> xs = splitArgs(extra); for (int i = 0; i < xs.size(); i++) { String a = xs.get(i); if (a.startsWith("-") && i + 1 < xs.size() && !xs.get(i + 1).startsWith("-")) { r.addOption(a, xs.get(++i)); } else r.addOption(a); } }
+        String jar = meta != null ? meta.optString("cookieJar", "") : ""; if (!jar.isEmpty()) { try { r.addOption("--cookies", KtCookies.disposable(ctx, jar).getAbsolutePath()); } catch (Exception e) { Log.w(TAG, "cookie jar: " + e); } }
         r.addOption("--print", "pre_process:KT|%(resolution)s|%(vcodec)s|%(acodec)s|%(ext)s|%(filesize_approx)s|%(duration)s");
         lastCommand.put(id, r.buildCommand()); live.remove(id);
         final String[] dest = { null }; final long[] last = { 0 }; final int[] dests = { 0 };
