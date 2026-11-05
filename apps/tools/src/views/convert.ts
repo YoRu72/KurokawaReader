@@ -5,6 +5,7 @@
 import { h, icon, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { ktPlugin } from '../native';
+import { getSettings } from '../settings';
 
 type Prog = { id: string; time: number; size?: number; speed?: number };
 type Bridge = { ffmpeg(o: { id: string; args: string[] }): Promise<{ code: number; log: string }>; ffmpegCancel(id: string): Promise<void>; ffprobe(path: string): Promise<{ format?: { duration?: string }; streams?: { codec_type: string; width?: number; height?: number }[] } | null>; onFfmpegProgress(cb: (p: Prog) => void): () => void };
@@ -27,6 +28,26 @@ async function run(args: string[], total: number, onP: (f: number, line: string)
   finally { if (typeof off === 'function') off(); else off.remove(); }
 }
 const cancel = (id: string) => { const d = desk(); if (d) void d.ffmpegCancel(id); else void plug()?.ffmpegCancel({ id }); };
+/** The H.264 encoder the computer's hardware offers (NVENC, VideoToolbox, QSV, AMF, VAAPI), found once by asking ffmpeg; null for the software one. */
+let hwCache: Promise<string | null> | null = null;
+export function hwEncoder(): Promise<string | null> {
+  if (hwCache) return hwCache;
+  hwCache = (async () => {
+    const d = desk(); if (!d) return null; if (getSettings().convertHw === false) return null;
+    try { const r = await d.ffmpeg({ id: `enc-${Date.now()}`, args: ['-hide_banner', '-encoders'] }); const log = r.log || '';
+      for (const enc of ['h264_nvenc', 'h264_videotoolbox', 'h264_qsv', 'h264_amf', 'h264_vaapi']) if (new RegExp(`\\b${enc}\\b`).test(log)) return enc; } catch { /* none */ }
+    return null;
+  })();
+  return hwCache;
+}
+const videoCodec = async (android: boolean, quality: 'good' | 'bitrate', bitrate?: number): Promise<string[]> => {
+  if (android) return ['-c:v', 'h264_mediacodec', '-b:v', bitrate ? String(bitrate) : '6M'];
+  const hw = await hwEncoder();
+  if (hw === 'h264_nvenc') return ['-c:v', hw, '-preset', 'p5', ...(quality === 'good' ? ['-cq', '23', '-b:v', '0'] : ['-b:v', String(bitrate), '-maxrate', String(Math.floor(bitrate! * 1.1))])];
+  if (hw === 'h264_videotoolbox') return ['-c:v', hw, ...(quality === 'good' ? ['-q:v', '60'] : ['-b:v', String(bitrate)])];
+  if (hw === 'h264_qsv' || hw === 'h264_amf') return ['-c:v', hw, ...(quality === 'good' ? ['-global_quality', '23'] : ['-b:v', String(bitrate)])];
+  return ['-c:v', 'libx264', '-preset', 'medium', ...(quality === 'good' ? ['-crf', '21'] : ['-b:v', String(bitrate), '-maxrate', String(Math.floor(bitrate! * 1.1)), '-bufsize', String(bitrate! * 2)])];
+};
 
 /** The sheet: Convert or Make smaller, for the file at `path`. */
 export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'convert'): Promise<void> {
@@ -37,7 +58,7 @@ export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'c
   const outDir = android ? (await plug()!.clipsDir()).dir : path.replace(/[\\/][^\\/]*$/, '');
   const info = await probe(path);
   const choose = h('div', { class: 'chip-row wrap' }); let pick = '';
-  const formats: [string, string][] = kind === 'video' ? [['mp4', 'MP4 (H.264)'], ['mkv', 'MKV'], ['webm', 'WebM'], ['mp3', 'MP3'], ['m4a', 'M4A'], ['gif', 'GIF']] : kind === 'audio' ? [['mp3', 'MP3'], ['m4a', 'M4A (AAC)'], ['flac', 'FLAC'], ['opus', 'Opus'], ['wav', 'WAV']] : [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']];
+  const formats: [string, string][] = kind === 'video' ? [['mp4', 'MP4 (H.264)'], ['mkv', 'MKV'], ['webm', 'WebM'], ['mp3', 'MP3'], ['m4a', 'M4A'], ['gif', 'GIF'], ['webp', 'WebP (animated)'], ['stab', t('convertSteady')], ['cut', t('convertCutSilence')], ['hevc', 'MP4 (H.265)']] : kind === 'audio' ? [['mp3', 'MP3'], ['m4a', 'M4A (AAC)'], ['flac', 'FLAC'], ['opus', 'Opus'], ['wav', 'WAV']] : [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']];
   const targets: [string, string][] = [['8', '8 MB'], ['10', '10 MB · Discord'], ['16', '16 MB · WhatsApp'], ['25', '25 MB · Email'], ['50', '50 MB'], ['100', '100 MB']];
   const list = mode === 'convert' ? formats : kind === 'image' ? [['75', t('shrinkQuality', { n: 75 })], ['50', t('shrinkQuality', { n: 50 })], ['1920', t('shrinkWidth', { n: 1920 })], ['1280', t('shrinkWidth', { n: 1280 })]] as [string, string][] : targets;
   const draw = () => choose.replaceChildren(...list.map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (pick === k ? ' on' : ''), onclick: () => { pick = k; draw(); go.disabled = false; } }, l)));
@@ -48,7 +69,13 @@ export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'c
     if (!(await (await import('../packs')).ensurePacks(['ffmpeg'], t('packWhyConvert')))) return;
     const args: string[] = ['-y', '-hide_banner', '-nostdin', '-i', path]; let ext = pick; let tag = mode === 'convert' ? '' : ' (small)';
     if (mode === 'convert') {
-      if (pick === 'mp4') args.push(...(android ? ['-c:v', 'h264_mediacodec', '-b:v', '6M'] : ['-c:v', 'libx264', '-crf', '21', '-preset', 'medium']), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
+      if (pick === 'mp4') args.push(...(await videoCodec(android, 'good')), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
+      else if (pick === 'hevc') { ext = 'mp4'; args.push(...(android ? ['-c:v', 'hevc_mediacodec', '-b:v', '4M'] : ['-c:v', 'libx265', '-crf', '24', '-preset', 'medium', '-tag:v', 'hvc1']), '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart'); }
+      else if (pick === 'webp') args.push('-t', '15', '-vf', 'fps=15,scale=480:-2:flags=lanczos', '-c:v', 'libwebp_anim', '-lossless', '0', '-q:v', '70', '-loop', '0');
+      // (Steadied: ffmpeg's own deshake — no extra library — then the usual H.264.)
+      else if (pick === 'stab') { ext = 'mp4'; tag = ' (steady)'; args.push('-vf', 'deshake=rx=32:ry=32:edge=mirror', ...(await videoCodec(android, 'good')), '-c:a', 'copy', '-movflags', '+faststart'); }
+      // (Silences cut: stretches quieter than −35 dB for over a second dropped from sound and picture alike.)
+      else if (pick === 'cut') { ext = 'mp4'; tag = ' (no silence)'; args.push('-af', 'silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-35dB', '-vf', "select='gt(scene,0)+1',setpts=N/FRAME_RATE/TB", ...(await videoCodec(android, 'good')), '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart'); }
       else if (pick === 'mkv') args.push('-map', '0', '-c', 'copy');
       else if (pick === 'webm') args.push('-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '32', '-row-mt', '1', '-c:a', 'libopus', '-b:a', '128k');
       else if (pick === 'gif') args.push('-t', '15', '-vf', 'fps=12,scale=480:-2:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse');
@@ -67,7 +94,7 @@ export async function convertSheet(path: string, mode: 'convert' | 'shrink' = 'c
       const bits = Number(pick) * 8 * 1024 * 1024 * 0.95; const aud = kind === 'audio' ? 0 : Math.min(128000, Math.max(48000, bits / info.duration * 0.12));
       if (kind === 'audio') { ext = 'm4a'; const ab = Math.max(32000, Math.floor(bits / info.duration)); args.push('-vn', '-c:a', 'aac', '-b:a', String(ab)); }
       else { ext = 'mp4'; const vb = Math.max(100000, Math.floor(bits / info.duration - aud)); const scale = vb < 700000 ? ['-vf', "scale='min(854,iw)':-2"] : vb < 1500000 ? ['-vf', "scale='min(1280,iw)':-2"] : [];
-        args.push(...scale, ...(android ? ['-c:v', 'h264_mediacodec', '-b:v', String(vb)] : ['-c:v', 'libx264', '-preset', 'medium', '-b:v', String(vb), '-maxrate', String(Math.floor(vb * 1.1)), '-bufsize', String(vb * 2)]), '-c:a', 'aac', '-b:a', String(Math.floor(aud)), '-movflags', '+faststart'); }
+        args.push(...scale, ...(await videoCodec(android, 'bitrate', vb)), '-c:a', 'aac', '-b:a', String(Math.floor(aud)), '-movflags', '+faststart'); }
     }
     const out = `${outDir.replace(/[\\/]$/, '')}/${base}${tag || (ext === (/\.(\w+)$/.exec(name)?.[1] ?? '').toLowerCase() ? ' (converted)' : '')}.${ext}`;
     args.push(out); tag = '';

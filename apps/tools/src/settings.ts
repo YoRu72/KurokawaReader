@@ -27,6 +27,8 @@ export interface Settings {
   videoRememberPreset?: boolean;
   /** Courses: lectures numbered continuously across the course (default), or anew in each section. */
   coursesContinuous?: boolean;
+  /** Convert on a computer: the hardware H.264 encoder (NVENC, VideoToolbox, QSV, AMF) when there is one. Default on. */
+  convertHw?: boolean;
   /** Finished files hashed; identical ones become hard links (the room taken once). Android. */
   dedupe?: boolean;
   /** The rules: what a link gets by its host, its words or its kind (see downloads/rules.ts). */
