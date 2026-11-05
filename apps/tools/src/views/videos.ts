@@ -28,11 +28,11 @@ export function videosView(route: Extract<Route, { name: 'videos' }>): HTMLEleme
   const body = h('div', { class: 'body videos-body' });
   const fileIn = h('input', { type: 'file', accept: 'video/*,.mkv,.ts,.m2ts', hidden: true, onchange: () => { const f = fileIn.files?.[0]; if (f) void play(URL.createObjectURL(f), f.name); } }) as HTMLInputElement;
   const root = h('div', { class: 'view videos-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navVideos'))), h('div', { class: 'topbar-actions' }, iconButton('upload', t('videosOpenFile'), () => fileIn.click()))), fileIn, body) as HTMLElement & { dispose?: () => void };
-  const TABS: [string, string, string][] = [['phone', nativePlatform() === 'android' ? t('videosPhone') : t('videosFiles'), 'folder'], ['recent', t('videosRecent'), 'history'], ['servers', t('videosServers'), 'cloud']];
+  const TABS: [string, string, string][] = [['phone', nativePlatform() === 'android' ? t('videosPhone') : t('videosFiles'), 'folder'], ['recent', t('videosRecent'), 'history'], ['servers', t('videosServers'), 'cloud'], ...(getSettings().addons.includes('video') ? [['followed', t('videosFollowed'), 'bell'] as [string, string, string]] : [])];
   const chips = h('div', { class: 'chips filter-chips' }, ...TABS.map(([k, label, ic]) => h('button', { type: 'button', class: 'chip' + (tab === k ? ' on' : ''), onclick: () => { try { localStorage.setItem('kt.videos.tab', k); } catch { /* */ } navigate(`/videos?tab=${k}`, true); } }, icon(ic), label)));
   body.append(chips);
   const content = h('div', { class: 'videos-content' }); body.append(content);
-  if (tab === 'recent') recent(content); else if (tab === 'servers') { if (route.srv) void browse(content, route.srv, route.p); else servers(content); } else void phone(content, route.folder);
+  if (tab === 'recent') recent(content); else if (tab === 'followed') void followed(content); else if (tab === 'servers') { if (route.srv) void browse(content, route.srv, route.p); else servers(content); } else void phone(content, route.folder);
   return root;
 }
 
@@ -222,4 +222,31 @@ async function webdav(s: Server, at?: string): Promise<Entry[]> {
     out.push({ id: p, name: nm, folder, video, size, url: video ? `${new URL(s.url).origin}${p}` : undefined, headers: video ? { Authorization: basic(s) } : undefined });
   }
   return out.filter((x) => x.folder || x.video || /\.(srt|ass|vtt)$/i.test(x.name)).sort((a, b) => Number(b.folder) - Number(a.folder) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
+/* ---------- followed channels and playlists: looked at now and then; new videos added on their own or counted ---------- */
+async function followed(content: HTMLElement): Promise<void> {
+  const m = await import('../video/follow'); const { videoEnabled } = await import('../video/ytdlp');
+  const fmtAgo = (ms?: number) => { if (!ms) return t('followNever'); const mins = Math.round((Date.now() - ms) / 60000); return mins < 60 ? t('followMinutesAgo', { n: localDigits(mins) }) : mins < 1440 ? t('followHoursAgo', { n: localDigits(Math.round(mins / 60)) }) : t('followDaysAgo', { n: localDigits(Math.round(mins / 1440)) }); };
+  const list = h('div', { class: 'dest-list' });
+  const draw = () => {
+    const fs = m.follows();
+    list.replaceChildren(...(fs.length ? fs.map((f) => h('div', { class: 'dest-row' + (f.error ? ' off' : '') },
+      icon(f.checking ? 'refresh' : f.auto ? 'download' : 'bell'),
+      h('button', { type: 'button', class: 'grow plain files-main', onclick: () => editSheet(f) }, h('span', { class: 'name', dir: 'auto' }, f.title), h('small', { class: 'src', dir: 'auto' }, [f.auto ? t('followAuto') : t('followNotify'), t('followEvery', { h: localDigits(f.every) }), fmtAgo(f.lastAt), f.newCount ? t('followNewN', { n: localDigits(f.newCount) }) : '', f.error ? f.error : ''].filter(Boolean).join(' · '))),
+      iconButton('refresh', t('followCheckNow'), () => { void m.check(f, true).then((n) => { toast(n ? t(f.auto ? 'followAdded' : 'followNew', { n: String(n) }) : t('followNothingNew')); draw(); }); draw(); }),
+      iconButton('trash', t('delete'), () => { m.unfollow(f.id); draw(); }))) : [h('p', { class: 'empty small' }, t('followEmpty'))]));
+  };
+  const editSheet = (f: import('../video/follow').Follow | null) => {
+    const sh = openSheet(f ? f.title : t('followAdd'), t('cancel'));
+    const url = h('input', { type: 'url', dir: 'ltr', value: f?.url ?? '', placeholder: 'https://www.youtube.com/@channel/videos', autocapitalize: 'off', spellcheck: 'false' }) as HTMLInputElement;
+    const title = h('input', { type: 'text', dir: 'auto', value: f?.title && f.title !== f.url ? f.title : '', placeholder: t('followTitleHint') }) as HTMLInputElement;
+    let every = f?.every ?? 6; const everyBtn = pickButton(t('followEveryLabel'), [['1', t('followEvery', { h: localDigits(1) })], ['3', t('followEvery', { h: localDigits(3) })], ['6', t('followEvery', { h: localDigits(6) })], ['12', t('followEvery', { h: localDigits(12) })], ['24', t('followEvery', { h: localDigits(24) })]], String(every), (v) => { every = Number(v); }, t('close'));
+    const auto = h('input', { type: 'checkbox', checked: !!f?.auto }) as HTMLInputElement; const max = h('input', { type: 'number', value: String(f?.max ?? 5), min: '1', max: '50' }) as HTMLInputElement; const dir = h('input', { type: 'text', dir: 'ltr', value: f?.dir ?? '', placeholder: t('ruleDirHint') }) as HTMLInputElement;
+    sh.body.append(h('p', { class: 'hint' }, t('followHint')), h('label', { class: 'field' }, h('span', null, t('followUrl')), url), h('label', { class: 'field' }, h('span', null, t('ruleName')), title), h('div', { class: 'row' }, h('span', null, t('followEveryLabel')), everyBtn),
+      h('label', { class: 'check-row' }, auto, h('span', null, t('followAutoLabel'), h('small', { class: 'src' }, t('followAutoHint')))), h('label', { class: 'field row' }, h('span', { class: 'label' }, t('followMax')), max), h('label', { class: 'field' }, h('span', null, t('ruleDir')), dir));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) { toast(t('invalidLink'), 'error'); return; } const all = m.follows(); const nf = f ? all.find((x) => x.id === f.id)! : m.newFollow(u); Object.assign(nf, { url: u, title: title.value.trim() || (f?.title ?? u), every, auto: auto.checked, max: Math.max(1, Number(max.value) || 5), dir: dir.value.trim() || undefined }); if (!f) all.push(nf); m.saveFollows(all); sh.close(); draw(); if (!f) void m.check(nf).then(draw); } }, icon('check'), t('save')));
+  };
+  content.replaceChildren(h('p', { class: 'hint' }, videoEnabled() ? t('followedHint') : t('videoYtdlpMissingLong')), list, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.tick(true).then(draw) }, icon('refresh'), t('followCheckAll')), h('button', { type: 'button', class: 'btn primary', onclick: () => editSheet(null) }, icon('plus'), t('followAdd'))));
+  draw(); const off = m.onFollowsChange(draw); const mo = new MutationObserver(() => { if (!content.isConnected) { off(); mo.disconnect(); } }); mo.observe(document.body, { childList: true, subtree: true });
 }
