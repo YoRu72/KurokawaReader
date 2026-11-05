@@ -908,8 +908,8 @@ public class KtPlugin extends Plugin {
     }
     /* ---------- yt-dlp (the video add-on): what a page offers, its version, and updating it ---------- */
     @PluginMethod public void videoInfo(PluginCall call) {
-        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false));
-        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
+        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false)); final String jar = call.getString("cookieJar", "");
+        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist, jar)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
     }
     @PluginMethod public void videoVersion(PluginCall call) { bg.execute(() -> { JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); r.put("ready", v != null); call.resolve(r); }); }
     @PluginMethod public void videoUpdate(PluginCall call) { bg.execute(() -> { KtVideo.update(getContext()); JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); call.resolve(r); }); }

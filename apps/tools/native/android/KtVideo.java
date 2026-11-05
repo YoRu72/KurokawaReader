@@ -35,9 +35,11 @@ final class KtVideo {
     static String version(Context ctx) { try { init(ctx); return YoutubeDL.getInstance().version(ctx); } catch (Throwable e) { return null; } }
 
     /** `-J` for a page: the raw JSON yt-dlp prints (the app shapes it). */
-    static String info(Context ctx, String url, boolean playlist) throws Exception {
+    static String info(Context ctx, String url, boolean playlist) throws Exception { return info(ctx, url, playlist, ""); }
+    static String info(Context ctx, String url, boolean playlist, String cookieJar) throws Exception {
         init(ctx);
         YoutubeDLRequest r = new YoutubeDLRequest(url); r.addOption("-J"); r.addOption("--no-warnings"); r.addOption(playlist ? "--flat-playlist" : "--no-playlist");
+        if (cookieJar != null && !cookieJar.isEmpty()) { try { r.addOption("--cookies", KtCookies.disposable(ctx, cookieJar).getAbsolutePath()); } catch (Exception e) { Log.w(TAG, "cookie jar: " + e); } }
         YoutubeDLResponse res = YoutubeDL.getInstance().execute(r, null, null);
         return res.getOut();
     }

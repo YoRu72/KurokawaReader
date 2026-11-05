@@ -8,7 +8,7 @@ import { getSettings } from '../settings';
 export const VIDEO_ADDON = 'video';
 export interface VideoChoice { id: string; kind: 'video' | 'audio'; label: string; ext?: string; height?: number; fps?: number; size?: number; vcodec?: string; acodec?: string; note?: string }
 export interface VideoInfo { kind: 'video'; id: string; title: string; thumbnail?: string; duration?: number; site?: string; url: string; uploader?: string; choices: VideoChoice[]; audio: VideoChoice[]; subtitles: string[]; /** Languages with automatic captions only. */ autoSubs?: string[]; live: boolean; chapters: number }
-export interface PlaylistInfo { kind: 'playlist'; title: string; url: string; count: number; entries: { url: string; title?: string; duration?: number; id?: string }[] }
+export interface PlaylistInfo { kind: 'playlist'; title: string; url: string; count: number; entries: { url: string; title?: string; duration?: number; id?: string; /** A course's section (chapter) and its number, when the site tells. */ chapter?: string; chapterNo?: number }[] }
 export type PageInfo = VideoInfo | PlaylistInfo;
 
 /** Sites yt-dlp is always asked about (others are, too, when the link is a web page rather than a file). */
@@ -22,17 +22,17 @@ export const videoEnabled = (): boolean => videoSupported() && getSettings().add
 
 interface Bridge { videoInfo?(o: { url: string; playlist?: boolean }): Promise<unknown>; videoReady?(): Promise<unknown>; videoVersion?(): Promise<{ version: string | null; ready: boolean }>; videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }> }
 const desk = (): Bridge | null => (window.kurokawaTools as unknown as Bridge | undefined) ?? null;
-const plug = () => ktPlugin() as unknown as { videoInfo(o: { url: string; playlist?: boolean }): Promise<{ json: string }>; videoVersion(): Promise<{ version: string | null; ready: boolean }>; videoUpdate(): Promise<{ version: string | null }> } | null;
+const plug = () => ktPlugin() as unknown as { videoInfo(o: { url: string; playlist?: boolean; cookieJar?: string }): Promise<{ json: string }>; videoVersion(): Promise<{ version: string | null; ready: boolean }>; videoUpdate(): Promise<{ version: string | null }> } | null;
 
 const cache = new Map<string, Promise<PageInfo>>();
 /** What a page offers (asked once per link per session). Throws yt-dlp's own last error line. */
-export function pageInfo(url: string, playlist = false): Promise<PageInfo> {
-  const key = `${playlist ? 'p' : 'v'}|${url}`; const hit = cache.get(key); if (hit) return hit;
+export function pageInfo(url: string, playlist = false, opts: { cookieJar?: string } = {}): Promise<PageInfo> {
+  const key = `${playlist ? 'p' : 'v'}|${opts.cookieJar ?? ''}|${url}`; const hit = cache.get(key); if (hit) return hit;
   const p = (async () => {
     const { ensurePacks, withPacks } = await import('../packs'); const { t } = await import('../i18n');
     // (yt-dlp needs Python and ffmpeg on a phone; on a computer ffmpeg only merges, so declining it is no stop.)
     const d = desk(); if (d?.videoInfo) { await ensurePacks(['ffmpeg'], t('packWhyVideo')); await d.videoReady?.(); return normalise(await d.videoInfo({ url, playlist })); }
-    const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist }))).json));
+    const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist, cookieJar: opts.cookieJar }))).json));
     throw new Error('yt-dlp');
   })();
   cache.set(key, p); p.catch(() => cache.delete(key));
@@ -56,7 +56,7 @@ export function normalise(input: unknown): PageInfo {
   const j = input as Raw;
   if (j.kind === 'video' && Array.isArray(j.choices)) return j as unknown as VideoInfo;
   if (j.kind === 'playlist' && Array.isArray(j.entries) && !j._type) return j as unknown as PlaylistInfo;
-  if (j._type === 'playlist') return { kind: 'playlist', title: j.title ?? '', url: j.webpage_url ?? j.original_url ?? '', count: (j.entries ?? []).length, entries: (j.entries ?? []).filter(Boolean).map((e) => ({ url: e.url ?? e.webpage_url ?? e.original_url ?? '', title: e.title, duration: e.duration, id: e.id })) };
+  if (j._type === 'playlist') return { kind: 'playlist', title: j.title ?? '', url: j.webpage_url ?? j.original_url ?? '', count: (j.entries ?? []).length, entries: (j.entries ?? []).filter(Boolean).map((e) => ({ url: e.url ?? e.webpage_url ?? e.original_url ?? '', title: e.title, duration: e.duration, id: e.id, chapter: (e as { chapter?: string }).chapter, chapterNo: (e as { chapter_number?: number }).chapter_number })) };
   const fmts = (j.formats ?? []).filter((f) => f.url || f.manifest_url);
   const has = (c?: string) => !!c && c !== 'none';
   const video = fmts.filter((f) => has(f.vcodec)); const audioOnly = fmts.filter((f) => !has(f.vcodec) && has(f.acodec));

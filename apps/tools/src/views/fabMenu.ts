@@ -9,6 +9,8 @@ import { addSheet } from './add';
 import { canInstallApps, installSheet } from './apk';
 import { isIos } from './ipa';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
+import { getSettings } from '../settings';
+import { navigate } from '../router';
 
 let open: HTMLElement | null = null;
 
@@ -28,6 +30,7 @@ export function fabMenu(anchor: HTMLElement): void {
     videoItem,
     item('search', t('grabTitle'), t('fabGrabHint'), () => void import('../downloads/prism').then((m) => m.grabberSheet(''))),
     item('puzzle', t('hfTitle'), t('fabModelHint'), () => void import('./models').then((m) => m.modelsSheet())),
+    ...(getSettings().addons.includes('courses') ? [item('books', t('coursesTitle'), t('coursesFabHint'), () => navigate('/courses'))] : []),
     ...(canBrowse() ? [item('globe', t('browseTitle'), t('browseHint'), () => void import('./browse').then((m) => m.browseSheet()))] : []),
     // (An app from the phone: an APK, a bundle, or an archive with one inside — the installer reads it.)
     // (On an iPhone or iPad: an iOS app — an IPA — looked into and handed to SideStore, AltStore or TrollStore.)

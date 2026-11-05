@@ -103,6 +103,7 @@ function mountInner(route: Route): void {
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
     case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
+    case 'courses': current = lazyView(() => import('./views/courses').then((m) => m.coursesView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;
     case 'tvTitle': current = lazyView(() => import('./views/tvTitle').then((m) => m.tvTitleView(route.type, route.id, route.season))); break;
     case 'search': current = lazyView(() => import('./views/search').then((m) => m.searchView(route.q))); break;

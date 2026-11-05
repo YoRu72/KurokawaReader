@@ -121,6 +121,8 @@ function remedies(x: Task): HTMLElement | null {
   if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
   if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
   if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), again(t('retry')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
+  // (A DRM-protected lecture or stream: nothing to retry; the app does not go around protection.)
+  if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errDrmHint')));
   if (/^HTTP 4(04|10)$/.test(e)) return null;
   return again(t('retry'));
 }

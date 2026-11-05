@@ -758,3 +758,4 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .recovery-note { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 16px 8px; padding: 10px 12px; border-radius: 14px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .cmd-text { max-height: 140px; overflow: auto; font-size: 11px; }
 .recorder-log { max-height: 50vh; overflow: auto; font-size: 11px; white-space: pre-wrap; word-break: break-all; background: var(--md-surface-container); border-radius: 12px; padding: 10px; }
+.courses-outline { margin-top: 10px; } .courses-head { margin: 10px 0 4px; display: flex; flex-direction: column; } .courses-section { margin-top: 10px; } .courses-lecture { padding-inline-start: 18px; }
