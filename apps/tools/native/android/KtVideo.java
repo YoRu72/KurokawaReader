@@ -43,8 +43,41 @@ final class KtVideo {
     }
     interface Progress { void on(long done, long total, long speed, String file, String detail); }
     /** Runs one download; blocks until it ends; `id` lets it be cancelled with cancel(). Throws on failure. */
+    /** The exact arguments of the last attempt, by download id (shown as «the command», taken as the start of «edit and try again»). */
+    static final java.util.Map<String, java.util.List<String>> lastCommand = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The ladder a refusal climbs (OmniGet's cascade): each step the extra arguments it adds, tried in turn when the
+     *  one before failed the way the step mends — a 429 or a signature/SABR fault with another YouTube player client,
+     *  a TLS-fingerprint block with impersonation, a postprocessing fault with a plainer format. */
+    static final String[][] LADDER = {
+        { },                                                                                   // as asked
+        { "--extractor-args", "youtube:player_client=android,web", "--retry-sleep", "exp=1:30" },  // 429 / nsig / SABR: another client, backing off
+        { "--extractor-args", "youtube:player_client=ios,mweb", "--sleep-requests", "1", "--throttled-rate", "100K" },
+        { "--impersonate", "chrome", "--retry-sleep", "exp=2:60" },                                    // a block on the connection's fingerprint
+        { "-f", "best", "--no-embed-metadata", "--no-embed-thumbnail" },                               // a postprocessing fault: the plainest format, nothing embedded
+    };
+    static int stepFor(String err, int step) {
+        String e = err == null ? "" : err.toLowerCase(java.util.Locale.ROOT);
+        if (e.contains("429") || e.contains("too many requests") || e.contains("nsig") || e.contains("sabr") || e.contains("sign in to confirm") || e.contains("player response") || e.contains("unable to extract")) return Math.max(step + 1, 1);
+        if (e.contains("handshake") || e.contains("ssl") || e.contains("403") || e.contains("forbidden") || e.contains("fingerprint") || e.contains("impersonat")) return Math.max(step + 1, 3);
+        if (e.contains("postprocess") || e.contains("ffmpeg") || e.contains("merging") || e.contains("embed")) return 4;
+        if (e.contains("http error 5") || e.contains("timed out") || e.contains("connection reset") || e.contains("incomplete")) return step + 1;
+        return -1;   // (not a fault another way mends: a private video, a missing file, a wrong address)
+    }
     static File run(Context ctx, String id, String url, File dir, JSONObject meta, Progress pr) throws Exception {
         init(ctx);
+        Exception last = null; int step = meta != null && meta.has("ladderStep") ? meta.optInt("ladderStep", 0) : 0;
+        for (int attempt = 0; attempt < LADDER.length; attempt++) {
+            try { return runOnce(ctx, id, url, dir, meta, pr, step); }
+            catch (Exception e) {
+                last = e; if (cancelled(id)) throw e; int next = stepFor(e.getMessage(), step); if (next < 0 || next >= LADDER.length || next <= step) throw e;
+                step = next; pr.on(0, 0, 0, null, "retry: " + String.join(" ", LADDER[step]));
+            }
+        }
+        throw last;
+    }
+    private static final java.util.Set<String> stopped = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    private static boolean cancelled(String id) { return stopped.remove(id); }
+    private static File runOnce(Context ctx, String id, String url, File dir, JSONObject meta, Progress pr, int step) throws Exception {
         boolean audioOnly = meta != null && meta.optBoolean("audioOnly", false); String format = meta != null ? meta.optString("format", "") : ""; String container = meta != null ? meta.optString("container", "") : "";
         int idx = meta != null ? meta.optInt("playlistIndex", 0) : 0;
         YoutubeDLRequest r = new YoutubeDLRequest(url);
@@ -62,6 +95,11 @@ final class KtVideo {
         if (meta != null && meta.optBoolean("embedThumb", false)) r.addOption("--embed-thumbnail");
         if (meta == null || meta.optBoolean("embedMeta", true)) r.addOption("--embed-metadata");
         if (meta != null && meta.optBoolean("sponsorblock", false)) r.addOption("--sponsorblock-remove", "sponsor");
+        // The step of the ladder, then the reader's own arguments («edit and try again»: whole words, split on spaces, quotes kept together).
+        { String[] st = LADDER[step]; for (int i = 0; i < st.length; i++) { if (st[i].startsWith("-") && i + 1 < st.length && !st[i + 1].startsWith("-")) r.addOption(st[i], st[++i]); else r.addOption(st[i]); } }
+        String extra = meta != null ? meta.optString("extraArgs", "") : "";
+        if (!extra.isEmpty()) { java.util.List<String> xs = splitArgs(extra); for (int i = 0; i < xs.size(); i++) { String a = xs.get(i); if (a.startsWith("-") && i + 1 < xs.size() && !xs.get(i + 1).startsWith("-")) { r.addOption(a, xs.get(++i)); } else r.addOption(a); } }
+        lastCommand.put(id, r.buildCommand());
         final String[] dest = { null }; final long[] last = { 0 };
         YoutubeDLResponse res = YoutubeDL.getInstance().execute(r, id, (progress, eta, line) -> {
             try {
@@ -75,7 +113,8 @@ final class KtVideo {
         if (res.getExitCode() != 0) throw new Exception(lastError(res.getErr()));
         return dest[0] != null ? new File(dest[0].replaceAll("\\.f\\d+\\.(\\w+)$", ".$1")) : null;
     }
-    static boolean cancel(String id) { try { return YoutubeDL.getInstance().destroyProcessById(id); } catch (Throwable e) { return false; } }
+    static java.util.List<String> splitArgs(String s) { java.util.List<String> out = new java.util.ArrayList<>(); Matcher m = java.util.regex.Pattern.compile("\"([^\"]*)\"|'([^']*)'|(\\S+)").matcher(s); while (m.find()) out.add(m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(3)); return out; }
+    static boolean cancel(String id) { stopped.add(id); try { return YoutubeDL.getInstance().destroyProcessById(id); } catch (Throwable e) { return false; } }
     private static double unit(String u) { return "K".equals(u) ? 1024 : "M".equals(u) ? 1048576 : 1073741824; }
     static String lastError(String err) { if (err == null) return "yt-dlp failed"; String out = null; for (String l : err.split("\n")) if (l.contains("ERROR")) out = l; if (out == null) { String[] ls = err.trim().split("\n"); out = ls[ls.length - 1]; } return out.replaceFirst("^ERROR:\\s*", "").trim(); }
 }

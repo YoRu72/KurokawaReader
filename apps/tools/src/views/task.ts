@@ -75,7 +75,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : h('span'), acts),
-      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
+      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), (x.kind === 'video' && ktPlugin() ? commandCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
   let filesBox: FilesCard | undefined;
@@ -95,6 +95,19 @@ function relinkCard(x: Task): HTMLElement {
   const has = !!trailOf(x); const on = has && autoRelinkOn(x.id);
   const box = h('input', { type: 'checkbox', checked: on, disabled: !has, 'data-act': 'auto-relink', onchange: (e: Event) => { setAutoRelink(x.id, (e.target as HTMLInputElement).checked); if ((e.target as HTMLInputElement).checked && expired(x)) replayTrail(x); } });
   return h('section', { class: 'card relink-card' }, h('label', { class: 'row switch-row' }, h('span', null, t('autoRelink'), h('small', { class: 'src' }, has ? t('autoRelinkHint') : t('autoRelinkNoWay'))), box));
+}
+/** A video download's exact yt-dlp command (its last attempt), and the reader's own arguments added to the next
+ *  one — «edit and try again» (OmniGet's command record). */
+function commandCard(x: Task): HTMLElement {
+  const p = ktPlugin() as unknown as { videoCommand(o: { id: string }): Promise<{ command: string; extraArgs: string }>; videoExtraArgs(o: { id: string; extraArgs: string }): Promise<void> } | null;
+  const pre = h('pre', { class: 'files-text cmd-text', dir: 'ltr' }, '…'); const extra = h('input', { type: 'text', dir: 'ltr', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', placeholder: '--cookies-from-browser chrome  --proxy socks5://…' }) as HTMLInputElement;
+  void p?.videoCommand({ id: x.id }).then((r) => { pre.textContent = r.command || t('cmdNone'); extra.value = r.extraArgs; }).catch(() => { pre.textContent = t('cmdNone'); });
+  const card = h('section', { class: 'card cmd-card' }, h('h3', null, t('cmdTitle')), pre,
+    h('label', { class: 'field' }, h('span', null, t('cmdExtra')), extra), h('p', { class: 'hint' }, t('cmdExtraHint')),
+    h('div', { class: 'row-actions wrap' },
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => void navigator.clipboard?.writeText(pre.textContent ?? '').then(() => toast(t('copied'))) }, icon('copy'), t('copy')),
+      h('button', { type: 'button', class: 'btn primary small', onclick: async () => { try { await p?.videoExtraArgs({ id: x.id, extraArgs: extra.value.trim() }); await getEngine().resume(x.id); toast(t('cmdRetrying')); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('refresh'), t('cmdRetry'))));
+  return card;
 }
 /** The rest of the failures classified, each with the one thing that mends it (OmniGet's root-cause buttons):
  *  no room → the storage analyzer or another folder; busy (429 / 5xx) → tried again after a wait; a name the

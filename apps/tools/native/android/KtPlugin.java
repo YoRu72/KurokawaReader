@@ -301,6 +301,9 @@ public class KtPlugin extends Plugin {
         catch (Exception e) { call.reject(e.getMessage()); }
     }
     /** A download renamed — the file on disk (an HTTP download, a torrent's single file; a torrent's folder when it holds many) and its name. */
+    /** The exact yt-dlp arguments of a video download's last attempt, and the reader's own extra arguments for the next («edit and try again»). */
+    @PluginMethod public void videoCommand(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); java.util.List<String> cmd = KtVideo.lastCommand.get(call.getString("id", "")); r.put("command", cmd == null ? "" : String.join(" ", cmd)); KtEngine.Task x = engine().task(call.getString("id", "")); r.put("extraArgs", x != null && x.meta != null ? x.meta.optString("extraArgs", "") : ""); call.resolve(r); }); }
+    @PluginMethod public void videoExtraArgs(PluginCall call) { run(call, () -> { KtEngine.Task x = engine().task(call.getString("id", "")); if (x == null) throw new Exception("noTask"); if (x.meta == null) x.meta = new JSONObject(); x.meta.put("extraArgs", call.getString("extraArgs", "")); engine().persistPublic(); call.resolve(); }); }
     @PluginMethod public void rename(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("name", engine().rename(call.getString("id", ""), call.getString("name", ""))); call.resolve(r); }); }
     static String mimeOf(String name) {
         String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase() : "";

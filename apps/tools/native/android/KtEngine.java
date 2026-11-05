@@ -857,6 +857,7 @@ final class KtEngine {
 
     /* ---------- kept across restarts ---------- */
     private final java.util.concurrent.ExecutorService bg = java.util.concurrent.Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "kt-video"); t.setDaemon(true); return t; });
+    void persistPublic() { persist(); tell(true); }
     private synchronized void persist() {
         try {
             JSONArray arr = new JSONArray();
