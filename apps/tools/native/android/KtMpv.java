@@ -34,6 +34,10 @@ final class KtMpv {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean created = false; private android.view.TextureView view; private android.view.Surface surface; private WebView web; private android.graphics.drawable.Drawable webBg; private boolean bgSaved = false; private String pendingUrl; private Events events;
     private String voInUse = "gpu";
+    /** The video output was switched off when the surface went (the player closed, the app left): it must be switched
+     *  back on with the next surface, a file waiting or not — else the next file plays its sound over a black picture. */
+    private boolean voOff = false;
+    private void voOn() { if (voOff) { voOff = false; MPVLib.setPropertyString("vo", voInUse); } }
 
     static File libDir(android.content.Context ctx) { return new File(KtPacks.dir(ctx, "mpv"), "usr/lib"); }
     static boolean available(android.content.Context ctx) { return KtPacks.installed(ctx, "mpv") != null && libDir(ctx).isDirectory(); }
@@ -103,7 +107,8 @@ final class KtMpv {
                 // (Per file: where it starts, the tracks and languages wanted, the decoding — each set before it loads.)
                 MPVLib.setOptionString("start", opt.has("start") ? opt.optString("start") : "none");
                 for (String k : new String[] { "aid", "sid", "alang", "slang", "speed", "volume", "hwdec", "user-agent", "http-header-fields", "deband", "audio-channels" }) { String v = opt.optString(k, ""); if (!v.isEmpty()) MPVLib.setOptionString(k, v); }
-                { String vo = opt.optString("vo", ""); if (!vo.isEmpty() && !vo.equals(voInUse)) { voInUse = vo; MPVLib.setPropertyString("vo", vo); } }
+                // (A different output asked for: taken now when a surface is there, else when the next one comes.)
+                { String vo = opt.optString("vo", ""); if (!vo.isEmpty() && !vo.equals(voInUse)) { voInUse = vo; if (surface != null && !voOff) MPVLib.setPropertyString("vo", vo); else voOff = true; } }
                 if (opt.optBoolean("paused", false)) MPVLib.setPropertyBoolean("pause", true); else MPVLib.setPropertyBoolean("pause", false);
                 web = webView; if (!bgSaved) { webBg = webView.getBackground(); bgSaved = true; }
                 // (A TextureView, drawn in the window like any view — under the see-through page —: a SurfaceView's «hole»
@@ -114,17 +119,18 @@ final class KtMpv {
                         @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int hh) {
                             surface = new android.view.Surface(st); MPVLib.attachSurface(surface); MPVLib.setOptionString("force-window", "yes");
                             MPVLib.setPropertyString("android-surface-size", w + "x" + hh);
-                            if (pendingUrl != null) { MPVLib.command(new String[] { "loadfile", pendingUrl }); pendingUrl = null; } else MPVLib.setPropertyString("vo", voInUse);
+                            voOn();
+                            if (pendingUrl != null) { MPVLib.command(new String[] { "loadfile", pendingUrl }); pendingUrl = null; }
                         }
                         @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int hh) { MPVLib.setPropertyString("android-surface-size", w + "x" + hh); }
-                        @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) { MPVLib.setPropertyString("vo", "null"); MPVLib.setPropertyString("force-window", "no"); MPVLib.detachSurface(); if (surface != null) { surface.release(); surface = null; } return true; }
+                        @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) { voOff = true; MPVLib.setPropertyString("vo", "null"); MPVLib.setPropertyString("force-window", "no"); MPVLib.detachSurface(); if (surface != null) { surface.release(); surface = null; } return true; }
                         @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {}
                     });
                 }
                 ViewGroup parent = (ViewGroup) webView.getParent();
                 if (view.getParent() == null && parent != null) parent.addView(view, 0, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 webView.setBackgroundColor(Color.TRANSPARENT);
-                if (view.isAvailable() && surface != null) MPVLib.command(new String[] { "loadfile", url });
+                if (view.isAvailable() && surface != null) { voOn(); MPVLib.command(new String[] { "loadfile", url }); }
                 else pendingUrl = url;
                 view.setVisibility(View.VISIBLE);
             } catch (Throwable e) {

@@ -347,6 +347,8 @@ body:has(.sheet) .get-card.watch-card { opacity: 0; pointer-events: none; }
 html.kt-mpv-on, html.kt-mpv-on body { background: transparent !important; }
 html.kt-mpv-on body > :not(.kt-player):not(.sheet):not(.scrim):not(.sheet-scrim):not(.toast):not(.get-card):not(dialog):not(script):not(style) { visibility: hidden !important; }
 html.kt-mpv-on .kt-player, html.kt-mpv-on .kt-stage { background: transparent !important; }
+/* (The ambient glow fills the stage with an inset shadow: over mpv's picture, which is under the page, that is a black sheet.) */
+html.kt-mpv-on .kt-player.ambient .kt-stage { box-shadow: none !important; }
 .kt-mpv-video { position: absolute; inset: 0; pointer-events: none; }
 
 /* REX Player's tools: the bar's chosen ones, the grid of all of them, frame navigation */
