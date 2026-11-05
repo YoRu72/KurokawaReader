@@ -173,10 +173,10 @@ export function arCount(n: number, f: { one: string; two: string; few: string; m
 
 /** "1 page / 2 pages" — in Arabic: صفحة واحدة · صفحتان · ٣–١٠ صفحات · ١١–٩٩ صفحةً · ١٠٠ صفحةٍ. */
 /** Counted nouns in Japanese, Chinese and Korean: a counter word after the figure, no plural. */
-const CJK_COUNT: Record<string, Record<'file' | 'minute' | 'second' | 'item' | 'episode' | 'connection' | 'peer' | 'result' | 'addon' | 'video' | 'source', string>> = {
-  ja: { file: '{n}個のファイル', minute: '{n}分', second: '{n}秒', item: '{n}件', episode: '{n}話', connection: '{n}接続', peer: '{n}ピア', result: '{n}件', addon: '{n}個のアドオン', video: '{n}本の動画', source: '{n}件のソース' },
-  zh: { file: '{n} 个文件', minute: '{n} 分钟', second: '{n} 秒', item: '{n} 项', episode: '{n} 集', connection: '{n} 个连接', peer: '{n} 个节点', result: '{n} 个结果', addon: '{n} 个附加组件', video: '{n} 个视频', source: '{n} 个来源' },
-  ko: { file: '파일 {n}개', minute: '{n}분', second: '{n}초', item: '{n}개', episode: '{n}화', connection: '연결 {n}개', peer: '피어 {n}개', result: '결과 {n}개', addon: '부가 기능 {n}개', video: '동영상 {n}개', source: '소스 {n}개' },
+const CJK_COUNT: Record<string, Record<'file' | 'minute' | 'second' | 'item' | 'episode' | 'connection' | 'peer' | 'result' | 'addon' | 'video' | 'source' | 'folder', string>> = {
+  ja: { file: '{n}個のファイル', minute: '{n}分', second: '{n}秒', item: '{n}件', episode: '{n}話', connection: '{n}接続', peer: '{n}ピア', result: '{n}件', addon: '{n}個のアドオン', video: '{n}本の動画', source: '{n}件のソース', folder: '{n}個のフォルダー' },
+  zh: { file: '{n} 个文件', minute: '{n} 分钟', second: '{n} 秒', item: '{n} 项', episode: '{n} 集', connection: '{n} 个连接', peer: '{n} 个节点', result: '{n} 个结果', addon: '{n} 个附加组件', video: '{n} 个视频', source: '{n} 个来源', folder: '{n} 个文件夹' },
+  ko: { file: '파일 {n}개', minute: '{n}분', second: '{n}초', item: '{n}개', episode: '{n}화', connection: '연결 {n}개', peer: '피어 {n}개', result: '결과 {n}개', addon: '부가 기능 {n}개', video: '동영상 {n}개', source: '소스 {n}개', folder: '폴더 {n}개' },
 };
 const cjkCount = (n: number, what: keyof (typeof CJK_COUNT)['ja']): string | null => (CJK_COUNT[current] ? CJK_COUNT[current][what].replace('{n}', String(n)) : null);
 const enCount = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -189,6 +189,10 @@ export function countFiles(n: number): string {
 export function countItems(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'عنصر واحد', two: 'عنصران', few: 'عناصر', many: 'عنصرًا', hundred: 'عنصرٍ' });
   return cjkCount(n, 'item') ?? enCount(n, 'item', 'items');
+}
+export function countFolders(n: number): string {
+  if (current === 'ar') return arCount(n, { one: 'مجلد واحد', two: 'مجلدان', few: 'مجلدات', many: 'مجلدًا', hundred: 'مجلدٍ' });
+  return cjkCount(n, 'folder') ?? enCount(n, 'folder', 'folders');
 }
 export function countEpisodes(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'حلقة واحدة', two: 'حلقتان', few: 'حلقات', many: 'حلقةً', hundred: 'حلقةٍ' });

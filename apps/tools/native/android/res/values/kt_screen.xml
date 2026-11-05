@@ -7,4 +7,5 @@
     <string name="kt_downloads_tile">Downloads: pause / resume</string>
     <string name="kt_installer">Kurokawa Installer</string>
     <string name="kt_player">Kurokawa Player</string>
+    <string name="kt_save">Kurokawa Tools · Save to device</string>
 </resources>

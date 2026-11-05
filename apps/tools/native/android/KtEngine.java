@@ -811,6 +811,11 @@ final class KtEngine {
      *  (Download/Kurokawa) — seen by every file manager, kept if the app is removed — when the phone lets the app
      *  write there; else the app's own storage, as before. */
     private volatile File defaultDirCache;
+    /** The same, for a context without an engine (the documents provider, which another app's picker starts). */
+    static File defaultDirOf(android.content.Context ctx) {
+        try { File pub = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Kurokawa"); if (pub.isDirectory() && pub.canWrite()) return pub; } catch (Throwable ignored) {}
+        File ext = ctx.getExternalFilesDir(null); File d = new File(ext != null ? ext : ctx.getFilesDir(), "Downloads"); d.mkdirs(); return d;
+    }
     File defaultDir() {
         File c = defaultDirCache; if (c != null) return c;
         File d = null;

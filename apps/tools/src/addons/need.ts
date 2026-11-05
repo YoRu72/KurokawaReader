@@ -7,7 +7,7 @@ import { t, getLang } from '../i18n';
 import { toast } from '../ui/dom';
 import { loadIndex, install, installed, nameOf, type AddonEntry } from '../addons';
 
-const ICON: Record<string, string> = { video: 'film', player: 'play', archives: 'archive', anime: 'tv', subtitles: 'subtitles', debrid: 'cloud', 'torrent-search': 'search' };
+const ICON: Record<string, string> = { video: 'film', player: 'play', archives: 'archive', files: 'folder', anime: 'tv', subtitles: 'subtitles', debrid: 'cloud', 'torrent-search': 'search' };
 
 /** True once the add-on is here (it already was, or it was just installed); false when declined. */
 export async function needAddon(id: string, why: string, opts: { start?: boolean } = {}): Promise<boolean> {
