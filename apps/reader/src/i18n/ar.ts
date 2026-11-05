@@ -1150,6 +1150,7 @@ export const ar: Strings = {
   updateVersionsSince: "{n} منذ إصدارك",
   updateAutoDownloadAndroid: "نزّل التحديثات في الخلفية",
   updateAutoDownloadAndroidHint: "يُجلب الإصدار الجديد وحده ويُتحقَّق منه، ثم يُعرض عليك جاهزًا للتثبيت.",
+  snapIncludePicture: "أدرِج الصورة",
   showMore: "عرض المزيد",
   shamelaSyntaxHelp: "مساعدة في البحث",
   shamelaSyntax: "ضع العبارة بين علامتي تنصيص لتجدها كما هي: \"الضرورات تبيح المحظورات\". وضع + قبل الكلمة المطلوبة، و− قبل الكلمة المستبعدة. وضع الكلمات البديلة بين قوسين ليُؤتى بأيٍّ منها: (الشرح معنى) +قاعدة.",
