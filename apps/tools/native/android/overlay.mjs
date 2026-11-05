@@ -226,8 +226,9 @@ if (!gradle.includes('libtorrent4j')) {
     implementation "net.lingala.zip4j:zip4j:2.11.5"
     implementation "commons-net:commons-net:3.11.1"
     implementation "com.github.mwiede:jsch:0.2.21"
-    implementation "com.hierynomus:smbj:0.13.0"
-    implementation "com.rapid7.client:dcerpc:0.12.1"
+    implementation("com.hierynomus:smbj:0.13.0") { exclude group: "org.bouncycastle" }
+    implementation("com.rapid7.client:dcerpc:0.12.1") { exclude group: "org.bouncycastle" }
+    implementation "org.bouncycastle:bcprov-jdk18on:1.78.1"
     implementation "androidx.security:security-crypto:1.1.0-alpha06"
     implementation "dev.rikka.shizuku:api:13.1.5"
     implementation "dev.rikka.shizuku:provider:13.1.5"
