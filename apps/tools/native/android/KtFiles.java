@@ -126,7 +126,7 @@ final class KtFiles {
         File dir = new File(ctx.getCacheDir(), "kt-decoded"); dir.mkdirs();
         File out = new File(dir, Integer.toHexString((f.getAbsolutePath() + "|" + f.lastModified()).hashCode()) + ".jpg"); if (out.length() > 0) return out;
         Bitmap b = null;
-        if (Build.VERSION.SDK_INT >= 28) { try { android.graphics.ImageDecoder.Source src = android.graphics.ImageDecoder.createSource(f); b = android.graphics.ImageDecoder.decodeBitmap(src, (dec, info, s) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); int w = info.getSize().getWidth(), h = info.getSize().getHeight(); int max = 4096; if (w > max || h > max) { float k = Math.min(max / (float) w, max / (float) h); dec.setTargetSize(Math.round(w * k), Math.round(h * k)); } }); } catch (Throwable e) { Log.w(TAG, "decode: " + e); } }
+        if (Build.VERSION.SDK_INT >= 28) { try { android.graphics.ImageDecoder.Source src = android.graphics.ImageDecoder.createSource(f); b = android.graphics.ImageDecoder.decodeBitmap(src, (dec, info, s) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); int w = info.getSize().getWidth(), h = info.getSize().getHeight(); int max = 4096; if (w > max || h > max) { float k = Math.min(max / (float) w, max / (float) h); dec.setTargetSize(Math.round(w * k), Math.round(h * k)); } }); } catch (Throwable e) { android.util.Log.w("KtFiles", "decode: " + e); } }
         if (b == null) b = BitmapFactory.decodeFile(f.getAbsolutePath());
         if (b == null) throw new java.io.IOException("undecodable");
         try (java.io.FileOutputStream o = new java.io.FileOutputStream(out)) { b.compress(Bitmap.CompressFormat.JPEG, 92, o); } finally { b.recycle(); }
