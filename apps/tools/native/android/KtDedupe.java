@@ -42,7 +42,7 @@ final class KtDedupe {
         }
         if (prior == null || !prior.isFile()) { JSONObject rec = new JSONObject(); rec.put("path", f.getAbsolutePath()); rec.put("size", f.length()); rec.put("at", System.currentTimeMillis()); files.put(sha, rec); }
         // (The index kept at a size: the oldest records dropped past two thousand.)
-        if (files.length() > 2000) { java.util.List<String> keys = new java.util.ArrayList<>(); for (java.util.Iterator<String> it = files.keys(); it.hasNext(); ) keys.add(it.next()); keys.sort((a, b) -> Long.compare(files.optJSONObject(a).optLong("at"), files.optJSONObject(b).optLong("at"))); for (int i = 0; i < keys.size() - 2000; i++) files.remove(keys.get(i)); }
+        if (files.length() > 2000) { java.util.List<String> keys = new java.util.ArrayList<>(); for (java.util.Iterator<String> it = files.keys(); it.hasNext(); ) keys.add(it.next()); final JSONObject fl = files; keys.sort((a, b) -> Long.compare(fl.optJSONObject(a).optLong("at"), fl.optJSONObject(b).optLong("at"))); for (int i = 0; i < keys.size() - 2000; i++) files.remove(keys.get(i)); }
         idx.put("hashed", idx.optInt("hashed") + 1); save(ctx, idx); return r;
     }
     private static boolean sameInode(File a, File b) { try { android.system.StructStat sa = android.system.Os.stat(a.getAbsolutePath()), sb = android.system.Os.stat(b.getAbsolutePath()); return sa.st_ino == sb.st_ino && sa.st_dev == sb.st_dev; } catch (Throwable e) { return false; } }
