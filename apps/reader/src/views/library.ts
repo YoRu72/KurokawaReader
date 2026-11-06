@@ -265,6 +265,42 @@ export function libraryView(): HTMLElement {
     renderGrid();
   }
 
+  /** What can be done with the chosen books, in order (the selection bar's, and a computer's right-click menu's). */
+  type Act = [string, string, () => void, string?];
+  function bookActions(): Act[] {
+    const n = selected.size;
+    const one = () => books.find((x) => x.id === [...selected][0]);
+    return [
+      ['books', n > 1 ? t('openTogether') : t('open'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); navigate(`/read/${ids.join(',')}`); }, 'primary'],
+      ...(n > 1 ? [['sort', t('readInOrder'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); void import('../ui/queue').then((m) => m.queueSheet(ids, { start: true })); }] as Act] : []),
+      ['heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
+      ['clock', t('toRead'), () => void Promise.all([...selected].map((id) => setTag([id], TOREAD_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
+      ['check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))],
+      ['tag', t('tags'), () => tagsSheet([...selected])],
+      ...(n === 1 ? [['info', t('details'), () => { const b = one(); if (b) showDetails(b); }] as Act, ['note', t('reviewBook'), () => { const b = one(); if (b) void import('../ui/review').then((m) => m.reviewSheet(b, () => renderGrid())); }] as Act] : []),
+      ['convert', t('convertFile'), () => { if (n === 1) { const b = one(); if (b) void import('../ui/convert').then((m) => m.convertSheet(b, () => void refresh())); } else { const list = books.filter((x) => selected.has(x.id)); void import('../ui/convert').then((m) => m.convertManySheet(list, () => void refresh())); } }],
+      ['folder', t('moveToFolder'), () => moveSheet([...selected])],
+      ['external', t('shareFile'), () => void shareBooks([...selected])],
+      ['trash', t('delete'), async () => {
+        if (!confirm(t('deleteConfirm', { n }))) return;
+        await removeBooks([...selected]);
+        selected.forEach(forgetCover);
+        setSelecting(false);
+        await refresh();
+      }, 'danger'],
+    ];
+  }
+  /** A computer's menu for one book (right-clicked): what the selection bar offers, at the pointer. */
+  function bookMenu(book: Book, at: Event): void {
+    selected.clear(); selected.add(book.id); let acted = false;
+    const sh = openSheet(book.title, t('close'), { at });
+    // (Closed without a choice: nothing stays chosen.)
+    const mo = new MutationObserver(() => { if (sh.el.isConnected) return; mo.disconnect(); if (!acted && !selecting) selected.clear(); }); mo.observe(document.body, { childList: true });
+    const acts = bookActions();
+    const rows = acts.filter(([, , , cls]) => cls !== 'danger').map(([ic, label, fn]) => h('button', { type: 'button', class: 'dest-row', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label)));
+    sh.body.append(h('div', { class: 'dest-list' }, ...rows));
+    for (const [ic, label, fn] of acts.filter(([, , , cls]) => cls === 'danger')) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), label));
+  }
   function renderSelBar() {
     clear(selBar);
     selBar.hidden = !selecting;
@@ -282,27 +318,7 @@ export function libraryView(): HTMLElement {
     // Every action, in order; a phone shows the first few as icons and folds the rest behind «More», so no
     // label is ever cut to a letter. A wide screen has room for them all.
     function actions(): (HTMLElement | null)[] {
-      type Act = [string, string, () => void, string?];
-      const one = () => books.find((x) => x.id === [...selected][0]);
-      const list: Act[] = [
-        ['books', n > 1 ? t('openTogether') : t('open'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); navigate(`/read/${ids.join(',')}`); }, 'primary'],
-        ...(n > 1 ? [['sort', t('readInOrder'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); void import('../ui/queue').then((m) => m.queueSheet(ids, { start: true })); }] as Act] : []),
-        ['heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
-        ['clock', t('toRead'), () => void Promise.all([...selected].map((id) => setTag([id], TOREAD_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
-        ['check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))],
-        ['tag', t('tags'), () => tagsSheet([...selected])],
-        ...(n === 1 ? [['info', t('details'), () => { const b = one(); if (b) showDetails(b); }] as Act, ['note', t('reviewBook'), () => { const b = one(); if (b) void import('../ui/review').then((m) => m.reviewSheet(b, () => renderGrid())); }] as Act] : []),
-        ['convert', t('convertFile'), () => { if (n === 1) { const b = one(); if (b) void import('../ui/convert').then((m) => m.convertSheet(b, () => void refresh())); } else { const list = books.filter((x) => selected.has(x.id)); void import('../ui/convert').then((m) => m.convertManySheet(list, () => void refresh())); } }],
-        ['folder', t('moveToFolder'), () => moveSheet([...selected])],
-        ['external', t('shareFile'), () => void shareBooks([...selected])],
-        ['trash', t('delete'), async () => {
-          if (!confirm(t('deleteConfirm', { n }))) return;
-          await removeBooks([...selected]);
-          selected.forEach(forgetCover);
-          setSelecting(false);
-          await refresh();
-        }, 'danger'],
-      ];
+      const list = bookActions();
       const wide = window.matchMedia('(min-width: 720px)').matches;
       if (wide) return list.map(([ic, label, fn, cls]) => act(ic, label, fn, cls));
       const shown = list.slice(0, 4), rest = list.slice(4);
@@ -429,8 +445,13 @@ export function libraryView(): HTMLElement {
     el.addEventListener('pointerdown', () => { pressTimer = window.setTimeout(() => { if (!selecting) { setSelecting(true); selected.add(book.id); renderGrid(); } }, 520); });
     const cancel = () => window.clearTimeout(pressTimer);
     el.addEventListener('pointerup', cancel); el.addEventListener('pointerleave', cancel); el.addEventListener('pointercancel', cancel);
-    // Right-click (a mouse) selects the book like a hold does; the details are an action of the selection bar.
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!selecting) { setSelecting(true); } selected.add(book.id); renderGrid(); });
+    // Right-click: on a computer the book's menu at the pointer (the selection bar's actions, for this one book); while
+    // choosing — or on a touch screen — it chooses the book like a hold does.
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!selecting && document.documentElement.classList.contains('pc')) { bookMenu(book, e); return; }
+      if (!selecting) { setSelecting(true); } selected.add(book.id); renderGrid();
+    });
     el.addEventListener('click', (e) => {
       // (Ctrl/⌘ + click on a computer: pick several without entering selection first.)
       if (!selecting && (e.ctrlKey || e.metaKey)) { setSelecting(true); selected.add(book.id); renderGrid(); return; }
