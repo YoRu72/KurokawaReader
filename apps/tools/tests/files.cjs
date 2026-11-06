@@ -142,6 +142,9 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('the apps are listed with their packages', (await p.textContent('.files-row:has-text("Game")')).includes('org.example.game'));
   await p.click('.files-row:has-text("Game") .files-main'); await p.waitForSelector('.files-row:has-text("base.apk")');
   ok("an app's folder: its APKs, data and obb", (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',').includes('base.apk,split_config.arm64_v8a.apk') && (await p.textContent('.files-crumbs')).includes('Apps'));
+  await p.click('.files-row:has-text("base.apk") .files-main'); await p.waitForFunction(() => window.__calls.some((c) => c === 'arcList:/data/app/org.example.game/base.apk'), null, { timeout: 4000 }).catch(() => undefined);
+  ok("an installed app's base.apk opens as a folder (not the installer)", await p.evaluate(() => window.__calls.includes('arcList:/data/app/org.example.game/base.apk') && !document.querySelector('.sheet')));
+  await p.goto('http://127.0.0.1:5481/#/files?p=' + encodeURIComponent('apps://org.example.game')); await p.waitForSelector('.files-row:has-text("base.apk")');
   await p.click('.files-crumbs .crumb:has-text("Apps")'); await p.waitForSelector('.files-row:has-text("Notes")');
   await p.click('.files-row:has-text("Notes") button[aria-label="More"]'); await p.waitForSelector('.sheet .dest-row:has-text("Back up")', { timeout: 5000 });
   ok("an app's sheet offers backup, launch, info, uninstall", (await p.$$('.sheet .dest-row')).length >= 6); await p.keyboard.press('Escape'); await p.waitForTimeout(200);

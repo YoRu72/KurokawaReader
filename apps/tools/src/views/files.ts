@@ -233,8 +233,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (pl && /\.kurokawa$/i.test(e.name)) { const m = await import('./filesMore'); if (m.canVault()) { await m.openLocked(e, open); return; } }
     try {
       if (k === 'video' || k === 'audio') { const { openPlayer } = await import('./player'); const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(e.path); if (u) { await openPlayer(u, e.name, { localPath: e.path }); return; } }
+      // (An installed app's own APKs — its base and its parts — are there to look into, not to install again.)
+      if (/\.apk$/i.test(e.name) && at.startsWith('apps://')) { go(arcPath(e.path)); return; }
       if (/\.(apk|apks|xapk|apkm)$/i.test(e.name)) { const m = await import('./apk'); if (m.canInstallApps()) { await m.installSheet(e.path); return; } }
-      if (k === 'archive' || /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|cbr|jar|001)$/i.test(e.name)) { go(arcPath(e.path)); return; }
+      if (looksArchive(e.name) && !/\.epub$/i.test(e.name)) { go(arcPath(e.path)); return; }
       if (/\.(srt|ass|ssa|vtt|sub)$/i.test(e.name) && e.size < 4_000_000) { const { workshopSheet } = await import('../subs/workshop'); const vid = shown().find((x) => !x.dir && kindOfFile(x.name) === 'video' && x.name.replace(/\.[^.]+$/, '').startsWith(e.name.replace(/\.[^.]+$/, '').replace(/\.[a-z]{2,3}$/i, ''))); await workshopSheet(e.path, vid?.path); return; }
       if (/\.(txt|nfo|md|log|json|xml|srt|ass|vtt|csv|ini|cfg|yml|yaml|html?|css|js|ts|py|sh|java|kt|c|h|cpp)$/i.test(e.name) && e.size < 4_000_000 && pl) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return; }
       if (k === 'image' && pl) { const m = await import('./filesMore'); const { localFileUrl } = await import('../player/files'); const pics = shown().filter((x) => !x.dir && (kindOfFile(x.name) === 'image' || kindOfFile(x.name) === 'video')); await m.imageViewer(pics, Math.max(0, pics.findIndex((x) => x.path === e.path)), localFileUrl, (x) => void confirmDelete([x.path])); return; }
@@ -331,7 +333,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ...(pl ? [act('lock', /\.kurokawa$/i.test(e.name) ? t('vaultUnlock') : t('vaultLock'), () => void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!/\.kurokawa$/i.test(e.name), [e.path], jobRow, () => void load()); }))] : []),
       ...(e.path.startsWith('root://') ? [act('terminal', t('filesPermissions'), () => rootOpsSheet(e))] : []),
       ...(pl && e.dir ? [act('eyeOff', t('filesHideFolder'), () => void import('./filesMore').then((m) => { m.hidePath(e.path); toast(t('filesHiddenNow')); void load(); })), act('images', t('filesNomedia'), () => void import('./filesMore').then((m) => m.toggleNomedia(e.path)).then((on) => toast(on ? t('filesNomediaOn') : t('filesNomediaOff'))).catch((err) => toast(String((err as Error).message ?? err), 'error')))] : []),
-      ...(!e.dir && !isVirtual(e.path) && looksArchive(e.name) ? [act('folder', t('filesOpenAsArchive'), () => { sh.close(); go(arcPath(e.path)); })] : []),
+      ...(!e.dir && !isVirtual(e.path) && looksArchive(e.name) ? [act('folder', /\.(apk|apks|xapk|apkm)$/i.test(e.name) ? t('apkBrowse') : t('filesOpenAsArchive'), () => { sh.close(); go(arcPath(e.path)); })] : []),
       ...(pl && !e.dir && /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|001)$/i.test(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
       ...(pl ? [act('archive', t('filesCompress'), () => void compress([e.path]))] : []),
       act('check', t('filesSelect'), () => { selecting = true; picked.add(e.path); draw(); drawSel(); }),

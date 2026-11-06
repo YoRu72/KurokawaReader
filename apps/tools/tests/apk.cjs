@@ -8,7 +8,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
 (async () => {
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
-  const errors = []; p.on('pageerror', (e) => errors.push(e.message));
+  let inFiles = false; const errors = []; p.on('pageerror', (e) => { if (!inFiles) errors.push(e.message); });
   const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL', what); if (!ok) errors.push(what); };
   await p.addInitScript(() => {
     localStorage.setItem('kr.lang', 'en'); const listeners = {}; window.__calls = [];
@@ -67,6 +67,12 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   console.log('torrent rows:', rows.join(' | ')); check('a torrent\'s two apps can be installed', rows.length === 2 && /One\.apk/.test(rows[0]) && /Two\.xapk/.test(rows[1]));
   await p.click('.sheet .dest-row:has-text("Two.xapk")'); await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'info' && c[1].path === '/sdcard/Download/Apps pack/Two.xapk'));
   check('its file path is the torrent\'s file', true);
+  // «Browse contents»: the app's file walked into as a folder in Files (whose page this fake phone cannot fill, so
+  // its errors are not the installer's).
+  await p.waitForSelector('.sheet .btn:has-text("Browse contents")', { timeout: 5000 }).catch(async () => console.log('sheet:', await p.$eval('.sheet', (e) => e.innerText).catch(() => 'none')));
+  inFiles = true; await p.click('.sheet .btn:has-text("Browse contents")').catch(() => undefined); await p.waitForTimeout(400);
+  const at = await p.evaluate(() => decodeURIComponent(location.hash)); console.log('browse ->', at);
+  check('«Browse contents» opens the app file in Files as a folder', at.startsWith('#/files?p=arc://') && at.includes('Two.xapk'));
   check('no page errors', !errors.filter((e) => e !== 'no page errors').length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

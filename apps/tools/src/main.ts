@@ -3,7 +3,7 @@ import './styles/base.css';
 import './styles/tools.css';
 import './styles/anime.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
-import { onRoute, parseRoute, navigate, type Route } from './router';
+import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './router';
 import { h, icon, closeSheets } from './ui/dom';
 import { goBack, wirePcBack } from './ui/backstack';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
@@ -53,7 +53,7 @@ function placeNav(): void {
   if (isPc()) document.body.prepend(nav); else document.body.append(nav);
   markNav(parseRoute());
 }
-const destOf = (r: Route): string => (r.name === 'downloads' || r.name === 'task' || r.name === 'add' || r.name === 'install' ? 'downloads' : r.name === 'settings' || r.name === 'addons' || r.name === 'screen' ? 'settings' : r.name === 'anime' || r.name === 'animeEntry' || r.name === 'animeStudio' ? 'anime' : r.name === 'subs' ? 'subs' : r.name === 'tv' || r.name === 'tvTitle' ? 'tv' : r.name === 'videos' ? 'videos' : 'search');
+const destOf = sectionOfRoute;
 /* Each tab remembers where it was (a show's page in Anime, a section of Settings…): going back to the tab
    brings that screen back as it was, scrolled where it was; tapping the tab that is open goes to its start. */
 const lastPath = new Map<string, string>();

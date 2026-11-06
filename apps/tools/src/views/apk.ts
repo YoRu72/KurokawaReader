@@ -7,6 +7,7 @@
 // installed (which the system refuses), the way out: uninstall that one first. A bundle's languages and screen
 // densities can be left out; a game's data (OBB) is put where the game reads it.
 import { h, icon, toast, openSheet } from '../ui/dom';
+import { navigate } from '../router';
 import { t, formatBytes, localDigits } from '../i18n';
 import { ktPlugin } from '../native';
 import { uid } from '../db';
@@ -27,6 +28,10 @@ export async function installSheet(path: string, o: { password?: string; select?
   const name = path.split(/[\\/]/).pop() ?? path;
   const sh = openSheet(t('apkInstallTitle'), t('close'));
   sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), h('p', { class: 'src small' }, t('apkReading'))));
+  // (What is inside — the manifest, the code, its pictures, the parts of a bundle —, walked into as a folder in Files;
+  // there whatever the file turns out to be: one app, a bundle, a locked archive, not an app at all.)
+  const browse = h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void import('./filesArc').then((m) => navigate(`/files?p=${encodeURIComponent(m.arcPath(path))}`)); } }, icon('archive'), t('apkBrowse'));
+  sh.actions.replaceChildren(browse);
   let info: ApkInfo;
   try { info = await p.apkInfo({ path, password: o.password, select: o.select }); }
   catch (e) {
@@ -37,7 +42,7 @@ export async function installSheet(path: string, o: { password?: string; select?
       const go = () => { if (!pw.value) return; sh.close(); void installSheet(path, { ...o, password: pw.value }); };
       pw.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go(); });
       sh.body.replaceChildren(h('p', null, o.password ? t('wrongPassword') : t('passwordNeeded')), h('p', { class: 'src', dir: 'ltr' }, name), pw);
-      sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: go }, icon('key'), t('apkUnlock'))); setTimeout(() => pw.focus(), 60); return;
+      sh.actions.replaceChildren(browse, h('button', { type: 'button', class: 'btn primary', onclick: go }, icon('key'), t('apkUnlock'))); setTimeout(() => pw.focus(), 60); return;
     }
     sh.body.replaceChildren(h('p', { class: 'empty small' }, /noApkInside|notAnApk/.test(m) ? t('apkNotApp') : m)); return;
   }
@@ -69,7 +74,7 @@ export async function installSheet(path: string, o: { password?: string; select?
     h('p', { class: 'src', dir: 'ltr' }, name),
     h('label', { class: 'row switch-row' }, h('span', null, info.container ? t('apkDeleteAfterArchive') : t('apkDeleteAfter')), h('input', { type: 'checkbox', onchange: (e: Event) => { deleteAfter = (e.target as HTMLInputElement).checked; } })));
   const go = h('button', { type: 'button', class: 'btn primary', disabled: !info.supported }, icon('download'), info.change === 'upgrade' ? t('apkUpdate') : t('apkInstall')) as HTMLButtonElement;
-  sh.actions.replaceChildren(go);
+  sh.actions.replaceChildren(browse, go);
   go.addEventListener('click', async () => {
     const id = uid(); go.disabled = true; let installed = -1; let confirming = false;
     const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src' }, t('apkWriting'));
