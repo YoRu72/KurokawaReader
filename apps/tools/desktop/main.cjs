@@ -12,6 +12,7 @@ const Ffmpeg = require('./ffmpeg.cjs');
 const Ytdlp = require('./ytdlp.cjs');
 const StreamProxy = require('./streamproxy.cjs');
 const TorrentStream = require('./torrentstream.cjs');
+const AppIcon = require('./appicon.cjs');
 const Packs = require('./packs.cjs');
 const Antivirus = require('./antivirus.cjs');
 const ScreenTr = require('./screentr.cjs');
@@ -100,6 +101,7 @@ function createWindow() {
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
+  AppIcon.apply(win, path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'));
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('did-finish-load', flushLinks);
   win.loadURL('app://kurokawa/index.html');
@@ -298,6 +300,7 @@ ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
+ipcMain.handle('kt:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));
 // DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.
 const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query', mullvad: 'https://dns.mullvad.net/dns-query', dnssb: 'https://doh.dns.sb/dns-query', controld: 'https://freedns.controld.com/p0', opendns: 'https://doh.opendns.com/dns-query' };
 // (The resolver tried: a known name asked through the app's own resolver — the one configureHostResolver set —

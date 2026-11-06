@@ -140,6 +140,15 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   // the installed apps as a place: listed from the drawer, an app entered shows its APKs and folders, its sheet offers the backup
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.click('.files-drawer .files-drawer-row:has-text("Installed apps")'); await p.waitForSelector('.files-row:has-text("Game")', { timeout: 8000 });
   ok('the apps are listed with their packages', (await p.textContent('.files-row:has-text("Game")')).includes('org.example.game'));
+  // an app given an icon of its own: from its sheet, a picture cropped, shown on its row
+  { const zlib = require('node:zlib'); const raw = Buffer.alloc((8 * 4 + 1) * 8, 200); for (let y = 0; y < 8; y++) raw[y * 33] = 0;
+    const crc = (b) => { let c, t = []; for (let n = 0; n < 256; n++) { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } let x = 0xffffffff; for (const v of b) x = t[(x ^ v) & 255] ^ (x >>> 8); return (x ^ 0xffffffff) >>> 0; };
+    const chunk = (ty, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(ty), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+    const ih = Buffer.alloc(13); ih.writeUInt32BE(8, 0); ih.writeUInt32BE(8, 4); ih[8] = 8; ih[9] = 6; const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+    await p.click('.files-row:has-text("Game") .icon-btn'); await p.waitForSelector('.sheet .dest-row:has-text("Change the icon")');
+    const [fc] = await Promise.all([p.waitForEvent('filechooser'), p.click('.sheet .dest-row:has-text("Change the icon")')]); await fc.setFiles({ name: 'g.png', mimeType: 'image/png', buffer: png });
+    await p.waitForSelector('.icon-crop canvas'); await p.click('.icon-crop .btn.primary'); await p.waitForTimeout(400);
+    ok('an app\'s own icon chosen: its row shows it', /^data:image\/png/.test(await p.$eval('.files-row:has-text("Game") .files-ic img', (e) => e.getAttribute('src')).catch(() => ''))); }
   await p.click('.files-row:has-text("Game") .files-main'); await p.waitForSelector('.files-row:has-text("base.apk")');
   ok("an app's folder: its APKs, data and obb", (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',').includes('base.apk,split_config.arm64_v8a.apk') && (await p.textContent('.files-crumbs')).includes('Apps'));
   await p.click('.files-row:has-text("base.apk") .files-main'); await p.waitForFunction(() => window.__calls.some((c) => c === 'arcList:/data/app/org.example.game/base.apk'), null, { timeout: 4000 }).catch(() => undefined);

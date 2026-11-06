@@ -387,6 +387,23 @@ public class KtPlugin extends Plugin {
         bg.execute(() -> { try { java.security.MessageDigest md5 = java.security.MessageDigest.getInstance("MD5"), sha1 = java.security.MessageDigest.getInstance("SHA-1"), sha256 = java.security.MessageDigest.getInstance("SHA-256"); byte[] b = new byte[1 << 16]; try (java.io.InputStream in = new java.io.FileInputStream(f)) { int n; while ((n = in.read(b)) > 0) { md5.update(b, 0, n); sha1.update(b, 0, n); sha256.update(b, 0, n); } } JSObject r = new JSObject(); r.put("md5", hex(md5.digest())); r.put("sha1", hex(sha1.digest())); r.put("sha256", hex(sha256.digest())); r.put("size", f.length()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } });
     }
     private static String hex(byte[] d) { StringBuilder sb = new StringBuilder(); for (byte x : d) sb.append(String.format("%02x", x)); return sb.toString(); }
+    /** The app's icon of the user's choosing on a home-screen shortcut that opens the app (Android lets an app change
+     *  only its shortcuts' icons): the launcher asks to confirm it. */
+    @PluginMethod public void pinIcon(PluginCall call) {
+        try {
+            String b64 = call.getString("png", ""); int comma = b64.indexOf(','); if (comma >= 0) b64 = b64.substring(comma + 1);
+            byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length); if (bmp == null) { call.reject("not a picture"); return; }
+            android.content.Context ctx = getContext();
+            if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(ctx)) { call.reject("unsupported"); return; }
+            android.content.Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName()); if (open == null) { call.reject("no launcher"); return; }
+            open.setAction(android.content.Intent.ACTION_MAIN);
+            String label = call.getString("label", ctx.getApplicationInfo().loadLabel(ctx.getPackageManager()).toString());
+            androidx.core.content.pm.ShortcutInfoCompat info = new androidx.core.content.pm.ShortcutInfoCompat.Builder(ctx, "kt-icon-" + System.currentTimeMillis())
+                .setShortLabel(label).setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(bmp)).setIntent(open).build();
+            JSObject r = new JSObject(); r.put("ok", androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(ctx, info, null)); call.resolve(r);
+        } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+    }
     /** The screen's turn for the player: landscape, portrait, or back to what the phone and the app do by themselves. */
     @PluginMethod public void orientation(PluginCall call) {
         String to = call.getString("to", "auto");

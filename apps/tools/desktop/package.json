@@ -51,6 +51,7 @@
       "ytdlp.cjs",
       "streamproxy.cjs",
       "torrentstream.cjs",
+      "appicon.cjs",
       "packs.cjs",
       "antivirus.cjs",
       "screentr.cjs"
