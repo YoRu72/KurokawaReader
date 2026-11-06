@@ -37,9 +37,16 @@ for abi in ABIS:
         with zipfile.ZipFile(ff_aar) as z:
             for n in ('libffmpeg.zip.so', 'libffmpeg.so', 'libffprobe.so'): z.extract(f'jni/{abi}/{n}', tmp)
         py_zip, ff_zip = f'{tmp}/jni/{abi}/libpython.zip.so', f'{tmp}/jni/{abi}/libffmpeg.zip.so'
-        # Python: its bundle as it is.
+        # Python: its bundle as it is, and yt-dlp beside it (the APK carries only a placeholder of yt-dlp: KtVideo puts
+        # this one in place). Taken from the library's own raw resource, so it is the yt-dlp this version was built with.
         py_out = f'{OUT}/KurokawaTools-pack-python-{ydl}-{abi}.zip'
         with open(py_zip, 'rb') as a, open(py_out, 'wb') as b: b.write(a.read())
+        with zipfile.ZipFile(lib_aar) as z:
+            raw = [n for n in z.namelist() if n == 'res/raw/ytdlp' or n.startswith('res/raw/ytdlp.')]
+            if not raw: sys.exit('no res/raw/ytdlp in the youtubedl-android AAR: the Python pack would come without yt-dlp')
+            ytdlp = z.read(raw[0])
+        if len(ytdlp) < 100_000 or not ytdlp.startswith(b'#!'): sys.exit(f'res/raw/ytdlp does not look like yt-dlp ({len(ytdlp)} bytes)')
+        with zipfile.ZipFile(py_out, 'a', zipfile.ZIP_DEFLATED) as zout: zout.writestr('yt-dlp', ytdlp)
         # ffmpeg: its bundle, and what it needs from Python's (found by following the libraries' NEEDED entries).
         ffdir, pydir = f'{tmp}/ff', f'{tmp}/py'
         subprocess.run(['unzip', '-q', '-o', ff_zip, '-d', ffdir], check=True)

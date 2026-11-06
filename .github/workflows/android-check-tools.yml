@@ -41,6 +41,8 @@ jobs:
           # (A release build: R8 runs — a class it strips wrongly, or a rule it rejects, shows here and not on release day.)
           cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
           ls -la app/build/outputs/apk/release/ | awk '{print $5, $9}'
+      - name: Packs and APK contents (the Python pack carries yt-dlp; the APK no yt-dlp, no Picnic tables)
+        run: python3 scripts/packs.py $RUNNER_TEMP/packs > /dev/null && python3 scripts/checksize.py $RUNNER_TEMP/packs "$(ls android/app/build/outputs/apk/release/*arm64*.apk | head -1)"
       - name: Report failure
         if: failure()
         env: { GH_TOKEN: "${{ github.token }}" }
