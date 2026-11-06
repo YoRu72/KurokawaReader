@@ -34,6 +34,24 @@ export async function signIn(repo: Repo, email: string, password: string): Promi
   try { localStorage.setItem(key(repo, 'in'), '1'); localStorage.setItem(key(repo, 'email'), email); } catch { /* none */ }
 }
 export async function signOut(repo: Repo): Promise<void> { try { await api(repo, '/api/auth/sign-out', { method: 'POST', body: {} }); } catch { /* gone anyway */ } cookie = ''; try { localStorage.removeItem(key(repo, 'in')); } catch { /* none */ } }
+/** A sign-in made on the site itself, in the app's browser, taken up: the browser and the app's requests share one
+ *  cookie jar on the phone, so the session the site set there is sent with every request here — only the «signed in»
+ *  mark was missing. Asked of the site's session endpoint; the email the site gives remembered. */
+export async function adoptSession(repo: Repo): Promise<boolean> {
+  try {
+    const r = await api<{ user?: { email?: string } } | null>(repo, '/api/auth/get-session');
+    const user = r.status < 400 && r.data && typeof r.data === 'object' ? (r.data as { user?: { email?: string } }).user : undefined;
+    if (!user) return false;
+    try { localStorage.setItem(key(repo, 'in'), '1'); if (user.email) localStorage.setItem(key(repo, 'email'), user.email); } catch { /* none */ }
+    return true;
+  } catch { return false; }
+}
+/** The site's own pages in the app's browser — its sign-in with whatever check it asks of a person, done by the
+ *  reader there — then the session taken up. */
+export async function signInOnSite(repo: Repo): Promise<boolean> {
+  const { openBrowser } = await import('./http'); await openBrowser(`${base(repo)}/`);
+  const ok = await adoptSession(repo); if (ok) toast(t('ranobeSignedIn')); else toast(t('ranobeSiteNoSession'), 'error'); return ok;
+}
 /** Whether the site still knows us (its session endpoint). */
 export async function sessionAlive(repo: Repo): Promise<boolean> { try { const r = await api<{ user?: unknown } | null>(repo, '/api/auth/get-session'); return r.status < 400 && !!r.data && typeof r.data === 'object' && !!(r.data as { user?: unknown }).user; } catch { return false; } }
 /** The sign-in sheet: the site's own form, in the app. Resolves true when signed in. */
@@ -44,11 +62,16 @@ export function signInSheet(repo: Repo): Promise<boolean> {
     const pass = h('input', { type: 'password', dir: 'ltr', autocomplete: 'current-password' }) as HTMLInputElement; const status = h('p', { class: 'hint' }, t('ranobeSignInHint'));
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('ranobeEmail')), email), h('label', { class: 'field' }, h('span', null, t('ranobePassword')), pass), status);
     const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { if (!email.value.trim() || !pass.value) return; go.disabled = true; status.textContent = t('ranobeSigningIn'); try { await signIn(repo, email.value.trim(), pass.value); done = true; sh.close(); toast(t('ranobeSignedIn')); res(true); } catch (e) { status.textContent = String((e as Error).message ?? e); go.disabled = false; } } }, icon('key'), t('ranobeSignIn'));
+    const viaSite = h('button', { type: 'button', class: 'btn tonal', onclick: async () => { const ok = await signInOnSite(repo); if (ok) { done = true; sh.close(); res(true); } } }, icon('globe'), t('ranobeSignInOnSite'));
+    // (The site asking a person to prove they are one — the form cannot answer that from the app: its own page can.)
+    new MutationObserver(() => { const st = status.textContent ?? ''; if (/verif|captcha|human|robot/i.test(st) && !st.includes(t('ranobeUseSite'))) { status.textContent = `${status.textContent} — ${t('ranobeUseSite')}`; viaSite.classList.add('primary'); viaSite.classList.remove('tonal'); viaSite.focus(); } }).observe(status, { childList: true, characterData: true, subtree: true });
+    sh.body.append(h('p', { class: 'hint' }, t('ranobeSiteHint')));
+    sh.actions.append(viaSite);
     sh.actions.append(go); setTimeout(() => (email.value ? pass : email).focus(), 60);
   });
 }
 async function ensureSignedIn(repo: Repo): Promise<void> {
-  if (signedIn(repo)) return;
+  if (signedIn(repo) || await adoptSession(repo)) return;
   const ok = await signInSheet(repo); if (!ok) throw new SourceError(t('ranobeNeedsAccount'), 'parse');
 }
 
@@ -87,7 +110,7 @@ export function ranobeSource(repo: Repo): Source {
     filters: (): SourceFilter[] => [{ id: 'sort', label: t('sortBy'), kind: 'sort', value: 'title', options: [{ value: 'title', label: t('sortByTitle') }, { value: 'recent', label: t('sortByRecent') }] }],
     shelves: async (): Promise<SourceTag[]> => [{ id: 'browse', label: t('ranobeBrowse') }, { id: 'account', label: t('ranobeAccount') }],
     async status() {
-      const on = signedIn(repo);
+      const on = signedIn(repo) || await adoptSession(repo);
       return { text: on ? t('ranobeStatusIn', { email: emailOf(repo) }) : t('ranobeStatusOut'), action: { label: on ? t('ranobeSignOut') : t('ranobeSignIn'), run: async () => { if (on) { await signOut(repo); toast(t('ranobeSignedOut')); } else await signInSheet(repo); return true; } } };
     },
     async browse(q, _f: FilterValues, page, shelf): Promise<SourcePage> {
