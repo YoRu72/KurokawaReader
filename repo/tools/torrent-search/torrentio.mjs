@@ -31,12 +31,11 @@ export async function search(query, ctx) {
   }
   const q = query.trim(); const m = /^(.*?)\s+s(\d{1,2})e(\d{1,3})$/i.exec(q);
   const name = (m ? m[1] : q).replace(/\s(19|20)\d\d$/, '');
-  const metas = [];
-  for (const type of m ? ['series'] : ['movie', 'series']) { const r = await ctx.fetch(`${META}/catalog/${type}/top/search=${encodeURIComponent(name)}.json`); if (r.ok) { const j = await r.json(); for (const x of (j.metas || []).slice(0, 2)) metas.push({ ...x, type }); } }
-  const out = [];
-  for (const meta of metas.slice(0, 3)) {
+  // (The films and the series looked up at once, then their streams at once.)
+  const metas = (await Promise.all((m ? ['series'] : ['movie', 'series']).map(async (type) => { try { const r = await ctx.fetch(`${META}/catalog/${type}/top/search=${encodeURIComponent(name)}.json`); if (!r.ok) return []; const j = await r.json(); return (j.metas || []).slice(0, 2).map((x) => ({ ...x, type })); } catch { return []; } }))).flat();
+  const out = (await Promise.all(metas.slice(0, 3).map((meta) => {
     const id = meta.type === 'series' ? `${meta.imdb_id}:${m ? Number(m[2]) : 1}:${m ? Number(m[3]) : 1}` : meta.imdb_id;
-    try { out.push(...(await streams(ctx, base, meta.type, id, meta))); } catch { /* the next one */ }
-  }
+    return streams(ctx, base, meta.type, id, meta).catch(() => []);
+  }))).flat();
   return out;
 }

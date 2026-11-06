@@ -72,7 +72,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.check('.sheet .dest-row input[aria-label="Decoder"]'); await p.waitForTimeout(100);
   check('a tool put on the bar from the layout', !!(await p.$('.kt-tools button[aria-label="Decoder"]')));
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()));
-  await p.evaluate(() => document.querySelector('.kt-bottom button[aria-label="Tools"]').click()); await p.waitForSelector('.kt-tool-grid'); await p.locator('.kt-tool', { hasText: 'Frame navigation' }).click(); await p.waitForSelector('.kt-frame-row');
+  await p.evaluate(() => document.querySelector('.kt-bottom button[aria-label="Tools"]').click()); await p.waitForSelector('.kt-tool-grid'); await p.locator('.kt-tool', { hasText: 'Frame navigation' }).click(); await p.waitForSelector('.kt-framepad'); await p.click('.kt-framepad .kt-fp-info'); await p.waitForSelector('.kt-frame-row');
   await p.locator('.kt-frame-row .chip', { hasText: '+1' }).first().click(); await p.waitForTimeout(100); c = await calls();
   check('a frame on → mpv frame-step', c.some((x) => x[0] === 'cmd' && x[1] === 'frame-step'));
   await p.locator('.sheet button', { hasText: 'Save the frame' }).click(); await p.waitForTimeout(100); c = await calls();

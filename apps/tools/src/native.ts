@@ -39,6 +39,7 @@ export interface KtPlugin {
   configure(o: Record<string, unknown>): Promise<void>;
   installApk?(o: { path: string }): Promise<void>;
   openUrl?(o: { url: string }): Promise<void>;
+  clipboardText?(): Promise<{ text: string }>;
   addListener(ev: string, fn: (p: never) => void): Promise<{ remove(): void }>;
 }
 export function ktPlugin(): KtPlugin | null {
@@ -71,4 +72,15 @@ export async function saveText(name: string, text: string, mime = 'text/plain'):
   const p = ktPlugin() as unknown as { saveText?(o: { name: string; text: string }): Promise<{ path: string }> } | null;
   if (p?.saveText) return (await p.saveText({ name, text })).path;
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); return name;
+}
+
+/** The clipboard's text: the computer's through the app, the phone's through the app (Android lets the app read it
+ *  while it is in front; the web view's own clipboard is refused there), else the browser's — unless `quiet`, since a
+ *  browser may ask the user first; '' when none is allowed. */
+export async function clipboardText(quiet = false): Promise<string> {
+  try {
+    const d = window.kurokawaTools as unknown as { clipboardText?(): Promise<string> } | undefined; if (d?.clipboardText) return (await d.clipboardText()) ?? '';
+    const p = ktPlugin(); if (p?.clipboardText) return (await p.clipboardText()).text ?? '';
+    return quiet ? '' : (await navigator.clipboard?.readText()) ?? '';
+  } catch { return ''; }
 }

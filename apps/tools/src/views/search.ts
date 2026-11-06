@@ -8,7 +8,7 @@ import { t, formatBytes, localDigits, countResults } from '../i18n';
 import { navigate } from '../router';
 import { getSettings } from '../settings';
 import { lookup, enrich, type TitleCard } from '../subs/lookup';
-import { runSearch, searchSources, addResult, type SearchResult, type TitleCtx } from '../addons/search';
+import { runSearch, searchSources, warmSources, addResult, type SearchResult, type TitleCtx } from '../addons/search';
 import { parseRelease, groupKey, matchRelease, type Release } from '../meta/match';
 import { similar } from '../anime/anitomy';
 
@@ -23,6 +23,9 @@ export function searchView(q?: string): HTMLElement & { dispose?: () => void } {
   const cards = h('div', { class: 'title-cards' }); const pickedBox = h('div'); const status = h('div', { class: 'chips provider-chips' }); const tools = h('div', { class: 'chip-row wrap search-tools' }); const list = h('div', { class: 'release-groups' });
   body.append(h('form', { class: 'search-form', onsubmit: (e: Event) => { e.preventDefault(); picked = null; void find(); } }, input), cards, pickedBox, status, tools, list);
   let found: TitleCard[] = []; let results: SearchResult[] = []; const matched = new Map<string, TitleCard | null>();
+  // (While typing: the works it may be, as covers, before Enter — the sources are asked on Enter or a cover's tap.)
+  let typeTimer = 0; let typed = '';
+  input.addEventListener('input', () => { window.clearTimeout(typeTimer); const s = input.value.trim(); if (s.length < 3 || s === typed) return; typeTimer = window.setTimeout(() => { typed = s; const my = token; void lookup(s, getSettings().animeAdult).then((c) => { if (my !== token || input.value.trim() !== s || picked) return; found = c; drawCards(); }).catch(() => undefined); }, 450); });
 
   const empty = async () => {
     if ((await searchSources()).length) return false;
@@ -110,7 +113,10 @@ export function searchView(q?: string): HTMLElement & { dispose?: () => void } {
     list.replaceChildren(...works.slice(0, 40).map((w) => groupCard(w, w.card, false)));
     // Covers for the groups not yet matched: the ones on top first, a few at a time.
     const todo = [...groups.values()].filter((g) => !matched.has(g.key)).sort((a, b) => b.rows.length - a.rows.length).slice(0, 10);
-    void (async () => { const my = token; for (const g of todo) { if (my !== token) return; if (matched.has(g.key)) continue; matched.set(g.key, null); const c = await matchRelease(g.rel, found, getSettings().animeAdult).catch(() => null); if (my !== token) return; matched.set(g.key, c); if (c) regroup(); } })();
+    // (Three at a time: each is a lookup on AniList or Cinemeta, and one slow answer no longer holds the rest.)
+    const my = token; let next = 0;
+    const worker = async () => { while (next < todo.length) { const g = todo[next++]; if (my !== token) return; if (matched.has(g.key)) continue; matched.set(g.key, null); const c = await matchRelease(g.rel, found, getSettings().animeAdult).catch(() => null); if (my !== token) return; matched.set(g.key, c); if (c) regroup(); } };
+    for (let k = 0; k < 3; k++) void worker();
   };
   const groupCard = (w: { rows: { r: SearchResult; p: Release }[]; rel: Release; key: string }, card: TitleCard | null, open: boolean) => {
     const more = w.rows.length > 4 && !open; let expanded = open;
@@ -130,6 +136,7 @@ export function searchView(q?: string): HTMLElement & { dispose?: () => void } {
     h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title),
       h('small', { class: 'src' }, [r.quality ?? p.resolution, r.size ? formatBytes(r.size) : '', r.seeds !== undefined ? `↑${localDigits(r.seeds)}` : '', p.season !== undefined && p.episode !== undefined ? `S${String(p.season).padStart(2, '0')}E${String(p.episode).padStart(2, '0')}` : p.episode !== undefined ? t('episodeN', { n: p.episode }) : '', p.batch ? t('animeBatch') : '', r.date ?? '', r.source].filter(Boolean).join(' · '))));
 
+  void warmSources();
   if (q) void find(); else void empty();
   root.dispose = () => { token++; };
   return root;

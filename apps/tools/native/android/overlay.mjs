@@ -172,6 +172,8 @@ ${process.env.KT_A11Y === '1' ? A11Y_SERVICE : ''}    <service android:name=".Kt
 }
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
+// (The player's floating window: the main activity may shrink into picture in picture.)
+if (!manifest.includes('android:supportsPictureInPicture')) manifest = manifest.replace('<activity', '<activity\n      android:supportsPictureInPicture="true"');
 if (!manifest.includes('android:usesCleartextTraffic')) manifest = manifest.replace('<application', '<application android:usesCleartextTraffic="true"');
 if (!manifest.includes('android:requestLegacyExternalStorage')) manifest = manifest.replace('<application', '<application android:requestLegacyExternalStorage="true"');
 // (The other Kurokawa app is looked for by its package name: Android 11+ must be told.)

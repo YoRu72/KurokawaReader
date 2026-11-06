@@ -504,3 +504,31 @@ html.pc .dc-cont, html.pc .dc-row.dc-k-cont > .dc-ph { width: 380px; }
 .studio-box:empty { display: none; }
 .studio-box .dc-rail { margin-bottom: 8px; }
 @media (prefers-reduced-motion: reduce) { .dc-ph, .dc-hero.skeleton { animation: none; } .dc-tile-img, .dc-poster-pic, .dc-dot { transition: none; } }
+
+/* The player's sheets (chapters, subtitles, audio, more): compact, as REX Player's — a side panel when the phone is on
+   its side, a short sheet otherwise; the rows smaller. */
+body:has(> .kt-player) > .sheet { max-width: 560px; max-height: 62vh; }
+body:has(> .kt-player) > .sheet .sheet-head { padding: 2px 8px 2px 18px; }
+body:has(> .kt-player) > .sheet .sheet-head h3 { font-size: 16px; }
+body:has(> .kt-player) > .sheet .sheet-body { padding: 4px 12px 10px; font-size: 14px; line-height: 1.45; }
+body:has(> .kt-player) > .sheet .dest-row { padding: 7px 10px; gap: 10px; font-size: 14px; }
+body:has(> .kt-player) > .sheet .ep-num { width: 30px; height: 30px; border-radius: 8px; font-size: 13px; }
+@media (orientation: landscape) {
+  body:has(> .kt-player) > .sheet, html.pc body:has(> .kt-player) > .sheet { inset: 0 0 0 auto; margin: 0; width: min(380px, 46vw); max-width: none; height: 100%; max-height: none; border-radius: var(--sh-xl) 0 0 var(--sh-xl); padding-bottom: 0; animation: side-in-rtl var(--dur-long) var(--ease-emph-decel); }
+  [dir='rtl'] body:has(> .kt-player) > .sheet { inset: 0 auto 0 0; border-radius: 0 var(--sh-xl) var(--sh-xl) 0; animation-name: side-in; }
+  body:has(> .kt-player) > .sheet::before { display: none; }
+  body:has(> .kt-player) > .sheet .sheet-body { flex: 1; }
+  body:has(> .kt-player) > .sheet-scrim { background: rgb(0 0 0 / .25); }
+}
+.dest-row:has(> .ep-num) { grid-template-columns: auto 1fr auto; }
+
+/* REX Player's floating frame controls: two pills at the end side over the video, the time above them. */
+.kt-framepad { position: absolute; inset-inline-end: 16px; bottom: 120px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.kt-fp-info { all: unset; cursor: pointer; font: 12px/1 ui-monospace, Menlo, monospace; color: #fff; background: rgb(0 0 0 / .55); padding: 6px 10px; border-radius: 999px; }
+.kt-fp-row { display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: rgb(28 28 32 / .72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgb(255 255 255 / .08); }
+.kt-fp-btn { all: unset; box-sizing: border-box; width: 46px; height: 40px; display: grid; place-items: center; border-radius: 999px; color: #fff; cursor: pointer; font-size: 18px; }
+.kt-fp-btn:active { background: rgb(255 255 255 / .16); }
+.kt-fp-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.kt-fp-btn b { font-weight: 600; }
+.kt-player.kt-pip .kt-framepad { display: none; }
+@media (orientation: portrait) { .kt-framepad { bottom: 170px; } }

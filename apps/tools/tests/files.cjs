@@ -157,6 +157,23 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.waitForTimeout(300);
   ok("recent files sit in the drawer", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"new.png\")")));
   await p.keyboard.press('Escape');
+  // the drawer from the side: a finger swiped from the start side opens it; swiped back, it closes
+  await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa'); await p.waitForSelector('.files-row:has-text("photo.jpg")');
+  const swipe = (sel, x0, x1) => p.evaluate(([sel, x0, x1]) => { const el = document.querySelector(sel); const ev = (type, x) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, pointerType: 'touch', clientX: x, clientY: 400 })); ev('pointerdown', x0); for (let k = 1; k <= 8; k++) ev('pointermove', x0 + ((x1 - x0) * k) / 8); ev('pointerup', x1); }, [sel, x0, x1]);
+  await swipe('.files-view', 20, 260); await p.waitForTimeout(900);
+  const side = await p.evaluate(() => { const d = document.querySelector('.sheet.files-drawer'); if (!d) return null; const r = d.getBoundingClientRect(); return { left: Math.round(r.left), top: Math.round(r.top), h: Math.round(r.height), side: d.classList.contains('side-drawer') }; });
+  ok('a swipe from the side opens the drawer, full height at the side', !!side && side.side && side.left === 0 && side.top === 0 && side.h === 900, side);
+  await swipe('.sheet.files-drawer', 300, 40); await p.waitForTimeout(400);
+  ok('swiped back, the drawer closes', !(await p.$('.sheet.files-drawer')));
+  // the gallery: a picture opens with the folder's videos among its neighbours; a swipe goes to the next; a video shows a Play button
+  await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa'); await p.waitForSelector('.files-row:has-text("photo.jpg")');
+  await p.click('.files-row:has-text("photo.jpg") .files-main'); await p.waitForSelector('.files-viewer', { timeout: 5000 });
+  ok('a picture opens in the gallery with the folder\'s video counted', (await p.textContent('.files-viewer')).includes('/ 2'));
+  const st = await p.$eval('.files-viewer-stage', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await p.mouse.move(st.x + 120, st.y); await p.mouse.down(); for (let k = 1; k <= 6; k++) await p.mouse.move(st.x + 120 - k * 40, st.y); await p.mouse.up(); await p.waitForTimeout(300);
+  const g = await p.evaluate(() => ({ title: document.querySelector('.files-viewer .sheet-head h3')?.textContent, play: !document.querySelector('.files-viewer-play').hidden, wall: [...document.querySelectorAll('.files-viewer .sheet-actions button')].some((b) => !b.hidden && /wallpaper/i.test(b.textContent)) }));
+  ok('a swipe goes to the next item; a video there has a Play button and no picture-only actions', g.title === 'Movie.mkv' && g.play && !g.wall, g);
+  await p.keyboard.press('Escape');
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

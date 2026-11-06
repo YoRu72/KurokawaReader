@@ -8,7 +8,7 @@ import { canArchive, pickFiles } from '../archives';
 import { isIos } from './ipa';
 import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
-import { ktPlugin } from '../native';
+import { ktPlugin, clipboardText } from '../native';
 import { videoPanel, preferredFormat, nativeHls } from './addVideo';
 import { galleryOf } from '../downloads/galleries';
 import { videoEnabled, isVideoHost } from '../video/ytdlp';
@@ -27,13 +27,12 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const fileIn = h('input', { type: 'file', accept: '.torrent,application/x-bittorrent', hidden: true }) as HTMLInputElement;
   let torrentFile: { name: string; b64: string } | null = null;
   const fileNote = h('p', { class: 'src', hidden: true });
-  fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (!f) return; torrentFile = { name: f.name, b64: toBase64(await f.arrayBuffer()) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); });
+  fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (!f) return; torrentFile = { name: f.name, b64: toBase64(await f.arrayBuffer()) }; fileNote.textContent = f.name; fileNote.hidden = false; clear.hidden = false; void metadata(); });
   const tools = h('div', { class: 'add-tools' },
-    h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { const s = await navigator.clipboard.readText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value ? ta.value + '\n' : '') + s.trim(); void metadata(); } catch { toast(t('nothingToPaste'), 'error'); } } }, icon('copy'), t('pasteLink')),
+    h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const s = await clipboardText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + s.trim(); clear.hidden = false; void metadata(); void refreshJar(); } }, icon('copy'), t('pasteLink')),
     ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []),
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const one = parseSources(ta.value)[0]?.url ?? ''; sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(one)); } }, icon('link'), t('grabTitle')),
     ...(getSettings().addons.includes('archives') && canArchive() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const fs = await pickFiles(true); if (!fs.length) return; sh.close(); if (fs.length === 1) void import('./archiveBrowse').then((m) => m.browseArchive(fs[0])); else void import('./extract').then((m) => m.extractMany(fs)); } }, icon('archive'), t('openArchive')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./extract').then((m) => m.createZipSheet()); } }, icon('plus'), t('createZip'))] : []));
-  // Options
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
   let dirChosen = false;
@@ -63,7 +62,6 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (r.page) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('linkIsPage')}`));
     void showStorage();
   };
-  // (Folders used before, for one tap; the newest first.)
   const recent = (): string[] => (getSettings().recentDirs ?? []).filter((d) => d && d !== getSettings().downloadDir).slice(0, 5);
   const dirMenu = h('div', { class: 'folder-chips', hidden: !recent().length }, ...recent().map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d)));
   const drawDirs = () => { const r = recent(); dirMenu.hidden = !r.length; dirMenu.replaceChildren(...r.map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d))); };
@@ -100,17 +98,21 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
   const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
-  const video = videoPanel(() => undefined);
+  // (A page yt-dlp read — a post on X, a reel, a video — is not a file: no name to give it, no «web page» warning.)
+  const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); });
   const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
   // A Hugging Face model's page: offered to the model window, where its files can be picked.
   const hfBox = h('div', { class: 'plan-note hf-offer', hidden: true });
   // (A link to an iOS app, on an iPhone: offered to the installer — SideStore, AltStore, TrollStore.)
   const peekIpa = (u: string | null): boolean => { if (!u || !/\.ipa(\?|$)/i.test(u) || !isIos()) return false; hfBox.hidden = false; hfBox.replaceChildren(icon('apps'), h('span', { class: 'grow' }, t('ipaOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./ipa').then((m) => m.ipaSheet({ url: u })); } }, t('ipaInstallIt'))); return true; };
   const peekHf = (u: string | null) => peekIpa(u) || void import('../hf/hf').then((HF) => {
-    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
+    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; if (getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; } hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
-  sh.body.append(ta, hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
+  const clear = h('button', { type: 'button', class: 'icon-btn add-clear', 'aria-label': t('clearField'), title: t('clearField'), hidden: !initial, onclick: () => {
+    ta.value = ''; torrentFile = null; fileIn.value = ''; fileNote.hidden = true; if (!how.name) { name.value = ''; ext.value = ''; nameTouched = false; }
+    clear.hidden = true; check.hidden = true; void metadata(); void refreshJar(); ta.focus(); } }, icon('close')) as HTMLButtonElement;
+  sh.body.append(h('div', { class: 'add-field' }, ta, clear), hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
   const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
   // (A batch: every link looked at first — what is not a file, what needs a sign-in, what is gone, what is here already — and the sizes against the free space.)
   const check = h('button', { type: 'button', class: 'btn tonal', hidden: true, onclick: () => void checkBatch() }, icon('check'), t('preflightCheck')) as HTMLButtonElement;
@@ -151,7 +153,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   };
   // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
   const sources = (): TaskSource[] => { const ref = referer.value.trim(); const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)).map((x) => (ref && x.url ? { ...x, headers: { ...(x.headers ?? {}), Referer: ref } } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
-  let typeTimer = 0; ta.addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = window.setTimeout(() => { void metadata(); void refreshJar(); }, 600); check.hidden = parseSources(ta.value).length < 2; });
+  let typeTimer = 0; ta.addEventListener('input', () => { clear.hidden = !ta.value; clearTimeout(typeTimer); typeTimer = window.setTimeout(() => { void metadata(); void refreshJar(); }, 600); check.hidden = parseSources(ta.value).length < 2; });
   if (initial) { void metadata(); void refreshJar(); check.hidden = parseSources(ta.value).length < 2; }
   go.addEventListener('click', async () => {
     const srcs = sources();

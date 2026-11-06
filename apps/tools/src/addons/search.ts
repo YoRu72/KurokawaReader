@@ -26,14 +26,27 @@ async function load(id: string): Promise<SearchModule> {
 }
 const timeout = <T>(p: Promise<T>, ms: number, what: string) => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what}: ${t('timedOut')}`)), ms))]);
 
+/** The sources' modules loaded ahead (the search page opening), so the first search does not wait on them. */
+export async function warmSources(): Promise<void> { for (const a of await searchSources()) void load(a.id).catch(() => undefined); }
+// (What a source answered for a query, kept ten minutes: the same search again — back, a picked work dropped — is
+// drawn at once.)
+const answered = new Map<string, { at: number; rows: SearchResult[] }>();
+const ANSWER_MS = 10 * 60_000;
+
 /** Every source at once; each one's results (or its error) reported as it answers; one copy of a torrent kept. */
 export async function runSearch(query: string, title: TitleCtx | undefined, onEach: (a: AddonEntry, res: SearchResult[] | Error) => void): Promise<SearchResult[]> {
   const srcs = await searchSources(); const all: SearchResult[] = []; const seen = new Map<string, SearchResult>();
   const hashOf = (r: SearchResult) => (/btih:([a-z0-9]{32,40})/i.exec(r.magnet ?? '')?.[1] ?? '').toLowerCase();
   await Promise.all(srcs.map(async (a) => {
     try {
-      const m = await load(a.id); if (typeof m.search !== 'function') { onEach(a, []); return; }
-      const rows = await timeout(m.search(query, { fetch: addonFetch() as unknown as typeof fetch, lang: getLang(), settings: addonSettings(a), title }), 25000, a.name);
+      const key = `${a.id}|${a.version ?? ''}|${JSON.stringify(addonSettings(a))}|${query}|${JSON.stringify(title ?? null)}`; const kept = answered.get(key);
+      let rows: SearchResult[];
+      if (kept && Date.now() - kept.at < ANSWER_MS) rows = kept.rows;
+      else {
+        const m = await load(a.id); if (typeof m.search !== 'function') { onEach(a, []); return; }
+        rows = (await timeout(m.search(query, { fetch: addonFetch() as unknown as typeof fetch, lang: getLang(), settings: addonSettings(a), title }), 25000, a.name)) ?? [];
+        answered.set(key, { at: Date.now(), rows }); if (answered.size > 200) answered.delete(answered.keys().next().value!);
+      }
       const fresh: SearchResult[] = [];
       for (const r of rows ?? []) { if (!r?.title || !(r.magnet || r.url || r.torrent)) continue; const k = hashOf(r) || r.url || r.torrent || r.title; const had = seen.get(k); if (had) { had.seeds = Math.max(had.seeds ?? 0, r.seeds ?? 0); continue; } const x = { ...r, source: r.source || a.id }; seen.set(k, x); fresh.push(x); all.push(x); }
       onEach(a, fresh);

@@ -5,12 +5,13 @@ import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countItems } from '../i18n';
 import { isStalled, phaseShort } from '../downloads/live';
-import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem } from '../engine';
+import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem, mainFilePath } from '../engine';
+import { canShareFiles, shareFiles } from '../ui/shareMany';
 import { noteOf, countFinished, autoClean, retryFailed, exportList, importList, stats } from '../downloads/extras';
 import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
 import { getSettings, onSettingsChange } from '../settings';
-import { nativePlatform, ktPlugin } from '../native';
+import { nativePlatform, ktPlugin, clipboardText } from '../native';
 import { canArchive, isArchiveName } from '../archives';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 import { updateSettings } from '../settings';
@@ -48,7 +49,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const moreMenu = () => {
     const sh = openSheet(t('navDownloads'), t('close'));
     const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
-    row('copy', t('pasteDownload'), () => void (async () => { let text = ''; try { text = await navigator.clipboard.readText(); } catch { /* not allowed */ } if (!text.trim()) { toast(t('clipboardEmpty'), 'error'); return; } addSheet(text.trim()); })());
+    row('copy', t('pasteDownload'), () => void (async () => { const text = await clipboardText(); if (!text.trim()) { toast(t('clipboardEmpty'), 'error'); return; } addSheet(text.trim()); })());
     // (Slow mode: the downloads held to a gentle speed — a call, a game, a shared connection —, and back.)
     { const slow = !!getSettings().slowMode; row('clock', slow ? t('slowModeOff') : t('slowModeOn'), () => { const st = getSettings(); const was = st.slowMode; const limits = was ? (was.prev ?? { down: 0, up: 0 }) : { down: 512 * 1024, up: 64 * 1024 }; updateSettings({ limits, slowMode: was ? undefined : { prev: st.limits } }); void getEngine().setLimits?.(limits); toast(was ? t('slowModeOff') : t('slowModeOnToast')); }); }
     void import('../downloads/wifishare').then((m) => { if (m.canShareWifi() && tasks.some((x) => x.state === 'done')) row('wifi', t('wifiShareDone'), () => void m.shareWifiSheet(tasks)); });
@@ -201,7 +202,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const eng = getEngine();
     const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(x.id)}`));
-    if (x.state === 'done' && eng.open) { row('external', t('open'), () => void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error'))); row('folder', t('showInFolder'), () => void import('./folder').then((m) => m.showInFolder(x))); if (eng.rename) row('pen', t('rename'), () => void import('./folder').then((m) => m.renameSheet(x))); }
+    if (x.state === 'done' && eng.open) { row('external', t('open'), () => void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error'))); row('folder', t('showInFolder'), () => void import('./folder').then((m) => m.showInFolder(x))); if (canShareFiles() && mainFilePath(x)) row('share', t('share'), () => void shareFiles([mainFilePath(x)]).catch((er) => toast(String(er.message ?? er), 'error'))); if (eng.rename) row('pen', t('rename'), () => void import('./folder').then((m) => m.renameSheet(x))); }
     if (x.state === 'done' && x.kind !== 'torrent' && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('archive', t('extract'), async () => { if (!getSettings().addons.includes('archives')) { const { needAddon } = await import('../addons/need'); if (!(await needAddon('archives', t('addonWhyArchives')))) return; } void import('./extract').then((m) => m.extractSheet(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)); });
     if (x.state === 'done' && x.kind !== 'torrent' && canArchive() && isArchiveName(displayName(x)) && x.dir && !x.dir.startsWith('content:')) row('folder', t('archiveBrowse'), () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${x.name}`)));
     // (An app among what came — a plain download, or a torrent's files —: installed from here; several, one row each.)

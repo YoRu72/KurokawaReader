@@ -15,7 +15,8 @@ export interface VideoPanel {
   el: HTMLElement;
   /** Looks at one link (or clears the panel for anything else). */
   check(url: string | null): void;
-  /** What to add for the link checked: one video, a playlist's videos, or null (an ordinary download). */
+  /** What to add for the link checked: one video, a playlist's videos, or null (an ordinary download) — non-null
+   *  once yt-dlp has read the page, so the sheet can drop an ordinary file's parts. */
   picks(): { url: string; video: VideoPick }[] | null;
   /** Whether a check is still running (the Download button waits for it). */
   busy(): Promise<void>;

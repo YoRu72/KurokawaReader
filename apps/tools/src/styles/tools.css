@@ -54,6 +54,11 @@ html.pc .fab { display: none; }
 
 /* Add sheet */
 .add-input { width: 100%; box-sizing: border-box; font: 14px/1.5 ui-monospace, Menlo, monospace; border: 0; border-radius: 14px; padding: 12px; background: var(--md-surface-container-highest); color: var(--md-on-surface); resize: vertical; }
+.add-field { position: relative; }
+.add-field .add-input { padding-inline-end: 44px; }
+.add-clear { position: absolute; top: 6px; inset-inline-end: 6px; width: 32px; height: 32px; min-width: 0; border-radius: 50%; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+.add-clear[hidden] { display: none; }
+.add-sheet.as-video .save-as > .field, .add-sheet.as-video .add-size { display: none; }
 .add-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .add-options { margin-top: 10px; } .add-options summary { cursor: pointer; color: var(--md-primary); font-weight: 600; padding: 6px 0; }
 .add-options .field { margin: 10px 0; } .field.row { flex-direction: row; align-items: center; justify-content: space-between; }
@@ -703,6 +708,12 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-fab { height: 56px; width: 56px; padding: 0; justify-content: center; border-radius: 50%; bottom: calc(var(--nav-h, 64px) + 18px); }
 .files-view.selecting .files-fab { display: none; }
 .files-drawer .sheet-body { padding-top: 0; }
+.sheet.side-drawer, html.pc .sheet.side-drawer { inset: 0 auto 0 0; margin: 0; width: min(340px, 86vw); max-width: none; height: 100%; max-height: none; border-radius: 0 var(--sh-xl) var(--sh-xl) 0; padding-bottom: var(--safe-bottom); padding-top: var(--safe-top, 0px); animation: side-in var(--dur-long) var(--ease-emph-decel); transition: transform .16s ease; touch-action: pan-y; transform-origin: 0 50%; }
+[dir='rtl'] .sheet.side-drawer, html.pc[dir='rtl'] .sheet.side-drawer { inset: 0 0 0 auto; border-radius: var(--sh-xl) 0 0 var(--sh-xl); animation-name: side-in-rtl; }
+.sheet.side-drawer::before { display: none; }
+.sheet.side-drawer .sheet-body { flex: 1; }
+@keyframes side-in { from { transform: translateX(-100%); } }
+@keyframes side-in-rtl { from { transform: translateX(100%); } }
 .files-drawer-section { padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 50%, transparent); }
 .files-drawer-label { display: block; padding: 6px 12px; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
 .files-drawer-row { width: 100%; text-align: start; }
@@ -726,6 +737,10 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-viewer .sheet-body { padding: 0; }
 .files-viewer-stage { height: 62vh; display: grid; place-items: center; overflow: hidden; background: #000; touch-action: none; border-radius: 12px; }
 .files-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; transition: transform .05s linear; user-select: none; }
+.files-viewer-stage > * { grid-area: 1 / 1; }
+.files-viewer-stage > [hidden] { display: none; }
+.files-viewer-play { width: 72px; height: 72px; border-radius: 50%; border: 0; display: grid; place-items: center; background: rgb(0 0 0 / .55); color: #fff; cursor: pointer; }
+.files-viewer-play .icon, .files-viewer-play svg { width: 36px; height: 36px; }
 .files-viewer-bar { align-items: center; justify-content: center; gap: 12px; padding: 8px; }
 .files-trash-row .files-main { min-width: 0; }
 .files-kind-row { padding: 6px 0; }

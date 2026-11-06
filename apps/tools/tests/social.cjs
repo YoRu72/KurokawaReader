@@ -46,8 +46,7 @@ const PHOTOS = { code: 200, message: 'OK', tweet: { id: '1700000000000000001', t
   added = await p.evaluate(() => window.__added); check('named after the post', added.every((a, i) => a.name === `bsky.app-3myx7vphq3s2j-${i + 1}.jpg` && /cdn\.bsky\.app\/img\/feed_fullsize/.test(a.source.url)));
   // The Add sheet: a post link offers its media.
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet textarea');
-  await p.fill('.sheet textarea', 'https://twitter.com/someone/status/1700000000000000001'); await p.waitForSelector('.hf-offer:not([hidden]) button', { timeout: 5000 });
-  await p.click('.hf-offer button'); await p.waitForSelector('.grab-row'); check('add sheet opens the post', (await p.$$('.grab-row')).length === 2);
+  await p.fill('.sheet textarea', 'https://twitter.com/someone/status/1700000000000000001'); await p.waitForSelector('.grab-row', { timeout: 6000 }); check('a post typed in the add sheet opens at once (no «Show them»)', (await p.$$('.grab-row')).length === 2 && !(await p.$('.add-sheet')));
   check('no page errors', !errors.filter((e) => e !== 'no page errors').length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

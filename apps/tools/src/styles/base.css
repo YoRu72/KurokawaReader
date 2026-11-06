@@ -438,6 +438,8 @@ html[dir='rtl'] .panel-head { padding: 12px 22px 8px 10px; }
 
 .panel .handle { display: none; }
 .scrim { position: fixed; inset: 0; z-index: 35; background: var(--md-scrim); animation: fade var(--dur-med) ease; }
+/* (A sheet's scrim right under its sheet — above the player and anything else full-screen — so a tap outside closes it.) */
+.scrim.sheet-scrim { z-index: 69; }
 @keyframes fade { from { opacity: 0; } }
 @media (max-width: 760px) {
   .panel { top: auto; inset-inline: 0; width: auto; max-height: 84vh; height: auto; border-radius: var(--sh-xl) var(--sh-xl) 0 0; transform: translateY(105%); padding-top: 0; }

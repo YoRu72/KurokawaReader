@@ -18,7 +18,7 @@
 //   And: openings/endings skipped (AniSkip, chapters), the episode marked watched on AniList, the A/B range cut to
 //   a file through ffmpeg, another player.
 import { getSettings } from '../settings';
-import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress, closeSheets } from '../ui/dom';
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
 import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
@@ -109,7 +109,15 @@ export function openPlayer(src: PlayerSource): void {
   const wake = navigator.wakeLock && P.keepScreenOn ? navigator.wakeLock.request('screen').catch(() => null) : null;
   // (The system bars away while the player is up, as chosen; back when it closes.)
   const barsPlug = ktPlugin() as unknown as { systemBars?(o: { mode: 'both' | 'status' | 'show' }): Promise<void> } | null; if (P.immersive !== 'none') void barsPlug?.systemBars?.({ mode: P.immersive === 'status' ? 'status' : 'both' }).catch(() => undefined);
-  if (P.orientation !== 'auto') void (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock?.(P.orientation === 'landscape' ? 'landscape' : 'landscape-primary').catch(() => undefined);
+  // (The screen's turn: the phone's own when the app is on one — the web view's lock does not always let go —, else the
+  // browser's; put back to what the phone does by itself when the player closes.)
+  const turnScreen = async (to: 'landscape' | 'portrait' | 'auto'): Promise<void> => {
+    const n = ktPlugin() as unknown as { orientation?(o: { to: string }): Promise<void> } | null;
+    if (n?.orientation) { await n.orientation({ to }); return; }
+    const o = screen.orientation as ScreenOrientation & { lock?(x: string): Promise<void>; unlock?(): void };
+    if (to === 'auto') o.unlock?.(); else await o.lock!(to);
+  };
+  if (P.orientation !== 'auto') void turnScreen('landscape').catch(() => undefined);
   const clockTick = () => { clock.textContent = new Date().toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }); };
   clockTick(); const clockTimer = window.setInterval(clockTick, 20000);
 
@@ -331,7 +339,20 @@ export function openPlayer(src: PlayerSource): void {
     paint(lines, hh - hh * 0.04 - (hh * 0.9 * (100 - P.subPos)) / 100, true); paint(topLines, size * 1.3 + hh * 0.03, false);
     g.restore();
   }
-  async function pip() { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); } catch { toast(t('pipFailed'), 'error'); } }
+  // (The floating window: on a phone the whole app shrinks around the player — the web view has none of its own —;
+  // elsewhere the browser's own. Left playing, the app goes into it by itself when the setting says.)
+  type PipPlug = { pip?(o: { w: number; h: number }): Promise<{ ok: boolean }>; pipAuto?(o: { on: boolean; w: number; h: number }): Promise<void> };
+  const pipPlug = (): PipPlug | null => (ktPlugin() as unknown as PipPlug | null);
+  const nativePip = (): boolean => !!pipPlug()?.pip;
+  const dims = () => ({ w: video.videoWidth || 16, h: video.videoHeight || 9 });
+  async function pip() {
+    if (nativePip()) { try { const r = await pipPlug()!.pip!(dims()); if (!r?.ok) toast(t('pipFailed'), 'error'); } catch { toast(t('pipFailed'), 'error'); } return; }
+    try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); } catch { toast(t('pipFailed'), 'error'); }
+  }
+  const pipArm = (on: boolean) => { if (nativePip()) void pipPlug()!.pipAuto?.({ on: on && getPrefs().pipOnLeave !== false, ...dims() }).catch(() => undefined); };
+  const onPipChange = (e: Event) => { const on = !!(e as CustomEvent<boolean>).detail; root.classList.toggle('kt-pip', on); if (on) { controlsOn = false; root.classList.add('hide-ui'); preview?.hide(); closeSheets(); } };
+  window.addEventListener('ktpip', onPipChange);
+  video.addEventListener('play', () => pipArm(true)); video.addEventListener('pause', () => pipArm(false));
   async function fullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.requestFullscreen(); } catch { /* not allowed */ } }
   const remote = (video as HTMLVideoElement & { remote?: { prompt(): Promise<void>; state: string } }).remote;
   async function cast() { try { await remote!.prompt(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
@@ -687,9 +708,9 @@ export function openPlayer(src: PlayerSource): void {
     { id: 'speed', icon: 'gauge', label: t('playbackSpeed'), run: () => speedSheet() },
     { id: 'decoder', icon: 'chip', label: t('toolDecoder'), run: () => decoderSheet() },
     { id: 'rotation', icon: 'screenRotate', label: t('toolScreenRotation'), run: () => cycleOrientation() },
-    { id: 'frames', icon: 'aperture', label: t('toolFrames'), run: () => frameSheet() },
+    { id: 'frames', icon: 'aperture', label: t('toolFrames'), run: () => toggleFramePad(), on: () => !!framePad },
     { id: 'zoom', icon: 'zoomIn', label: t('toolZoom'), run: () => zoomSheet() },
-    { id: 'pip', icon: 'mini', label: t('pip'), run: () => void pip(), show: () => 'pictureInPictureEnabled' in document && !mpv },
+    { id: 'pip', icon: 'mini', label: t('pip'), run: () => void pip(), show: () => nativePip() || ('pictureInPictureEnabled' in document && document.pictureInPictureEnabled && !mpv) },
     { id: 'aspect', icon: 'aspect', label: t('toolAspect'), run: () => cycleAspect() },
     { id: 'lock', icon: 'lock', label: t('lockScreen'), run: () => lock(true) },
     { id: 'audio', icon: 'music', label: t('audioTracks'), run: () => audioSheet() },
@@ -748,6 +769,28 @@ export function openPlayer(src: PlayerSource): void {
   }
   /** Frame by frame (REX Player's frame navigation): a frame back or on, ten at a time, the frame's number and time,
    *  saved as a picture, made A or B of the cut. */
+  // ---- REX Player's floating frame controls: on the video while switched on — a frame back, the frame saved, a frame
+  // on, A, clear, B and cut —, so stepping through frames needs no menu each time (the full sheet: a tap on the time).
+  let framePad: HTMLElement | null = null; let padPaint: (() => void) | null = null;
+  function toggleFramePad(on = !framePad) {
+    framePad?.remove(); framePad = null; if (padPaint) video.removeEventListener('seeked', padPaint); padPaint = null; drawTools(); if (!on) return;
+    video.pause(); const rate = () => fps || 30;
+    const info = h('button', { type: 'button', class: 'kt-fp-info', dir: 'ltr', onclick: () => frameSheet() });
+    const paint = () => { info.textContent = `${fmtTime(video.currentTime)}.${String(Math.floor((video.currentTime % 1) * 1000)).padStart(3, '0')} · ${t('frameShort')} ${localDigits(Math.round(video.currentTime * rate()))}`; };
+    const step = (n: number) => { video.pause(); if (mpv && Math.abs(n) === 1) { mpv.command(n > 0 ? 'frame-step' : 'frame-back-step'); window.setTimeout(paint, 250); return; } seekTo(Math.max(0, video.currentTime + n / rate())); window.setTimeout(paint, 200); };
+    const btn = (ic: string, label: string, fn: () => void, text?: string) => { const b = h('button', { type: 'button', class: 'kt-fp-btn', 'aria-label': label, title: label, onclick: (e: Event) => { e.stopPropagation(); fn(); } }, text ? h('b', null, text) : icon(ic)); return b; };
+    const back = btn('rewind', t('frameBack'), () => step(-1)); const fwd = btn('fastForward', t('frameForward'), () => step(1));
+    onLongPress(back, () => step(-10)); onLongPress(fwd, () => step(10));
+    framePad = h('div', { class: 'kt-framepad', onpointerdown: (e: Event) => e.stopPropagation(), onclick: (e: Event) => e.stopPropagation() },
+      info,
+      h('div', { class: 'kt-fp-row' }, back, btn('camera', t('frameSave'), () => screenshot()), fwd, btn('close', t('close'), () => toggleFramePad(false))),
+      h('div', { class: 'kt-fp-row' },
+        btn('', t('framePointA'), () => { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); drawMarks(); }, 'A'),
+        btn('close', t('toolAbLoop'), () => { abA = null; abB = null; abBtn.classList.remove('on'); drawMarks(); flashText(t('toolAbLoop') + ' ✕'); }),
+        btn('', t('framePointB'), () => { abB = Math.max((abA ?? 0) + 0.04, video.currentTime); flashText(`B ${fmtTime(abB)}`); abBtn.classList.add('on'); drawMarks(); }, 'B'),
+        btn('scissors', t('toolCut'), () => void cutSheet())));
+    root.append(framePad); paint(); padPaint = paint; video.addEventListener('seeked', paint); drawTools();
+  }
   function frameSheet() {
     video.pause(); const sh = openSheet(t('toolFrames'), t('close')); const rate = () => fps || 30;
     const info = h('p', { class: 'kt-frame-info', dir: 'ltr' }); const paint = () => { info.textContent = `${fmtTime(video.currentTime)}.${String(Math.floor((video.currentTime % 1) * 1000)).padStart(3, '0')} · ${t('frameShort')} ${localDigits(Math.round(video.currentTime * rate()))} · ${localDigits(Math.round(rate() * 100) / 100)} fps`; };
@@ -773,11 +816,11 @@ export function openPlayer(src: PlayerSource): void {
   const ktPluginMpvGet = async (name: string): Promise<string | null> => { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { mpvGet?(o: { name: string }): Promise<{ value: string | null }> } | null; try { return (await kp?.mpvGet?.({ name }))?.value ?? null; } catch { return null; } };
   /** The screen's turn: as the phone is held, landscape, portrait — kept locked so. */
   function cycleOrientation() {
-    const o = screen.orientation as ScreenOrientation & { lock?(x: string): Promise<void>; unlock?(): void };
     const next = orientLock === 'any' ? 'landscape' : orientLock === 'landscape' ? 'portrait' : 'any'; orientLock = next;
-    if (next === 'any') o.unlock?.(); else void o.lock?.(next).catch(() => toast(t('rotationUnavailable'), 'error'));
+    void turnScreen(next === 'any' ? 'auto' : next).catch(() => toast(t('rotationUnavailable'), 'error'));
     flashText(next === 'any' ? t('orientationAuto') : next === 'landscape' ? t('orientationLandscape') : t('orientationPortrait'));
   }
+
   let orientLock: 'any' | 'landscape' | 'portrait' = 'any';
   /** The picture's zoom (and its pan put back). */
   function zoomSheet() {
@@ -960,7 +1003,7 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- closing
   function close() {
-    barRo.disconnect();
+    barRo.disconnect(); pipArm(false); window.removeEventListener('ktpip', onPipChange);
     playerGone = true;
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (Opened by another app: the position and the length handed back to it, and the app steps aside.)
@@ -970,7 +1013,7 @@ export function openPlayer(src: PlayerSource): void {
     window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void (screen.orientation as ScreenOrientation & { unlock?(): void }).unlock?.();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);
   }
   root.addEventListener('kt-close', close);
   (root as HTMLElement & { _kt?: unknown })._kt = { setVolume, applySound, subLine, syncMark, get subDelay() { return subDelay; }, get boost() { return boost; }, addBookmark, cycleCrop };

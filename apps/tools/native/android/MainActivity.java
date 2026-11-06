@@ -6,6 +6,17 @@ import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    /** The player is playing and the floating window is wanted when the app is left (set by the page). */
+    static volatile boolean pipAuto = false; static volatile int pipW = 16, pipH = 9;
+    // (Android 12 and later enter by themselves from the params; before that, leaving the app is the cue.)
+    @Override protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (pipAuto && android.os.Build.VERSION.SDK_INT >= 26 && android.os.Build.VERSION.SDK_INT < 31) { try { enterPictureInPictureMode(KtPlugin.pipParamsFor(pipW, pipH)); } catch (Throwable ignored) {} }
+    }
+    @Override public void onPictureInPictureModeChanged(boolean on, android.content.res.Configuration cfg) {
+        super.onPictureInPictureModeChanged(on, cfg);
+        try { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().evaluateJavascript("window.dispatchEvent(new CustomEvent('ktpip',{detail:" + on + "}))", null); } catch (Throwable ignored) {}
+    }
     @Override public void onCreate(Bundle savedInstanceState) {
         catchCrashes(getApplicationContext());
         noteLastExit(getApplicationContext());

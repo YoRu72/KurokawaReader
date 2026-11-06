@@ -5,6 +5,7 @@
 // installer) or by any app (Open with…, Open as a kind); a selection (held) copied, cut, pasted, deleted, renamed,
 // shared, zipped, with properties; the operations as jobs with their progress and a question when a name is taken;
 // what other apps share to «Save to device» saved where you choose.
+import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countFiles, countItems, countFolders } from '../i18n';
 import { ktPlugin, listen, nativePlatform } from '../native';
@@ -236,7 +237,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       if (k === 'archive' || /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|cbr|jar|001)$/i.test(e.name)) { go(arcPath(e.path)); return; }
       if (/\.(srt|ass|ssa|vtt|sub)$/i.test(e.name) && e.size < 4_000_000) { const { workshopSheet } = await import('../subs/workshop'); const vid = shown().find((x) => !x.dir && kindOfFile(x.name) === 'video' && x.name.replace(/\.[^.]+$/, '').startsWith(e.name.replace(/\.[^.]+$/, '').replace(/\.[a-z]{2,3}$/i, ''))); await workshopSheet(e.path, vid?.path); return; }
       if (/\.(txt|nfo|md|log|json|xml|srt|ass|vtt|csv|ini|cfg|yml|yaml|html?|css|js|ts|py|sh|java|kt|c|h|cpp)$/i.test(e.name) && e.size < 4_000_000 && pl) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return; }
-      if (k === 'image' && pl) { const m = await import('./filesMore'); const { localFileUrl } = await import('../player/files'); const pics = shown().filter((x) => !x.dir && kindOfFile(x.name) === 'image'); await m.imageViewer(pics, Math.max(0, pics.findIndex((x) => x.path === e.path)), localFileUrl, (x) => void confirmDelete([x.path])); return; }
+      if (k === 'image' && pl) { const m = await import('./filesMore'); const { localFileUrl } = await import('../player/files'); const pics = shown().filter((x) => !x.dir && (kindOfFile(x.name) === 'image' || kindOfFile(x.name) === 'video')); await m.imageViewer(pics, Math.max(0, pics.findIndex((x) => x.path === e.path)), localFileUrl, (x) => void confirmDelete([x.path])); return; }
       if (pl) { await pl.openChooser({ path: e.path, mime: mimeOf(e.name), title: e.name }); return; }
       const d = desk(); if (d?.openPath) { await d.openPath(e.path); return; }
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
@@ -249,9 +250,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const openAs = (e: Entry) => pickSheet(t('filesOpenAs'), MIMES.map(([m, l, ic]): [string, string, string] => [m, t(l as 'filesAsAny'), ic]), mimeOf(e.name), (m) => void plug()?.openWith({ path: e.path, mime: m, title: e.name }), t('close'));
 
-  // ---- the drawer: storages (with their used space), bookmarks, collections — Solid Explorer's, as a sheet from the side
+  // ---- the drawer: storages (with their used space), bookmarks, collections — Solid Explorer's, from the side
   const drawer = () => {
-    const sh = openSheet(t('navFiles'), t('close')); sh.el.classList.add('files-drawer');
+    const sh = openSheet(t('navFiles'), t('close')); sh.el.classList.add('files-drawer'); sideDrawer(sh.el, sh.close);
     const section = (label: string, ...kids: (HTMLElement | null)[]) => h('div', { class: 'files-drawer-section' }, h('small', { class: 'src files-drawer-label' }, label), ...kids);
     const item = (ic: string, name: string, sub: string | HTMLElement | null, fn: () => void, extra?: HTMLElement) => h('button', { type: 'button', class: 'dest-row files-drawer-row', onclick: () => { sh.close(); fn(); } }, h('span', { class: 'files-drawer-ic' }, icon(ic)), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, name), sub ? (typeof sub === 'string' ? h('small', { class: 'src', dir: 'ltr' }, sub) : sub) : null), extra ?? null);
     const storage = (r: Root) => { const used = r.total && r.free !== undefined ? Math.round(((r.total - r.free) / r.total) * 100) : null; return item(r.kind === 'app' ? 'download' : 'storage', r.name, used === null ? r.path : h('span', { class: 'files-usage' }, h('span', { class: 'files-usage-bar' }, h('i', { style: { width: `${used}%` } })), h('small', { class: 'src' }, t('filesFreeOf', { free: formatBytes(r.free!), total: formatBytes(r.total!) }))), () => { if (!r.readable) { void askAccess(); return; } go(r.path); }); };
@@ -475,7 +476,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // The back button goes up a folder first when the reader asked for that.
   const onBack = (ev: KeyboardEvent) => { if (!prefs.backUp || ev.key !== 'Escape' && ev.key !== 'GoBack' && ev.key !== 'BrowserBack') return; if (document.querySelector('.sheet')) return; const r = roots.find((x) => at === x.path); if (collection || r || !at) return; ev.preventDefault(); ev.stopPropagation(); go(parentOf(at)); };
   window.addEventListener('keydown', onBack, true);
-  root.dispose = () => { gone = true; io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); void wake?.release().catch(() => undefined); };
+  const unSwipe = swipeToOpen(root, () => drawer());
+  root.dispose = () => { gone = true; unSwipe(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };

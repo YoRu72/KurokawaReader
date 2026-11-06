@@ -10,7 +10,7 @@ import { ktPlugin, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 import { t, localDigits } from '../i18n';
 import { liveLine } from '../downloads/live';
-import { getEngine, displayName, isVideo } from '../engine';
+import { getEngine, displayName, isVideo, mainFilePath } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
 import { back, navigate } from '../router';
@@ -48,7 +48,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     // folder» shows the folder itself — never a file picker.
     const video = x.files.find((f) => isVideo(f.path) && f.priority > 0) ?? (isVideo(name) ? { index: 0, path: name } : undefined);
     const audio = !video && /\.(mp3|m4a|flac|ogg|opus|wav|aac)$/i.test(x.files.find((f) => f.priority > 0)?.path ?? name);
-    const mainPath = x.dir && !x.dir.startsWith('content:') ? `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/${(x.files.find((f) => f.priority > 0) ?? x.files[0]).path}` : (x.files[0]?.path ?? name)}`.replace(/\/+/g, '/') : '';
+    const mainPath = mainFilePath(x);
     const isApk = /\.(apk|apks|xapk|apkm)$/i.test(mainPath || name);
     const ready = x.readyFile !== undefined && x.readyFile >= 0;
     if (video && (eng.streamUrl || x.state === 'done')) acts.append(h('button', { type: 'button', class: x.state === 'done' || ready ? 'btn primary' : 'btn tonal', onclick: () => void import('./player').then((m) => m.playTaskFile(x, ready ? x.readyFile! : video.index)).catch((e) => toast(String(e.message ?? e), 'error')) }, icon('play'), t(x.state === 'done' ? 'play' : ready ? 'readyToPlay' : 'stream')));
@@ -68,7 +68,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     }
     if (x.state === 'done' && x.kind !== 'torrent' && x.dir && !x.dir.startsWith('content:') && isArchiveName(name) && canArchive()) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('./archiveBrowse').then((m) => m.browseArchive(`${x.dir.replace(/[\\/]$/, '')}/${name}`)) }, icon('folder'), t('archiveBrowse')));
     // (Shared to another app — Android's share sheet —, the page it came from opened again, a note of one's own.)
-    if (x.state === 'done' && nativePlatform() === 'android' && x.dir && !x.dir.startsWith('content:')) { const fp = `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/${(x.files.find((f) => f.priority > 0) ?? x.files[0]).path}` : (x.files[0]?.path ?? name)}`.replace(/\/+/g, '/'); acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void (ktPlugin() as unknown as { shareFile?(o: { path: string; title: string }): Promise<void> } | null)?.shareFile?.({ path: fp, title: name }).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('share'), t('share'))); }
+    if (x.state === 'done' && mainPath) void import('../ui/shareMany').then((m) => { if (m.canShareFiles()) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.shareFiles([mainPath]).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('share'), t('share'))); });
     if (x.state === 'done' && x.dir && !x.dir.startsWith('content:')) void import('../downloads/wifishare').then((m) => { if (m.canShareWifi()) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void m.shareWifiSheet([x]) }, icon('wifi'), t('wifiShare'))); });
     { const ref = x.source.headers?.Referer ?? x.source.headers?.referer; if (ref && /^https?:/.test(ref)) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../browser').then((m) => m.openBrowser(ref)) }, icon('globe'), t('openSourcePage'))); }
     acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/extras').then((m) => { const sh = openSheet(t('taskNote'), t('close')); const area = h('textarea', { class: 'text-input', rows: '3', dir: 'auto', value: m.noteOf(x.id), placeholder: t('taskNoteHint') }) as HTMLTextAreaElement; area.value = m.noteOf(x.id); sh.body.append(area); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { m.setNote(x.id, area.value); sh.close(); toast(t('saved')); } }, icon('check'), t('save'))); }) }, icon('pen'), t('taskNote')));
