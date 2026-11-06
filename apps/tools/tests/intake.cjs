@@ -39,7 +39,7 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
       window.kurokawaTools = { platform: 'desktop', available: true, os: 'linux', ready: async () => ({}), list: async () => [], add: async (o) => { window.__added.push(o); return { id: 't' + window.__added.length, name: o.video?.title || o.source.url, ...o }; },
         pause: async () => {}, resume: async () => {}, remove: async () => {}, on: () => () => {}, onTasks: () => () => {}, freeSpace: async () => 5e9,
         probe: async () => ({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<!doctype html><html></html>' }),
-        httpRequest: async () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: '<!doctype html><html></html>' }),
+        http: async (o) => ({ status: 200, url: o.url, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<!doctype html><html></html>' }),
         videoReady: async () => true, videoVersion: async () => ({ version: '2026.10.10', ready: true }),
         videoInfo: async (o) => { await new Promise((r) => setTimeout(r, 120)); if (/x\.com/.test(o.url)) return raw(o.url, 'A post on X', 'Twitter'); if (/instagram/.test(o.url)) return raw(o.url, 'A reel', 'Instagram'); throw new Error('Unsupported URL'); } };
     }, auto);
@@ -56,6 +56,17 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
     await p.click('.add-sheet .add-clear');
     const after = await p.evaluate(() => ({ v: document.querySelector('.add-input').value, panel: document.querySelector('.video-panel')?.hidden ?? true }));
     check('the clear button empties the field and the old link\'s video panel', after.v === '' && after.panel);
+    // A video site's link yt-dlp cannot read: nothing added — never its page —, and said so.
+    await p.fill('.add-input', 'https://www.youtube.com/watch?v=gone'); await p.waitForTimeout(700); await p.click('.sheet .btn.primary'); await p.waitForTimeout(400);
+    const refused = await p.evaluate(() => ({ added: window.__added.length, toast: document.querySelector('.toast')?.textContent || '' }));
+    check('a video site\'s link that cannot be read adds nothing (not its page)', refused.added === 0 && /could not be read/.test(refused.toast));
+    // A link that gives a web page: asked first; «Find the files on it» opens the grabber, nothing added.
+    await p.click('.add-sheet .add-clear'); await p.fill('.add-input', 'https://example.com/some/page'); await p.waitForTimeout(900); await p.click('.add-sheet .btn.primary');
+    const asked = await p.waitForSelector('.sheet:has-text("This link is a web page")', { timeout: 3000 }).then(() => true, () => false);
+    if (asked) await p.click('.sheet:has-text("This link is a web page") .btn.primary');
+    const grabbing = await p.waitForFunction(() => [...document.querySelectorAll('.sheet')].some((x) => /Grab links from a page/.test(x.textContent || '')), null, { timeout: 3000 }).then(() => true, () => false);
+    check('a web page link asks first, and can look for the files on it', asked && grabbing && (await p.evaluate(() => window.__added.length)) === 0);
+    await p.evaluate(() => document.querySelectorAll('.sheet, .scrim').forEach((x) => x.remove())); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.add-sheet');
     await p.fill('.add-input', IG); await p.waitForSelector('.video-choices', { timeout: 6000 }); await p.click('.sheet .btn.primary');
     await p.waitForFunction(() => window.__added.length === 1, null, { timeout: 4000 }).catch(() => undefined);
     const added = await p.evaluate(() => window.__added[0]);

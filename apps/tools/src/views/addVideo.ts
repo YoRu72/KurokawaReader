@@ -18,8 +18,10 @@ export interface VideoPanel {
   /** What to add for the link checked: one video, a playlist's videos, or null (an ordinary download) — non-null
    *  once yt-dlp has read the page, so the sheet can drop an ordinary file's parts. */
   picks(): { url: string; video: VideoPick }[] | null;
-  /** Whether a check is still running (the Download button waits for it). */
+  /** Whether a check is still running (the Download button waits for it, a setup and the read after it included). */
   busy(): Promise<void>;
+  /** A video site's link the panel could not read (yt-dlp missing or refusing it): not to be saved as a page. */
+  unread(): boolean;
 }
 
 const dur = (s?: number) => { if (!s || !isFinite(s)) return ''; s = Math.round(s); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits((hh ? `${hh}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0')); };
@@ -99,6 +101,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
       i.duration && !i.live ? h('div', { class: 'video-part' }, h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: chap.split, onchange: (e: Event) => { chap.split = (e.target as HTMLInputElement).checked; } }), h('span', null, t('videoSplitChapters'))),
         h('input', { type: 'text', class: 'video-part-more', dir: 'auto', value: chap.match, placeholder: t('videoChapterMatchHint'), 'aria-label': t('videoChapterMatch'), oninput: (e: Event) => { chap.match = (e.target as HTMLInputElement).value; } })) : null].filter((x): x is NonNullable<typeof x> => !!x));
   };
+  let autoTried = false;
   const offerAddon = () => {
     el.hidden = false;
     el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoYtdlpMissingLong'))),
@@ -108,7 +111,15 @@ export function videoPanel(onChange: () => void): VideoPanel {
   const check = (u: string | null) => {
     if (u === url) return; url = u; info = null; chosen = null; const my = ++token;
     if (!u || !pageLike(u)) { el.hidden = true; el.replaceChildren(); onChange(); return; }
-    if (!videoEnabled()) { if (videoSupported() && isVideoHost(u)) offerAddon(); else { el.hidden = true; el.replaceChildren(); } onChange(); return; }
+    // (A video site's link with the video add-on off: it is set up at once — yt-dlp fetched — and the link read, once a
+    // session; turned down, the offer stays. What was asked for is a video, never the site's page.)
+    if (!videoEnabled()) {
+      if (!videoSupported() || !isVideoHost(u)) { el.hidden = true; el.replaceChildren(); onChange(); return; }
+      if (autoTried) { offerAddon(); onChange(); return; }
+      autoTried = true; el.hidden = false; el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('videoSettingUp')}`)); onChange();
+      running = import('../addons/need').then((m) => m.needAddon(VIDEO_ADDON, t('addonWhyVideo'), { start: true })).then((ok) => { if (my !== token) return; if (ok) { url = null; check(u); } else offerAddon(); }, () => { if (my === token) offerAddon(); });
+      return;
+    }
     el.hidden = false; el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('videoChecking')}`));
     const playlist = /[?&]list=|\/playlist\b|\/sets\/|\/album\//i.test(u) && !/[?&]v=/.test(u);
     running = pageInfo(u, playlist).then((got) => { if (my !== token) return; info = got; changeNote = got.kind === 'video' ? noteChanges(got) : null; pickDefault(got); draw(); onChange(); }, () => {
@@ -120,7 +131,8 @@ export function videoPanel(onChange: () => void): VideoPanel {
   };
   const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, sponsorMode: s.videoSponsorMode ?? (s.videoSponsor ? 'remove' : 'off'), sponsorCats: (s.videoSponsorCats ?? ['sponsor']).join(','), infoJson: (s.sidecarNfo || s.sidecarComments || s.sidecarChapters || s.sidecarLyrics) || undefined, cover: s.sidecarCover || undefined, comments: s.sidecarComments || undefined, liveChat: s.sidecarLiveChat || undefined, chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
   return {
-    el, check, busy: () => running,
+    el, check, busy: async () => { let r: Promise<void>; do { r = running; await r.catch(() => undefined); } while (r !== running); },
+    unread: () => !!url && isVideoHost(url) && !info,
     picks() {
       if (!url || !info) return null;
       if (info.kind === 'playlist') return info.entries.filter((e) => e.url).map((e, n) => ({ url: e.url, video: { ...base(preferredFormat().audioOnly), ...preferredFormat(), title: e.title, playlistIndex: s.videoNumber === false ? undefined : n + 1 } }));

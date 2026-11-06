@@ -11,7 +11,7 @@ import { getSettings, updateSettings } from '../settings';
 import { ktPlugin, clipboardText } from '../native';
 import { videoPanel, preferredFormat, nativeHls } from './addVideo';
 import { galleryOf } from '../downloads/galleries';
-import { videoEnabled, isVideoHost } from '../video/ytdlp';
+import { videoEnabled, videoSupported, isVideoHost } from '../video/ytdlp';
 import { probeUrl, splitName, type Probe } from '../downloads/probe';
 import { freeSpaceAt } from '../archives';
 import { nativePlatform } from '../native';
@@ -43,7 +43,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: given.stem, class: 'grow' }) as HTMLInputElement;
   const ext = h('input', { type: 'text', dir: 'ltr', placeholder: t('extension'), value: given.ext, class: 'ext-in', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
   const sizeLine = h('div', { class: 'src add-size' }); const storageLine = h('div', { class: 'src add-storage' });
-  let probed: Probe | null = null; let probeToken = 0; let nameTouched = !!how.name;
+  let probed: Probe | null = null; let probeToken = 0; let probing: Promise<void> = Promise.resolve(); let nameTouched = !!how.name;
   name.addEventListener('input', () => { nameTouched = true; }); ext.addEventListener('input', () => { nameTouched = true; });
   const showStorage = async () => { const free = await freeSpaceAt(getSettings().downloadDir || '').catch(() => -1); if (free < 0) { storageLine.hidden = true; return; } storageLine.hidden = false; const need = probed?.size ?? 0; storageLine.replaceChildren(icon('storage'), h('span', null, t('storageFree', { free: formatBytes(free) }))); if (need && need > free) storageLine.append(h('b', { class: 'danger' }, ` · ${t('storageShort')}`)); };
   const lookAt = async (u: string | null, hdrs?: Record<string, string>) => {
@@ -136,7 +136,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
   const peekZip = async (u: string | null) => { if (!u || !/\.(zip|cbz|apks|xapk|apkm)(\?|$)/i.test(u)) { zipBox.hidden = true; zipFor = ''; return; } if (zipFor === u) return; zipFor = u; zipBox.hidden = false; zipBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('zipPeeking')}`)); const m = await import('../downloads/prism'); const r = await m.remoteZipEntries(u).catch(() => null); if (zipFor !== u) return; if (!r) { zipBox.hidden = true; return; } zipBox.replaceChildren(h('details', null, h('summary', null, `${t('archiveContents')} · ${countFiles(r.entries.length)} · ${formatBytes(r.total)}`), h('div', { class: 'file-rows' }, ...r.entries.slice(0, 300).map((e) => h('div', { class: 'file-row' }, h('span', { class: 'grow', dir: 'ltr' }, e.path), h('small', { class: 'src' }, formatBytes(e.size))))))); };
   const metadata = async () => {
-    { const one = sources(); const u = one.length === 1 && one[0].url ? one[0].url : null; video.check(u); void peekZip(u); peekHf(u); void lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
+    { const one = sources(); const u = one.length === 1 && one[0].url ? one[0].url : null; video.check(u); void peekZip(u); peekHf(u); probing = lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }
     const my = ++metaToken;
@@ -174,6 +174,15 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     try {
       await video.busy();
       const picks = video.picks();
+      // (A video site's page is never what was wanted: unread, it is said so and nothing is added.)
+      if (!picks && (video.unread() || srcs.some((x) => x.url && isVideoHost(x.url) && !videoEnabled() && videoSupported()))) { toast(t('videoCantRead'), 'error', 6000); go.disabled = false; return; }
+      // (A link that gives a web page where a file was expected: its files and videos looked for, or the page itself
+      // saved only when that is what is chosen.)
+      if (!picks && srcs.length === 1 && srcs[0].url) await probing.catch(() => undefined);
+      if (!picks && srcs.length === 1 && probed?.page && !/\.html?$/i.test(ext.value)) {
+        const how2 = await askPage(srcs[0].url ?? ''); if (!how2) { go.disabled = false; return; }
+        if (how2 === 'grab') { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(srcs[0].url ?? '')); return; }
+      }
       if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(cookieJar ? { cookieJar } : {}), ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     try {
@@ -203,6 +212,15 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
 }
 
 /** «Already in your downloads»: added again, or not. */
+/** A link that gives a web page: what to do with it — look for its files and videos, or save the page itself. */
+function askPage(link: string): Promise<'grab' | 'save' | null> {
+  return new Promise((resolve) => {
+    let done = false; const sh = openSheet(t('pageTitle'), t('cancel'), { stack: true }); const end = (v: 'grab' | 'save' | null) => { if (done) return; done = true; sh.close(); resolve(v); };
+    sh.body.append(h('p', null, t('pageBody')), h('p', { class: 'src', dir: 'ltr' }, link));
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => end('save') }, t('pageSave')), h('button', { type: 'button', class: 'btn primary', onclick: () => end('grab') }, icon('search'), t('pageGrab')));
+    const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); if (!done) { done = true; resolve(null); } } }); mo.observe(document.body, { childList: true });
+  });
+}
 function askDuplicate(name: string): Promise<boolean> {
   return new Promise((resolve) => {
     let done = false; const sh = openSheet(t('dupTitle'), t('cancel'), { stack: true }); const end = (v: boolean) => { if (done) return; done = true; sh.close(); resolve(v); };
