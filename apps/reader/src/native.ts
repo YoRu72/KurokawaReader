@@ -224,7 +224,7 @@ type IconDesk = { appIcon?(o?: { set: string | null }): Promise<string | boolean
 type IconPlug = { pinIcon?(o: { png: string; label: string }): Promise<{ ok: boolean }> };
 const iconPlug = (): IconPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: IconPlug } }) | undefined)?.Plugins?.Kurokawa;
 export const appIconWay = (): 'desktop' | 'android' | null => ((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon ? 'desktop' : nativePlatform() === 'android' && iconPlug()?.pinIcon ? 'android' : null);
-export async function appIconNow(): Promise<string | null> { const u = await (window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon?.().catch(() => null); return typeof u === 'string' && u ? u : null; }
+export async function appIconNow(): Promise<string | null> { const u = await Promise.resolve((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon?.()).catch(() => null); return typeof u === 'string' && u ? u : null; }
 export async function setAppIcon(png: string | null, label: string): Promise<boolean> {
   if (appIconWay() === 'desktop') { await (window.kurokawaDesktop as unknown as IconDesk).appIcon!({ set: png }); return true; }
   if (png && appIconWay() === 'android') return !!(await iconPlug()!.pinIcon!({ png, label }))?.ok;
