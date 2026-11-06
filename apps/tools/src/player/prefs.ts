@@ -34,6 +34,10 @@ export interface PlayerPrefs {
   /** Playback: repeat (off, all, one), closing at the end, the brightness kept between videos, playing on in the
    *  background, chapter skip by double tap. */
   repeat: 'off' | 'all' | 'one'; closeAtEnd: boolean; rememberBrightness: boolean; brightness: number; backgroundPlay: boolean;
+  /** Leaving the app while a video plays puts it in the floating window (Android). */
+  pipOnLeave: boolean;
+  /** The tools an update put on the bar once (each only once, so a tool taken off stays off). */
+  barAdded?: string[];
   /** Subtitles (REX Player / VLC): italic, outline colour and width, background opacity, the second track's
    *  position and size, timing stretched (a 25 fps file on a 23.976 video), the line direction kept left-to-right. */
   subItalic: boolean; subOutline: string; subOutlineWidth: number; subBgOpacity: number; sub2Pos: number; sub2Size: number; subSpeed: number; subForceLtr: boolean;
@@ -63,8 +67,8 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   skipAmount: 85, autoSkip: 'button', skipSponsor: 'button', skipSilence: false, heatmap: true, filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
-  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, shotSubs: true,
-  repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true,
+  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'frames', 'rotation', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, shotSubs: true,
+  repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true, pipOnLeave: true,
   topTools: ['chapters'], portraitTools: [], seekBelowButtons: false, singleTap: 'controls', panZoomed: true, subtitleSwipe: true, rememberAspect: true, autoQueueFolder: true, immersive: 'both', reduceMotion: false, glassControls: false, alwaysDark: true, mpvConf: '',
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,
   eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0,
@@ -73,7 +77,14 @@ export const DEFAULT_PREFS: PlayerPrefs = {
 };
 const KEY = 'kt.player'; const MEM = 'kt.player.memory';
 let prefs: PlayerPrefs = load();
-function load(): PlayerPrefs { try { const p = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<PlayerPrefs>; return { ...DEFAULT_PREFS, ...p, filters: { ...DEFAULT_FILTERS, ...(p.filters ?? {}) } }; } catch { return { ...DEFAULT_PREFS }; } }
+const NEW_ON_BAR = ['frames', 'rotation', 'pip'];
+function load(): PlayerPrefs {
+  try {
+    const p = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<PlayerPrefs>;
+    if (p.bar) { const had = p.barAdded ?? []; for (const id of NEW_ON_BAR) if (!had.includes(id) && !p.bar.includes(id)) p.bar = [...p.bar, id]; p.barAdded = [...new Set([...had, ...NEW_ON_BAR])]; }
+    return { ...DEFAULT_PREFS, ...p, filters: { ...DEFAULT_FILTERS, ...(p.filters ?? {}) } };
+  } catch { return { ...DEFAULT_PREFS }; }
+}
 export const getPrefs = (): PlayerPrefs => prefs;
 export function updatePrefs(p: Partial<PlayerPrefs>): PlayerPrefs { prefs = { ...prefs, ...p }; try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch { /* full */ } return prefs; }
 export function resetPrefs(keys: (keyof PlayerPrefs)[]): PlayerPrefs { const o: Partial<PlayerPrefs> = {}; for (const k of keys) (o as Record<string, unknown>)[k] = DEFAULT_PREFS[k]; return updatePrefs(o); }
