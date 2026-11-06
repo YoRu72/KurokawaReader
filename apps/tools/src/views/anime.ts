@@ -253,13 +253,11 @@ function filterSheet(f: al.SearchFilters, done: () => void): void {
   };
   tagQ.addEventListener('input', drawTags);
   void al.genresAndTags().then(({ genres: gs, tags: ts }) => { genres.replaceChildren(...gs.map((g) => toggle('genres', g, g))); allTags = ts; drawTags(); }).catch((e) => genres.replaceChildren(h('small', { class: 'src' }, String((e as Error).message ?? e))));
-  // (Studios: the best known ones to tap, any other found by its name; chosen ones first, each taken off by a tap.)
-  const studioRow = h('div', { class: 'chip-row wrap' }, h('div', { class: 'spinner small' })); const studioQ = h('input', { type: 'search', class: 'search-input small', placeholder: t('animeStudioSearch') }) as HTMLInputElement;
-  let known: { id: number; name: string }[] = [];
-  const drawStudios = () => { const chosen = f.studios ?? []; const rest = known.filter((s) => !chosen.some((c) => c.id === s.id));
-    studioRow.replaceChildren(...[...chosen, ...rest].map((s) => { const on = chosen.some((c) => c.id === s.id); return h('button', { type: 'button', class: 'chip small' + (on ? ' on' : ''), onclick: () => { f.studios = on ? chosen.filter((c) => c.id !== s.id) : [...chosen, { id: s.id, name: s.name }]; drawStudios(); } }, s.name); })); };
-  void al.famousStudios().then((ss) => { known = ss.map((s) => ({ id: s.id, name: s.name })); drawStudios(); }).catch(() => drawStudios());
-  let studioTimer = 0; studioQ.addEventListener('input', () => { window.clearTimeout(studioTimer); const q = studioQ.value.trim(); studioTimer = window.setTimeout(() => { if (q.length < 2) { void al.famousStudios().then((ss) => { known = ss.map((s) => ({ id: s.id, name: s.name })); drawStudios(); }).catch(() => undefined); return; } void al.searchStudios(q).then((ss) => { if (studioQ.value.trim() !== q) return; known = ss.map((s) => ({ id: s.id, name: s.name })); drawStudios(); }).catch(() => undefined); }, 350); });
+  // (Studios: the ones chosen, each taken off by a tap, and the list to choose from.)
+  const studioRow = h('div', { class: 'chip-row wrap' });
+  const drawStudios = () => studioRow.replaceChildren(...(f.studios ?? []).map((s) => h('button', { type: 'button', class: 'chip small on', onclick: () => { f.studios = (f.studios ?? []).filter((c) => c.id !== s.id); drawStudios(); } }, h('span', { dir: 'auto' }, s.name), icon('close'))),
+    h('button', { type: 'button', class: 'chip small', onclick: () => void import('./studioPicker').then((m) => m.studioPicker(f.studios ?? [], (v) => { f.studios = v; drawStudios(); })) }, icon('plus'), f.studios?.length ? t('spChange') : t('spChoose')));
+  drawStudios();
   const formats = h('div', { class: 'chip-row wrap' }, ...['TV', 'TV_SHORT', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'].map((x) => toggle('formats', x, fmtFormat(x))));
   const one = <K extends 'status' | 'season' | 'sort'>(k: K, opts: [string, string][]) => { const row = h('div', { class: 'chip-row wrap' }); const draw = () => row.replaceChildren(...opts.map(([v, l]) => h('button', { type: 'button', class: 'chip small' + ((f[k] ?? '') === v ? ' on' : ''), onclick: () => { (f as Record<string, unknown>)[k] = (f[k] ?? '') === v && k !== 'sort' ? undefined : v || undefined; draw(); } }, l))); draw(); return row; };
   const year = h('input', { type: 'number', min: '1940', max: String(new Date().getFullYear() + 2), value: f.year ? String(f.year) : '', placeholder: t('animeYear'), inputmode: 'numeric', class: 'num-small', onchange: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); f.year = v >= 1940 ? v : undefined; } });
@@ -268,7 +266,7 @@ function filterSheet(f: al.SearchFilters, done: () => void): void {
   sh.body.append(
     sec(t('animeSort'), one('sort', SORTS.map(([v, l]) => [v, t(l as 'sortPopular')]))),
     sec(t('animeGenres'), genres),
-    sec(t('dcStudios'), studioQ, studioRow),
+    sec(t('dcStudios'), studioRow),
     sec(t('animeTags'), h('p', { class: 'hint' }, t('animeTagsHint')), tagQ, tags),
     sec(t('animeFormat'), formats),
     sec(t('animeStatus'), one('status', Object.entries(STATUS_LABEL).map(([v, l]) => [v, t(l as 'animeAired')]))),
