@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.60.3",
+  "version": "0.60.4",
   "description": "KurokawaReader for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
@@ -54,11 +54,7 @@
           ]
         }
       ],
-      "icon": "icon.ico",
-      "files": [
-        "!node_modules/7zip-bin/{linux,mac}/**",
-        "!node_modules/7zip-bin/win/{ia32,arm64}/**"
-      ]
+      "icon": "icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -83,21 +79,14 @@
         "zip"
       ],
       "icon": "icon.png",
-      "category": "public.app-category.books",
-      "files": [
-        "!node_modules/7zip-bin/{linux,win}/**"
-      ]
+      "category": "public.app-category.books"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
       "icon": "icon.png",
-      "category": "Office",
-      "files": [
-        "!node_modules/7zip-bin/{mac,win}/**",
-        "!node_modules/7zip-bin/linux/{ia32,arm,arm64}/**"
-      ]
+      "category": "Office"
     },
     "fileAssociations": [
       {
