@@ -9,7 +9,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
   const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 412, height: 900 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   const page = await ctx.newPage(); const errors = []; page.on('pageerror', (e) => errors.push(e.message)); const check = (w, ok) => { console.log(ok ? 'ok  ' : 'FAIL', w); if (!ok) errors.push(w); };
   await page.goto(`http://localhost:${port}/`); await page.evaluate(() => localStorage.setItem('kr.update.lastCheck', String(Date.now()))); await page.reload(); await page.waitForSelector('.library-view, .library', { timeout: 30000 }).catch(() => undefined);
-  await page.setInputFiles('input[type=file]', [path.join(__dirname, 'fixtures', 'sample.pdf')]); await page.waitForSelector('.book-card', { timeout: 60000 });
+  await page.setInputFiles('input[type=file]', [path.join(__dirname, 'pdfsearch', 'sample.pdf')]); await page.waitForSelector('.book-card', { timeout: 60000 });
   await page.click('.book-card'); await page.waitForSelector('.pdf-page', { timeout: 60000 }); await page.waitForTimeout(1200);
   const cdp = await ctx.newCDPSession(page);
   const width = () => page.evaluate(() => document.querySelector('.pdf-page').getBoundingClientRect().width);
