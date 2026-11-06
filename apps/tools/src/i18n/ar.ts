@@ -1104,7 +1104,7 @@ export const ar: Partial<Strings> = {
   filesKindVideo: "الفيديو",
   filesKindDocs: "المستندات",
   filesKindArchives: "الأرشيفات",
-  filesKindApps: "التطبيقات",
+  filesKindApps: "حزم APK",
   filesNothingMatches: "لا شيء يطابق.",
   filesFolders: "مجلدات",
   filesTruncated: "مجلد ضخم: تُعرض أول عشرين ألف عنصر.",
