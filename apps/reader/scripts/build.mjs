@@ -178,7 +178,9 @@ if (watch || serve) {
     console.log(`KurokawaReader → http://${hosts?.[0] ?? '127.0.0.1'}:${port}`);
   }
 } else {
-  await esbuild.build(buildOptions);
+  // (KR_META=1: the bundle's map written beside it — what each chunk is made of — for size work.)
+  const built = await esbuild.build({ ...buildOptions, metafile: !!process.env.KR_META });
+  if (built.metafile) await fs.writeFile(path.join(root, 'meta.json'), JSON.stringify(built.metafile));
   await esbuild.build(runtimeOptions);
   const n = await preloadStartupChunks();
   await slimDown();

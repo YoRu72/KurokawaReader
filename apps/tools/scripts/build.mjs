@@ -62,7 +62,9 @@ if (watch || serve) {
   await sw();
   if (serve) { const { hosts, port } = await ctx.serve({ servedir: dist, port: 5174 }); console.log(`Kurokawa Tools → http://${hosts?.[0] ?? '127.0.0.1'}:${port}`); }
 } else {
-  await esbuild.build(options);
+  // (KR_META=1: the bundle's map written beside it — what each chunk is made of — for size work.)
+  const built = await esbuild.build({ ...options, metafile: !!process.env.KR_META });
+  if (built.metafile) await fs.writeFile(path.join(root, 'meta.json'), JSON.stringify(built.metafile));
   await preload(); await sw();
   console.log('Built → dist/');
 }
