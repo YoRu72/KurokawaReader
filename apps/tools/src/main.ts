@@ -42,14 +42,25 @@ function buildNav(): HTMLElement {
   const pc = isPc();
   const items = DESTS().map(([name, ic, key, go]) => h('button', { type: 'button', class: pc ? 'rail-item' : 'nav-item', 'data-dest': name, onclick: go, title: t(key as 'navDownloads') },
     h('span', { class: pc ? 'rail-pill' : 'nav-pill' }, icon(ic)), h('span', { class: pc ? 'rail-label' : 'nav-label' }, t(key as 'navDownloads'))));
-  if (pc) return h('nav', { class: 'nav-rail', 'aria-label': t('appName') }, h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' })),
-    h('button', { type: 'button', class: 'rail-fab', title: t('addDownload'), 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./views/fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus')),
+  // (A computer: a sidebar — the app's name, «New download», each place by its icon and its name —, folded down to
+  // the icons by its button or when the window is narrow.)
+  if (pc) return h('nav', { class: 'nav-rail', 'aria-label': t('appName') },
+    h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' }), h('b', { class: 'rail-name' }, t('appName')),
+      h('button', { type: 'button', class: 'icon-btn rail-fold', title: t('railFold'), 'aria-label': t('railFold'), onclick: () => { const mini = !document.documentElement.classList.contains('rail-mini'); try { localStorage.setItem(RAIL_KEY, mini ? '1' : '0'); } catch { /* private */ } fitRail(); } }, icon('sidebar'))),
+    h('button', { type: 'button', class: 'rail-fab', title: t('addDownload'), 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./views/fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus'), h('span', { class: 'rail-fab-label' }, t('addDownload'))),
     h('div', { class: 'rail-items' }, ...items.slice(0, -1)), h('div', { class: 'rail-end' }, items[items.length - 1]));
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }
+const RAIL_KEY = 'kt.rail.mini';
+/** The sidebar folded: as chosen, or by itself in a window too narrow for it. */
+function fitRail(): void {
+  let chosen: string | null = null; try { chosen = localStorage.getItem(RAIL_KEY); } catch { /* private */ }
+  document.documentElement.classList.toggle('rail-mini', chosen === '1' || (chosen === null && window.innerWidth < 1100));
+}
+window.addEventListener('resize', () => { if (isPc()) fitRail(); }, { passive: true });
 function placeNav(): void {
   nav?.remove(); nav = buildNav(); nav.dataset.addons = getSettings().addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (getSettings().videosTab === false ? '-' : ''); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
-  document.documentElement.classList.toggle('pc', isPc());
+  document.documentElement.classList.toggle('pc', isPc()); if (isPc()) fitRail();
   if (isPc()) document.body.prepend(nav); else document.body.append(nav);
   markNav(parseRoute());
 }

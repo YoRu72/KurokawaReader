@@ -42,7 +42,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const mine = addonTabs(s.addons, index, ids);
     if (tab !== 'all' && tab !== 'app' && !mine.some((m) => m.id === tab)) tab = 'all';
     const btn = (id: string, label: string, ic?: string) => h('button', { type: 'button', role: 'tab', class: 'chip' + (tab === id ? ' on' : ''), 'aria-selected': String(tab === id), onclick: () => { tab = id; search.value = ''; rerender(); body.scrollTop = 0; } }, ic ? icon(ic) : null, h('span', null, label));
-    tabsBar.replaceChildren(btn('all', t('settingsAll'), 'list'), btn('app', t('settingsApp'), 'settings'), ...mine.map((m) => btn(m.id, m.entry ? nameOf(m.entry, lang) : m.id, m.entry?.icon ?? 'puzzle')));
+    tabsBar.replaceChildren(btn('all', t('settingsAll'), 'list'), btn('app', t('settingsApp'), 'settings'), ...mine.map((m) => btn(m.id, m.entry ? nameOf(m.entry, lang) : localAddonName(m.id), m.entry?.icon ?? 'puzzle')));
     tabsBar.querySelector('.chip.on')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
   };
   const inTab = (all: HTMLElement[]): HTMLElement[] => {
@@ -427,4 +427,11 @@ function recorderSheet(m: typeof import('../downloads/recorder')): void {
   sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { m.clear(); sh.close(); toast(t('done')); } }, t('clockClear')),
     h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../native').then(async (n) => { const p = await n.saveText('kurokawa-tools-report.txt', m.report()); if (p) toast(t('recorderSaved')); }) }, icon('download'), t('save')),
     h('button', { type: 'button', class: 'btn primary', onclick: () => void navigator.clipboard?.writeText(m.report()).then(() => toast(t('copied'))) }, icon('copy'), t('copy')));
+}
+
+/** An add-on's name in the app's language while the add-on index has not come (offline, or still loading) — never
+ *  its id. */
+function localAddonName(id: string): string {
+  const k: Record<string, string> = { anime: 'navAnime', tv: 'navTv', player: 'playerSection', video: 'ruleKindVideo', subtitles: 'navSubs', files: 'filesTitle', 'torrent-search': 'torrentSearch' };
+  return k[id] ? t(k[id] as 'navAnime') : id;
 }

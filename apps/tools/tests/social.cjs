@@ -8,18 +8,19 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
 const PHOTOS = { code: 200, message: 'OK', tweet: { id: '1700000000000000001', text: 'Two photos', author: { screen_name: 'someone' }, media: { all: [
   { type: 'photo', url: 'https://pbs.twimg.com/media/AAAA1111.jpg', width: 4096, height: 2048 },
   { type: 'photo', url: 'https://pbs.twimg.com/media/BBBB2222?format=png&name=small', width: 800, height: 600 }] } } };
+const GIF = { code: 200, tweet: { id: '2118688654906573042', text: 'a gif', author: { screen_name: 'hutarikiri2025' }, media: { all: [{ type: 'gif', url: 'https://video.twimg.com/tweet_video/GGGG.mp4', thumbnail_url: 'https://pbs.twimg.com/tweet_video_thumb/GGGG.jpg', width: 480, height: 270 }] } } };
 (async () => {
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL', what); if (!ok) errors.push(what); };
   const cors = { 'access-control-allow-origin': '*' };
-  await p.route('https://api.fxtwitter.com/**', (r) => r.fulfill({ headers: cors, contentType: 'application/json', body: /1585341984679469056/.test(r.request().url()) ? fs.readFileSync(path.join(FX, 'fxtwitter-video.json')) : JSON.stringify(PHOTOS) }));
+  await p.route('https://api.fxtwitter.com/**', (r) => r.fulfill({ headers: cors, contentType: 'application/json', body: /1585341984679469056/.test(r.request().url()) ? fs.readFileSync(path.join(FX, 'fxtwitter-video.json')) : /2118688654906573042/.test(r.request().url()) ? JSON.stringify(GIF) : JSON.stringify(PHOTOS) }));
   await p.route('https://public.api.bsky.app/**', (r) => r.fulfill({ headers: cors, contentType: 'application/json', body: fs.readFileSync(path.join(FX, 'bsky-post.json')) }));
   await p.route(/pbs\.twimg\.com|cdn\.bsky\.app/, (r) => r.fulfill({ status: 404 }));
   await p.addInitScript(() => {
     const tasks = []; window.__added = [];
-    window.kurokawaTools = { platform: 'desktop', available: true, os: 'linux', ready: async () => ({}), list: async () => tasks, add: async (o) => { window.__added.push(o); return { id: 't' + window.__added.length, name: o.name || 'x', ...o }; }, pause: async () => {}, resume: async () => {}, remove: async () => {}, setFiles: async () => {}, setLimits: async () => {}, configure: async () => {}, torrentInfo: async () => null, open: async () => {}, defaultDir: async () => '/home/u/Downloads', pickDir: async () => '/x', onTasks: (cb) => { cb(tasks); return () => {}; } };
+    window.__gdl = 0; window.kurokawaTools = { platform: 'desktop', available: true, os: 'linux', galleryList: async () => { window.__gdl++; throw new Error('gallery-dl: X needs an account'); }, ready: async () => ({}), list: async () => tasks, add: async (o) => { window.__added.push(o); return { id: 't' + window.__added.length, name: o.name || 'x', ...o }; }, pause: async () => {}, resume: async () => {}, remove: async () => {}, setFiles: async () => {}, setLimits: async () => {}, configure: async () => {}, torrentInfo: async () => null, open: async () => {}, defaultDir: async () => '/home/u/Downloads', pickDir: async () => '/x', onTasks: (cb) => { cb(tasks); return () => {}; } };
   });
   const grab = async (link) => {
     await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.evaluate(() => { window.__added = []; });
@@ -33,6 +34,10 @@ const PHOTOS = { code: 200, message: 'OK', tweet: { id: '1700000000000000001', t
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__added.length);
   let added = await p.evaluate(() => window.__added); console.log('added:', JSON.stringify(added.map((a) => [a.source.url, a.name])));
   check('the best MP4, named after the post', /1920x1080\/aeoVUvTgj4wHShhN\.mp4/.test(added[0].source.url) && added[0].name === 'elonmusk-1585341984679469056-1.mp4');
+  // An X GIF (x.com link, on a computer that has gallery-dl): the GIF's MP4 from FxTwitter, gallery-dl not asked.
+  rows = await grab('https://x.com/hutarikiri2025/status/2118688654906573042');
+  check('an x.com GIF post on a computer: the GIF, through the X reader (not gallery-dl)', rows.length === 1 && (await p.evaluate(() => window.__gdl)) === 0);
+  await p.evaluate(() => document.querySelectorAll('.sheet, .scrim').forEach((x) => x.remove()));
   // X photos (x.com link): the original size.
   rows = await grab('https://x.com/someone/status/1700000000000000001');
   check('two photos', rows.length === 2);

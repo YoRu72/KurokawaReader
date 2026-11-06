@@ -58,13 +58,22 @@ async function update(force = false) {
   return { version: await version(), latest: tag, updated };
 }
 async function maybeUpdate() { try { if (haveBinary()) await update(false); } catch { /* offline: next time */ } }
-const common = () => { const ff = Ffmpeg.binary(); return ['--no-warnings', '--no-playlist-reverse', ...(fs.existsSync(ff) ? ['--ffmpeg-location', ff] : [])]; };
+// (YouTube needs a JavaScript runtime since yt-dlp 2025.11 — without one it reads nothing. The app's own Node is it:
+// Electron's program runs as plain Node with ELECTRON_RUN_AS_NODE, which yt-dlp's child inherits.)
+// (Only for a yt-dlp that knows the option — one of the user's own may be older.)
+let jsOk = true;
+const JS_SINCE = '2025.11.12';
+async function checkJs() { const v = await version(); jsOk = !v || !olderThan(v, JS_SINCE); }
+const jsArgs = () => (jsOk ? ['--js-runtimes', `node:${process.execPath}`] : []);
+const ENV = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+const common = () => { const ff = Ffmpeg.binary(); return ['--no-warnings', '--no-playlist-reverse', ...jsArgs(), ...(fs.existsSync(ff) ? ['--ffmpeg-location', ff] : [])]; };
 
 /** What a page offers: title, thumbnail, duration, formats; a playlist's entries (flat). */
 async function info(url, opts = {}) {
   await ensure();
-  const args = ['-J', '--no-warnings', ...(opts.playlist ? ['--flat-playlist'] : ['--no-playlist']), ...(opts.cookiesFromBrowser ? ['--cookies-from-browser', opts.cookiesFromBrowser] : []), url];
-  const out = await new Promise((res, rej) => execFile(binPath(), args, { maxBuffer: 64 << 20, timeout: 90000 }, (e, so, se) => (e ? rej(new Error(String(se || e.message).trim().split('\n').pop())) : res(so))));
+  await checkJs();
+  const args = ['-J', '--no-warnings', ...jsArgs(), ...(opts.playlist ? ['--flat-playlist'] : ['--no-playlist']), ...(opts.cookiesFromBrowser ? ['--cookies-from-browser', opts.cookiesFromBrowser] : []), url];
+  const out = await new Promise((res, rej) => execFile(binPath(), args, { maxBuffer: 64 << 20, timeout: 90000, env: ENV }, (e, so, se) => (e ? rej(new Error(String(se || e.message).trim().split('\n').pop())) : res(so))));
   const j = JSON.parse(out);
   return normalise(j);
 }
@@ -97,6 +106,7 @@ class VideoJobs {
     const t = this.tasks.get(id); if (!t || this.procs.has(id)) return;
     t.state = 'downloading'; t.error = undefined; this.emit();
     try { await ensure(); } catch (e) { t.state = 'failed'; t.error = String(e.message); this.emit(); this.save(); return; }
+    await checkJs();
     const m = t.meta || {}; const safe = (x) => String(x).replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().slice(0, 180); const tpl = m.template && !/[\\/]|\.\./.test(m.template) ? m.template : '%(title)s [%(id)s]';
     const outTpl = m.outName ? path.join(t.dir, `${safe(m.outName)}.%(ext)s`) : m.template ? path.join(t.dir, `${m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - ` : ''}${tpl}.%(ext)s`) : path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
     const args = [...common(), '--newline', '--no-playlist', '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.filename)s', '-o', outTpl];
@@ -109,7 +119,7 @@ class VideoJobs {
     if (m.splitChapters) args.push('--split-chapters', '-o', `chapter:${path.join(t.dir, `${m.outName ? safe(m.outName) : tpl} - %(section_number)02d %(section_title)s.%(ext)s`)}`);
     for (const [k, v] of Object.entries(m.headers || {})) if (k && v) args.push('--add-header', `${k}:${v}`);
     args.push(t.source.url);
-    const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); this.procs.set(id, p); let err = ''; let buf = ''; let last = 0;
+    const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: ENV }); this.procs.set(id, p); let err = ''; let buf = ''; let last = 0;
     p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) { if (l.startsWith('KT|')) { const [, done, total, est, speed, eta, file] = l.split('|'); t.done = Number(done) || 0; t.total = Number(total) || Number(est) || 0; t.downSpeed = Number(speed) || 0; t.eta = Number(eta) || undefined; if (file && file !== 'NA') { const base = path.basename(file).replace(/\.f\d+\.(\w+)$/, '.$1').replace(/\.part$/, ''); t.files = [{ index: 0, path: base, size: t.total, done: t.done, priority: 1 }]; t.name = base.replace(/\.[^.]+$/, '') || t.name; } } else if (/\[(Merger|ExtractAudio|EmbedSubtitle|Metadata|ffmpeg)\]/.test(l)) { t.detail = l.replace(/^\[\w+\]\s*/, '').slice(0, 120); if (/Merging into "(.+)"/.test(l)) { const f = /Merging into "(.+)"/.exec(l)[1]; t.files = [{ index: 0, path: path.basename(f), size: t.total, done: t.total, priority: 1 }]; t.name = path.basename(f).replace(/\.[^.]+$/, ''); } } const now = Date.now(); if (now - last > 300) { last = now; this.emit(); } } });
     p.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); });
     p.on('close', (code) => { this.procs.delete(id); const tt = this.tasks.get(id); if (!tt) return; if (tt.state === 'paused' || tt.state === 'removed') { /* asked */ } else if (code === 0) { tt.state = 'done'; tt.done = tt.total || tt.done; tt.doneAt = Date.now(); tt.downSpeed = 0; if (m.bilingual && tt.files && tt.files[0]) { try { bilingual(path.join(tt.dir, tt.files[0].path || tt.files[0].name || ''), String(m.bilingual)); } catch (e) { /* the two files stay */ } } } else { tt.state = 'failed'; tt.error = (err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || `yt-dlp ${code}`).replace(/^ERROR:\s*/, '').slice(0, 300); } this.save(); this.emit(); });

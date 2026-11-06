@@ -87,7 +87,10 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
     const u = url.value.trim(); if (!/^https?:\/\//i.test(u)) return;
     const status = h('small', { class: 'src' }); list.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), status));
     // (A post on X, Bluesky or Reddit: its media read from the site's API, at full quality — no page to crawl.)
-    const social = await import('./social'); const feed = social.feedOf(u); const G = await import('./galleries'); const gal = G.galleryOf(u); const isPost = !!social.socialOf(u) || !!feed || !!gal; depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
+    const social = await import('./social'); const feed = social.feedOf(u); const G = await import('./galleries');
+    // (A post the social reader knows — an X post among them — goes to it, not to gallery-dl: X refuses gallery-dl
+    // without an account, so its GIFs and videos came back broken on a computer.)
+    const gal = social.socialOf(u) || feed ? null : G.galleryOf(u); const isPost = !!social.socialOf(u) || !!feed || !!gal; depthPick.hidden = isPost; if (isPost) belowRow.hidden = true; else belowRow.hidden = depth === 0;
     // (A picture site: a booru's post or tag search, or — on a computer — any gallery gallery-dl reads.)
     if (gal) {
       status.textContent = ` ${t('grabGallery')}`;

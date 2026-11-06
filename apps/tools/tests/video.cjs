@@ -21,9 +21,10 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   }, lang);
   const base = `http://127.0.0.1:${port}/`;
   await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet');
-  await p.fill('.add-input', 'https://www.youtube.com/watch?v=abc'); await p.waitForSelector('.video-card.offer', { timeout: 4000 });
-  console.log('offer:', await p.$eval('.video-card.offer', (e) => e.innerText.replace(/\n+/g, ' | ')));
-  await p.click('.video-card.offer .btn'); await p.waitForSelector('.video-choices', { timeout: 6000 });
+  // (The video add-on off: a YouTube link sets it up by itself — no offer to tap — and its qualities follow.)
+  await p.fill('.add-input', 'https://www.youtube.com/watch?v=abc');
+  const setup = await p.waitForFunction(() => /video downloader|yt-dlp/i.test(document.querySelector('.video-panel')?.innerText || '') || !!document.querySelector('.video-choices'), null, { timeout: 4000 }).then(() => true, () => false);
+  await p.waitForSelector('.video-choices', { timeout: 8000 }); if (!setup || await p.$('.video-card.offer')) errors.push('the video add-on set up by itself');
   console.log('panel:', (await p.$eval('.video-panel', (e) => e.innerText)).replace(/\n+/g, ' | '));
   await p.screenshot({ path: path.join(__dirname, `shot-video-${lang}.png`) });
   await p.click('.video-choices .chip:has-text("720")');
