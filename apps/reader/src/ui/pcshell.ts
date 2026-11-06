@@ -12,6 +12,13 @@ const roomy = matchMedia('(min-width: 720px)');
 export const isPc = (): boolean => (!!window.kurokawaDesktop && roomy.matches) || wide.matches;
 
 let rail: HTMLElement | null = null;
+const RAIL_KEY = 'kr.rail.mini';
+/** The sidebar folded to its icons: as chosen, or by itself in a window too narrow for it. */
+function fitRail(): void {
+  let chosen: string | null = null; try { chosen = localStorage.getItem(RAIL_KEY); } catch { /* private */ }
+  document.documentElement.classList.toggle('rail-mini', chosen === '1' || (chosen === null && window.innerWidth < 1100));
+}
+window.addEventListener('resize', () => { if (isPc()) fitRail(); }, { passive: true });
 let updateOpen: (() => void) | null = null;
 function updateItem(): HTMLElement {
   const b = item('update', 'download', t('updateNow'), () => updateOpen?.());
@@ -34,8 +41,9 @@ function item(name: string, iconName: string, label: string, onClick: () => void
 
 function build(): HTMLElement {
   const nav = h('nav', { class: 'nav-rail', 'aria-label': t('appName') },
-    h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' })),
-    h('button', { type: 'button', class: 'rail-fab', title: `${t('importBooks')} (Ctrl+O)`, 'aria-label': t('importBooks'), onclick: () => ask('import') }, icon('plus')),
+    h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' }), h('b', { class: 'rail-name' }, t('appName')),
+      h('button', { type: 'button', class: 'icon-btn rail-fold', title: t('railFold'), 'aria-label': t('railFold'), onclick: () => { const mini = !document.documentElement.classList.contains('rail-mini'); try { localStorage.setItem(RAIL_KEY, mini ? '1' : '0'); } catch { /* private */ } fitRail(); } }, icon('sidebar'))),
+    h('button', { type: 'button', class: 'rail-fab', title: `${t('importBooks')} (Ctrl+O)`, 'aria-label': t('importBooks'), onclick: () => ask('import') }, icon('plus'), h('span', { class: 'rail-fab-label' }, t('importBooks'))),
     h('div', { class: 'rail-items' },
       item('library', 'books', t('library'), () => navigate('/')),
       item('search', 'search', t('railSearch'), () => ask('search'), `${t('searchBooks')} (Ctrl+Shift+F)`),
@@ -48,7 +56,7 @@ function build(): HTMLElement {
 }
 
 function mark(r: Route): void {
-  document.documentElement.classList.toggle('rail-off', r.name === 'read');
+  document.documentElement.classList.toggle('rail-off', r.name === 'read'); if (isPc()) applyUiSize();
   rail?.querySelectorAll<HTMLElement>('.rail-item').forEach((b) => {
     const on = b.dataset.dest === r.name;
     b.classList.toggle('active', on);
@@ -58,7 +66,7 @@ function mark(r: Route): void {
 
 function apply(): void {
   const pc = isPc();
-  document.documentElement.classList.toggle('pc', pc);
+  document.documentElement.classList.toggle('pc', pc); if (pc) { fitRail(); applyUiSize(); }
   if (pc && !rail) { rail = build(); document.body.prepend(rail); mark(parseRoute()); }
   if (!pc && rail) { rail.remove(); rail = null; }
 }
@@ -89,3 +97,10 @@ export function railUpdate(open: () => void): void {
   updateOpen = open;
   const b = rail?.querySelector<HTMLElement>('[data-dest="update"]'); if (b) b.hidden = false;
 }
+
+/** The interface's size on a computer (everything but an open book, whose text has its own size and whose PDF pages
+ *  stay sharp): 1 is the phone's size; a computer starts a little larger. */
+export const UI_SIZES = [1, 1.1, 1.2, 1.3] as const;
+export function uiSize(): number { try { const v = Number(localStorage.getItem('kr.uiSize')); if ((UI_SIZES as readonly number[]).includes(v)) return v; } catch { /* private */ } return 1.1; }
+export function setUiSize(v: number): void { try { localStorage.setItem('kr.uiSize', String(v)); } catch { /* private */ } applyUiSize(); }
+export function applyUiSize(): void { const f = isPc() && parseRoute().name !== 'read' ? uiSize() : 1; (window.kurokawaDesktop as { setZoom?(f: number): void } | undefined)?.setZoom?.(f); }

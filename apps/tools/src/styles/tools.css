@@ -10,7 +10,7 @@ html.pc .view .body { padding: 18px var(--gut) 48px; max-width: var(--col); widt
 html.pc .view > :is(.topbar, .filter-chips) { padding-inline: max(var(--gut), calc((100% - var(--col)) / 2 + var(--gut))); box-sizing: border-box; }
 html.pc .view > .filter-chips { padding-block: 4px 6px; }
 /* A mouse cannot swipe: on a computer the chip rows that scroll sideways on a phone wrap onto more lines. */
-html.pc :is(.settings-nav, .settings-tabs, .chip-row.files-kinds, .filter-chips) { flex-wrap: wrap; overflow: visible; -webkit-mask: none; mask: none; }
+html.pc :is(.chip-row.files-kinds, .filter-chips) { flex-wrap: wrap; overflow: visible; -webkit-mask: none; mask: none; }
 .topbar .title .count { margin-inline-start: 8px; font-size: 13px; color: var(--md-on-surface-dim); font-weight: 500; }
 
 /* Bottom navigation (phones) */
@@ -800,3 +800,16 @@ html.pc .topbar .icon-btn:hover { background: color-mix(in srgb, var(--md-on-sur
 html.pc .topbar .icon-btn[data-icon='back'] { margin-inline-start: -8px; }
 html[dir='rtl'] .topbar .title > span:first-child { letter-spacing: 0; }
 [dir='rtl'] .files-crumbs { justify-content: flex-end; }
+
+/* Settings on a computer: two columns — the sections (and the add-on tabs, and the search) in a column at the side
+   that stays in view, the cards beside it — instead of a header pinned over the page. */
+html.pc .view.settings-view { --col: 1240px; }
+html.pc .settings-view .settings-body { display: grid; grid-template-columns: 236px minmax(0, 1fr); column-gap: 32px; align-items: start; align-content: start; }
+html.pc .settings-view .settings-body > :not(.settings-head) { grid-column: 2; }
+html.pc .settings-view .settings-head { grid-column: 1; grid-row: 1 / span 400; position: sticky; top: 0; margin: 0; padding: 4px 0 24px; background: none; box-shadow: none; max-height: calc(100vh - 110px); overflow: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 10px; }
+html.pc .settings-view .settings-head .settings-search { order: -1; margin: 0; flex: none; height: 44px; min-height: 44px; box-sizing: border-box; padding: 0 16px; font-size: 14px; }
+html.pc .settings-view :is(.settings-tabs, .settings-nav) { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 2px; overflow: visible; padding: 0; margin: 0; -webkit-mask: none; mask: none; }
+html.pc .settings-view .settings-tabs { padding-bottom: 10px; border-bottom: 1px solid var(--md-outline-variant); }
+html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip { justify-content: flex-start; height: 38px; padding: 0 14px; border-radius: var(--sh-full); background: none; border: 0; font-size: 14px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip.on, html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 650; }
