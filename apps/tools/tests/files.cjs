@@ -159,7 +159,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.keyboard.press('Escape');
   // the drawer from the side: a finger swiped from the start side opens it; swiped back, it closes
   await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa'); await p.waitForSelector('.files-row:has-text("photo.jpg")');
-  const swipe = (sel, x0, x1) => p.evaluate(([sel, x0, x1]) => { const el = document.querySelector(sel); const ev = (type, x) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, pointerType: 'touch', clientX: x, clientY: 400 })); ev('pointerdown', x0); for (let k = 1; k <= 8; k++) ev('pointermove', x0 + ((x1 - x0) * k) / 8); ev('pointerup', x1); }, [sel, x0, x1]);
+  // (A real finger, through Chromium's touch handling — scrolling and all —, not made-up events: a little up and down
+  // on the way, as a thumb does.)
+  const cdp = await p.context().newCDPSession(p); await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 }); await cdp.send('Emulation.setEmitTouchEventsForMouse', { enabled: false });
+  const swipe = async (_sel, x0, x1, y = 400) => {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+    for (let k = 1; k <= 10; k++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + ((x1 - x0) * k) / 10, y: y + (k % 3) * 6 }] }); await p.waitForTimeout(16); }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
   await swipe('.files-view', 20, 260); await p.waitForTimeout(900);
   const side = await p.evaluate(() => { const d = document.querySelector('.sheet.files-drawer'); if (!d) return null; const r = d.getBoundingClientRect(); return { left: Math.round(r.left), top: Math.round(r.top), h: Math.round(r.height), side: d.classList.contains('side-drawer') }; });
   ok('a swipe from the side opens the drawer, full height at the side', !!side && side.side && side.left === 0 && side.top === 0 && side.h === 900, side);
