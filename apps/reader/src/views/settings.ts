@@ -1,4 +1,5 @@
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
+import { isPc, uiSize, setUiSize, UI_SIZES } from '../ui/pcshell';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
 import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels, countHours } from '../i18n';
 import { navigate, back } from '../router';
@@ -42,7 +43,9 @@ export function settingsView(): HTMLElement {
     const modes: [UiMode, string][] = [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')], ['page', t('uiPage')]];
     const accents: [Accent, string, string][] = [['graphite', t('accentGraphite'), '#c9ccd2'], ['aqua', t('accentAqua'), '#8fd0f0'], ['teal', t('accentTeal'), '#86d6cf'], ['gold', t('accentGold'), '#ebc47e'], ['coral', t('accentCoral'), '#ffb59f'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['olive', t('accentOlive'), '#c3cf9a'], ['sand', t('accentSand'), '#e3c9a3'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')),
+    // (On a computer: the interface's size — everything but an open book.)
+    const sizeField = isPc() ? h('div', { class: 'field' }, h('label', null, t('uiSize')), h('div', { class: 'segmented' }, ...UI_SIZES.map((v) => h('button', { type: 'button', 'aria-pressed': String(Math.abs(uiSize() - v) < 0.01), onclick: () => { setUiSize(v); renderAppearance(); } }, `${localDigits(Math.round(v * 100))}%`))), h('p', { class: 'hint' }, t('uiSizeHint'))) : null;
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), sizeField,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
