@@ -181,7 +181,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         if (info && srcs.length === 1 && !chosen.size) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }
         const files = info && srcs.length === 1 && chosen.size < info.files.length ? [...chosen] : undefined;
         const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
-        const wait = later.checked && !(await import('../downloads/prism')).inWindow();
+        const wait = later.checked && !(await import('../downloads/background')).inWindow();
         const fullName = srcs.length === 1 && name.value.trim() ? `${hidden.checked && !name.value.trim().startsWith('.') ? '.' : ''}${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` : undefined;
         const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true; if (!retry.checked) meta.noRetry = true; if (hidden.checked) meta.hidden = true;
         // (A rule that fits the link: its folder, its «later» and «Wi‑Fi only», its connections — unless the reader chose otherwise here.)
@@ -189,7 +189,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         if (rule?.then.later) meta.later = true; if (rule?.then.wifiOnly) meta.wifiOnly = true;
         if (cookieJar) meta.cookieJar = cookieJar;
         if (src.url && nativeHls(src.url)) { meta.hls = true; const q = rule?.then.quality || getSettings().videoQuality; if (/^\d+/.test(q)) meta.quality = `${parseInt(q, 10)}p`; }
-        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait || (!!rule?.then.later && !(await import('../downloads/prism')).inWindow()), connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
+        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait || (!!rule?.then.later && !(await import('../downloads/background')).inWindow()), connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
         toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
       }
       sh.close();

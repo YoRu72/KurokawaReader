@@ -160,7 +160,7 @@ else {
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());
-  void import('./downloads/prism').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
+  void import('./downloads/background').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
   if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
   if (getSettings().addons.includes('tv')) void import('./tv/auto').then((m) => m.startTvAuto());
   void import('./downloads/done').then((m) => m.startDoneWatch());

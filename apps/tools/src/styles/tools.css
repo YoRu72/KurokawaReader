@@ -80,7 +80,7 @@ html.pc .fab { display: none; }
 
 /* Search */
 .search-form { padding: 6px 0 12px; } .search-input { width: 100%; box-sizing: border-box; height: 48px; border-radius: var(--sh-full); border: 0; padding: 0 20px; background: var(--md-surface-container-high); color: var(--md-on-surface); font: 15px var(--font-ui); }
-.search-source h4 { margin: 14px 0 6px; color: var(--md-on-surface-dim); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+
 .result-row { all: unset; cursor: pointer; display: flex; gap: 12px; align-items: center; width: 100%; box-sizing: border-box; padding: 10px 8px; border-radius: 14px; }
 .result-row:hover { background: var(--md-surface-container); }
 .result-row > svg { width: 20px; height: 20px; flex: none; fill: none; stroke: var(--md-primary); stroke-width: 1.9; }
@@ -94,25 +94,25 @@ html.pc .fab { display: none; }
 
 /* Selection: the app's words are not text to pick. */
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-input, textarea, pre, code, .selectable, .release-notes, .kv dd { -webkit-user-select: text; user-select: text; }
+input, textarea, pre, code, .release-notes, .kv dd { -webkit-user-select: text; user-select: text; }
 
 .crash-detail { font-size: 11px; text-align: start; white-space: pre-wrap; word-break: break-all; max-width: 100%; background: var(--md-surface-container-high); padding: 10px; border-radius: 10px; color: var(--md-on-surface-variant); }
 /* Prism-style details */
-.filemap { position: relative; height: 18px; border-radius: 6px; background: var(--md-surface-container-highest); overflow: hidden; }
-.filemap .seg { position: absolute; top: 0; height: 100%; border-inline-end: 1px solid var(--md-surface); }
-.filemap .seg b { display: block; height: 100%; opacity: .9; }
-.filemap .seg.active b { animation: pulse 1.2s ease-in-out infinite; }
-.filemap .done { position: absolute; top: 0; height: 100%; }
+
+
+
+
+
 .lanes { display: flex; flex-direction: column; gap: 6px; }
 .lane { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.lane-id { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; color: #000; font-weight: 700; font-size: 11px; flex: none; }
-.lane-track { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--md-surface-container-highest); overflow: hidden; }
-.lane-track i { position: absolute; top: 0; height: 100%; background: var(--md-surface-container); }
-.lane-track i b { display: block; height: 100%; }
-.speed-wrap { position: relative; color: var(--md-primary); }
-.speed-chart { width: 100%; height: 90px; display: block; }
-.speed-chart .grid { stroke: var(--md-outline-variant); stroke-width: 1; stroke-dasharray: 3 4; }
-.speed-legend { display: flex; justify-content: space-between; color: var(--md-on-surface-variant); }
+
+
+
+
+
+
+
+
 .task-log { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .log-row { display: flex; gap: 10px; }
 .chip-sep { width: 1px; height: 24px; background: var(--md-outline-variant); margin: 0 4px; flex: none; }
@@ -213,10 +213,10 @@ html.pc .fab-item { flex-direction: row-reverse; }
 .watch-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Packs: a component being fetched */
-.pack-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
-.pack-row > svg { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
-.pack-row b { display: block; } .pack-row small { display: block; margin: 2px 0 6px; }
-.pack-row.done small { color: var(--md-primary); }
+
+
+ 
+
 
 /* Downloads options (as the reader's Library sheet) */
 .lib-sheet-tabs { margin-bottom: 12px; }
@@ -418,7 +418,7 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 .kt-kv dd .sel { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 .kt-kv dd .sel.open { display: block; -webkit-line-clamp: unset; }
 @media (max-width: 560px) { .kt-kv-row { grid-template-columns: 1fr; gap: 2px; align-items: start; } }
-.kt-log li, .kt-log div { overflow-wrap: anywhere; }
+
 
 /* The files of a batch to pick from (the picker sheet and the Add sheet). */
 .result-wrap { display: flex; align-items: center; gap: 2px; }
@@ -443,7 +443,7 @@ html.mini .bottom-nav, html.mini .nav-rail { display: none !important; }
 /* Settings rows: the label above its hint (never run together), the control kept to its size beside them. */
 .settings-view .row > span, .settings-view .switch-row > span { flex: 1 1 auto; min-width: 0; }
 .settings-view .row > span > small, .settings-view .switch-row > span > small { display: block; margin-top: 3px; font-weight: 400; font-size: 12.5px; line-height: 1.4; opacity: .85; }
-.settings-view .row > input[type=number], .settings-view .row > .num-wrap input[type=number] { flex: none; width: 5.5em; max-width: 34vw; height: 40px; min-height: 0; padding: 0 12px; border-radius: 12px; text-align: center; box-sizing: border-box; font-size: 15px; }
+.settings-view .row > input[type=number]{ flex: none; width: 5.5em; max-width: 34vw; height: 40px; min-height: 0; padding: 0 12px; border-radius: 12px; text-align: center; box-sizing: border-box; font-size: 15px; }
 .settings-view .row > input[type=text], .settings-view .row > input[type=url], .settings-view .row > input[type=password] { flex: 1 1 100%; min-width: 0; height: 40px; min-height: 0; border-radius: 12px; box-sizing: border-box; }
 /* The search and the section chips stay over the page as it scrolls, on a solid ground (nothing shows above or under them). */
 .settings-view .settings-head { top: -8px; background: var(--md-surface); box-shadow: 0 6px 8px -8px rgb(0 0 0 / .45); padding-bottom: 8px; }
