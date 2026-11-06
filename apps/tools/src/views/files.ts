@@ -400,6 +400,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
     const m = await import('./filesMore'); const toBin = m.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p));
     sh.body.append(h('p', { class: 'hint' }, toBin ? t('filesDeleteToTrash') : t('filesDeleteForeverHint')));
+    // (With the recycle bin on, a second way: gone from the phone at once, the bin passed by.)
+    if (toBin) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); leaveSel(); void startJob('delete', paths); } }, icon('trash'), t('filesDeleteForever')));
     sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { sh.close(); leaveSel(); if (!toBin) { void startJob('delete', paths); return; } try { const r = await m.toTrash(paths); if (r.failed.length) toast(t('filesSomeFailed', { n: localDigits(r.failed.length), why: r.failed[0] }), 'error'); else toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('delete')));
   };
   const shareMany = async (paths: string[]) => { const pl = plug(); if (!pl) return; if (paths.length === 1) { await pl.shareFile({ path: paths[0], title: baseOf(paths[0]) }).catch(() => undefined); return; } const { shareFiles } = await import('../ui/shareMany'); await shareFiles(paths); };

@@ -1108,7 +1108,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   filesKindVideo: "Video",
   filesKindDocs: "Documents",
   filesKindArchives: "Archives",
-  filesKindApps: "Apps",
+  filesKindApps: "APKs",
   filesNothingMatches: "Nothing matches.",
   filesFolders: "folders",
   filesTruncated: "A very big folder: the first twenty thousand entries are shown.",
