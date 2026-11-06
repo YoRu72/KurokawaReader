@@ -1,7 +1,7 @@
 // The app's own icon, of the user's choosing (a picture cropped in the app): kept in the app's data folder, set on
 // every window and the taskbar now and at each start, the Dock's on a Mac, and on Windows the desktop, Start-menu
 // and pinned taskbar shortcuts made to show it (an .ico written beside it — Windows wants one for a shortcut).
-// Shared by Kurokawa Tools and KurokawaReader (the same file in each app).
+// The same file is in Kurokawa Tools and KurokawaReader: a change to one goes to both.
 const { app, BrowserWindow, nativeImage, shell } = require('electron');
 const fs = require('node:fs'); const path = require('node:path');
 

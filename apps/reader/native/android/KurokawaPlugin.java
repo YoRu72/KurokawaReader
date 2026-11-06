@@ -67,6 +67,23 @@ public class KurokawaPlugin extends Plugin {
 
     private boolean jobStarted = false;
 
+    /** The app's icon of the user's choosing on a home-screen shortcut that opens the app (Android lets an app change
+     *  only its shortcuts' icons): the launcher asks to confirm it. */
+    @PluginMethod public void pinIcon(PluginCall call) {
+        try {
+            String b64 = call.getString("png", ""); int comma = b64.indexOf(','); if (comma >= 0) b64 = b64.substring(comma + 1);
+            byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length); if (bmp == null) { call.reject("not a picture"); return; }
+            android.content.Context ctx = getContext();
+            if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(ctx)) { call.reject("unsupported"); return; }
+            android.content.Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName()); if (open == null) { call.reject("no launcher"); return; }
+            open.setAction(android.content.Intent.ACTION_MAIN);
+            String label = call.getString("label", ctx.getApplicationInfo().loadLabel(ctx.getPackageManager()).toString());
+            androidx.core.content.pm.ShortcutInfoCompat info = new androidx.core.content.pm.ShortcutInfoCompat.Builder(ctx, "kt-icon-" + System.currentTimeMillis())
+                .setShortLabel(label).setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(bmp)).setIntent(open).build();
+            JSObject r = new JSObject(); r.put("ok", androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(ctx, info, null)); call.resolve(r);
+        } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+    }
     @PluginMethod
     public void notifyPermission(PluginCall call) {
         boolean ask = Boolean.TRUE.equals(call.getBoolean("ask", false));

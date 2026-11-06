@@ -1,3 +1,4 @@
+// (The same file is in both apps' src/ui: a change to one goes to both.)
 // An icon made from any picture: chosen, moved under a square frame by the finger or the mouse, zoomed (wheel,
 // pinch, slider), turned by quarters, its shape seen as a launcher would show it (round, rounded, square), and
 // what the picture leaves bare filled with a colour. Gives a 512×512 PNG (a data URL), or null when let go.
@@ -23,7 +24,9 @@ export function cropIcon(src: string, o: { title?: string } = {}): Promise<strin
     img.onerror = () => { toast(t('iconCantRead'), 'error'); resolve(null); };
     img.onload = () => {
       let done = false; const finish = (v: string | null) => { if (done) return; done = true; resolve(v); };
-      const sh = openSheet(o.title ?? t('iconCropTitle'), t('cancel'), { stack: true, onClose: () => finish(null) }); sh.el.classList.add('icon-crop');
+      const sh = openSheet(o.title ?? t('iconCropTitle'), t('cancel'), { stack: true }); sh.el.classList.add('icon-crop');
+      // (Closed any way — its button, the scrim, Escape —: nothing chosen.)
+      const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); finish(null); } }); mo.observe(document.body, { childList: true });
       const SZ = 280; const dpr = Math.min(3, window.devicePixelRatio || 1);
       const cv = h('canvas', { class: 'ic-canvas', width: String(SZ * dpr), height: String(SZ * dpr), 'aria-label': t('iconCropTitle') }) as HTMLCanvasElement; const ctx = cv.getContext('2d')!;
       let shape: IconShape = 'squircle'; let bg = '#ffffff'; let fill = false; let rot = 0;

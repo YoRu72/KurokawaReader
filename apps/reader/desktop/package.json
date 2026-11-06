@@ -25,6 +25,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "appicon.cjs",
       "icon.png",
       "icon.ico",
       {

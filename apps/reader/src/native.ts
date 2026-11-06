@@ -218,6 +218,18 @@ export async function setAppName(lang: string): Promise<void> {
   const k = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setAppName?(o: { lang: string }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await k?.setAppName?.({ lang }); } catch { /* ignore */ }
 }
+/** The app's icon of the user's choosing: on a computer the window, taskbar and shortcuts (null brings the original
+ *  back; nothing asked gives the one in use); on Android a home-screen shortcut pinned with it. */
+type IconDesk = { appIcon?(o?: { set: string | null }): Promise<string | boolean | null> };
+type IconPlug = { pinIcon?(o: { png: string; label: string }): Promise<{ ok: boolean }> };
+const iconPlug = (): IconPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: IconPlug } }) | undefined)?.Plugins?.Kurokawa;
+export const appIconWay = (): 'desktop' | 'android' | null => ((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon ? 'desktop' : nativePlatform() === 'android' && iconPlug()?.pinIcon ? 'android' : null);
+export async function appIconNow(): Promise<string | null> { const u = await (window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon?.().catch(() => null); return typeof u === 'string' && u ? u : null; }
+export async function setAppIcon(png: string | null, label: string): Promise<boolean> {
+  if (appIconWay() === 'desktop') { await (window.kurokawaDesktop as unknown as IconDesk).appIcon!({ set: png }); return true; }
+  if (png && appIconWay() === 'android') return !!(await iconPlug()!.pinIcon!({ png, label }))?.ok;
+  return false;
+}
 /** Screen brightness 0–1 (phones and tablets); -1 hands control back to the system. */
 export async function setDeviceBrightness(value: number): Promise<void> { try { await brightnessPlugin()?.setBrightness({ value }); } catch { /* ignore */ } }
 export async function getDeviceBrightness(): Promise<number> { try { return (await brightnessPlugin()?.getBrightness())?.value ?? 0.5; } catch { return 0.5; } }

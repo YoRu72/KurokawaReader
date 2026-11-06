@@ -9,7 +9,7 @@ import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting, type VisualSettings, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
-import { nativePlatform, canSetAppName, setAppName } from '../native';
+import { nativePlatform, canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon } from '../native';
 import { decksCard } from '../ui/decks';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
@@ -45,7 +45,7 @@ export function settingsView(): HTMLElement {
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
     // (On a computer: the interface's size — everything but an open book.)
     const sizeField = isPc() ? h('div', { class: 'field' }, h('label', null, t('uiSize')), h('div', { class: 'segmented' }, ...UI_SIZES.map((v) => h('button', { type: 'button', 'aria-pressed': String(Math.abs(uiSize() - v) < 0.01), onclick: () => { setUiSize(v); renderAppearance(); } }, `${localDigits(Math.round(v * 100))}%`))), h('p', { class: 'hint' }, t('uiSizeHint'))) : null;
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), sizeField,
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
@@ -436,4 +436,19 @@ function resettable(text: string, key: keyof VisualSettings, after: () => void):
   const span = h('span', { class: 'label' }, text);
   if (!isDefault(key)) span.append(h('button', { type: 'button', class: 'reset-one', title: t('resetThis'), 'aria-label': t('resetThis'), onclick: () => { resetSetting(key); after(); } }, icon('undo')));
   return span;
+}
+
+/** «The app's icon»: any picture, cropped — on a computer the window, taskbar and shortcuts show it (the original can
+ *  come back); on Android a home-screen shortcut with it opens the app. Hidden where neither is possible. */
+function appIconField(): HTMLElement | null {
+  const way = appIconWay(); if (!way) return null;
+  const show = (u: string | null) => document.querySelectorAll<HTMLElement>('.app-icon-row').forEach((r) => { (r.querySelector('.app-icon-now') as HTMLImageElement).src = u || 'icons/icon.svg'; (r.querySelector('.app-icon-reset') as HTMLElement).hidden = !u; });
+  const pic = h('img', { class: 'app-icon-now', src: 'icons/icon.svg', alt: '' });
+  const reset = h('button', { type: 'button', class: 'btn text small app-icon-reset', hidden: true, onclick: async () => { await setAppIcon(null, t('appName')); show(null); toast(t('myIconSet')); } }, t('myIconReset'));
+  if (way === 'desktop') void appIconNow().then((u) => { if (u) show(u); });
+  const choose = async () => {
+    const { pickIconImage } = await import('../ui/iconCrop'); const u = await pickIconImage(); if (!u) return;
+    try { const ok = await setAppIcon(u, t('appName')); if (way === 'desktop') { show(u); toast(t('myIconSet')); } else toast(ok ? t('myIconPinned') : t('iconCantRead'), ok ? 'info' : 'error', 5000); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  };
+  return h('div', { class: 'field app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, way === 'desktop' ? t('myIconHintPc') : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
 }
