@@ -75,7 +75,7 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
             aired ? iconButton('play', t('epWatchNow'), () => void watch(mm, v)) : null,
             aired ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => { lib.setSeen(epKey(mm, v), !seen); draw(); }) : null);
           // (Held: the episode's options, its download deleted among them.)
-          if (aired) onLongPress(rowEl, () => episodeMenu(mm, v, got, seen, eps, () => draw()));
+          if (aired) onLongPress(rowEl, (ev) => episodeMenu(mm, v, got, seen, eps, () => draw(), ev));
           return rowEl;
         }));
     }
@@ -137,8 +137,8 @@ async function addRelease(m: TvMeta, r: TvRelease, v?: TvEpisode, choose = false
 }
 /** One episode, held: watch, download, choose a release, mark it (or every one up to it) seen or not, its
  *  download's details, and its download deleted (files and all). */
-function episodeMenu(m: TvMeta, v: TvEpisode, got: Task | undefined, seen: boolean, season: TvEpisode[], changed: () => void): void {
-  const sh = openSheet(titleOf(m, v), t('close')); sh.el.classList.add('ep-menu');
+function episodeMenu(m: TvMeta, v: TvEpisode, got: Task | undefined, seen: boolean, season: TvEpisode[], changed: () => void, at?: Event): void {
+  const sh = openSheet(titleOf(m, v), t('close'), { at }); sh.el.classList.add('ep-menu');
   const row = (ic: string, label: string, fn: () => void, cls = '') => sh.body.append(h('button', { type: 'button', class: 'dest-row' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow', dir: 'auto' }, label)));
   if (v.name) sh.body.append(h('p', { class: 'src', dir: 'auto' }, v.name));
   row('play', got?.state === 'done' ? t('play') : t('epWatchNow'), () => void watch(m, v));

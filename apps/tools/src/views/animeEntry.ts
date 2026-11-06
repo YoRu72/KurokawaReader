@@ -75,7 +75,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
         al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) })) : null);
       // (Held: the episode's options — Hayase's — among them deleting its download.)
-      if (aired) onLongPress(rowEl, () => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw()));
+      if (aired) onLongPress(rowEl, (ev) => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw(), ev));
       eps.push(rowEl);
     }
     const rule = ruleOf(a.id);
@@ -255,8 +255,8 @@ function ruleSheet(a: Anime, next: number, changed: () => void): void {
 
 /** One episode, held: what can be done with it — watch, download, choose a release, mark it (or every one up to
  *  it) seen or not, its download's details, and its download deleted (files and all). */
-function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, seen: boolean, setProgress: ((to: number) => void) | null, changed: () => void): void {
-  const sh = openSheet(`${titleOf(a)} · ${t('episodeN', { n })}`, t('close')); sh.el.classList.add('ep-menu');
+function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, seen: boolean, setProgress: ((to: number) => void) | null, changed: () => void, at?: Event): void {
+  const sh = openSheet(`${titleOf(a)} · ${t('episodeN', { n })}`, t('close'), { at }); sh.el.classList.add('ep-menu');
   const row = (ic: string, label: string, fn: () => void, cls = '') => sh.body.append(h('button', { type: 'button', class: 'dest-row' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow', dir: 'auto' }, label)));
   sh.body.append(h('p', { class: 'src', dir: 'auto' }, title));
   row('play', got?.state === 'done' ? t('play') : t('epWatchNow'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${titleOf(a)} · ${t('episodeN', { n })}`)));

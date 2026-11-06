@@ -46,8 +46,8 @@ html.pc .fab { display: none; }
 .task-actions { display: flex; align-items: center; }
 @keyframes kt-slide { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
 .filter-chips { display: flex; gap: 8px; padding: 8px 0 12px; overflow-x: auto; scrollbar-width: none; }
-.engine-note { display: flex; gap: 8px; align-items: flex-start; color: var(--md-on-surface-dim); }
-.engine-note svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; }
+.engine-note { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--md-on-surface-dim); }
+.engine-note > svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; }
 
 /* Task detail */
 .task-detail .card { margin-bottom: 14px; }

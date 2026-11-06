@@ -104,6 +104,7 @@ function createWindow() {
   AppIcon.apply(win, path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'));
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('did-finish-load', flushLinks);
+  win.webContents.on('did-finish-load', () => { if (engine) send('kt:engineState', engineState()); });
   win.loadURL('app://kurokawa/index.html');
   if (st.maximized) win.maximize();
   win.on('resize', saveState); win.on('move', saveState);
@@ -138,7 +139,10 @@ else {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]));
     const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true });
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
-    await engine.start().catch((e) => { engine.available = false; engine.reason = String(e.message || e); });
+    engine.onState = () => send('kt:engineState', engineState());
+    // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
+    // first start under Windows' antivirus.)
+    void engine.ensure();
     videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
     engine.onTasks((tasks) => { lastAria = tasks; const all = allTasks(); send('kt:tasks', all); onDesktopTasks(all); });
     setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
@@ -157,9 +161,13 @@ else {
 
 /* ---------- the engine, to the page ---------- */
 const E = () => { if (!engine) throw new Error('engine'); return engine; };
-ipcMain.handle('kt:state', () => ({ available: !!engine?.available, reason: engine?.reason || '', os: process.platform, arch: process.arch }));
-ipcMain.handle('kt:list', async () => { lastAria = await E().list(); return allTasks(); });
-ipcMain.handle('kt:add', (_e, o) => (o.video ? videos.add({ ...o.video, url: o.source.url, dir: o.dir || engine.defaultDir, paused: o.paused, meta: o.meta }) : E().add(o)));
+const engineState = () => ({ available: !!engine?.available, reason: engine?.reason || '', os: process.platform, arch: process.arch });
+ipcMain.handle('kt:state', () => engineState());
+// (Asked again from the page — «Try again» —: aria2c started if it is not running.)
+ipcMain.handle('kt:engineRetry', async () => { await engine?.ensure(); return engineState(); });
+// (aria2c down: the videos still listed, and an added download starts it again first.)
+ipcMain.handle('kt:list', async () => { if (engine?.available) lastAria = await engine.list().catch(() => lastAria); return allTasks(); });
+ipcMain.handle('kt:add', (_e, o) => (o.video ? videos.add({ ...o.video, url: o.source.url, dir: o.dir || engine.defaultDir, paused: o.paused, meta: o.meta }) : E().ensure().then(() => E().add(o))));
 ipcMain.handle('kt:pause', (_e, id) => (isVideoId(id) ? videos.pause(id) : E().pause(id)));
 ipcMain.handle('kt:resume', (_e, id) => (isVideoId(id) ? videos.resume(id) : E().resume(id)));
 ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, !!del) : E().remove(id, !!del)));
@@ -217,7 +225,7 @@ ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => E().configure(o));
-ipcMain.handle('kt:torrentInfo', (_e, s) => E().torrentInfo(s));
+ipcMain.handle('kt:torrentInfo', (_e, s) => E().ensure().then(() => E().torrentInfo(s)));
 ipcMain.handle('kt:rename', (_e, o) => E().rename(String(o.id), String(o.name)));
 ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
 ipcMain.handle('kt:defaultDir', () => engine?.defaultDir || app.getPath('downloads'));

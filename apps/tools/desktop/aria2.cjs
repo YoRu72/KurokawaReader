@@ -53,17 +53,32 @@ class Aria2Engine {
     if (c.dht === false) args.push('--enable-dht=false', '--enable-dht6=false'); if (c.lsd === false) args.push('--bt-enable-lpd=false'); else args.push('--bt-enable-lpd=true');
     if (c.enc === 'forced') args.push('--bt-require-crypto=true', '--bt-min-crypto-level=arc4');
     args.push(...Object.entries(netOptions(c.net)).map(([k, v]) => `--${k}=${v}`));
-    this.proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    this.proc.stderr.on('data', (d) => console.warn('[aria2c]', String(d).trim()));
-    this.proc.on('exit', (code) => { console.warn('[aria2c] exited', code); this.available = false; this.reason = `aria2c exited (${code})`; this.proc = null; });
+    let said = ''; const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); this.proc = proc;
+    proc.stderr.on('data', (d) => { said = String(d).trim().split(/\r?\n/).pop() || said; console.warn('[aria2c]', said); });
+    proc.on('error', (e) => { said = String(e.message || e); });
+    proc.on('exit', (code) => {
+      console.warn('[aria2c] exited', code); if (this.proc !== proc) return; this.proc = null;
+      const was = this.available; this.available = false; this.reason = `aria2c exited (${code})${said ? `: ${said}` : ''}`; this.onState?.();
+      // (It stopped on its own while in use — not the app quitting —: started again, a few times at most.)
+      if (was && !this.stopping && (this.restarts = (this.restarts || 0) + 1) <= 3) setTimeout(() => void this.ensure(), 2000 * this.restarts);
+    });
     this.rpc = new Aria2Rpc(`ws://127.0.0.1:${port}/jsonrpc`, secret);
     this.rpc.onNotify = () => this.tick();
-    for (let i = 0; i < 40; i++) { try { await this.rpc.call('getVersion'); this.available = true; this.reason = ''; break; } catch { await new Promise((r) => setTimeout(r, 150)); } }
-    if (!this.available) { this.reason = 'aria2c did not answer'; return false; }
+    // (Up to half a minute: on a first start Windows' antivirus may hold the new program that long.)
+    const until = Date.now() + 30000;
+    while (Date.now() < until && this.proc === proc) { try { await this.rpc.call('getVersion'); this.available = true; this.reason = ''; break; } catch { await new Promise((r) => setTimeout(r, 250)); } }
+    if (!this.available) { if (this.proc === proc) { try { proc.kill(); } catch { /* gone */ } this.proc = null; this.reason = 'aria2c did not answer'; } else if (said && !this.reason.includes(said)) this.reason += `: ${said}`; this.onState?.(); return false; }
+    this.onState?.();
     this.loop();
     return true;
   }
-  stop() { try { this.rpc?.call('saveSession').catch(() => {}); } catch { /* ignore */ } try { this.rpc?.close(); } catch { /* ignore */ } if (this.proc) { try { this.proc.kill(); } catch { /* ignore */ } this.proc = null; } }
+  /** Started if it is not running (once at a time): whether it runs now. */
+  ensure() {
+    if (this.available) return Promise.resolve(true);
+    if (!this.starting) this.starting = this.start().catch((e) => { this.available = false; this.reason = String(e.message || e); this.onState?.(); return false; }).finally(() => { this.starting = null; });
+    return this.starting;
+  }
+  stop() { this.stopping = true; try { this.rpc?.call('saveSession').catch(() => {}); } catch { /* ignore */ } try { this.rpc?.close(); } catch { /* ignore */ } if (this.proc) { try { this.proc.kill(); } catch { /* ignore */ } this.proc = null; } }
 
   /* ---------- tasks ---------- */
   nameOf(st) { return st.bittorrent?.info?.name || (st.files?.[0]?.path ? path.basename(st.files[0].path) : (st.files?.[0]?.uris?.[0]?.uri || '').split('/').pop()) || st.gid; }
@@ -143,7 +158,7 @@ class Aria2Engine {
   }
   async setFiles(id, priorities) { await this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }); this.tick(); }
   async setLimits(l) { await this.rpc.call('changeGlobalOption', { 'max-overall-download-limit': String(l.down || 0), 'max-overall-upload-limit': String(l.up || 0) }); }
-  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.net) await this.rpc.call('changeGlobalOption', netOptions(o.net)).catch(() => {}); if (o.maxConnections) await this.rpc.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
+  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.net) await this.rpc?.call('changeGlobalOption', netOptions(o.net)).catch(() => {}); if (o.maxConnections) await this.rpc?.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc?.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
   async torrentInfo(source) {
     const gid = source.torrent ? await this.rpc.call('addTorrent', source.torrent, [], { pause: 'true' }) : await this.rpc.call('addUri', [source.magnet], { 'bt-metadata-only': 'true', 'bt-save-metadata': 'false' });
     const until = Date.now() + 60000;

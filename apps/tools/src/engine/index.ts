@@ -17,7 +17,9 @@ function pick(): Engine {
   if (engine && k === key) return engine;
   key = k;
   if (s.aria2.use) engine = new Aria2Engine(new Aria2Rpc(s.aria2.url, s.aria2.secret));
-  else if (window.kurokawaTools?.available) engine = new DesktopEngine(window.kurokawaTools);
+  // (On the computer always its own engine — never the browser's, which only hands a link over and calls it done —:
+  // were aria2c down, adding starts it again, and videos go through yt-dlp without it.)
+  else if (window.kurokawaTools?.platform === 'desktop') engine = new DesktopEngine(window.kurokawaTools);
   else engine = NativeEngine.here() ?? new BrowserEngine();
   for (const fn of listeners) fn(engine);
   return engine;
@@ -27,6 +29,10 @@ export const getEngine = (): Engine => pick();
 export const platformEngineProblem = (): string | undefined => (window.kurokawaTools && !window.kurokawaTools.available ? window.kurokawaTools.reason ?? 'aria2c missing' : undefined);
 export function onEngineChange(fn: (e: Engine) => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
 onSettingsChange(() => pick());
+// (The desktop's aria2c came up late or stopped: the platform's engine picked again.)
+window.addEventListener('kt:engine-state', () => { if (key === 'platform') { key = ''; pick(); } });
+/** Starts the desktop's aria2c again (if it is not running); whether there is an engine of the platform's own now. */
+export async function retryPlatformEngine(): Promise<boolean> { await window.kurokawaTools?.retryEngine?.(); if (key === 'platform') { key = ''; pick(); } return !platformEngineProblem(); }
 
 /* ---------- what the user typed ---------- */
 /** Links, magnets and torrents out of free text (several, one per line or space-separated). */
