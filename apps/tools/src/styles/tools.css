@@ -2,7 +2,15 @@
 /* Kurokawa Tools — what is its own on top of the shared Material 3 Expressive kit (base.css). */
 #app { display: flex; flex-direction: column; min-height: 100dvh; }
 .view .body { flex: 1; min-height: 0; overflow: auto; padding: 8px 16px calc(96px + var(--safe-bottom, 0px)); }
-html.pc .view .body { padding: 20px 40px 48px; max-width: 1100px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+/* A computer: one column for every page — its title bar, its tabs and its body start at the same edge. */
+html.pc .view { --col: 1180px; --gut: 36px; }
+html.pc .view:has(> .body.dc-page) { --col: 1600px; }
+html.pc .view.settings-view { --col: 960px; }
+html.pc .view .body { padding: 18px var(--gut) 48px; max-width: var(--col); width: 100%; margin: 0 auto; box-sizing: border-box; }
+html.pc .view > :is(.topbar, .filter-chips) { padding-inline: max(var(--gut), calc((100% - var(--col)) / 2 + var(--gut))); box-sizing: border-box; }
+html.pc .view > .filter-chips { padding-block: 4px 6px; }
+/* A mouse cannot swipe: on a computer the chip rows that scroll sideways on a phone wrap onto more lines. */
+html.pc :is(.settings-nav, .settings-tabs, .chip-row.files-kinds, .filter-chips) { flex-wrap: wrap; overflow: visible; -webkit-mask: none; mask: none; }
 .topbar .title .count { margin-inline-start: 8px; font-size: 13px; color: var(--md-on-surface-dim); font-weight: 500; }
 
 /* Bottom navigation (phones) */
@@ -14,7 +22,6 @@ html.pc .view .body { padding: 20px 40px 48px; max-width: 1100px; width: 100%; m
 .nav-item.active .nav-pill { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .nav-item:active .nav-pill { transform: scale(.94); }
 html.pc .bottom-nav { display: none; }
-html.pc .rail-item.active .rail-pill::before { opacity: 1; transform: scaleX(1); }
 .fab { position: fixed; inset-inline-end: 16px; bottom: calc(84px + var(--safe-bottom, 0px)); z-index: 31; }
 html.pc .fab { display: none; }
 
@@ -778,3 +785,18 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .recorder-log { max-height: 50vh; overflow: auto; font-size: 11px; white-space: pre-wrap; word-break: break-all; background: var(--md-surface-container); border-radius: 12px; padding: 10px; }
 .courses-outline { margin-top: 10px; } .courses-head { margin: 10px 0 4px; display: flex; flex-direction: column; } .courses-section { margin-top: 10px; } .courses-lecture { padding-inline-start: 18px; }
 .ws-list { max-height: 48vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; } .ws-cue { padding: 6px 8px; border-radius: 10px; background: var(--md-surface-container); } .ws-text { white-space: pre-wrap; min-height: 1.2em; outline: none; } .ws-text:focus { background: var(--md-surface-container-high); border-radius: 6px; } .ws-tools { gap: 8px; align-items: center; }
+
+/* The top bar: the page's name as a heading, the actions in round buttons with a clear hover; on a computer taller,
+   the name larger, aligned with the page's column. */
+.topbar .title > span:first-child, .topbar .title > bdi:first-child { font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
+.topbar .title small { font-size: 12.5px; }
+.topbar .topbar-actions { display: flex; align-items: center; gap: 2px; }
+.topbar .icon-btn { width: 44px; height: 44px; border-radius: 50%; }
+html.pc .view > .topbar { height: calc(76px + var(--safe-top)); gap: 8px; }
+html.pc .view > .topbar .title > span:first-child, html.pc .view > .topbar .title > bdi:first-child { font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+html.pc .view > .topbar .title { padding-inline: 0; }
+html.pc .topbar .icon-btn { width: 42px; height: 42px; }
+html.pc .topbar .icon-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 9%, transparent); }
+html.pc .topbar .icon-btn[data-icon='back'] { margin-inline-start: -8px; }
+html[dir='rtl'] .topbar .title > span:first-child { letter-spacing: 0; }
+[dir='rtl'] .files-crumbs { justify-content: flex-end; }

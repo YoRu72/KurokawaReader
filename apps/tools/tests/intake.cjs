@@ -41,7 +41,7 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
         probe: async () => ({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<!doctype html><html></html>' }),
         http: async (o) => ({ status: 200, url: o.url, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<!doctype html><html></html>' }),
         videoReady: async () => true, videoVersion: async () => ({ version: '2026.10.10', ready: true }),
-        videoInfo: async (o) => { await new Promise((r) => setTimeout(r, 120)); if (/x\.com/.test(o.url)) return raw(o.url, 'A post on X', 'Twitter'); if (/instagram/.test(o.url)) return raw(o.url, 'A reel', 'Instagram'); throw new Error('Unsupported URL'); } };
+        videoInfo: async (o) => { await new Promise((r) => setTimeout(r, 120)); if (/x\.com/.test(o.url) && !/photos/.test(o.url)) return raw(o.url, 'A post on X', 'Twitter'); if (/instagram/.test(o.url)) return raw(o.url, 'A reel', 'Instagram'); throw new Error('Unsupported URL'); } };
     }, auto);
     return p; };
   { const p = await desk(false);
@@ -76,9 +76,14 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
   // ---- by default a post's photos and videos open at once
   { const p = await desk(true);
     await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.add-sheet');
-    await p.fill('.add-input', X);
+    // A post yt-dlp reads (a video, a GIF): its qualities here, the media list only on offer.
+    await p.fill('.add-input', X); await p.waitForSelector('.video-choices', { timeout: 6000 }).catch(() => undefined); await p.waitForTimeout(500);
+    const stayed = await p.evaluate(() => !!document.querySelector('.add-sheet .video-choices') && !![...document.querySelectorAll('.add-sheet .hf-offer')].find((x) => !x.hidden));
+    check('a video post stays in the sheet with its qualities (the media list only on offer)', stayed);
+    // A post it cannot read (photos): its photos and videos open at once — only then.
+    await p.click('.add-sheet .add-clear'); await p.fill('.add-input', 'https://x.com/photos/status/1700000000000000009');
     const opened = await p.waitForFunction(() => [...document.querySelectorAll('.sheet')].some((s) => /Grab links from a page/.test(s.textContent || '')) && !document.querySelector('.add-sheet'), null, { timeout: 6000 }).then(() => true, () => false);
-    check('a post\'s link opens its photos and videos at once (no «Show them»)', opened);
+    check('a photo post opens its photos and videos at once (no «Show them»)', opened);
     await p.close(); }
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

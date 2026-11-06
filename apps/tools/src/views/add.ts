@@ -106,7 +106,14 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   // (A link to an iOS app, on an iPhone: offered to the installer — SideStore, AltStore, TrollStore.)
   const peekIpa = (u: string | null): boolean => { if (!u || !/\.ipa(\?|$)/i.test(u) || !isIos()) return false; hfBox.hidden = false; hfBox.replaceChildren(icon('apps'), h('span', { class: 'grow' }, t('ipaOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./ipa').then((m) => m.ipaSheet({ url: u })); } }, t('ipaInstallIt'))); return true; };
   const peekHf = (u: string | null) => peekIpa(u) || void import('../hf/hf').then((HF) => {
-    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; if (getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; } hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
+    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; // (Only when needed: a post the video panel reads — a video or a GIF, its qualities here — stays in this sheet with
+      // «Show them» on offer; one it cannot read — photos — opens its photos and videos at once.)
+      void (async () => {
+        if (videoEnabled() && isVideoHost(u)) { await video.busy(); if (!sh.el.isConnected || sources()[0]?.url !== u) return; }
+        const read = !!video.picks();
+        if (!read && getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; }
+        hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen')));
+      })(); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
   const clear = h('button', { type: 'button', class: 'icon-btn add-clear', 'aria-label': t('clearField'), title: t('clearField'), hidden: !initial, onclick: () => {
