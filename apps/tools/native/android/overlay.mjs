@@ -241,8 +241,13 @@ if (!gradle.includes('libtorrent4j')) {
 // release workflow. The small launchers stay (Android runs programs only from the APK's library folder).
 if (!gradle.includes('libpython.zip.so')) gradle = gradle.replace(/android \{/, `android {
     packagingOptions { jniLibs { pickFirsts += ['**/libc++_shared.so']; excludes += ['**/libpython.zip.so', '**/libffmpeg.zip.so']; useLegacyPackaging = true }
-      resources { excludes += ['META-INF/versions/**', 'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES', 'META-INF/*.kotlin_module', 'META-INF/INDEX.LIST', 'META-INF/io.netty.versions.properties']; pickFirsts += ['META-INF/MANIFEST.MF', 'module-info.class'] } }`);
+      resources { excludes += ['META-INF/versions/**', 'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES', 'META-INF/*.kotlin_module', 'META-INF/INDEX.LIST', 'META-INF/io.netty.versions.properties', 'org/bouncycastle/pqc/crypto/picnic/**']; pickFirsts += ['META-INF/MANIFEST.MF', 'module-info.class'] } }`);
 }
+// yt-dlp is not carried either (3 MB): youtubedl-android unpacks it from its raw resource «ytdlp» when it finds none,
+// so a placeholder of the same name (an app's resource wins over a library's) stands in, and the real one comes with
+// the Python pack — which yt-dlp needs to run anyway (KtVideo.init puts it in place, or fetches it).
+await fs.mkdir(path.join(app, 'src/main/res/raw'), { recursive: true });
+await fs.writeFile(path.join(app, 'src/main/res/raw/ytdlp'), '# placeholder: yt-dlp comes with the Python pack\n');
 if (!gradle.includes('splits {')) {
   gradle = gradle.replace(/android \{/, `android {
     splits {

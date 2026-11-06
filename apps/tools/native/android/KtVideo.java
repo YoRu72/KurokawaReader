@@ -26,11 +26,28 @@ final class KtVideo {
         // (Python and ffmpeg are packs downloaded with the Video add-on; without Python nothing runs.)
         if (KtPacks.installed(ctx, "python") == null) throw new IllegalStateException("pack:python");
         YoutubeDL.getInstance().init(ctx);
+        ensureYtdlp(ctx);
         if (KtPacks.installed(ctx, "ffmpeg") != null) { try { com.yausername.ffmpeg.FFmpeg.getInstance().init(ctx); } catch (Throwable e) { Log.w(TAG, "ffmpeg module: " + e); } }
         inited = true;
     }
     /** After a pack comes or goes: initialised again on next use. */
     static synchronized void reset() { inited = false; }
+    /** yt-dlp in place: the APK carries only a placeholder of it (see overlay.mjs), which youtubedl-android unpacks
+     *  the first time; the real one is taken from the Python pack, or — a pack from before it carried yt-dlp — fetched
+     *  by youtubedl-android's own update. One unpacked by an older version of the app is kept as it is. */
+    private static void ensureYtdlp(Context ctx) throws Exception {
+        File y = new File(ctx.getNoBackupFilesDir(), "youtubedl-android/yt-dlp/yt-dlp");
+        if (y.isFile() && y.length() > 100_000) return;
+        File fromPack = new File(KtPacks.dir(ctx, "python"), "yt-dlp");
+        if (fromPack.isFile() && fromPack.length() > 100_000) {
+            y.getParentFile().mkdirs(); File tmp = new File(y.getPath() + ".part");
+            try (java.io.InputStream in = new java.io.FileInputStream(fromPack); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) out.write(b, 0, n); }
+            if (!tmp.renameTo(y)) throw new java.io.IOException("yt-dlp: could not be put in place");
+            return;
+        }
+        YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.STABLE.INSTANCE);
+        if (!y.isFile() || y.length() <= 100_000) throw new IllegalStateException("pack:python");
+    }
     static void update(Context ctx) { try { init(ctx); YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.STABLE.INSTANCE); } catch (Throwable e) { Log.w(TAG, "update: " + e); } }
     static String version(Context ctx) { try { init(ctx); return YoutubeDL.getInstance().version(ctx); } catch (Throwable e) { return null; } }
 

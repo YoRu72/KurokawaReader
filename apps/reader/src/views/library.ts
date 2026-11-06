@@ -1,3 +1,4 @@
+import { readPending, writePending, onPendingChanged } from '../sources/pending';
 import { busyNow, onBusy } from '../busy';
 import { h, icon, iconButton, toast, clear, coverColors, openSheet } from '../ui/dom';
 import { onBack } from '../ui/backstack';
@@ -100,10 +101,12 @@ export function libraryView(): HTMLElement {
   const browseBtn = iconButton('globe', t('sources'), () => navigate('/sources')); browseBtn.classList.add('tool-btn', 'browse-btn');
   // (A red mark on the Browse button while something new waits at the sources — new chapters or volumes.)
   { const mark = h('span', { class: 'alert-mark', hidden: true, 'aria-hidden': 'true' }, '!'); browseBtn.append(mark);
-    const refresh = async () => { try { const { pendingCounts } = await import('../sources/updates'); const c = await pendingCounts(); const n = c.chapters + c.series; mark.hidden = !n; browseBtn.title = n ? `${t('sources')} · ${t('updatesWaiting')}` : t('sources'); } catch { /* none */ } };
-    void refresh();
-    // (Told when a check ends; the listener leaves with the view.)
-    void import('../sources/updates').then(({ onUpdatesChanged }) => { const off = onUpdatesChanged(() => { if (!browseBtn.isConnected) { off(); return; } void refresh(); }); }); }
+    // (The count kept from the last time is shown at once; the sources themselves are asked a few seconds later, when
+    // the update checks start anyway — their 100 KB not loaded just to draw the library.)
+    const paintMark = () => { const c = readPending(); const n = c.chapters + c.series; mark.hidden = !n; browseBtn.title = n ? `${t('sources')} · ${t('updatesWaiting')}` : t('sources'); };
+    paintMark();
+    const off = onPendingChanged(() => { if (!browseBtn.isConnected) { off(); return; } paintMark(); });
+    setTimeout(() => { if (browseBtn.isConnected) void import('../sources/updates').then(async (m) => writePending(await m.pendingCounts())).catch(() => undefined); }, 4000); }
   const body = h('div', { class: 'library-body' },
     hero,
     h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, archivesBtn, searchBooksBtn, randomBtn, downloadsBtn, browseBtn),

@@ -9,7 +9,6 @@ import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem 
 import { noteOf, countFinished, autoClean, retryFailed, exportList, importList, stats } from '../downloads/extras';
 import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
-import { addSheet } from './add';
 import { getSettings, onSettingsChange } from '../settings';
 import { nativePlatform, ktPlugin } from '../native';
 import { canArchive, isArchiveName } from '../archives';
@@ -17,6 +16,8 @@ import { allCategories, categoryOf, categoryName } from '../downloads/categories
 import { updateSettings } from '../settings';
 import { dlPrefs, applyFilters, sortTasks, groupOf, activeFilters, downloadsOptionsSheet } from './downloadsOptions';
 import { historyOf, sparkline } from './taskmap';
+/** The add sheet, loaded on the first tap that opens it (it and the video panel are not on the first screen). */
+const addSheet = (...a: Parameters<typeof import('./add').addSheet>): void => { void import('./add').then((m) => m.addSheet(...a)); };
 const isMedia = (n: string): boolean => /\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|wmv|flv|ogv|3gp|mp3|m4a|flac|ogg|opus|wav|aac)$/i.test(n);
 
 const ACTIVE: TaskState[] = ['queued', 'metadata', 'downloading', 'checking', 'seeding'];
