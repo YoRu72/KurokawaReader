@@ -288,7 +288,7 @@ if (!gradle.includes('proguard-kt.pro')) {
     '-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*',
     '-dontwarn org.apache.commons.compress.**', '-dontwarn org.tukaani.xz.**', '-dontwarn com.github.junrar.**', '-dontwarn org.brotli.**', '-dontwarn com.github.luben.zstd.**', '-dontwarn org.bouncycastle.**', '-dontwarn org.slf4j.**', '-dontwarn com.hierynomus.**', '-dontwarn net.engio.**', '-dontwarn com.rapid7.**', '-dontwarn rikka.**', '-dontwarn javax.naming.**', '-dontwarn java.beans.**', '-dontwarn org.ietf.jgss.**', '-dontwarn com.google.errorprone.**', '-dontwarn org.apache.commons.net.**', '-dontwarn com.google.crypto.tink.**', '-dontwarn com.sun.jna.**', '-dontwarn org.apache.logging.**', '-dontwarn org.newsclub.net.**', '-dontwarn java.awt.**', '-dontwarn javax.swing.**', '-dontwarn sun.misc.**',
   ].join('\n') + '\n');
-  gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
+  gradle = gradle.replace(/proguardFiles getDefaultProguardFile\('proguard-android.txt'\), 'proguard-rules.pro'/, "proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro', 'proguard-kt.pro'");
 }
 // (The screen translator's OCR: Google's text recognition through Play services — its models are fetched by the
 // phone, not carried in the APK: a few hundred KB instead of tens of MB.)
