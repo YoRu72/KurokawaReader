@@ -11,7 +11,6 @@ import { applyChrome, onSettingsChange, getSettings, warmFonts } from './setting
 import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
-import { scheduleAutoCheck } from './updates';
 import { initPcShell } from './ui/pcshell';
 
 const app = document.getElementById('app')!;
@@ -102,7 +101,8 @@ void loadSlim().then((sl) => { if (sl.fonts) warmFonts(); });
 window.addEventListener('kr:font-missing', () => void import('./ui/dom').then((m) => m.toast(t('fontFetchFailed'), 'info', 5000)));
 initNativeBridges();
 void setVolumeKeys(getSettings().volumeKeys);
-scheduleAutoCheck();
+// (The update checks loaded once the first screen is up: nothing on it needs them.)
+void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined);
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 // (Downloads the app was closed in the middle of: taken up again.)
 setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);
