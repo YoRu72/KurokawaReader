@@ -145,6 +145,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.files-crumbs .crumb:has-text("Apps")'); await p.waitForSelector('.files-row:has-text("Notes")');
   await p.click('.files-row:has-text("Notes") button[aria-label="More"]'); await p.waitForSelector('.sheet .dest-row:has-text("Back up")', { timeout: 5000 });
   ok("an app's sheet offers backup, launch, info, uninstall", (await p.$$('.sheet .dest-row')).length >= 6); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  // a place an older version saved as «apps:» opens as the installed apps; Back from an app's folder goes up to «apps://»
+  await p.evaluate(() => { const k = 'kt.files.prefs'; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.last = 'apps:'; v.rememberLast = true; localStorage.setItem(k, JSON.stringify(v)); });
+  await p.goto('http://127.0.0.1:5481/#/videos'); await p.goto('http://127.0.0.1:5481/#/files'); await p.waitForSelector('.files-row:has-text("Game")', { timeout: 8000 }).catch(() => undefined);
+  ok('a saved «apps:» is mended to the installed apps', !!(await p.$('.files-row:has-text("Game")')));
+  await p.evaluate(() => { const k = 'kt.files.prefs'; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.last = 'apps://org.example.game'; v.backUp = true; localStorage.setItem(k, JSON.stringify(v)); });
+  await p.goto('http://127.0.0.1:5481/#/videos'); await p.goto('http://127.0.0.1:5481/#/files'); await p.waitForSelector('.files-row:has-text("base.apk")', { timeout: 8000 }).catch(() => undefined);
+  await p.keyboard.press('Escape'); await p.waitForSelector('.files-row:has-text("Notes")', { timeout: 5000 }).catch(() => undefined);
+  ok("Back from an app's folder lists the apps again", !!(await p.$('.files-row:has-text("Notes")')) && !(await p.textContent('.files-view')).includes('Nothing here'));
   // recent files in the drawer
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.waitForTimeout(300);
   ok("recent files sit in the drawer", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"new.png\")")));
