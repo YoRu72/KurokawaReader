@@ -44,6 +44,13 @@ export function parseSources(text: string): TaskSource[] {
 }
 export const isVideo = (name: string): boolean => /\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|wmv|flv|ogv|3gp)$/i.test(name);
 export const isArchive = (name: string): boolean => /\.(zip|7z|rar|r\d\d|tar|gz|tgz|bz2|xz|zst|001)$/i.test(name);
+/** A finished task's main file on the disk — a torrent of several files: its first chosen one —; '' when it is
+ *  not a path the app can hand over (a content:// folder). */
+export function mainFilePath(x: Task): string {
+  if (!x.dir || x.dir.startsWith('content:')) return '';
+  const rel = x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/${(x.files.find((f) => f.priority > 0) ?? x.files[0]).path}` : (x.files[0]?.path ?? displayName(x));
+  return `${x.dir.replace(/[\\/]$/, '')}/${rel}`.replace(/\/+/g, '/');
+}
 export const displayName = (t: Task): string => t.name || (t.source.url ?? t.source.magnet ?? '').split('/').pop() || t.id;
 /** The display name of a magnet before its metadata comes (its dn= part). */
 export function magnetName(m: string): string | undefined { try { const dn = new URL(m).searchParams.get('dn'); return dn ? decodeURIComponent(dn.replace(/\+/g, ' ')) : undefined; } catch { return undefined; } }

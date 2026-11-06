@@ -4,7 +4,8 @@
 // On a computer, a system notification too when the app is not in front.
 import { h, icon, toast } from '../ui/dom';
 import { t, formatBytes } from '../i18n';
-import { getEngine, displayName, onEngineChange } from '../engine';
+import { getEngine, displayName, onEngineChange, mainFilePath } from '../engine';
+import { canShareFiles, shareFiles } from '../ui/shareMany';
 import type { Task } from '../engine/types';
 import { getSettings, updateSettings } from '../settings';
 import { fmtSecs } from '../views/taskmap';
@@ -66,6 +67,7 @@ export function doneCard(x: Task): void {
       h('button', { type: 'button', class: 'btn small text', onclick: () => { updateSettings({ sounds: { ...soundPrefs(), card: false } }); toast(t('doneNoMore')); close(); } }, t('doneDontShow')),
       h('span', { class: 'grow' }),
       eng.open ? btn('folder', t('openFolder'), () => void eng.open!(x.id, -1)) : null,
+      canShareFiles() && mainFilePath(x) ? btn('share', t('share'), () => void shareFiles([mainFilePath(x)]).catch(() => undefined)) : null,
       eng.open ? btn('external', t('open'), () => void eng.open!(x.id), 'btn small primary') : null));
   if (path) {
     more.append(btn('copy', t('donePath'), () => void navigator.clipboard?.writeText(path).then(() => toast(t('copied')))));

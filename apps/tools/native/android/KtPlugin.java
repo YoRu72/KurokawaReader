@@ -278,13 +278,13 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void open(PluginCall call) {
         run(call, () -> {
             KtEngine.Task x = engine().task(call.getString("id", "")); if (x == null) throw new Exception("notFound");
-            // (No file named: the torrent's main file — the largest chosen and here —, not simply its first.)
+            // (-1: the folder, shown; no file named: the main file — the largest chosen and here —, opened in its app.)
             Integer given = call.getInt("fileIndex"); int idx = given == null ? -2 : given;
             File f = engine().fileOf(x, idx == -1 ? -2 : idx);
             if (f == null || !f.exists()) { File d = new File(x.dir); f = d.exists() ? d : null; if (f == null) throw new Exception("notFound"); }
             // (A folder: the system's Files app at that folder when it will open one; else the page is told to show the
             // folder itself — never a file picker in a folder's place.)
-            if (idx < 0 || f.isDirectory()) { File d = f.isDirectory() ? f : f.getParentFile(); JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); r.put("opened", openFolder(d)); call.resolve(r); return; }
+            if (idx == -1 || f.isDirectory()) { File d = f.isDirectory() ? f : f.getParentFile(); JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); r.put("opened", openFolder(d)); call.resolve(r); return; }
             if (!f.exists()) throw new Exception("notFound");
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
             Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(uri, mimeOf(f.getName())); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);

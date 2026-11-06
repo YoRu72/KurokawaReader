@@ -54,6 +54,11 @@ html.pc .fab { display: none; }
 
 /* Add sheet */
 .add-input { width: 100%; box-sizing: border-box; font: 14px/1.5 ui-monospace, Menlo, monospace; border: 0; border-radius: 14px; padding: 12px; background: var(--md-surface-container-highest); color: var(--md-on-surface); resize: vertical; }
+.add-field { position: relative; }
+.add-field .add-input { padding-inline-end: 44px; }
+.add-clear { position: absolute; top: 6px; inset-inline-end: 6px; width: 32px; height: 32px; min-width: 0; border-radius: 50%; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+.add-clear[hidden] { display: none; }
+.add-sheet.as-video .save-as > .field, .add-sheet.as-video .add-size { display: none; }
 .add-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .add-options { margin-top: 10px; } .add-options summary { cursor: pointer; color: var(--md-primary); font-weight: 600; padding: 6px 0; }
 .add-options .field { margin: 10px 0; } .field.row { flex-direction: row; align-items: center; justify-content: space-between; }

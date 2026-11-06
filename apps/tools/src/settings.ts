@@ -88,6 +88,8 @@ export interface Settings {
   dl?: import('./views/downloadsOptions').DlPrefs;
   /** The clipboard watched for links (asked before adding), and the schedule downloads run in. */
   clipboardWatch: boolean;
+  /** A post's link (X, Instagram, Bluesky, Reddit, Telegram…) opens its photos and videos at once (off: «Show them» first). */
+  socialAuto?: boolean;
   /** Torrent options (Senpwai's): peer discovery, encryption, when seeding stops (0 = never). */
   torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; addTrackers?: boolean; simpleDisk?: boolean; connsPerTorrent?: number; connsTotal?: number; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
   /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */

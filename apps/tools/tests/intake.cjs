@@ -16,7 +16,7 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
   // ---- a phone: the clipboard through the app
   { const p = await br.newPage({ viewport: { width: 420, height: 860 } }); p.setDefaultTimeout(5000); p.on('pageerror', (e) => errors.push(e.message));
     await p.addInitScript((X) => {
-      localStorage.setItem('kr.lang', 'en');
+      localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.settings', JSON.stringify({ socialAuto: false }));
       Object.defineProperty(navigator, 'clipboard', { value: { readText: () => Promise.reject(new Error('NotAllowedError')), writeText: () => Promise.resolve() } });
       const api = { addListener: () => Promise.resolve({ remove() {} }), list: async () => ({ tasks: [] }), clipboardText: async () => ({ text: X }) };
       const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -31,10 +31,10 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
     check('the sheet\'s «Paste» reads the phone clipboard too', (await p.$eval('.add-input', (e) => e.value)) === X);
     await p.close(); }
 
-  // ---- a computer with yt-dlp: a post on X, then one on Instagram
-  { const p = await br.newPage({ viewport: { width: 420, height: 860 } }); p.setDefaultTimeout(5000); p.on('pageerror', (e) => errors.push(e.message));
-    await p.addInitScript(() => {
-      localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['video'] })); window.__added = [];
+  // ---- a computer with yt-dlp: a post on X, then one on Instagram («Show them» first: the automatic list off)
+  const desk = async (auto) => { const p = await br.newPage({ viewport: { width: 420, height: 860 } }); p.setDefaultTimeout(5000); p.on('pageerror', (e) => errors.push(e.message));
+    await p.addInitScript((auto) => { window.__auto = auto;
+      localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.settings', JSON.stringify(window.__auto ? { addons: ['video'] } : { addons: ['video'], socialAuto: false })); window.__added = [];
       const raw = (u, title, ex) => ({ id: '1', title, duration: 90, extractor_key: ex, webpage_url: u, uploader: 'someone', formats: [{ format_id: 'hls-1080', url: 'x', vcodec: 'avc1', acodec: 'mp4a', height: 1080, ext: 'mp4', tbr: 3000 }, { format_id: 'hls-720', url: 'x', vcodec: 'avc1', acodec: 'mp4a', height: 720, ext: 'mp4', tbr: 1500 }] });
       window.kurokawaTools = { platform: 'desktop', available: true, os: 'linux', ready: async () => ({}), list: async () => [], add: async (o) => { window.__added.push(o); return { id: 't' + window.__added.length, name: o.video?.title || o.source.url, ...o }; },
         pause: async () => {}, resume: async () => {}, remove: async () => {}, on: () => () => {}, onTasks: () => () => {}, freeSpace: async () => 5e9,
@@ -42,7 +42,9 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
         httpRequest: async () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: '<!doctype html><html></html>' }),
         videoReady: async () => true, videoVersion: async () => ({ version: '2026.10.10', ready: true }),
         videoInfo: async (o) => { await new Promise((r) => setTimeout(r, 120)); if (/x\.com/.test(o.url)) return raw(o.url, 'A post on X', 'Twitter'); if (/instagram/.test(o.url)) return raw(o.url, 'A reel', 'Instagram'); throw new Error('Unsupported URL'); } };
-    });
+    }, auto);
+    return p; };
+  { const p = await desk(false);
     await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.add-sheet');
     for (const [label, u] of [['X', X], ['Instagram', IG]]) {
       await p.click('.add-sheet .add-clear').catch(() => undefined); await p.fill('.add-input', u);
@@ -58,6 +60,14 @@ const IG = 'https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWx4';
     await p.waitForFunction(() => window.__added.length === 1, null, { timeout: 4000 }).catch(() => undefined);
     const added = await p.evaluate(() => window.__added[0]);
     check('Download adds the reel as a video', !!added && !!added.video && added.source.url === IG);
+    await p.close(); }
+
+  // ---- by default a post's photos and videos open at once
+  { const p = await desk(true);
+    await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.add-sheet');
+    await p.fill('.add-input', X);
+    const opened = await p.waitForFunction(() => [...document.querySelectorAll('.sheet')].some((s) => /Grab links from a page/.test(s.textContent || '')) && !document.querySelector('.add-sheet'), null, { timeout: 6000 }).then(() => true, () => false);
+    check('a post\'s link opens its photos and videos at once (no «Show them»)', opened);
     await p.close(); }
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
