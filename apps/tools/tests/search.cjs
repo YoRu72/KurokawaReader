@@ -43,6 +43,11 @@ const svg = (c) => `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="9
   console.log('calls:', calls.filter((c) => /torrentio|yts|knaben/.test(c)).join(' | '));
   await p.click('.release-group .result-row'); await p.waitForSelector('.toast');
   console.log('toast:', await p.$eval('.toast', (e) => e.textContent));
+  // The same search again: drawn from what the sources answered a moment ago, nothing asked again.
+  const before = calls.filter((c) => /^knaben|^yts/.test(c)).length;
+  await p.fill('.search-input', 'dune'); await p.press('.search-input', 'Enter'); await p.waitForSelector('.release-group', { timeout: 5000 }).catch(() => undefined); await p.waitForTimeout(500);
+  const after = calls.filter((c) => /^knaben|^yts/.test(c)).length; console.log('asked again:', after - before);
+  if (after !== before || !(await p.$('.release-group'))) errors.push('the same search asked the sources again');
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); process.exit(errors.length ? 1 : 0);
 })();

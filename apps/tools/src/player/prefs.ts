@@ -76,8 +76,9 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   customButtons: [],
 };
 const KEY = 'kt.player'; const MEM = 'kt.player.memory';
-let prefs: PlayerPrefs = load();
+// (Tools an update puts on the bar, once each.)
 const NEW_ON_BAR = ['frames', 'rotation', 'pip'];
+let prefs: PlayerPrefs = load();
 function load(): PlayerPrefs {
   try {
     const p = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<PlayerPrefs>;

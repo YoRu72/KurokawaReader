@@ -32,13 +32,57 @@
       "kind": "torrent-search",
       "parent": "torrent-search",
       "name": "Nyaa",
-      "description": "Anime torrents from nyaa.si, sorted by seeders.",
+      "description": "Anime torrents from nyaa.si, seeders first: a picked work asked by all its names in one request, its episode with them; a mirror, a category and a filter to choose.",
       "descriptions": {
-        "ar": "تورنتات الأنمي من nyaa.si، مرتبةً بعدد الباذرين."
+        "ar": "تورنتات الأنمي من nyaa.si، الأكثر باذرين أولًا: يُسأل عن العمل المختار بجميع أسمائه في طلبٍ واحد، ومعها حلقته؛ ولك أن تختار موقعًا بديلًا وقسمًا ومرشّحًا."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "torrent-search/nyaa.mjs",
-      "icon": "magnet"
+      "icon": "magnet",
+      "settings": [
+        {
+          "id": "domain",
+          "label": "Nyaa address (a mirror)",
+          "labels": {
+            "ar": "عنوان Nyaa (أو موقع بديل)"
+          },
+          "type": "text",
+          "value": "https://nyaa.si"
+        },
+        {
+          "id": "category",
+          "label": "Category (auto: anime for a picked anime; 0_0 all, 1_0 anime, 1_2 English, 1_3 other languages, 1_4 raw, 3_0 literature, 4_0 live action)",
+          "labels": {
+            "ar": "القسم (auto: الأنمي إذا اخترتَ أنمي؛ 0_0 الكل، 1_0 أنمي، 1_2 بالإنجليزية، 1_3 بلغات أخرى، 1_4 خام، 3_0 كتب، 4_0 تمثيل حي)"
+          },
+          "type": "select",
+          "options": [
+            "auto",
+            "0_0",
+            "1_0",
+            "1_2",
+            "1_3",
+            "1_4",
+            "3_0",
+            "4_0"
+          ],
+          "value": "auto"
+        },
+        {
+          "id": "filter",
+          "label": "Filter (0 none, 1 no remakes, 2 trusted only)",
+          "labels": {
+            "ar": "المرشّح (0 لا شيء، 1 بلا إعادات، 2 الموثوق فقط)"
+          },
+          "type": "select",
+          "options": [
+            "0",
+            "1",
+            "2"
+          ],
+          "value": "0"
+        }
+      ]
     },
     {
       "id": "torrent-search-torrentio",
@@ -49,7 +93,7 @@
       "descriptions": {
         "ar": "الأفلام والمسلسلات والأنمي بمعرّفاتها في IMDb وKitsu (من العمل الذي تختاره أو بالبحث عن اسمه)، مع روابط مخزَّنة إن أضفت مفتاح خدمة Debrid."
       },
-      "version": "0.2.0",
+      "version": "0.2.1",
       "module": "torrent-search/torrentio.mjs",
       "icon": "magnet",
       "settings": [
@@ -180,7 +224,7 @@
       "descriptions": {
         "ar": "حلقات المسلسلات بمعرّف IMDb (اختر المسلسل أولًا)."
       },
-      "version": "0.1.0",
+      "version": "0.1.1",
       "module": "torrent-search/eztv.mjs",
       "icon": "magnet",
       "settings": [
@@ -227,7 +271,7 @@
       "descriptions": {
         "ar": "الحلقات والحزم من nyaa.si."
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "module": "anime/nyaa.mjs",
       "icon": "magnet",
       "settings": [
