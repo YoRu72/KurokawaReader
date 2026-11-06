@@ -5,12 +5,13 @@ import { canBrowse } from '../browser';
 import { h, icon, toast } from '../ui/dom';
 import { t } from '../i18n';
 import { getEngine, parseSources } from '../engine';
-import { addSheet } from './add';
 import { canInstallApps, installSheet } from './apk';
 import { isIos } from './ipa';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
 import { getSettings } from '../settings';
 import { navigate } from '../router';
+/** The add sheet, loaded on the first tap that opens it (it and the video panel are not on the first screen). */
+const addSheet = (...a: Parameters<typeof import('./add').addSheet>): void => { void import('./add').then((m) => m.addSheet(...a)); };
 
 let open: HTMLElement | null = null;
 
