@@ -77,7 +77,10 @@ export function inTargetScript(text: string, target: string): boolean {
 const caches = new Map<string, Record<string, string>>();   // bookId → key → translation
 const bySource = new Map<string, Record<string, string>>();
 /** The whole-book translations going on, by book: one at a time for a book, whichever reader started it. */
-const aheadJobs = new Map<string, { cancel(): void; done: number; total: number }>();
+const aheadJobs = new Map<string, { cancel(): void; done: number; total: number; bookId: string; label: string; from: number; to: number }>();
+/** The paragraphs a job is translating right now (by key): another job — this chapter beside the whole book — leaves
+ *  them to it and counts them done once they are kept, so nothing is translated twice. */
+const inFlight = new Set<string>();
 
 /** The links of the original given back to the translation: the n-th link of the translation takes the n-th
  *  link's address (and its other attributes); a paragraph that was one link whole, its tags lost by the model,
@@ -278,9 +281,12 @@ export function attachTranslator(host: TranslatorHost): Translator {
     let failed = 0;
     const worker = async () => {
       while (batches.length && gen === generation && on) {
-        const batch = batches.shift()!;
+        // (Paragraphs a background job translates now are left to it: shown when it keeps them.)
+        const batch = batches.shift()!.filter((x) => !inFlight.has(x.key)); if (!batch.length) continue;
+        for (const x of batch) inFlight.add(x.key);
         try {
-          const out = await translateBatch(batch.map((x) => x.text), batch[0]?.bookId, contextFor(batch[0].el, batch[0].bookId, order));
+          let out: string[];
+          try { out = await translateBatch(batch.map((x) => x.text), batch[0]?.bookId, contextFor(batch[0].el, batch[0].bookId, order)); } finally { for (const x of batch) inFlight.delete(x.key); }
           if (gen !== generation || !on) return;
           for (let i = 0; i < batch.length; i++) {
             const tr = out[i]?.trim(); if (!tr) continue;
@@ -298,7 +304,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
   /** The next chapter translated while this one is read (quietly; nothing shown until it is opened). */
   let prefetched = '';
   async function prefetchNext() {
-    if (getSettings().aiPrefetch === false || aheadBusy || [...aheadJobs.keys()].some((id) => host.chapters().some((c) => c.bookId === id))) return;
+    if (getSettings().aiPrefetch === false || aheadBusy || [...aheadJobs.values()].some((j) => host.chapters().some((c) => c.bookId === j.bookId))) return;
     const cur = host.currentChapter(); const next = host.chapters()[cur + 1]; if (!next) return;
     const mark = `${next.bookId}:${cur + 1}`; if (prefetched === mark) return; prefetched = mark;
     await translateAhead(cur + 1, cur + 1, null, null, () => undefined, true);
@@ -308,8 +314,12 @@ export function attachTranslator(host: TranslatorHost): Translator {
   let aheadGen = 0; let aheadBusy = false;
   async function translateAhead(from: number, to: number, status: HTMLElement | null, bar: HTMLElement | null, onDone: () => void, quiet = false, force = false) {
     const chapters = host.chapters().slice(from, to + 1); const bookKey = chapters[0]?.bookId ?? '';
-    if (!quiet && aheadJobs.has(bookKey)) { toast(t('trJobAlready'), 'info', 4000); onDone(); return; }
-    const gen = quiet ? aheadGen : ++aheadGen; if (!quiet) aheadBusy = true;
+    // (Each job its own: this chapter, a range and the whole book can go on side by side, each with its own progress
+    // and its own Stop — the same range twice is refused.)
+    const jobKey = `${bookKey}:${from}-${to}`;
+    if (!quiet && aheadJobs.has(jobKey)) { toast(t('trJobAlready'), 'info', 4000); onDone(); return; }
+    const gen = aheadGen; let stopped = false; const alive = () => (quiet ? gen === aheadGen : !stopped);
+    if (!quiet) aheadBusy = true;
     const items: { bookId: string; text: string; key: string; el: HTMLElement; chapter: string; all: HTMLElement[] }[] = [];
     const seen = new Set<string>();
     for (const ch of chapters) for (const el of ch.blocks) {
@@ -324,11 +334,13 @@ export function attachTranslator(host: TranslatorHost): Translator {
     // (A range or the whole book goes on as a job: in the background, out of the reader too, its progress in a
     // notification — the book read meanwhile. Stopped from the jobs list or the sheet.)
     const job: { report?: (pct: number, text?: string) => void; finish?: (how: 'ok' | 'cancel' | 'fail') => void } = {};
-    const stopIt = () => { aheadGen++; aheadBusy = false; aheadJobs.delete(bookKey); job.finish?.('cancel'); };
-    const entry = { cancel: stopIt, done: 0, total };
-    if (!quiet && total) aheadJobs.set(bookKey, entry);
+    const one = from === to; const allBook = from === 0 && to >= host.chapters().length - 1;
+    const label = one ? (chapters[0]?.label || t('trThisChapter')) : allBook ? t('wholeBook') : `${localDigits(from + 1)}–${localDigits(to + 1)}`;
+    const stopIt = () => { stopped = true; aheadJobs.delete(jobKey); aheadBusy = aheadJobs.size > 0; job.finish?.('cancel'); };
+    const entry = { cancel: stopIt, done: 0, total, bookId: bookKey, label, from, to };
+    if (!quiet && total) aheadJobs.set(jobKey, entry);
     if (!quiet && total) {
-      const title = host.bookTitle?.(chapters[0]?.bookId ?? '') ?? t('aiTranslate');
+      const book = host.bookTitle?.(chapters[0]?.bookId ?? '') ?? t('aiTranslate'); const title = one ? `${label} · ${book}` : allBook ? book : `${book} · ${label}`;
       const ended = new Promise<'ok' | 'cancel' | 'fail'>((res) => { job.finish = res; });
       void import('../jobs').then(({ runJob }) => runJob(t('trJobTitle', { book: title }), async (rep) => { job.report = rep; rep(0, t('trJobProgress', { n: localDigits(0), total: localDigits(total) })); const how = await ended; if (how === 'fail') throw new Error(t('trJobFailed')); return how === 'ok' ? { blob: new Blob([]), name: title } : null; }, () => false,
         { quiet: true, cancel: () => stopIt(), doneText: () => t('trJobDone', { book: title, n: localDigits(finished) }) })).catch(() => undefined);
@@ -338,13 +350,18 @@ export function attachTranslator(host: TranslatorHost): Translator {
     if (!total) { if (status) status.textContent = t('alreadyTranslated'); if (!quiet) aheadBusy = false; onDone(); return; }
     const batches = batchesOf(items);
     const worker = async () => {
-      while (batches.length && gen === aheadGen) {
-        const batch = batches.shift()!;
+      while (batches.length && alive()) {
+        let batch = batches.shift()!;
         try {
-          if (getSettings().aiAutoGlossary) { for (const x of batch) { const ci = from + chapters.findIndex((c) => c.blocks === x.all); if (ci >= from) await autoGlossary(x.bookId, ci, x.all, true); } for (const x of batch) x.key = translationKey(x.text, x.bookId); if (gen !== aheadGen) return; }
+          if (getSettings().aiAutoGlossary) { for (const x of batch) { const ci = from + chapters.findIndex((c) => c.blocks === x.all); if (ci >= from) await autoGlossary(x.bookId, ci, x.all, true); } for (const x of batch) x.key = translationKey(x.text, x.bookId); if (!alive()) return; }
+          // (What another job translates now, or kept since this one was planned, is left out and counted done.)
+          if (!force) { const c = await cache(batch[0].bookId); const left = batch.filter((x) => !inFlight.has(x.key) && !c[x.key]); finished += batch.length - left.length; batch = left; if (!batch.length) { paintAhead(); continue; } }
+          for (const x of batch) inFlight.add(x.key);
           const first = batch[0]; const i = first.all.indexOf(first.el); const before = first.all.slice(Math.max(0, i - 2), i).map((e) => plainOf(e)).filter((x) => x.length > 1);
-          const out = await translateBatch(batch.map((x) => x.text), first.bookId, { book: host.bookTitle?.(first.bookId), chapter: first.chapter, before });
-          if (gen !== aheadGen) return;
+          let out: string[];
+          try { out = await translateBatch(batch.map((x) => x.text), first.bookId, { book: host.bookTitle?.(first.bookId), chapter: first.chapter, before }); }
+          finally { for (const x of batch) inFlight.delete(x.key); }
+          if (!alive()) return;
           for (let i = 0; i < batch.length; i++) { const tr = out[i]?.trim(); if (!tr) continue; await remember(batch[i].bookId, batch[i].key, batch[i].text, tr); }
           finished += batch.length;
         } catch (err) { failed++; console.warn('[kurokawa] translate-ahead failed', err); if (failed === 1 && !quiet) toast(String((err as Error).message ?? err), 'error', 6000); if (failed > 3 || (err as Error).name === 'QuotaError') { batches.length = 0; } }
@@ -352,9 +369,9 @@ export function attachTranslator(host: TranslatorHost): Translator {
       }
     };
     await Promise.all(Array.from({ length: quiet ? 1 : Math.max(parallel(), 2) }, () => worker()));
-    if (!quiet) { aheadBusy = false; if (aheadJobs.get(bookKey) === entry) aheadJobs.delete(bookKey); }
-    job.finish?.(gen !== aheadGen ? 'cancel' : finished > 0 ? 'ok' : failed ? 'fail' : 'ok');
-    if (gen !== aheadGen) return;
+    if (!quiet) { if (aheadJobs.get(jobKey) === entry) aheadJobs.delete(jobKey); aheadBusy = aheadJobs.size > 0; }
+    job.finish?.(!alive() ? 'cancel' : finished > 0 ? 'ok' : failed ? 'fail' : 'ok');
+    if (!alive()) return;
     if (quiet) return;
     if (status) status.textContent = failed ? t('translateAheadPartial', { n: finished, total }) : t('translateAheadDone', { n: finished });
     onDone();
@@ -365,31 +382,36 @@ export function attachTranslator(host: TranslatorHost): Translator {
   /** The translate-ahead controls (used in their own sheet and inside the AI settings sheet). */
   function aheadControls(): HTMLElement {
     const chapters = host.chapters();
-    const cur = host.currentChapter();
+    const cur = host.currentChapter(); const bookId = chapters[0]?.bookId ?? '';
     const num = (v: number, min: number, max: number) => h('input', { type: 'number', min: String(min), max: String(max), value: String(v), dir: 'ltr', style: { width: '5.5em' } }) as HTMLInputElement;
     const count = num(Math.min(5, chapters.length - cur), 1, chapters.length - cur);
     const fromI = num(cur + 1, 1, chapters.length), toI = num(Math.min(chapters.length, cur + 5), 1, chapters.length);
     const row = (...kids: (HTMLElement | string)[]) => h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap' } }, ...kids);
     const status = h('p', { class: 'src' }, t('translateAheadBody', { n: chapters.length }));
-    const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
-    let busy = false;
-    const cancel = h('button', { class: 'btn small', type: 'button', hidden: true, onclick: () => { const j = aheadJobs.get(chapters[0]?.bookId ?? ''); if (j) j.cancel(); else aheadGen++; busy = false; aheadBusy = false; cancel.hidden = true; status.textContent = t('cancelled'); } }, icon('close'), t('cancel'));
-    // (A whole-book translation already going on for this book — from this reader or one closed since: its progress, and its Stop.)
-    const running = aheadJobs.get(chapters[0]?.bookId ?? '');
-    if (running) { busy = true; track.hidden = false; cancel.hidden = false; const tick = () => { if (!aheadJobs.has(chapters[0]?.bookId ?? '') || !status.isConnected) { if (status.isConnected && busy) { busy = false; cancel.hidden = true; status.textContent = t('translateAheadDone', { n: running.done }); } return; } status.textContent = t('translatingAhead', { n: running.done, total: running.total }); bar.style.width = `${Math.round((running.done / Math.max(1, running.total)) * 100)}%`; setTimeout(tick, 700); }; setTimeout(tick, 0); }
+    // (The jobs of this book going on — this chapter, a range, the whole book, each in the background, from this
+    // reader or one closed since —: each its own line, its own progress and its own Stop.)
+    const jobsBox = h('div', { class: 'tr-jobs' });
+    const drawJobs = () => {
+      const mine = [...aheadJobs.values()].filter((j) => j.bookId === bookId);
+      jobsBox.replaceChildren(...mine.map((j) => h('div', { class: 'tr-job' },
+        h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, h('span', { class: 'grow', dir: 'auto' }, `${j.label} — ${t('translatingAhead', { n: j.done, total: j.total })}`),
+          h('button', { class: 'btn small', type: 'button', onclick: () => { j.cancel(); drawJobs(); } }, icon('close'), t('cancel'))),
+        h('div', { class: 'progress-bar' }, h('span', { style: { width: `${Math.round((j.done / Math.max(1, j.total)) * 100)}%` } })))));
+    };
+    let shownOnce = false; const loop = () => { if (jobsBox.isConnected) shownOnce = true; else if (shownOnce) return; drawJobs(); setTimeout(loop, 700); }; loop();
     const start = (from: number, to: number) => {
-      if (busy) return;
       if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
-      busy = true; track.hidden = false; cancel.hidden = false;
-      void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, bar, () => { busy = false; cancel.hidden = true; });
+      void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, null, () => drawJobs());
+      setTimeout(drawJobs, 150); toast(t('trInBackground'), 'info', 3000);
     };
     const btn = (label: string, fn: () => void) => h('button', { class: 'btn small tonal', type: 'button', onclick: fn }, label);
     return h('div', { class: 'tr-ahead' },
       h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('translateAhead')),
-      status, track,
+      status, jobsBox,
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('trThisChapter')), row(btn(t('trThisChapterGo'), () => start(cur, cur)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('nextChapters')), row(count, btn(t('translateSelected'), () => start(cur, cur + Number(count.value || 1) - 1)))),
       h('div', { class: 'field' }, h('span', { class: 'label' }, t('chapterRange')), row(fromI, '→', toI, btn(t('translateSelected'), () => start(Number(fromI.value) - 1, Number(toI.value) - 1)))),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, t('wholeBook')), row(btn(t('translateWholeBook'), () => start(0, chapters.length - 1)), cancel)),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('wholeBook')), row(btn(t('translateWholeBook'), () => start(0, chapters.length - 1)))),
     );
   }
 

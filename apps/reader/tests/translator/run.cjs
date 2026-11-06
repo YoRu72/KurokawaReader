@@ -107,6 +107,15 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.waitForSelector('.job-chip', { timeout: 8000 }); const chip = await p.$eval('.job-chip', (e) => e.textContent); console.log('job:', chip);
   ok('the whole book goes on as a job, its progress shown', /Translating «Gate Story»/.test(chip) && /Paragraphs: \d/.test(chip));
   await p.waitForSelector('.job-chip', { state: 'detached', timeout: 20000 }); ok('the job ends by itself', true);
+  // This chapter and the whole book side by side: each its own job in the background, its own line and progress.
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Clear' }).click(); await p.waitForTimeout(300);
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translate ahead' }).click();
+  await p.locator('.sheet button', { hasText: 'Translate in the background' }).click(); await p.locator('.sheet button', { hasText: 'Translate the whole book' }).click();
+  await p.waitForFunction(() => document.querySelectorAll('.sheet .tr-job').length === 2, null, { timeout: 6000 }).catch(() => undefined);
+  const lines = await p.$$eval('.sheet .tr-job', (e) => e.map((x) => x.textContent)); console.log('jobs:', JSON.stringify(lines));
+  ok('this chapter and the whole book: two jobs, each with its own progress', lines.length === 2 && lines.some((x) => /Whole book/i.test(x)) && lines.every((x) => /\d+\/\d+/.test(x)));
+  await p.keyboard.press('Escape');
+  await p.waitForSelector('.job-chip', { state: 'detached', timeout: 30000 }).catch(() => undefined); ok('both end by themselves', !(await p.$('.job-chip')));
   // The bar folded away keeps the translation; brought back with its button; saved with the book.
   await p.click('.tr-pill button[aria-label="Translation on or off"]'); await p.waitForTimeout(400);
   await p.click('.tr-pill button[aria-label^="Hide the bar"]'); await p.waitForSelector('.tr-mini');

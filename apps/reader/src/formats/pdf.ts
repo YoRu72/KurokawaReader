@@ -718,10 +718,16 @@ export class PdfViewer {
     el.addEventListener('touchend', (e) => { if (active && e.touches.length < 2) finish(); }, { passive: true });
     el.addEventListener('touchcancel', () => finish(), { passive: true });
     // Double tap: zoom in on the spot (two and a half times the width), or back to the width when zoomed.
-    let lastTap = 0, lastX = 0, lastY = 0;
+    // (Only taps count: a finger that barely moved, briefly, on a page that was not moving — two quick flicks of a fast
+    // scroll end at much the same spot, and were taken for a double tap: the page zoomed in mid-scroll.)
+    let lastTap = 0, lastX = 0, lastY = 0; let downX = 0, downY = 0, downAt = 0, downTop = 0, downLeft = 0; let scrolledAt = 0;
+    let seenTop = 0, seenLeft = 0; el.addEventListener('scroll', () => { if (Math.abs(el.scrollTop - seenTop) > 2 || Math.abs(el.scrollLeft - seenLeft) > 2) scrolledAt = performance.now(); seenTop = el.scrollTop; seenLeft = el.scrollLeft; }, { passive: true });
+    el.addEventListener('touchstart', (e) => { if (e.touches.length !== 1) { downAt = 0; return; } const t = e.touches[0]; downX = t.clientX; downY = t.clientY; downAt = performance.now(); downTop = el.scrollTop; downLeft = el.scrollLeft; if (downAt - lastTap > 320 && downAt - scrolledAt < 120) downAt = 0; /* (a touch that stops a moving page is not a tap; the second of a pair is judged by itself — the first tap may show the bars and nudge the page) */ }, { passive: true });
     el.addEventListener('touchend', (e) => {
       if (!this.pinchZoom || e.touches.length || e.changedTouches.length !== 1 || active) return;
       const t = e.changedTouches[0]; const now = performance.now();
+      const tap = downAt > 0 && now - downAt < 300 && Math.hypot(t.clientX - downX, t.clientY - downY) < 12 && Math.abs(el.scrollTop - downTop) < 4 && Math.abs(el.scrollLeft - downLeft) < 4;
+      if (!tap) { lastTap = 0; return; }
       const quick = now - lastTap < 320 && Math.hypot(t.clientX - lastX, t.clientY - lastY) < 28;
       lastTap = now; lastX = t.clientX; lastY = t.clientY;
       if (!quick) return;
