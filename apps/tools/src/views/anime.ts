@@ -68,13 +68,13 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
       const fbtn = h('button', { type: 'button', class: 'btn tonal small anime-filter-btn', onclick: () => filterSheet(f, () => { saveFilters(f); drawActive(); void run(); }) }, icon('filter'), t('animeFilters')) as HTMLButtonElement;
       let runs = 0; let page = 1; let all: Anime[] = []; const studioBox = h('div', { class: 'studio-box' });
       const drawActive = () => {
-        const n = (f.genres?.length ?? 0) + (f.tags?.length ?? 0) + (f.notTags?.length ?? 0) + (f.formats?.length ?? 0) + (f.status ? 1 : 0) + (f.season ? 1 : 0) + (f.year ? 1 : 0) + (f.minScore ? 1 : 0) + (f.from ? 1 : 0);
+        const n = (f.studios?.length ?? 0) + (f.genres?.length ?? 0) + (f.tags?.length ?? 0) + (f.notTags?.length ?? 0) + (f.formats?.length ?? 0) + (f.status ? 1 : 0) + (f.season ? 1 : 0) + (f.year ? 1 : 0) + (f.minScore ? 1 : 0) + (f.from ? 1 : 0);
         fbtn.lastChild!.textContent = n ? `${t('animeFilters')} · ${localDigits(n)}` : t('animeFilters');
         const x = (label: string, rm: () => void, cls = '') => h('button', { type: 'button', class: 'chip small on ' + cls, onclick: () => { rm(); saveFilters(f); drawActive(); void run(); } }, h('span', { dir: 'auto' }, label), icon('close'));
-        active.replaceChildren(...(f.genres ?? []).map((g) => x(g, () => { f.genres = f.genres!.filter((y) => y !== g); })), ...(f.tags ?? []).map((g) => x(`#${g}`, () => { f.tags = f.tags!.filter((y) => y !== g); })), ...(f.notTags ?? []).map((g) => x(`−${g}`, () => { f.notTags = f.notTags!.filter((y) => y !== g); }, 'not')),
+        active.replaceChildren(...(f.studios ?? []).map((s) => x(s.name, () => { f.studios = f.studios!.filter((y) => y.id !== s.id); }, 'studio')), ...(f.genres ?? []).map((g) => x(g, () => { f.genres = f.genres!.filter((y) => y !== g); })), ...(f.tags ?? []).map((g) => x(`#${g}`, () => { f.tags = f.tags!.filter((y) => y !== g); })), ...(f.notTags ?? []).map((g) => x(`−${g}`, () => { f.notTags = f.notTags!.filter((y) => y !== g); }, 'not')),
           ...(f.formats ?? []).map((g) => x(fmtFormat(g), () => { f.formats = f.formats!.filter((y) => y !== g); })), ...(f.status ? [x(t(STATUS_LABEL[f.status] as 'animeAired'), () => { f.status = undefined; })] : []),
           ...(f.season ? [x(seasonName(f.season), () => { f.season = undefined; })] : []), ...(f.year ? [x(localDigits(f.year), () => { f.year = undefined; })] : []), ...(f.minScore ? [x(`≥ ${localDigits(f.minScore)}%`, () => { f.minScore = undefined; })] : []), ...(f.from ? [x(f.to && f.to - f.from === 9 && f.from % 10 === 0 ? t('dcDecade', { y: localDigits(f.from), z: localDigits(f.from + 9) }) : `${localDigits(f.from)}–${localDigits(f.to ?? '')}`, () => { f.from = undefined; f.to = undefined; })] : []),
-          ...(n ? [h('button', { type: 'button', class: 'chip small text', onclick: () => { Object.assign(f, { genres: [], tags: [], notTags: [], formats: [], status: undefined, season: undefined, year: undefined, minScore: undefined, from: undefined, to: undefined, sort: undefined }); saveFilters(f); drawActive(); void run(); } }, t('clearAll'))] : []));
+          ...(n ? [h('button', { type: 'button', class: 'chip small text', onclick: () => { Object.assign(f, noFilters(), { q: f.q }); saveFilters(f); drawActive(); void run(); } }, t('clearAll'))] : []));
       };
       const more = h('button', { type: 'button', class: 'btn tonal small anime-more', hidden: true, onclick: () => void run(true) }, t('loadMore')) as HTMLButtonElement;
       let used: string | undefined;
@@ -221,10 +221,12 @@ function diaryYear(acts: Awaited<ReturnType<typeof guide.activities>>): HTMLElem
 
 /* ---------- the search's filters ---------- */
 const FKEY = 'kt.anime.search';
-function searchFilters(): al.SearchFilters { try { return { genres: [], tags: [], notTags: [], formats: [], ...(JSON.parse(localStorage.getItem(FKEY) ?? '{}') as al.SearchFilters) }; } catch { return { genres: [], tags: [], notTags: [], formats: [] }; } }
+/** Every filter off (the words kept apart): one list, so a filter added later is cleared with the rest. */
+const noFilters = (): al.SearchFilters => ({ studios: [], genres: [], tags: [], notTags: [], formats: [], status: undefined, season: undefined, year: undefined, minScore: undefined, from: undefined, to: undefined, sort: undefined });
+function searchFilters(): al.SearchFilters { try { return { ...noFilters(), ...(JSON.parse(localStorage.getItem(FKEY) ?? '{}') as al.SearchFilters) }; } catch { return { genres: [], tags: [], notTags: [], formats: [] }; } }
 function saveFilters(f: al.SearchFilters): void { try { localStorage.setItem(FKEY, JSON.stringify(f)); } catch { /* full */ } }
 /** The search opened on these filters alone (a tile of the Discover page: a genre, a season, a decade, the best rated). */
-export function presetSearch(f: Partial<al.SearchFilters>): void { saveFilters({ genres: [], tags: [], notTags: [], formats: [], q: '', ...f }); }
+export function presetSearch(f: Partial<al.SearchFilters>): void { saveFilters({ ...noFilters(), q: '', ...f }); }
 const countWorks = (n: number): string => t('dcWorks', { n: localDigits(n) });
 const STATUS_LABEL: Record<string, string> = { RELEASING: 'animeStatusReleasing', FINISHED: 'animeStatusFinished', NOT_YET_RELEASED: 'animeNotYet', HIATUS: 'animeStatusHiatus' };
 const SORTS: [string, string][] = [['POPULARITY_DESC', 'sortPopular'], ['SCORE_DESC', 'sortScore'], ['TRENDING_DESC', 'sortTrending'], ['START_DATE_DESC', 'sortNewest'], ['FAVOURITES_DESC', 'sortFavourites'], ['TITLE_ROMAJI', 'sortTitle']];
@@ -251,6 +253,13 @@ function filterSheet(f: al.SearchFilters, done: () => void): void {
   };
   tagQ.addEventListener('input', drawTags);
   void al.genresAndTags().then(({ genres: gs, tags: ts }) => { genres.replaceChildren(...gs.map((g) => toggle('genres', g, g))); allTags = ts; drawTags(); }).catch((e) => genres.replaceChildren(h('small', { class: 'src' }, String((e as Error).message ?? e))));
+  // (Studios: the best known ones to tap, any other found by its name; chosen ones first, each taken off by a tap.)
+  const studioRow = h('div', { class: 'chip-row wrap' }, h('div', { class: 'spinner small' })); const studioQ = h('input', { type: 'search', class: 'search-input small', placeholder: t('animeStudioSearch') }) as HTMLInputElement;
+  let known: { id: number; name: string }[] = [];
+  const drawStudios = () => { const chosen = f.studios ?? []; const rest = known.filter((s) => !chosen.some((c) => c.id === s.id));
+    studioRow.replaceChildren(...[...chosen, ...rest].map((s) => { const on = chosen.some((c) => c.id === s.id); return h('button', { type: 'button', class: 'chip small' + (on ? ' on' : ''), onclick: () => { f.studios = on ? chosen.filter((c) => c.id !== s.id) : [...chosen, { id: s.id, name: s.name }]; drawStudios(); } }, s.name); })); };
+  void al.famousStudios().then((ss) => { known = ss.map((s) => ({ id: s.id, name: s.name })); drawStudios(); }).catch(() => drawStudios());
+  let studioTimer = 0; studioQ.addEventListener('input', () => { window.clearTimeout(studioTimer); const q = studioQ.value.trim(); studioTimer = window.setTimeout(() => { if (q.length < 2) { void al.famousStudios().then((ss) => { known = ss.map((s) => ({ id: s.id, name: s.name })); drawStudios(); }).catch(() => undefined); return; } void al.searchStudios(q).then((ss) => { if (studioQ.value.trim() !== q) return; known = ss.map((s) => ({ id: s.id, name: s.name })); drawStudios(); }).catch(() => undefined); }, 350); });
   const formats = h('div', { class: 'chip-row wrap' }, ...['TV', 'TV_SHORT', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'].map((x) => toggle('formats', x, fmtFormat(x))));
   const one = <K extends 'status' | 'season' | 'sort'>(k: K, opts: [string, string][]) => { const row = h('div', { class: 'chip-row wrap' }); const draw = () => row.replaceChildren(...opts.map(([v, l]) => h('button', { type: 'button', class: 'chip small' + ((f[k] ?? '') === v ? ' on' : ''), onclick: () => { (f as Record<string, unknown>)[k] = (f[k] ?? '') === v && k !== 'sort' ? undefined : v || undefined; draw(); } }, l))); draw(); return row; };
   const year = h('input', { type: 'number', min: '1940', max: String(new Date().getFullYear() + 2), value: f.year ? String(f.year) : '', placeholder: t('animeYear'), inputmode: 'numeric', class: 'num-small', onchange: (e: Event) => { const v = Number((e.target as HTMLInputElement).value); f.year = v >= 1940 ? v : undefined; } });
@@ -259,6 +268,7 @@ function filterSheet(f: al.SearchFilters, done: () => void): void {
   sh.body.append(
     sec(t('animeSort'), one('sort', SORTS.map(([v, l]) => [v, t(l as 'sortPopular')]))),
     sec(t('animeGenres'), genres),
+    sec(t('dcStudios'), studioQ, studioRow),
     sec(t('animeTags'), h('p', { class: 'hint' }, t('animeTagsHint')), tagQ, tags),
     sec(t('animeFormat'), formats),
     sec(t('animeStatus'), one('status', Object.entries(STATUS_LABEL).map(([v, l]) => [v, t(l as 'animeAired')]))),

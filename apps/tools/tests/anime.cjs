@@ -12,7 +12,10 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { const rel = r.request().url().split('/main/repo/')[1]; const f = path.join(REPO, rel); if (!fs.existsSync(f)) return r.fulfill({ status: 404 }); r.fulfill({ body: fs.readFileSync(f), contentType: /\.mjs$/.test(f) ? 'text/plain' : (MIME[path.extname(f)] || 'application/octet-stream') }); });  // (GitHub serves .mjs as text/plain)
-  await p.route('https://graphql.anilist.co/**', (r) => { const body = JSON.parse(r.request().postData() || '{}'); const q = body.query; (globalThis.__al ??= []).push(body); const data = /GenreCollection/.test(q) ? { GenreCollection: ['Action', 'Drama', 'Fantasy'], MediaTagCollection: [{ name: 'Isekai', category: 'Setting', isAdult: false }, { name: 'Magic', category: 'Theme', isAdult: false }] } : /Media\(id/.test(q) ? { Media: MEDIA(1, 1) } : /airingSchedules/.test(q) ? { Page: { pageInfo: { hasNextPage: false }, airingSchedules: [{ airingAt: Math.floor(Date.now() / 1000) + 3600, episode: 6, media: MEDIA(1, 1) }] } } : { Page: { pageInfo: { hasNextPage: false }, media: [MEDIA(1, 1), MEDIA(2, 2), MEDIA(3, 3)] } }; r.fulfill({ json: { data } }); });
+  await p.route('https://graphql.anilist.co/**', (r) => { const body = JSON.parse(r.request().postData() || '{}'); const q = body.query; (globalThis.__al ??= []).push(body); const data = /s0: Studio\(search/.test(q) ? { s0: { id: 11, name: 'MAPPA', isAnimationStudio: true, media: { nodes: [] } }, s1: { id: 12, name: 'ufotable', isAnimationStudio: true, media: { nodes: [] } } } : /Studio\(id: \$id\) \{ media\(isMain/.test(q) ? { Studio: { media: { pageInfo: { hasNextPage: false }, nodes: body.variables.id === 11 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }] } } } : /GenreCollection/.test(q) ? { GenreCollection: ['Action', 'Drama', 'Fantasy'], MediaTagCollection: [{ name: 'Isekai', category: 'Setting', isAdult: false }, { name: 'Magic', category: 'Theme', isAdult: false }] } : /Media\(id/.test(q) ? { Media: MEDIA(1, 1) } : /airingSchedules/.test(q) ? { Page: { pageInfo: { hasNextPage: false }, airingSchedules: [{ airingAt: Math.floor(Date.now() / 1000) + 3600, episode: 6, media: MEDIA(1, 1) }] } } : { Page: { pageInfo: { hasNextPage: false }, media: [MEDIA(1, 1), MEDIA(2, 2), MEDIA(3, 3)] } }; r.fulfill({ json: { data } }); });
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAYAAAA7KqwyAAAAEklEQVR42mP8z8DwnxEPYBxVSAoA0KkFE3ZgS1AAAAAASUVORK5CYII=', 'base64');
+  await p.route(/artworks\.thetvdb\.com/, (r) => r.fulfill({ contentType: 'image/png', body: PNG }));
+  await p.route('https://api.ani.zip/**', (r) => r.fulfill({ json: { mappings: {}, episodes: Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [String(n), { image: `https://artworks.thetvdb.com/e${n}.jpg`, title: { en: `Part ${n}` } }])) } }));
   await p.route('https://arm.haglund.dev/**', (r) => r.fulfill({ json: { anidb: 17617, kitsu: 46474, imdb: 'tt22248376' } }));
   await p.route('https://nyaa.si/**', (r) => r.fulfill({ contentType: 'application/xml', body: `<rss><channel><item><title>[SubsPlease] Sousou no Frieren - 05 (1080p) [AAAA].mkv</title><nyaa:infoHash>0123456789abcdef0123456789abcdef01234567</nyaa:infoHash><nyaa:size>1.3 GiB</nyaa:size><nyaa:seeders>900</nyaa:seeders><nyaa:leechers>20</nyaa:leechers><pubDate>Fri, 31 Oct 2026 10:00:00 -0000</pubDate></item><item><title>[Judas] Sousou no Frieren (Season 1) [1080p] (Batch)</title><nyaa:infoHash>89abcdef0123456789abcdef0123456789abcdef</nyaa:infoHash><nyaa:size>20 GiB</nyaa:size><nyaa:seeders>300</nyaa:seeders><nyaa:leechers>5</nyaa:leechers><pubDate>Fri, 31 Oct 2026 10:00:00 -0000</pubDate></item><item><title>[X] Sousou no Frieren - 04 (720p).mkv</title><nyaa:infoHash>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</nyaa:infoHash><nyaa:size>500 MiB</nyaa:size><nyaa:seeders>10</nyaa:seeders><nyaa:leechers>1</nyaa:leechers><pubDate>Fri, 31 Oct 2026 10:00:00 -0000</pubDate></item></channel></rss>` }));
   await p.route('https://torrentio.strem.fun/**', (r) => r.fulfill({ json: { streams: [{ name: 'Torrentio\n1080p', title: 'Frieren 05 [Erai]\n👤 120 💾 1.1 GB ⚙️ NyaaSi', infoHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', sources: ['tracker:udp://x/announce'] }] } }));
@@ -23,11 +26,14 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const anime = (await p.$$('.addon-row')).find(async () => true); void anime;
   await p.click('.addon-row:has-text("Anime") .btn'); await p.waitForSelector('.toast');
   console.log('installed:', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.join(',')));
-  await p.waitForSelector('[data-dest="anime"]'); await p.click('[data-dest="anime"]'); await p.waitForSelector('.anime-card');
+  await p.waitForSelector('[data-dest="anime"]'); await p.click('[data-dest="anime"]'); await p.click('.chip[aria-pressed]:has-text("Season")'); await p.waitForSelector('.anime-card');
   console.log('season cards:', await p.$$eval('.anime-card', (e) => e.length), await p.$eval('.season-head h2', (e) => e.textContent));
   await p.screenshot({ path: 'shot-anime-season.png' });
   await p.click('.chip:has-text("Schedule")'); await p.waitForSelector('.sched-row'); console.log('schedule:', await p.$eval('.sched-row .anime-title', (e) => e.textContent), await p.$eval('.sched-until', (e) => e.textContent));
   await p.click('.sched-row'); await p.waitForSelector('.ep-row'); console.log('episodes:', await p.$$eval('.ep-row', (e) => e.length), 'aired rows:', await p.$$eval('.ep-row:not(.future)', (e) => e.length));
+  await p.waitForFunction(() => document.querySelectorAll('.ep-row .ep-pic img').length > 0, null, { timeout: 4000 }).catch(() => undefined);
+  const pics = await p.$$eval('.ep-row .ep-pic img', (e) => e.map((x) => x.getAttribute('src'))); console.log('episode pictures:', pics.length);
+  if (!pics.some((x) => /thetvdb\.com\/e2/.test(x))) errors.push('episode pictures from ani.zip');
   await p.screenshot({ path: 'shot-anime-entry.png' });
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console:', m.text().slice(0, 300)); });
   await p.locator('.ep-row:not(.future)').nth(4).locator('button[aria-label="Find torrents"]').evaluate((b) => b.click()); await p.waitForSelector('.sheet'); await p.waitForTimeout(3000);
@@ -69,10 +75,13 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   await p.locator('.anime-filters .chip', { hasText: 'Isekai' }).click(); await p.locator('.anime-filters details', { hasText: 'Theme' }).locator('summary').click();
   await p.locator('.anime-filters .chip', { hasText: 'Magic' }).click(); await p.locator('.anime-filters .chip', { hasText: 'Magic' }).click();
   await p.screenshot({ path: path.join(__dirname, 'shot-anime-filters-en.png') });
+  await p.locator('.anime-filters .chip', { hasText: 'MAPPA' }).click();
   await p.click('.anime-filters ~ * .btn.primary, .sheet .btn.primary'); await p.waitForTimeout(900);
   const asked = (globalThis.__al || []).filter((b) => /tag_in/.test(b.query)).pop();
   const activeChips = await p.$$eval('.anime-active .chip', (r) => r.map((x) => x.innerText.trim()));
   console.log('search vars:', JSON.stringify(asked && asked.variables), 'active:', activeChips.join(' | '), 'cards:', await p.$$eval('.anime-grid .anime-card, .anime-grid > *', (r) => r.length));
+  // A studio chosen with the genres: the search kept to its works, by id; its chip among the active ones.
+  if (!asked || JSON.stringify(asked.variables.ids) !== '[1,2]' || !activeChips.includes('MAPPA')) errors.push('studio filter: ' + JSON.stringify(asked && asked.variables.ids));
   if (!asked || JSON.stringify(asked.variables.genres) !== '["Fantasy"]' || JSON.stringify(asked.variables.tags) !== '["Isekai"]' || JSON.stringify(asked.variables.notTags) !== '["Magic"]') errors.push('tag search');
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); repo.close(); process.exit(errors.length ? 1 : 0);

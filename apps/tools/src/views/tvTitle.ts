@@ -11,6 +11,7 @@ import * as cm from '../tv/cinemeta';
 import type { TvMeta, TvKind, TvEpisode } from '../tv/cinemeta';
 import { streams, bestOf, tvPrefs, type TvRelease } from '../tv/torrentio';
 import * as lib from '../tv/library';
+import { episodePic } from '../ui/discover';
 import { magnetOf } from '../anime/providers';
 import { parseFilename } from '../anime/anitomy';
 
@@ -67,7 +68,7 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
         ...eps.map((v) => {
           const aired = cm.aired(v); const seen = lib.isSeen(epKey(mm, v)); const got = tasks.find((x) => x.meta?.season === v.season && x.meta?.episode === v.episode);
           const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { se: `${v.season}:${v.episode}` }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined, onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(mm, v, got); } },
-            v.thumbnail ? h('img', { class: 'ep-thumb', src: v.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(v.episode)),
+            episodePic(v.thumbnail, localDigits(v.episode)),
             h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, `${localDigits(v.episode)}. ${v.name || t('episodeN', { n: v.episode })}`, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null),
               h('small', { class: 'src' }, v.released ? (aired ? df.format(new Date(v.released)) : `${t('animeNotYet')} · ${df.format(new Date(v.released))}`) : ''),
               got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' }, h('i', { style: { width: `${got.total ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
@@ -90,7 +91,7 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
     row('magnet', t('epChoose'), t('epChooseHint'), () => void releasesSheet(mm, v));
     if (got) row('info', t('details'), '', () => navigate(`/task/${encodeURIComponent(got.id)}`));
   };
-  const load = async () => { try { m = await cm.meta(type, id); tasks = await tasksOf(id); draw(); } catch (e) { body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); } };
+  const load = async () => { try { m = await cm.meta(type, id); tasks = await tasksOf(id); draw(); const mm = m; void cm.fillStills(mm).then((more) => { if (more && m === mm) draw(); }); } catch (e) { body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); } };
   const off = getEngine().onChange((ts) => { if (!m || gone) return; const mine = ts.filter((x) => (x.meta as { imdbId?: string } | undefined)?.imdbId === id); const changed = mine.length !== tasks.length || mine.some((x, i) => x.state !== tasks[i]?.state); tasks = mine; if (changed) { draw(); return; }
     // (Only the bars moved: each episode's bar set in place.)
     for (const x of mine) { const bar = body.querySelector<HTMLElement>(x.meta?.season !== undefined ? `.ep-row[data-se="${x.meta.season}:${x.meta.episode}"] .ep-prog i` : '.tv-movie .task-bar i'); if (bar) bar.style.width = `${x.total ? Math.round((x.done / x.total) * 100) : 2}%`; } });

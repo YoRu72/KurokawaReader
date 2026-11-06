@@ -102,7 +102,8 @@ export async function search(q: string, opts: { adult?: boolean; page?: number }
 /** AniList's search with its filters (Hayase's and Senpwai's): words, genres, tags (all must match; some can be
  *  left out), format, status, season and year, sort — any of them alone browses by it. Answers are kept a few
  *  minutes, so going back and forth costs no request. */
-export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean; /** A decade or span of years (first and last year). */ from?: number; to?: number }
+export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean; /** A decade or span of years (first and last year). */ from?: number; to?: number;
+  /** Studios: the works of any of them (their own productions), the other filters applied to those. */ studios?: { id: number; name: string }[] }
 const searchCache = new Map<string, { at: number; v: { media: Anime[]; hasNext: boolean; used?: string } }>();
 /** Other ways to put what was typed, for when it finds nothing: a release's file name read for its title; «season 2»,
  *  «2nd season», «part 2», «S2», an episode and a year dropped; punctuation made spaces; then the first words only. */
@@ -119,8 +120,11 @@ export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Ani
   if (f.q?.trim()) v.q = f.q.trim(); if (f.genres?.length) v.genres = f.genres; if (f.tags?.length) v.tags = f.tags; if (f.notTags?.length) v.notTags = f.notTags;
   if (f.formats?.length) v.formats = f.formats; if (f.status) v.status = f.status; if (f.season) v.season = f.season; if (f.year) v.year = f.year; if (f.minScore) v.minScore = f.minScore; if (f.onList !== undefined) v.onList = f.onList;
   if (f.from) v.from = f.from * 10000; if (f.to) v.to = (f.to + 1) * 10000;
+  // (AniList's search has no studio filter: the studios' works asked for once, by id, and the search kept to them —
+  // so the genres, tags, sort and the rest still work on AniList's side.)
+  if (f.studios?.length) { const ids = [...new Set((await Promise.all(f.studios.map((s) => studioIds(s.id)))).flat())]; if (!ids.length) return { media: [], hasNext: false }; v.ids = ids; }
   const key = JSON.stringify(v); const had = searchCache.get(key); if (had && Date.now() - had.at < 5 * 60000) return had.v;
-  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars);
+  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt, $ids: [Int]) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, id_in: $ids, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars);
   let d = await ask(v); let used: string | undefined;
   // (Nothing for the words as typed — a file's name, «Season 2», a subtitle, a typo's last word —: the same search with
   // the words cleaned up, then shortened; the results say which words found them.)
@@ -239,6 +243,24 @@ export async function idsOf(anilistId: number): Promise<IdMap> {
   idCache.set(anilistId, out); return out;
 }
 const num = (v: unknown): number | undefined => (typeof v === 'number' && v > 0 ? v : undefined);
+export interface EpisodeArt { image?: string; title?: string; overview?: string; runtime?: number }
+const epArt = new Map<number, Promise<Map<number, EpisodeArt>>>();
+/** Each episode's picture, title and summary from ani.zip (TheTVDB's, through ani.zip — Seanime's and Hayase's source),
+ *  asked for once a session; an empty map when it has none. */
+export function episodeArt(anilistId: number): Promise<Map<number, EpisodeArt>> {
+  let p = epArt.get(anilistId);
+  if (!p) {
+    p = (async () => {
+      const r = await request(`https://api.ani.zip/mappings?anilist_id=${anilistId}`); if (r.status !== 200) return new Map();
+      const eps = (JSON.parse(r.body) as { episodes?: Record<string, { episode?: string; episodeNumber?: number; image?: string; title?: Record<string, string>; overview?: string; summary?: string; runtime?: number; length?: number }> }).episodes ?? {};
+      const out = new Map<number, EpisodeArt>();
+      for (const [k, e] of Object.entries(eps)) { if (!/^\d+$/.test(k)) continue; out.set(Number(k), { image: e.image || undefined, title: e.title?.en || e.title?.['x-jat'] || undefined, overview: e.overview || e.summary || undefined, runtime: e.runtime || e.length || undefined }); }
+      return out;
+    })().catch(() => { epArt.delete(anilistId); return new Map<number, EpisodeArt>(); });
+    epArt.set(anilistId, p);
+  }
+  return p;
+}
 
 /* ---------- Discover ---------- */
 export interface DiscoverData { trending: Anime[]; airing: (Anime & { sequel?: boolean })[]; season: Anime[]; top: Anime[]; movies: Anime[] }
@@ -295,6 +317,16 @@ export async function famousStudios(): Promise<Studio[]> {
   FAMOUS.forEach((_, i) => { const s = d[`s${i}`]; if (s && !seen.has(s.id)) { seen.add(s.id); v.push(toStudio(s)); } });
   try { localStorage.setItem(STUDIOS_KEY, JSON.stringify({ at: Date.now(), v })); } catch { /* full */ }
   return v;
+}
+const studioIdsP = new Map<number, Promise<number[]>>();
+/** The ids of a studio's own productions (up to 300), asked for once a session. */
+function studioIds(id: number): Promise<number[]> {
+  let p = studioIdsP.get(id);
+  if (!p) {
+    p = (async () => { const out: number[] = []; for (let page = 1; page <= 6; page++) { const d = await gql<{ Studio: { media: { pageInfo: { hasNextPage: boolean }; nodes: { id: number }[] } } }>('query ($id: Int, $page: Int) { Studio(id: $id) { media(isMain: true, page: $page, perPage: 50) { pageInfo { hasNextPage } nodes { id } } } }', { id, page }, false); out.push(...d.Studio.media.nodes.map((x) => x.id)); if (!d.Studio.media.pageInfo.hasNextPage) break; } return out; })();
+    p.catch(() => studioIdsP.delete(id)); studioIdsP.set(id, p);
+  }
+  return p;
 }
 /** A studio's works: the page asked for, in the order chosen, its own productions only or with the ones it helped on. */
 export async function studioWorks(id: number, o: { page?: number; sort?: string; mainOnly?: boolean } = {}): Promise<{ studio: Studio; media: Anime[]; hasNext: boolean; total?: number }> {

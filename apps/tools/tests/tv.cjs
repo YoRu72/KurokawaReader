@@ -7,13 +7,18 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 const serve = (root) => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(root, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const cors = { 'access-control-allow-origin': '*' };
 const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'Night Shift', poster: '', releaseInfo: '2020–', imdbRating: '8.1', genres: ['Drama'], description: 'A hospital at night.',
-  videos: [1, 2, 3].map((e) => ({ id: `tt1234567:1:${e}`, season: 1, episode: e, name: `Hour ${e}`, released: '2020-01-0' + e + 'T00:00:00.000Z' })).concat([{ id: 'tt1234567:2:1', season: 2, episode: 1, name: 'Dawn', released: '2021-01-01T00:00:00.000Z' }]) };
+  videos: [1, 2, 3].map((e) => ({ id: `tt1234567:1:${e}`, season: 1, episode: e, name: `Hour ${e}`, ...(e === 1 ? { thumbnail: 'https://episodes.metahub.space/tt1234567/1/1/w780.jpg' } : {}), released: '2020-01-0' + e + 'T00:00:00.000Z' })).concat([{ id: 'tt1234567:2:1', season: 2, episode: 1, name: 'Dawn', released: '2021-01-01T00:00:00.000Z' }]) };
 (async () => {
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL', what); if (!ok) errors.push(what); };
   await p.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { const f = path.join(REPO, r.request().url().split('/main/repo/')[1]); if (!fs.existsSync(f)) return r.fulfill({ status: 404 }); r.fulfill({ body: fs.readFileSync(f), contentType: /\.mjs$/.test(f) ? 'text/plain' : (MIME[path.extname(f)] || 'application/octet-stream') }); });
+  // (TVmaze for the pictures Cinemeta lacks; every picture a small PNG.)
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAYAAAA7KqwyAAAAEklEQVR42mP8z8DwnxEPYBxVSAoA0KkFE3ZgS1AAAAAASUVORK5CYII=', 'base64');
+  await p.route(/episodes\.metahub\.space|static\.tvmaze\.com/, (r) => r.fulfill({ contentType: 'image/png', body: PNG }));
+  await p.route('https://api.tvmaze.com/lookup/shows**', (r) => r.fulfill({ headers: cors, json: { id: 99 } }));
+  await p.route('https://api.tvmaze.com/shows/99/episodes', (r) => r.fulfill({ headers: cors, json: [1, 2, 3].map((n) => ({ season: 1, number: n, name: `Hour ${n}`, image: { medium: `https://static.tvmaze.com/e${n}.jpg` } })) }));
   await p.route('https://cinemeta-catalogs.strem.io/**', (r) => r.fulfill({ headers: cors, json: { metas: [SERIES, { ...SERIES, id: 'tt7654321', imdb_id: 'tt7654321', name: 'Day Shift' }] } }));
   await p.route('https://v3-cinemeta.strem.io/**', (r) => r.fulfill({ headers: cors, json: { meta: SERIES } }));
   await p.route('https://torrentio.strem.fun/**', (r) => r.fulfill({ headers: cors, json: { streams: [
@@ -31,6 +36,9 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   check('discover shows the catalogue', (await p.$$('.tv-card')).length === 2);
   await p.click('.tv-card >> nth=0'); await p.waitForSelector('.ep-row');
   check('series page with season 1 episodes', (await p.$$('.ep-row')).length === 3);
+  await p.waitForFunction(() => document.querySelectorAll('.ep-row .ep-pic img').length === 3, null, { timeout: 4000 }).catch(() => undefined);
+  const pics = await p.$$eval('.ep-row .ep-pic img', (e) => e.map((x) => x.getAttribute('src')));
+  check('each episode with its picture: Cinemeta\'s, else TVmaze\'s', pics.length === 3 && /metahub/.test(pics[0]) && /tvmaze.com\/e2/.test(pics[1]));
   // An episode's releases: the first adds only its own file of the season pack.
   await p.click('.ep-row >> nth=1'); await p.waitForSelector('.ep-sheet .dest-row'); await p.locator('.ep-sheet .dest-row', { hasText: 'Choose a release' }).click();
   await p.waitForSelector('.torrent-list .result-row'); console.log('releases:', await p.$$eval('.torrent-list .result-title', (e) => e.map((x) => x.textContent).join(' | ')));

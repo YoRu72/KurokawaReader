@@ -90,3 +90,19 @@ export async function fillIn(ms: TvMeta[], each: (m: TvMeta, i: number) => void,
   const worker = async () => { while (next < n) { const i = next++; try { const full = await meta(ms[i].type, ms[i].id); const m = { ...ms[i], genres: full.genres, imdbRating: full.imdbRating ?? ms[i].imdbRating, year: full.year ?? ms[i].year, releaseInfo: ms[i].releaseInfo ?? full.releaseInfo, runtime: full.runtime }; ms[i] = m; each(m, i); } catch { /* left as it was */ } } };
   await Promise.all(Array.from({ length: 6 }, () => worker()));
 }
+
+/** The episodes Cinemeta has no picture (or title) for filled from TVmaze — free, no key —, found by the IMDb id;
+ *  true when anything was added. Asked once a session for each series. */
+const stillsAsked = new Set<string>();
+export async function fillStills(m: TvMeta): Promise<boolean> {
+  const vids = m.videos ?? []; if (m.type !== 'series' || !vids.some((v) => !v.thumbnail) || stillsAsked.has(m.id)) return false; stillsAsked.add(m.id);
+  try {
+    const show = await request(`https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(m.id)}`); if (show.status !== 200) return false;
+    const sid = (JSON.parse(show.body) as { id?: number }).id; if (!sid) return false;
+    const r = await request(`https://api.tvmaze.com/shows/${sid}/episodes`); if (r.status !== 200) return false;
+    const eps = JSON.parse(r.body) as { season: number; number: number | null; name?: string; image?: { medium?: string; original?: string } | null }[];
+    const at = new Map(eps.filter((e) => e.number !== null).map((e) => [`${e.season}:${e.number}`, e])); let added = false;
+    for (const v of vids) { const e = at.get(`${v.season}:${v.episode}`); if (!e) continue; if (!v.thumbnail && e.image) { v.thumbnail = e.image.medium ?? e.image.original; added = true; } if (!v.name && e.name) { v.name = e.name; added = true; } }
+    return added;
+  } catch { return false; }
+}

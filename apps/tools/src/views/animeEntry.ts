@@ -7,6 +7,7 @@ import { back, navigate } from '../router';
 import { getSettings, updateSettings } from '../settings';
 import { getEngine } from '../engine';
 import * as al from '../anilist';
+import { episodePic } from '../ui/discover';
 import type { Anime, AlEntry } from '../anilist';
 import { fmtUntil, titleOf, fmtFormat, statusName, tickCountdowns } from './anime';
 import { buildQuery, searchAll, rank, releaseTags, providers, syncBuiltins, magnetOf, type TorrentResult, type ProviderEntry } from '../anime/providers';
@@ -18,7 +19,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
   const body = h('div', { class: 'body anime-entry' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   const title = h('div', { class: 'title' }, h('span', null, ''));
   const root = h('div', { class: 'view anime-entry-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/anime')), title, h('div', { class: 'topbar-actions' })), body) as HTMLElement & { dispose?: () => void };
-  let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let disk = new Map<number, { path: string; name: string }>(); let fillers = new Set<number>(); let streams = 0;
+  let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let disk = new Map<number, { path: string; name: string }>(); let fillers = new Set<number>(); let streams = 0; let art = new Map<number, al.EpisodeArt>();
   const draw = () => {
     if (!a) return;
     const s = getSettings();
@@ -57,14 +58,16 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     const rangeChips = pages > 1 ? h('div', { class: 'chip-row wrap ep-ranges' }, ...Array.from({ length: pages }, (_, i) => h('button', { type: 'button', class: 'chip small' + (i === range ? ' on' : ''), onclick: () => { range = i; draw(); } }, `${localDigits(i * PAGE + 1, 'prose')}–${localDigits(Math.min(list, (i + 1) * PAGE), 'prose')}`))) : null;
     const from = pages > 1 ? range * PAGE + 1 : 1; const to = pages > 1 ? Math.min(list, (range + 1) * PAGE) : list;
     for (let n = from; n <= to; n++) {
-      const aired = n <= airedCount || a.status === 'FINISHED'; const at = sched.get(n); const seen = !!e && n <= e.progress; const st = stream.find((x) => x.n === n);
+      const aired = n <= airedCount || a.status === 'FINISHED'; const at = sched.get(n); const seen = !!e && n <= e.progress; const st0 = stream.find((x) => x.n === n); const ar = art.get(n);
+      // (The streaming site's picture and title first, else ani.zip's — TheTVDB's — for the episodes the sites lack.)
+      const st = st0 || ar ? { title: st0?.title || ar?.title, thumbnail: st0?.thumbnail || ar?.image } : undefined;
       const got = have.get(n); const filler = fillers.has(n);
       // (Hayase's «hide spoilers»: past the next episode, no title and no picture.)
       const spoil = !!s.animeHideSpoilers && n > (e?.progress ?? 0) + 1;
       const epTitle = (!spoil && st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '')) || t('episodeN', { n }); const onDisk = !got ? disk.get(n) : undefined;
       const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { ep: String(n) }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined,
         onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(a!, n, epTitle, st?.thumbnail, () => draw()); } },
-        st?.thumbnail && !spoil ? h('img', { class: 'ep-thumb', src: st.thumbnail, alt: '', loading: 'lazy' }) : h('span', { class: 'ep-num' }, localDigits(n, 'prose')),
+        episodePic(spoil ? undefined : st?.thumbnail, localDigits(n, 'prose')),
         h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, epTitle, onDisk ? h('span', { class: 'ep-badge have' }, t('onDisk')) : null, filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet')),
           got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' + (got.state === 'paused' || got.state === 'failed' ? ' paused' : '') }, h('i', { style: { width: `${got.total ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
         onDisk ? iconButton('play', t('play'), () => void import('./anime').then((m) => m.playLocal(a!, n, onDisk.path, onDisk.name))) :
@@ -95,6 +98,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     sh.body.append(h('div', { class: 'score-row' }, range, out));
     sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void saveEntry({ ...a!.entry!, score: Number(range.value) }); } }, t('save')));
   };
+  void al.episodeArt(id).then((x) => { art = x; if (x.size && a && !gone) draw(); });
   void al.media(id).then((m) => { if (gone) return; a = m; draw(); void import('../anime/library').then((l) => l.filesFor(m.id)).then((f) => { disk = f; if (f.size && !gone) draw(); }).catch(() => undefined); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
   // Downloads of this show followed as they go: each episode's bar and percentage moved in place; the page
   // redrawn when one is added, finishes or fails.

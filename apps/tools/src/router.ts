@@ -51,13 +51,22 @@ export function navigate(path: string, replace = false): void {
   if (replace) { move = 'replace'; stack[stack.length - 1] = path; location.replace(target); return; }
   pushing = path; location.hash = target;
 }
-/** The part of the app a place belongs to (the tab it lives under). */
-export function sectionOf(path: string): string {
-  const p = path.split('?')[0];
-  if (p.startsWith('/anime')) return 'anime'; if (p.startsWith('/tv')) return 'tv'; if (p.startsWith('/videos')) return 'videos'; if (p.startsWith('/courses')) return 'videos'; if (p.startsWith('/subs')) return 'subs'; if (p.startsWith('/files')) return 'files';
-  if (p.startsWith('/settings') || p.startsWith('/addons')) return 'settings'; if (p.startsWith('/search')) return 'search';
-  return 'downloads';
+/** The tab a place lives under — every place named here, so a new one cannot be left to fall under another tab. */
+export function sectionOfRoute(r: Route): string {
+  switch (r.name) {
+    case 'downloads': case 'task': case 'add': case 'install': return 'downloads';
+    case 'settings': case 'addons': case 'screen': return 'settings';
+    case 'anime': case 'animeEntry': case 'animeStudio': return 'anime';
+    case 'tv': case 'tvTitle': return 'tv';
+    case 'videos': case 'courses': return 'videos';
+    case 'files': return 'files';
+    case 'subs': return 'subs';
+    case 'search': return 'search';
+    default: { const never: never = r; return never; }
+  }
 }
+/** The tab a path lives under. */
+export const sectionOf = (path: string): string => sectionOfRoute(parseRoute(`#${path}`));
 /** Up from this view: to the one it was opened from when that is in the same part of the app (a show opened from
  *  its list), else to `fallback`, its part's own top — never into another tab's past, which made Back go round
  *  between two tabs. */
