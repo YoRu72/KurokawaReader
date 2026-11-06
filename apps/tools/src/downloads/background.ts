@@ -1,7 +1,7 @@
 // What runs in the background from the start: the clipboard monitor (a copied link offered for download when the app
 // comes to the front) and the scheduler (downloads marked «later» run in the hours set, each download's own clock,
 // the followed channels' looks). Apart from the grabber and the checksums (prism.ts), which load only when opened.
-import { ktPlugin } from '../native';
+import { clipboardText } from '../native';
 import { getEngine, parseSources } from '../engine';
 import { getSettings } from '../settings';
 
@@ -9,10 +9,9 @@ import { getSettings } from '../settings';
 let lastClip = ''; let clipWired = false;
 export function startClipboardWatch(open: (text: string) => void): void {
   if (clipWired) return; clipWired = true;
-  const read = async (): Promise<string> => { const d = window.kurokawaTools as unknown as { clipboardText?(): Promise<string> } | undefined; if (d?.clipboardText) return d.clipboardText(); const p = ktPlugin() as unknown as { clipboardText?(): Promise<{ text: string }> } | null; if (p?.clipboardText) return (await p.clipboardText()).text; return ''; };
   const check = async () => {
     if (!getSettings().clipboardWatch || document.visibilityState !== 'visible') return;
-    let text = ''; try { text = (await read()).trim(); } catch { return; }
+    const text = (await clipboardText(true)).trim();
     if (!text || text === lastClip) return; const first = lastClip === ''; lastClip = text; if (first && !sessionStorage.getItem('kt.clip.armed')) { sessionStorage.setItem('kt.clip.armed', '1'); }
     if (!parseSources(text).length) return;
     let seen: string[] = []; try { seen = JSON.parse(localStorage.getItem('kt.clip.seen') ?? '[]') as string[]; } catch { /* none */ }

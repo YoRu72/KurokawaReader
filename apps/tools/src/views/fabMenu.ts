@@ -10,6 +10,7 @@ import { isIos } from './ipa';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
 import { getSettings } from '../settings';
 import { navigate } from '../router';
+import { clipboardText } from '../native';
 /** The add sheet, loaded on the first tap that opens it (it and the video panel are not on the first screen). */
 const addSheet = (...a: Parameters<typeof import('./add').addSheet>): void => { void import('./add').then((m) => m.addSheet(...a)); };
 
@@ -49,8 +50,7 @@ export function fabMenu(anchor: HTMLElement): void {
   function close() { open?.remove(); open = null; closeOpen = null; anchor.classList.remove('open'); anchor.setAttribute('aria-expanded', 'false'); window.removeEventListener('keydown', onKey); }
 }
 async function fromClipboard(): Promise<void> {
-  let text = '';
-  try { const d = window.kurokawaTools as unknown as { clipboardText?(): Promise<string> } | undefined; text = d?.clipboardText ? await d.clipboardText() : await navigator.clipboard.readText(); } catch { /* not allowed */ }
+  const text = await clipboardText();
   if (!text || !parseSources(text).length) { toast(t('nothingToPaste'), 'error'); addSheet(); return; }
   addSheet(text);
 }

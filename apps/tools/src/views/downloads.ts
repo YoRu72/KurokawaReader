@@ -10,7 +10,7 @@ import { noteOf, countFinished, autoClean, retryFailed, exportList, importList, 
 import type { Task, TaskState } from '../engine/types';
 import { navigate } from '../router';
 import { getSettings, onSettingsChange } from '../settings';
-import { nativePlatform, ktPlugin } from '../native';
+import { nativePlatform, ktPlugin, clipboardText } from '../native';
 import { canArchive, isArchiveName } from '../archives';
 import { allCategories, categoryOf, categoryName } from '../downloads/categories';
 import { updateSettings } from '../settings';
@@ -48,7 +48,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const moreMenu = () => {
     const sh = openSheet(t('navDownloads'), t('close'));
     const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
-    row('copy', t('pasteDownload'), () => void (async () => { let text = ''; try { text = await navigator.clipboard.readText(); } catch { /* not allowed */ } if (!text.trim()) { toast(t('clipboardEmpty'), 'error'); return; } addSheet(text.trim()); })());
+    row('copy', t('pasteDownload'), () => void (async () => { const text = await clipboardText(); if (!text.trim()) { toast(t('clipboardEmpty'), 'error'); return; } addSheet(text.trim()); })());
     // (Slow mode: the downloads held to a gentle speed — a call, a game, a shared connection —, and back.)
     { const slow = !!getSettings().slowMode; row('clock', slow ? t('slowModeOff') : t('slowModeOn'), () => { const st = getSettings(); const was = st.slowMode; const limits = was ? (was.prev ?? { down: 0, up: 0 }) : { down: 512 * 1024, up: 64 * 1024 }; updateSettings({ limits, slowMode: was ? undefined : { prev: st.limits } }); void getEngine().setLimits?.(limits); toast(was ? t('slowModeOff') : t('slowModeOnToast')); }); }
     void import('../downloads/wifishare').then((m) => { if (m.canShareWifi() && tasks.some((x) => x.state === 'done')) row('wifi', t('wifiShareDone'), () => void m.shareWifiSheet(tasks)); });

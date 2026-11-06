@@ -8,7 +8,7 @@ import { canArchive, pickFiles } from '../archives';
 import { isIos } from './ipa';
 import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
-import { ktPlugin } from '../native';
+import { ktPlugin, clipboardText } from '../native';
 import { videoPanel, preferredFormat, nativeHls } from './addVideo';
 import { galleryOf } from '../downloads/galleries';
 import { videoEnabled, isVideoHost } from '../video/ytdlp';
@@ -29,7 +29,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const fileNote = h('p', { class: 'src', hidden: true });
   fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (!f) return; torrentFile = { name: f.name, b64: toBase64(await f.arrayBuffer()) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); });
   const tools = h('div', { class: 'add-tools' },
-    h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { const s = await navigator.clipboard.readText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value ? ta.value + '\n' : '') + s.trim(); void metadata(); } catch { toast(t('nothingToPaste'), 'error'); } } }, icon('copy'), t('pasteLink')),
+    h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const s = await clipboardText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + s.trim(); void metadata(); void refreshJar(); } }, icon('copy'), t('pasteLink')),
     ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []),
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const one = parseSources(ta.value)[0]?.url ?? ''; sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(one)); } }, icon('link'), t('grabTitle')),
     ...(getSettings().addons.includes('archives') && canArchive() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const fs = await pickFiles(true); if (!fs.length) return; sh.close(); if (fs.length === 1) void import('./archiveBrowse').then((m) => m.browseArchive(fs[0])); else void import('./extract').then((m) => m.extractMany(fs)); } }, icon('archive'), t('openArchive')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./extract').then((m) => m.createZipSheet()); } }, icon('plus'), t('createZip'))] : []));

@@ -7,6 +7,7 @@ import { t, formatBytes } from '../i18n';
 import { navigate } from '../router';
 import { getEngine, parseSources } from '../engine';
 import { getSettings, updateSettings } from '../settings';
+import { clipboardText } from '../native';
 
 const typing = (e: Event) => { const el = e.target as HTMLElement | null; return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); };
 const sheetOpen = () => !!document.querySelector('.sheet, .kt-player, .player-view');
@@ -35,7 +36,7 @@ export function startDropAndKeys(): void {
     else if (k === ',') { e.preventDefault(); navigate('/settings'); }
     else if (k === 'l' && !typing(e)) { e.preventDefault(); toggleLimiter(); }
     else if (k === 'v' && !typing(e) && !sheetOpen()) {
-      void (async () => { let text = ''; try { const d = window.kurokawaTools as unknown as { clipboardText?(): Promise<string> } | undefined; text = d?.clipboardText ? await d.clipboardText() : await navigator.clipboard.readText(); } catch { /* not allowed */ } if (text && parseSources(text).length) void import('../views/add').then((m) => m.addSheet(text)); })();
+      void (async () => { const text = await clipboardText(); if (text && parseSources(text).length) void import('../views/add').then((m) => m.addSheet(text)); })();
     }
   });
 }
