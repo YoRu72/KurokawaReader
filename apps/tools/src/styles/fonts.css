@@ -3,8 +3,11 @@
 @font-face {
   font-family: 'Inter';
   src: url('../assets/fonts/Inter.woff2') format('woff2');
-  font-weight: 100 900;
+  /* (Inter kept to Latin and symbols, weights 400–900, the features the CSS uses — 79 KB from 151: other scripts
+     fall back to the system's font, Arabic has Sultan.) */
+  font-weight: 400 900;
   font-display: swap;
+  unicode-range: U+0000-024F, U+0259, U+02B0-036F, U+1E00-1EFF, U+2000-22FF, U+2460-27BF, U+FB00-FB06, U+FEFF, U+FFFD;
 }
 /* Sultan draws ( ) as the ornate Qur'anic ayah brackets ﴿ ﴾ and ASCII digits as
    Arabic-Indic ones; leave both out of its range so they fall through to Inter
