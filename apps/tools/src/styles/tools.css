@@ -46,8 +46,8 @@ html.pc .fab { display: none; }
 .task-actions { display: flex; align-items: center; }
 @keyframes kt-slide { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
 .filter-chips { display: flex; gap: 8px; padding: 8px 0 12px; overflow-x: auto; scrollbar-width: none; }
-.engine-note { display: flex; gap: 8px; align-items: flex-start; color: var(--md-on-surface-dim); }
-.engine-note svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; }
+.engine-note { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--md-on-surface-dim); }
+.engine-note > svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; }
 
 /* Task detail */
 .task-detail .card { margin-bottom: 14px; }
@@ -813,3 +813,16 @@ html.pc .settings-view .settings-tabs { padding-bottom: 10px; border-bottom: 1px
 html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip { justify-content: flex-start; height: 38px; padding: 0 14px; border-radius: var(--sh-full); background: none; border: 0; font-size: 14px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
 html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip.on, html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 650; }
+
+/* The icon cropper: the picture under a square frame, the shape it will have drawn over it; zoom, turn, shape, fill. */
+.icon-crop .sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.ic-stage { display: grid; place-items: center; padding: 8px 0; background: repeating-conic-gradient(color-mix(in srgb, var(--md-on-surface) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border-radius: 16px; }
+.ic-canvas { width: 280px; height: 280px; touch-action: none; cursor: grab; border-radius: 12px; }
+.ic-canvas:active { cursor: grabbing; }
+.ic-row { display: flex; align-items: center; gap: 8px; }
+.ic-row input[type=range] { flex: 1; }
+.ic-fill { display: flex; align-items: center; gap: 10px; }
+.ic-fill input[type=color] { width: 40px; height: 28px; border: 0; padding: 0; background: none; }
+.app-icon-row { display: flex; align-items: center; gap: 12px; }
+.app-icon-now { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; flex: none; }
+.app-icon-row .grow { display: flex; flex-direction: column; gap: 2px; }

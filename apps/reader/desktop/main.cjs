@@ -2,6 +2,8 @@
 // fonts and absolute paths behave exactly as on the web) and forwards files the
 // OS asks us to open (double-click, "Open with", drag onto the icon).
 const { app, BrowserWindow, WebContentsView, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session, dialog } = require('electron');
+const AppIcon = require('./appicon.cjs');
+ipcMain.handle('kr:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));
 // (Windows shows the app's notifications under its own name only with this.)
 if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.reader');
 const path = require('node:path');
@@ -75,6 +77,7 @@ function createWindow() {
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
+  AppIcon.apply(win, path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'));
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('did-finish-load', flush);
   win.loadURL('app://kurokawa/index.html');

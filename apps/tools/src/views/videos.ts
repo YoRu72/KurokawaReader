@@ -95,11 +95,11 @@ function videoRow(v: Vid, list: Vid[]): HTMLElement {
   const tb = thumb(v); tb.append(h('i', { class: 'video-dur' }, dur(v.duration)), ...(f > 0 ? [h('i', { class: 'video-prog', style: { width: `${f * 100}%` } })] : []));
   const row = h('button', { type: 'button', class: 'video-row' + (m?.watched ? ' seen' : ''), onclick: () => void playLocal(list, list.indexOf(v)) }, tb,
     h('span', { class: 'grow' }, h('b', { dir: 'auto' }, v.name), h('small', { class: 'src' }, [resName(v.width, v.height), formatBytes(v.size), m?.watched ? t('videosWatched') : f > 0 ? t('videosLeftAt', { t: dur(m!.pos * 1000) }) : ''].filter(Boolean).join(' · '))));
-  onLongPress(row, () => videoMenu(v, list));
+  onLongPress(row, (ev) => videoMenu(v, list, ev));
   return row;
 }
-function videoMenu(v: Vid, list: Vid[]): void {
-  const sh = openSheet(v.name, t('close'));
+function videoMenu(v: Vid, list: Vid[], at?: Event): void {
+  const sh = openSheet(v.name, t('close'), { at });
   const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label));
   const mem = memory(); const watched = !!mem[v.path]?.watched;
   const setMem = (o: Partial<Mem> | null) => { const all = memory(); if (o === null) delete all[v.path]; else all[v.path] = { ...(all[v.path] ?? { pos: 0, duration: v.duration / 1000 }), ...o, at: Date.now() }; try { localStorage.setItem('kt.player.memory', JSON.stringify(all)); } catch { /* */ } };

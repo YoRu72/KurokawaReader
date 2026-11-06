@@ -1109,29 +1109,40 @@ html.rail-mini .rail-item { justify-content: center; padding: 0; }
 .rail-update { color: var(--md-primary); }
 .rail-update { background: color-mix(in srgb, var(--md-primary) 12%, transparent); }
 
-/* Library: the rail carries the app bar's places and the import button. */
-html.pc .library-view > .topbar, html.pc .library-view > .fab { display: none; }
-html.pc .library-body { padding: calc(36px + var(--safe-top)) 48px 64px; }
-html.pc .library-hero { padding: 0 4px 26px; }
-html.pc .library-hero .display { font-size: 57px; letter-spacing: -.03em; }
+/* Library on a computer: desktop proportions — a title, not a phone's hero; one row of tools sized for a mouse
+   (the search and the order at the start, the rest as small square buttons with their names on hover); the rail
+   carries the app bar's places and the import button, so the page repeats neither. */
+html.pc .library-view > .topbar, html.pc .library-view > .fab, html.pc .import-chip { display: none; }
+html.pc .library-view > .library-body { padding: calc(28px + var(--safe-top)) 40px 56px; max-width: 1560px; width: 100%; box-sizing: border-box; margin-inline: auto; }
+html.pc .library-hero { padding: 0 2px 16px; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 16px; row-gap: 6px; }
+html.pc .library-hero .display { font-size: 30px; font-weight: 700; letter-spacing: -.015em; line-height: 1.15; margin: 0; }
 html.pc[dir='rtl'] .library-hero .display { letter-spacing: 0; }
-html.pc .library-tools { gap: 12px; margin-bottom: 26px; }
-html.pc .library-tools input[type='search'] { height: 56px; border-radius: var(--sh-full); font-size: 15.5px; max-width: 760px; }
-html.pc .library-tools .tool-btn { width: 56px; height: 56px; transition: border-radius var(--dur-long) var(--spring), background var(--dur-short), transform var(--dur-med) var(--spring); }
-html.pc .library-tools .tool-btn:hover { border-radius: 28px; }
-html.pc .book-grid { gap: 34px 26px; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); }
-html.pc .cover { transition: transform var(--dur-long) var(--spring), border-radius var(--dur-long) var(--spring), box-shadow var(--dur-med); }
-html.pc .book-card:hover .cover { transform: translateY(-6px); border-radius: 26px; box-shadow: var(--el-3); }
-html.pc .book-card:active .cover { transform: scale(.96); }
+html.pc .library-hero .sub { font-size: 13.5px; }
+html.pc .library-hero :is(.goal-line, .quote-card) { flex-basis: 100%; }
+html.pc .library-tools { gap: 6px; margin-bottom: 18px; flex-wrap: nowrap; }
+html.pc .library-tools input[type='search'] { flex: 0 1 380px; min-width: 220px; height: 40px; border-radius: 10px; font-size: 14px; padding-inline-start: 40px; background-position: 12px center; }
+html.pc[dir='rtl'] .library-tools input[type='search'] { background-position: calc(100% - 12px) center; }
+html.pc .library-tools select { height: 40px; border-radius: 10px; font-size: 14px; margin-inline-end: auto; }
+html.pc .library-tools .sort-btn { height: 40px; min-height: 40px; border-radius: 10px; font-size: 14px; padding-block: 0; margin-inline-end: auto; }
+html.pc .library-tools .tool-btn { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 10px; transition: background var(--dur-short); }
+html.pc .library-tools .tool-btn svg { width: 20px; height: 20px; }
+html.pc .library-tools .tool-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 12%, var(--md-surface-container-high)); }
+html.pc .book-grid { gap: 28px 22px; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); }
+html.pc .cover { transition: transform var(--dur-med) var(--ease-std, ease), box-shadow var(--dur-med); }
+html.pc .book-card:hover .cover { transform: translateY(-3px); box-shadow: var(--el-3); }
+html.pc .book-card:active .cover { transform: scale(.98); }
 
-/* Settings and notes: a large header in place of the back arrow (the rail is the way back). */
-html.pc:not(.rail-off) :is(.settings-view, .view.notes-view) > .topbar { height: calc(108px + var(--safe-top)); padding-inline: 20px; background: transparent; backdrop-filter: none; position: static; width: 100%; max-width: 1180px; margin: 0 auto; flex: 0 0 auto; }
+/* Settings and notes: a page title in place of the back arrow (the rail is the way back). */
+html.pc:not(.rail-off) :is(.settings-view, .view.notes-view) > .topbar { height: calc(84px + var(--safe-top)); padding-inline: 20px; background: transparent; backdrop-filter: none; position: static; width: 100%; max-width: 1180px; margin: 0 auto; flex: 0 0 auto; }
 html.pc .settings-body { max-width: 1180px; }
 html.pc .view.notes-view .library-body { max-width: 1180px; width: 100%; margin: 0 auto; padding-inline: 20px; }
 html.pc:not(.rail-off) :is(.settings-view, .view.notes-view) > .topbar > .icon-btn[data-icon='back'] { display: none; }
-html.pc:not(.rail-off) :is(.settings-view, .view.notes-view) > .topbar .title { font-size: 36px; font-weight: 650; letter-spacing: -.02em; padding-inline: 0; }
+html.pc:not(.rail-off) :is(.settings-view, .view.notes-view) > .topbar .title { font-size: 30px; font-weight: 700; letter-spacing: -.015em; padding-inline: 0; }
 html.pc[dir='rtl'] :is(.settings-view, .view.notes-view) > .topbar .title { letter-spacing: 0; }
 html.pc .view.notes-view .library-body { padding-top: 0; }
+/* The other pages (catalogs, browse, a series…): a desktop app bar — its title readable, not a phone's small one. */
+html.pc:not(.rail-off) .view:not(.settings-view, .notes-view, .library-view) > .topbar { height: calc(64px + var(--safe-top)); padding-inline: 16px 20px; }
+html.pc:not(.rail-off) .view:not(.settings-view, .notes-view, .library-view) > .topbar .title { font-size: 22px; font-weight: 650; }
 
 /* Dialogs in place of bottom sheets: centred, rounded all round, springing in. */
 html.pc .sheet {
@@ -1151,6 +1162,23 @@ html.pc .sheet.stacked { width: min(560px, calc(100vw - 96px)); max-height: 70vh
 html.pc .sheet.update-sheet { width: min(620px, calc(100vw - 64px)); }
 html.pc .sheet.libsearch-sheet { width: min(980px, calc(100vw - 64px)); max-height: 90vh; }
 html.pc .sheet.scan-sheet, html.pc .sheet.scan-editor { width: min(1080px, calc(100vw - 64px)); max-height: 92vh; }
+/* A sheet opened from a right-click or a ⋮ button: a computer's menu at the pointer, not a dialog. */
+html.pc .sheet.as-menu { inset: auto; margin: 0; width: max-content; min-width: 220px; max-width: 340px; max-height: min(70vh, 560px); border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.4), var(--el-2); animation: menu-in var(--dur-short) var(--ease-emph-decel); background: var(--md-surface-container); }
+html.pc .sheet.as-menu .sheet-head { padding: 10px 14px 4px; }
+html.pc .sheet.as-menu .sheet-head h3 { font-size: 12px; font-weight: 600; color: var(--md-on-surface-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+html.pc .sheet.as-menu .sheet-head .icon-btn { display: none; }
+html.pc .sheet.as-menu .sheet-body { padding: 2px 6px 6px; overflow-y: auto; }
+html.pc .sheet.as-menu .sheet-actions { padding: 0 6px 6px; justify-content: stretch; }
+html.pc .sheet.as-menu .sheet-actions:empty { display: none; }
+html.pc .sheet.as-menu .sheet-actions .btn { flex: 1; justify-content: flex-start; min-height: 34px; padding: 7px 10px; gap: 10px; border-radius: 8px; background: none; font-weight: 500; }
+html.pc .sheet.as-menu .sheet-actions { border-top: 1px solid color-mix(in srgb, var(--md-on-surface) 10%, transparent); padding-top: 6px; }
+html.pc .sheet.as-menu .sheet-actions .btn.danger { color: var(--md-error); }
+html.pc .sheet.as-menu .dest-row { padding: 7px 10px; min-height: 34px; border-radius: 8px; font-size: 14px; gap: 10px; }
+html.pc .sheet.as-menu .dest-row svg { width: 18px; height: 18px; }
+html.pc .sheet.as-menu .dest-row:hover, html.pc .sheet.as-menu .sheet-actions .btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+html.pc .scrim.menu-scrim { background: transparent; backdrop-filter: none; }
+@keyframes menu-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes dialog-in { from { transform: scale(.88) translateY(14px); opacity: 0; } 40% { opacity: 1; } }
 html.pc .scrim { backdrop-filter: blur(2px); }
 
@@ -2101,3 +2129,16 @@ html.pc .settings-view .settings-nav { display: flex; flex-direction: column; fl
 html.pc .settings-view .settings-nav .chip { justify-content: flex-start; height: 38px; padding: 0 14px; border-radius: var(--sh-full); background: none; border: 0; font-size: 14px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html.pc .settings-view .settings-nav .chip:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
 html.pc .settings-view .settings-nav .chip.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 650; }
+
+/* The icon cropper: the picture under a square frame, the shape it will have drawn over it; zoom, turn, shape, fill. */
+.icon-crop .sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.ic-stage { display: grid; place-items: center; padding: 8px 0; background: repeating-conic-gradient(color-mix(in srgb, var(--md-on-surface) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border-radius: 16px; }
+.ic-canvas { width: 280px; height: 280px; touch-action: none; cursor: grab; border-radius: 12px; }
+.ic-canvas:active { cursor: grabbing; }
+.ic-row { display: flex; align-items: center; gap: 8px; }
+.ic-row input[type=range] { flex: 1; }
+.ic-fill { display: flex; align-items: center; gap: 10px; }
+.ic-fill input[type=color] { width: 40px; height: 28px; border: 0; padding: 0; background: none; }
+.app-icon-row { display: flex; align-items: center; gap: 12px; }
+.app-icon-now { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; flex: none; }
+.app-icon-row .grow { display: flex; flex-direction: column; gap: 2px; }

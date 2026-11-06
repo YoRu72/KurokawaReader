@@ -84,6 +84,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const s = getSettings();
     const langOpts: [string, string][] = [['system', t('languageSystem')], ...LANGS.map(([c, n]) => [c, n] as [string, string])];
     const general = card('general', t('general'),
+      appIconRow(),
       row(t('language'), pickButton(t('language'), langOpts, getLangPref(), (v) => { setLangPref(v as 'system'); }, t('close'))),
       row(t('direction'), pickButton(t('direction'), [['auto', t('dirAuto')], ['ltr', t('dirLtr')], ['rtl', t('dirRtl')]], getDirPref(), (v) => { setDirPref(v as DirPref); rerender(); }, t('close'))),
       row(t('settingsLayout'), pickButton(t('settingsLayout'), [['tabs', t('settingsLayoutTabs')], ['list', t('settingsLayoutList')]], s.settingsLayout ?? 'tabs', (v) => { updateSettings({ settingsLayout: v as 'tabs' }); tab = 'all'; rerender(); }, t('close')), t('settingsLayoutHint')),
@@ -434,4 +435,26 @@ function recorderSheet(m: typeof import('../downloads/recorder')): void {
 function localAddonName(id: string): string {
   const k: Record<string, string> = { anime: 'navAnime', tv: 'navTv', player: 'playerSection', video: 'ruleKindVideo', subtitles: 'navSubs', files: 'filesTitle', 'torrent-search': 'torrentSearch' };
   return k[id] ? t(k[id] as 'navAnime') : id;
+}
+
+/** «The app's icon»: any picture, cropped — on a computer the window, taskbar and shortcuts show it (and the original
+ *  can come back); on Android a home-screen shortcut with it opens the app. Hidden where neither is possible. */
+function appIconRow(): HTMLElement | null {
+  type Desk = { appIcon?(o?: { set: string | null }): Promise<string | boolean | null> };
+  type Plug = { pinIcon?(o: { png: string; label: string }): Promise<{ ok: boolean }> };
+  const d = window.kurokawaTools as unknown as Desk | undefined; const p = ktPlugin() as unknown as Plug | null;
+  if (!d?.appIcon && !p?.pinIcon) return null;
+  const pic = h('img', { class: 'app-icon-now', src: 'icons/icon.svg', alt: '' }) as HTMLImageElement;
+  // (Every row on the page shown anew — the settings may have been drawn again since this one was.)
+  const show = (u: string | null) => document.querySelectorAll<HTMLElement>('.app-icon-row').forEach((r) => { (r.querySelector('.app-icon-now') as HTMLImageElement).src = u || 'icons/icon.svg'; (r.querySelector('.app-icon-reset') as HTMLElement).hidden = !u; });
+  const reset = h('button', { type: 'button', class: 'btn text small app-icon-reset', hidden: true, onclick: async () => { await d!.appIcon!({ set: null }); show(null); toast(t('myIconSet')); } }, t('myIconReset'));
+  if (d?.appIcon) void d.appIcon().then((u) => { if (typeof u === 'string' && u) { pic.src = u; reset.hidden = false; } }).catch(() => undefined);
+  const choose = async () => {
+    const { pickIconImage } = await import('../ui/iconCrop'); const u = await pickIconImage(); if (!u) return;
+    try {
+      if (d?.appIcon) { await d.appIcon({ set: u }); show(u); toast(t('myIconSet')); }
+      else { const r = await p!.pinIcon!({ png: u, label: t('appName') }); toast(r?.ok ? t('myIconPinned') : t('taskFailed', { error: '' }), r?.ok ? 'info' : 'error', 5000); }
+    } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  };
+  return h('div', { class: 'row app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, d?.appIcon ? t('myIconHintPc') : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
 }

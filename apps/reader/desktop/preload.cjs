@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 contextBridge.exposeInMainWorld('kurokawaDesktop', {
+  appIcon: (o) => ipcRenderer.invoke('kr:appIcon', o),
   // The interface's size (the app's own zoom, as Ctrl+= gives — pages and PDFs stay sharp).
   setZoom: (f) => { const v = Number(f); if (v >= 0.5 && v <= 2) webFrame.setZoomFactor(v); },
   onOpenFile(cb) { ipcRenderer.on('kr:open-file', (_e, payload) => cb(payload)); ipcRenderer.invoke('kr:ready'); },

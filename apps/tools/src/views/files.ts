@@ -191,8 +191,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const meta = ae.sub ? (ae.pkg && e.dir && !ae.special ? `${ae.sub} · ${formatBytes(e.size)}` : ae.sub) : e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'auto' }, e.name), h('small', { class: 'src' }, meta)),
-      selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e); }));
-    onLongPress(el, () => { if (!selecting) { selecting = true; } toggle(e); });
+      selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }));
+    // (A computer's right-click: the item's menu at the pointer; a long press — or a right-click while choosing —: choosing.)
+    onLongPress(el, (ev) => { if (ev.type === 'contextmenu' && !selecting && document.documentElement.classList.contains('pc')) { itemSheet(e, ev); return; } if (!selecting) { selecting = true; } toggle(e); });
     if (((thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc) && prefs.thumbs !== false) io.observe(ic);
     if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;
@@ -319,9 +320,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
-  const itemSheet = (e: Entry) => {
+  const itemSheet = (e: Entry, at?: Event) => {
     if ((e as AppEntry).pkg && isApps(e.path) && e.dir && !(e as AppEntry).special) { void import('./filesApps').then((m) => m.appSheet((e as AppEntry).pkg!, e.name, { go, pickDir: async () => { try { const { ktPlugin } = await import('../native'); return (await ktPlugin()?.pickDir())?.dir ?? null; } catch { return null; } }, defaultDir: `${roots.find((r) => r.kind === 'app')?.path ?? '/storage/emulated/0/Download/Kurokawa'}/Apps` })); return; }
-    const pl = isVirtual(e.path) ? null : plug(); const sh = openSheet(e.name, t('close'));
+    const pl = isVirtual(e.path) ? null : plug(); const sh = openSheet(e.name, t('close'), { at });
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     sh.body.append(h('p', { class: 'src', dir: 'ltr' }, e.path), h('div', { class: 'dest-list' },
       act('external', t('open'), () => void open(e)),

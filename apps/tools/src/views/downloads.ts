@@ -5,7 +5,7 @@ import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countItems } from '../i18n';
 import { isStalled, phaseShort } from '../downloads/live';
-import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem, mainFilePath } from '../engine';
+import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem, retryPlatformEngine, mainFilePath } from '../engine';
 import { canShareFiles, shareFiles } from '../ui/shareMany';
 import { noteOf, countFinished, autoClean, retryFailed, exportList, importList, stats } from '../downloads/extras';
 import type { Task, TaskState } from '../engine/types';
@@ -29,10 +29,12 @@ export const fmtEta = (s: number): string => { s = Math.max(0, Math.round(s)); c
 export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => void } {
   let tasks: Task[] = []; let current = filter; let cat = ''; let query = ''; const picked = new Set<string>(); let selecting = false;
   const list = h('div', { class: 'task-list' });
-  const empty = h('div', { class: 'empty', hidden: true }, h('div', { class: 'glyph' }, icon('download')), h('h2', null, t('downloadsEmptyTitle')), h('p', null, t('downloadsEmptyBody')));
+  const empty = h('div', { class: 'empty', hidden: true }, h('div', { class: 'glyph' }, icon('download')), h('h2', null, t('downloadsEmptyTitle')), h('p', null, t(document.documentElement.classList.contains('pc') ? 'downloadsEmptyBodyPc' : 'downloadsEmptyBody')));
   const chips = h('div', { class: 'chips filter-chips' });
   const problem = platformEngineProblem();
-  const note = problem ? h('p', { class: 'hint engine-note' }, icon('info'), t('engineUnavailable', { why: problem })) : null;
+  // (The computer's aria2c not running: why, and a way to start it again here.)
+  const note = problem ? h('p', { class: 'hint engine-note' }, icon('info'), h('span', { class: 'grow' }, t('engineUnavailable', { why: problem })),
+    h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; if (await retryPlatformEngine()) note?.remove(); else { b.disabled = false; toast(t('engineUnavailable', { why: platformEngineProblem() ?? '' }), 'error', 5000); } } }, icon('refresh'), t('retry'))) : null;
   // (Downloads the last run left mid-way — the app killed, the phone off: offered back in one tap, once.)
   const recovery = h('div', { class: 'hint recovery-note', hidden: true });
   let recoveryDismissed = false;
@@ -174,7 +176,8 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const el = h('article', { class: `task-card state-${x.state}`, dataset: { id: x.id } },
       h('input', { type: 'checkbox', class: 'task-pick', 'aria-label': t('dlSelect'), onclick: (e: Event) => { e.stopPropagation(); pick(tasks.find((y) => y.id === x.id) ?? x); } }),
       h('button', { type: 'button', class: 'task-main', onclick: () => { if (selecting) pick(tasks.find((y) => y.id === x.id) ?? x); else navigate(`/task/${encodeURIComponent(x.id)}`); },
-        oncontextmenu: (e: Event) => { e.preventDefault(); if (!selecting) setSelecting(true); pick(tasks.find((y) => y.id === x.id) ?? x); } },
+        oncontextmenu: (e: Event) => { e.preventDefault(); const cur = tasks.find((y) => y.id === x.id) ?? x; // (A computer's right-click: its menu at the pointer; a phone's long press: choosing.)
+          if (document.documentElement.classList.contains('pc') && !selecting) { taskMenu(cur, e); return; } if (!selecting) setSelecting(true); pick(cur); } },
         h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
         h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i', { style: { width: `${bar(x)}%` } })))),
       h('span', { class: 'task-actions' }));
@@ -195,10 +198,10 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'done' && isVideo(displayName(x))) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
     // (Done: a video or a sound plays in the app; anything else opens in the system's viewer.)
     else if (x.state === 'done' && eng.open) { const media = x.files.some((f) => f.priority > 0 && isMedia(f.path)) || isMedia(x.name); acts.append(iconButton(media ? 'play' : 'external', t(media ? 'play' : 'open'), (e) => { e.stopPropagation(); if (media) { void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => f.priority > 0 && isMedia(f.path))?.index ?? 0)).catch((er) => toast(String((er as Error).message ?? er), 'error')); return; } void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error')); })); }
-    acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(x); }));
+    acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(x, e); }));
   };
-  const taskMenu = (x: Task) => {
-    const sh = openSheet(displayName(x), t('close'));
+  const taskMenu = (x: Task, at?: Event) => {
+    const sh = openSheet(displayName(x), t('close'), { at });
     const eng = getEngine();
     const row = (ic: string, label: string, fn: () => void) => sh.body.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label)));
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(x.id)}`));

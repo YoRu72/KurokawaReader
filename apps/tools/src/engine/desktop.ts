@@ -10,6 +10,8 @@ export interface DesktopBridge {
   os?: string;
   /** Resolves once the main process has said whether aria2c is there. */
   ready?(): Promise<unknown>;
+  /** Starts aria2c again if it is not running; resolves with the new state. */
+  retryEngine?(): Promise<unknown>;
   onUpdateProgress?(cb: (p: { pct: number; got: number; total: number }) => void): () => void;
   add(o: AddOptions): Promise<Task>;
   list(): Promise<Task[]>;

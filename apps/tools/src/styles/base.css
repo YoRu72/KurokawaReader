@@ -1116,6 +1116,23 @@ html.pc .sheet.stacked { width: min(560px, calc(100vw - 96px)); max-height: 70vh
 html.pc .sheet.update-sheet { width: min(620px, calc(100vw - 64px)); }
 
 
+/* A sheet opened from a right-click or a ⋮ button: a computer's menu at the pointer, not a dialog. */
+html.pc .sheet.as-menu { inset: auto; margin: 0; width: max-content; min-width: 220px; max-width: 340px; max-height: min(70vh, 560px); border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.4), var(--el-2); animation: menu-in var(--dur-short) var(--ease-emph-decel); background: var(--md-surface-container); }
+html.pc .sheet.as-menu .sheet-head { padding: 10px 14px 4px; }
+html.pc .sheet.as-menu .sheet-head h3 { font-size: 12px; font-weight: 600; color: var(--md-on-surface-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+html.pc .sheet.as-menu .sheet-head .icon-btn { display: none; }
+html.pc .sheet.as-menu .sheet-body { padding: 2px 6px 6px; overflow-y: auto; }
+html.pc .sheet.as-menu .sheet-actions { padding: 0 6px 6px; justify-content: stretch; }
+html.pc .sheet.as-menu .sheet-actions:empty { display: none; }
+html.pc .sheet.as-menu .sheet-actions .btn { flex: 1; justify-content: flex-start; min-height: 34px; padding: 7px 10px; gap: 10px; border-radius: 8px; background: none; font-weight: 500; }
+html.pc .sheet.as-menu .sheet-actions { border-top: 1px solid color-mix(in srgb, var(--md-on-surface) 10%, transparent); padding-top: 6px; }
+html.pc .sheet.as-menu .sheet-actions .btn.danger { color: var(--md-error); }
+html.pc .sheet.as-menu .dest-row { padding: 7px 10px; min-height: 34px; border-radius: 8px; font-size: 14px; gap: 10px; }
+html.pc .sheet.as-menu .dest-row svg { width: 18px; height: 18px; }
+html.pc .sheet.as-menu .dest-row:hover, html.pc .sheet.as-menu .sheet-actions .btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+html.pc .scrim.menu-scrim { background: transparent; backdrop-filter: none; }
+@keyframes menu-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes dialog-in { from { transform: scale(.88) translateY(14px); opacity: 0; } 40% { opacity: 1; } }
 html.pc .scrim { backdrop-filter: blur(2px); }
 

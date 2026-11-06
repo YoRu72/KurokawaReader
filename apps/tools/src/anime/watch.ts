@@ -4,7 +4,7 @@
 // as its details are in. A small card says where it is and can stop it.
 import { h, icon, toast } from '../ui/dom';
 import { t, localDigits } from '../i18n';
-import { getEngine, isVideo } from '../engine';
+import { getEngine, isVideo, platformEngineProblem, retryPlatformEngine } from '../engine';
 import type { Task } from '../engine/types';
 import type { Anime } from '../anilist';
 import { getSettings } from '../settings';
@@ -95,8 +95,10 @@ export async function watchEpisode(a: Anime, ep: number, title: string, release?
  *  gives added to play in order (only its one file when it names one), then played as soon as its files are known. */
 export async function watchWith(o: { title: string; have?: () => Promise<Task | undefined>; find: () => Promise<TorrentResult | null>; meta: (r: TorrentResult) => Task['meta']; pick: (x: Task, r?: TorrentResult) => number; picked?: (r: TorrentResult) => void; choose?: () => void }): Promise<void> {
   running?.stop();
+  // (On the computer aria2c may be late or stopped: started again first; still not there — why, not «get the app».)
+  if (!getEngine().streamUrl && platformEngineProblem()) await retryPlatformEngine();
   const eng = getEngine(); const title = o.title;
-  if (!eng.streamUrl) { toast(t('watchNeedsApp'), 'error', 5000); return; }
+  if (!eng.streamUrl) { const why = platformEngineProblem(); toast(why ? t('engineUnavailable', { why }) : t('watchNeedsApp'), 'error', 7000); return; }
   let stopped = false; let taskId = ''; let off: (() => void) | null = null; let chosen: TorrentResult | undefined;
   const line = h('small', null, t('watchFinding')); const bar = h('div', { class: 'task-bar thin' }, h('i', { style: { width: '8%' } }));
   const stop = () => { stopped = true; off?.(); el.classList.add('leaving'); setTimeout(() => el.remove(), 180); if (running === me) running = null; };

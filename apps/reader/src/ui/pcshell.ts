@@ -47,6 +47,7 @@ function build(): HTMLElement {
     h('div', { class: 'rail-items' },
       item('library', 'books', t('library'), () => navigate('/')),
       item('search', 'search', t('railSearch'), () => ask('search'), `${t('searchBooks')} (Ctrl+Shift+F)`),
+      item('sources', 'globe', t('sources'), () => navigate('/sources')),
       item('notes', 'bookmark', t('railNotes'), () => navigate('/notes'), t('allNotes')),
       item('stats', 'chart', t('railStats'), () => void import('./stats').then((m) => m.showStats()), t('readingStats')),
       item('sync', 'cloud', t('railSync'), () => void import('./syncsheet').then((m) => m.syncSheet()), t('sync')),
@@ -58,7 +59,8 @@ function build(): HTMLElement {
 function mark(r: Route): void {
   document.documentElement.classList.toggle('rail-off', r.name === 'read'); if (isPc()) applyUiSize();
   rail?.querySelectorAll<HTMLElement>('.rail-item').forEach((b) => {
-    const on = b.dataset.dest === r.name;
+    // (A catalog is reached from Browse, a book's page from the library: their places stay lit.)
+    const on = b.dataset.dest === (r.name === 'catalog' ? 'sources' : r.name === 'book' ? 'library' : r.name);
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });

@@ -2,6 +2,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const state = { available: false, reason: '', os: process.platform, arch: process.arch };
 const ready = ipcRenderer.invoke('kt:state').then((s) => Object.assign(state, s)).catch(() => state);
+// (aria2c up later, or stopped: the page told, to pick its engine again.)
+const news = (s) => { Object.assign(state, s); window.dispatchEvent(new CustomEvent('kt:engine-state')); return state; };
+ipcRenderer.on('kt:engineState', (_e, s) => news(s));
 const call = (ch, ...a) => ipcRenderer.invoke(ch, ...a);
 contextBridge.exposeInMainWorld('kurokawaTools', {
   platform: 'desktop',
@@ -9,9 +12,10 @@ contextBridge.exposeInMainWorld('kurokawaTools', {
   get reason() { return state.reason; },
   get os() { return state.os; },
   ready: () => ready,
+  retryEngine: () => call('kt:engineRetry').then(news),
   add: (o) => call('kt:add', o), list: () => call('kt:list'), pause: (id) => call('kt:pause', id), resume: (id) => call('kt:resume', id), remove: (id, del) => call('kt:remove', id, del),
   setFiles: (id, p) => call('kt:setFiles', id, p), setUrl: (id, url) => call('kt:setUrl', id, url), move: (id, how) => call('kt:move', id, how), mini: (o) => call('kt:mini', o), siteWindow: (o) => call('kt:siteWindow', o), exists: (ps) => call('kt:exists', ps), setLimits: (l) => call('kt:setLimits', l), configure: (o) => call('kt:configure', o), torrentInfo: (s) => call('kt:torrentInfo', s),
-  open: (id, i) => call('kt:open', id, i), rename: (o) => call('kt:rename', o), streamUrl: (o) => call('kt:streamUrl', o), desktopPrefs: (o) => call('kt:desktopPrefs', o), saveText: (o) => call('kt:saveText', o), shareWifi: (o) => call('kt:shareWifi', o), shareWifiStop: () => call('kt:shareWifiStop'), shareWifiStatus: () => call('kt:shareWifiStatus'), audioUrl: () => call('kt:audioUrl'), fontDirs: () => call('kt:fontDirs'), fontIndex: (dirs) => call('kt:fontIndex', dirs), defaultDir: () => call('kt:defaultDir'), pickDir: () => call('kt:pickDir'), openExternal: (u) => call('kt:openExternal', u), registerMagnet: () => call('kt:registerMagnet'),
+  open: (id, i) => call('kt:open', id, i), rename: (o) => call('kt:rename', o), streamUrl: (o) => call('kt:streamUrl', o), appIcon: (o) => call('kt:appIcon', o), desktopPrefs: (o) => call('kt:desktopPrefs', o), saveText: (o) => call('kt:saveText', o), shareWifi: (o) => call('kt:shareWifi', o), shareWifiStop: () => call('kt:shareWifiStop'), shareWifiStatus: () => call('kt:shareWifiStatus'), audioUrl: () => call('kt:audioUrl'), fontDirs: () => call('kt:fontDirs'), fontIndex: (dirs) => call('kt:fontIndex', dirs), defaultDir: () => call('kt:defaultDir'), pickDir: () => call('kt:pickDir'), openExternal: (u) => call('kt:openExternal', u), registerMagnet: () => call('kt:registerMagnet'),
   http: (o) => call('kt:http', o), captureUrl: (o) => call('kt:captureUrl', o),
   videoInfo: (o) => call('kt:videoInfo', o), videoReady: () => call('kt:videoReady'), isVideoHost: (u) => call('kt:isVideoHost', u), videoVersion: () => call('kt:videoVersion'), videoRollback: () => call('kt:videoRollback'), galleryList: (o) => call('kt:galleryList', o), localApi: (o) => call('kt:localApi', o), galleryReady: () => call('kt:galleryReady'), videoBinary: (o) => call('kt:videoBinary', o), videoUpdate: () => call('kt:videoUpdate'),
   listDir: (p) => call('kt:listDir', p), deletePath: (p) => call('kt:deletePath', p), roots: () => call('kt:roots'),

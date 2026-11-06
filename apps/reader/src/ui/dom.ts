@@ -148,7 +148,7 @@ export function closeSheets(): void {
   document.querySelectorAll<HTMLElement & { __close?: () => void }>('.sheet').forEach((s) => { if (s.__close) s.__close(); else s.remove(); });
   document.querySelectorAll('.sheet-scrim').forEach((s) => s.remove());
 }
-export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
+export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** On a computer: a small menu at this point (the pointer, or the button's corner) instead of a dialog. */ at?: { x: number; y: number } | Event } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
   // A stacked sheet opens above the current one (choice lists inside a form) instead of replacing it.
   if (!opts.stack) closeSheets();
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
@@ -164,7 +164,24 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   const scrim = h('div', { class: 'scrim sheet-scrim', style: depth ? { zIndex: String(69 + depth * 2) } : undefined, onclick: close });
   (el as HTMLElement & { __close?: () => void }).__close = close;
   document.body.append(scrim, el);
+  if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
   return { body, actions, close, el };
+}
+/** A sheet as a computer's menu: beside the pointer (or under the button that opened it), kept on the screen. */
+function placeMenu(el: HTMLElement, scrim: HTMLElement, at: { x: number; y: number } | Event): void {
+  el.classList.add('as-menu'); scrim.classList.add('menu-scrim');
+  // (Where it opens is read now — the button is the event's only while it is handled —; the size once the rows are in,
+  // and again when more arrive later.)
+  const b = at instanceof Event && at.type !== 'contextmenu' ? (at.currentTarget as HTMLElement | null)?.getBoundingClientRect() : undefined;
+  const p = at instanceof Event ? { x: (at as MouseEvent).clientX, y: (at as MouseEvent).clientY } : at;
+  const place = () => {
+    const w = el.offsetWidth, hh = el.offsetHeight, pad = 8, rtl = document.documentElement.dir === 'rtl';
+    // (Right-clicked: from the pointer, toward the reading side; from a button: under it, flush with its outer edge.)
+    const x = b ? (rtl ? b.left : b.right - w) : rtl ? p.x - w : p.x; const y = b ? b.bottom + 4 : p.y;
+    const top = y + hh + pad > innerHeight ? Math.max(pad, (b ? b.top - 4 : y) - hh) : y;
+    Object.assign(el.style, { left: `${Math.max(pad, Math.min(x, innerWidth - w - pad))}px`, top: `${top}px` });
+  };
+  queueMicrotask(place); new ResizeObserver(place).observe(el);
 }
 
 export function debounce<T extends (...a: never[]) => void>(fn: T, ms: number): T {
@@ -195,8 +212,8 @@ export function coverColors(seed: string): [string, string] {
 }
 
 /** An M3 choice sheet (radio list) used in place of native <select> menus. */
-export function pickSheet<T extends string>(title: string, options: [T, string, string?][], value: T, onPick: (v: T) => void, closeLabel = 'Close'): void {
-  const sh = openSheet(title, closeLabel, { stack: true });
+export function pickSheet<T extends string>(title: string, options: [T, string, string?][], value: T, onPick: (v: T) => void, closeLabel = 'Close', at?: Event): void {
+  const sh = openSheet(title, closeLabel, { stack: true, at });
   sh.body.style.fontFamily = 'var(--font-ui)';
   sh.body.append(h('div', { class: 'dest-list' }, ...options.map(([id, label, ic]) => h('label', { class: 'dest-row' + (id === value ? ' on' : '') },
     h('input', { type: 'radio', name: 'kr-pick', checked: id === value, onchange: () => { sh.close(); onPick(id); } }),
@@ -209,6 +226,7 @@ export function pickButton<T extends string>(title: string, options: [T, string,
   const btn = h('button', { type: 'button', class: 'pick-btn', 'aria-haspopup': 'dialog' }, label, icon('chevronDown')) as HTMLButtonElement & { setValue(v: T): void };
   let cur = value;
   btn.setValue = (v: T) => { cur = v; label.textContent = options.find((o) => o[0] === v)?.[1] ?? String(v); };
-  btn.addEventListener('click', () => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); btn.dispatchEvent(new Event('change', { bubbles: true })); }, closeLabel));
+  // (On a computer a dropdown under the button; on a phone a sheet.)
+  btn.addEventListener('click', (e) => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); btn.dispatchEvent(new Event('change', { bubbles: true })); }, closeLabel, e));
   return btn;
 }
