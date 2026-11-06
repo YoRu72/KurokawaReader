@@ -76,3 +76,10 @@ export function continueCard(c: ContinueItem): HTMLElement {
 }
 /** A colour from a name, the same each time (a tile with no picture yet). */
 export function hueOf(s: string): string { let n = 0; for (const ch of s) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return `hsl(${n % 360} 45% 32%)`; }
+/** An episode's picture, 16:9, its number over it (Seanime's rows); the number alone, on a tint, when there is none
+ *  (or it would spoil). A picture that fails to load leaves the number. */
+export function episodePic(src: string | undefined, label: string): HTMLElement {
+  const pic = h('span', { class: 'ep-pic' + (src ? '' : ' none') }, h('b', { class: 'ep-pic-n' }, label));
+  if (src) pic.prepend(h('img', { src, alt: '', loading: 'lazy', decoding: 'async', onerror: (e: Event) => { (e.target as HTMLElement).remove(); pic.classList.add('none'); } }));
+  return pic;
+}

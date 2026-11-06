@@ -243,6 +243,24 @@ export async function idsOf(anilistId: number): Promise<IdMap> {
   idCache.set(anilistId, out); return out;
 }
 const num = (v: unknown): number | undefined => (typeof v === 'number' && v > 0 ? v : undefined);
+export interface EpisodeArt { image?: string; title?: string; overview?: string; runtime?: number }
+const epArt = new Map<number, Promise<Map<number, EpisodeArt>>>();
+/** Each episode's picture, title and summary from ani.zip (TheTVDB's, through ani.zip — Seanime's and Hayase's source),
+ *  asked for once a session; an empty map when it has none. */
+export function episodeArt(anilistId: number): Promise<Map<number, EpisodeArt>> {
+  let p = epArt.get(anilistId);
+  if (!p) {
+    p = (async () => {
+      const r = await request(`https://api.ani.zip/mappings?anilist_id=${anilistId}`); if (r.status !== 200) return new Map();
+      const eps = (JSON.parse(r.body) as { episodes?: Record<string, { episode?: string; episodeNumber?: number; image?: string; title?: Record<string, string>; overview?: string; summary?: string; runtime?: number; length?: number }> }).episodes ?? {};
+      const out = new Map<number, EpisodeArt>();
+      for (const [k, e] of Object.entries(eps)) { if (!/^\d+$/.test(k)) continue; out.set(Number(k), { image: e.image || undefined, title: e.title?.en || e.title?.['x-jat'] || undefined, overview: e.overview || e.summary || undefined, runtime: e.runtime || e.length || undefined }); }
+      return out;
+    })().catch(() => { epArt.delete(anilistId); return new Map<number, EpisodeArt>(); });
+    epArt.set(anilistId, p);
+  }
+  return p;
+}
 
 /* ---------- Discover ---------- */
 export interface DiscoverData { trending: Anime[]; airing: (Anime & { sequel?: boolean })[]; season: Anime[]; top: Anime[]; movies: Anime[] }
