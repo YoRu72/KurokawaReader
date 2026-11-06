@@ -537,3 +537,16 @@ body:has(> .kt-player) > .sheet .ep-num { width: 30px; height: 30px; border-radi
 .kt-fp-btn b { font-weight: 600; }
 .kt-player.kt-pip .kt-framepad { display: none; }
 @media (orientation: portrait) { .kt-framepad { bottom: 170px; } }
+
+/* The filters' studio list: a search box over a list of rows to tick, the ticked first. */
+.studio-picker .sheet-body { display: flex; flex-direction: column; gap: 8px; }
+.studio-picker .search-input { width: 100%; box-sizing: border-box; }
+.sp-count { min-height: 1em; }
+.sp-list { display: flex; flex-direction: column; min-height: 40vh; }
+.sp-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 10px 6px; border-bottom: 1px solid var(--md-outline-variant); cursor: pointer; }
+.sp-row:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; border-radius: 8px; }
+.sp-box { width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--md-outline); display: grid; place-items: center; }
+.sp-row.on .sp-box { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
+.sp-box svg { width: 14px; height: 14px; }
+.sp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-row small { white-space: nowrap; }

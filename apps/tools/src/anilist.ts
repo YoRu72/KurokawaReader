@@ -299,6 +299,22 @@ export async function tileArt(want: { key: string; filter: string }[]): Promise<
 }
 /* ---------- studios ---------- */
 export interface Studio { id: number; name: string; animation: boolean; favourites?: number; image?: string; color?: string; count?: number }
+export interface StudioEntry { id: number; name: string; animation: boolean; favourites: number }
+const STUDIO_LIST_KEY = 'kt.anime.studioList';
+let studioListP: Promise<StudioEntry[]> | null = null;
+/** AniList's studios, the best liked first (its first 500, in one request), for the filters' list: kept a week. */
+export function studioList(): Promise<StudioEntry[]> {
+  studioListP ??= (async () => {
+    try { const c = JSON.parse(localStorage.getItem(STUDIO_LIST_KEY) ?? 'null') as { at: number; v: StudioEntry[] } | null; if (c && Date.now() - c.at < 7 * 86400e3 && c.v.length) return c.v; } catch { /* first time */ }
+    const pages = Array.from({ length: 10 }, (_, i) => `p${i}: Page(page: ${i + 1}, perPage: 50) { studios(sort: [FAVOURITES_DESC]) { id name isAnimationStudio favourites } }`).join(' ');
+    const d = await gql<Record<string, { studios: { id: number; name: string; isAnimationStudio: boolean; favourites?: number }[] }>>(`query { ${pages} }`, {}, false);
+    const seen = new Set<number>(); const v: StudioEntry[] = [];
+    for (const p of Object.values(d)) for (const s of p?.studios ?? []) if (!seen.has(s.id)) { seen.add(s.id); v.push({ id: s.id, name: s.name, animation: s.isAnimationStudio, favourites: s.favourites ?? 0 }); }
+    try { localStorage.setItem(STUDIO_LIST_KEY, JSON.stringify({ at: Date.now(), v })); } catch { /* full */ }
+    return v;
+  })().catch((e) => { studioListP = null; throw e; });
+  return studioListP;
+}
 type RawStudio = { id: number; name: string; isAnimationStudio: boolean; favourites?: number; media?: { pageInfo?: { total?: number }; nodes: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] } };
 const toStudio = (s: RawStudio): Studio => ({ id: s.id, name: s.name, animation: s.isAnimationStudio, favourites: s.favourites, image: s.media?.nodes?.[0]?.bannerImage ?? s.media?.nodes?.[0]?.coverImage?.extraLarge, color: s.media?.nodes?.[0]?.coverImage?.color, count: s.media?.pageInfo?.total });
 const STUDIO_FIELDS = 'id name isAnimationStudio favourites media(sort: [POPULARITY_DESC], isMain: true, perPage: 1) { nodes { bannerImage coverImage { extraLarge color } } }';
