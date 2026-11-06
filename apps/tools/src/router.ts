@@ -51,8 +51,7 @@ export function navigate(path: string, replace = false): void {
   if (replace) { move = 'replace'; stack[stack.length - 1] = path; location.replace(target); return; }
   pushing = path; location.hash = target;
 }
-/** The tab a place lives under — every place named here, so a new one cannot be left to fall under another tab
- *  (Files and Courses once fell under Search: the bar lit Search, and Search's remembered place became Files). */
+/** The tab a place lives under — every place named here, so a new one cannot be left to fall under another tab. */
 export function sectionOfRoute(r: Route): string {
   switch (r.name) {
     case 'downloads': case 'task': case 'add': case 'install': return 'downloads';

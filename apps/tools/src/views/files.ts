@@ -131,7 +131,6 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // ---- the storages and the way here
   const loadRoots = async () => {
     const pl = plug();
-    // (The phone's own storage by its name in the app's language, not its folder's — «0».)
     if (pl) { try { const r = await pl.filesRoots(); roots = r.roots.map((x) => (x.kind === 'phone' ? { ...x, name: t('filesInternalStorage') } : x)); allFiles = r.allFiles; } catch { roots = []; } }
     else { const d = desk(); const home = d?.homeDir ? await d.homeDir().catch(() => '') : ''; roots = home ? [{ kind: 'phone', path: home, name: t('filesHome'), readable: true }] : []; }
     rootsRow.replaceChildren(...roots.filter((r) => r.kind !== 'remote' && r.kind !== 'saf' && r.kind !== 'root').map((r) => h('button', { type: 'button', class: 'chip' + (at === r.path || at.startsWith(r.path + '/') ? ' on' : ''), onclick: () => { if (!r.readable) { void askAccess(); return; } go(r.path); } },
