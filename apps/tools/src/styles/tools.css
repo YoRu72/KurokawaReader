@@ -731,6 +731,10 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-viewer .sheet-body { padding: 0; }
 .files-viewer-stage { height: 62vh; display: grid; place-items: center; overflow: hidden; background: #000; touch-action: none; border-radius: 12px; }
 .files-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; transition: transform .05s linear; user-select: none; }
+.files-viewer-stage > * { grid-area: 1 / 1; }
+.files-viewer-stage > [hidden] { display: none; }
+.files-viewer-play { width: 72px; height: 72px; border-radius: 50%; border: 0; display: grid; place-items: center; background: rgb(0 0 0 / .55); color: #fff; cursor: pointer; }
+.files-viewer-play .icon, .files-viewer-play svg { width: 36px; height: 36px; }
 .files-viewer-bar { align-items: center; justify-content: center; gap: 12px; padding: 8px; }
 .files-trash-row .files-main { min-width: 0; }
 .files-kind-row { padding: 6px 0; }

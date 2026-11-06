@@ -157,6 +157,15 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.waitForTimeout(300);
   ok("recent files sit in the drawer", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"new.png\")")));
   await p.keyboard.press('Escape');
+  // the gallery: a picture opens with the folder's videos among its neighbours; a swipe goes to the next; a video shows a Play button
+  await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa'); await p.waitForSelector('.files-row:has-text("photo.jpg")');
+  await p.click('.files-row:has-text("photo.jpg") .files-main'); await p.waitForSelector('.files-viewer', { timeout: 5000 });
+  ok('a picture opens in the gallery with the folder\'s video counted', (await p.textContent('.files-viewer')).includes('/ 2'));
+  const st = await p.$eval('.files-viewer-stage', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await p.mouse.move(st.x + 120, st.y); await p.mouse.down(); for (let k = 1; k <= 6; k++) await p.mouse.move(st.x + 120 - k * 40, st.y); await p.mouse.up(); await p.waitForTimeout(300);
+  const g = await p.evaluate(() => ({ title: document.querySelector('.files-viewer .sheet-head h3')?.textContent, play: !document.querySelector('.files-viewer-play').hidden, wall: [...document.querySelectorAll('.files-viewer .sheet-actions button')].some((b) => !b.hidden && /wallpaper/i.test(b.textContent)) }));
+  ok('a swipe goes to the next item; a video there has a Play button and no picture-only actions', g.title === 'Movie.mkv' && g.play && !g.wall, g);
+  await p.keyboard.press('Escape');
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -7,6 +7,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Entry } from './files';
+import { isVideo } from '../engine';
 
 type Plug = {
   filesJob(o: { id?: string; op: 'copy' | 'move' | 'delete'; paths: string[]; dest?: string; conflict?: string }): Promise<{ id: string }>;
@@ -172,31 +173,40 @@ export async function editorSheet(e: Entry, refresh: () => void): Promise<void> 
   try { const r = await pl.filesHead({ path: e.path, max: 2_000_000 }); original = r.text; ta.value = r.text; status.textContent = `${localDigits(r.text.length)} ${t('filesChars')}${r.size > 2_000_000 ? ' · ' + t('filesTooBigToEdit') : ''}`; if (r.size > 2_000_000) ta.readOnly = true; } catch (err) { ta.value = String((err as Error).message ?? err); ta.readOnly = true; }
 }
 
-/* ---------- the picture viewer: pinch to zoom, swipe between the folder's pictures ---------- */
+/* ---------- the picture viewer: pinch to zoom; a swipe — the picture following the finger — to the folder's next or
+   previous picture or GIF; its videos among them, each a still with a Play button (a swipe there would fight the
+   player's seeking, so the video plays in the player, with the folder's videos as its queue) ---------- */
 export async function imageViewer(items: Entry[], index: number, urlOf: (p: string) => Promise<string | null>, onDelete: (e: Entry) => void, o: { readOnly?: boolean } = {}): Promise<void> {
   const pl = plug(); let i = index; const sh = openSheet(items[i].name, t('close')); sh.el.classList.add('files-viewer');
-  const img = h('img', { class: 'files-viewer-img', alt: '', draggable: 'false' }) as HTMLImageElement; const stage = h('div', { class: 'files-viewer-stage' }, img); const counter = h('small', { class: 'src' });
+  const img = h('img', { class: 'files-viewer-img', alt: '', draggable: 'false' }) as HTMLImageElement;
+  const vid = h('video', { class: 'files-viewer-img', muted: true, playsinline: true, preload: 'metadata', hidden: true }) as HTMLVideoElement; let vidUrl = '';
+  const play = h('button', { type: 'button', class: 'files-viewer-play', hidden: true, 'aria-label': t('play'), onclick: () => { const e = items[i]; if (!vidUrl) return; sh.close(); void import('./player').then((m) => m.openPlayer(vidUrl, e.name, /^arc:\/\//.test(e.path) ? {} : { localPath: e.path })); } }, icon('play'));
+  const isVid = (e: Entry) => isVideo(e.name);
+  const stage = h('div', { class: 'files-viewer-stage' }, img, vid, play); const counter = h('small', { class: 'src' });
   let scale = 1, tx = 0, ty = 0; const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
   const title = sh.el.querySelector('.sheet-head h3') as HTMLElement | null;
   // (What the web view cannot draw — HEIC/HEIF, TIFF — is decoded by the phone to a JPEG in the cache first.)
   const needsDecode = (name: string) => /\.(heic|heif|hif|tiff?|wbmp)$/i.test(name);
   const decodeIt = async (e: Entry): Promise<string | null> => { const p = pl as unknown as { filesDecode?(o: { path: string }): Promise<{ path: string }> } | null; if (!p?.filesDecode) return null; try { let local = e.path; if (/^arc:\/\//.test(e.path)) local = await (await import('./filesArc')).arcFetch(e.path); const r = await p.filesDecode({ path: local }); const { localFileUrl } = await import('../player/files'); return localFileUrl(r.path); } catch { return null; } };
   let showing = 0;
-  const show = async () => { const my = ++showing; const e = items[i]; if (title) title.textContent = e.name; counter.textContent = `${localDigits(i + 1)} / ${localDigits(items.length)}`; scale = 1; tx = ty = 0; apply(); img.classList.add('loading'); const u = needsDecode(e.name) ? await decodeIt(e) : await urlOf(e.path); if (my !== showing) return; img.src = u ?? ''; img.classList.remove('loading'); img.onerror = () => { if (my !== showing) return; void decodeIt(e).then((d) => { if (d && my === showing) img.src = d; }); }; };
+  const show = async () => { const my = ++showing; const e = items[i]; if (title) title.textContent = e.name; counter.textContent = `${localDigits(i + 1)} / ${localDigits(items.length)}`; scale = 1; tx = ty = 0; apply(); const v = isVid(e); img.hidden = v; vid.hidden = !v; play.hidden = !v; for (const b of imageOnly) b.hidden = v; vid.removeAttribute('src'); vidUrl = '';
+    if (v) { const u = await urlOf(e.path); if (my !== showing) return; vidUrl = u ?? ''; if (u) vid.src = `${u}#t=1`; return; }
+    img.classList.add('loading'); const u = needsDecode(e.name) ? await decodeIt(e) : await urlOf(e.path); if (my !== showing) return; img.src = u ?? ''; img.classList.remove('loading'); img.onerror = () => { if (my !== showing) return; void decodeIt(e).then((d) => { if (d && my === showing) img.src = d; }); }; };
   // (Pointers: one drags when zoomed or swipes to the next picture; two pinch.)
   const pts = new Map<number, { x: number; y: number }>(); let startDist = 0, startScale = 1, sx = 0, sy = 0, stx = 0, sty = 0;
-  stage.addEventListener('pointerdown', (ev) => { stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; } else { sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; } });
-  stage.addEventListener('pointermove', (ev) => { if (!pts.has(ev.pointerId)) return; pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; scale = Math.max(1, Math.min(6, startScale * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, startDist))); apply(); } else if (scale > 1) { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); apply(); } });
-  const up = (ev: PointerEvent) => { if (!pts.has(ev.pointerId)) return; pts.delete(ev.pointerId); if (pts.size === 0 && scale === 1) { const dx = ev.clientX - sx; if (Math.abs(dx) > 60) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; void show(); } } };
+  stage.addEventListener('pointerdown', (ev) => { if (play.contains(ev.target as Node)) return; stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; } else { sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; } });
+  stage.addEventListener('pointermove', (ev) => { if (!pts.has(ev.pointerId)) return; pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; scale = Math.max(1, Math.min(6, startScale * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, startDist))); apply(); } else if (scale > 1) { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); apply(); } else if (items.length > 1) { tx = ev.clientX - sx; apply(); vid.style.transform = img.style.transform; } });
+  const up = (ev: PointerEvent) => { if (!pts.has(ev.pointerId)) return; pts.delete(ev.pointerId); if (pts.size === 0 && scale === 1) { const dx = ev.clientX - sx; tx = 0; apply(); vid.style.transform = ''; if (Math.abs(dx) > 60 && items.length > 1) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; void show(); } } };
   stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
   stage.addEventListener('dblclick', () => { scale = scale > 1 ? 1 : 2.5; tx = ty = 0; apply(); });
   sh.body.append(stage, h('div', { class: 'row files-viewer-bar' }, iconButton('chevronLeft', t('previous'), () => { i = (i - 1 + items.length) % items.length; void show(); }), counter, iconButton('chevronRight', t('next'), () => { i = (i + 1) % items.length; void show(); })));
+  const imageOnly: HTMLElement[] = []; const mark = (b: HTMLElement) => { imageOnly.push(b); return b; };
   const ocr = pl as unknown as { ocrFile?(o: { path: string; lang: string }): Promise<{ text: string }> } | null;
-  if (ocr?.ocrFile) sh.actions.append(h('button', { type: 'button', class: 'btn tonal small', onclick: async (ev: Event) => { const b = ev.currentTarget as HTMLButtonElement; b.disabled = true; try { let local = items[i].path; if (/^arc:\/\//.test(local)) local = await (await import('./filesArc')).arcFetch(local); const { loadScreen } = await import('../screen/config'); const r = await ocr.ocrFile!({ path: local, lang: loadScreen().source || 'en' }); if (!r.text.trim()) { toast(t('ocrNothing'), 'error'); } else { const ts = openSheet(t('ocrText'), t('close'), { stack: true }); ts.body.append(h('textarea', { rows: 10, dir: 'auto', readonly: 'true' }, r.text)); ts.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void navigator.clipboard?.writeText(r.text).then(() => toast(t('copied'))) }, icon('copy'), t('copy'))); } } catch (err) { toast(String((err as Error).message ?? err), 'error'); } b.disabled = false; } }, icon('type'), t('ocrCopy')));
+  if (ocr?.ocrFile) sh.actions.append(mark(h('button', { type: 'button', class: 'btn tonal small', onclick: async (ev: Event) => { const b = ev.currentTarget as HTMLButtonElement; b.disabled = true; try { let local = items[i].path; if (/^arc:\/\//.test(local)) local = await (await import('./filesArc')).arcFetch(local); const { loadScreen } = await import('../screen/config'); const r = await ocr.ocrFile!({ path: local, lang: loadScreen().source || 'en' }); if (!r.text.trim()) { toast(t('ocrNothing'), 'error'); } else { const ts = openSheet(t('ocrText'), t('close'), { stack: true }); ts.body.append(h('textarea', { rows: 10, dir: 'auto', readonly: 'true' }, r.text)); ts.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void navigator.clipboard?.writeText(r.text).then(() => toast(t('copied'))) }, icon('copy'), t('copy'))); } } catch (err) { toast(String((err as Error).message ?? err), 'error'); } b.disabled = false; } }, icon('type'), t('ocrCopy'))));
   if (!o.readOnly) sh.actions.append(
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.shareFile({ path: items[i].path, title: items[i].name }) }, icon('share'), t('share')),
-    h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.filesWallpaper({ path: items[i].path }).then(() => toast(t('filesWallpaperSet'))).catch((err) => toast(String((err as Error).message ?? err), 'error')) }, icon('images'), t('filesSetWallpaper')),
-    h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.openWith({ path: items[i].path, mime: 'image/*', title: items[i].name }) }, icon('external'), t('openWith')),
+    mark(h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.filesWallpaper({ path: items[i].path }).then(() => toast(t('filesWallpaperSet'))).catch((err) => toast(String((err as Error).message ?? err), 'error')) }, icon('images'), t('filesSetWallpaper'))),
+    h('button', { type: 'button', class: 'btn tonal small', onclick: () => void pl.openWith({ path: items[i].path, mime: isVid(items[i]) ? 'video/*' : 'image/*', title: items[i].name }) }, icon('external'), t('openWith')),
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const e = items[i]; sh.close(); onDelete(e); } }, icon('trash'), t('delete')));
   await show();
 }
