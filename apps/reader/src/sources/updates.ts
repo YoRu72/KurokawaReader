@@ -3,6 +3,7 @@
 // on demand from the bell in Sources; the result is kept, shown as a count on the bell and a mark on the
 // book, and told once as a notification of the system's.
 import { db, type Book } from '../db';
+import { writePending } from './pending';
 import { pool } from './http';
 import { listRepos, refreshRepo, extensionUpdates, autoUpdateExtensions, type Repo, type ExtItem } from './repos';
 import { checkNovel } from './ext/source';
@@ -30,7 +31,7 @@ export function setCheckEvery(h: number): void { try { localStorage.setItem('kr.
 let running: Promise<UpdateReport> | null = null;
 const listeners = new Set<() => void>();
 export function onUpdatesChanged(fn: () => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
-const emit = () => { for (const fn of listeners) fn(); };
+const emit = () => { for (const fn of listeners) fn(); void pendingCounts().then(writePending).catch(() => undefined); };
 
 /** The reader's choices for the checks (kept in localStorage: kr.updates.*). */
 export type UpdatePref = 'wifiOnly' | 'onlyOngoing' | 'autoFetch' | 'skipUnread' | 'skipNotStarted' | 'smart';
