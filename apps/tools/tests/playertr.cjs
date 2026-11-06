@@ -1,4 +1,5 @@
-// The player's subtitles translated (Google answered here): the lines from where the video is first, the translation
+// The player's subtitles translated (Google answered here; the lines go in batches joined with newlines, so each
+// asked line is counted on its own): the lines from where the video is first, the translation
 // shown with the original above it, a second line chosen by hand, the progress said; the rest of the player's
 // own test is in player.cjs. (Header kept from it:)
 // The player (REX Player's and VLC's features) on a finished download (the Android plugin faked, a short WebM
@@ -38,7 +39,7 @@ const serve = () => http.createServer((req, res) => {
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
   }, port);
   const asked = [];
-  await p.route('https://translate.googleapis.com/**', (r) => { const u = new URL(r.request().url()); asked.push(u.searchParams.get('q')); r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify([[['JA:' + u.searchParams.get('q'), u.searchParams.get('q')]], null, 'en']) }); });
+  await p.route('https://translate.googleapis.com/**', (r) => { const u = new URL(r.request().url()); asked.push(...(u.searchParams.get('q') || '').split('\n')); r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify([[['JA:' + u.searchParams.get('q'), u.searchParams.get('q')]], null, 'en']) }); });
   await p.goto(`http://127.0.0.1:${port}/`); await p.waitForSelector('.task-card');
   await p.click('.task-card button[aria-label="Play"]'); await p.waitForSelector('.kt-player video.kt-video');
   await p.waitForFunction(() => document.querySelector('.kt-video').currentTime > 0.3, null, { timeout: 15000 });
