@@ -86,6 +86,7 @@ export const ja: Partial<Strings> = {
   reviewPicks: "追加前に選択を確認", reviewUnsure: "不確か", reviewChange: "変更", reviewFinding: "各話のリリースを探しています…", reviewAdd: "{n} を追加", reviewCountdown: "すべて明確です：{n} 秒後に追加します（一覧を押すと停止）。",
   navTv: "TV・映画", tvAddWatchlist: "ウォッチリストに追加", tvAddedWl: "ウォッチリストに追加しました", tvAutoAdded: "{title}: S{s}E{e} を追加", tvBestHint: "設定 → TV・映画 の画質と優先順位に従って", tvCached: "クラウドにあり", tvCast: "出演", tvDirector: "監督", tvDiscover: "見つける", tvFilm: "映画", tvFilmsPl: "映画", tvFollow: "フォロー", tvFollowHint: "新しいエピソードが出たら、この話からこの画質で自動ダウンロードします。", tvInWatchlist: "ウォッチリストにあり", tvPack: "パック", tvRemovedWl: "ウォッチリストから外しました", tvSearchHint: "映画やシリーズを検索", tvSeason: "シーズン", tvSeasonN: "シーズン {n}", tvSeasonSeen: "シーズン視聴済み", tvSeries: "シリーズ", tvSeriesPl: "シリーズ", tvSpecials: "特別編", tvTrailer: "予告編", tvWatch: "視聴", tvWatchlist: "ウォッチリスト", tvWatchlistEmpty: "ウォッチリストは空です：作品ページから追加してください。",
   tvSettingsHint: "映画とシリーズは Cinemeta、トレントはこの設定の Torrentio から。", tvProviders: "サイト", tvSort: "並び順", tvSortQualitySize: "画質→サイズ", tvSortQuality: "画質", tvLeaveOut: "除外", tvLanguage: "優先言語", tvLanguageHint: "この言語のリリースを先に表示します。", tvUseDebrid: "Debrid アドオンのキーを使う", tvUseDebridHint: "リンクが直接ダウンロードに変換されます。", tvCustom: "Torrentio の設定", tvCustomHint: "設定ページのアドレスを貼ると、そのまま使います。", tvFollowed: "フォロー中のシリーズ",
+  animeStudioSearch: "スタジオを名前で探す",
   filesInternalStorage: "内部ストレージ",
   apkBrowse: "中身を見る",
   pipOnLeave: "アプリを離れたらフローティング表示",
