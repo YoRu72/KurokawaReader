@@ -1,6 +1,6 @@
 // What runs in the background from the start: the clipboard monitor (a copied link offered for download when the app
 // comes to the front) and the scheduler (downloads marked «later» run in the hours set, each download's own clock,
-// the followed channels' looks). Apart from the grabber and the checksums (prism.ts), which load only when opened.
+// the followed channels' looks).
 import { clipboardText } from '../native';
 import { getEngine, parseSources } from '../engine';
 import { getSettings } from '../settings';

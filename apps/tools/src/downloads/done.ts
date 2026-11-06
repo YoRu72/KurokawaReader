@@ -1,6 +1,6 @@
 // When downloads finish, as Prism does it: a sound (eleven to choose from, Prism's own), another when one fails and
 // another when everything has finished, at the volume set; and the «Download complete» card — the file, how long
-// it took and its average speed, Open · Folder · Copy path · Convert · Make smaller · Verify, «Don't show again».
+// it took and its average speed, and what to do with it.
 // On a computer, a system notification too when the app is not in front.
 import { h, icon, toast } from '../ui/dom';
 import { t, formatBytes } from '../i18n';

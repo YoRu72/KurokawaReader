@@ -33,7 +33,6 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []),
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const one = parseSources(ta.value)[0]?.url ?? ''; sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(one)); } }, icon('link'), t('grabTitle')),
     ...(getSettings().addons.includes('archives') && canArchive() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const fs = await pickFiles(true); if (!fs.length) return; sh.close(); if (fs.length === 1) void import('./archiveBrowse').then((m) => m.browseArchive(fs[0])); else void import('./extract').then((m) => m.extractMany(fs)); } }, icon('archive'), t('openArchive')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./extract').then((m) => m.createZipSheet()); } }, icon('plus'), t('createZip'))] : []));
-  // Options
   const s = getSettings();
   const dir = h('span', { class: 'grow', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
   let dirChosen = false;
@@ -63,7 +62,6 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (r.page) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('linkIsPage')}`));
     void showStorage();
   };
-  // (Folders used before, for one tap; the newest first.)
   const recent = (): string[] => (getSettings().recentDirs ?? []).filter((d) => d && d !== getSettings().downloadDir).slice(0, 5);
   const dirMenu = h('div', { class: 'folder-chips', hidden: !recent().length }, ...recent().map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d)));
   const drawDirs = () => { const r = recent(); dirMenu.hidden = !r.length; dirMenu.replaceChildren(...r.map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d))); };
@@ -111,7 +109,6 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; if (getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; } hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen'))); }); return; }
     hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
-  // (The field's clear button: the link, the chosen .torrent and what was found for them, gone at once.)
   const clear = h('button', { type: 'button', class: 'icon-btn add-clear', 'aria-label': t('clearField'), title: t('clearField'), hidden: !initial, onclick: () => {
     ta.value = ''; torrentFile = null; fileIn.value = ''; fileNote.hidden = true; if (!how.name) { name.value = ''; ext.value = ''; nameTouched = false; }
     clear.hidden = true; check.hidden = true; void metadata(); void refreshJar(); ta.focus(); } }, icon('close')) as HTMLButtonElement;
