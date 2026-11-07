@@ -3,6 +3,7 @@
 // OS asks us to open (double-click, "Open with", drag onto the icon).
 const { app, BrowserWindow, WebContentsView, protocol, net, ipcMain, shell, Menu, clipboard, nativeImage, session, dialog } = require('electron');
 const AppIcon = require('./appicon.cjs');
+const TitleBar = require('./titlebar.cjs'); TitleBar.install();
 ipcMain.handle('kr:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));
 // (Windows shows the app's notifications under its own name only with this.)
 if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.reader');
@@ -74,10 +75,12 @@ function createWindow() {
   win = new BrowserWindow({
     width: st.width || 1180, height: st.height || 820, x: st.x, y: st.y, minWidth: 420, minHeight: 600,
     backgroundColor: '#121314', title: 'KurokawaReader', autoHideMenuBar: true,
+    ...TitleBar.options(),
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   AppIcon.apply(win, path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'));
+  TitleBar.watch(win);
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('did-finish-load', flush);
   win.loadURL('app://kurokawa/index.html');

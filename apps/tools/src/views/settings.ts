@@ -1,5 +1,6 @@
 // Settings: the look and the language, the downloads (folder, limits, seeding, port), a remote aria2, the
 // add-ons from the Kurokawa repository, the other Kurokawa apps (installed, or fetched from here), updates, about.
+import { brandIcon, setBrandIcon } from '../ui/brandIcon';
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
 import { getSettings, updateSettings, type Accent, type UiMode, type DarkTone } from '../settings';
@@ -460,14 +461,17 @@ function appIconRow(): HTMLElement | null {
   if (!d?.appIcon && !p?.pinIcon) return null;
   const pic = h('img', { class: 'app-icon-now', src: 'icons/icon.svg', alt: '' }) as HTMLImageElement;
   // (Every row on the page shown anew — the settings may have been drawn again since this one was.)
-  const show = (u: string | null) => document.querySelectorAll<HTMLElement>('.app-icon-row').forEach((r) => { (r.querySelector('.app-icon-now') as HTMLImageElement).src = u || 'icons/icon.svg'; (r.querySelector('.app-icon-reset') as HTMLElement).hidden = !u; });
-  const reset = h('button', { type: 'button', class: 'btn text small app-icon-reset', hidden: true, onclick: async () => { await d!.appIcon!({ set: null }); show(null); toast(t('myIconSet')); } }, t('myIconReset'));
-  if (d?.appIcon) void d.appIcon().then((u) => { if (typeof u === 'string' && u) { pic.src = u; reset.hidden = false; } }).catch(() => undefined);
+  const show = (u: string | null) => { setBrandIcon(u); showRows(u); };
+  const showRows = (u: string | null) => document.querySelectorAll<HTMLElement>('.app-icon-row').forEach((r) => { (r.querySelector('.app-icon-now') as HTMLImageElement).src = u || 'icons/icon.svg'; (r.querySelector('.app-icon-reset') as HTMLElement).hidden = !u; });
+  const reset = h('button', { type: 'button', class: 'btn text small app-icon-reset', hidden: true, onclick: async () => { if (d?.appIcon) await d.appIcon({ set: null }); show(null); toast(t('myIconSet')); } }, t('myIconReset'));
+  // (The app's own record — an icon chosen before the app kept one — brought into the page's logos too.)
+  if (d?.appIcon) void d.appIcon().then((u) => { if (typeof u === 'string' && u) { pic.src = u; reset.hidden = false; if (u !== brandIcon()) setBrandIcon(u); } }).catch(() => undefined);
+  else { const u = brandIcon(); if (u) { pic.src = u; reset.hidden = false; } }
   const choose = async () => {
     const { pickIconImage } = await import('../ui/iconCrop'); const u = await pickIconImage(); if (!u) return;
     try {
       if (d?.appIcon) { await d.appIcon({ set: u }); show(u); toast(t('myIconSet')); }
-      else { const r = await p!.pinIcon!({ png: u, label: t('appName') }); toast(r?.ok ? t('myIconPinned') : t('taskFailed', { error: '' }), r?.ok ? 'info' : 'error', 5000); }
+      else { const r = await p!.pinIcon!({ png: u, label: t('appName') }); toast(r?.ok ? t('myIconPinned') : t('taskFailed', { error: '' }), r?.ok ? 'info' : 'error', 5000); if (r?.ok) show(u); }
     } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
   };
   return h('div', { class: 'row app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, d?.appIcon ? t('myIconHintPc') : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));

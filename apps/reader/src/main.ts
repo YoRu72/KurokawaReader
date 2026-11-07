@@ -1,6 +1,9 @@
 import { normalizeForSearch } from './formats/types';
 import { cmapsUrl, loadSlim } from './slim';
 import './styles/fonts.css';
+import { applyBrandIcon } from './ui/brandIcon';
+// (The icon of the user's choosing on the page's own little icon too, from the start.)
+applyBrandIcon();
 import './styles/base.css';
 import './styles/reader.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
@@ -94,6 +97,7 @@ registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 initPcShell();
+void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
 setTimeout(() => void import('./ui/share').then((m) => m.clearShareCache()), 8000);
 void loadFonts();
 // (A slim package: what it left out, and the chosen font fetched before the first book opens.)

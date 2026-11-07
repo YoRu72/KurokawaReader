@@ -52,6 +52,7 @@
       "streamproxy.cjs",
       "torrentstream.cjs",
       "appicon.cjs",
+      "titlebar.cjs",
       "packs.cjs",
       "antivirus.cjs",
       "screentr.cjs"

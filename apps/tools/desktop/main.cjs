@@ -13,6 +13,7 @@ const Ytdlp = require('./ytdlp.cjs');
 const StreamProxy = require('./streamproxy.cjs');
 const TorrentStream = require('./torrentstream.cjs');
 const AppIcon = require('./appicon.cjs');
+const TitleBar = require('./titlebar.cjs'); TitleBar.install();
 const Packs = require('./packs.cjs');
 const Antivirus = require('./antivirus.cjs');
 const ScreenTr = require('./screentr.cjs');
@@ -98,10 +99,12 @@ function createWindow() {
   win = new BrowserWindow({
     width: st.width || 1100, height: st.height || 780, x: st.x, y: st.y, minWidth: 420, minHeight: 560,
     backgroundColor: '#121314', title: 'Kurokawa Tools', autoHideMenuBar: true,
+    ...TitleBar.options(),
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   AppIcon.apply(win, path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'));
+  TitleBar.watch(win);
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('did-finish-load', flushLinks);
   win.webContents.on('did-finish-load', () => { if (engine) send('kt:engineState', engineState()); });

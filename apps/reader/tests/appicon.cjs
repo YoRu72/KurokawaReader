@@ -22,8 +22,13 @@ const png = (() => { const w = 64, hh = 40; const raw = Buffer.alloc((w * 4 + 1)
     await pick(p, '.app-icon-row .btn.tonal'); await crop(p); await p.waitForTimeout(300);
     const set = await p.evaluate(() => ({ calls: window.__icon, src: document.querySelector('.app-icon-now').getAttribute('src').slice(0, 22) }));
     check('a computer: the cropped picture handed over as the app\'s icon, shown in Settings', set.calls[0] === 'data:image/png;base64,' && set.src === 'data:image/png;base64,', set);
+    const inApp = () => p.evaluate(() => ({ logo: (document.querySelector('.rail-brand img')?.getAttribute('src') || '').slice(0, 22), fav: (document.querySelector('link[rel="icon"]')?.getAttribute('href') || '').slice(0, 22) }));
+    let ia = await inApp(); check('a computer: the sidebar\'s logo and the window\'s icon are the new one', ia.logo === 'data:image/png;base64,' && ia.fav === 'data:image/png;base64,', ia);
+    await p.reload(); await p.waitForSelector('.rail-brand img'); await p.waitForTimeout(300); ia = await inApp(); check('a computer: … and still after a restart', ia.logo === 'data:image/png;base64,' && ia.fav === 'data:image/png;base64,', ia);
+    await p.goto(base + '#/settings'); await p.waitForSelector('.app-icon-row', { state: 'attached' }); await p.waitForTimeout(300);
     await p.evaluate(() => [...document.querySelectorAll('.app-icon-row button')].find((b) => /original/.test(b.textContent)).click()); await p.waitForTimeout(200);
     check('a computer: the original icon back', (await p.evaluate(() => window.__icon.at(-1))) === null);
+    ia = await inApp(); check('a computer: the app\'s own logo back in the page', !ia.logo.startsWith('data:') && !ia.fav.startsWith('data:'), ia);
     await ctx.close(); }
   // Android
   { const ctx = await br.newContext({ viewport: { width: 412, height: 860 } }); const p = await ctx.newPage(); p.setDefaultTimeout(6000); p.on('pageerror', (e) => errors.push(e.message));

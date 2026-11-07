@@ -26,6 +26,7 @@
       "main.cjs",
       "preload.cjs",
       "appicon.cjs",
+      "titlebar.cjs",
       "icon.png",
       "icon.ico",
       {

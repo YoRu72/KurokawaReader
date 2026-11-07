@@ -11,12 +11,13 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   const ctx = await br.newContext({ viewport: { width: 1366, height: 768 } }); const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
   let asked = 0;
   await ctx.route(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/repo\/(.*)/, (r) => { asked++; const f = path.join(REPO, r.request().url().split('/main/repo/')[1].split('?')[0]); if (!fs.existsSync(f)) return r.fulfill({ status: 404 }); r.fulfill({ body: fs.readFileSync(f), contentType: f.endsWith('.json') ? 'application/json' : 'text/javascript' }); });
-  await p.addInitScript(() => { localStorage.setItem('kr.lang', 'en'); window.kurokawaTools = new Proxy({ platform: 'desktop', available: true, os: 'win32', list: async () => [], on: () => () => {}, onTasks: () => () => {} }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) }); });
+  await p.addInitScript(() => { localStorage.setItem('kr.lang', 'en'); window.kurokawaTools = new Proxy({ platform: 'desktop', available: true, os: 'win32', packStatus: async () => { window.__packAsked = (window.__packAsked || 0) + 1; return null; }, list: async () => [], on: () => () => {}, onTasks: () => () => {} }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) }); });
   await p.goto(base + '#/');
   await p.waitForFunction(() => { try { return localStorage.getItem('kt.pc.starter') === '1'; } catch { return false; } }, null, { timeout: 20000 }).catch(() => undefined);
   const s = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings') || '{}').addons || []);
   const want = ['torrent-search', 'torrent-search-nyaa', 'anime', 'anime-nyaa', 'tv', 'subtitles', 'video', 'player', 'files', 'archives'];
   check('every add-on and its sources installed on the first start', want.every((x) => s.includes(x)) && !s.includes('debrid'), s);
+  check('the packs (ffmpeg with the Player) looked to as well', (await p.evaluate(() => window.__packAsked || 0)) > 0);
   const before = asked; await p.reload(); await p.waitForTimeout(6000);
   check('only once', asked === before || asked - before <= 1, { before, after: asked });
   await br.close(); web.close();

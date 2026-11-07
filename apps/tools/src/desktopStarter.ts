@@ -21,5 +21,8 @@ async function run(): Promise<void> {
     if (getSettings().addons.includes(id) && !(e.children ?? []).some((k) => !getSettings().addons.includes(k))) continue;
     try { await install(id); } catch { ok = false; }
   }
+  // (The packs those add-ons need — ffmpeg with the Player — fetched too, not left to the first time one is used.)
+  const packs = [...new Set(WANT.flatMap((id) => ix.addons.find((a) => a.id === id)?.packs ?? []))];
+  if (packs.length) { const { ensurePacks } = await import('./packs'); const { t } = await import('./i18n'); if (!(await ensurePacks(packs as never, t('pcStarterWhy'), { start: true }).catch(() => false))) ok = false; }
   if (ok) try { localStorage.setItem(DONE, '1'); } catch { /* private */ }
 }
