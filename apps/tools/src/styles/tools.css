@@ -906,3 +906,7 @@ html.pc .settings-view .card .row small.src, html.pc .settings-view .card .switc
 .downloads-view .body > .chips { position: sticky; top: -8px; z-index: 6; margin-top: -8px; padding-top: 8px; padding-bottom: 8px; background: var(--md-surface); }
 html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-top: 18px; }
 .view .body > :is(.filter-chips, .chip-row, .folder-chips, .chips, .tabs, .seg-tabs) { flex-shrink: 0; }
+
+/* The file picker's «select all»: one row above the files, partly ticked when some are. */
+.pick-master { padding: 10px 12px; border-radius: 14px; background: var(--surface-2, rgba(127,127,127,.08)); margin: 6px 0 2px; }
+.pick-master b { font-weight: 600; }

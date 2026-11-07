@@ -52,6 +52,9 @@ export async function smartFiles(source: TaskSource, episodes: number[], season?
  *  the Add sheet; `changed` hears the ticked files. */
 export function fileChooser(fs: FileGuess[], chosen: Set<number>, changed: () => void, episodes: number[] = [], season?: number): HTMLElement {
   const list = h('div', { class: 'file-rows' }); const tools = h('div', { class: 'chip-row wrap pick-tools' }); const total = h('p', { class: 'models-total' });
+  // (Every file at once: ticked, unticked — partly ticked when some are.)
+  const master = h('input', { type: 'checkbox', 'aria-label': t('pickAll'), onchange: () => set(() => master.checked) }) as HTMLInputElement;
+  const masterRow = h('label', { class: 'check-row pick-master' }, master, h('b', { class: 'grow' }, t('pickAll')), h('small', { class: 'src' }, formatBytes(fs.reduce((n, f) => n + f.size, 0))));
   // (The release's own folder, shared by every file, is not repeated under each name.)
   const top = fs[0]?.path.includes('/') ? fs[0].path.slice(0, fs[0].path.indexOf('/') + 1) : '';
   const root = top && fs.every((f) => f.path.startsWith(top)) ? top.length : 0;
@@ -65,6 +68,7 @@ export function fileChooser(fs: FileGuess[], chosen: Set<number>, changed: () =>
         h('span', { class: 'grow' }, h('span', { class: 'pick-name', dir: 'auto' }, f.path.split('/').pop()), tags ? h('small', { class: 'src', dir: 'auto' }, tags) : null),
         h('small', { class: 'src pick-size' }, formatBytes(f.size)));
     }));
+    master.checked = chosen.size === fs.length; master.indeterminate = chosen.size > 0 && chosen.size < fs.length;
     const sel = fs.filter((f) => chosen.has(f.index)); total.textContent = `${t('selectedFiles', { n: localDigits(sel.length), total: localDigits(fs.length) })} · ${formatBytes(sel.reduce((n, f) => n + f.size, 0))}`;
   };
   const set = (pick: (f: FileGuess) => boolean) => { chosen.clear(); for (const f of fs) if (pick(f)) chosen.add(f.index); draw(); changed(); };
@@ -76,31 +80,37 @@ export function fileChooser(fs: FileGuess[], chosen: Set<number>, changed: () =>
   tools.append(
     ...(mine ? [chip(episodes.length === 1 ? t('pickThisEp', { n: localDigits(episodes[0]) }) : t('pickTheseEps'), () => set((f) => mine.includes(f.index)))] : []),
     ...(eps.length ? [chip(t('pickEpisodes'), () => set((f) => (f.video && !f.extra) || f.sub))] : []),
-    chip(t('pickAll'), () => set(() => true)), chip(t('pickNone'), () => set(() => false)));
+    chip(t('pickNone'), () => set(() => false)));
   const range = eps.length > 2 ? h('div', { class: 'pick-range' }, h('span', null, t('fromEpisode')), a, h('span', null, t('toEpisode')), b,
     h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const lo = Math.min(Number(a.value), Number(b.value)), hi = Math.max(Number(a.value), Number(b.value)); const r = filesFor(fs, eps.filter((e) => e >= lo && e <= hi), season) ?? []; set((f) => r.includes(f.index)); } }, t('pickRange'))) : null;
   draw();
-  return h('div', { class: 'file-chooser' }, tools, range, list, total);
+  return h('div', { class: 'file-chooser' }, tools, range, masterRow, list, total);
 }
 
 /** The picker: what to download of a torrent — the files' indexes, «all» (one file, or no list to read), or null
  *  when cancelled. */
-export function pickFiles(source: TaskSource, title: string, episodes: number[] = [], season?: number): Promise<number[] | 'all' | null> {
+export async function pickFiles(source: TaskSource, title: string, episodes: number[] = [], season?: number): Promise<number[] | 'all' | null> {
+  // (The list asked for at once; a torrent of one file — known within a moment — goes straight in, no sheet.)
+  const files = torrentFiles(source); let early: FileGuess[] | null | undefined;
+  await Promise.race([files.then((x) => { early = x; }), new Promise((r) => setTimeout(r, 400))]);
+  if (early && early.length <= 1) return 'all';
   return new Promise((resolve) => {
     const sh = openSheet(title, t('close')); sh.el.classList.add('pick-files'); let done = false;
     const finish = (v: number[] | 'all' | null) => { if (done) return; done = true; obs.disconnect(); sh.close(); resolve(v); };
     const obs = new MutationObserver(() => { if (!sh.el.isConnected && !done) { done = true; obs.disconnect(); resolve(null); } }); obs.observe(document.body, { childList: true, subtree: true });
     const box = h('div', null, h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('fetchingMetadata')}`));
-    const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('download'), h('span', null, t('download'))) as HTMLButtonElement;
+    // (While its list is fetched — a magnet with few peers can take a while —, the whole torrent can be started.)
+    let action: () => void = () => finish('all');
+    const go = h('button', { type: 'button', class: 'btn primary', onclick: () => action() }, icon('download'), h('span', null, t('pickWhole'))) as HTMLButtonElement;
     sh.body.append(h('p', { class: 'hint' }, t('pickHint')), box); sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => finish(null) }, t('cancel')), go);
-    void torrentFiles(source).then((fs) => {
+    void files.then((fs) => {
       if (done) return;
-      if (!fs) { box.replaceChildren(h('p', { class: 'empty small' }, t('pickNoList'))); go.disabled = false; go.lastChild!.textContent = t('pickWhole'); go.onclick = () => finish('all'); return; }
+      if (!fs) { box.replaceChildren(h('p', { class: 'empty small' }, t('pickNoList'))); return; }
       if (fs.length <= 1) { finish('all'); return; }
       const chosen = new Set(defaultPick(fs, episodes, season));
-      const sync = () => { go.disabled = !chosen.size; };
+      const sync = () => { go.disabled = !chosen.size; go.lastChild!.textContent = chosen.size === fs.length ? t('pickWhole') : t('pickDownloadN', { n: localDigits(chosen.size) }); };
       box.replaceChildren(fileChooser(fs, chosen, sync, episodes, season)); sync();
-      go.onclick = () => finish(chosen.size === fs.length ? 'all' : [...chosen].sort((x, y) => x - y));
+      action = () => finish(chosen.size === fs.length ? 'all' : [...chosen].sort((x, y) => x - y));
     });
   });
 }

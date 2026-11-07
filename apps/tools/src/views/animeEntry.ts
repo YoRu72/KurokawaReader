@@ -171,7 +171,7 @@ export async function torrentSheet(a: Anime, episode: number, mode: 'download' |
   const add = async (r: TorrentResult, choose = false) => {
     try {
       const source = r.url ? { url: r.url } : { magnet: magnetOf(r) }; const meta = { anilistId: a.id, title: titleOf(a), episode: episode || undefined, batch: !episode || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx };
-      if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); const d = await sendToDebrid(source, { meta }); toast(d.kind === 'cloud' ? t('debridSent', { name: d.name }) : t('taskAdded', { name: d.name })); sh.close(); navigate('/'); return; }
+      if (mode !== 'stream' && !r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); const d = await sendToDebrid(source, { meta }); toast(d.kind === 'cloud' ? t('debridSent', { name: d.name }) : t('taskAdded', { name: d.name }), 'info', 5000, { label: t('toastShow'), run: () => navigate('/') }); sh.close(); return; }
       if (mode === 'stream') {
         // (Watched now: the file chosen first when asked; played while it comes; the release remembered.)
         let pick = r;
@@ -179,14 +179,15 @@ export async function torrentSheet(a: Anime, episode: number, mode: 'download' |
         sh.close(); const w = await import('../anime/watch'); w.rememberPick(a.id, r); await w.watchEpisode(a, episode, `${titleOf(a)}${episode ? ` · ${t('episodeN', { n: episode })}` : ''}`, pick); return;
       }
       let files: number[] | undefined = !r.url && r.fileIdx !== undefined && episode ? [r.fileIdx] : undefined;
-      if (!r.url && canPick() && (choose || ((r.type === 'batch' || parseFilename(r.title).batch || !episode) && files === undefined))) {
+      if (!r.url && canPick()) {
         const { pickFiles } = await import('./pickFiles');
         const got = await pickFiles(source, r.title, episode ? [episode] : []); if (got === null) return;
         files = got === 'all' ? undefined : got;
       }
       const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
       void import('../anime/watch').then((w) => w.rememberPick(a.id, r));
-      toast(t('taskAdded', { name: tk.name || r.title })); sh.close(); navigate('/');
+      // (Downloaded in the background, as in Hayase: the show's page stays; «Show» goes to the download.)
+      toast(t('taskAdded', { name: tk.name || r.title }), 'info', 5000, { label: t('toastShow'), run: () => navigate('/') }); sh.close();
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
   const base = await buildQuery(a, episode); let token = 0;
@@ -236,7 +237,7 @@ function rangeSheet(a: Anime, from: number, to: number): void {
     const n = await downloadRange(a, { from, to, choices: c, skipFillers, skipHave, preferBatch }, (ep, state, title) => {
       log.prepend(h('div', { class: 'range-row s-' + state }, h('b', null, localDigits(ep)), h('span', { class: 'grow', dir: 'auto' }, state === 'added' || state === 'batch' ? title ?? '' : t(state === 'have' ? 'downloaded' : state === 'filler' ? 'filler' : 'autoNone'))));
     }, () => stopped);
-    toast(t('autoRangeDone', { n: countEpisodes(n) })); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); navigate('/'); } }, t('done')));
+    toast(t('autoRangeDone', { n: countEpisodes(n) })); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); } }, t('done')));
   });
 }
 /** Seanime's Auto Downloader for one show: new episodes fetched as they air, with these choices. */
@@ -260,13 +261,12 @@ function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, 
   const row = (ic: string, label: string, fn: () => void, cls = '') => sh.body.append(h('button', { type: 'button', class: 'dest-row' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow', dir: 'auto' }, label)));
   sh.body.append(h('p', { class: 'src', dir: 'auto' }, title));
   row('play', got?.state === 'done' ? t('play') : t('epWatchNow'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${titleOf(a)} · ${t('episodeN', { n })}`)));
-  if (!got) row('download', t('epDownloadBest'), () => void (async () => { const { buildQuery, searchAll } = await import('../anime/providers'); const { bestRelease } = await import('../anime/watch'); toast(t('watchFinding')); const best = bestRelease(a, n, await searchAll(await buildQuery(a, n), () => undefined)); if (!best) { toast(t('watchNone'), 'error'); return; } const { addFor } = await import('../anime/auto'); await addFor({ ...a, title: titleOf(a) } as Anime, best, n); toast(t('taskAdded', { name: best.title })); changed(); })());
+  if (!got) row('download', t('epDownloadBest'), () => void (async () => { const { findBest } = await import('../anime/watch'); toast(t('watchFinding')); const best = await findBest(a, n); if (!best) { toast(t('watchNone'), 'error'); return; } const { addFor } = await import('../anime/auto'); await addFor({ ...a, title: titleOf(a) } as Anime, best, n); toast(t('taskAdded', { name: best.title })); changed(); })());
   row('magnet', t('epChoose'), () => void torrentSheet(a, n));
   if (setProgress) { row(seen ? 'circle' : 'check', seen ? t('epMarkUnseen') : t('animeMarkSeen'), () => setProgress(seen ? n - 1 : n)); if (!seen && n > 1) row('check', t('epMarkUpTo', { n: localDigits(n) }), () => setProgress(n)); }
   if (got) {
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(got.id)}`));
-    row('trash', t('epDeleteDownload'), () => { const c = openSheet(t('epDeleteDownload'), t('close'), { stack: true }); c.body.append(h('p', null, t('epDeleteAsk', { n: localDigits(n) })), h('p', { class: 'src', dir: 'auto' }, got.name));
-      c.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => c.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { c.close(); await getEngine().remove(got.id, true).catch((er) => toast(String((er as Error).message ?? er), 'error')); void import('../downloads/episodeCache').then((m) => m.forget(got.id)); toast(t('epDeleted', { n: localDigits(n) })); changed(); } }, icon('trash'), t('epDeleteYes'))); }, ' danger');
+    row('trash', t('epDeleteDownload'), () => void import('./epDelete').then((m) => m.deleteEpisodeSheet(got, n, changed)), ' danger');
   }
 }
 
@@ -293,9 +293,9 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
       row('magnet', t('epChooseToWatch'), t('epChooseToWatchHint'), () => void torrentSheet(a, n, 'stream'));
       void import('../anime/stream').then((st) => st.streamProviders()).then((ps) => { if (ps.length && sh.el.isConnected) row('globe', t('streamWatch'), t('epOnlineHint'), () => void import('./animeStream').then((m) => m.streamSheet(a, n))); });
       row('download', t('epDownloadBest'), t('epDownloadBestHint'), () => void (async () => {
-        const { buildQuery, searchAll } = await import('../anime/providers'); const { bestRelease } = await import('../anime/watch');
+        const { findBest } = await import('../anime/watch');
         toast(t('watchFinding'));
-        const rs = await searchAll(await buildQuery(a, n), () => undefined); const best = bestRelease(a, n, rs);
+        const best = await findBest(a, n);
         if (!best) { toast(t('watchNone'), 'error', 5000); torrentSheet(a, n); return; }
         const { addFor } = await import('../anime/auto'); await addFor({ ...a, title: show } as Anime, best, n);
         toast(t('taskAdded', { name: best.title })); changed();
@@ -326,7 +326,7 @@ async function reviewRange(sh: ReturnType<typeof openSheet>, log: HTMLElement, a
   const addAll = async () => {
     window.clearInterval(timer); let n = 0; sh.actions.replaceChildren(h('div', { class: 'spinner small' }));
     for (const it of picks()) { try { await addFor(a, it.pick!, it.ep); n++; } catch { /* next */ } }
-    toast(t('autoRangeDone', { n: countEpisodes(n) })); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); navigate('/'); } }, t('done')));
+    toast(t('autoRangeDone', { n: countEpisodes(n) })); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); } }, t('done')));
   };
   const add = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('reviewAdd', { n: countEpisodes(picks().length) })) as HTMLButtonElement;
   add.addEventListener('click', () => void addAll());

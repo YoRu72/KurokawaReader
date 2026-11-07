@@ -13,6 +13,12 @@ import { pickFor, ruleOf, downloadedEpisodes } from './auto';
 import { parseFilename, matchesEpisode } from './anitomy';
 
 /** The release to use for an episode: the show's saved choices first, then the app's quality alone, then any. */
+/** The best release for an episode, found the quick way: once a well-seeded, sure match is in, the slow sources
+ *  are not waited for (Hayase starts as soon as it has one). */
+export async function findBest(a: Anime, ep: number): Promise<TorrentResult | null> {
+  const good = (all: TorrentResult[]) => { const b = bestRelease(a, ep, all); return !!b && b.seeders >= 5 && (b.accuracy === 'high' || b.type === 'best'); };
+  return bestRelease(a, ep, await searchAll(await buildQuery(a, ep), () => undefined, { enough: good, grace: 2500 }));
+}
 export function bestRelease(a: Anime, ep: number, rs: TorrentResult[]): TorrentResult | null {
   const r = ruleOf(a.id); const q = getSettings().animeQuality;
   const base = r ? { resolution: r.resolution, group: r.group, dub: r.dub, require: r.require, avoid: r.avoid } : { resolution: q, group: '', dub: 'any' as const, require: '', avoid: '' };
@@ -42,7 +48,7 @@ export async function preloadNext(anilistId: number, ep: number): Promise<void> 
   const al = await import('../anilist'); const a = await al.media(anilistId);
   const aired = a.nextAiring ? a.nextAiring.episode - 1 : a.episodes ?? 0; if (aired && ep + 1 > aired) return;
   if ((await downloadedEpisodes(anilistId)).has(ep + 1)) return;
-  const best = bestRelease(a, ep + 1, await searchAll(await buildQuery(a, ep + 1), () => undefined)); if (!best) return;
+  const best = await findBest(a, ep + 1); if (!best) return;
   const { addFor } = await import('./auto'); await addFor(a, best, ep + 1);
   const { toast } = await import('../ui/dom'); const { t } = await import('../i18n'); toast(t('preloadedNext', { n: ep + 1 }));
 }
@@ -83,7 +89,7 @@ export async function watchEpisode(a: Anime, ep: number, title: string, release?
       const p = pickedFor(a.id);
       const range = p ? parseFilename(p.title) : undefined; const covers = !!range && (range.episode === undefined || range.episodeEnd === undefined || (ep >= range.episode && ep <= range.episodeEnd));
       if (p?.batch && covers) return { title: p.title, link: p.link, hash: p.hash, size: 0, seeders: 0, leechers: 0, downloads: 0, accuracy: 'high', provider: p.provider, type: 'batch' };
-      return bestRelease(a, ep, await searchAll(await buildQuery(a, ep), () => undefined));
+      return findBest(a, ep);
     },
     meta: (best) => ({ anilistId: a.id, title, episode: ep || undefined, cover: a.cover, provider: best.provider, hash: best.hash, fileIdx: best.fileIdx }),
     pick: (x) => episodeFile(x, ep),

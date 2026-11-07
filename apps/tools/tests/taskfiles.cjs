@@ -22,6 +22,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       list: async () => ({ tasks: [task] }),
       setFiles: async (o) => { window.__calls.push(['setFiles', o.priorities.join('')]); o.priorities.forEach((v, i) => { task.files[i].priority = v; }); window.__emit(); },
       remove: async (o) => { window.__calls.push(['remove', o.id, o.deleteFiles]); },
+      filesTrash: async (o) => { window.__calls.push(['trash', o.paths.join('|')]); return {}; },
       torrentDetail: async () => ({ seeds: 1, peersConnected: 1, seedsInSwarm: 1, peersInSwarm: 1, ratio: 0, limitDown: 0, limitUp: 0, peers: [], trackers: [] }),
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -63,6 +64,18 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.check('.remove-files input'); await p.click('.sheet .btn.primary.danger'); await p.waitForTimeout(400);
   const rm = await p.evaluate(() => window.__calls.find((c) => c[0] === 'remove')); console.log('remove:', JSON.stringify(rm));
   check('removed with its files from the device, as asked', !!rm && rm[2] === true);
+  // One file of the torrent deleted by itself: left out of the download, moved to the trash, the rest kept.
+  if (lang === 'en') {
+    await p.evaluate(() => { window.__calls.length = 0; location.hash = '#/task/b?x=' + Date.now(); }); await p.waitForTimeout(300);
+    await p.evaluate(() => { location.hash = '#/task/b'; }); await p.waitForSelector('.kt-files .kt-file');
+    const row = p.locator('.kt-files-list .kt-file', { hasText: 'Vol 1.epub' });
+    check('a downloaded file has a delete button; one not started has none', await row.locator('button[aria-label="Delete this file"]').count() === 1 && await p.locator('.kt-files-list .kt-file', { hasText: 'Vol 3.epub' }).locator('button[aria-label="Delete this file"]').count() === 0);
+    await row.locator('button[aria-label="Delete this file"]').click(); await p.click('.sheet .btn.primary.danger'); await p.waitForTimeout(600);
+    const calls = await p.evaluate(() => window.__calls); console.log('delete calls:', JSON.stringify(calls));
+    const sf = calls.find((c) => c[0] === 'setFiles'); const tr = calls.find((c) => c[0] === 'trash');
+    check('deleted alone: left out (priority 0), the others as they were', !!sf && sf[1][0] === '0' && sf[1].length === 7 && !calls.some((c) => c[0] === 'remove'));
+    check('…and moved to the trash, by its path', !!tr && tr[1] === '/sdcard/Download/Kaifuku LNs/Vol 1.epub');
+  }
   check('no page errors', !errors.length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

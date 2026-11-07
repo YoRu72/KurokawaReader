@@ -3,10 +3,11 @@
 // holds; a search, Finished / Not finished, the kinds of file it holds (videos, ebooks, subtitles…), All / None /
 // Invert for what is shown; a star for the file wanted first. The choice is sent once you stop changing it, and a
 // finished torrent given more files goes on downloading.
-import { h, icon, iconButton, toast } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { isVideo } from '../engine';
 import type { Engine, Task, TaskFile } from '../engine/types';
+import { localPathOf } from '../engine/localPath';
 
 export type FileKind = 'video' | 'audio' | 'ebook' | 'image' | 'sub' | 'archive' | 'doc' | 'other';
 const KINDS: [FileKind, RegExp][] = [
@@ -73,7 +74,7 @@ export function filesCard(task: Task, eng: Engine, opts: { open: boolean; onTogg
   };
   const pct = (done: number, size: number) => (size ? Math.min(100, (done / size) * 100) : 0);
   const bar = (p: number) => h('span', { class: 'kt-file-bar' }, h('span', { style: `width:${p.toFixed(1)}%` }));
-  const localOf = (f: TaskFile) => (x.dir && !x.dir.startsWith('content:') ? `${x.dir.replace(/[\\/]$/, '')}/${x.files.length > 1 ? `${x.name}/` : ''}${f.path}`.replace(/\/+/g, '/') : undefined);
+  const localOf = (f: TaskFile) => localPathOf(x, f.index);
   const finished = (f: TaskFile) => f.size > 0 && f.done >= f.size;
 
   const fileRow = (f: TaskFile, strip: number, showDir: boolean) => {
@@ -91,7 +92,16 @@ export function filesCard(task: Task, eng: Engine, opts: { open: boolean; onTogg
       k !== 'video' && k !== 'archive' && finished(f) && eng.open ? iconButton('external', t('open'), () => void eng.open!(x.id, f.index).catch((er: unknown) => toast(String((er as Error).message ?? er), 'error'))) : null,
       k === 'archive' && finished(f) && opts.browse && localOf(f) ? iconButton('folder', t('archiveBrowse'), () => opts.browse!(localOf(f)!)) : null,
       eng.setFiles && p > 0 && !finished(f) ? iconButton('star', p === 2 ? t('fileNormalAgain') : t('fileFirst'), () => setMany([f], () => (p === 2 ? 1 : 2)), { pressed: p === 2 }) : null,
+      // (A file with something on the disk, in a torrent of several: deleted by itself, the rest kept.)
+      eng.setFiles && f.done > 0 && x.files.length > 1 && localOf(f) ? iconButton('trash', t('fileDelete'), () => askDelete(f, name)) : null,
       box(p > 0, (v) => setMany([f], () => (v ? 1 : 0)), name));
+  };
+  const askDelete = (f: TaskFile, name: string) => {
+    const c = openSheet(t('fileDelete'), t('close'), { stack: true }); c.body.append(h('p', { dir: 'auto' }, t('fileDeleteAsk', { name })));
+    c.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => c.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => {
+      c.close(); mine.set(f.index, 0); draw();
+      try { const { deleteTaskFile } = await import('../downloads/deleteFile'); await deleteTaskFile(x, f.index); toast(t('fileDeleted', { name })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+    } }, icon('trash'), t('epDeleteYes')));
   };
   const folderRow = (d: Folder) => {
     const fs = allIn(d); const on = fs.filter((f) => prio(f) > 0).length; const size = fs.reduce((n, f) => n + f.size, 0); const done = fs.reduce((n, f) => n + f.done, 0);

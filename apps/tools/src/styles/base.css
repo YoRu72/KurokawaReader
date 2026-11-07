@@ -537,6 +537,9 @@ html[dir='rtl'] .sheet-head { padding: 6px 22px 6px 12px; }
   box-shadow: var(--el-3); z-index: 100; font-size: 14px; font-weight: 500; animation: rise var(--dur-med) var(--ease-emph-decel); max-width: 90vw;
 }
 .toast.error { background: var(--md-error-container); color: var(--md-on-error-container); }
+.toast.with-action { display: flex; align-items: center; gap: 12px; padding-inline-end: 8px; }
+.toast-act { background: none; border: 0; color: var(--md-inverse-primary, #c6c0ff); font: inherit; font-weight: 700; padding: 6px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.toast-act:hover { background: rgba(255,255,255,.12); }
 
 /* ---------- Settings ---------- */
 .settings-body { flex: 1; overflow: auto; padding: 8px 20px; max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; padding-bottom: calc(32px + var(--safe-bottom)); }

@@ -309,6 +309,7 @@ ipcMain.handle('kt:fontIndex', async (_e, dirs) => {
 ipcMain.handle('kt:desktopPrefs', (_e, o) => { if (o && typeof o === 'object') { if ('keepAwake' in o) deskPrefs.keepAwake = !!o.keepAwake; if (['nothing', 'quit', 'sleep', 'shutdown'].includes(o.whenDone)) deskPrefs.whenDone = o.whenDone; if ('notifyDone' in o) deskPrefs.notifyDone = !!o.notifyDone; if ('tray' in o) { deskPrefs.tray = !!o.tray; trayUpdate([]); } if (o.hotkeys && typeof o.hotkeys === 'object') { deskPrefs.hotkeys = o.hotkeys; hotkeysApply(); } } return deskPrefs; });
 ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(E(), String(o.id), Number(o.fileIndex) || 0) }));
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
+ipcMain.handle('kt:videoUrl', async () => ({ url: await StreamProxy.videoBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 ipcMain.handle('kt:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));

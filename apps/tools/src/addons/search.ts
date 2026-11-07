@@ -58,7 +58,11 @@ export async function addResult(r: SearchResult, meta: Record<string, unknown> =
   try {
     const m = { addon: r.source, title: r.title, quality: r.quality, ...meta };
     if ((r.magnet || r.torrent) && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); const d = await sendToDebrid(r.magnet ? { magnet: r.magnet } : { torrent: r.torrent! }, { meta: m }); toast(d.kind === 'cloud' ? t('debridSent', { name: d.name }) : t('taskAdded', { name: d.name })); return; }
-    const tk = await getEngine().add({ source: r.magnet ? { magnet: r.magnet } : r.torrent ? { torrent: r.torrent } : { url: r.url! }, name: r.magnet || r.torrent ? undefined : r.title, sequential: true, meta: m });
+    // (A torrent of several files: which of them, asked first — a single file goes straight in.)
+    const source = r.magnet ? { magnet: r.magnet } : r.torrent ? { torrent: r.torrent } : { url: r.url! }; let files: number[] | undefined;
+    const eng = getEngine();
+    if ((r.magnet || r.torrent) && eng.torrentInfo && eng.can.pickFiles) { const { pickFiles } = await import('../views/pickFiles'); const got = await pickFiles(source, r.title); if (got === null) return; files = got === 'all' ? undefined : got; }
+    const tk = await eng.add({ source, name: r.magnet || r.torrent ? undefined : r.title, sequential: true, files, meta: m });
     toast(t('taskAdded', { name: tk.name || r.title }));
   } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
 }

@@ -155,7 +155,7 @@ export function openPlayer(src: PlayerSource): void {
     if (getPrefs().closeAtEnd) { close(); return; }
     showControls();
   });
-  video.addEventListener('error', () => { const err = video.error; toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); });
+  video.addEventListener('error', () => { const err = video.error; if (!mpv && !converted && !pictureTried && (err?.code === 4 || err?.code === 3)) { void import('./transcode').then(async (T) => { if (T.canConvert()) { const c = await import('./compat'); const pr = await c.probe(src.url).catch(() => null); if (pr) tracksFound = pr; if (await startPicture(T.pictureProblem(pr?.video) ?? (pr?.video?.codec ?? '?').toUpperCase(), Math.max(0, pr?.audio.findIndex((a) => a.isDefault) ?? 0), pr?.duration)) return; } toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); }); return; } toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); });
   video.addEventListener('waiting', () => centre.classList.add('busy')); video.addEventListener('playing', () => centre.classList.remove('busy')); video.addEventListener('canplay', () => centre.classList.remove('busy'));
   let lastPosState = 0;
   function onTime() {
@@ -216,7 +216,7 @@ export function openPlayer(src: PlayerSource): void {
   scheduleHide();
 
   // ---- seek bar (with previews of the time under the finger)
-  const canPreview = () => getPrefs().seekPreview && !(src.headers && Object.keys(src.headers).length) && (!!src.localPath || /^(http:\/\/127\.0\.0\.1|blob:|file:|https?:\/\/localhost)/.test(src.url));
+  const canPreview = () => !converted && getPrefs().seekPreview && !(src.headers && Object.keys(src.headers).length) && (!!src.localPath || /^(http:\/\/127\.0\.0\.1|blob:|file:|https?:\/\/localhost)/.test(src.url));
   const previewAt = (clientX: number) => { if (!canPreview() || !video.duration) return; if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } const rr = bar.parentElement!.getBoundingClientRect(); const f = fracAt(clientX); preview.show(f * video.duration, clientX - rr.left, rr.width); };
   const fracAt = (clientX: number) => { const r = bar.getBoundingClientRect(); const rtl = getComputedStyle(bar).direction === 'rtl'; let f = (clientX - r.left) / r.width; if (rtl) f = 1 - f; return Math.max(0, Math.min(1, f)); };
   const seekToX = (clientX: number) => { if (video.duration) seekTo(fracAt(clientX) * video.duration); };
@@ -620,7 +620,13 @@ export function openPlayer(src: PlayerSource): void {
   let beside: import('./compat').SoundBeside | null = null; let tracksFound: import('./compat').Probe | null = null;
   async function checkSound() {
     const c = await import('./compat'); if (mpv || !c.compatHere() || playerGone) return;
+    // (Whatever ffprobe says: a video playing a few seconds with not one frame drawn has a picture this view cannot decode.)
+    const pic = () => { if (playerGone || converted) return; void import('./transcode').then((T) => { if (T.noPicture(video)) void noPictureHere(); }); };
+    window.setTimeout(pic, 5000); window.setTimeout(pic, 11000);
     tracksFound = await c.probe(src.url).catch(() => null); if (playerGone) return;
+    // (A picture this web view will not decode: the computer's ffmpeg turns it, sound and all, into one it does.)
+    const T = await import('./transcode'); const why = T.pictureProblem(tracksFound?.video);
+    if (why && T.canConvert()) { const pick = tracksFound!.audio.findIndex((a) => a.isDefault); await startPicture(why, Math.max(0, pick), tracksFound!.duration); return; }
     if (tracksFound?.audio.length) {
       const pick = tracksFound.audio.find((a) => a.isDefault) ?? tracksFound.audio[0];
       if (!c.audioPlayable(pick.codec)) await startBeside(pick.index, pick.codec);
@@ -629,6 +635,29 @@ export function openPlayer(src: PlayerSource): void {
     // (No answer from ffprobe: a video playing for a few seconds with no sound decoded is taken as one.)
     const check = () => { if (playerGone || beside) return; const n = (video as HTMLVideoElement & { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount; if (n === 0 && video.currentTime > 3 && !video.paused) void startBeside(0, ''); };
     window.setTimeout(check, 6000); window.setTimeout(check, 12000);
+  }
+  // ---- a picture the web view cannot decode: converted by the computer's ffmpeg (./transcode), or mpv on a phone
+  let converted: import('./transcode').Converted | null = null; let pictureTried = false;
+  async function startPicture(why: string, track: number, duration?: number): Promise<boolean> {
+    if (converted || pictureTried || playerGone) return !!converted; pictureTried = true;
+    const T = await import('./transcode'); const packs = await import('../packs');
+    if (packs.packsHere() && !(await packs.ensurePacks(['ffmpeg'], t('packWhyPlayerPicture')))) { toast(t('playerNoPicture', { codec: why }), 'error', 7000); return false; }
+    const base = await T.videoBase(); if (!base || playerGone) return false;
+    const at = Number.isFinite(video.currentTime) ? video.currentTime : 0; const was = !video.paused || video.autoplay;
+    const d = duration ?? (Number.isFinite(video.duration) ? video.duration : 0);
+    beside?.stop(); beside = null; video.muted = false;
+    converted = new T.Converted(video, base, src.localPath ?? src.url, track, d); converted.start(src.startAt && at < 1 ? src.startAt : at, was || true);
+    flashText(t('playerPictureConverted', { codec: why }), true); return true;
+  }
+  /** Playing, and not one frame drawn: converted on a computer; on a phone, mpv (its pack fetched if need be). */
+  async function noPictureHere() {
+    if (converted || playerGone) return;
+    if ((await import('./transcode')).canConvert()) { await startPicture(tracksFound?.video ? (await import('./transcode')).pictureProblem(tracksFound.video) ?? '?' : '?', 0, tracksFound?.duration); return; }
+    const { nativePlatform } = await import('../native'); if (nativePlatform() !== 'android' || pictureTried) return; pictureTried = true;
+    const at = video.currentTime; const packs = await import('../packs');
+    if (!(await packs.ensurePacks(['mpv'], t('packWhyMpv')))) return;
+    const { mpvAvailable } = await import('./mpv'); if (!(await mpvAvailable()) || playerGone) return;
+    toast(t('playerSwitchMpv')); close(); openPlayer({ ...src, engine: 'mpv', startAt: at });
   }
   async function startBeside(track: number, codec: string) {
     const c = await import('./compat'); const packs = await import('../packs');
@@ -643,7 +672,7 @@ export function openPlayer(src: PlayerSource): void {
     const a = audioTracks();
     // (The tracks ffprobe found, when the browser does not list them or one is played beside the video: each one
     // either played by the browser or turned into AAC beside it.)
-    if (tracksFound && tracksFound.audio.length > 1 && (beside || !a || a.length < 2)) { const pr = tracksFound; sh.body.append(h('h4', null, t('audioTracks')), h('div', { class: 'dest-list' }, ...pr.audio.map((x) => h('label', { class: 'dest-row' + ((beside ? beside.track === x.index : x.isDefault) ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-pt', checked: beside ? beside.track === x.index : !!x.isDefault, onchange: () => { void import('./compat').then((c) => { if (c.audioPlayable(x.codec) && !beside && a && a.length > x.index) { for (let k = 0; k < a.length; k++) a[k].enabled = k === x.index; } else if (beside) beside.restart(x.index); else void startBeside(x.index, x.codec); }); } }), icon('music'), h('span', { class: 'grow', dir: 'auto' }, [x.title, x.lang, `${x.codec.toUpperCase()}${x.channels ? ` ${localDigits(x.channels)}ch` : ''}`].filter(Boolean).join(' · ')))))); }
+    if (tracksFound && tracksFound.audio.length > 1 && (beside || converted || !a || a.length < 2)) { const pr = tracksFound; sh.body.append(h('h4', null, t('audioTracks')), h('div', { class: 'dest-list' }, ...pr.audio.map((x) => h('label', { class: 'dest-row' + ((beside ? beside.track === x.index : x.isDefault) ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-pt', checked: converted ? converted.track === x.index : beside ? beside.track === x.index : !!x.isDefault, onchange: () => { if (converted) { converted.setTrack(x.index); return; } void import('./compat').then((c) => { if (c.audioPlayable(x.codec) && !beside && a && a.length > x.index) { for (let k = 0; k < a.length; k++) a[k].enabled = k === x.index; } else if (beside) beside.restart(x.index); else void startBeside(x.index, x.codec); }); } }), icon('music'), h('span', { class: 'grow', dir: 'auto' }, [x.title, x.lang, `${x.codec.toUpperCase()}${x.channels ? ` ${localDigits(x.channels)}ch` : ''}`].filter(Boolean).join(' · ')))))); }
     else if (a && a.length > 1) sh.body.append(h('h4', null, t('audioTracks')), h('div', { class: 'dest-list' }, ...Array.from({ length: a.length }, (_x, i) => h('label', { class: 'dest-row' + (a[i].enabled ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-at', checked: a[i].enabled, onchange: () => { for (let k = 0; k < a.length; k++) a[k].enabled = k === i; } }), icon('music'), h('span', { class: 'name', dir: 'auto' }, a[i].label || `${t('audioTrack')} ${localDigits(i + 1)}`), h('small', { class: 'src' }, a[i].language || '')))));
     else sh.body.append(h('p', { class: 'src' }, a ? t('audioOneTrack') : t('audioTracksNote')));
     const vol = h('input', { type: 'range', min: '0', max: String(100 + p.volumeBoost), step: '1', value: String(Math.round(video.volume * boost * 100)), oninput: () => { setVolume(Number(vol.value) / 100); volOut.textContent = `${localDigits(vol.value)}%`; } }) as HTMLInputElement;
@@ -1056,7 +1085,7 @@ export function openPlayer(src: PlayerSource): void {
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
+    converted?.stop(); converted = null; window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);

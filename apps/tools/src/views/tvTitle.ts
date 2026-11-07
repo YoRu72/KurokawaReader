@@ -148,8 +148,7 @@ function episodeMenu(m: TvMeta, v: TvEpisode, got: Task | undefined, seen: boole
   if (!seen && v.episode > 1) row('check', t('epMarkUpTo', { n: localDigits(v.episode) }), () => { for (const x of season) if (x.episode <= v.episode && cm.aired(x)) lib.setSeen(epKey(m, x), true); changed(); });
   if (got) {
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(got.id)}`));
-    row('trash', t('epDeleteDownload'), () => { const c = openSheet(t('epDeleteDownload'), t('close'), { stack: true }); c.body.append(h('p', null, t('epDeleteAsk', { n: localDigits(v.episode) })), h('p', { class: 'src', dir: 'auto' }, got.name));
-      c.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => c.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { c.close(); await getEngine().remove(got.id, true).catch((er) => toast(String((er as Error).message ?? er), 'error')); void import('../downloads/episodeCache').then((x) => x.forget(got.id)); toast(t('epDeleted', { n: localDigits(v.episode) })); changed(); } }, icon('trash'), t('epDeleteYes'))); }, ' danger');
+    row('trash', t('epDeleteDownload'), () => void import('./epDelete').then((m) => m.deleteEpisodeSheet(got, v.episode, changed, v.season)), ' danger');
   }
 }
 /** Every release Torrentio has for a film or an episode: filtered by quality, ordered as asked, one tap to add. */
@@ -185,7 +184,7 @@ async function releasesSheet(m: TvMeta, v?: TvEpisode): Promise<void> {
     if (sort === 'seeds') rs = [...rs].sort((a, b) => b.seeders - a.seeders); else if (sort === 'size') rs = [...rs].sort((a, b) => b.size - a.size);
     const go = (r: TvRelease, choose: boolean) => void addRelease(m, r, v, choose).then((ok) => { if (ok) sh.close(); }).catch((e) => toast(String((e as Error).message ?? e), 'error'));
     list.replaceChildren(...(rs.length ? rs.slice(0, 120).map((r) => {
-      const main = h('button', { type: 'button', class: 'result-row' + (r.cached ? ' best' : ''), onclick: () => go(r, false) },
+      const main = h('button', { type: 'button', class: 'result-row' + (r.cached ? ' best' : ''), onclick: () => go(r, !r.url && canPick()) },
         icon(r.url ? 'link' : 'magnet'), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.file ?? r.title), h('small', { class: 'src' }, label(r)), r.file && r.file !== r.title ? h('small', { class: 'src' }, r.title) : null, r.languages ? h('small', { class: 'src' }, r.languages) : null));
       return r.url || !canPick() ? main : h('div', { class: 'result-wrap' }, main, h('button', { type: 'button', class: 'icon-btn result-files', title: t('pickFilesTitle'), 'aria-label': t('pickFilesTitle'), onclick: () => go(r, true) }, icon('list')));
     }) : [h('p', { class: 'empty small' }, t('noResults'))]));

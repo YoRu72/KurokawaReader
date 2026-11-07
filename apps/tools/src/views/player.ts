@@ -66,9 +66,10 @@ function bare(url: string, name: string): void {
   document.body.append(root);
 }
 /** A task's file in the player: streamed while it comes, or the finished file from disk; the task's other videos as the playlist. */
+import { localPathOf } from '../engine/localPath';
 export async function playTaskFile(x: Task, fileIndex: number): Promise<void> {
   const eng = getEngine(); const f = x.files.find((g) => g.index === fileIndex) ?? x.files[0]; const name = f?.path.split('/').pop() ?? x.name;
-  const localOf = (g: { path: string }) => (x.dir && !x.dir.startsWith('content:') ? `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/` : ''}${g.path}`.replace(/\/+/g, '/') : undefined);
+  const localOf = (g: { index: number }) => localPathOf(x, g.index);
   const { localFileUrl } = await import('../player/files');
   const urlOf = async (g: { index: number; path: string; done: number; size: number }) => { const lp = localOf(g); if (x.state === 'done' && lp) { const u = await localFileUrl(lp); if (u) return u; } if (eng.streamUrl) return eng.streamUrl(x.id, g.index); return null; };
   const url = f ? await urlOf(f) : null; if (!url) { if (eng.open) await eng.open(x.id, fileIndex); else toast(t('playerCantPlay'), 'error'); return; }
