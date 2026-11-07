@@ -19,7 +19,9 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
     check(`${lang}: folded to its icons, and kept so`, await p.evaluate(() => document.documentElement.classList.contains('rail-mini') && document.querySelector('.nav-rail').getBoundingClientRect().width <= 90));
     await p.click('.rail-fold');
     await p.goto(base + '#/settings'); await p.waitForTimeout(600);
-    await p.evaluate(() => { for (const d of document.querySelectorAll('details, .card.collapsed')) { if (d.tagName === 'DETAILS') d.open = true; else d.classList.remove('collapsed'); } });
+    // (A computer shows one section at a time: Appearance picked from the side list.)
+    await p.locator('.settings-nav .chip', { hasText: /Appearance|المظهر/ }).first().click(); await p.waitForTimeout(200);
+    check(`${lang}: one section shown at a time`, (await p.$$eval('.settings-body > .card:not([hidden])', (e) => e.length)) === 1);
     const btn = p.locator('.segmented button', { hasText: /^(120|١٢٠)%$/ }).first();
     if (!(await btn.count())) console.log('segmented:', await p.$$eval('.segmented button', (e) => e.slice(0, 12).map((x) => x.textContent)));
     const has = await btn.count(); if (has) await btn.click({ force: true });

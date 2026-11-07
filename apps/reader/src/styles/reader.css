@@ -498,3 +498,42 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .kr-tr-titled > .kr-tr-title { display: block; }
 .kr-tr-titled > .kr-tr-sub { display: block; font-size: .62em; font-weight: 400; opacity: .7; margin-top: .3em; line-height: 1.4; }
 .toc-list .toc-orig { display: block; font-size: 12px; opacity: .65; margin-top: 2px; }
+
+/* ---------- Reading on a computer ----------
+   The tools in the top bar with their names (not a bubble floating over the text); the contents, bookmarks or
+   search docked beside the page and left open while reading; arrows at the text's sides to turn the page, shown
+   while the mouse moves; a picture opens with a double-click. A phone keeps its own chrome. */
+.tb-label, .page-arrow { display: none; }
+html.pc .reader-view .float-toolbar {
+  position: absolute; top: var(--safe-top); bottom: auto; left: auto; inset-inline-end: 56px; transform: none; z-index: 21;
+  height: var(--topbar-h); max-width: calc(100% - 420px); padding: 0; gap: 2px; background: none; box-shadow: none; border-radius: 0;
+  color: var(--chrome-fg, var(--md-on-surface)); overflow: hidden;
+}
+html.pc .reader-view .float-toolbar .icon-btn { display: inline-flex; flex-direction: row; align-items: center; width: auto; height: 38px; padding: 0 10px; gap: 7px; border-radius: 10px; flex: none; color: inherit; }
+html.pc .reader-view .float-toolbar .icon-btn svg { width: 19px; height: 19px; }
+html.pc .reader-view .float-toolbar .icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+html.pc .reader-view .float-toolbar .tb-label { display: inline; font-size: 13px; font-weight: 500; white-space: nowrap; }
+html.pc .reader-view .float-toolbar .sep { height: 22px; background: color-mix(in srgb, currentColor 18%, transparent); }
+html.pc .reader-view.immersive .float-toolbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+html.pc .reader-view .topbar .title { max-width: 34%; flex: 0 1 auto; }
+html.pc .reader-view .topbar > .icon-btn:last-child { margin-inline-start: auto; }
+@media (max-width: 1180px) { html.pc .reader-view .float-toolbar .tb-label { display: none; } html.pc .reader-view .float-toolbar { max-width: calc(100% - 300px); } }
+
+html.pc .page-arrow { display: grid; place-items: center; position: absolute; top: 50%; z-index: 6; width: 44px; height: 88px; margin-top: -44px; border: 0; border-radius: 14px;
+  background: color-mix(in srgb, var(--chrome-bg, var(--md-surface-container-high)) 82%, transparent); color: var(--chrome-fg, var(--md-on-surface)); cursor: pointer;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-med), background var(--dur-short); box-shadow: var(--el-1); }
+html.pc .page-arrow svg { width: 24px; height: 24px; }
+html.pc .page-arrow.prev { inset-inline-start: 18px; } html.pc .page-arrow.next { inset-inline-end: 18px; }
+html.pc[dir='rtl'] .page-arrow svg { transform: scaleX(-1); }
+html.pc .reader-view.mouse-awake .page-arrow { opacity: .85; pointer-events: auto; }
+html.pc .page-arrow:hover { opacity: 1 !important; background: var(--md-surface-container-highest); }
+html.pc .reader-view .reader { position: relative; }
+
+html.pc .reader-view .panel.docked { width: 360px; top: 0; border-radius: 0; box-shadow: none; border-inline-start: 1px solid color-mix(in srgb, var(--md-on-surface) 10%, transparent); z-index: 25; transition: none; }
+html.pc .reader-view.panel-docked :is(.reader, .read-footer, .read-status) { margin-inline-end: 360px; }
+html.pc .reader-view.panel-docked .topbar { inset-inline-end: 360px; }
+html.pc .reader-view.panel-docked .float-toolbar { inset-inline-end: calc(360px + 56px); max-width: calc(100% - 360px - 420px); }
+html.pc .reader-view.panel-docked .float-toolbar .tb-label { display: none; }
+html.pc .reader-view.panel-docked .page-arrow.next { inset-inline-end: 18px; }
+html.pc .reader-view .panel.docked .panel-head { min-height: calc(var(--topbar-h) + var(--safe-top)); padding-block: 0; }
+html.pc .reader-view .panel.docked .panel-head h2 { font-size: 17px; }

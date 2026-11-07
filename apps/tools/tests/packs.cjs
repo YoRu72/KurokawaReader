@@ -20,7 +20,7 @@ const MANIFEST = { ydl: '0.18.1', packs: { python: { 'arm64-v8a': { file: 'Kurok
       list: async () => ({ tasks: [task] }), defaultDir: async () => ({ dir: '/sdcard/Download' }),
       httpRequest: async (o) => { if (/KurokawaTools-packs\.json$/.test(o.url)) return { status: 200, body: JSON.stringify(manifest), headers: {} }; const r = await fetch(o.url); return { status: r.status, body: await r.text(), headers: {} }; },
       packStatus: async () => ({ ...JSON.parse(JSON.stringify(packs)), abi: 'arm64-v8a' }),
-      packInstall: async (o) => { window.__calls.push(['packInstall', o.name, o.url.split('/').pop(), o.sha256]); for (let i = 1; i <= 4; i++) { await new Promise((r) => setTimeout(r, 60)); emit('packProgress', { name: o.name, done: i * 1e6, total: 4e6 }); } packs[o.name] = { version: o.version, size: 5e7 }; },
+      packInstall: async (o) => { window.__calls.push(['packInstall', o.name, o.url.split('/').pop(), o.sha256]); for (let i = 1; i <= 4; i++) { await new Promise((r) => setTimeout(r, 250)); emit('packProgress', { name: o.name, done: i * 1e6, total: 4e6 }); } packs[o.name] = { version: o.version, size: 5e7 }; },
       openWith: async (o) => { window.__calls.push(['openWith', o.path || o.url]); },
       localUrl: async (o) => ({ url: 'http://127.0.0.1:9/file?p=' + encodeURIComponent(o.path) }), streamUrl: async () => ({ url: 'http://127.0.0.1:9/t1/0' }),
     }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -29,6 +29,13 @@ const MANIFEST = { ydl: '0.18.1', packs: { python: { 'arm64-v8a': { file: 'Kurok
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForSelector('.addon-row[data-id="video"]');
   await p.click('.addon-row[data-id="video"] .btn'); await p.waitForSelector('.get-card');
   const ask = (await p.$eval('.get-card', (e) => e.innerText)).replace(/\s+/g, ' '); console.log('pack card:', ask.slice(0, 300));
+  // While it downloads: one bar only, at the top of a phone's screen (not over the bottom bar), and foldable into a pill.
+  await p.waitForSelector('.get-card.running');
+  const look = await p.evaluate(() => { const c = document.querySelector('.get-card'); const bars = [...c.querySelectorAll('.task-bar')].filter((b) => b.offsetParent); return { bars: bars.length, top: c.getBoundingClientRect().top, fold: !!c.querySelector('.get-fold')?.offsetParent }; });
+  console.log('running card:', JSON.stringify(look));
+  if (look.bars !== 1 || look.top > 80 || !look.fold) { console.log('FAIL running card'); process.exitCode = 1; }
+  await p.click('.get-fold'); const mini = await p.evaluate(() => { const c = document.querySelector('.get-card.mini'); return c ? { w: c.getBoundingClientRect().width, steps: !!c.querySelector('.get-steps')?.offsetParent } : null; });
+  console.log('folded:', JSON.stringify(mini)); if (!mini || mini.w > 330 || mini.steps) { console.log('FAIL fold'); process.exitCode = 1; }
   await p.waitForFunction(() => window.__calls.filter((c) => c[0] === 'packInstall').length === 2); await p.waitForFunction(() => (JSON.parse(localStorage.getItem('kt.settings') || '{}').addons || []).includes('video'), null, { timeout: 8000 }).catch(() => undefined);
   const installed = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings') || '{}').addons || []);
   const calls1 = await p.evaluate(() => window.__calls); console.log('installs:', JSON.stringify(calls1), '| video add-on:', installed.includes('video'));

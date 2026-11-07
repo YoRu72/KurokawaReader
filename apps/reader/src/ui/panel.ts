@@ -13,8 +13,12 @@ export class SidePanel {
   private tabs: PanelTab[] = [];
   private active = '';
   isOpen = false;
+  /** Told when the panel is shut (its button, the scrim, Escape) — not when a docked panel stays open after a jump. */
+  onClose?: () => void;
+  private host: HTMLElement;
 
   constructor(host: HTMLElement) {
+    this.host = host;
     this.titleEl = h('h2');
     this.body = h('div', { class: 'panel-body' });
     this.tabsEl = h('div', { class: 'panel-tabs', role: 'tablist' });
@@ -26,11 +30,15 @@ export class SidePanel {
     host.append(this.scrim, this.el);
   }
 
-  open(title: string, tabs: PanelTab[], activeId?: string): void {
+  /** On a computer wide enough, a panel opened `dock`ed (the contents, bookmarks, search) sits beside the page —
+   *  no scrim, the text narrowed to make room — and stays open while reading; others float over it as before. */
+  open(title: string, tabs: PanelTab[], activeId?: string, o: { dock?: boolean } = {}): void {
     this.titleEl.textContent = title;
     this.tabs = tabs;
     this.tabsEl.hidden = tabs.length <= 1;
-    this.scrim.hidden = false;
+    const dock = !!o.dock && SidePanel.canDock();
+    this.el.classList.toggle('docked', dock); this.host.classList.toggle('panel-docked', dock);
+    this.scrim.hidden = dock;
     this.el.classList.add('open');
     this.isOpen = true;
     this.show(activeId ?? tabs[0]?.id ?? '');
@@ -48,10 +56,18 @@ export class SidePanel {
 
   close(): void {
     if (this.el.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
-    this.el.classList.remove('open');
+    const was = this.isOpen;
+    this.el.classList.remove('open', 'docked'); this.host.classList.remove('panel-docked');
     this.scrim.hidden = true;
     this.isOpen = false;
+    if (was) this.onClose?.();
   }
+
+  /** After a jump from the panel (a chapter, a bookmark, a search hit): shut — unless it is docked beside the page. */
+  dismiss(): void { if (!this.el.classList.contains('docked')) this.close(); }
+
+  get docked(): boolean { return this.isOpen && this.el.classList.contains('docked'); }
+  static canDock(): boolean { return document.documentElement.classList.contains('pc') && window.innerWidth >= 1000; }
 
   get bodyEl(): HTMLElement { return this.body; }
 }

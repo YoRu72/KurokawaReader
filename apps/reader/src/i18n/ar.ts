@@ -1150,6 +1150,8 @@ export const ar: Strings = {
   updateVersionsSince: "{n} منذ إصدارك",
   updateAutoDownloadAndroid: "نزّل التحديثات في الخلفية",
   updateAutoDownloadAndroidHint: "يُجلب الإصدار الجديد وحده ويُتحقَّق منه، ثم يُعرض عليك جاهزًا للتثبيت.",
+  prevPage: "الصفحة السابقة",
+  moreTools: "أدوات أخرى",
   iconCantRead: "تعذّرت قراءة هذه الصورة.",
   iconCropTitle: "قصّ الأيقونة",
   iconZoom: "التكبير",

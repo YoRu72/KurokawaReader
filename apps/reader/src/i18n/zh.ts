@@ -106,6 +106,8 @@ export const zh: Partial<Strings> = {
   extractInPlace: '原地解压', extractInPlaceHint: '文件每解出一个，压缩包就缩小一分，磁盘只需容纳文件本身；中途停止也可以稍后继续。', deleteArchiveAfter: '解压后删除压缩包', extracting: '正在解压…', extracted: '已解压 {n}', extractContinue: '继续解压', extractResumable: '已解压一半', extractPausedInPlace: '已停止——压缩包保持原样，可以继续', 
   notAnArchive: '这不是本应用能打开的压缩包。', encrypted: '已加密', password: '密码', passwordNeeded: '此压缩包需要密码。', wrongPassword: '密码错误。', noSpace: '磁盘空间不足。', andMore: '…还有 {n} 个', openArchive: '打开压缩包', createZip: '创建 zip', zipping: '正在压缩…', zipped: '已创建 {name}（{size}）',
   otherApps: '其他 Kurokawa 应用', otherAppsHint: '各应用共用同一外观、同一 AniList 关联和同一附加组件仓库。', appTools: 'Kurokawa Tools', appToolsDesc: '下载、种子与串流，以及动画、字幕、压缩包附加组件。', appInstalled: '已安装 · 打开', appGet: '获取', appOpenReleases: '打开发布页', appInstallerOpened: '已交给安装程序', 
+  prevPage: "上一页",
+  moreTools: "更多工具",
   iconCantRead: "无法读取此图片。",
   iconCropTitle: "裁剪图标",
   iconZoom: "缩放",

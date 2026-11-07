@@ -107,9 +107,17 @@ export function libraryView(): HTMLElement {
     paintMark();
     const off = onPendingChanged(() => { if (!browseBtn.isConnected) { off(); return; } paintMark(); });
     setTimeout(() => { if (browseBtn.isConnected) void import('../sources/updates').then(async (m) => writePending(await m.pendingCounts())).catch(() => undefined); }, 4000); }
+  // On a computer the occasional tools fold into one named menu (each with its name), so the row is the search, the
+  // order and a few buttons; a phone keeps them all as icons.
+  const occasional = [searchBooksBtn, convertBtn, pdfToolsBtn, archivesBtn, randomBtn];
+  occasional.forEach((b) => b.classList.add('pc-fold'));
+  const moreTools = h('button', { type: 'button', class: 'tool-btn tool-more', title: t('moreTools'), 'aria-label': t('moreTools'), 'aria-haspopup': 'menu', onclick: (e: Event) => {
+    const sh = openSheet(t('moreTools'), t('close'), { at: e });
+    sh.body.append(h('div', { class: 'dest-list' }, ...occasional.filter((b) => !b.hidden).map((b) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); b.click(); } }, (b.querySelector('svg')?.cloneNode(true) as SVGElement) ?? null, h('span', { class: 'name' }, b.getAttribute('aria-label') ?? b.title)))));
+  } }, icon('more'), h('span', null, t('moreTools')));
   const body = h('div', { class: 'library-body' },
     hero,
-    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, archivesBtn, searchBooksBtn, randomBtn, downloadsBtn, browseBtn),
+    h('div', { class: 'library-tools' }, search, sortSel, filterBtn, selectBtn, convertBtn, pdfToolsBtn, archivesBtn, searchBooksBtn, randomBtn, moreTools, downloadsBtn, browseBtn),
     chips,
     tagChips,
     fmtChips,

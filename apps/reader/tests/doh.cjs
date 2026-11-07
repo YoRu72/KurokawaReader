@@ -19,7 +19,7 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   });
   await p.goto('http://localhost:5461/'); await p.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }, process.env.LANG_UI || 'en'); await p.reload();
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForTimeout(1200);
-  await p.locator('h3.card-title').filter({ hasText: /In-app browser|متصفح التطبيق/ }).first().click(); await p.waitForTimeout(300);
+  await p.locator('.settings-nav .chip').filter({ hasText: /In-app browser|متصفح التطبيق/ }).first().click(); await p.waitForTimeout(300);
   const btn = p.locator('button:has-text("Open the browser"), button:has-text("افتح المتصفح")').first();
   await btn.scrollIntoViewIfNeeded(); await btn.click(); await p.waitForTimeout(300);
   const open = await p.evaluate(() => window.__calls.find((c) => c[0] === 'open')?.[1]);
