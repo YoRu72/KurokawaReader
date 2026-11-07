@@ -43,7 +43,8 @@ async function url({ key, source, dir, fileIndex, gid, peers, clientOpts }) {
   if (!w) {
     const torrent = c.add(source, { path: dir, deselect: true, destroyStoreOnDestroy: false, strategy: 'sequential' });
     w = { torrent, gid, files: new Set(), readers: 0, idleTimer: 0 }; live.set(key, w);
-    if (peers?.length) torrent.once('infoHash', () => { for (const p of peers) torrent.addPeer(p); });
+    // (A .torrent's hash is known at once — before a listener could be set —, a magnet's a moment later.)
+    if (peers?.length) { const addAll = () => { for (const p of peers) torrent.addPeer(p); }; if (torrent.infoHash) addAll(); else torrent.once('infoHash', addAll); }
     torrent.on('error', (e) => console.warn('webstream torrent:', e && e.message));
   }
   const t = w.torrent;

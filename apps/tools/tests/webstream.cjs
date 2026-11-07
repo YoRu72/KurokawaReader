@@ -5,6 +5,7 @@
 // WebTorrent fetched as there (so nothing is fetched twice).
 const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const crypto = require('node:crypto');
 let fails = 0; const ok = (n, c, extra) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (extra ? `  (${extra})` : '')); if (!c) fails++; };
+setTimeout(() => { console.log('FAIL timed out (3 min)'); process.exit(1); }, 180000).unref();
 (async () => {
   const W = require('../desktop/webstream.cjs');
   if (!(await W.available())) { console.log(process.env.CI ? 'FAIL WebTorrent did not load' : 'skipped: WebTorrent not installed (cd desktop && npm install)'); process.exit(process.env.CI ? 1 : 0); }
