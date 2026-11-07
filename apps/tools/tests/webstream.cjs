@@ -37,17 +37,20 @@ setTimeout(() => { console.log('FAIL timed out (3 min)'); process.exit(1); }, 18
   const out = path.join(dir, 'Show', 'Show - 01.mkv');
   ok('its file kept, where aria2 keeps it (folder/name/file)', fs.existsSync(out));
   // aria2, as the app hands it back: the same folder, checked — what WebTorrent fetched counted at once.
-  const { Aria2Engine } = require('../desktop/aria2.cjs');
-  const res = path.join(__dirname, '..', 'desktop');
-  const e = new Aria2Engine({ userData: fs.mkdtempSync(path.join(root, 'ud-')), resources: res, defaultDir: dir });
-  if (await e.ensure()) {
-    const gid = await e.rpc.call('addTorrent', torrentFile.toString('base64'), [], { dir, 'check-integrity': 'true', 'select-file': String(idx + 1), pause: 'true', 'bt-enable-lpd': 'false', 'enable-dht': 'false' });
-    await e.rpc.call('unpause', gid).catch(() => {});
-    let done = 0; for (let i = 0; i < 40; i++) { await new Promise((ok2) => setTimeout(ok2, 250)); const s2 = await e.rpc.call('tellStatus', gid, ['completedLength', 'status', 'verifiedLength']); done = Number(s2.completedLength); if (done > 0 && !s2.verifiedLength) break; }
-    ok('aria2 checked the folder: WebTorrent\'s pieces counted as there', done >= want, `${(done / 1048576).toFixed(1)} MB`);
-    e.stop();
+  const exe = path.join(__dirname, '..', 'desktop', 'aria2', `${process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux'}-${process.arch}`, process.platform === 'win32' ? 'aria2c.exe' : 'aria2c');
+  if (fs.existsSync(exe)) {
+    const { spawn } = require('node:child_process'); const rpcPort = 16800 + Math.floor(Math.random() * 1000);
+    const a2 = spawn(exe, ['--enable-rpc', `--rpc-listen-port=${rpcPort}`, '--rpc-listen-all=false', '--enable-dht=false', '--bt-enable-lpd=false', '--quiet=true', '--file-allocation=none'], { stdio: 'ignore' });
+    const rpc = async (method, params) => { const r = await fetch(`http://127.0.0.1:${rpcPort}/jsonrpc`, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: '1', method, params }), signal: AbortSignal.timeout(5000) }); const j = await r.json(); if (j.error) throw new Error(j.error.message); return j.result; };
+    let up = false; for (let i = 0; i < 40 && !up; i++) { await new Promise((r2) => setTimeout(r2, 250)); up = await rpc('aria2.getVersion', []).then(() => true, () => false); }
+    if (up) {
+      const gid = await rpc('aria2.addTorrent', [torrentFile.toString('base64'), [], { dir, 'check-integrity': 'true', 'select-file': String(idx + 1), 'seed-time': '0' }]);
+      let done = 0; for (let i = 0; i < 60; i++) { await new Promise((r2) => setTimeout(r2, 250)); const s2 = await rpc('aria2.tellStatus', [gid, ['completedLength', 'verifiedLength', 'verifyIntegrityPending']]).catch(() => null); if (!s2) continue; done = Number(s2.completedLength); if (done > 0 && !s2.verifiedLength && !s2.verifyIntegrityPending) break; }
+      ok("aria2 checked the folder: WebTorrent's pieces counted as there", done >= want, `${(done / 1048576).toFixed(1)} MB`);
+    } else ok('aria2 answered', false);
+    a2.kill();
   } else console.log('skipped the aria2 part: no aria2c here (node fetch-aria2.mjs)');
-  await W.stopAll(); await new Promise((r2) => seeder.destroy(r2));
+  await W.stopAll(); await Promise.race([new Promise((r2) => seeder.destroy(r2)), new Promise((r2) => setTimeout(r2, 3000))]);
   fs.rmSync(root, { recursive: true, force: true });
   console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
