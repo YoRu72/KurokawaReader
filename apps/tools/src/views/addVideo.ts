@@ -20,6 +20,8 @@ export interface VideoPanel {
   picks(): { url: string; video: VideoPick }[] | null;
   /** Whether a check is still running (the Download button waits for it, a setup and the read after it included). */
   busy(): Promise<void>;
+  /** The sign-in (a cookie jar) the page is read with; a change reads it again. */
+  setJar(id: string): void;
   /** A video site's link the panel could not read (yt-dlp missing or refusing it): not to be saved as a page. */
   unread(): boolean;
 }
@@ -37,6 +39,8 @@ export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (
 /** An HLS playlist the app fetches itself (pieces joined here), unless yt-dlp was chosen for streams. */
 export const nativeHls = (url: string): boolean => getPlatform() === 'android' && !!ktPlugin() && getSettings().hlsNative !== false && /\.m3u8(\?|#|$)/i.test(url);
 
+/** Whether sign-ins (cookie jars) can be kept here: the Android app's. */
+const hasCookieJars = (): boolean => !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.();
 export function videoPanel(onChange: () => void): VideoPanel {
   const el = h('div', { class: 'video-panel', hidden: true });
   const part = { on: false, from: '', to: '', more: '' as string }; const chap = { split: false, match: '' }; let bilingual = false; let changeNote: string | null = null;
@@ -79,7 +83,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
     const rydLine = h('p', { class: 'src video-ryd', dir: 'ltr', hidden: true }); if (s.videoRyd !== false && /youtube/i.test(i.site ?? '') && i.id) void import('../http').then(({ request }) => request(`https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(i.id)}`).then((r) => { if (r.status !== 200) return; const j = JSON.parse(r.body) as { likes?: number; dislikes?: number }; if (j.likes === undefined) return; rydLine.hidden = false; rydLine.textContent = `👍 ${localDigits(j.likes)} · 👎 ${localDigits(j.dislikes ?? 0)}`; }).catch(() => undefined));
     const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
     el.replaceChildren(...[
-      h('p', { class: 'video-ready' }, icon('check'), t('videoYtdlpReadyShort')),
+      h('p', { class: 'video-ready' }, icon('check'), t(i.choices.length || i.audio.length ? 'videoYtdlpReadyShort' : 'videoYtdlpBestOnly')),
       // (Seen before and not the same: said before it is fetched again.)
       changed ? h('p', { class: 'src danger video-changed', dir: 'auto' }, icon('alert'), ' ', t('mediaChanged'), ': ', changed) : null,
       rydLine,
@@ -108,6 +112,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
       h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; const { needAddon } = await import('../addons/need'); if (await needAddon(VIDEO_ADDON, t('addonWhyVideo'), { start: true })) { const u = url; url = null; check(u); } else b.disabled = false; } }, t('videoAddIt')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => { closeSheets(); void import('../router').then((r) => r.navigate('/settings/addons')); } }, t('videoOpenAddons'))));
   };
+  let jar = '';
   const check = (u: string | null) => {
     if (u === url) return; url = u; info = null; chosen = null; const my = ++token;
     if (!u || !pageLike(u)) { el.hidden = true; el.replaceChildren(); onChange(); return; }
@@ -122,16 +127,23 @@ export function videoPanel(onChange: () => void): VideoPanel {
     }
     el.hidden = false; el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('videoChecking')}`));
     const playlist = /[?&]list=|\/playlist\b|\/sets\/|\/album\//i.test(u) && !/[?&]v=/.test(u);
-    running = pageInfo(u, playlist).then((got) => { if (my !== token) return; info = got; changeNote = got.kind === 'video' ? noteChanges(got) : null; pickDefault(got); draw(); onChange(); }, () => {
+    running = pageInfo(u, playlist, jar ? { cookieJar: jar } : {}).then((got) => { if (my !== token) return; info = got; changeNote = got.kind === 'video' ? noteChanges(got) : null; pickDefault(got); draw(); onChange(); }, (e: unknown) => {
       if (my !== token) return;
-      // Not a page yt-dlp reads: an ordinary download, said quietly only when a video site was expected.
-      if (isVideoHost(u)) { el.replaceChildren(h('p', { class: 'src small' }, t('videoFallback'))); } else { el.hidden = true; el.replaceChildren(); }
+      // Not a page yt-dlp reads: an ordinary download, said quietly only when a video site was expected — with
+      // yt-dlp's own reason, and, when the site wants a sign-in (Instagram, a YouTube «not a bot» check, a private
+      // post), a way to read it with the user's own sign-in: their cookies for it, taken from the app's browser.
+      if (isVideoHost(u)) {
+        const why = String((e as Error)?.message ?? e ?? '').replace(/^ERROR:\s*/i, '').replace(/\s+/g, ' ').trim().slice(0, 220);
+        const signIn = /sign ?in|log ?in|login|cookies|rate.?limit|private|not a bot|age.?restrict|members|account/i.test(why);
+        el.replaceChildren(h('div', { class: 'video-failed' }, h('p', { class: 'src small' }, t(signIn ? 'videoNeedsSignIn' : 'videoFallback')), why ? h('p', { class: 'src small video-why', dir: 'ltr' }, why) : null,
+          signIn && hasCookieJars() ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../downloads/cookies').then((m) => m.signInFor(u, () => { url = null; check(u); })) }, icon('globe'), t('videoUseSignIn')) : null));
+      } else { el.hidden = true; el.replaceChildren(); }
       onChange();
     });
   };
   const base = (audio = false): Omit<VideoPick, 'format' | 'audioOnly' | 'label'> => ({ container: audio ? undefined : s.videoContainer, embedThumb: s.videoEmbedThumb, sponsorblock: s.videoSponsor, sponsorMode: s.videoSponsorMode ?? (s.videoSponsor ? 'remove' : 'off'), sponsorCats: (s.videoSponsorCats ?? ['sponsor']).join(','), infoJson: (s.sidecarNfo || s.sidecarComments || s.sidecarChapters || s.sidecarLyrics) || undefined, cover: s.sidecarCover || undefined, comments: s.sidecarComments || undefined, liveChat: s.sidecarLiveChat || undefined, chapters: s.videoChapters !== false, template: s.videoTemplate || undefined, cookies: s.videoCookies || undefined });
   return {
-    el, check, busy: async () => { let r: Promise<void>; do { r = running; await r.catch(() => undefined); } while (r !== running); },
+    el, check, setJar: (id: string) => { if (id === jar) return; jar = id; if (url) { const u = url; url = null; check(u); } }, busy: async () => { let r: Promise<void>; do { r = running; await r.catch(() => undefined); } while (r !== running); },
     unread: () => !!url && isVideoHost(url) && !info,
     picks() {
       if (!url || !info) return null;

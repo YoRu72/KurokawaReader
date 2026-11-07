@@ -9,6 +9,7 @@ import { isIos } from './ipa';
 import { categoryOf, categoryDir } from '../downloads/categories';
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin, clipboardText } from '../native';
+import { postPanel } from './addPost';
 import { videoPanel, preferredFormat, nativeHls } from './addVideo';
 import { galleryOf } from '../downloads/galleries';
 import { videoEnabled, videoSupported, isVideoHost } from '../video/ytdlp';
@@ -92,7 +93,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     h('label', { class: 'field row' }, h('span', { class: 'label' }, t('connections')), conn));
   // (A cookie jar for this download — the jars that fit the link's site first — once the link is known.)
   let cookieJar = ''; const jarRow = h('div'); opts.append(jarRow); let jarHost = '';
-  const refreshJar = async () => { const u = parseSources(ta.value)[0]?.url ?? ''; let host = ''; try { host = u ? new URL(u).host : ''; } catch { host = ''; } if (host === jarHost) return; jarHost = host; cookieJar = ''; const { jarPicker } = await import('../downloads/cookies'); const el = host ? await jarPicker(host, (id) => { cookieJar = id; }) : null; jarRow.replaceChildren(...(el ? [el] : [])); };
+  const refreshJar = async () => { const u = parseSources(ta.value)[0]?.url ?? ''; let host = ''; try { host = u ? new URL(u).host : ''; } catch { host = ''; } if (host === jarHost) return; jarHost = host; cookieJar = ''; const { jarPicker } = await import('../downloads/cookies'); const el = host ? await jarPicker(host, (id) => { cookieJar = id; video.setJar(id); }) : null; jarRow.replaceChildren(...(el ? [el] : [])); };
   void showStorage();
   // Through a debrid service (the Debrid add-on with a key): the cloud fetches it, the app downloads the result.
   const viaDebrid = h('input', { type: 'checkbox', checked: getSettings().debridDefault }) as HTMLInputElement;
@@ -100,27 +101,33 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
   // (A page yt-dlp read — a post on X, a reel, a video — is not a file: no name to give it, no «web page» warning.)
   const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); });
+  // (A post's photos and videos read here at once — «auto-grab» —; then they are what «Download» adds.)
+  let goBtn: HTMLButtonElement | null = null;
+  const post = postPanel(() => { const pp = post.picks(); sh.el.classList.toggle('as-post', !!pp); if (goBtn) goBtn.lastChild!.textContent = pp ? t('grabAddN', { n: countFiles(pp.length) }) : t('addStart'); });
   const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
   // A Hugging Face model's page: offered to the model window, where its files can be picked.
   const hfBox = h('div', { class: 'plan-note hf-offer', hidden: true });
   // (A link to an iOS app, on an iPhone: offered to the installer — SideStore, AltStore, TrollStore.)
   const peekIpa = (u: string | null): boolean => { if (!u || !/\.ipa(\?|$)/i.test(u) || !isIos()) return false; hfBox.hidden = false; hfBox.replaceChildren(icon('apps'), h('span', { class: 'grow' }, t('ipaOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./ipa').then((m) => m.ipaSheet({ url: u })); } }, t('ipaInstallIt'))); return true; };
   const peekHf = (u: string | null) => peekIpa(u) || void import('../hf/hf').then((HF) => {
-    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) return; // (Only when needed: a post the video panel reads — a video or a GIF, its qualities here — stays in this sheet with
+    if (!u || !HF.isHfLink(u)) { hfBox.hidden = true; void import('../downloads/social').then((S) => { if (!u || (!S.socialOf(u) && !S.feedOf(u) && !galleryOf(u))) { void post.read(null); return; } // (Only when needed: a post the video panel reads — a video or a GIF, its qualities here — stays in this sheet with
       // «Show them» on offer; one it cannot read — photos — opens its photos and videos at once.)
       void (async () => {
+        // (Read at once, in this sheet: its photos and videos listed, ticked; nothing to list — or turned off — the rest as before.)
+        if (getSettings().socialAuto !== false && sources().length === 1 && (await post.read(u))) return;
+        if (!sh.el.isConnected || sources()[0]?.url !== u) return;
         if (videoEnabled() && isVideoHost(u)) { await video.busy(); if (!sh.el.isConnected || sources()[0]?.url !== u) return; }
         const read = !!video.picks();
         if (!read && getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; }
         hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen')));
       })(); }); return; }
-    hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
+    void post.read(null); hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));
   });
   const clear = h('button', { type: 'button', class: 'icon-btn add-clear', 'aria-label': t('clearField'), title: t('clearField'), hidden: !initial, onclick: () => {
     ta.value = ''; torrentFile = null; fileIn.value = ''; fileNote.hidden = true; if (!how.name) { name.value = ''; ext.value = ''; nameTouched = false; }
     clear.hidden = true; check.hidden = true; void metadata(); void refreshJar(); ta.focus(); } }, icon('close')) as HTMLButtonElement;
-  sh.body.append(h('div', { class: 'add-field' }, ta, clear), hfBox, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
-  const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement;
+  sh.body.append(h('div', { class: 'add-field' }, ta, clear), hfBox, post.el, video.el, tools, fileNote, fileIn, filesBox, zipBox, saveAs, quick, debridRow, opts);
+  const go = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('addStart')) as HTMLButtonElement; goBtn = go;
   // (A batch: every link looked at first — what is not a file, what needs a sign-in, what is gone, what is here already — and the sizes against the free space.)
   const check = h('button', { type: 'button', class: 'btn tonal', hidden: true, onclick: () => void checkBatch() }, icon('check'), t('preflightCheck')) as HTMLButtonElement;
   const checkBatch = async () => {
@@ -165,6 +172,14 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   go.addEventListener('click', async () => {
     const srcs = sources();
     if (!srcs.length) { toast(t('invalidLink'), 'error'); ta.focus(); return; }
+    // (A post read here: what is ticked of it, each at full quality — never the post's page saved as a file.)
+    const pp = post.picks();
+    if (pp && srcs.length === 1) {
+      if (!pp.length) { toast(t('postNonePicked'), 'error'); return; }
+      go.disabled = true;
+      const { addGrabbed } = await import('../downloads/prism'); const r = await addGrabbed(pp);
+      toast(t('grabAdded', { n: countFiles(r.n) })); if (r.noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close(); return;
+    }
     if (!debridRow.hidden && viaDebrid.checked) {
       go.disabled = true;
       try { const { sendToDebrid } = await import('../debrid/transfers'); for (const src of srcs) { const r = await sendToDebrid(src, { dir: getSettings().downloadDir || undefined, name: srcs.length === 1 && name.value.trim() ? `${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim()}` : ''}` : undefined }); toast(r.kind === 'cloud' ? t('debridSent', { name: r.name }) : t('taskAdded', { name: r.name })); } sh.close(); }
