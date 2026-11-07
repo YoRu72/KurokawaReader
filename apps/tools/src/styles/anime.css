@@ -533,6 +533,8 @@ body:has(> .kt-player) > .sheet .ep-num { width: 30px; height: 30px; border-radi
 .kt-fp-row { display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: rgb(28 28 32 / .72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgb(255 255 255 / .08); }
 .kt-fp-btn { all: unset; box-sizing: border-box; width: 46px; height: 40px; display: grid; place-items: center; border-radius: 999px; color: #fff; cursor: pointer; font-size: 18px; }
 .kt-fp-btn:active { background: rgb(255 255 255 / .16); }
+.kt-fp-btn.on { background: rgb(255 255 255 / .22); color: var(--md-primary, #8ad); }
+html.pc .kt-fp-btn:hover { background: rgb(255 255 255 / .12); }
 .kt-fp-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
 .kt-fp-btn b { font-weight: 600; }
 .kt-player.kt-pip .kt-framepad { display: none; }
@@ -550,3 +552,21 @@ body:has(> .kt-player) > .sheet .ep-num { width: 30px; height: 30px; border-radi
 .sp-box svg { width: 14px; height: 14px; }
 .sp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sp-row small { white-space: nowrap; }
+
+/* ---------- The player on a computer ----------
+   The volume by the play button (a phone has its gestures), deeper shades behind the bars so their buttons read on
+   any picture, round hover marks, and the chips of the bar in one glassy look instead of the picture's colours. */
+.kt-vol { display: none; }
+html.pc .kt-vol { display: inline-flex; align-items: center; gap: 2px; margin-inline-start: 4px; }
+html.pc .kt-vol-slider { width: 0; opacity: 0; margin: 0; accent-color: #fff; cursor: pointer; transition: width .18s, opacity .18s; }
+html.pc .kt-vol:hover .kt-vol-slider, html.pc .kt-vol-slider:focus-visible { width: 96px; opacity: 1; }
+html.pc .kt-top { background: linear-gradient(rgb(0 0 0 / .78), rgb(0 0 0 / .35) 60%, transparent); padding-bottom: 28px; }
+html.pc .kt-bottom { background: linear-gradient(transparent, rgb(0 0 0 / .55) 35%, rgb(0 0 0 / .85)); padding-top: 40px; }
+html.pc .kt-player .kt-top .icon-btn:hover, html.pc .kt-player .kt-bottom .icon-btn:hover { background: rgb(255 255 255 / .14); }
+html.pc .kt-player .kt-bottom .chip, html.pc .kt-player .kt-bottom .kt-chip { background: rgb(255 255 255 / .14); color: #fff; backdrop-filter: blur(8px); }
+html.pc .kt-player .kt-bottom .chip:hover, html.pc .kt-player .kt-bottom .kt-chip:hover { background: rgb(255 255 255 / .24); }
+
+/* A subtitle file dragged over the player (a computer): the frame lit up as the place to let go. */
+.kt-player.kt-drop::after { content: ''; position: absolute; inset: 12px; border: 2px dashed rgba(255,255,255,.85); border-radius: 20px; background: rgba(255,255,255,.06); pointer-events: none; z-index: 50; }
+.sub-search { gap: 8px; align-items: center; }
+.sub-search input[type=search] { flex: 1; min-width: 0; }

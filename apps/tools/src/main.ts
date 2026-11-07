@@ -13,6 +13,7 @@ import { scheduleAutoCheck } from './updates';
 import { brandIcon, applyBrandIcon } from './ui/brandIcon';
 // (The icon of the user's choosing on the page's own little icon too, from the start.)
 applyBrandIcon();
+void import('./ui/fitTopbar').then((m) => setTimeout(m.startFitTopbar, 0));
 
 const app = document.getElementById('app')!;
 window.addEventListener('error', (e) => { console.error(e.error ?? e.message); void import('./ui/dom').then((m) => m.toast(String(e.error?.message ?? e.message), 'error', 6000)); });

@@ -23,7 +23,7 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
   if (!canCut()) { sh.body.append(h('p', { class: 'hint' }, t('cutUnavailable'))); return; }
   const input = job.src.localPath ?? job.src.url; const isLocal = !!job.src.localPath || /^https?:\/\/127\.0\.0\.1/.test(job.src.url);
   if (!isLocal) sh.body.append(h('p', { class: 'hint' }, t('cutRemoteNote')));
-  let a = job.a, b = job.b; let mode: 'fast' | 'exact' = job.subtitle ? 'exact' : 'fast'; let burn = !!job.subtitle; let res: '' | '1080' | '720' | '480' = ''; let codec: 'h264' | 'hevc' = 'h264'; let quality = 23;
+  let a = job.a, b = job.b; let mode: 'fast' | 'exact' = 'fast'; let burn = false; /* (Asked for, not assumed: off until ticked.) */ let res: '' | '1080' | '720' | '480' = ''; let codec: 'h264' | 'hevc' = 'h264'; let quality = 23;
   // REX Player's clip sheet: what comes out (a video, its sound, a GIF), the sound kept or not.
   let kind: 'video' | 'audio' | 'gif' = 'video'; let mute = false; let gifWidth = 480; let gifFps = 12;
   const D = job.duration || job.video.duration || Math.max(b, 1); const frame = 1 / (job.fps || 30);

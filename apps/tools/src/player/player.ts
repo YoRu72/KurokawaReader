@@ -96,9 +96,15 @@ export function openPlayer(src: PlayerSource): void {
   const drawCustom = () => customBox.replaceChildren(...getPrefs().customButtons.map((b) => h('button', { type: 'button', class: 'kt-chip', onclick: () => runCustom(b) }, customLabel(b))));
   // The floating «Skip opening» button, shown while an opening/ending/recap is on screen.
   const skipOp = h('button', { type: 'button', class: 'kt-skip-op', hidden: true }) as HTMLButtonElement;
+  // (A computer's volume, as a player there has it: the speaker to mute, a slider beside it; the wheel and ↑ ↓ too.)
+  const volIcon = iconButton('volume', t('scMute'), () => { video.muted = !video.muted; paintVol(); });
+  const volSlider = h('input', { type: 'range', class: 'kt-vol-slider', min: '0', max: '100', step: '1', 'aria-label': t('scVolume'), oninput: () => { video.muted = false; setVolume(Number(volSlider.value) / 100); paintVol(); } }) as HTMLInputElement;
+  const volBox = h('div', { class: 'kt-vol' }, volIcon, volSlider);
+  const paintVol = () => { const v = video.muted ? 0 : Math.min(1, video.volume * boost); volSlider.value = String(Math.round(v * 100)); volSlider.style.setProperty('--v', `${Math.round(v * 100)}%`); volIcon.replaceChildren(icon(v === 0 ? 'volumeOff' : 'volume')); };
+  video.addEventListener('volumechange', paintVol); queueMicrotask(paintVol);
   const bottom = h('div', { class: 'kt-bottom' },
     h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
-    h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('undo', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null,
+    h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('undo', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null, volBox,
       h('span', { class: 'grow' }), customBox, toolBox, iconButton('grid', t('playerTools'), () => toolsSheet()), iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
   const centre = h('div', { class: 'kt-centre' }, h('div', { class: 'kt-flash' })); const flash = centre.firstChild as HTMLElement;
   const ripple = h('div', { class: 'kt-ripple', hidden: true });
@@ -327,8 +333,9 @@ export function openPlayer(src: PlayerSource): void {
   function applyAspectMpv(): boolean { if (!mpv) return false; mpv.set('keepaspect', aspect !== 'stretch'); mpv.set('panscan', aspect === 'fill' ? 1 : 0); mpv.set('video-aspect-override', /^\d/.test(aspect) ? aspect : 'no'); return true; }
   function applyAspect() { if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
   function cycleCrop() { crop = CROPS[(CROPS.indexOf(crop) + 1) % CROPS.length]; applyTransform(); flashText(crop ? `${t('cropTo')} ${localDigits(crop)}` : t('cropOff')); }
-  function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(); toast(t('screenshotSaved')); return true; }
-  function screenshot() { if (screenshotMpv()) return; try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); else if (getPrefs().shotSubs !== false) drawCuesOn(g, c.width, c.height); c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
+  function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(getPrefs().frameSubs === true); toast(t('screenshotSaved')); return true; }
+  function screenshot() { if (screenshotMpv()) return; try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); // (The subtitles only when asked: an ASS track as libass drew it, in its own fonts; an SRT in the player's look.)
+    if (getPrefs().frameSubs === true) { if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); else drawCuesOn(g, c.width, c.height); } c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
   /** The lines on screen now (an SRT/VTT the page draws) painted onto a saved frame in the player's style. */
   function drawCuesOn(g: CanvasRenderingContext2D, w: number, hh: number): void {
     if (!current || current.ass) return; const now = cuesAt(current.cues, (video.currentTime - subDelay) * getPrefs().subSpeed); if (!now.length) return;
@@ -436,6 +443,15 @@ export function openPlayer(src: PlayerSource): void {
     if (!current ? langRank(tr) < 999 || fallback : langRank(tr) < langRank(current)) void useTrack(tr);
   }
   async function addTrackFromBytes(name: string, bytes: Uint8Array, lang?: string): Promise<SubTrack | null> {
+    // (Packed — a site's .zip, a .gz —: every subtitle in it a track, this episode's the one given back.)
+    const P = await import('./subPack');
+    if (P.isZip(bytes) || P.isGzip(bytes)) {
+      let files: import('./subPack').SubFile[] = [];
+      try { const { parseFilename } = await import('../anime/anitomy'); files = await P.unpackSubtitle(name, bytes, (src.task?.meta ?? src.meta)?.episode ?? parseFilename(src.name).episode); } catch { files = []; }
+      if (!files.length) { toast(t('subsPackEmpty', { name }), 'error'); return null; }
+      let first: SubTrack | null = null; for (const f of files) { const tr = await addTrackFromBytes(f.name, f.bytes, lang); first ??= tr; }
+      return first;
+    }
     const text = decodeSubtitle(bytes, getPrefs().subCodepage || undefined); const fmt = sniffFormat(name, text);
     if (fmt === 'unknown') { toast(t('subsUnknownFormat', { name }), 'error'); return null; }
     const tr: SubTrack = { id: `${name}:${bytes.length}`, name, lang, cues: parseCues(text, fmt), fmt, ass: fmt === 'ass' ? text : undefined };
@@ -449,6 +465,13 @@ export function openPlayer(src: PlayerSource): void {
   void (async () => { const subs = src.subtitles ?? []; for (const sb of subs.slice(0, 12)) { try { const r = await request(sb.url, { binary: true }); if (r.status >= 400) continue; const tr = await addTrackFromBytes(sb.name, Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)), sb.lang); if (tr) offer(tr, !!sb.isDefault || subs.length === 1); } catch { /* one missing */ } } })();
   // The subtitles inside the file itself (a Matroska's SRT/ASS tracks), read out by ffmpeg for the page's player.
   void (async () => { if (mpv || !src.localPath) return; const { canReadEmbedded, embeddedSubs } = await import('./embedded'); if (!canReadEmbedded()) return; let n = 0; await embeddedSubs(src.localPath, (e) => { void addTrackFromBytes(e.name, e.bytes, e.lang).then((tr) => { if (tr && !playerGone) { n++; offer(tr, e.isDefault || n === 1); } }); }); })();
+  // A subtitle file (or a site's .zip) dropped onto the player, on a computer: loaded and turned on.
+  root.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; root.classList.add('kt-drop'); } });
+  root.addEventListener('dragleave', (e) => { if (e.target === root || !root.contains(e.relatedTarget as Node)) root.classList.remove('kt-drop'); });
+  root.addEventListener('drop', (e) => {
+    root.classList.remove('kt-drop'); const fs = [...(e.dataTransfer?.files ?? [])].filter((f) => /\.(srt|ass|ssa|vtt|sub|zip|gz)$/i.test(f.name)); if (!fs.length) return; e.preventDefault();
+    void (async () => { let last: SubTrack | null = null; for (const f of fs.slice(0, 8)) last = (await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer()))) ?? last; if (last) { chosenByHand = true; await useTrack(last); toast(t('subsLoaded', { name: last.name })); } })();
+  });
   // Subtitles beside a local file (same base name) are offered first.
   void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr) offer(tr, list.length === 1); } } })();
 
@@ -459,7 +482,7 @@ export function openPlayer(src: PlayerSource): void {
     // (mpv: the subtitles inside the file — every one it carries, text or picture —, chosen here; the preferred
     // languages are picked by themselves when the file opens.)
     if (mpv) { const inFile = mpv.tracks().filter((x) => x.type === 'sub' && !x.external); if (inFile.length) list.append(h('h4', null, t('subsInVideo')), ...inFile.map((x) => h('label', { class: 'dest-row' + (x.selected && !current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: x.selected && !current, onchange: () => { chosenByHand = true; void useTrack(null).then(() => mpv.setTrack('sub', x.id)); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, x.title || x.lang || `#${x.id}`), h('small', { class: 'src' }, [(x.codec ?? '').toUpperCase(), x.lang].filter(Boolean).join(' · '))))); }
-    const fileIn = h('input', { type: 'file', accept: '.srt,.ass,.ssa,.vtt,.sub,.txt', hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
+    const fileIn = h('input', { type: 'file', ...(ktPlugin() ? {} : { accept: '.srt,.ass,.ssa,.vtt,.sub,.txt,.zip,.gz' }), hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')),
       ...(ktPlugin() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void localSubs(); } }, icon('folder'), t('subsOnPhone'))] : []));
@@ -538,19 +561,39 @@ export function openPlayer(src: PlayerSource): void {
     };
     void run();
   }
-  /** Subtitles for this very episode through the Subtitles add-on, loaded straight into the player. */
+  /** Subtitles for this very episode through the Subtitles add-on, loaded straight into the player — searched by the
+   *  show's name as read from the file, or by your own words. */
   async function findSubs() {
-    const { getSettings } = await import('../settings'); if (!getSettings().addons.includes('subtitles')) { toast(t('subsNoSources')); return; }
+    const { getSettings } = await import('../settings');
+    const sh = openSheet(t('subsFind'), t('close'));
+    if (!getSettings().addons.includes('subtitles')) {
+      sh.body.append(h('p', { class: 'hint' }, t('subsNoSources')), h('button', { type: 'button', class: 'btn filled', onclick: () => { sh.close(); close(); location.hash = '#/settings/addons'; } }, icon('plus'), t('subsGetAddon')));
+      return;
+    }
     const { lookup, enrich } = await import('../subs/lookup'); const { searchSubtitles, queryFor, rankSubs, resolveLink } = await import('../subs/search'); const { parseFilename } = await import('../anime/anitomy');
-    const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); const q = m?.title ?? parsed.title; const ep = m?.episode ?? parsed.episode;
-    const sh = openSheet(t('subsFind'), t('close')); sh.body.append(h('p', { class: 'src' }, `${q}${ep ? ` · ${t('episodeN', { n: ep })}` : ''}`), h('div', { class: 'center' }, h('div', { class: 'spinner' })));
-    try {
-      const cards = m?.anilistId ? await lookup(`anilist:${m.anilistId}`) : await lookup(q); if (!cards.length) { sh.body.replaceChildren(h('p', { class: 'empty small' }, t('noResults'))); return; }
-      const c = await enrich(cards[0]); const query = queryFor(c, parsed.season, ep, getSettings().subLangs); const list = h('div', { class: 'sub-list' }); sh.body.replaceChildren(h('p', { class: 'src', dir: 'auto' }, `${c.title}${ep ? ` · ${t('episodeN', { n: ep })}` : ''}`), list);
-      let all: Awaited<ReturnType<typeof searchSubtitles>> = [];
-      await searchSubtitles(query, (_a, res) => { if (!(res instanceof Error)) all = all.concat(res); list.replaceChildren(...rankSubs(all, getSettings().subLangs, ep).slice(0, 60).map((r) => h('button', { type: 'button', class: 'result-row sub-row', onclick: async () => { try { const { url, name } = await resolveLink(r, query); if (r.archive) { toast(t('subsArchiveNote')); } sh.close(); await loadSubtitleUrl(url, name ?? `${r.title}.${r.archive ?? 'srt'}`, r.language); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, h('span', { class: 'lang-badge' }, (r.language ?? '?').toUpperCase()), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title), h('small', { class: 'src' }, [r.site, r.hi ? t('subsHI') : '', r.archive ?? ''].filter(Boolean).join(' · ')))))); });
-      if (!all.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
-    } catch (e) { sh.body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
+    const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); const ep0 = m?.episode ?? parsed.episode;
+    const q = h('input', { type: 'search', dir: 'auto', value: m?.title ?? parsed.title ?? '', placeholder: t('subsSearchHint'), enterkeyhint: 'search' }) as HTMLInputElement;
+    const epIn = h('input', { type: 'number', min: '0', inputmode: 'numeric', value: ep0 != null ? String(ep0) : '', placeholder: t('subsEpisode'), style: { width: '5.5em' }, 'aria-label': t('subsEpisode') }) as HTMLInputElement;
+    const out = h('div', { class: 'sub-results' });
+    const form = h('form', { class: 'row sub-search', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, q, epIn, h('button', { type: 'submit', class: 'btn tonal small' }, icon('search'), t('search')));
+    sh.body.append(form, out);
+    let token = 0;
+    const run = async () => {
+      const my = ++token; const words = q.value.trim(); const ep = epIn.value.trim() === '' ? undefined : Number(epIn.value);
+      if (!words) { out.replaceChildren(h('p', { class: 'empty small' }, t('subsSearchHint'))); return; }
+      out.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
+      try {
+        const sameShow = words === (m?.title ?? parsed.title ?? '') && m?.anilistId;
+        const cards = sameShow ? await lookup(`anilist:${m!.anilistId}`) : await lookup(words); if (my !== token) return;
+        if (!cards.length) { out.replaceChildren(h('p', { class: 'empty small' }, t('noResults'))); return; }
+        const c = await enrich(cards[0]); const query = queryFor(c, parsed.season, ep, getSettings().subLangs); const list = h('div', { class: 'sub-list' }); if (my !== token) return;
+        out.replaceChildren(h('p', { class: 'src', dir: 'auto' }, `${c.title}${ep != null ? ` · ${t('episodeN', { n: ep })}` : ''}`), list);
+        let all: Awaited<ReturnType<typeof searchSubtitles>> = [];
+        await searchSubtitles(query, (_a, res) => { if (my !== token) return; if (!(res instanceof Error)) all = all.concat(res); list.replaceChildren(...rankSubs(all, getSettings().subLangs, ep).slice(0, 60).map((r) => h('button', { type: 'button', class: 'result-row sub-row', onclick: async () => { try { const { url, name } = await resolveLink(r, query); sh.close(); await loadSubtitleUrl(url, name ?? `${r.title}.${r.archive ?? 'srt'}`, r.language); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, h('span', { class: 'lang-badge' }, (r.language ?? '?').toUpperCase()), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title), h('small', { class: 'src' }, [r.site, r.hi ? t('subsHI') : '', r.archive ?? ''].filter(Boolean).join(' · ')))))); });
+        if (my === token && !all.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
+      } catch (e) { if (my === token) out.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
+    };
+    void run();
   }
 
   /** Subtitles fetched by themselves (the Subtitles add-on, the preferred languages) when the video has none of
@@ -565,7 +608,7 @@ export function openPlayer(src: PlayerSource): void {
       const cards = m?.anilistId ? await lookup(`anilist:${m.anilistId}`) : await lookup(q); if (!cards.length || playerGone || current) return;
       const c = await enrich(cards[0]); const query = queryFor(c, parsed.season, ep, langs); let all: Awaited<ReturnType<typeof searchSubtitles>> = [];
       await searchSubtitles(query, (_a, res) => { if (!(res instanceof Error)) all = all.concat(res); });
-      const best = rankSubs(all, langs, ep).find((r) => !r.archive); if (!best || playerGone || current) return;
+      const best = rankSubs(all, langs, ep).find((r) => !r.archive || /^(zip|gz)$/i.test(r.archive)); if (!best || playerGone || current) return;
       const { url, name } = await resolveLink(best, query); await loadSubtitleUrl(url, name ?? `${best.title}.srt`, best.language);
     } catch { /* none found: left as it is */ }
   }
@@ -781,9 +824,12 @@ export function openPlayer(src: PlayerSource): void {
     const btn = (ic: string, label: string, fn: () => void, text?: string) => { const b = h('button', { type: 'button', class: 'kt-fp-btn', 'aria-label': label, title: label, onclick: (e: Event) => { e.stopPropagation(); fn(); } }, text ? h('b', null, text) : icon(ic)); return b; };
     const back = btn('rewind', t('frameBack'), () => step(-1)); const fwd = btn('fastForward', t('frameForward'), () => step(1));
     onLongPress(back, () => step(-10)); onLongPress(fwd, () => step(10));
+    // (Saved frames with the subtitles on them — in their own fonts — or the picture alone: off unless turned on here.)
+    const subsBtn = btn('subtitles', t('frameWithSubs'), () => { const on = !(getPrefs().frameSubs === true); updatePrefs({ frameSubs: on }); subsBtn.classList.toggle('on', on); subsBtn.setAttribute('aria-pressed', String(on)); flashText(on ? t('frameSubsOn') : t('frameSubsOff')); });
+    subsBtn.classList.toggle('on', getPrefs().frameSubs === true); subsBtn.setAttribute('aria-pressed', String(getPrefs().frameSubs === true));
     framePad = h('div', { class: 'kt-framepad', onpointerdown: (e: Event) => e.stopPropagation(), onclick: (e: Event) => e.stopPropagation() },
       info,
-      h('div', { class: 'kt-fp-row' }, back, btn('camera', t('frameSave'), () => screenshot()), fwd, btn('close', t('close'), () => toggleFramePad(false))),
+      h('div', { class: 'kt-fp-row' }, back, btn('camera', t('frameSave'), () => screenshot()), fwd, subsBtn, btn('close', t('close'), () => toggleFramePad(false))),
       h('div', { class: 'kt-fp-row' },
         btn('', t('framePointA'), () => { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); drawMarks(); }, 'A'),
         btn('close', t('toolAbLoop'), () => { abA = null; abB = null; abBtn.classList.remove('on'); drawMarks(); flashText(t('toolAbLoop') + ' ✕'); }),
@@ -799,7 +845,7 @@ export function openPlayer(src: PlayerSource): void {
     sh.body.append(info, h('div', { class: 'kt-frame-row', dir: 'ltr' }, b('−10', () => step(-10)), b('−1', () => step(-1)), b('+1', () => step(1)), b('+10', () => step(10))),
       h('div', { class: 'row-actions wrap' },
         h('button', { type: 'button', class: 'btn tonal small', onclick: () => screenshot() }, icon('camera'), t('frameSave')),
-        h('label', { class: 'row switch-row' }, h('span', null, t('frameWithSubs')), h('input', { type: 'checkbox', checked: getPrefs().shotSubs !== false, onchange: (e: Event) => updatePrefs({ shotSubs: (e.target as HTMLInputElement).checked }) })),
+        h('label', { class: 'row switch-row' }, h('span', null, t('frameWithSubs')), h('input', { type: 'checkbox', checked: getPrefs().frameSubs === true, onchange: (e: Event) => updatePrefs({ frameSubs: (e.target as HTMLInputElement).checked }) })),
         h('button', { type: 'button', class: 'btn tonal small', onclick: () => { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); drawMarks(); } }, t('framePointA')),
         h('button', { type: 'button', class: 'btn tonal small', onclick: () => { abB = Math.max((abA ?? 0) + 0.04, video.currentTime); flashText(`B ${fmtTime(abB)}`); abBtn.classList.add('on'); drawMarks(); } }, t('framePointB')),
         h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void cutSheet(); } }, icon('scissors'), t('toolCut'))));

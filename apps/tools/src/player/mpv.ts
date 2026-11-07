@@ -28,7 +28,8 @@ export interface MpvControl {
   addSub(urlOrData: string, title?: string, isData?: boolean): void;
   set(name: string, value: string | number | boolean): void;
   command(...args: string[]): void;
-  screenshot(): void;
+  /** A frame saved, with the subtitles on it or not. */
+  screenshot(subs?: boolean): void;
   onTracks(fn: () => void): void;
   close(): void;
 }
@@ -79,7 +80,7 @@ export function mpvVideo(url: string, opts: { start?: number; alang?: string; sl
     setTrack: (type, id) => set(type === 'audio' ? 'aid' : 'sid', id),
     addSub: (u, title, isData) => command('sub-add', isData ? `memory://${u}` : u, 'select', title ?? ''),
     set, command: (...a) => command(...a),
-    screenshot: () => command('screenshot', 'video'),
+    screenshot: (subs?: boolean) => command('screenshot', subs ? 'subtitles' : 'video'),
     onTracks: (fn) => { trackFns.push(fn); },
     close: () => { sub?.remove(); void p.mpvClose().catch(() => undefined); },
   };

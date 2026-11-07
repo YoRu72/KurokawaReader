@@ -399,6 +399,9 @@ html.pc .get-card { animation-name: get-in-up; }
 .dl-status .sb-btn:hover { background: var(--md-surface-container-highest); }
 .dl-status .sb-btn.on { color: var(--md-primary); font-weight: 600; }
 .downloads-view .body { display: flex; flex-direction: column; }
+/* (The scroller's rows keep their height: a row that scrolls sideways — the filters — would otherwise be squeezed to
+   nothing by a long list, the status card drawn over it.) */
+.downloads-view .body > * { flex-shrink: 0; }
 .downloads-view .body > .chips { order: 1; } .downloads-view .body > .dl-search { order: 0; } .downloads-view .body > .engine-note { order: 0; } .downloads-view .body > .empty, .downloads-view .body > .task-list { order: 3; }
 /* On a computer it sits at the bottom, as Prism's does. */
 html.pc .dl-status { order: 9; position: sticky; bottom: 0; z-index: 5; margin: auto 0 0; border-radius: 0; border-top: 1px solid var(--md-outline-variant); padding: 7px 16px; }
@@ -892,3 +895,14 @@ html.pc .settings-view .card .row small.src, html.pc .settings-view .card .switc
 .app-icon-row { display: flex; align-items: center; gap: 12px; }
 .app-icon-now { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; flex: none; }
 .app-icon-row .grow { display: flex; flex-direction: column; gap: 2px; }
+
+/* A phone's bar too narrow for its title and buttons: two lines (ui/fitTopbar.ts) — the buttons, then the title. */
+.view > .topbar.stacked { flex-wrap: wrap; height: auto; min-height: calc(var(--topbar-h) + var(--safe-top)); padding-bottom: 6px; row-gap: 0; }
+.view > .topbar.stacked > .topbar-actions { order: 1; margin-inline-start: auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.view > .topbar.stacked > .topbar-actions::-webkit-scrollbar { display: none; }
+.view > .topbar.stacked > .icon-btn:first-child { order: 0; }
+.view > .topbar.stacked > .title { order: 2; flex: 1 0 100%; padding-inline: 10px; }
+/* The filters stay in sight above the list as it scrolls, instead of being cut in half under the bar. */
+.downloads-view .body > .chips { position: sticky; top: -8px; z-index: 6; margin-top: -8px; padding-top: 8px; padding-bottom: 8px; background: var(--md-surface); }
+html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-top: 18px; }
+.view .body > :is(.filter-chips, .chip-row, .folder-chips, .chips, .tabs, .seg-tabs) { flex-shrink: 0; }

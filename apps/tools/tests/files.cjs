@@ -79,6 +79,17 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   // selection by a long press: the bar
   const row = await p.$('.files-row:has-text("Song.mp3")'); const bb = await row.boundingBox(); await p.mouse.move(bb.x + 40, bb.y + 20); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200);
   ok('held: the selection bar shows one', !(await p.$eval('.files-selbar', (e) => e.hidden)) && /1/.test(await p.textContent('.files-selcount')));
+  // the same by a finger (a real touch, through Chromium): held once, it selects one — and the tap that follows the
+  // lift does not undo it
+  {
+    await p.click('.files-selbar button[aria-label="Close"]'); await p.waitForTimeout(200);
+    const tc = await p.context().newCDPSession(p); await tc.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    const r2 = await (await p.$('.files-row:has-text("Song.mp3")')).boundingBox(); const pt = [{ x: r2.x + 40, y: r2.y + 20 }];
+    await tc.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pt }); await p.waitForTimeout(700);
+    await tc.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(400);
+    ok('held by a finger: one selected, and still after the lift', !(await p.$eval('.files-selbar', (e) => e.hidden)) && /1/.test(await p.textContent('.files-selcount')) && (await p.$$('.files-row.picked, .files-row[aria-selected="true"], .files-row.on')).length === 1);
+    await tc.send('Emulation.setTouchEmulationEnabled', { enabled: false }); await tc.detach();
+  }
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-select.png' });
   // copy, go to Phone, paste: the job, the conflict, replace
   await p.click('.files-selbar button[aria-label="Copy"]'); await p.waitForTimeout(200); await p.click('.files-roots .chip:nth-child(2)'); await p.waitForTimeout(300); await p.click('.topbar-actions button[aria-label="Paste here"]'); await p.waitForSelector('.files-compare', { timeout: 3000 });

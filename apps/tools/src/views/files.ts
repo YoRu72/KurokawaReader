@@ -479,8 +479,27 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // The back button goes up a folder first when the reader asked for that.
   const onBack = (ev: KeyboardEvent) => { if (!prefs.backUp || ev.key !== 'Escape' && ev.key !== 'GoBack' && ev.key !== 'BrowserBack') return; if (document.querySelector('.sheet')) return; const r = roots.find((x) => at === x.path); if (collection || r || !at) return; ev.preventDefault(); ev.stopPropagation(); go(parentOf(at)); };
   window.addEventListener('keydown', onBack, true);
+  // A computer's keys, as a file manager's: Ctrl+A all, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste, Delete to the
+  // bin, F2 rename the one chosen, Ctrl+F filter this folder, Alt+↑ (or Backspace) the folder above, Escape let go.
+  const onKeys = (ev: KeyboardEvent) => {
+    if (!root.isConnected || document.querySelector('.sheet') || !document.documentElement.classList.contains('pc')) return;
+    const el = ev.target as HTMLElement; if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable) { if (ev.key === 'Escape' && el === search) { search.value = ''; query = ''; search.hidden = true; draw(); } return; }
+    // (Only the pane last clicked in, when two are side by side.)
+    if (po.peer?.() && !root.contains(document.activeElement) && !root.matches(':hover')) return;
+    const mod = ev.ctrlKey || ev.metaKey; const k = ev.key.toLowerCase();
+    const one = picked.size === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
+    if (mod && k === 'a') { ev.preventDefault(); selecting = true; for (const e of shown()) picked.add(e.path); draw(); drawSel(); }
+    else if (mod && (k === 'c' || k === 'x') && picked.size) { ev.preventDefault(); const n = picked.size; clipboard = { op: k === 'c' ? 'copy' : 'move', paths: [...picked] }; pasteBtn.hidden = false; toast(t(k === 'c' ? 'filesCopied' : 'filesCutDone', { n: localDigits(n) })); leaveSel(); }
+    else if (mod && k === 'v' && clipboard) { ev.preventDefault(); void paste(); }
+    else if (mod && k === 'f') { ev.preventDefault(); search.hidden = false; search.focus(); }
+    else if (ev.key === 'Delete' && picked.size) { ev.preventDefault(); void confirmDelete([...picked]); }
+    else if (ev.key === 'F2' && one) { ev.preventDefault(); renameSheet(one); }
+    else if (ev.key === 'Escape' && selecting) { ev.preventDefault(); leaveSel(); }
+    else if ((ev.altKey && ev.key === 'ArrowUp') || (ev.key === 'Backspace' && !mod)) { if (at && !collection && parentOf(at) !== at && !roots.some((r) => r.path === at)) { ev.preventDefault(); go(parentOf(at)); } }
+  };
+  window.addEventListener('keydown', onKeys);
   const unSwipe = swipeToOpen(root, () => drawer());
-  root.dispose = () => { gone = true; unSwipe(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { gone = true; unSwipe(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };
