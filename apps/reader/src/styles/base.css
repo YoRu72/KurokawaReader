@@ -2183,6 +2183,7 @@ html.pc .settings-view .settings-nav .chip.on { background: var(--md-secondary-c
 .ic-canvas { width: 280px; height: 280px; touch-action: none; cursor: grab; border-radius: 12px; }
 .ic-canvas:active { cursor: grabbing; }
 .ic-row { display: flex; align-items: center; gap: 8px; }
+.ic-row > svg { width: 20px; height: 20px; flex: none; color: var(--md-on-surface-variant); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .ic-row input[type=range] { flex: 1; }
 .ic-fill { display: flex; align-items: center; gap: 10px; }
 .ic-fill input[type=color] { width: 40px; height: 28px; border: 0; padding: 0; background: none; }
@@ -2193,3 +2194,31 @@ html.pc .settings-view .settings-nav .chip.on { background: var(--md-secondary-c
 /* Menu rows that are buttons (the book's menu, More tools): the app's type, not a button's default. */
 .sheet button.dest-row { font: inherit; font-size: 14px; color: inherit; background: none; border: 0; width: 100%; text-align: start; grid-template-columns: auto 1fr; }
 html.pc .book-hero-acts .book-tile .tile-more { position: static; opacity: .6; margin-inline-start: -2px; }
+/* The app's icon on a computer's settings page: the picture, its name and note, then its buttons — one line. */
+html.pc .settings-body.pc-one > .card > .field.app-icon-row { display: flex; flex-direction: row; align-items: center; gap: 14px; }
+html.pc .settings-body.pc-one > .card > .field.app-icon-row > * { grid-column: auto; }
+html.pc .settings-body.pc-one > .card > .field.app-icon-row > .grow { flex: 1; min-width: 0; }
+html.pc .settings-body.pc-one > .card > .field.app-icon-row > .btn { flex: none; width: auto; }
+
+/* The window's bar of the app's own on a computer (ui/titlebar.ts): a strip in the theme's colours with the icon and
+   the name, the system's buttons over its end (on a Mac its lights at its start); the page below it, full screen
+   without it. */
+.win-titlebar { display: none; }
+html.frameless { --tb: var(--tb-h, 38px); }
+html.frameless .win-titlebar { display: flex; align-items: center; gap: 9px; position: fixed; top: 0; left: 0; right: 0; height: var(--tb); z-index: 2147483000;
+  padding: 0 150px 0 14px; box-sizing: border-box; background: var(--md-surface-container-low); color: var(--md-on-surface);
+  font: 600 12.5px/1 var(--font-ui, system-ui); letter-spacing: .01em; -webkit-app-region: drag; user-select: none; }
+html.frameless[data-os="darwin"] .win-titlebar { padding: 0 14px 0 84px; justify-content: center; }
+html.frameless .win-titlebar img { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; }
+html.frameless .win-titlebar .win-title { opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* (The system's buttons are always at the window's right: the bar's own things stay at its left, whatever the language.) */
+html.frameless:not([data-os="darwin"]) .win-titlebar { direction: ltr; }
+html.frameless .win-titlebar .win-where { font-weight: 500; opacity: .55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.frameless .win-titlebar .win-where:not(:empty)::before { content: '—'; margin-inline-end: 8px; opacity: .7; }
+/* (The bar shows the icon and the name: the sidebar's top keeps only its fold button.) */
+html.frameless .rail-brand > img, html.frameless .rail-brand > .rail-name { display: none; }
+html.frameless .rail-brand { justify-content: flex-end; min-height: 0; margin-bottom: -6px; }
+html.frameless.rail-mini .rail-brand { justify-content: center; }
+html.frameless body { position: fixed; top: var(--tb); left: 0; right: 0; bottom: 0; height: auto; transform: translateZ(0); overflow: hidden; }
+html.frameless.tb-hidden { --tb: 0px; }
+html.frameless.tb-hidden .win-titlebar { display: none; }

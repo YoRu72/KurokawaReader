@@ -1,3 +1,4 @@
+import { brandIcon, setBrandIcon } from '../ui/brandIcon';
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
 import { isPc, uiSize, setUiSize, UI_SIZES } from '../ui/pcshell';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
@@ -454,13 +455,15 @@ function resettable(text: string, key: keyof VisualSettings, after: () => void):
  *  come back); on Android a home-screen shortcut with it opens the app. Hidden where neither is possible. */
 function appIconField(): HTMLElement | null {
   const way = appIconWay(); if (!way) return null;
-  const show = (u: string | null) => document.querySelectorAll<HTMLElement>('.app-icon-row').forEach((r) => { (r.querySelector('.app-icon-now') as HTMLImageElement).src = u || 'icons/icon.svg'; (r.querySelector('.app-icon-reset') as HTMLElement).hidden = !u; });
+  const show = (u: string | null) => { setBrandIcon(u); showRows(u); };
+  const showRows = (u: string | null) => document.querySelectorAll<HTMLElement>('.app-icon-row').forEach((r) => { (r.querySelector('.app-icon-now') as HTMLImageElement).src = u || 'icons/icon.svg'; (r.querySelector('.app-icon-reset') as HTMLElement).hidden = !u; });
   const pic = h('img', { class: 'app-icon-now', src: 'icons/icon.svg', alt: '' });
   const reset = h('button', { type: 'button', class: 'btn text small app-icon-reset', hidden: true, onclick: async () => { await setAppIcon(null, t('appName')); show(null); toast(t('myIconSet')); } }, t('myIconReset'));
-  if (way === 'desktop') void appIconNow().then((u) => { if (u) show(u); });
+  // (The app's own record brought into the page's logos too; on a phone, the one pinned last.)
+  if (way === 'desktop') void appIconNow().then((u) => { if (u) show(u); }); else { const u = brandIcon(); if (u) showRows(u); }
   const choose = async () => {
     const { pickIconImage } = await import('../ui/iconCrop'); const u = await pickIconImage(); if (!u) return;
-    try { const ok = await setAppIcon(u, t('appName')); if (way === 'desktop') { show(u); toast(t('myIconSet')); } else toast(ok ? t('myIconPinned') : t('iconCantRead'), ok ? 'info' : 'error', 5000); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+    try { const ok = await setAppIcon(u, t('appName')); if (way === 'desktop') { show(u); toast(t('myIconSet')); } else { if (ok) show(u); toast(ok ? t('myIconPinned') : t('iconCantRead'), ok ? 'info' : 'error', 5000); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
   };
   return h('div', { class: 'field app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, way === 'desktop' ? t('myIconHintPc') : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
 }

@@ -10,6 +10,9 @@ import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
 import { scheduleAutoCheck } from './updates';
+import { brandIcon, applyBrandIcon } from './ui/brandIcon';
+// (The icon of the user's choosing on the page's own little icon too, from the start.)
+applyBrandIcon();
 
 const app = document.getElementById('app')!;
 window.addEventListener('error', (e) => { console.error(e.error ?? e.message); void import('./ui/dom').then((m) => m.toast(String(e.error?.message ?? e.message), 'error', 6000)); });
@@ -45,7 +48,7 @@ function buildNav(): HTMLElement {
   // (A computer: a sidebar — the app's name, «New download», each place by its icon and its name —, folded down to
   // the icons by its button or when the window is narrow.)
   if (pc) return h('nav', { class: 'nav-rail', 'aria-label': t('appName') },
-    h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' }), h('b', { class: 'rail-name' }, t('appName')),
+    h('div', { class: 'rail-brand' }, h('img', { src: brandIcon() || 'icons/icon.svg', alt: '', 'data-brand': '' }), h('b', { class: 'rail-name' }, t('appName')),
       h('button', { type: 'button', class: 'icon-btn rail-fold', title: t('railFold'), 'aria-label': t('railFold'), onclick: () => { const mini = !document.documentElement.classList.contains('rail-mini'); try { localStorage.setItem(RAIL_KEY, mini ? '1' : '0'); } catch { /* private */ } fitRail(); } }, icon('sidebar'))),
     h('button', { type: 'button', class: 'rail-fab', title: t('addDownload'), 'aria-label': t('addDownload'), 'aria-haspopup': 'menu', onclick: (e: Event) => { const b = e.currentTarget as HTMLElement; void import('./views/fabMenu').then((m) => m.fabMenu(b)); } }, icon('plus'), h('span', { class: 'rail-fab-label' }, t('addDownload'))),
     h('div', { class: 'rail-items' }, ...items.slice(0, -1)), h('div', { class: 'rail-end' }, items[items.length - 1]));
@@ -169,6 +172,7 @@ else {
     void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   void import('./ui/imgRetry').then((m) => m.startImgRetry());
   void import('./desktopStarter').then((m) => m.startDesktopStarter());
+  void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());

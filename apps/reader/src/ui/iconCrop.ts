@@ -57,7 +57,7 @@ export function cropIcon(src: string, o: { title?: string } = {}): Promise<strin
       color.disabled = true;
       sh.body.append(
         h('div', { class: 'ic-stage' }, cv),
-        h('div', { class: 'ic-row' }, icon('search'), slider, iconButton('rotate', t('iconRotate'), () => { rot = (rot + 1) % 4; base = fit(); x = y = 0; draw(); }), iconButton('refresh', t('iconResetCrop'), () => { rot = 0; base = fit(); zoom = 1; x = y = 0; slider.value = '1'; draw(); })),
+        h('div', { class: 'ic-row' }, icon('search'), slider, iconButton('rotate', t('iconRotate'), () => { rot = (rot + 1) % 4; base = fit(); x = y = 0; draw(); }), iconButton('undo', t('iconResetCrop'), () => { rot = 0; base = fit(); zoom = 1; x = y = 0; slider.value = '1'; draw(); })),
         h('div', { class: 'field' }, h('label', null, t('iconShape')), seg<IconShape>([['circle', t('iconShapeCircle')], ['squircle', t('iconShapeRounded')], ['square', t('iconShapeSquare')]], () => shape, (v) => { shape = v; })),
         fillBox, h('p', { class: 'hint' }, t('iconCropHint', { n: localDigits(OUT) })));
       sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { const out = document.createElement('canvas'); out.width = out.height = OUT; paint(out.getContext('2d')!, OUT, false); const url = out.toDataURL('image/png'); finish(url); sh.close(); } }, icon('check'), t('iconUse')));

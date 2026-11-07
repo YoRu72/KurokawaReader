@@ -5,6 +5,7 @@
 import { h, icon } from './dom';
 import { t, onLangChange } from '../i18n';
 import { navigate, onRoute, parseRoute, type Route } from '../router';
+import { brandIcon } from './brandIcon';
 
 const wide = matchMedia('(min-width: 1024px) and (pointer: fine)');
 // (The desktop app's window can be made narrow; below this it keeps the phone layout.)
@@ -41,7 +42,7 @@ function item(name: string, iconName: string, label: string, onClick: () => void
 
 function build(): HTMLElement {
   const nav = h('nav', { class: 'nav-rail', 'aria-label': t('appName') },
-    h('div', { class: 'rail-brand' }, h('img', { src: 'icons/icon.svg', alt: '' }), h('b', { class: 'rail-name' }, t('appName')),
+    h('div', { class: 'rail-brand' }, h('img', { src: brandIcon() || 'icons/icon.svg', alt: '', 'data-brand': '' }), h('b', { class: 'rail-name' }, t('appName')),
       h('button', { type: 'button', class: 'icon-btn rail-fold', title: t('railFold'), 'aria-label': t('railFold'), onclick: () => { const mini = !document.documentElement.classList.contains('rail-mini'); try { localStorage.setItem(RAIL_KEY, mini ? '1' : '0'); } catch { /* private */ } fitRail(); } }, icon('sidebar'))),
     h('button', { type: 'button', class: 'rail-fab', title: `${t('importBooks')} (Ctrl+O)`, 'aria-label': t('importBooks'), onclick: () => ask('import') }, icon('plus'), h('span', { class: 'rail-fab-label' }, t('importBooks'))),
     h('div', { class: 'rail-items' },

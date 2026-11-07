@@ -1915,3 +1915,26 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .doh-ev .doh-kind { font-weight: 600; min-width: 6em; }
 .doh-ev.k-fail .doh-kind, .doh-ev.k-retry .doh-kind { color: var(--md-error); }
 .doh-ev.k-unblock .doh-kind, .doh-ev.k-resolve .doh-kind { color: var(--md-primary); }
+
+/* The window's bar of the app's own on a computer (ui/titlebar.ts): a strip in the theme's colours with the icon and
+   the name, the system's buttons over its end (on a Mac its lights at its start); the page below it, full screen
+   without it. */
+.win-titlebar { display: none; }
+html.frameless { --tb: var(--tb-h, 38px); }
+html.frameless .win-titlebar { display: flex; align-items: center; gap: 9px; position: fixed; top: 0; left: 0; right: 0; height: var(--tb); z-index: 2147483000;
+  padding: 0 150px 0 14px; box-sizing: border-box; background: var(--md-surface-container-low); color: var(--md-on-surface);
+  font: 600 12.5px/1 var(--font-ui, system-ui); letter-spacing: .01em; -webkit-app-region: drag; user-select: none; }
+html.frameless[data-os="darwin"] .win-titlebar { padding: 0 14px 0 84px; justify-content: center; }
+html.frameless .win-titlebar img { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; }
+html.frameless .win-titlebar .win-title { opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* (The system's buttons are always at the window's right: the bar's own things stay at its left, whatever the language.) */
+html.frameless:not([data-os="darwin"]) .win-titlebar { direction: ltr; }
+html.frameless .win-titlebar .win-where { font-weight: 500; opacity: .55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.frameless .win-titlebar .win-where:not(:empty)::before { content: '—'; margin-inline-end: 8px; opacity: .7; }
+/* (The bar shows the icon and the name: the sidebar's top keeps only its fold button.) */
+html.frameless .rail-brand > img, html.frameless .rail-brand > .rail-name { display: none; }
+html.frameless .rail-brand { justify-content: flex-end; min-height: 0; margin-bottom: -6px; }
+html.frameless.rail-mini .rail-brand { justify-content: center; }
+html.frameless body { position: fixed; top: var(--tb); left: 0; right: 0; bottom: 0; height: auto; transform: translateZ(0); overflow: hidden; }
+html.frameless.tb-hidden { --tb: 0px; }
+html.frameless.tb-hidden .win-titlebar { display: none; }
