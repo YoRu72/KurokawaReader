@@ -21,8 +21,8 @@ export function startTitleBar(bridge: Bridge | undefined, name: string): void {
   root.append(bar); root.classList.add('frameless');
   const full = (on?: boolean) => root.classList.toggle('tb-hidden', !!on);
   let last = '';
-  const paint = () => { const cs = getComputedStyle(bar); const o = { color: hex(cs.backgroundColor), symbol: hex(cs.color) }; const k = o.color + o.symbol; if (k === last) return; last = k; void bridge.titleBar!(o).catch(() => undefined); };
-  void bridge.titleBar().then((info) => {
+  const paint = () => { const cs = getComputedStyle(bar); const o = { color: hex(cs.backgroundColor), symbol: hex(cs.color) }; const k = o.color + o.symbol; if (k === last) return; last = k; void Promise.resolve(bridge.titleBar!(o)).catch(() => undefined); };
+  void Promise.resolve(bridge.titleBar()).then((info) => {
     if (!info) { bar.remove(); root.classList.remove('frameless'); return; }
     root.dataset.os = info.platform; root.style.setProperty('--tb-h', `${info.height}px`); full(info.fullscreen); paint();
   }).catch(() => { bar.remove(); root.classList.remove('frameless'); });
