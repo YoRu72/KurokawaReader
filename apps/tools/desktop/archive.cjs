@@ -157,7 +157,13 @@ async function extractZipInPlace(file, dest, o, pr) {
   return n;
 }
 async function writeAtomic(file, text) { await fsp.writeFile(file + '.tmp', text); await fsp.rename(file + '.tmp', file); }
-async function freeSpace(dir) { try { const s = await fsp.statfs(dir); return Number(s.bavail) * Number(s.bsize); } catch { return Number.MAX_SAFE_INTEGER; } }
+/** Free bytes where `dir` is — measured at the nearest folder that exists (the download folder is made with the first
+ *  download) —; Infinity when it cannot be told (callers then don't hold anything back, and the page shows nothing). */
+async function freeSpace(dir) {
+  let d = path.resolve(String(dir || '.'));
+  for (let i = 0; i < 40; i++) { try { const s = await fsp.statfs(d); return Number(s.bavail) * Number(s.bsize); } catch { const up = path.dirname(d); if (up === d) break; d = up; } }
+  return Infinity;
+}
 
 async function extract7z(file, dest, o, pr) {
   const args = ['x', '-y', '-bsp1', '-bb1', `-o${dest}`, o.replace === 'skip' ? '-aos' : o.replace === 'both' ? '-aou' : '-aoa', o.password ? `-p${o.password}` : '-p', file, ...(o.only || []).map((w) => w.replace(/\/$/, ''))];

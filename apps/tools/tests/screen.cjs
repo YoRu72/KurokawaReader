@@ -19,6 +19,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       screenStatus: async () => ({ ...window.__st }),
       screenPermission: async (o) => { window.__calls.push(['perm', o.what]); if (o.what === 'overlay') setTimeout(() => { window.__st.overlay = true; }, 200); },
       screenConfig: async (o) => { window.__calls.push(['config', o.config, !!o.clearFixed]); },
+      screenFontAdd: async (o) => { window.__calls.push(['font', o.name, o.b64.length]); return { path: '/data/app/screen-fonts/' + o.name }; }, screenFontRemove: async (o) => { window.__calls.push(['fontRemove', o.path]); },
       screenStart: async () => { window.__calls.push(['start']); window.__st.running = true; },
       screenStop: async () => { window.__calls.push(['stop']); window.__st.running = false; },
       screenTranslate: async (o) => { window.__calls.push(['try', o.texts, o.config.engine]); return { texts: o.texts.map((x) => '«' + x + '»→' + o.config.target) }; },
@@ -93,6 +94,21 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.topbar .screen-btn');
   check('the Downloads page\'s top bar leads to it', await p.$eval('.topbar .screen-btn', (e) => !e.hidden));
   await p.click('.topbar .screen-btn'); await p.waitForSelector('.screen-view');
+  // Lettering and the glossary: a font of the reader's added and set for thoughts; terms pasted one a line; both sent
+  // to the floating translator with its settings.
+  {
+    await p.goto(`http://127.0.0.1:${port}/#/screen`); await p.waitForSelector('#scr-letter'); await p.evaluate(() => { window.__calls.length = 0; });
+    await p.setInputFiles('#scr-letter input[type=file]', "/usr/share/fonts/truetype/crosextra/Caladea-Bold.ttf"); await p.waitForSelector('#scr-letter .scr-fonts .dest-row');
+    const sel = p.locator('#scr-letter select[name="font-thought"]'); if (await sel.count()) await sel.selectOption({ index: 1 });
+    await p.locator('#scr-glossary details summary').click(); await p.fill('#scr-glossary textarea', 'Kamado Tanjiro = كامادو تانجيرو\nドーン = بووم [sfx]');
+    await p.locator('#scr-glossary details .btn').click(); await p.waitForTimeout(400);
+    const last = await p.evaluate(() => { const c = window.__calls.filter((x) => x[0] === 'config').pop(); return c ? c[1] : null; });
+    const font = await p.evaluate(() => window.__calls.find((x) => x[0] === 'font'));
+    check('a font added: its file handed over and listed', !!font && font[2] > 1000 && (await p.$$('#scr-letter .scr-fonts .dest-row')).length === 1);
+    check('…set for thoughts, sent with the settings', !!last && last.letter.lib.length === 1 && !!last.letter.fonts.thought && last.letter.lib[0].path.endsWith('.ttf'));
+    check('terms pasted: two, the second a sound effect, sent too', !!last && last.glossary.entries.length === 2 && last.glossary.entries[1].kind === 'sfx' && (await p.$$('#scr-glossary .scr-term')).length === 2);
+    await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/scr-letter-' + lang + '.png' });
+  }
   await p.goto(`http://127.0.0.1:${port}/#/settings/addons`); await p.waitForTimeout(1200);
   check('Settings has its card', !!(await p.$('#screen a[href="#/screen"]')));
   await ctx.close();

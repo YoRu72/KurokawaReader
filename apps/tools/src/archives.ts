@@ -107,7 +107,7 @@ export function testArchiveJob(path: string, password: string | undefined, onPro
 }
 /** An extraction in place given up: what is left becomes a normal archive again. */
 export async function restoreArchive(path: string): Promise<number> { const m = more(); if (!m?.archiveRestore) throw new Error('unsupported'); return (await m.archiveRestore({ path })).left; }
-export async function freeSpaceAt(dir: string): Promise<number> { try { const m = more(); return m?.archiveFree ? (await m.archiveFree({ dir })).free : -1; } catch { return -1; } }
+export async function freeSpaceAt(dir: string): Promise<number> { try { const m = more(); const f = m?.archiveFree ? (await m.archiveFree({ dir })).free : -1; return Number.isFinite(f) && f < 1e15 ? f : -1; } catch { return -1; } }
 export async function existingIn(dest: string, names: string[]): Promise<string[]> { try { const m = more(); return m?.archiveExisting ? (await m.archiveExisting({ dest, names })).existing : []; } catch { return []; } }
 /** HatchZip's «Extract here»: one top-level item lands beside the archive; several go into a folder named after it. */
 export function topLevel(entries: ArchiveEntry[]): 'one' | 'many' { const tops = new Set(entries.map((e) => e.path.replace(/^\.\//, '').split('/')[0]).filter(Boolean)); return tops.size <= 1 ? 'one' : 'many'; }

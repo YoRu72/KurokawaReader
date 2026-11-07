@@ -13,7 +13,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
     await p.goto(`http://127.0.0.1:${port}/#/settings`); await p.waitForSelector('.settings-view .card'); await p.waitForTimeout(500); return p;
   };
   let p = await open([]);
-  check('no AniList, subtitle or episode cards without the add-ons', !(await p.$('#anilist')) && !(await p.$('#sublangs')) && !(await p.$('#episodes')));
+  check('no AniList or episode cards without the add-ons (subtitle languages stay: the player is built in)', !(await p.$('#anilist')) && !(await p.$('#episodes')));
   await p.close();
   p = await open(['anime', 'subtitles']);
   const ids = await p.$$eval('.settings-view section.card', (c) => c.map((x) => x.id)); console.log('cards:', ids.join(' '));

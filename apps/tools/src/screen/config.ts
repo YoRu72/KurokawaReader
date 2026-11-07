@@ -21,7 +21,17 @@ export interface ScreenConfig {
   /** On a computer: the shortcuts on, kept in the tray, started with the computer, how the picture is read. */
   pcOn: boolean;
   pc: { keys: Record<PcKey, string>; tray: boolean; startup: boolean; ocr: 'system' | 'ai'; closeOnBlur: boolean };
+  /** The lettering (Ascent's idea, taken further): fonts of the reader's own, one for each kind of text — a balloon's
+   *  words, a thought, a box (narration), a sound effect, a sign —, the kinds told apart or not. */
+  letter: { kinds: boolean; fonts: Record<'default' | TextKind, string>; lib: FontFile[] };
+  /** Terms always translated the reader's way (names, places, attacks), each into one language or any; one with a
+   *  kind sets the kind of a block holding it (a sound effect always in the sound-effect font). */
+  glossary: { on: boolean; entries: GlossaryEntry[] };
 }
+export type TextKind = 'dialogue' | 'thought' | 'box' | 'sfx' | 'sign';
+export const TEXT_KINDS: TextKind[] = ['dialogue', 'thought', 'box', 'sfx', 'sign'];
+export interface FontFile { id: string; name: string; path: string }
+export interface GlossaryEntry { from: string; to: string; kind?: TextKind | ''; lang?: string }
 export type PcKey = 'region' | 'full' | 'repeat' | 'auto' | 'clipboard';
 export const PC_KEYS: Record<PcKey, string> = { region: 'Alt+Shift+T', full: 'Alt+Shift+F', repeat: 'Alt+Shift+R', auto: 'Alt+Shift+A', clipboard: 'Alt+Shift+C' };
 export type Action = 'translate' | 'region' | 'fixed' | 'auto' | 'panel' | 'menu' | 'clear' | 'none';
@@ -49,6 +59,8 @@ export const DEFAULT_SCREEN: ScreenConfig = {
   bubble: { size: 52, alpha: 0.92, color: '#6750A4', dim: true, dimAfter: 4, edge: true },
   actions: { tap: 'translate', double: 'region', long: 'menu' },
   pcOn: false, pc: { keys: { ...PC_KEYS }, tray: true, startup: false, ocr: 'system', closeOnBlur: true },
+  letter: { kinds: true, fonts: { default: '', dialogue: '', thought: '', box: '', sfx: '', sign: '' }, lib: [] },
+  glossary: { on: true, entries: [] },
 };
 
 const KEY = 'kt.screen';

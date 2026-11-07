@@ -138,7 +138,7 @@ else {
     protocol.handle('app', (req) => {
       const u = new URL(req.url); let p = decodeURIComponent(u.pathname); if (p === '/' || p === '') p = '/index.html';
       let file = path.normalize(path.join(DIST, p)); if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
-      return net.fetch('file://' + file).then((r) => new Response(r.body, { headers: { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' } }));
+      return net.fetch(require('node:url').pathToFileURL(file).href).then((r) => new Response(r.body, { headers: { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' } }));
     });
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]));
     const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true });
@@ -235,7 +235,9 @@ ipcMain.handle('kt:rename', (_e, o) => E().rename(String(o.id), String(o.name)))
 ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
 ipcMain.handle('kt:defaultDir', () => engine?.defaultDir || app.getPath('downloads'));
 ipcMain.handle('kt:pickDir', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
-ipcMain.handle('kt:openExternal', (_e, u) => shell.openExternal(String(u)));
+// (A file of this computer — «file://» and its path, as the page writes it — opened with its own app: by its path, which
+// works on Windows too, where «file://C:\…» is no address.)
+ipcMain.handle('kt:openExternal', (_e, u) => { const s = String(u); if (/^file:\/\//i.test(s)) { const raw = s.replace(/^file:\/\/\/?/i, process.platform === 'win32' ? '' : '/'); let p = raw; try { p = decodeURIComponent(raw); } catch { /* a path with a % of its own */ } return shell.openPath(p); } return shell.openExternal(s); });
 ipcMain.handle('kt:registerMagnet', () => { if (process.defaultApp) { if (process.argv.length >= 2) app.setAsDefaultProtocolClient('magnet', process.execPath, [path.resolve(process.argv[1])]); } else app.setAsDefaultProtocolClient('magnet'); return true; });
 ipcMain.handle('kt:http', async (_e, o) => {
   const r = await net.fetch(String(o.url), { method: o.method || 'GET', headers: o.headers || {}, body: o.body ? (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body) : undefined, redirect: 'follow' });
@@ -339,6 +341,9 @@ async function handBack(gid) {
   e.tick?.();
 }
 ipcMain.handle('kt:streamUrl', async (_e, o) => { const id = String(o.id), i = Number(o.fileIndex) || 0; const w = await watchUrl(id, i).catch((er) => { console.warn('webstream:', er && er.message); return null; }); return { url: w || await TorrentStream.url(E(), id, i) }; });
+// Fonts for the screen translator's lettering, kept in the app's data folder.
+ipcMain.handle('kt:screenFontAdd', async (_e, o) => { const dir = path.join(app.getPath('userData'), 'screen-fonts'); await fs.promises.mkdir(dir, { recursive: true }); const b = Buffer.from(String(o.b64 || ''), 'base64'); if (b.length < 1000 || b.length > 40e6) throw new Error('size'); const p = path.join(dir, `${Date.now()}-${String(o.name || 'font.ttf').replace(/[\\/:*?"<>|]+/g, '_')}`); await fs.promises.writeFile(p, b); return { path: p }; });
+ipcMain.handle('kt:screenFontRemove', async (_e, o) => { const dir = path.join(app.getPath('userData'), 'screen-fonts'); const p = path.resolve(String(o.path || '')); if (p.startsWith(dir + path.sep)) await fs.promises.rm(p, { force: true }); return { ok: true }; });
 ipcMain.handle('kt:streamDone', async (_e, o) => { await handBack(String(o.id)); return { ok: true }; });
 ipcMain.handle('kt:streamStats', async (_e, o) => { const h = handed.get(String(o.id)); return h ? WebStream.stats(h.hash) : null; });
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
@@ -363,7 +368,7 @@ let _dohProvider = 'off';
 ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: p === 'auto' ? Object.values(DOH) : [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
 ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(String(p)); if (err) throw new Error(err); });
 ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
-ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
+ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir || '') || engine?.defaultDir || app.getPath('downloads'); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
 ipcMain.handle('kt:archiveExisting', async (_e, o) => ({ existing: await Archive.existing(String(o.dest), (o.names || []).map(String)) }));
 ipcMain.handle('kt:archiveCancel', (_e, id) => { const s = archiveJobs.get(id); if (s) s.v = true; });
 ipcMain.handle('kt:archiveCreate', async (e, o) => {
@@ -414,7 +419,8 @@ ipcMain.handle('kt:saveText', async (_e, o) => { const r = await dialog.showSave
 ipcMain.handle('kt:writeTempBytes', async (_e, o) => { const dir = path.join(app.getPath('temp'), 'kurokawa-clip', o.sub ? String(o.sub).replace(/[\\/]/g, '_') : ''); fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, String(o.name).replace(/[\\/]/g, '_')); await fs.promises.writeFile(f, Buffer.from(String(o.b64), 'base64')); return f; });
 ipcMain.handle('kt:writeTemp', async (_e, o) => { const dir = path.join(app.getPath('temp'), 'kurokawa-clip'); fs.mkdirSync(path.join(dir, 'fonts'), { recursive: true }); const f = path.join(dir, String(o.name).replace(/[\\/]/g, '_')); await fs.promises.writeFile(f, String(o.text), 'utf8'); return f; });
 ipcMain.handle('kt:siblings', async (_e, p) => { try { const dir = path.dirname(String(p)); const base = path.basename(String(p)).replace(/\.[^.]+$/, '').toLowerCase(); return (await fs.promises.readdir(dir)).filter((n) => n.toLowerCase().startsWith(base) && n !== path.basename(String(p))).map((n) => path.join(dir, n)); } catch { return []; } });
-ipcMain.handle('kt:fileUrl', (_e, p) => 'file://' + String(p));
+// (Through the app's own local server: a page on app:// may not read file:// media, and a Windows path is no URL.)
+ipcMain.handle('kt:fileUrl', (_e, p) => StreamProxy.fileUrl(String(p)));
 
 /* ---------- updates: the repository's tools-v* releases ---------- */
 const cmp = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; } return 0; };

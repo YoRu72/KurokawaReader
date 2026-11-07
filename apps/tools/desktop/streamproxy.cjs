@@ -22,7 +22,7 @@ function start() {
 async function url(u, headers) { await start(); return `http://127.0.0.1:${port}/p?u=${encodeURIComponent(u)}&h=${encodeURIComponent(JSON.stringify(headers || {}))}`; }
 
 async function serve(req, out) {
-  const q = new URL(req.url, 'http://x'); if (q.pathname === '/audio') { audio(q, req, out); return; } if (q.pathname === '/video') { await Transcode.serve(q, req, out); return; } if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
+  const q = new URL(req.url, 'http://x'); if (q.pathname === '/f') { localFile(q, req, out); return; } if (q.pathname === '/audio') { audio(q, req, out); return; } if (q.pathname === '/video') { await Transcode.serve(q, req, out); return; } if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
   const u = q.searchParams.get('u'); let h = {}; try { h = JSON.parse(q.searchParams.get('h') || '{}'); } catch { /* none */ }
   const headers = { 'user-agent': UA, ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), String(v)])) };
   const isPlaylist = (type, href) => /mpegurl/i.test(type || '') || /\.m3u8(\?|$)/i.test(href);
@@ -62,5 +62,23 @@ function audio(q, req, out) {
 }
 async function audioBase() { await start(); return `http://127.0.0.1:${port}/audio`; }
 async function videoBase() { await start(); return `http://127.0.0.1:${port}/video`; }
+
+// A file on this computer for the page's player and readers: by this server (with ranges, so seeking works), since a
+// page served from app:// may not read file:// media and a Windows path is no URL. Only with this run's token.
+const TOKEN = require('node:crypto').randomBytes(16).toString('hex');
+const TYPES = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo', '.ts': 'video/mp2t', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav', '.srt': 'text/plain; charset=utf-8', '.ass': 'text/plain; charset=utf-8', '.vtt': 'text/vtt', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
+function localFile(q, req, out) {
+  const fs = require('node:fs'); const path = require('node:path');
+  if (q.searchParams.get('t') !== TOKEN) { out.writeHead(403); out.end(); return; }
+  const p = q.searchParams.get('p') || ''; let st; try { st = fs.statSync(p); } catch { out.writeHead(404, { 'access-control-allow-origin': '*' }); out.end(); return; }
+  if (!st.isFile()) { out.writeHead(404, { 'access-control-allow-origin': '*' }); out.end(); return; }
+  const size = st.size; let from = 0, to = size - 1; const r = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+  if (r) { if (r[1]) from = Number(r[1]); if (r[2]) to = Math.min(size - 1, Number(r[2])); if (!r[1] && r[2]) { from = Math.max(0, size - Number(r[2])); to = size - 1; } }
+  if (size && from >= size) { out.writeHead(416, { 'content-range': `bytes */${size}`, 'access-control-allow-origin': '*' }); out.end(); return; }
+  out.writeHead(r ? 206 : 200, { 'content-type': TYPES[path.extname(p).toLowerCase()] || 'application/octet-stream', 'accept-ranges': 'bytes', 'content-length': String(size ? to - from + 1 : 0), ...(r ? { 'content-range': `bytes ${from}-${to}/${size}` } : {}), 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+  if (req.method === 'HEAD' || !size) { out.end(); return; }
+  const rs = fs.createReadStream(p, { start: from, end: to }); req.on('close', () => rs.destroy()); rs.on('error', () => out.destroy()); rs.pipe(out);
+}
+async function fileUrl(p) { await start(); return `http://127.0.0.1:${port}/f?t=${TOKEN}&p=${encodeURIComponent(p)}`; }
 function stop() { try { server?.close(); } catch { /* fine */ } server = null; }
-module.exports = { url, stop, audioBase, videoBase };
+module.exports = { url, stop, audioBase, videoBase, fileUrl };

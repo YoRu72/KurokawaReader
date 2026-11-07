@@ -10,7 +10,7 @@ const lang = process.argv[2] || 'en';
   const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], locale: lang }); const p = await ctx.newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/favicon|api.github|raw.githubusercontent|net::|CORS policy/.test(m.text())) errors.push(m.text()); });
   await p.goto('http://localhost:5480/'); await p.evaluate((l) => localStorage.setItem('kr.lang', l), lang); await p.reload(); await p.waitForSelector('.downloads-view'); await p.waitForTimeout(400);
-  ok('the downloads page opens, empty', !!(await p.$('.downloads-view .empty')) && (await p.$eval('.bottom-nav', (e) => e.children.length)) === 3);
+  ok('the downloads page opens, empty (Downloads, Search, Videos — the player is built in — and Settings)', !!(await p.$('.downloads-view .empty')) && (await p.$eval('.bottom-nav', (e) => e.children.length)) === 4);
   ok('the document direction follows the language', (await p.evaluate(() => document.documentElement.dir)) === (lang === 'ar' ? 'rtl' : 'ltr'));
   await p.click('.fab'); await p.waitForSelector('.fab-menu'); const menu = await p.$$eval('.fab-item', (e) => e.map((x) => x.innerText.replace(/\s+/g, ' ')));
   ok('the + opens a menu of ways to add (link, clipboard, video, page)', menu.length >= 4);

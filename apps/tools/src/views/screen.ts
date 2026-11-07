@@ -7,7 +7,8 @@ import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, getLang } from '../i18n';
 import { back } from '../router';
 import { ktPlugin, nativePlatform } from '../native';
-import { AI_PRESETS, PC_KEYS, SCREEN_LANGS, engineReady, loadScreen, nativeConfig, saveScreen, type Action, type PcKey, type ScreenConfig } from '../screen/config';
+import { parseTerms } from '../screen/lettering';
+import { AI_PRESETS, PC_KEYS, SCREEN_LANGS, TEXT_KINDS, engineReady, loadScreen, nativeConfig, saveScreen, type Action, type GlossaryEntry, type PcKey, type ScreenConfig, type TextKind } from '../screen/config';
 
 /** An Electron accelerator from a key press (a modifier and a key): «Alt+Shift+T», «CommandOrControl+F9». */
 export function accelerator(e: { key: string; code: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }): string {
@@ -117,9 +118,59 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
   const engineCard = h('section', { class: 'card', id: 'scr-engine' }); const readCard = h('section', { class: 'card', id: 'scr-read' }); const autoCard = h('section', { class: 'card', id: 'scr-auto' });
   const lookCard = h('section', { class: 'card', id: 'scr-look' }); const bubbleCard = h('section', { class: 'card', id: 'scr-bubble' }); const histCard = h('section', { class: 'card', id: 'scr-history' });
   const keysCard = h('section', { class: 'card', id: 'scr-keys' }); const bgCard = h('section', { class: 'card', id: 'scr-bg' });
-  if (PC) { hero.querySelector('p')!.textContent = t('scrPcIntro'); setup.querySelector('h3')!.textContent = t('scrPcState'); body.append(hero, setup, keysCard, bgCard, engineCard, readCard, autoCard, lookCard); }
-  else body.append(hero, setup, engineCard, readCard, autoCard, lookCard, bubbleCard, histCard);
+  const letterCard = h('section', { class: 'card', id: 'scr-letter' }); const glossCard = h('section', { class: 'card', id: 'scr-glossary' });
+  if (PC) { hero.querySelector('p')!.textContent = t('scrPcIntro'); setup.querySelector('h3')!.textContent = t('scrPcState'); body.append(hero, setup, keysCard, bgCard, engineCard, readCard, autoCard, lookCard, letterCard, glossCard); }
+  else body.append(hero, setup, engineCard, readCard, autoCard, lookCard, letterCard, glossCard, bubbleCard, histCard);
 
+  // Lettering: the reader's own fonts, one for each kind of text (Ascent's lettering font, taken further).
+  const KIND_LABEL = (): Record<'default' | TextKind, string> => ({ default: t('scrKindDefault'), dialogue: t('scrKindDialogue'), thought: t('scrKindThought'), box: t('scrKindBox'), sfx: t('scrKindSfx'), sign: t('scrKindSign') });
+  // (No type filter on a phone: Android's picker knows no type for fonts and would grey them out.)
+  const fontIn = h('input', { type: 'file', ...(nativePlatform() === 'android' ? {} : { accept: '.ttf,.otf,.ttc' }), hidden: true, onchange: () => void addFont() }) as HTMLInputElement;
+  async function addFont(): Promise<void> {
+    const f = fontIn.files?.[0]; fontIn.value = ''; if (!f) return;
+    if (cfg.letter.lib.length >= 16) { toast(t('scrFontsFull'), 'error'); return; }
+    if (/\.woff2?$/i.test(f.name)) { toast(t('scrFontWoff'), 'error', 5000); return; }
+    if (!/\.(ttf|otf|ttc)$/i.test(f.name)) { toast(t('scrFontNotFont'), 'error', 5000); return; }
+    const b = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    try {
+      const kp = ktPlugin() as unknown as { screenFontAdd?(o: { name: string; b64: string }): Promise<{ path: string }> } | null; const dp = window.kurokawaTools as unknown as { screenFontAdd?(o: { name: string; b64: string }): Promise<{ path: string }> } | undefined;
+      const r = kp?.screenFontAdd ? await kp.screenFontAdd({ name: f.name, b64: btoa(bin) }) : await dp!.screenFontAdd!({ name: f.name, b64: btoa(bin) });
+      set((c) => { c.letter.lib.push({ id: `f${Date.now().toString(36)}`, name: f.name.replace(/\.[^.]+$/, ''), path: r.path }); }, true);
+    } catch (e) { toast(/font|size/.test(String((e as Error).message)) ? t('scrFontNotFont') : String((e as Error).message ?? e), 'error', 5000); }
+  }
+  function drawLetter(): void {
+    const L = cfg.letter; const labels = KIND_LABEL(); const fonts: [string, string][] = [['', t('scrFontSystem')], ...L.lib.map((f) => [f.id, f.name] as [string, string])];
+    const sample = async (el: HTMLElement, id: string) => { const lib = L.lib.find((x) => x.id === id); if (!lib) { el.style.fontFamily = ''; return; } const { fontFamily } = await import('../screen/lettering'); const fam = await fontFamily(lib.path); if (fam) el.style.fontFamily = `"${fam}"`; };
+    const kindRow = (k: 'default' | TextKind) => { const prev = h('span', { class: 'scr-font-sample', dir: 'auto' }, t(k === 'sfx' ? 'scrSampleSfx' : k === 'thought' ? 'scrSampleThought' : 'scrSampleDialogue')); void sample(prev, L.fonts[k]); return row(labels[k], h('span', { class: 'scr-font-pick' }, prev, select(L.fonts[k], fonts, (v) => set((c) => { c.letter.fonts[k] = v; }, true), `font-${k}`))); };
+    letterCard.replaceChildren(h('h3', null, t('scrLetter')), h('p', { class: 'hint' }, t('scrLetterHint')), fontIn,
+      h('div', { class: 'dest-list scr-fonts' }, ...L.lib.map((f) => h('div', { class: 'dest-row' }, icon('text'), h('span', { class: 'name grow', dir: 'auto' }, f.name), iconButton('trash', t('scrRemove'), () => { const kp = ktPlugin() as unknown as { screenFontRemove?(o: { path: string }): Promise<void> } | null; const dp = window.kurokawaTools as unknown as { screenFontRemove?(o: { path: string }): Promise<void> } | undefined; void (kp?.screenFontRemove ?? dp?.screenFontRemove)?.({ path: f.path }); set((c) => { c.letter.lib = c.letter.lib.filter((x) => x.id !== f.id); for (const k of Object.keys(c.letter.fonts) as ('default' | TextKind)[]) if (c.letter.fonts[k] === f.id) c.letter.fonts[k] = ''; }, true); })))),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => fontIn.click() }, icon('plus'), t('scrFontAdd')),
+      kindRow('default'),
+      toggle(t('scrKinds'), L.kinds, (v) => set((c) => { c.letter.kinds = v; }, true), t('scrKindsHint')),
+      ...(L.kinds ? TEXT_KINDS.map((k) => kindRow(k)) : []));
+  }
+  // The glossary: terms always translated the reader's way, each for one language or any, some with a kind.
+  function drawGlossary(): void {
+    const G = cfg.glossary; const labels = KIND_LABEL();
+    const kinds: [string, string][] = [['', t('scrKindAuto')], ...TEXT_KINDS.map((k) => [k, labels[k]] as [string, string])];
+    const langs: [string, string][] = [['', t('scrAnyLang')], ...SCREEN_LANGS.filter(([c]) => c !== 'auto')];
+    const rowOf = (e: GlossaryEntry, i: number) => h('div', { class: 'scr-term' },
+      h('input', { class: 'input', type: 'text', value: e.from, placeholder: t('scrTermFrom'), dir: 'auto', 'aria-label': t('scrTermFrom'), onchange: (ev: Event) => set((c) => { c.glossary.entries[i].from = (ev.target as HTMLInputElement).value; }) }),
+      h('span', { class: 'scr-term-arrow' }, '→'),
+      h('input', { class: 'input', type: 'text', value: e.to, placeholder: t('scrTermTo'), dir: 'auto', 'aria-label': t('scrTermTo'), onchange: (ev: Event) => set((c) => { c.glossary.entries[i].to = (ev.target as HTMLInputElement).value; }) }),
+      select(e.kind ?? '', kinds, (v) => set((c) => { c.glossary.entries[i].kind = v as TextKind | ''; }), `gk-${i}`),
+      select(e.lang ?? '', langs, (v) => set((c) => { c.glossary.entries[i].lang = v; }), `gl-${i}`),
+      iconButton('trash', t('scrRemove'), () => set((c) => { c.glossary.entries.splice(i, 1); }, true)));
+    const bulk = h('textarea', { class: 'input', rows: 4, dir: 'auto', placeholder: t('scrGlossaryBulkHint') }) as HTMLTextAreaElement;
+    glossCard.replaceChildren(h('h3', null, t('scrGlossary')), h('p', { class: 'hint' }, t('scrGlossaryHint')),
+      toggle(t('scrGlossaryOn'), G.on, (v) => set((c) => { c.glossary.on = v; }, true)),
+      h('div', { class: 'scr-terms' }, ...G.entries.map(rowOf)),
+      h('div', { class: 'chip-row wrap' },
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => set((c) => { c.glossary.entries.push({ from: '', to: '', kind: '', lang: c.target }); }, true) }, icon('plus'), t('scrTermAdd')),
+        h('button', { type: 'button', class: 'btn text small', onclick: () => { void navigator.clipboard?.writeText(G.entries.map((e) => `${e.from} = ${e.to}${e.kind ? ` [${e.kind}]` : ''}`).join('\n')).then(() => toast(t('copied'))).catch(() => undefined); } }, icon('copy'), t('scrGlossaryCopy'))),
+      h('details', { class: 'scr-bulk' }, h('summary', null, t('scrGlossaryBulk')), bulk,
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const add = parseTerms(bulk.value, cfg.target); if (!add.length) { toast(t('scrGlossaryNone'), 'error'); return; } set((c) => { c.glossary.entries.push(...add); }, true); toast(t('scrGlossaryAdded', { n: String(add.length) })); } }, icon('plus'), t('scrGlossaryAddAll'))));
+  }
   function draw(): void {
     const langs: [string, string][] = SCREEN_LANGS;
     // The translator
@@ -194,6 +245,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       ...(PC ? [] : [toggle(t('scrTapClose'), cfg.tapClose, (v) => set((c) => { c.tapClose = v; }), t('scrTapCloseHint'))]),
       ...(PC ? [] : [toggle(t('scrSpeak'), cfg.speak, (v) => set((c) => { c.speak = v; }, true), t('scrSpeakHint')),
       ...(cfg.speak ? [row(t('scrRate'), num(cfg.ttsRate, 0.5, 2, 0.1, (v) => set((c) => { c.ttsRate = Math.round(v * 10) / 10; }), 'ttsRate', '×'))] : [])]));
+    drawLetter(); drawGlossary();
     if (PC) return;
 
     // The bubble and its taps

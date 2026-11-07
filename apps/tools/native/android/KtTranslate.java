@@ -36,7 +36,8 @@ final class KtTranslate {
         // (Addresses, changed only by the tests.)
         String googleBase = "https://translate.googleapis.com", deeplBase = "", microsoftBase = "https://api.cognitive.microsofttranslator.com", microsoftAuth = "https://edge.microsoft.com/translate/auth";
         int timeoutMs = 30000;
-        String id() { return engine + "|" + source + "|" + target + "|" + (engine.equals("ai") ? style + base + model + prompt.hashCode() : ""); }
+        List<KtLettering.Entry> glossary = new ArrayList<>();
+        String id() { return engine + "|" + source + "|" + target + "|" + (engine.equals("ai") ? style + base + model + prompt.hashCode() : "") + "|" + KtLettering.key(glossary); }
 
         static Config from(Map<String, Object> o) {
             Config c = new Config(); if (o == null) return c;
@@ -46,6 +47,7 @@ final class KtTranslate {
             for (Map.Entry<String, Object> e : KtJson.obj(ai.get("headers")).entrySet()) c.headers.put(e.getKey(), String.valueOf(e.getValue()));
             if (o.get("googleBase") instanceof String) c.googleBase = (String) o.get("googleBase"); if (o.get("deeplBase") instanceof String) c.deeplBase = (String) o.get("deeplBase");
             if (o.get("microsoftBase") instanceof String) c.microsoftBase = (String) o.get("microsoftBase"); if (o.get("microsoftAuth") instanceof String) c.microsoftAuth = (String) o.get("microsoftAuth");
+            c.glossary = KtLettering.glossary(o);
             return c;
         }
     }
@@ -68,7 +70,10 @@ final class KtTranslate {
         }
         if (!ask.isEmpty()) {
             List<String> got;
-            switch (c.engine) { case "deepl": got = deepl(ask, c); break; case "ai": got = ai(ask, c); break; case "microsoft": got = keyless(ask, c, "microsoft"); break; default: got = keyless(ask, c, "google"); }
+            // (The reader's glossary: told to an AI model; masked from the other translators, put back after.)
+            Map<Integer, String> used = new java.util.HashMap<>(); List<String> sent = c.engine.equals("ai") ? ask : KtLettering.protect(ask, c.glossary, used);
+            switch (c.engine) { case "deepl": got = deepl(sent, c); break; case "ai": got = ai(sent, c); break; case "microsoft": got = keyless(sent, c, "microsoft"); break; default: got = keyless(sent, c, "google"); }
+            got = KtLettering.restore(got, used);
             synchronized (cache) { for (int k = 0; k < ask.size(); k++) cache.put(c.id() + "\u0000" + ask.get(k), got.get(k)); }
             for (int k : todo) out[k] = got.get(firstOf.get(texts.get(k)));
         }
@@ -172,7 +177,7 @@ final class KtTranslate {
     }
     static final class BadShape extends IOException { BadShape() { super("shape"); } }
     static List<String> aiOnce(List<String> texts, Config c) throws Exception {
-        String system = (c.prompt.trim().isEmpty() ? "Translate into the language whose code is «" + c.target + "»: natural, accurate and idiomatic, faithful to the meaning and tone." : c.prompt.trim()) + "\n\n" + AI_RULES + " Target language: " + c.target + ".";
+        String system = (c.prompt.trim().isEmpty() ? "Translate into the language whose code is «" + c.target + "»: natural, accurate and idiomatic, faithful to the meaning and tone." : c.prompt.trim()) + "\n\n" + AI_RULES + " Target language: " + c.target + "." + KtLettering.prompt(c.glossary);
         String user = KtJson.write(new ArrayList<Object>(texts));
         String reply = chat(system, user, c);
         return parseArray(reply, texts.size());

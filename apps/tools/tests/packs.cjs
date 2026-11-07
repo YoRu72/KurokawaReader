@@ -48,13 +48,13 @@ const MANIFEST = { ydl: '0.18.1', packs: { python: { 'arm64-v8a': { file: 'Kurok
   await p.click('.sheet .switch-row input'); await p.click('.watch-choice >> nth=1'); await p.waitForTimeout(400);
   const calls2 = await p.evaluate(() => window.__calls.filter((c) => c[0] === 'openWith')); const pref = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).playerWith);
   console.log('openWith:', JSON.stringify(calls2), '| remembered:', pref);
-  // In-app chosen while the Player add-on is missing: the card offers it (ffmpeg is already here from Video), Get it, then it plays.
+  // In-app chosen: the player is built in — no card to fetch it, it plays at once.
   await p.evaluate(() => { const st = JSON.parse(localStorage.getItem('kt.settings')); st.playerWith = 'app'; localStorage.setItem('kt.settings', JSON.stringify(st)); });
-  await p.reload(); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]'); await p.waitForSelector('.get-card');
-  const card = (await p.$eval('.get-card', (e) => e.innerText)).replace(/\s+/g, ' '); console.log('player card:', card);
-  await p.click('.get-card .btn.primary'); await p.waitForSelector('video.kt-video', { timeout: 10000 });
+  await p.reload(); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]'); await p.waitForTimeout(400);
+  const card = (await p.$('.get-card')) ? (await p.$eval('.get-card', (e) => e.innerText)).replace(/\s+/g, ' ') : ''; console.log('player card:', card || '(none)');
+  await p.waitForSelector('.kt-stage, video.kt-video', { state: 'attached', timeout: 10000 });
   const playerOn = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.includes('player')); console.log('player add-on:', playerOn, '| player open:', !!(await p.$('.kt-stage, video.kt-video')));
-  const pass = /Python/.test(ask) && /ffmpeg/.test(ask) && /14 MB/.test(ask) && /37 MB/.test(ask) && calls1.length === 2 && calls1[0][2] === 'KurokawaTools-pack-python-0.18.1-arm64-v8a.zip' && installed.includes('video') && /Installed/.test(storage) && calls2.length === 1 && calls2[0][1] === '/sdcard/Download/Episode 05.mkv' && pref === 'external' && /Player/.test(card) && playerOn;
+  const pass = /Python/.test(ask) && /ffmpeg/.test(ask) && /14 MB/.test(ask) && /37 MB/.test(ask) && calls1.length === 2 && calls1[0][2] === 'KurokawaTools-pack-python-0.18.1-arm64-v8a.zip' && installed.includes('video') && /Installed/.test(storage) && calls2.length === 1 && calls2[0][1] === '/sdcard/Download/Episode 05.mkv' && pref === 'external' && !card && playerOn;
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : pass ? 'all passed' : 'FAILED');
   await br.close(); web.close(); process.exit(errors.length || !pass ? 1 : 0);
 })();
