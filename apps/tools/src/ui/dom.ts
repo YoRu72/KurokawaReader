@@ -41,6 +41,8 @@ const PATHS: Record<string, string> = {
   magnet: '<path d="M6 15 12 9l6 6a8 8 0 0 1-12 0Z"/><path d="M6 15 3 12l6-6 3 3"/><path d="m18 15 3-3-6-6-3 3"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+  volume: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>',
+  volumeOff: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6"/><path d="m21 9-5 6"/>',
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   film: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5"/>',
@@ -285,12 +287,27 @@ export function pickButton<T extends string>(title: string, options: [T, string,
 
 /** A long press (half a second held, or a right click) on `el`: `fn` called, and the tap that follows the press
  *  swallowed so the element's own tap does not also run. */
+// After a hold: the click on letting go, and a phone's «contextmenu» for the same hold, are the hold's, not new ones —
+// dropped wherever they land, since what the hold did (a selection, a menu) often redraws the very element held.
+let heldAt = 0; let heldUp = false;
+function swallowAfterHold(): void {
+  if ((swallowAfterHold as { on?: boolean }).on) return; (swallowAfterHold as { on?: boolean }).on = true;
+  const recent = () => heldAt && performance.now() - heldAt < 1500;
+  document.addEventListener('pointerup', () => { if (recent()) heldUp = true; }, true);
+  document.addEventListener('click', (e) => { if (recent() && heldUp) { e.stopPropagation(); e.preventDefault(); heldAt = 0; heldUp = false; } }, true);
+  document.addEventListener('contextmenu', (e) => { if (recent() && !heldUp) { e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('pointerdown', () => { heldAt = 0; heldUp = false; }, true);
+}
+
 export function onLongPress(el: HTMLElement, fn: (e: Event) => void): void {
-  let timer = 0; let fired = false; let x = 0, y = 0;
+  // (One hold, one call: the timer's end or a «contextmenu», whichever comes first. A mouse's right-click, with no
+  // hold before it, is a call of its own.)
+  swallowAfterHold();
+  let timer = 0; let x = 0, y = 0;
   const cancel = () => { clearTimeout(timer); timer = 0; };
-  el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; fired = false; x = e.clientX; y = e.clientY; cancel(); timer = window.setTimeout(() => { fired = true; try { navigator.vibrate?.(12); } catch { /* none */ } fn(e); }, 500); });
+  const fire = (e: Event) => { cancel(); heldAt = performance.now(); heldUp = false; fn(e); };
+  el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; x = e.clientX; y = e.clientY; cancel(); timer = window.setTimeout(() => { try { navigator.vibrate?.(12); } catch { /* none */ } fire(e); }, 500); });
   el.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - x, e.clientY - y) > 10) cancel(); });
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave'] as const) el.addEventListener(ev, cancel);
-  el.addEventListener('click', (e) => { if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; } }, true);
-  el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!fired) fn(e); fired = false; });
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); fire(e); });
 }

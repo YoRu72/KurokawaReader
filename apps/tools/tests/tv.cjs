@@ -61,6 +61,27 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   check('holding an episode opens its options', opts.some((x) => /Watch now/.test(x)) && opts.some((x) => /Mark watched up to episode 3/.test(x)));
   await p.locator('.ep-menu .dest-row', { hasText: 'Mark watched up to' }).click(); await p.waitForTimeout(300);
   check('marked watched up to it', (await p.$$('.ep-row.seen')).length === 3);
+  // Schedule: the week's episodes from TVmaze, day by day; a show on your list first and under «Yours».
+  {
+    const inH = (h) => new Date(Date.now() + h * 3600e3).toISOString();
+    const show = (id, name, imdb) => ({ id, name, image: { medium: 'https://static.tvmaze.com/s.jpg' }, externals: { imdb }, webChannel: { name: 'Netflix' } });
+    let asked = 0;
+    await p.route('https://api.tvmaze.com/schedule**', (r) => { asked++; const today = r.request().url().includes(new Date().toISOString().slice(0, 10)) && r.request().url().includes('/web');
+      r.fulfill({ headers: cors, json: today ? [
+        { id: 1, season: 2, number: 5, name: 'Other One', airstamp: inH(2), _embedded: { show: show(1, 'Some Other Show', 'tt0000001') } },
+        { id: 2, season: 1, number: 4, name: 'Hour 4', airstamp: inH(3), _embedded: { show: show(2, 'Night Shift', 'tt1234567') } },
+        { id: 3, season: 1, number: 1, name: 'No IMDb', airstamp: inH(4), _embedded: { show: { id: 3, name: 'Unknown', externals: {} } } }] : [] }); });
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    await p.evaluate(() => { location.hash = '#/tv'; }); await p.waitForSelector('.chip:has-text("Schedule")'); await p.click('.chip:has-text("Schedule")');
+    await p.waitForSelector('.tv-sched .sched-row', { timeout: 8000 });
+    const names = await p.$$eval('.tv-sched .sched-row .anime-title', (e) => e.map((x) => x.textContent));
+    check('schedule: TVmaze asked, at most four at a time, a week of days', asked === 14);
+    check('schedule: shows with an IMDb id only, yours first', names.length === 2 && /Night Shift/.test(names[0]), names);
+    await p.click('.tv-sched-head .chip:nth-child(2)'); await p.waitForTimeout(200);
+    check('schedule: «Yours» keeps only yours', (await p.$$('.tv-sched .sched-row')).length === 1);
+    await p.click('.tv-sched .sched-row'); await p.waitForTimeout(300);
+    check('schedule: a row opens its show at its season', /#\/tv\/series\/tt1234567\?s=1/.test(await p.evaluate(() => location.hash)));
+  }
   check('no page errors', !errors.filter((e) => e !== 'no page errors').length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');

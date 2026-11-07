@@ -105,6 +105,27 @@ const serve = () => http.createServer((req, res) => {
   await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Player settings' }).click(); await p.waitForSelector('.sheet .pp-group');
   const groups = await p.$$eval('.sheet .pp-group > summary', (e) => e.map((x) => x.textContent)); console.log('groups:', groups.join(' | '));
   check('the groups of preferences (the decoder\'s too, on a phone)', groups.length === 8 || (groups.length === 9 && groups.includes('Decoder')));
+  // A subtitle from a file: a site's .zip (a season — the playing episode's taken), a .gz, and one dropped on the
+  // player from the computer.
+  {
+    const srt = (line) => `1\n00:00:00,500 --> 00:00:11,500\n${line}\n`;
+    execFileSync('python3', ['-c', `import zipfile,sys\nz=zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_DEFLATED)\nz.writestr('__MACOSX/._x.srt','junk')\nz.writestr('Show/Show - 01.srt',sys.argv[2])\nz.writestr('Show/Show - 02.srt',sys.argv[3])\nz.close()`, path.join(MEDIA, 'pack.zip'), srt('Zip one'), srt('Zip two')]);
+    const gz = require('node:zlib').gzipSync(srt('Gzipped line'));
+    await p.keyboard.press('Escape').catch(() => {}); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    const shown = async () => { await seek(2); await p.waitForTimeout(400); return p.$eval('.kt-subs', (e) => e.textContent); };
+    const pick = async (name, buffer) => { await p.click('.kt-top button[aria-label="Subtitles"]'); await p.waitForSelector('.sheet input[type=file]', { state: 'attached' }); await p.setInputFiles('.sheet input[type=file]', { name, mimeType: 'application/octet-stream', buffer }); await p.waitForTimeout(600); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove())); };
+    check('the phone\'s file picker is not limited to types it cannot name (.ass)', await (async () => { await p.click('.kt-top button[aria-label="Subtitles"]'); await p.waitForSelector('.sheet input[type=file]', { state: 'attached' }); const a = await p.$eval('.sheet input[type=file]', (e) => e.getAttribute('accept')); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove())); return a === null; })());
+    await pick('pack.zip', fs.readFileSync(path.join(MEDIA, 'pack.zip')));
+    const z = await shown(); console.log('zip:', z); check('a .zip: its subtitle loaded and shown', /Zip (one|two)/.test(z));
+    const names = await (async () => { await p.click('.kt-top button[aria-label="Subtitles"]'); await p.waitForSelector('.sheet .dest-row'); const n = await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent)); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove())); return n; })();
+    check('a .zip: every subtitle in it a track, no Mac junk', names.includes('Show - 01.srt') && names.includes('Show - 02.srt') && !names.some((x) => /^\._/.test(x)));
+    await pick('x.srt.gz', gz); check('a .gz: unpacked and shown', /Gzipped line/.test(await shown()));
+    await p.evaluate((text) => { const dt = new DataTransfer(); dt.items.add(new File([text], 'dropped.srt')); const root = document.querySelector('.kt-player'); root.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true })); root.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); }, srt('Dropped line'));
+    await p.click('.kt-top button[aria-label="Subtitles"]'); await p.click('.sheet button:has-text("Find subtitles")'); await p.waitForTimeout(400);
+    check('search without subtitle sites: says so, with a way to add them', await p.isVisible('.sheet button:has-text("Add subtitle sites")'));
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    await p.waitForTimeout(500); check('a subtitle dropped on the player: shown', /Dropped line/.test(await shown()));
+  }
   check('no page errors', !errors.length);
   await br.close(); web.close(); fs.rmSync(MEDIA, { recursive: true, force: true });
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
