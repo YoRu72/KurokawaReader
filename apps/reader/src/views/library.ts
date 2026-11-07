@@ -1127,10 +1127,23 @@ export function libraryView(): HTMLElement {
     const back = takeReturn();
     if (back && root.isConnected) void import('../ui/librarysearch').then((m) => m.librarySearchSheet(books, folders, activeFolder, back));
   });
+  // A computer's keys over the library: Ctrl+A all the books shown, Ctrl+F the search, Delete the chosen ones (asked
+  // first), Enter open the one chosen, Escape let go.
+  const onKeys = (e: KeyboardEvent) => {
+    if (!root.isConnected || document.querySelector('.sheet') || !document.documentElement.classList.contains('pc')) return;
+    const el = e.target as HTMLElement; if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable) return;
+    const mod = e.ctrlKey || e.metaKey; const k = e.key.toLowerCase();
+    if (mod && k === 'a') { e.preventDefault(); if (!selecting) setSelecting(true); for (const b of sorted()) selected.add(b.id); renderGrid(); }
+    else if (mod && k === 'f') { e.preventDefault(); search.focus(); }
+    else if (e.key === 'Escape' && selecting) { e.preventDefault(); setSelecting(false); }
+    else if (e.key === 'Delete' && selecting && selected.size) { e.preventDefault(); const del = bookActions().find(([, , , cls]) => cls === 'danger'); del?.[2](); }
+    else if (e.key === 'Enter' && selecting && selected.size === 1) { e.preventDefault(); const id = [...selected][0]; setSelecting(false); navigate(`/read/${id}`); }
+  };
+  document.addEventListener('keydown', onKeys);
   // (Left: its listeners on the document and the window go with it — each visit otherwise added a set, and
   // kept the old view and its books alive.)
   (root as HTMLElement & { dispose?: () => void }).dispose = () => {
-    offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
+    document.removeEventListener('keydown', onKeys); offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
     document.removeEventListener('kr:command', onCommand); window.removeEventListener('kr:library', onAsk);
     for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.removeEventListener(ev, endDrag);
   };
