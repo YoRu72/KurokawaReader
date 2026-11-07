@@ -531,6 +531,8 @@ final class KtEngine {
                 File out = KtVideo.run(ctx, x.id, x.source.getString("url"), new File(x.dir), x.meta, (done, total, speed, file, detail) -> { if (total > 0) { x.total = total; x.done = done; } x.downSpeed = speed; JSONObject lv = KtVideo.live.get(x.id); if (lv != null && x.meta != null) { try { for (java.util.Iterator<String> it = lv.keys(); it.hasNext(); ) { String k = it.next(); x.meta.put(k, lv.get(k)); } } catch (Exception ignored) {} } if (file != null) { x.httpOut = new File(x.dir, file.replaceAll("\\.f\\d+\\.(\\w+)$", ".$1")); x.name = x.httpOut.getName().replaceAll("\\.[^.]+$", ""); } tell(false); });
                 if (x.paused) return;
                 if (out != null) { x.httpOut = out; x.name = out.getName().replaceAll("\\.[^.]+$", ""); if (out.exists()) { x.total = out.length(); } }
+                // (yt-dlp ended without an error but left nothing — no file, or an empty one —: a failure, not «done» at 0 B.)
+                File made = out != null ? out : x.httpOut; if (made == null || (made.exists() && made.length() == 0)) throw new Exception("yt-dlp made no file");
                 x.done = x.total; x.downSpeed = 0; x.state = "done"; x.doneAt = System.currentTimeMillis(); KtVideo.live.remove(x.id); if (x.meta != null) { x.meta.remove("phase"); x.meta.remove("frag"); x.meta.remove("frags"); } scan(x); persist(); tell(true); KtService.maybeStop(ctx, this);
             } catch (Exception e) {
                 if (x.paused) { x.state = "paused"; } else { x.state = "failed"; x.error = errOf(e); }

@@ -29,9 +29,11 @@ export function cookiesSheet(): void {
   sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => fromBrowser(null, draw) }, icon('globe'), t('cookiesFromBrowser')), h('button', { type: 'button', class: 'btn primary', onclick: () => pasteSheet(draw) }, icon('plus'), t('cookiesPaste')));
   void draw();
 }
-function fromBrowser(j: Jar | null, done: () => void): void {
+/** A sign-in for a site that wants one (a video page yt-dlp could not read): its cookies taken from the app's browser, signed in there. */
+export function signInFor(link: string, done: () => void): void { let site = ''; try { site = `${new URL(link).origin}/`; } catch { /* as typed */ } fromBrowser(null, done, site); }
+function fromBrowser(j: Jar | null, done: () => void, preset = ''): void {
   const sh = openSheet(t('cookiesFromBrowser'), t('cancel'), { stack: true });
-  const url = h('input', { type: 'url', dir: 'ltr', value: j ? `https://${j.domain}/` : '', placeholder: 'https://example.com/', autocapitalize: 'off', spellcheck: 'false' }) as HTMLInputElement;
+  const url = h('input', { type: 'url', dir: 'ltr', value: j ? `https://${j.domain}/` : preset, placeholder: 'https://example.com/', autocapitalize: 'off', spellcheck: 'false' }) as HTMLInputElement;
   const name = h('input', { type: 'text', dir: 'auto', value: j?.name ?? '', placeholder: t('cookiesNameHint') }) as HTMLInputElement;
   sh.body.append(h('p', { class: 'hint' }, t('cookiesFromBrowserHint')), h('label', { class: 'field' }, h('span', null, t('cookiesSite')), url), h('label', { class: 'field' }, h('span', null, t('ruleName')), name));
   sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { const u = url.value.trim(); if (u) void import('../browser').then((m) => m.openBrowser(u)); } }, icon('globe'), t('cookiesOpenSite')),

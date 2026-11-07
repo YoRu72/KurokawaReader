@@ -186,17 +186,8 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   const hdrs: Record<string, string> = {}; if (pre?.ua) hdrs['User-Agent'] = pre.ua; if (pre && start) hdrs.Referer = start;
   // (A post's media keep the names given them; a stream — a Bluesky or Reddit video — goes to the Video add-on.)
   go.addEventListener('click', async () => {
-    go.disabled = true; let n = 0; let noVideo = 0;
-    const vid = await import('../video/ytdlp'); const { preferredFormat, nativeHls } = await import('../views/addVideo');
-    for (const href of chosen) {
-      const l = links.find((x) => x.href === href);
-      try {
-        // (A stream's playlist or manifest — HLS, DASH — is a list of pieces, not the video: yt-dlp joins them.)
-        if (!l?.viaVideo && nativeHls(href)) { const q = getSettings().videoQuality; await getEngine().add({ source: pre ? { url: href, headers: hdrs } : { url: href }, name: l?.name, connections: 8, meta: { hls: true, quality: /^\d+$/.test(q) ? `${q}p` : undefined } }); n++; continue; }
-        if (l?.viaVideo || /\.(m3u8|mpd)(\?|#|$)/i.test(href)) { if (!vid.videoEnabled()) { noVideo++; continue; } await getEngine().add({ source: { url: href }, video: { ...preferredFormat(), title: l?.text || undefined, embedThumb: getSettings().videoEmbedThumb, ...(pre && !l?.viaVideo ? { headers: hdrs } : {}) } }); n++; continue; }
-        const [src] = parseSources(href); if (src) { await getEngine().add({ source: src.url && pre ? { ...src, headers: hdrs } : src, name: l?.name, connections: 8 }); n++; }
-      } catch { /* the next */ }
-    }
+    go.disabled = true;
+    const { n, noVideo } = await addGrabbed([...chosen].map((href) => links.find((x) => x.href === href) ?? { href, text: '' }), pre ? hdrs : undefined);
     toast(t('grabAdded', { n: countFiles(n) })); if (noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close();
   });
   if (pre) { if (pre.title) sh.body.prepend(h('p', { class: 'hint', dir: 'auto' }, pre.title)); fromPage(pre.links); }
@@ -229,3 +220,20 @@ export async function remoteZipEntries(url: string): Promise<{ total: number; en
 }
 
 export const categoryLabelOf = (name: string) => categoryOf(name).name;
+
+/** Links picked from a page or a post added as downloads: a stream's playlist (HLS, DASH) or a link the Video add-on
+ *  reads goes to yt-dlp, a file as it is, each keeping the name given it. `hdrs`: what the app's browser sent. */
+export async function addGrabbed(list: { href: string; text?: string; name?: string; viaVideo?: boolean }[], hdrs?: Record<string, string>): Promise<{ n: number; noVideo: number }> {
+  let n = 0; let noVideo = 0;
+  const vid = await import('../video/ytdlp'); const { preferredFormat, nativeHls } = await import('../views/addVideo');
+  for (const l of list) {
+    const href = l.href;
+    try {
+      // (A stream's playlist or manifest — HLS, DASH — is a list of pieces, not the video: yt-dlp joins them.)
+      if (!l.viaVideo && nativeHls(href)) { const q = getSettings().videoQuality; await getEngine().add({ source: hdrs ? { url: href, headers: hdrs } : { url: href }, name: l.name, connections: 8, meta: { hls: true, quality: /^\d+$/.test(q) ? `${q}p` : undefined } }); n++; continue; }
+      if (l.viaVideo || /\.(m3u8|mpd)(\?|#|$)/i.test(href)) { if (!vid.videoEnabled()) { noVideo++; continue; } await getEngine().add({ source: { url: href }, video: { ...preferredFormat(), title: l.text || undefined, embedThumb: getSettings().videoEmbedThumb, ...(hdrs && !l.viaVideo ? { headers: hdrs } : {}) } }); n++; continue; }
+      const [src] = parseSources(href); if (src) { await getEngine().add({ source: src.url && hdrs ? { ...src, headers: hdrs } : src, name: l.name, connections: 8 }); n++; }
+    } catch { /* the next */ }
+  }
+  return { n, noVideo };
+}

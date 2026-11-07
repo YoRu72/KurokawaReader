@@ -51,7 +51,14 @@ const GIF = { code: 200, tweet: { id: '2118688654906573042', text: 'a gif', auth
   added = await p.evaluate(() => window.__added); check('named after the post', added.every((a, i) => a.name === `bsky.app-3myx7vphq3s2j-${i + 1}.jpg` && /cdn\.bsky\.app\/img\/feed_fullsize/.test(a.source.url)));
   // The Add sheet: a post link offers its media.
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet textarea');
-  await p.fill('.sheet textarea', 'https://twitter.com/someone/status/1700000000000000001'); await p.waitForSelector('.grab-row', { timeout: 6000 }); check('a post typed in the add sheet opens at once (no «Show them»)', (await p.$$('.grab-row')).length === 2 && !(await p.$('.add-sheet')));
+  // «Auto-grab»: the post's photos read in the Add sheet itself, ticked; Download adds them at full size (never the page).
+  await p.fill('.sheet textarea', 'https://twitter.com/someone/status/1700000000000000001'); await p.waitForSelector('.post-tile', { timeout: 6000 });
+  const tiles = await p.$$eval('.post-tile', (e) => e.map((x) => x.classList.contains('on')));
+  check('a post typed in the add sheet: its photos listed there, all ticked', tiles.length === 2 && tiles.every(Boolean) && !!(await p.$('.add-sheet.as-post')), tiles);
+  await p.locator('.post-tile').nth(1).click(); await p.evaluate(() => { window.__added = []; });
+  await p.click('.add-sheet .sheet-actions .btn.primary'); await p.waitForTimeout(600);
+  added = await p.evaluate(() => window.__added);
+  check('Download adds the ticked ones, at full size', added.length === 1 && added[0].source.url === 'https://pbs.twimg.com/media/AAAA1111.jpg?name=orig', added);
   check('no page errors', !errors.filter((e) => e !== 'no page errors').length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
