@@ -51,6 +51,7 @@
       "ytdlp.cjs",
       "streamproxy.cjs",
       "transcode.cjs",
+      "webstream.cjs",
       "torrentstream.cjs",
       "appicon.cjs",
       "titlebar.cjs",
@@ -165,6 +166,7 @@
     ]
   },
   "dependencies": {
-    "7zip-bin": "^5.2.0"
+    "7zip-bin": "^5.2.0",
+    "webtorrent": "3.0.21"
   }
 }

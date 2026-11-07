@@ -1,0 +1,20 @@
+name: Desktop streaming check (WebTorrent)
+on:
+  push:
+    branches: ['work-*']
+    paths: ['apps/tools/desktop/**', 'apps/tools/tests/webstream.cjs', '.github/workflows/webstream-check.yml']
+  workflow_dispatch:
+jobs:
+  stream:
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-latest, windows-latest, macos-15] }
+    runs-on: ${{ matrix.os }}
+    defaults: { run: { working-directory: apps/tools, shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: cd desktop && npm install --no-audit --no-fund && (node fetch-aria2.mjs || true)
+      - run: node tests/webstream.cjs
+        env: { CI: '1' }

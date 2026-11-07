@@ -12,6 +12,7 @@ const Ffmpeg = require('./ffmpeg.cjs');
 const Ytdlp = require('./ytdlp.cjs');
 const StreamProxy = require('./streamproxy.cjs');
 const TorrentStream = require('./torrentstream.cjs');
+const WebStream = require('./webstream.cjs');
 const AppIcon = require('./appicon.cjs');
 const TitleBar = require('./titlebar.cjs'); TitleBar.install();
 const Packs = require('./packs.cjs');
@@ -142,6 +143,7 @@ else {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]));
     const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true });
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
+    engine.watching = (hash) => (WebStream.watching(hash.toLowerCase()) ? WebStream.stats(hash.toLowerCase()) : null); engine.handedOver = (gid) => handed.has(gid);
     engine.onState = () => send('kt:engineState', engineState());
     // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
     // first start under Windows' antivirus.)
@@ -159,7 +161,7 @@ else {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin' && !ScreenTr.keepInTray()) app.quit(); });
-  app.on('before-quit', () => { quitting = true; ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
+  app.on('before-quit', () => { quitting = true; void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
 }
 
 /* ---------- the engine, to the page ---------- */
@@ -307,7 +309,38 @@ ipcMain.handle('kt:fontIndex', async (_e, dirs) => {
   return out;
 });
 ipcMain.handle('kt:desktopPrefs', (_e, o) => { if (o && typeof o === 'object') { if ('keepAwake' in o) deskPrefs.keepAwake = !!o.keepAwake; if (['nothing', 'quit', 'sleep', 'shutdown'].includes(o.whenDone)) deskPrefs.whenDone = o.whenDone; if ('notifyDone' in o) deskPrefs.notifyDone = !!o.notifyDone; if ('tray' in o) { deskPrefs.tray = !!o.tray; trayUpdate([]); } if (o.hotkeys && typeof o.hotkeys === 'object') { deskPrefs.hotkeys = o.hotkeys; hotkeysApply(); } } return deskPrefs; });
-ipcMain.handle('kt:streamUrl', async (_e, o) => ({ url: await TorrentStream.url(E(), String(o.id), Number(o.fileIndex) || 0) }));
+// Watching a torrent: WebTorrent, which fetches the place the player reads first (aria2 cannot), while the player
+// is open — aria2's download paused meanwhile, taken back (and checked) after; a finished file from the disk.
+const handed = new Map(); // gid → { hash, wasPaused }
+async function watchUrl(gid, index) {
+  const e = E(); const st = await e.rpc.call('tellStatus', gid, ['gid', 'status', 'bittorrent', 'infoHash', 'files', 'dir']);
+  if (!st.bittorrent || !st.infoHash) return null;
+  const f = (st.files || [])[index]; if (f && Number(f.length) > 0 && Number(f.completedLength) >= Number(f.length)) return null;
+  if (!(await WebStream.available())) return null;
+  const hash = st.infoHash.toLowerCase(); const k = e.keep[gid] || {};
+  let source = null;
+  if (k.source?.torrent) source = Buffer.from(k.source.torrent, 'base64');
+  else { const saved = path.join(st.dir || '', `${hash}.torrent`); if (fs.existsSync(saved)) source = fs.readFileSync(saved); }
+  if (!source) { const tr = (st.bittorrent.announceList || []).flat().slice(0, 20).map((u) => `&tr=${encodeURIComponent(u)}`).join(''); source = k.source?.magnet || `magnet:?xt=urn:btih:${hash}${tr}`; }
+  if (!handed.has(gid)) {
+    handed.set(gid, { hash, wasPaused: st.status === 'paused' });
+    if (st.status === 'active' || st.status === 'waiting') { await e.rpc.call('forcePause', gid).catch(() => undefined); for (let i = 0; i < 25; i++) { const s2 = await e.rpc.call('tellStatus', gid, ['status']).catch(() => ({ status: 'paused' })); if (s2.status !== 'active' && s2.status !== 'waiting') break; await new Promise((ok) => setTimeout(ok, 200)); } }
+  }
+  try { return await WebStream.url({ key: hash, source, dir: st.dir, fileIndex: index, gid }); }
+  catch (er) { await handBack(gid); if (/webtorrent-unavailable/.test(String(er && er.message))) return null; throw er; }
+}
+/** The player closed: WebTorrent lets go, aria2 checks what is there and goes on (unless it was paused before). */
+async function handBack(gid) {
+  const h = handed.get(gid); if (!h) return; handed.delete(gid);
+  await WebStream.release(h.hash);
+  const e = engine; if (!e) return;
+  await e.rpc.call('changeOption', gid, { 'check-integrity': 'true' }).catch(() => undefined);
+  if (!h.wasPaused) await e.rpc.call('unpause', gid).catch(() => undefined);
+  e.tick?.();
+}
+ipcMain.handle('kt:streamUrl', async (_e, o) => { const id = String(o.id), i = Number(o.fileIndex) || 0; const w = await watchUrl(id, i).catch((er) => { console.warn('webstream:', er && er.message); return null; }); return { url: w || await TorrentStream.url(E(), id, i) }; });
+ipcMain.handle('kt:streamDone', async (_e, o) => { await handBack(String(o.id)); return { ok: true }; });
+ipcMain.handle('kt:streamStats', async (_e, o) => { const h = handed.get(String(o.id)); return h ? WebStream.stats(h.hash) : null; });
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:videoUrl', async () => ({ url: await StreamProxy.videoBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));

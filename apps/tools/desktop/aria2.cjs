@@ -87,6 +87,9 @@ class Aria2Engine {
     if (st.status === 'waiting') return 'queued'; if (st.status === 'paused') return 'paused'; if (st.status === 'complete') return 'done'; return 'failed';
   }
   task(st) {
+    // (Watched now through WebTorrent — desktop/webstream.cjs —: shown downloading, at WebTorrent's speed and peers.)
+    const w = st.infoHash && this.watching ? this.watching(st.infoHash) : null;
+    if (w) st = { ...st, status: 'active', downloadSpeed: String(Math.round(w.down)), uploadSpeed: String(Math.round(w.up)), connections: String(w.peers) };
     const extra = this.keep[st.gid] || {}; const total = num(st.totalLength), done = num(st.completedLength), speed = num(st.downloadSpeed);
     const dir = (st.dir || '').replace(/[\\/]+$/, '');
     return {
@@ -148,7 +151,7 @@ class Aria2Engine {
     this.keep[gid] = { ...k, source: { ...(k.source || {}), url } }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
   }
   async pause(id) { await this.rpc.call('pause', id); this.tick(); }
-  async resume(id) { await this.rpc.call('unpause', id); this.tick(); }
+  async resume(id) { if (this.handedOver?.(id)) return; await this.rpc.call('unpause', id); this.tick(); }
   async remove(id, deleteFiles) {
     const st = await this.rpc.call('tellStatus', id).catch(() => null);
     if (st && ['active', 'waiting', 'paused'].includes(st.status)) await this.rpc.call('forceRemove', id).catch(() => {});
