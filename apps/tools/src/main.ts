@@ -133,6 +133,16 @@ function mountInner(route: Route): void {
         void (async () => { if (!getSettings().addons.includes('anime')) { const { needAddon } = await import('./addons/need'); const { t } = await import('./i18n'); if (!(await needAddon('anime', t('addonWhyAnime')))) return; } let id = al ? Number(al[1]) : 0; if (!id && mal) { const { gql } = await import('./anilist'); const d = await gql<{ Media: { id: number } | null }>('query ($mal: Int) { Media(idMal: $mal, type: ANIME) { id } }', { mal: Number(mal[1]) }, false).catch(() => null); id = d?.Media?.id ?? 0; } if (id) navigate(`/anime/${id}`, true); else void import('./views/add').then((m) => m.addSheet(u)); })();
         break;
       }
+      // (A .torrent handed over as data: shown as the file it is — its name, its files — not as its bytes; and a file
+      // that is not a torrent at all said so.)
+      if (/^data:application\/x-bittorrent;base64,/i.test(u)) {
+        current = downloadsView();
+        void (async () => { const { torrentB64Ok } = await import('./engine'); const { t } = await import('./i18n'); const { toast } = await import('./ui/dom'); const b64 = u.split(',')[1] ?? '';
+          if (!torrentB64Ok(b64)) { toast(t('notATorrent'), 'error', 6000); return; }
+          const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          (await import('./views/add')).addSheet('', { torrent: new File([bytes], 'download.torrent', { type: 'application/x-bittorrent' }) }); })();
+        break;
+      }
       current = downloadsView(); setTimeout(() => void import('./views/add').then((m) => m.addSheet(u)), 50); break;
     }
     default: current = downloadsView(route.filter);

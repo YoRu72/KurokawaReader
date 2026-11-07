@@ -1,0 +1,36 @@
+name: Desktop streaming check (WebTorrent)
+on:
+  push:
+    branches: ['work-*']
+    paths: ['apps/tools/desktop/**', 'apps/tools/tests/webstream.cjs', '.github/workflows/webstream-check.yml']
+  workflow_dispatch:
+jobs:
+  stream:
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-latest, windows-latest, macos-15] }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults: { run: { working-directory: apps/tools, shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: cd desktop && npm install --no-audit --no-fund && (node fetch-aria2.mjs || true)
+      - run: node tests/webstream.cjs
+        env: { CI: '1' }
+  mac-pack:
+    name: macOS universal package with WebTorrent
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults: { run: { working-directory: apps/tools, shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install && npm run build
+      - run: |
+          cd desktop && npm install --no-audit --no-fund && node fetch-aria2.mjs || true
+          CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --universal --publish never 2>&1 | tail -n 40
+          ls out
+          find out -path '*webtorrent/package.json' | head -2

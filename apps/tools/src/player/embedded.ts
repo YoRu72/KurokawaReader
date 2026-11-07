@@ -38,3 +38,31 @@ export async function embeddedSubs(path: string, onEach?: (s: EmbeddedSub) => vo
   }
   return out;
 }
+
+/** The fonts a Matroska carries for its styled subtitles (its attachments), read out by ffmpeg — only the file's
+ *  head is read, so a video still coming works too — as addresses the subtitle renderer loads. Kept per file. */
+const FONT_MIME = /font|truetype|opentype|sfnt/i; const FONT_NAME = /\.(ttf|otf|ttc|otc|woff2?)$/i;
+const fontCache = new Map<string, Promise<string[]>>();
+export function attachedFonts(path: string): Promise<string[]> {
+  let c = fontCache.get(path);
+  if (!c) { c = readFonts(path).catch(() => []); fontCache.set(path, c); }
+  return c;
+}
+async function readFonts(path: string): Promise<string[]> {
+  const d = desk(); const p = plug(); if (!d && !p) return [];
+  const probe = d ? await d.ffprobe(path) : JSON.parse((await p!.ffprobe({ path })).json) as { streams?: Stream[] };
+  const atts = (probe?.streams ?? []).filter((s) => s.codec_type === 'attachment' && (FONT_MIME.test(s.tags?.mimetype ?? '') || FONT_NAME.test(s.tags?.filename ?? ''))).slice(0, 60);
+  if (!atts.length) return [];
+  // (All in one run of ffmpeg: one -dump_attachment per font, each to a file of its own.)
+  const tmps: string[] = []; const args = ['-y', '-hide_banner', '-nostdin', '-v', 'error'];
+  for (let i = 0; i < atts.length; i++) {
+    const nm = `font-${Date.now()}-${i}${(/\.[a-z0-9]+$/i.exec(atts[i].tags?.filename ?? '') ?? ['.ttf'])[0]}`;
+    const tmp = d ? await d.writeTemp(nm, '') : (await p!.writeTemp({ name: nm, text: '' })).path; tmps.push(tmp);
+    args.push(`-dump_attachment:${atts[i].index}`, tmp);
+  }
+  args.push('-i', path); // (no output asked for: ffmpeg says so and stops, the attachments written already)
+  await (d ? d.ffmpeg({ id: `fonts-${Date.now()}`, args }) : p!.ffmpeg({ id: `fonts-${Date.now()}`, args })).catch(() => undefined);
+  const out: string[] = [];
+  for (const t of tmps) { const b = await readLocal(t).catch(() => null); if (b && b.length > 1000) out.push(URL.createObjectURL(new Blob([b as Uint8Array<ArrayBuffer>]))); }
+  return out;
+}

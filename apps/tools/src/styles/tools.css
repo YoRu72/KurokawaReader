@@ -910,3 +910,10 @@ html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-
 /* The file picker's «select all»: one row above the files, partly ticked when some are. */
 .pick-master { padding: 10px 12px; border-radius: 14px; background: var(--surface-2, rgba(127,127,127,.08)); margin: 6px 0 2px; }
 .pick-master b { font-weight: 600; }
+
+/* Clips being cut in the background: their cards stacked above the bottom bar, on every page. */
+.clip-tray { position: fixed; inset-inline: 12px; bottom: calc(84px + var(--safe-bottom, 0px)); z-index: 70; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+.clip-tray .get-card { position: static; transform: none; pointer-events: auto; width: min(420px, 100%); margin: 0; }
+.clip-tray .clip-card.failed .get-ic { color: var(--md-error); }
+.clip-tray .get-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+@media (min-width: 900px) { .clip-tray { inset-inline: auto 20px; bottom: 20px; align-items: flex-end; } }

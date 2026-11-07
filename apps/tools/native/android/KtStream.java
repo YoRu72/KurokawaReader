@@ -188,7 +188,7 @@ final class KtStream {
             long pos = rangeStart; byte[] buf = new byte[1 << 17];
             // (The newest request for a file steers the download: an older one, left behind by a seek, still finishes
             // what it sends but no longer pulls the download back to where it was — the two used to take turns.)
-            final String key = (th != null && th.isValid() ? th.infoHash().toHex() : x.id) + ":" + index; final long me = requests.incrementAndGet(); owner.put(key, me);
+            final String key = (th != null && th.isValid() ? th.infoHash().toHex() : x.id) + ":" + index; final long me = requests.incrementAndGet(); owner.put(key, me); if (th != null) ids.put(th, x.id);
             while (pos <= rangeEnd) {
                 if (ti != null) waitForPiece(th, ti, index, pos, rangeEnd, sock, key, me);
                 if (f == null || !f.exists()) { Thread.sleep(300); continue; }
@@ -213,6 +213,11 @@ final class KtStream {
         try { sock.setSoTimeout(1); return sock.getInputStream().read() < 0; } catch (java.net.SocketTimeoutException e) { return false; } catch (IOException e) { return true; }
         finally { try { sock.setSoTimeout(30000); } catch (IOException ignored) {} }
     }
+    /** The video's byte rate (file size ÷ length) per task and file, told by the player once it knows the length. */
+    final java.util.Map<String, Long> byteRate = new java.util.concurrent.ConcurrentHashMap<>();
+    void hint(String taskId, int index, double seconds, long size) { if (seconds > 1 && size > 0) byteRate.put(taskId + ":" + index, (long) (size / seconds)); }
+    private final java.util.Map<TorrentHandle, String> ids = new java.util.concurrent.ConcurrentHashMap<>();
+    private String task(TorrentHandle th) { String id = ids.get(th); return id == null ? "" : id; }
     private void waitForPiece(TorrentHandle th, TorrentInfo ti, int index, long pos, long end, Socket sock, String key, long me) throws InterruptedException {
         FileStorage fs = ti.files();
         PeerRequest pr = fs.mapFile(index, pos, 1); int piece = pr.piece();
@@ -222,7 +227,11 @@ final class KtStream {
         // gap: about 48 MB after it, on deadlines that grow with the distance.)
         Integer at = windowAt.get(key);
         if (steer && (at == null || at != piece)) {
-            int ahead = Math.max(12, (int) ((48L << 20) / Math.max(1, ti.pieceLength())));
+            // (About half a minute of the video ahead (torrentplayer's window), at its byte rate when the player has said
+            // it — its length known —, else the old 48 MB; never under 16 MB nor over 256 MB.)
+            Long rate = byteRate.get(task(th) + ":" + index); long want = rate != null && rate > 0 ? rate * 30 : (48L << 20);
+            want = Math.max(16L << 20, Math.min(256L << 20, want));
+            int ahead = Math.max(12, (int) (want / Math.max(1, ti.pieceLength())));
             // (A jump — a seek —: the old window's deadlines dropped, so the download turns here at once.)
             if (at != null && (piece < at || piece > at + ahead)) { try { th.clearPieceDeadlines(); } catch (Throwable ignored) {} }
             windowAt.put(key, piece);

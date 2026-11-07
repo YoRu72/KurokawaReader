@@ -59,7 +59,12 @@ export function bestOf(rs: TvRelease[], p = tvPrefs()): TvRelease | null {
   const order = ['2160p', '1440p', '1080p', '720p', '576p', '480p'];
   const want = p.quality ? `${p.quality}p` : ''; const wi = want ? order.indexOf(want) : 0;
   const ok = (r: TvRelease) => r.seeders > 0 || r.cached || !!r.url;
-  const live = rs.filter(ok); const pool = live.length ? live : rs;
+  // (torrentplayer's rules: a camera copy, telesync or screener is never the pick while an honest release is there;
+  // one or two seeders count as fragile — one leaving stalls playback — so a better-seeded one goes first.)
+  const cam = (r: TvRelease) => /(^|[\s._\-[(])(cam|camrip|hdcam|ts|telesync|hdts|tc|telecine|scr|screener|dvdscr)(?=[\s._\-\])]|$)/i.test(r.title) && /\b(19|20)\d{2}\b|\b\d{3,4}p\b|x26[45]|hevc/i.test(r.title);
+  const honest = rs.filter((r) => !cam(r)); const rs2 = honest.length ? honest : rs;
+  const steady = rs2.filter((r) => ok(r) && (r.seeders >= 3 || r.cached || !!r.url));
+  const live = steady.length ? steady : rs2.filter(ok); const pool = live.length ? live : rs2;
   let cands = want ? pool.filter((r) => r.resolution === want) : pool;
   for (let i = wi + 1; !cands.length && i < order.length; i++) cands = pool.filter((r) => r.resolution === order[i]);
   if (!cands.length) cands = pool;

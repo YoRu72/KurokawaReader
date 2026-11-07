@@ -106,14 +106,16 @@
 .cloud-box h4 { margin: 10px 0 2px; font-size: 13px; font-weight: 700; color: var(--md-primary); }
 .cloud-row { padding: 8px 10px; }
 /* The player */
-.kt-player { position: fixed; inset: 0; background: #000; z-index: 60; display: flex; flex-direction: column; color: #fff; --sub-size: 100%; --sub-color: #fff; --sub-pos: 0%; --sub-font: ; user-select: none; touch-action: none; }
+.kt-player { position: fixed; inset: 0; background: #000; z-index: 60; display: flex; flex-direction: column; color: #fff; --sub-size: 100; --sub-color: #fff; --sub-lift: 0; --sub-font: ; user-select: none; touch-action: none; }
 .kt-stage { position: absolute; inset: 0; overflow: hidden; display: grid; place-items: center; }
 .kt-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; transition: transform .05s linear; }
 .kt-ass { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.kt-subs { position: absolute; inset-inline: 6%; bottom: calc(10% + var(--sub-pos)); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; text-align: center; transition: bottom .2s; }
-.kt-subs.top { bottom: auto; top: 6%; }
-.kt-player:not(.hide-ui) .kt-subs:not(.top) { bottom: max(calc(10% + var(--sub-pos)), calc(var(--kt-bottom-h, 110px) + 10px + var(--sub-pos))); }
-.kt-cue { font: 600 calc(22px * var(--sub-size) / 100) / 1.35 var(--sub-font) var(--font-ui), system-ui, sans-serif; color: var(--sub-color); padding: 2px 8px; border-radius: 6px; white-space: pre-wrap; }
+.kt-subs { position: absolute; left: calc(var(--vr-l, 0px) + var(--vr-w, 100%) * .04); width: calc(var(--vr-w, 100%) * .92); bottom: calc(var(--vr-b, 0px) + var(--vr-h, 100%) * (.05 + var(--sub-lift))); display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none; text-align: center; transition: bottom .2s; }
+.kt-subs.top { bottom: auto; top: calc(var(--vr-t, 0px) + var(--vr-h, 100%) * .05); }
+/* (Inside the picture, above the controls only where the picture reaches under them.) */
+.kt-player:not(.hide-ui) .kt-subs:not(.top) { bottom: max(calc(var(--vr-b, 0px) + var(--vr-h, 100%) * (.05 + var(--sub-lift))), calc(var(--kt-bottom-h, 110px) + 10px)); }
+/* (Sized from the picture, as players do — about a nineteenth of its height —, not from the screen.) */
+.kt-cue { font: 600 clamp(15px, calc(var(--vr-h, 540px) * .058 * var(--sub-size) / 100), 84px) / 1.3 var(--sub-font) var(--font-ui), system-ui, sans-serif; color: var(--sub-color); padding: 1px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .kt-player.sub-bold .kt-cue { font-weight: 800; }
 .kt-player[data-sub-bg='shadow'] .kt-cue { text-shadow: 0 0 4px #000, 0 2px 3px #000, 0 0 10px rgb(0 0 0 / .8); }
 .kt-player[data-sub-bg='box'] .kt-cue { background: rgb(0 0 0 / .6); }
@@ -247,13 +249,13 @@ html[dir='rtl'] .season-head .icon-btn svg, html[dir='rtl'] .ep-ranges svg { tra
 
 /* The player, round 3 (REX Player and VLC): subtitle outline and opacity, a second track on top, the seek
    ripple, previews over the bar, bookmarks on it, a clock, the equaliser, «sound only». */
-.kt-player { --sub-outline: #000; --sub-outline-w: 2px; --sub-bg-a: .6; --sub2-pos: 10%; --sub2-size: 85%; }
+.kt-player { --sub-outline: #000; --sub-outline-w: 2px; --sub-bg-a: .6; --sub2-lift: 0; --sub2-size: 85; }
 .kt-player[data-sub-bg='shadow'] .kt-cue { text-shadow: 0 0 var(--sub-outline-w) var(--sub-outline), 0 0 calc(var(--sub-outline-w) * 1.5) var(--sub-outline), 0 2px 3px rgb(0 0 0 / .8); }
 .kt-player[data-sub-bg='none'] .kt-cue { text-shadow: none; -webkit-text-stroke: calc(var(--sub-outline-w) * .6) var(--sub-outline); paint-order: stroke fill; }
 .kt-player[data-sub-bg='box'] .kt-cue { background: rgb(0 0 0 / var(--sub-bg-a)); }
 .kt-player.sub-italic .kt-cue { font-style: italic; }
-.kt-player.has-sub2 .kt-subs.top { top: var(--sub2-pos); }
-.kt-player.has-sub2 .kt-subs.top .kt-cue { font-size: calc(22px * var(--sub-size) / 100 * var(--sub2-size) / 100); opacity: .92; }
+.kt-player.has-sub2 .kt-subs.top { top: calc(var(--vr-t, 0px) + var(--vr-h, 100%) * (.04 + var(--sub2-lift))); }
+.kt-player.has-sub2 .kt-subs.top .kt-cue { font-size: clamp(13px, calc(var(--vr-h, 540px) * .058 * var(--sub-size) / 100 * var(--sub2-size) / 100), 72px); opacity: .92; }
 .kt-subs .kt-cue { pointer-events: auto; }
 .kt-clock { font: 600 14px var(--font-ui); opacity: .85; padding: 0 6px; }
 .kt-ripple { position: absolute; top: 0; bottom: 0; width: 34%; display: flex; align-items: center; justify-content: center; font: 700 20px var(--font-ui); color: #fff; background: radial-gradient(circle at center, rgb(255 255 255 / .18), transparent 70%); pointer-events: none; z-index: 3; animation: kt-ripple .5s ease-out; }
@@ -570,3 +572,5 @@ html.pc .kt-player .kt-bottom .chip:hover, html.pc .kt-player .kt-bottom .kt-chi
 .kt-player.kt-drop::after { content: ''; position: absolute; inset: 12px; border: 2px dashed rgba(255,255,255,.85); border-radius: 20px; background: rgba(255,255,255,.06); pointer-events: none; z-index: 50; }
 .sub-search { gap: 8px; align-items: center; }
 .sub-search input[type=search] { flex: 1; min-width: 0; }
+/* Why the video waits, under the spinner. */
+.kt-centre .kt-wait { position: absolute; top: calc(50% + 40px); padding: 4px 12px; border-radius: 999px; background: rgb(0 0 0 / .55); color: #fff; font: 500 13px/1.3 var(--font-ui), system-ui, sans-serif; white-space: nowrap; }

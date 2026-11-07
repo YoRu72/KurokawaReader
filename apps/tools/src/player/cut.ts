@@ -1,6 +1,6 @@
 // A/B → a clip: fast (stream copy from the keyframe before A) or exact (re-encoded), with the subtitles burnt
 // in — the loaded track written out shifted to the clip's start, the video's own fonts dumped beside it, and
-// ffmpeg's `subtitles=` filter (libass) drawing them; the result lands in Downloads/Kurokawa/Clips.
+// ffmpeg's `subtitles=` filter (libass) drawing them; the result lands in Movies/KUROKAWACLIPS on a phone, the download folder on a computer.
 import { h, toast, openSheet, pickButton, icon } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { ktPlugin } from '../native';
@@ -80,21 +80,26 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
     const id = `cut-${Date.now()}`; sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => void (desk() ? desk()!.ffmpegCancel(id) : plug()!.ffmpegCancel({ id })) }, t('cancel')));
     try {
       const d = desk(); const p = plug(); const android = !d;
-      const outDir = d ? `${(getSettings().downloadDir || (await window.kurokawaTools!.defaultDir())).replace(/[\\/]$/, '')}/Clips` : (await p!.clipsDir()).dir;
+      const outDir = d ? `${(getSettings().downloadDir || (await window.kurokawaTools!.defaultDir())).replace(/[\\/]$/, '')}` : (await p!.clipsDir()).dir;
       const base = job.src.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, ' ').trim(); const inExt = (/\.(\w+)$/.exec(job.src.name)?.[1] ?? 'mkv').toLowerCase();
       if (kind !== 'video') burn = false;
       const outExt = kind === 'audio' ? 'm4a' : kind === 'gif' ? 'gif' : mode === 'fast' ? (['mkv', 'mp4', 'webm', 'mov', 'ts'].includes(inExt) ? (inExt === 'mov' ? 'mp4' : inExt) : 'mkv') : 'mp4';
       const out = `${outDir}/${base} ${fmt(a).replace(/[:.]/g, '')}-${fmt(b).replace(/[:.]/g, '')}${burn ? ' sub' : ''}.${outExt}`;
-      const args: string[] = ['-y', '-hide_banner', '-nostdin'];
+      const args: string[] = ['-y', '-hide_banner', '-nostdin']; let encoders: string[][] = [[]];
       if (job.src.headers) for (const [k, v] of Object.entries(job.src.headers)) args.push('-headers', `${k}: ${v}\r\n`);
-      args.push('-ss', fmt(a), '-to', fmt(b), '-i', input);
+      // (A fast cut copies the picture as it is, so it can only begin on a keyframe: begun at A itself, players show
+      // nothing until the next one — seconds late. It begins on the keyframe at or before A instead, said so.)
+      let from = a;
+      if (kind === 'video' && mode === 'fast') { const kf = await keyframeBefore(input, a, job.src.headers).catch(() => null); if (kf !== null && kf <= a + 0.05) from = kf; }
+      // (Asked a hair after the keyframe: at its very time, a container's coarse index lands on the keyframe before it.)
+      args.push('-ss', fmt(from < a ? from + 0.05 : from), '-to', fmt(b), '-i', input);
       if (kind === 'audio') args.push('-vn', '-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
       else if (kind === 'gif') args.push('-an', '-vf', `fps=${gifFps},scale=${gifWidth}:-2:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4`, '-loop', '0');
       else if (mode === 'fast') { args.push('-map', mute ? '0:v' : '0', '-c', 'copy', '-avoid_negative_ts', 'make_zero'); if (mute) args.push('-an'); if (outExt === 'mp4') args.push('-map', '-0:t?', '-c:s', 'mov_text', '-movflags', '+faststart'); }
       else {
         const vf: string[] = []; if (res) vf.push(`scale=-2:${res}`);
         if (burn && job.subtitle) {
-          const content = job.subtitle.ass ? shiftAss(job.subtitle.ass, -a + job.subtitle.delay) : cuesToSrt(job.subtitle.cues.map((c) => ({ ...c, start: c.start - a + job.subtitle!.delay, end: c.end - a + job.subtitle!.delay })).filter((c) => c.end > 0));
+          const content = job.subtitle.ass ? shiftAss(job.subtitle.ass, -from + job.subtitle.delay) : cuesToSrt(job.subtitle.cues.map((c) => ({ ...c, start: c.start - from + job.subtitle!.delay, end: c.end - from + job.subtitle!.delay })).filter((c) => c.end > 0));
           const subName = job.subtitle.ass ? 'clip.ass' : 'clip.srt'; const subPath = d ? await d.writeTemp(subName, content) : (await p!.writeTemp({ name: subName, text: content })).path;
           const fontsDir = subPath.replace(/[\\/][^\\/]*$/, '/fonts');
           // The video's attached fonts, dumped beside the subtitle so libass finds them.
@@ -113,22 +118,51 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
           } catch { /* the default look then */ }
           vf.push(`subtitles='${esc(subPath)}':fontsdir='${esc(fontsDir)}'${force ? `:force_style='${esc(force)}'` : ''}`);
         }
-        vf.push('format=yuv420p'); args.push('-vf', vf.join(','), '-map', '0:v:0'); if (!mute) args.push('-map', '0:a:0?'); else args.push('-an');
-        if (android) args.push('-c:v', codec === 'hevc' ? 'hevc_mediacodec' : 'h264_mediacodec', '-bitrate_mode', 'vbr', '-b:v', `${Math.round(Math.max(1.5, 14 - quality * 0.4) * (res === '480' ? 0.35 : res === '720' ? 0.6 : 1))}M`, '-g', '60');
-        else args.push('-c:v', codec === 'hevc' ? 'libx265' : 'libx264', '-preset', 'medium', '-crf', String(quality));
+        const mbps = Math.round(Math.max(1.5, 14 - quality * 0.4) * (res === '480' ? 0.35 : res === '720' ? 0.6 : 1));
+        // (The encoders to try in turn: on a phone its own (MediaCodec, which most phones take only in NV12), then x264,
+        // then ffmpeg's built-in MPEG-4 — one of them is always there.)
+        encoders = android
+          ? [['-vf', [...vf, 'format=nv12'].join(','), '-c:v', codec === 'hevc' ? 'hevc_mediacodec' : 'h264_mediacodec', '-bitrate_mode', 'vbr', '-b:v', `${mbps}M`, '-g', '60'],
+            ['-vf', [...vf, 'format=yuv420p'].join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(quality)],
+            ['-vf', [...vf, 'format=yuv420p'].join(','), '-c:v', 'mpeg4', '-q:v', '3']]
+          : [['-vf', [...vf, 'format=yuv420p'].join(','), '-c:v', codec === 'hevc' ? 'libx265' : 'libx264', '-preset', 'medium', '-crf', String(quality)]];
+        args.push('-map', '0:v:0'); if (!mute) args.push('-map', '0:a:0?'); else args.push('-an');
         if (!mute) args.push('-c:a', 'aac', '-b:a', '192k'); args.push('-movflags', '+faststart');
       }
       args.push('-progress', 'pipe:1', '-nostats', out);
-      const total = b - a; let off: (() => void) | { remove(): void } | null = null;
-      const onP = (pr: FfProgress) => { if (pr.id !== id) return; const f = Math.min(1, pr.time / total); (bar.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`; line.textContent = `${localDigits(Math.round(f * 100))}%${pr.speed ? ` · ${localDigits(pr.speed.toFixed(1))}×` : ''}${pr.size ? ` · ${formatBytes(pr.size)}` : ''}`; };
-      if (d) off = d.onFfmpegProgress(onP); else off = await p!.addListener('ffmpegProgress', onP);
-      try { const r = d ? await d.ffmpeg({ id, args }) : await p!.ffmpeg({ id, args }); if (r.code !== 0) throw new Error(r.log.trim().split('\n').slice(-3).join(' ') || `ffmpeg ${r.code}`); }
-      finally { if (off) { if (typeof off === 'function') off(); else off.remove(); } }
-      // Done: the file opened or shared from here (Android's chooser), or its folder.
-      sh.body.replaceChildren(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('cutDone', { name: out.split(/[\\/]/).pop()! })), h('p', { class: 'src', dir: 'ltr' }, out)));
+      // (From here the clip is cut in the background: the sheet closes, the progress is in a card and the
+      // notifications, and it goes on wherever you go; a pop-up says when it is done.)
       const mime = kind === 'audio' ? 'audio/*' : kind === 'gif' ? 'image/gif' : 'video/*';
-      const kp = p as unknown as { openWith?(o: { path: string; mime: string; title: string }): Promise<void> } | null;
-      sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('done')), h('button', { type: 'button', class: 'btn primary', onclick: () => { if (kp?.openWith) void kp.openWith({ path: out, mime, title: job.src.name }).catch((er) => toast(String((er as Error).message ?? er), 'error')); else void import('../native').then((n) => n.openFolder(out)); } }, icon('external'), t('cutOpen')));
+      const { runClip } = await import('./clipJob');
+      sh.close();
+      void runClip({ id, title: out.split(/[\\/]/).pop()!, out, mime, total: b - from, attempts: encoders.map((enc) => { const i = args.lastIndexOf('-progress'); return [...args.slice(0, i), ...enc, ...args.slice(i)]; }), from: from < a - 0.05 ? from : undefined, srcName: job.src.name });
+      return;
     } catch (e) { const m = String((e as Error).message ?? e); sh.body.replaceChildren(h('p', { class: 'empty small' }, /cancel|stopped|255/i.test(m) ? t('cancelled') : m)); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void cutClipSheet(job); } }, t('back'))); }
   }
+}
+
+/** The last keyframe at or before `t` seconds (where a fast cut can begin), by ffmpeg copying the twelve seconds
+ *  before it and listing its packets (framecrc: a packet with no «F=» flags is a keyframe). Null when unknown. */
+async function keyframeBefore(input: string, t: number, headers?: Record<string, string>): Promise<number | null> {
+  const d = desk(); const p = plug(); if (!d && !p) return null;
+  const t0 = Math.max(0, t - 12); const name = `kf-${Date.now()}.txt`;
+  const tmp = d ? await d.writeTemp(name, '') : (await p!.writeTemp({ name, text: '' })).path;
+  const args = ['-y', '-hide_banner', '-nostdin', '-v', 'error'];
+  if (headers) for (const [k, v] of Object.entries(headers)) args.push('-headers', `${k}: ${v}\r\n`);
+  args.push('-ss', String(t0), '-copyts', '-i', input, '-to', String(t + 0.6), '-map', '0:v:0', '-c', 'copy', '-f', 'framecrc', tmp); // (-copyts: the file's own times, so the end is given as a time too)
+  const r = d ? await d.ffmpeg({ id: `kf-${Date.now()}`, args }) : await p!.ffmpeg({ id: `kf-${Date.now()}`, args });
+  if (r.code !== 0) return null;
+  const { readLocal } = await import('./files'); const b = await readLocal(tmp); if (!b) return null;
+  return keyframeFromCrc(new TextDecoder().decode(b), t);
+}
+/** From framecrc's text: the latest keyframe time at or before `t` (exported for the tests). */
+export function keyframeFromCrc(text: string, t: number): number | null {
+  const tb = /#tb 0:\s*(\d+)\/(\d+)/.exec(text); if (!tb) return null; const unit = Number(tb[1]) / Number(tb[2]);
+  let best: number | null = null;
+  for (const line of text.split('\n')) {
+    if (!/^0,/.test(line) || /F=0x/i.test(line) && !/F=0x0*1\b/i.test(line)) continue;
+    const f = line.split(',').map((x) => x.trim()); const pts = Number(f[2]); if (!Number.isFinite(pts)) continue;
+    const s = pts * unit; if (s <= t + 0.05 && (best === null || s > best)) best = s;
+  }
+  return best;
 }
