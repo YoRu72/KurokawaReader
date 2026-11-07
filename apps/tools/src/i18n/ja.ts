@@ -137,7 +137,7 @@ export const ja: Partial<Strings> = {
   pipOnLeave: "アプリを離れたらフローティング表示",
   pipOnLeaveHint: "動画の再生中にアプリを離れると、他のアプリの上の小さなウィンドウで再生を続けます。",
   socialAuto: "投稿の写真と動画をすぐに表示",
-  socialAutoHint: "投稿のリンク（X、Instagram、Bluesky、Reddit、Telegram など）は«Show them» を押さなくても写真と動画をすぐに一覧表示します。",
+  socialAutoHint: "投稿のリンク（X、Bluesky、Reddit、Telegram など）を入れると、写真と動画が「新しいダウンロード」にすぐ選択済みで並び、最高画質で保存できます。",
   clearField: "入力を消去",
   filesDeleteForever: "完全に削除",
   seeAll: "すべて見る",

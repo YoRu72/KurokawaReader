@@ -137,7 +137,7 @@ export const ko: Partial<Strings> = {
   pipOnLeave: "나갈 때 플로팅 창",
   pipOnLeaveHint: "동영상 재생 중 앱을 나가면 다른 앱 위의 작은 창에서 계속 재생합니다.",
   socialAuto: "게시물의 사진과 동영상 바로 보기",
-  socialAutoHint: "게시물 링크(X, Instagram, Bluesky, Reddit, Telegram 등)를 넣으면 «Show them»을 누르지 않아도 사진과 동영상을 바로 보여 줍니다.",
+  socialAutoHint: "게시물 링크(X, Bluesky, Reddit, Telegram 등)를 넣으면 사진과 동영상이 「새 다운로드」에 바로 선택된 채로 나타나 최고 화질로 받을 수 있습니다.",
   clearField: "입력 지우기",
   filesDeleteForever: "영구 삭제",
   seeAll: "모두 보기",

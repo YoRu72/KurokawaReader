@@ -442,7 +442,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   pipOnLeave: "Floating window when leaving",
   pipOnLeaveHint: "Leaving the app while a video plays keeps it going in a small window over the other apps.",
   socialAuto: "Show a post's photos and videos at once",
-  socialAutoHint: "A link to a post (X, Instagram, Bluesky, Reddit, Telegram…) opens its photos and videos straight away, without tapping «Show them».",
+  socialAutoHint: "A link to a post (X, Bluesky, Reddit, Telegram…) lists its photos and videos in «New download» at once, ticked, to download at full quality.",
   clearField: "Clear the field",
   seeAll: "See all",
   dcTrendingToday: "Trending today",

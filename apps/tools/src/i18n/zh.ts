@@ -137,7 +137,7 @@ export const zh: Partial<Strings> = {
   pipOnLeave: "离开时悬浮窗播放",
   pipOnLeaveHint: "视频播放时离开应用，将在其他应用上方的小窗口中继续播放。",
   socialAuto: "立即显示帖子的图片和视频",
-  socialAutoHint: "帖子链接（X、Instagram、Bluesky、Reddit、Telegram 等）无需点«Show them»即直接列出其图片和视频。",
+  socialAutoHint: "帖子链接（X、Bluesky、Reddit、Telegram 等）会立即在“新建下载”中列出其图片和视频并全部勾选，以最高质量下载。",
   clearField: "清除输入",
   filesDeleteForever: "永久删除",
   seeAll: "查看全部",
