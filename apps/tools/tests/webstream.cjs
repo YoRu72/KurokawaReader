@@ -8,7 +8,7 @@ let fails = 0; const ok = (n, c, extra) => { console.log((c ? 'ok   ' : 'FAIL ')
 (async () => {
   const W = require('../desktop/webstream.cjs');
   if (!(await W.available())) { console.log(process.env.CI ? 'FAIL WebTorrent did not load' : 'skipped: WebTorrent not installed (cd desktop && npm install)'); process.exit(process.env.CI ? 1 : 0); }
-  const WebTorrent = (await import(require.resolve('webtorrent', { paths: [path.join(__dirname, '..', 'desktop')] }))).default;
+  const WebTorrent = (await import(require('node:url').pathToFileURL(require.resolve('webtorrent', { paths: [path.join(__dirname, '..', 'desktop')] })).href)).default;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-ws-')); const src = path.join(root, 'seed', 'Show'); fs.mkdirSync(src, { recursive: true });
   const SIZE = 64 << 20; const data = crypto.randomBytes(SIZE); fs.writeFileSync(path.join(src, 'Show - 01.mkv'), data); fs.writeFileSync(path.join(src, 'notes.txt'), 'hello');
   const quiet = { dht: false, tracker: false, lsd: false, utPex: false, natUpnp: false, natPmp: false };
