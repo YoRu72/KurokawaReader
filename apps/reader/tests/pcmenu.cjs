@@ -13,8 +13,11 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
     const ctx = await br.newContext({ viewport: { width: 1366, height: 768 } }); const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
     await p.addInitScript((l) => localStorage.setItem('kr.lang', l), lang);
     await p.goto(base); await p.waitForSelector('.empty .btn:not(.primary)'); await p.click('.empty .btn:not(.primary)'); await p.waitForSelector('.book-card'); await p.waitForTimeout(800);
-    const tools = await p.evaluate(() => { const r = [...document.querySelectorAll('.library-tools > :not([hidden])')].map((e) => e.getBoundingClientRect()); return { rows: new Set(r.map((x) => Math.round(x.top))).size, maxH: Math.max(...r.map((x) => x.height)) }; });
+    const tools = await p.evaluate(() => { const r = [...document.querySelectorAll('.library-tools > :not([hidden])')].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect()); return { rows: new Set(r.map((x) => Math.round(x.top))).size, maxH: Math.max(...r.map((x) => x.height)) }; });
     check(`${lang}: the tools are one row, 40 px high`, tools.rows === 1 && tools.maxH <= 41, tools);
+    // The occasional tools in one named menu, each with its name.
+    await p.click('.tool-more'); await p.waitForSelector('.sheet.as-menu'); const named = await p.$$eval('.sheet.as-menu .dest-row', (e) => e.map((x) => x.textContent.trim()).filter(Boolean).length);
+    check(`${lang}: More tools lists the folded tools by name`, named >= 4, named); await p.keyboard.press('Escape'); await p.waitForTimeout(150);
     const b = await p.locator('.book-card').first().boundingBox(); const x = b.x + b.width / 2, y = b.y + 40;
     await p.mouse.click(x, y, { button: 'right' }); await p.waitForSelector('.sheet.as-menu'); await p.waitForTimeout(150);
     const m = await p.evaluate(() => { const r = document.querySelector('.sheet.as-menu').getBoundingClientRect(); return { x: r.left, r: r.right, y: r.top, b: r.bottom, fits: r.top >= 0 && r.bottom <= innerHeight, rows: document.querySelectorAll('.sheet.as-menu .dest-row').length, del: !!document.querySelector('.sheet.as-menu .sheet-actions .danger'), bar: !document.querySelector('.sel-bar, .selection-bar')?.hidden && !!document.querySelector('.library-view.selecting') }; });
@@ -25,6 +28,10 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
     check(`${lang}: a click outside closes it, nothing chosen`, !after.menu && !after.picked, after);
     await p.click('.rail-item[data-dest="sources"]'); await p.waitForTimeout(600);
     check(`${lang}: Browse in the sidebar, lit on its page`, /#\/sources/.test(p.url()) && (await p.getAttribute('.rail-item[data-dest="sources"]', 'aria-current')) === 'page');
+    // A book's page: «Read» and the actions beside the cover, no floating button, the chapters compact.
+    await p.click('.rail-item[data-dest="library"]'); await p.waitForSelector('.book-card'); await p.locator('.book-card').first().click(); await p.waitForSelector('.book-hero'); await p.waitForTimeout(1500);
+    const bk = await p.evaluate(() => { const r = document.querySelector('.book-hero .book-read'); const li = document.querySelector('.book-view .chapter-list li button'); return { read: !!r && !!r.closest('.book-hero-text'), fab: !!document.querySelector('.book-view .fab.book-resume'), tiles: !!document.querySelector('.book-hero-acts .book-tiles'), rowH: li ? li.getBoundingClientRect().height : 0 }; });
+    check(`${lang}: the book's page — Read beside the cover, no floating button, compact chapters`, bk.read && !bk.fab && bk.tiles && bk.rowH > 0 && bk.rowH < 40, bk);
     await ctx.close();
   }
   await br.close(); web.close();

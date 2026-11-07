@@ -1127,6 +1127,35 @@ html.pc .library-tools .sort-btn { height: 40px; min-height: 40px; border-radius
 html.pc .library-tools .tool-btn { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 10px; transition: background var(--dur-short); }
 html.pc .library-tools .tool-btn svg { width: 20px; height: 20px; }
 html.pc .library-tools .tool-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 12%, var(--md-surface-container-high)); }
+/* A book's page on a computer: the cover, and beside it the title, the facts, «Read» and the actions in one row;
+   the top bar keeps only its back arrow (the title is right below); the chapters a compact numbered list. */
+html.pc .book-view > .topbar .title { visibility: hidden; }
+html.pc .book-view .book-body { max-width: 1180px; width: 100%; margin-inline: auto; box-sizing: border-box; padding-inline: 24px; }
+html.pc .book-hero { border-radius: 20px; overflow: hidden; }
+html.pc .book-hero-bg { opacity: .35; }
+html.pc .book-hero-row { align-items: flex-end; gap: 28px; padding: 28px; }
+html.pc .book-hero-cover { width: 190px; flex: none; }
+html.pc .book-hero-text h1 { font-size: 30px; line-height: 1.2; }
+html.pc .book-hero-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+html.pc .book-read { min-height: 44px; padding: 0 22px; font-size: 15px; border-radius: 12px; gap: 8px; }
+html.pc .book-hero-acts .book-tiles { display: flex; gap: 4px; margin: 0; padding: 0; background: none; border: 0; flex-wrap: wrap; }
+html.pc .book-hero-acts .book-tile { flex-direction: row; gap: 8px; min-height: 44px; min-width: 0; width: auto; padding: 0 14px; border-radius: 12px; font-size: 13.5px; background: color-mix(in srgb, var(--md-surface-container-highest) 80%, transparent); }
+html.pc .book-hero-acts .book-tile svg { width: 18px; height: 18px; }
+html.pc .book-hero-acts .book-tile:hover { background: var(--md-surface-container-highest); }
+html.pc .book-desc { margin-top: 20px; }
+html.pc .book-view .chapter-list { counter-reset: ch; columns: 2 320px; column-gap: 24px; }
+html.pc .book-view .chapter-list li { break-inside: avoid; counter-increment: ch; }
+html.pc .book-view .chapter-list li button { padding: 7px 12px; min-height: 0; font-size: 14.5px; border-radius: 8px; gap: 12px; }
+html.pc .book-view .chapter-list li button:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+html.pc .book-view .chapter-list li button::before { content: counter(ch); min-width: 2.2em; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; text-align: end; }
+html.pc:lang(ar) .book-view .chapter-list li button::before { content: counter(ch, arabic-indic); }
+html.pc .book-view .chapter-list .dot { width: 6px; height: 6px; }
+html.pc .book-hero-acts .book-tile { display: flex; align-items: center; }
+.library-tools .tool-more { display: none; }
+html.pc .library-tools .pc-fold { display: none; }
+html.pc .library-tools .tool-more { display: inline-flex; align-items: center; gap: 8px; width: auto; flex: none; padding: 0 14px; height: 40px; border-radius: 10px; border: 0; background: var(--md-surface-container-high); color: var(--md-on-surface); font: inherit; font-size: 14px; cursor: pointer; }
+html.pc .library-tools .tool-more svg { width: 18px; height: 18px; }
+html.pc .library-tools .tool-more:hover { background: color-mix(in srgb, var(--md-on-surface) 12%, var(--md-surface-container-high)); }
 html.pc .book-grid { gap: 28px 22px; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); }
 html.pc .cover { transition: transform var(--dur-med) var(--ease-std, ease), box-shadow var(--dur-med); }
 html.pc .book-card:hover .cover { transform: translateY(-3px); box-shadow: var(--el-3); }
@@ -2160,3 +2189,7 @@ html.pc .settings-view .settings-nav .chip.on { background: var(--md-secondary-c
 .app-icon-row { display: flex; align-items: center; gap: 12px; }
 .app-icon-now { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; flex: none; }
 .app-icon-row .grow { display: flex; flex-direction: column; gap: 2px; }
+
+/* Menu rows that are buttons (the book's menu, More tools): the app's type, not a button's default. */
+.sheet button.dest-row { font: inherit; font-size: 14px; color: inherit; background: none; border: 0; width: 100%; text-align: start; grid-template-columns: auto 1fr; }
+html.pc .book-hero-acts .book-tile .tile-more { position: static; opacity: .6; margin-inline-start: -2px; }

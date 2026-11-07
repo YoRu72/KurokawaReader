@@ -150,7 +150,13 @@ export function bookView(id: string): HTMLElement {
     });
     const fabText = h('span', { class: 'fab-text' }, h('b', null, book.progress && !done ? t('resume') : done ? t('readAgain') : t('startReading')));
     const fab = h('button', { type: 'button', class: 'fab book-resume', onclick: () => navigate(`/read/${book.id}`) }, icon('play'), fabText);
-    body.replaceChildren(hero, tiles, facts, descEl, tagsEl, seriesEl, chaptersEl, fab);
+    // On a computer: Read and the book's actions beside the cover, under its facts — not a button floating in the
+    // corner and a row of tiles under the banner.
+    if (document.documentElement.classList.contains('pc')) {
+      const read = h('button', { type: 'button', class: 'btn primary book-read', onclick: () => navigate(`/read/${book.id}`) }, icon('play'), h('span', null, fabText.textContent ?? ''));
+      hero.querySelector('.book-hero-text')?.append(h('div', { class: 'book-hero-acts' }, read, tiles));
+      body.replaceChildren(hero, facts, descEl, tagsEl, seriesEl, chaptersEl);
+    } else body.replaceChildren(hero, tiles, facts, descEl, tagsEl, seriesEl, chaptersEl, fab);
 
     void (async () => {
       const outline = await outlineOf(book);

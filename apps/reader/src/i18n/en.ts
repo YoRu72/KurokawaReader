@@ -1145,6 +1145,7 @@ export const en = {
   updateVersionsSince: "{n} since yours",
   updateAutoDownloadAndroid: "Download updates in the background",
   updateAutoDownloadAndroidHint: "A new version is fetched (and checked) by itself, then offered ready to install.",
+  moreTools: "More tools",
   iconCantRead: "This picture could not be read.",
   iconCropTitle: "Crop the icon",
   iconZoom: "Zoom",
