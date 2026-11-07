@@ -703,8 +703,12 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 
 /* ---------- the Files add-on ---------- */
 .files-view .files-search { margin: 6px 16px; width: calc(100% - 32px); border-radius: 22px; border: 0; padding: 10px 16px; background: var(--md-surface-container-high); color: var(--md-on-surface); font: inherit; }
-.files-roots { padding: 4px 16px 0; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
-.files-roots .chip { flex: none; }
+.chip-row.files-roots { display: flex; gap: 6px; padding: 4px 16px 0; overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; flex-shrink: 0; scrollbar-width: none; -webkit-mask: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+[dir='rtl'] .chip-row.files-roots { -webkit-mask: linear-gradient(270deg, #000 calc(100% - 24px), transparent); }
+.chip-row.files-roots::-webkit-scrollbar { display: none; }
+.files-roots .chip { flex: none; height: 36px; padding: 0 14px; }
+.files-roots .chip .src { opacity: .8; font-size: 12px; }
+.files-view .topbar .files-head { min-width: 0; padding-bottom: 2px; }
 .files-crumbs { display: flex; align-items: center; gap: 2px; padding: 6px 12px 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
 .files-crumbs .crumb { border: 0; background: transparent; color: var(--md-on-surface-variant); font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 12px; }
 .files-crumbs .crumb:last-child { color: var(--md-on-surface); font-weight: 600; background: var(--md-surface-container); }

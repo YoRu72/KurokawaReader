@@ -166,6 +166,21 @@ const serve = () => http.createServer((req, res) => {
     await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
     await p.waitForTimeout(500); check('a subtitle dropped on the player: shown', /Dropped line/.test(await shown()));
   }
+  if (fs.existsSync('/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf')) {
+    // The main subtitle font: a font file added from the subtitle style, chosen at once, the plain lines drawn in it.
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    await p.click('.kt-top button[aria-label="Subtitles"]'); await p.click('.sheet .sub-font-btn'); await p.waitForSelector('.sheet .sub-font-row');
+    check('the font sheet: the system font first, chosen', await p.$eval('.sheet .sub-font-row', (e) => e.classList.contains('on')));
+    await p.setInputFiles('.sheet input[type=file]', '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf'); await p.waitForTimeout(800);
+    const fam = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.player.prefs') || localStorage.getItem('kt.playerPrefs') || '{}').subFont ?? null);
+    const css = await p.evaluate(() => getComputedStyle(document.querySelector('.kt-player')).getPropertyValue('--sub-font'));
+    check('a font file added from the player becomes the subtitle font', /DejaVu Serif/.test(css), { fam, css });
+    check('…loaded into the page', await p.evaluate(() => document.fonts.check('16px "DejaVu Serif"') && [...document.fonts].some((f) => f.family.replace(/"/g, '') === 'DejaVu Serif' && f.status === 'loaded')));
+    check('…listed and chosen in the sheet', await p.$$eval('.sheet .sub-font-row', (rs) => rs.some((r) => r.classList.contains('on') && /DejaVu Serif/.test(r.textContent))));
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    const ff = await (async () => { await seek(2); await p.waitForTimeout(400); return p.$eval('.kt-subs .kt-cue', (c) => getComputedStyle(c).fontFamily).catch(() => ''); })();
+    check('the plain lines drawn in it', /DejaVu Serif/.test(ff), ff);
+  }
   check('no page errors', !errors.length);
   await br.close(); web.close(); fs.rmSync(MEDIA, { recursive: true, force: true });
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
