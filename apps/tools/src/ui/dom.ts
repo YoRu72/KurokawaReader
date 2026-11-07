@@ -187,9 +187,11 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 }
 
 let toastTimer: number | undefined;
-export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200): void {
+export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200, action?: { label: string; run: () => void }): void {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
-  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : ''), role: 'status' }, msg);
+  // (With an action — «Show» —: a button in it, and it can be touched.)
+  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : '') + (action ? ' with-action' : ''), role: 'status' }, h('span', null, msg),
+    action ? h('button', { type: 'button', class: 'toast-act', onclick: () => { el.remove(); action.run(); } }, action.label) : null);
   document.body.appendChild(el);
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => el.remove(), ms);

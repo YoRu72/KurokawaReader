@@ -248,7 +248,9 @@ export const magnetOf = (r: TorrentResult): string => (r.link?.startsWith('magne
 /** The query for a show and an episode (0 = the whole thing / a batch / a movie), ids filled in from the mapping services. */
 export async function buildQuery(media: Anime, episode: number): Promise<AnimeQuery> {
   const s = getSettings(); const ids = await idsOf(media.id).catch(() => ({} as Awaited<ReturnType<typeof idsOf>>));
-  const ex: string[] = []; try { const v = document.createElement('video'); if (!v.canPlayType('video/mp4; codecs="hvc1"') && !v.canPlayType('video/mp4; codecs="hev1"') && !window.kurokawaTools) ex.push('HEVC', 'x265', 'H.265'); } catch { /* none */ }
+  // (HEVC left out only where nothing here plays it: not on a computer (its graphics card, else ffmpeg's conversion),
+  // not on a phone with mpv.)
+  const ex: string[] = []; try { const v = document.createElement('video'); if (!v.canPlayType('video/mp4; codecs="hvc1"') && !v.canPlayType('video/mp4; codecs="hev1"') && !window.kurokawaTools) { const { mpvAvailable } = await import('../player/mpv'); if (s.playerEngine === 'web' || !(await mpvAvailable().catch(() => false))) ex.push('HEVC', 'x265', 'H.265'); } } catch { /* none */ }
   return { media, anilistId: media.id, anidbAid: ids.anidb, kitsuId: ids.kitsu, imdbId: ids.imdb, tmdbId: ids.tmdb, tvdbId: ids.tvdb, titles: titlesOf(media), episode, episodeCount: media.episodes ?? undefined, resolution: s.animeQuality, exclusions: ex };
 }
 // (Some sources — AnimeTosho, the ElfHosted add-ons — take long to answer on a slow day.)
@@ -310,16 +312,31 @@ function fromSeanime(t: Record<string, unknown>, p: ProviderEntry): TorrentResul
   return { title: String(t.name ?? ''), link: link || magnetOf({ hash, title: String(t.name ?? '') } as TorrentResult), hash, size: Number(t.size) || 0, seeders: Number(t.seeders) || 0, leechers: Number(t.leechers) || 0, downloads: Number(t.downloadCount) || 0, accuracy: t.confirmed ? 'high' : 'medium', date: t.date ? new Date(t.date as string) : undefined, type: t.isBestRelease ? 'best' : t.isBatch ? 'batch' : undefined, provider: p.name, resolution: (t.resolution as string) || parsed.resolution, episode: typeof t.episodeNumber === 'number' && t.episodeNumber >= 0 ? t.episodeNumber : parsed.episode, group: (t.releaseGroup as string) || parsed.group };
 }
 
-/** All enabled providers at once; each one's results (or its error) reported as it answers. */
-export async function searchAll(q: AnimeQuery, onEach: (p: ProviderEntry, res: TorrentResult[] | Error) => void): Promise<TorrentResult[]> {
+/** All enabled providers at once; each one's results (or its error) reported as it answers. A source's answer is
+ *  kept ten minutes (the same episode asked again — the sheet reopened, Watch after looking — answers at once).
+ *  `enough`: an answer good enough to go on with — then the search resolves `grace` ms later without waiting for the
+ *  slow sources (up to 35 s on a bad day), which still finish behind it and are kept for next time. */
+const answers = new Map<string, { at: number; res: TorrentResult[] }>(); const KEEP = 10 * 60_000;
+const keyOf = (p: ProviderEntry, q: AnimeQuery) => [p.id, q.anilistId, q.episode, q.query ?? '', q.resolution ?? '', (q.exclusions ?? []).join()].join('|');
+export async function searchAll(q: AnimeQuery, onEach: (p: ProviderEntry, res: TorrentResult[] | Error) => void, opt: { enough?: (all: TorrentResult[]) => boolean; grace?: number; fresh?: boolean } = {}): Promise<TorrentResult[]> {
   await syncBuiltins().catch(() => undefined);
   const ps = (await providers()).filter((p) => p.enabled && p.role !== 'stream');
   const all: TorrentResult[] = []; const seen = new Map<string, TorrentResult>();
-  await Promise.all(ps.map(async (p) => {
-    try { const r = await runProvider(p, q); const fresh: TorrentResult[] = []; for (const x of r) { const k = x.hash || x.url || x.link; const had = seen.get(k); if (had) { had.seeders = Math.max(had.seeders, x.seeders); if (x.accuracy === 'high') had.accuracy = 'high'; continue; } seen.set(k, x); fresh.push(x); all.push(x); } onEach(p, fresh); }
+  let early: (() => void) | null = null; let graceTimer = 0;
+  const took = (p: ProviderEntry, r: TorrentResult[]) => {
+    const fresh: TorrentResult[] = []; for (const x of r) { const k = x.hash || x.url || x.link; const had = seen.get(k); if (had) { had.seeders = Math.max(had.seeders, x.seeders); if (x.accuracy === 'high') had.accuracy = 'high'; continue; } const c = { ...x }; seen.set(k, c); fresh.push(c); all.push(c); }
+    onEach(p, fresh);
+    if (opt.enough && !graceTimer && early && opt.enough(all)) graceTimer = window.setTimeout(() => early?.(), opt.grace ?? 2000);
+  };
+  const work = Promise.all(ps.map(async (p) => {
+    const k = keyOf(p, q); const had = answers.get(k);
+    if (had && !opt.fresh && Date.now() - had.at < KEEP) { took(p, had.res); return; }
+    try { const r = await runProvider(p, q); answers.set(k, { at: Date.now(), res: r }); took(p, r); }
     catch (e) { onEach(p, e as Error); }
   }));
-  return all;
+  await Promise.race([work, new Promise<void>((r) => { early = r; if (opt.enough && opt.enough(all)) graceTimer = window.setTimeout(r, 0); })]);
+  window.clearTimeout(graceTimer); early = null;
+  return [...all];
 }
 /** A release's tags, read from its name (Seanime's and Hayase's badges): SeaDex's best, a batch, the quality, the
  *  source (BD, web), the video (HEVC, AV1, 10-bit, HDR, remux), the audio (dual, dubbed), subtitles, a fixed v2. */
@@ -352,9 +369,10 @@ export function releaseScore(r: TorrentResult): number {
   return s;
 }
 /** Results ordered the Hayase way: best releases, then accuracy, then the wanted resolution, then how good each
- *  looks (its tags and seeders). */
+ *  looks (its tags and seeders); one nobody seeds after all that someone does (it would not stream) — SeaDex's best, which carries no count, still first. */
 export function rank(rs: TorrentResult[], want: string): TorrentResult[] {
   const acc = { high: 2, medium: 1, low: 0 }; const res = (r: TorrentResult) => (want && r.resolution?.startsWith(want) ? 1 : 0);
   const sc = new Map(rs.map((r) => [r, releaseScore(r)]));
-  return [...rs].sort((a, b) => (b.type === 'best' ? 1 : 0) - (a.type === 'best' ? 1 : 0) || acc[b.accuracy] - acc[a.accuracy] || res(b) - res(a) || sc.get(b)! - sc.get(a)! || b.seeders - a.seeders);
+  const alive = (r: TorrentResult) => (r.seeders > 0 ? 1 : 0); const anyAlive = rs.some((r) => r.seeders > 0);
+  return [...rs].sort((a, b) => (b.type === 'best' ? 1 : 0) - (a.type === 'best' ? 1 : 0) || (anyAlive ? alive(b) - alive(a) : 0) || acc[b.accuracy] - acc[a.accuracy] || res(b) - res(a) || sc.get(b)! - sc.get(a)! || b.seeders - a.seeders);
 }

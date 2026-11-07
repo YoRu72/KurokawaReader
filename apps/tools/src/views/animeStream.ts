@@ -95,7 +95,7 @@ export async function streamSheet(a: Anime, episode: number): Promise<void> {
       let tk;
       if (v.type === 'mp4') tk = await getEngine().add({ source: { url: v.url, headers: sv.headers }, name: `${name}.mp4`, sequential: true, meta });
       else { const { videoSupported } = await import('../video/ytdlp'); if (!videoSupported()) { toast(t('streamNeedsVideo'), 'error', 6000); return; } tk = await getEngine().add({ source: { url: v.url, headers: sv.headers }, name, meta, video: { title: name, site: p.name, label: v.quality, headers: sv.headers, outName: name } }); }
-      toast(t('taskAdded', { name: tk.name || name })); sh.close(); navigate('/');
+      toast(t('taskAdded', { name: tk.name || name }), 'info', 5000, { label: t('toastShow'), run: () => navigate('/') }); sh.close();
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   }
   await go();

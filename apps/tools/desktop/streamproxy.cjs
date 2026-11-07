@@ -6,6 +6,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 const { net } = require('electron');
 const Ffmpeg = require('./ffmpeg.cjs');
+const Transcode = require('./transcode.cjs');
 
 let server = null; let port = 0;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
@@ -21,7 +22,7 @@ function start() {
 async function url(u, headers) { await start(); return `http://127.0.0.1:${port}/p?u=${encodeURIComponent(u)}&h=${encodeURIComponent(JSON.stringify(headers || {}))}`; }
 
 async function serve(req, out) {
-  const q = new URL(req.url, 'http://x'); if (q.pathname === '/audio') { audio(q, req, out); return; } if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
+  const q = new URL(req.url, 'http://x'); if (q.pathname === '/audio') { audio(q, req, out); return; } if (q.pathname === '/video') { await Transcode.serve(q, req, out); return; } if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
   const u = q.searchParams.get('u'); let h = {}; try { h = JSON.parse(q.searchParams.get('h') || '{}'); } catch { /* none */ }
   const headers = { 'user-agent': UA, ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), String(v)])) };
   const isPlaylist = (type, href) => /mpegurl/i.test(type || '') || /\.m3u8(\?|$)/i.test(href);
@@ -60,5 +61,6 @@ function audio(q, req, out) {
   p.stdout.pipe(out); req.on('close', () => { try { p.kill('SIGKILL'); } catch { /* gone */ } }); p.on('close', () => out.end());
 }
 async function audioBase() { await start(); return `http://127.0.0.1:${port}/audio`; }
+async function videoBase() { await start(); return `http://127.0.0.1:${port}/video`; }
 function stop() { try { server?.close(); } catch { /* fine */ } server = null; }
-module.exports = { url, stop, audioBase };
+module.exports = { url, stop, audioBase, videoBase };

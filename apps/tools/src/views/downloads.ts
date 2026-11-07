@@ -219,7 +219,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       const f = x.kind === 'torrent' ? x.files.find((g) => /\.ipa$/i.test(g.path)) : undefined; const rel = f ? f.path : displayName(x);
       row('apps', t('ipaTitle'), () => void (async () => {
         let file: Blob | undefined;
-        try { if (x.dir && !x.dir.startsWith('content:')) { const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(`${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? `${x.name}/` : ''}${rel}`); if (u) file = await (await fetch(u)).blob(); } } catch { /* the link alone */ }
+        try { if (x.dir && !x.dir.startsWith('content:')) { const { localFileUrl } = await import('../player/files'); const { localPathOf } = await import('../engine/localPath'); const lp = f ? localPathOf(x, f.index) : `${x.dir.replace(/[\\/]$/, '')}/${rel}`; const u = lp ? await localFileUrl(lp) : null; if (u) file = await (await fetch(u)).blob(); } } catch { /* the link alone */ }
         const m = await import('./ipa'); await m.ipaSheet({ file, url: x.source.url, name: rel.split('/').pop() });
       })());
     }

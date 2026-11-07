@@ -45,7 +45,10 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   // An episode's releases: the first adds only its own file of the season pack.
   await p.click('.ep-row >> nth=1'); await p.waitForSelector('.ep-sheet .dest-row'); await p.locator('.ep-sheet .dest-row', { hasText: 'Choose a release' }).click();
   await p.waitForSelector('.torrent-list .result-row'); console.log('releases:', await p.$$eval('.torrent-list .result-title', (e) => e.map((x) => x.textContent).join(' | ')));
-  await p.click('.torrent-list .result-row >> nth=0'); await p.waitForFunction(() => window.__added.length === 1);
+  await p.click('.torrent-list .result-row >> nth=0'); await p.waitForSelector('.pick-files .pick-row');
+  check('a season pack: its files shown first, this episode ticked, the rest not', await p.$$eval('.pick-files .pick-row.on .pick-name', (e) => e.map((x) => x.textContent).join('|')).then((x) => /E02/.test(x) && !x.includes('|')));
+  check('select all: one box, partly ticked', await p.$eval('.pick-master input', (e) => e.indeterminate && !e.checked));
+  await p.click('.pick-files .btn.primary'); await p.waitForFunction(() => window.__added.length === 1);
   let a = await p.evaluate(() => window.__added[0]); console.log('added:', JSON.stringify({ files: a.files, meta: a.meta }));
   check('only the episode file of the pack', JSON.stringify(a.files) === '[1]' && a.meta.season === 1 && a.meta.episode === 2 && a.meta.imdbId === 'tt1234567');
   // The pack's files chosen by hand: this episode ticked, the sample not.

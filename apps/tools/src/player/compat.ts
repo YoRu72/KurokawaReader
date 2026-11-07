@@ -5,8 +5,8 @@
 // after a few seconds of playing is taken as such a video.
 import { ktPlugin } from '../native';
 
-export interface Probe { audio: { index: number; codec: string; lang?: string; title?: string; channels?: number; isDefault?: boolean }[]; video?: { codec: string; profile?: string; pixFmt?: string } }
-type Raw = { streams?: { codec_type?: string; codec_name?: string; profile?: string; pix_fmt?: string; channels?: number; tags?: { language?: string; title?: string }; disposition?: { default?: number } }[] };
+export interface Probe { audio: { index: number; codec: string; lang?: string; title?: string; channels?: number; isDefault?: boolean }[]; video?: { codec: string; profile?: string; pixFmt?: string }; duration?: number }
+type Raw = { format?: { duration?: string }; streams?: { codec_type?: string; codec_name?: string; profile?: string; pix_fmt?: string; channels?: number; tags?: { language?: string; title?: string }; disposition?: { default?: number } }[] };
 type Desk = { ffprobe?(p: string): Promise<Raw>; audioUrl?(): Promise<{ url: string }> };
 type Plug = { ffprobe?(o: { path: string }): Promise<{ json: string }>; audioUrl?(): Promise<{ url: string }> };
 const desk = (): Desk | null => { const d = window.kurokawaTools as unknown as Desk | undefined; return d?.audioUrl ? d : null; };
@@ -24,7 +24,7 @@ export async function probe(url: string): Promise<Probe | null> {
   if (!raw?.streams) return null;
   const audio = raw.streams.filter((s) => s.codec_type === 'audio').map((s, index) => ({ index, codec: s.codec_name ?? '', lang: s.tags?.language, title: s.tags?.title, channels: s.channels, isDefault: !!s.disposition?.default }));
   const v = raw.streams.find((s) => s.codec_type === 'video' && s.codec_name !== 'mjpeg' && s.codec_name !== 'png');
-  return { audio, video: v ? { codec: v.codec_name ?? '', profile: v.profile, pixFmt: v.pix_fmt } : undefined };
+  return { audio, video: v ? { codec: v.codec_name ?? '', profile: v.profile, pixFmt: v.pix_fmt } : undefined, duration: Number(raw.format?.duration) || undefined };
 }
 
 /** The sound beside the video: started at the video's time, kept in step, restarted when it drifts or the video jumps. */

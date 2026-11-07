@@ -47,6 +47,15 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const tagRows = await p.$$eval('.torrent-list .result-row', (e) => e.map((x) => [...x.querySelectorAll('.rel-tag')].map((y) => y.textContent).join(',')));
   console.log('tags:', tagRows.join(' | ')); if (!/SeaDex/.test(tagRows[0] ?? '')) errors.push('the best release first, tagged');
   await p.click('.switch-row.small input'); console.log('unfiltered:', await p.$$eval('.torrent-list .result-row', (e) => e.length));
+  // The same episode's releases again: the sources' answers kept, not asked for again.
+  {
+    let hits = 0; const count = (r) => { if (/nyaa\.si|torrentio|animetosho|releases\.moe/.test(r.url())) hits++; }; p.on('request', count);
+    await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    const t0 = Date.now(); await p.locator('.ep-row:not(.future)').nth(4).locator('button[aria-label="Find torrents"]').evaluate((b) => b.click());
+    await p.waitForSelector('.torrent-list .result-row'); await p.waitForFunction(() => !document.querySelector('.provider-chips .busy'));
+    const ms = Date.now() - t0; p.off('request', count); console.log('again:', hits, 'requests,', ms, 'ms');
+    if (hits !== 0 || ms > 3000) errors.push('the same episode again: answered from what was found');
+  }
   // An episode tapped: its sheet with Watch now, Download the best release, Choose a release.
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
   await p.locator('.ep-row:not(.future)').nth(2).locator('.ep-title').click(); await p.waitForSelector('.ep-sheet .dest-row'); await p.waitForTimeout(400);
