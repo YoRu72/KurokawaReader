@@ -831,6 +831,32 @@ html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip { justify-conten
 html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
 html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip.on, html.pc .settings-view :is(.settings-tabs, .settings-nav) .chip[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 650; }
 
+/* One section at a time (the side list picks it): its name as the page's heading — no fold arrow, nothing to click
+   — and its settings as rows of a list, each a line with a hairline between, sized for a mouse. */
+html.pc .settings-body.pc-one > .card { background: none; box-shadow: none; border: 0; padding: 0; margin: 0; }
+html.pc .settings-view .card > h3.card-title { cursor: default; pointer-events: none; }
+html.pc .settings-view .card > h3.card-title > svg { display: none; }
+html.pc .settings-body.pc-one > .card > h3.card-title { font-size: 26px; font-weight: 700; letter-spacing: -.01em; text-transform: none; color: var(--md-on-surface); margin: 6px 0 16px; padding: 0; }
+html.pc[dir='rtl'] .settings-body.pc-one > .card > h3.card-title { letter-spacing: 0; }
+html.pc .settings-body.pc-one > .card > :not(h3) { background: var(--md-surface-container); margin: 0; padding: 12px 18px; border-radius: 0; }
+html.pc .settings-body.pc-one > .card > :not(h3) + :not(h3) { border-top: 1px solid color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+html.pc .settings-body.pc-one > .card > h3 + :not(h3) { border-top-left-radius: 14px; border-top-right-radius: 14px; }
+html.pc .settings-body.pc-one > .card > :not(h3):last-child { border-bottom-left-radius: 14px; border-bottom-right-radius: 14px; }
+html.pc .settings-body.pc-one > .card > p.hint { background: none; padding: 4px 4px 12px; border: 0 !important; }
+html.pc .settings-body.pc-one > .card > p.hint + :not(h3) { border-top: 0; border-top-left-radius: 14px; border-top-right-radius: 14px; }
+html.pc .settings-body.pc-one > .card > :not(h3):has(+ p.hint) { border-bottom-left-radius: 14px; border-bottom-right-radius: 14px; margin-bottom: 14px; }
+
+/* A computer's setting row: its name and note at the start, its control at the end on the same line — a choice a
+   dropdown of its own width, not a bar across the page. */
+html.pc .settings-view .card { gap: 0; }
+html.pc .settings-view .card > .row:not([hidden]) { flex-wrap: nowrap; min-height: 60px; gap: 24px; box-sizing: border-box; }
+html.pc .settings-view .card .row > span:first-child { flex: 1 1 auto; min-width: 0; }
+html.pc .settings-view .card .row > .pick-btn { width: auto; flex: 0 1 auto; min-width: 200px; max-width: 360px; min-height: 38px; padding: 0 12px 0 14px; border-radius: 10px; font-size: 14px; background: var(--md-surface-container-high); }
+html.pc .settings-view .card .row > .pick-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 10%, var(--md-surface-container-high)); }
+html.pc .settings-view .card .row > input[type=number], html.pc .settings-view .card .row > input[type=text] { min-height: 38px; border-radius: 10px; }
+html.pc .settings-view .card > .switch-row { min-height: 60px; box-sizing: border-box; }
+html.pc .settings-view .card .row small.src, html.pc .settings-view .card .switch-row small { font-size: 12.5px; }
+
 /* The icon cropper: the picture under a square frame, the shape it will have drawn over it; zoom, turn, shape, fill. */
 .icon-crop .sheet-body { display: flex; flex-direction: column; gap: 12px; }
 .ic-stage { display: grid; place-items: center; padding: 8px 0; background: repeating-conic-gradient(color-mix(in srgb, var(--md-on-surface) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border-radius: 16px; }

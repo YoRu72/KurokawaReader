@@ -1162,6 +1162,24 @@ html.pc .sheet.stacked { width: min(560px, calc(100vw - 96px)); max-height: 70vh
 html.pc .sheet.update-sheet { width: min(620px, calc(100vw - 64px)); }
 html.pc .sheet.libsearch-sheet { width: min(980px, calc(100vw - 64px)); max-height: 90vh; }
 html.pc .sheet.scan-sheet, html.pc .sheet.scan-editor { width: min(1080px, calc(100vw - 64px)); max-height: 92vh; }
+/* Settings, one section at a time on a computer (the side list picks it): its name as the page's heading — no fold
+   arrow, nothing to click — and its settings below in one panel. */
+html.pc .settings-body.pc-one > .card { background: var(--md-surface-container-low); }
+html.pc .settings-body.pc-one > .card > h3.card-title { pointer-events: none; cursor: default; font-size: 26px; font-weight: 700; text-transform: none; letter-spacing: -.01em; color: var(--md-on-surface); margin: -4px 0 8px; }
+html.pc[dir='rtl'] .settings-body.pc-one > .card > h3.card-title { letter-spacing: 0; }
+html.pc .settings-body.pc-one > .card > h3.card-title > svg { display: none; }
+html.pc .settings-view .settings-nav .chip.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 650; }
+/* A field's name at the start and its control at the end on one line, the control its own width; a hairline
+   between fields. */
+html.pc .settings-body.pc-one > .card { gap: 0; padding: 20px 24px; }
+html.pc .settings-body.pc-one > .card > .field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); align-items: center; column-gap: 24px; row-gap: 4px; padding: 12px 0; border-top: 1px solid color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+html.pc .settings-body.pc-one > .card > h3 + .field { border-top: 0; }
+html.pc .settings-body.pc-one > .card > .field > :is(label, .label):first-child { font-size: 14px; color: var(--md-on-surface); }
+html.pc .settings-body.pc-one > .card > .field > :not(:first-child) { grid-column: 2; }
+html.pc .settings-body.pc-one > .card > .field > .hint { grid-column: 1; grid-row: 2; margin: 0; }
+html.pc .settings-body.pc-one > .card > .field :is(.pick-btn, select) { min-height: 38px; border-radius: 10px; font-size: 14px; }
+html.pc .settings-body.pc-one > .card > .field .segmented button { min-height: 36px; font-size: 13px; }
+
 /* A sheet opened from a right-click or a ⋮ button: a computer's menu at the pointer, not a dialog. */
 html.pc .sheet.as-menu { inset: auto; margin: 0; width: max-content; min-width: 220px; max-width: 340px; max-height: min(70vh, 560px); border-radius: 12px;
   box-shadow: 0 10px 32px rgba(0,0,0,.4), var(--el-2); animation: menu-in var(--dur-short) var(--ease-emph-decel); background: var(--md-surface-container); }

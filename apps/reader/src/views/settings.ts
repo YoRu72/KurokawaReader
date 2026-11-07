@@ -384,6 +384,12 @@ export function settingsView(): HTMLElement {
   const search = h('input', { type: 'search', class: 'settings-search', placeholder: t('searchSettings'), 'aria-label': t('searchSettings') }) as HTMLInputElement;
   const head = h('div', { class: 'settings-head' }, search, nav);
   body.prepend(head);
+  // On a computer, as its own settings app has it: the side list picks one section, shown open on its own (the one
+  // last seen, remembered); a search still looks through them all. A phone keeps the folding list.
+  const pc = () => document.documentElement.classList.contains('pc');
+  const SEC_KEY = 'kr.settings.sec';
+  let pcSec = (() => { try { return localStorage.getItem(SEC_KEY) ?? ''; } catch { return ''; } })();
+  const showSec = (id: string) => { pcSec = id; try { localStorage.setItem(SEC_KEY, id); } catch { /* fine */ } search.value = ''; applySearch(); root.querySelector('.settings-body, .body')?.scrollTo?.({ top: 0 }); };
   cards.forEach((card, i) => {
     const title = card.querySelector('h3');
     if (!title) return;
@@ -393,14 +399,19 @@ export function settingsView(): HTMLElement {
     title.prepend(icon('chevronDown'));
     // Everything starts folded except Updates, so the page is a short list of headings.
     if ((title.textContent ?? '').trim() !== t('updates')) card.classList.add('collapsed');
-    const toggleCard = () => card.classList.toggle('collapsed');
+    const toggleCard = () => { if (!pc()) card.classList.toggle('collapsed'); };
     title.addEventListener('click', toggleCard);
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } });
-    nav.append(h('button', { type: 'button', class: 'chip small', onclick: () => { card.classList.remove('collapsed'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
+    nav.append(h('button', { type: 'button', class: 'chip small', 'data-sec': card.id, onclick: () => { if (pc()) { showSec(card.id); return; } card.classList.remove('collapsed'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
   });
+  const titled = cards.filter((c) => c.querySelector(':scope > h3'));
+  if (!titled.some((c) => c.id === pcSec)) pcSec = titled[0]?.id ?? '';
   const applySearch = () => {
-    const q = search.value.trim().toLowerCase();
+    const q = search.value.trim().toLowerCase(); const one = pc() && !q;
+    body.classList.toggle('pc-one', one);
+    for (const b of Array.from(nav.querySelectorAll<HTMLElement>('[data-sec]'))) { const on = one && b.dataset.sec === pcSec; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
     for (const card of cards) {
+      if (one) { card.hidden = card.id !== pcSec; card.classList.remove('collapsed'); card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       if (!q) { card.hidden = false; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       card.classList.remove('collapsed');
       let any = false;
@@ -428,6 +439,7 @@ export function settingsView(): HTMLElement {
     }
   };
   search.addEventListener('input', applySearch);
+  applySearch();
   return root;
 }
 

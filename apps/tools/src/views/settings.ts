@@ -54,23 +54,36 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     if (m.sources.length) { const box = card(`src-${m.id}`, t('addonSourcesSettings')); addonFields(box, m.sources, getLang()); open.add(box.id); out.push(box); }
     return out;
   };
+  // On a computer, as its own settings app has it: the side list picks one section, shown open on its own; a search
+  // still looks through them all. (A phone keeps the folding list.)
+  const pc = () => document.documentElement.classList.contains('pc');
+  let pcSec = section ?? '';
+  const showSec = (id: string) => {
+    pcSec = id; search.value = ''; applySearch(); body.scrollTop = 0;
+    try { history.replaceState(null, '', `#/settings/${id}`); } catch { /* not ours */ }
+  };
   const decorate = () => {
     nav.replaceChildren();
-    for (const card of Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'))) {
+    const cards = Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'));
+    if (pc() && !cards.some((c) => c.id === pcSec)) pcSec = cards.find((c) => c.querySelector(':scope > h3'))?.id ?? '';
+    for (const card of cards) {
       const title = card.querySelector<HTMLElement>(':scope > h3'); if (!title) continue;
       title.classList.add('card-title'); title.setAttribute('role', 'button'); title.setAttribute('tabindex', '0'); title.setAttribute('aria-expanded', String(open.has(card.id)));
       if (!title.querySelector('svg')) title.prepend(icon('chevronDown'));
       card.classList.toggle('collapsed', !open.has(card.id));
-      const flip = () => { const on = card.classList.toggle('collapsed'); if (on) open.delete(card.id); else open.add(card.id); title.setAttribute('aria-expanded', String(!on)); };
+      const flip = () => { if (pc()) return; const on = card.classList.toggle('collapsed'); if (on) open.delete(card.id); else open.add(card.id); title.setAttribute('aria-expanded', String(!on)); };
       title.onclick = flip; title.onkeydown = (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } };
-      nav.append(h('button', { type: 'button', class: 'chip small', onclick: () => { open.add(card.id); card.classList.remove('collapsed'); title.setAttribute('aria-expanded', 'true'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
+      nav.append(h('button', { type: 'button', class: 'chip small', 'data-sec': card.id, onclick: () => { if (pc()) { showSec(card.id); return; } open.add(card.id); card.classList.remove('collapsed'); title.setAttribute('aria-expanded', 'true'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
     }
     applySearch();
   };
   const applySearch = () => {
-    const q = search.value.trim().toLowerCase();
+    const q = search.value.trim().toLowerCase(); const one = pc();
+    body.classList.toggle('pc-one', one && !q);
+    for (const b of Array.from(nav.querySelectorAll<HTMLElement>('[data-sec]'))) { const on = one && !q && b.dataset.sec === pcSec; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
     for (const card of Array.from(body.querySelectorAll<HTMLElement>(':scope > .card'))) {
       const rows = Array.from(card.children).filter((r) => !r.matches('h3')) as HTMLElement[];
+      if (!q && one) { card.hidden = card.id !== pcSec; rows.forEach((r) => { r.hidden = false; }); card.classList.remove('collapsed'); continue; }
       if (!q) { card.hidden = false; rows.forEach((r) => { r.hidden = false; }); card.classList.toggle('collapsed', !open.has(card.id)); continue; }
       const titleHit = (card.querySelector(':scope > h3')?.textContent ?? '').toLowerCase().includes(q);
       let any = false; for (const r of rows) { const hit = titleHit || (r.textContent ?? '').toLowerCase().includes(q); r.hidden = !hit; if (hit) any = true; }
@@ -107,16 +120,16 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       row(t('netTimeout'), numberField(NET.timeout, (v) => setNet({ timeout: Math.max(5, Math.min(600, v)) }), { min: 5, max: 600, width: '6em' }), t('netTimeoutHint')),
       row(t('netProxy'), h('input', { type: 'text', dir: 'ltr', value: NET.proxy, placeholder: 'socks5://127.0.0.1:9050', autocomplete: 'off', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); void import('../downloads/net').then((m) => { if (!m.validProxy(v)) { toast(t('netProxyBad'), 'error'); return; } setNet({ proxy: v }); }); } }), t('netProxyHint')),
       row(t('netConflict'), pickButton(t('netConflict'), [['rename', t('netConflictRename'), t('netConflictRenameHint')], ['overwrite', t('netConflictOverwrite')], ['skip', t('netConflictSkip')]], NET.conflict, (v) => setNet({ conflict: v }), t('close'))),
-      eng.id === 'native' ? h('div', { class: 'row' }, h('span', null, t('netHosts'), hostsLine), h('button', { type: 'button', class: 'btn text small', onclick: () => { void ktPlugin()?.configure({ forgetHosts: true }).then(() => { hostsLine.textContent = ''; toast(t('netHostsForgot')); }); } }, t('netHostsForget'))) : null) : null;
-    if (connection && eng.id === 'native') void (ktPlugin() as unknown as { hosts?(): Promise<{ hosts: Record<string, number> }> } | null)?.hosts?.().then((r) => { const e = Object.entries(r.hosts ?? {}); hostsLine.textContent = e.length ? ' ' + e.slice(0, 4).map(([k, v]) => `${k} ≤ ${localDigits(v)}`).join(' · ') + (e.length > 4 ? ' …' : '') : ' ' + t('netHostsNone'); }).catch(() => undefined);
+      !!ktPlugin() ? h('div', { class: 'row' }, h('span', null, t('netHosts'), hostsLine), h('button', { type: 'button', class: 'btn text small', onclick: () => { void ktPlugin()?.configure({ forgetHosts: true }).then(() => { hostsLine.textContent = ''; toast(t('netHostsForgot')); }); } }, t('netHostsForget'))) : null) : null;
+    if (connection && !!ktPlugin()) void (ktPlugin() as unknown as { hosts?(): Promise<{ hosts: Record<string, number> }> } | null)?.hosts?.().then((r) => { const e = Object.entries(r.hosts ?? {}); hostsLine.textContent = e.length ? ' ' + e.slice(0, 4).map(([k, v]) => `${k} ≤ ${localDigits(v)}`).join(' · ') + (e.length > 4 ? ' …' : '') : ' ' + t('netHostsNone'); }).catch(() => undefined);
     const downloads = card('downloads', t('downloadsSection'),
       row(t('downloadFolder'), canPick ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); const ok = await import('./folderAccess').then((m) => m.ensureFolderAccess(d!)); rerender(); if (ok) toast(t('folderPicked', { dir: d })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('folder'), t('changeFolder')) : h('span'), s.downloadDir || t('defaultFolder')),
       // (Downloads kept before in the app's own storage, out of sight of the phone's file apps: moved to the
       // app's folder in Download in one go.)
-      eng.id === 'native' ? (() => { const st = h('small', { class: 'src' }); const btn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { await (ktPlugin() as unknown as { notifyAccess?(o: { ask?: boolean }): Promise<{ granted: boolean }> } | null)?.notifyAccess?.({ ask: true }).catch(() => null); for (let k = 0; k < 30; k++) { await new Promise((r) => setTimeout(r, 1000)); if (await show()) return; } } }, icon('bell'), t('notifyAllow'));
+      !!ktPlugin() ? (() => { const st = h('small', { class: 'src' }); const btn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { await (ktPlugin() as unknown as { notifyAccess?(o: { ask?: boolean }): Promise<{ granted: boolean }> } | null)?.notifyAccess?.({ ask: true }).catch(() => null); for (let k = 0; k < 30; k++) { await new Promise((r) => setTimeout(r, 1000)); if (await show()) return; } } }, icon('bell'), t('notifyAllow'));
         const show = async () => { const r = await (ktPlugin() as unknown as { notifyAccess?(o: { ask?: boolean }): Promise<{ granted: boolean }> } | null)?.notifyAccess?.({}).catch(() => null); st.textContent = r?.granted ? t('notifyOn') : t('notifyOff'); btn.hidden = !!r?.granted; return !!r?.granted; };
         void show(); return row(t('notifyProgress'), h('div', { class: 'row' }, st, btn), t('notifyProgressHint')); })() : null,
-      eng.id === 'native' && !s.downloadDir ? row(t('moveFinished'), h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const r = await (ktPlugin() as unknown as { moveFinished(o: { dir?: string }): Promise<{ moved: number; dir: string }> }).moveFinished({}); toast(t('movedFinished', { n: localDigits(r.moved), dir: r.dir }), 'info', 6000); } catch (er) { toast(String((er as Error).message ?? er), 'error'); } b.disabled = false; } }, icon('folder'), t('moveFinishedGo')), t('moveFinishedHint')) : null,
+      !!ktPlugin() && !s.downloadDir ? row(t('moveFinished'), h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const r = await (ktPlugin() as unknown as { moveFinished(o: { dir?: string }): Promise<{ moved: number; dir: string }> }).moveFinished({}); toast(t('movedFinished', { n: localDigits(r.moved), dir: r.dir }), 'info', 6000); } catch (er) { toast(String((er as Error).message ?? er), 'error'); } b.disabled = false; } }, icon('folder'), t('moveFinishedGo')), t('moveFinishedHint')) : null,
       row(t('maxActive'), numberField(s.maxActive, (v) => { updateSettings({ maxActive: Math.max(1, Math.min(10, v)) }); void (window.kurokawaTools?.configure?.({ maxConnections: v }) ?? ktPlugin()?.configure({ maxActive: v })); }, { min: 1, max: 10 })),
       ...(ktPlugin() ? [row(t('connBudget'), numberField(s.connBudget ?? 24, (v) => { updateSettings({ connBudget: Math.max(4, Math.min(128, v)) }); void ktPlugin()?.configure({ connBudget: v }); }, { min: 4, max: 128 }), t('connBudgetHint'))] : []),
       h('div', { class: 'row' }, h('span', null, t('dlAutoClean'), h('small', { class: 'src' }, t('dlAutoCleanHint'))), pickButton(t('dlAutoClean'), [['0', t('never')], ['1', t('days1')], ['7', t('days7')], ['30', t('days30')]], String(s.dlAutoClean ?? 0), (v) => updateSettings({ dlAutoClean: Number(v) }), t('close'))),
@@ -273,7 +286,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
       ...(s.addons.includes('player') ? [...(plat === 'android' ? [toggle(t('playerEngine') + ' — mpv', s.playerEngine !== 'web', (v) => updateSettings({ playerEngine: v ? 'mpv' : 'web' }), t('playerEngineHint'))] : []), toggle(t('videosTabToggle'), s.videosTab !== false, (v) => updateSettings({ videosTab: v }), t('videosTabHint')), ...fontRows(plat === 'desktop')] : [])) : null;
     // The player's own preferences (REX Player's groups), with the Player add-on.
-    const playerPrefs = s.addons.includes('player') ? (() => { const box = card('playerprefs', t('playerSettings'), h('p', { class: 'hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => box.append(m.playerPrefsPanel())); return box; })() : null;
+    // (The player's own preferences go into the Player card — one «Player», not a second «Player settings» beside it.)
+    const playerPrefs = s.addons.includes('player') ? (() => { const into = player ?? card('playerprefs', t('playerSettings')); into.append(h('p', { class: 'hint player-prefs-hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => into.append(m.playerPrefsPanel())); return player ? null : into; })() : null;
     // Sounds (Prism's): when a download finishes or fails and when all are done; the «Download complete» card.
     const sp = (s.sounds ?? {}) as Partial<import('../downloads/done').SoundPrefs>; const SP = { on: true, complete: 'classic', failed: true, allDone: true, volume: 0.7, card: true, ...sp };
     const setSp = (o: Partial<typeof SP>) => { updateSettings({ sounds: { ...SP, ...o } }); };
