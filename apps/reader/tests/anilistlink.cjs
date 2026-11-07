@@ -21,7 +21,7 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await ctx.route('https://graphql.anilist.co/**', async (route) => { auth = route.request().headers().authorization || ''; return route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { Viewer: { id: 7, name: 'Reader', avatar: { medium: '' }, mediaListOptions: { scoreFormat: 'POINT_10' } } } }) }); });
   await p.goto('http://localhost:5464/'); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await p.reload();
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('section.card h3');
-  await p.locator('h3.card-title').filter({ hasText: /Tracking|AniList/ }).first().click(); await p.waitForTimeout(300);
+  await p.locator('.settings-nav .chip').filter({ hasText: /Tracking|AniList/ }).first().click(); await p.waitForTimeout(300);
   const en = p.locator('label.row:has-text("AniList") input[type=checkbox]').first();
   if (!(await en.isChecked())) { await en.check(); await p.waitForTimeout(400); }
   // One tap, with the apps' own AniList client: nothing to fill in.
