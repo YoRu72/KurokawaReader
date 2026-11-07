@@ -33,7 +33,10 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   await p.click('.addon-row:has-text("TV & Movies") .btn'); await p.waitForSelector('.toast');
   check('installed', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.includes('tv')));
   await p.waitForSelector('[data-dest="tv"]'); await p.click('[data-dest="tv"]'); await p.waitForSelector('.dc-poster'); await p.click('.chip:has-text("Browse")'); await p.waitForSelector('.tv-card');
-  check('discover shows the catalogue', (await p.$$('.tv-card')).length === 2);
+  // (The Browse grid, once drawn: a slow machine is waited for, and what it showed is said if not two.)
+  await p.waitForSelector('.tv-head .chip.on'); const nCards = await p.waitForFunction(() => document.querySelectorAll('.tv-card').length === 2, null, { timeout: 8000 }).then(() => 2).catch(() => p.$$eval('.tv-card', (e) => e.length));
+  if (nCards !== 2) console.log('browse cards:', nCards, await p.$$eval('.tv-card', (e) => e.map((x) => x.textContent.slice(0, 30))));
+  check('discover shows the catalogue', nCards === 2);
   await p.click('.tv-card >> nth=0'); await p.waitForSelector('.ep-row');
   check('series page with season 1 episodes', (await p.$$('.ep-row')).length === 3);
   await p.waitForFunction(() => document.querySelectorAll('.ep-row .ep-pic img').length === 3, null, { timeout: 4000 }).catch(() => undefined);
