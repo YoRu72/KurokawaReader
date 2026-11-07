@@ -1,0 +1,1 @@
+Caladea-Bold.ttf: Caladea by Carlo de Fabritiis / Huerta Tipográfica, Apache License 2.0 (from fonts-crosextra-caladea); used by the tests only.
