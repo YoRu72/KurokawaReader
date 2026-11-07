@@ -98,7 +98,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   // to the floating translator with its settings.
   {
     await p.goto(`http://127.0.0.1:${port}/#/screen`); await p.waitForSelector('#scr-letter'); await p.evaluate(() => { window.__calls.length = 0; });
-    await p.setInputFiles('#scr-letter input[type=file]', "/usr/share/fonts/truetype/crosextra/Caladea-Bold.ttf"); await p.waitForSelector('#scr-letter .scr-fonts .dest-row');
+    await p.setInputFiles('#scr-letter input[type=file]', require('node:path').join(__dirname, 'fixtures', 'Caladea-Bold.ttf')); await p.waitForSelector('#scr-letter .scr-fonts .dest-row');
     const sel = p.locator('#scr-letter select[name="font-thought"]'); if (await sel.count()) await sel.selectOption({ index: 1 });
     await p.locator('#scr-glossary details summary').click(); await p.fill('#scr-glossary textarea', 'Kamado Tanjiro = كامادو تانجيرو\nドーン = بووم [sfx]');
     await p.locator('#scr-glossary details .btn').click(); await p.waitForTimeout(400);

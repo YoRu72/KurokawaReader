@@ -401,7 +401,7 @@ export function openPlayer(src: PlayerSource): void {
   }
   function applySubStyle() {
     const p = getPrefs(); const st = root.style;
-    st.setProperty('--sub-size', String(p.subSize)); st.setProperty('--sub-color', p.subColor); st.setProperty('--sub-lift', String(Math.max(0, 100 - p.subPos) / 100)); st.setProperty('--sub-font', p.subFont ? `"${p.subFont}", ` : '');
+    st.setProperty('--sub-size', String(p.subSize)); st.setProperty('--sub-color', p.subColor); st.setProperty('--sub-lift', String(Math.max(0, 100 - p.subPos) / 100)); st.setProperty('--sub-font', p.subFont ? `"${p.subFont}", ` : ''); if (p.subFont) void import('./subFont').then((m) => m.ensureFace(p.subFont));
     st.setProperty('--sub-outline', p.subOutline); st.setProperty('--sub-outline-w', `${p.subOutlineWidth}px`); st.setProperty('--sub-bg-a', String(p.subBgOpacity / 100)); st.setProperty('--sub2-lift', String(Math.max(0, p.sub2Pos - 10) / 100)); st.setProperty('--sub2-size', String(p.sub2Size));
     root.classList.toggle('sub-bold', p.subBold); root.classList.toggle('sub-italic', p.subItalic); root.dataset.subBg = p.subBackground;
     // (Appearance: the accent, the seek bar, the shade, the title, the marks, the size — REX Player's page.)
@@ -462,8 +462,9 @@ export function openPlayer(src: PlayerSource): void {
   }
   async function useTrack(tr: SubTrack | null) {
     current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
-    if (mpv) { mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(tr.ass, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
-    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, await fileFonts(), own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
+    const SF = await import('./subFont'); const styled = tr?.ass ? SF.styledText(tr.ass) : '';
+    if (mpv) { await SF.mpvFont((n, v) => mpv!.set(n, v)); mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(styled, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
+    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(styled)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, styled, await fileFonts(), own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
   function cycleSub() { chosenByHand = true; if (!tracks.length) { void subsSheet(); return; } const i = current ? tracks.indexOf(current) : -1; const nx = tracks[i + 1] ?? null; void useTrack(nx); flashText(nx ? nx.name : t('subsOff')); }
@@ -527,6 +528,7 @@ export function openPlayer(src: PlayerSource): void {
   void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr) offer(tr, list.length === 1); } } })();
 
   async function subsSheet() {
+    const subFontRows = (await import('./subFont')).fontRows(() => { applySubStyle(); delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime); if (current?.ass || mpv) void useTrack(current); });
     const sh = openSheet(t('navSubs'), t('close')); const p = getPrefs();
     const list = h('div', { class: 'dest-list' }, h('label', { class: 'dest-row' + (!current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: !current, onchange: () => { chosenByHand = true; void useTrack(null); } }), icon('close'), h('span', { class: 'name' }, t('subsOff'))),
       ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => { chosenByHand = true; void useTrack(tr); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton(secondary === tr ? 'bookmark' : 'bookmarkAdd', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); drawSubs(video.currentTime); }))));
@@ -571,7 +573,7 @@ export function openPlayer(src: PlayerSource): void {
       h('label', { class: 'field' }, h('span', null, t('subSize')), size), h('label', { class: 'field' }, h('span', null, t('subPosition')), pos),
       h('div', { class: 'row' }, h('span', null, t('subColor')), color), h('div', { class: 'row' }, h('span', null, t('subOutlineColor')), outline),
       h('div', { class: 'row' }, h('span', null, t('subBackground')), pickButton(t('subBackground'), [['none', t('subBgNone')], ['shadow', t('subBgShadow')], ['box', t('subBgBox')]], p.subBackground, (v) => { updatePrefs({ subBackground: v }); applySubStyle(); }, t('close'))),
-      sw(t('subBold'), 'subBold'), sw(t('subItalic'), 'subItalic'), sw(t('subForceLtr'), 'subForceLtr', () => { delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime); }),
+      ...subFontRows, sw(t('subBold'), 'subBold'), sw(t('subItalic'), 'subItalic'), sw(t('subForceLtr'), 'subForceLtr', () => { delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime); }),
       h('label', { class: 'row switch-row' }, h('span', null, t('subAssOverride'), h('small', { class: 'src' }, t('subAssOverrideHint'))), h('input', { type: 'checkbox', checked: p.subAssOverride, onchange: (e: Event) => { updatePrefs({ subAssOverride: (e.target as HTMLInputElement).checked }); void useTrack(current); } })),
       h('div', { class: 'row' }, h('span', null, t('subCodepage')), pickButton(t('subCodepage'), [['', t('subCodepageAuto')], ['windows-1256', 'Windows-1256 (Arabic)'], ['utf-8', 'UTF-8'], ['windows-1252', 'Windows-1252'], ['windows-1251', 'Windows-1251'], ['shift_jis', 'Shift_JIS'], ['euc-kr', 'EUC-KR'], ['gbk', 'GBK'], ['big5', 'Big5'], ['windows-1254', 'Windows-1254']], p.subCodepage, (v) => updatePrefs({ subCodepage: v }), t('close'))));
   }
@@ -1052,7 +1054,7 @@ export function openPlayer(src: PlayerSource): void {
       if (keys.includes('pitchCorrection')) video.preservesPitch = getPrefs().pitchCorrection;
     })));
   }
-  async function cutSheet() { const { cutClipSheet } = await import('./cut'); await cutClipSheet({ src, a: abA ?? Math.max(0, video.currentTime - 30), b: abB ?? video.currentTime, duration: video.duration, subtitle: current ? { name: current.name, ass: current.ass, cues: current.cues, delay: subDelay , style: { font: getPrefs().subFont, size: getPrefs().subSize, color: getPrefs().subColor, outline: getPrefs().subOutline, outlineWidth: getPrefs().subOutlineWidth, bold: getPrefs().subBold, italic: getPrefs().subItalic, pos: getPrefs().subPos, background: getPrefs().subBackground } } : undefined, video, fps: fps || undefined, setRange: (x, y) => { abA = x; abB = y; abBtn.classList.add('on'); drawMarks(); } }); }
+  async function cutSheet() { const { cutClipSheet } = await import('./cut'); await cutClipSheet({ src, a: abA ?? Math.max(0, video.currentTime - 30), b: abB ?? video.currentTime, duration: video.duration, subtitle: current ? { name: current.name, ass: current.ass ? (await import('./subFont')).styledText(current.ass) : undefined, cues: current.cues, delay: subDelay , style: { font: getPrefs().subFont, size: getPrefs().subSize, color: getPrefs().subColor, outline: getPrefs().subOutline, outlineWidth: getPrefs().subOutlineWidth, bold: getPrefs().subBold, italic: getPrefs().subItalic, pos: getPrefs().subPos, background: getPrefs().subBackground } } : undefined, video, fps: fps || undefined, setRange: (x, y) => { abA = x; abB = y; abBtn.classList.add('on'); drawMarks(); } }); }
 
   // ---- REX Player's extras: the ambient glow, chapters, skipping openings (AniSkip), another player
   // The ambient glow: the picture's average colour spilled around it, a few times a second.

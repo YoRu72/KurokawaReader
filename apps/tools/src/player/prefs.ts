@@ -5,7 +5,7 @@ export type EqBands = [number, number, number, number, number, number, number, n
 export interface PlayerPrefs {
   doubleTapSeek: number; swipeSeek: boolean; swipeVolume: boolean; swipeBrightness: boolean; longPressSpeed: number; pinchZoom: boolean;
   speedPresets: number[]; defaultSpeed: number; pitchCorrection: boolean; volumeBoost: number;
-  subSize: number; subColor: string; subBackground: 'none' | 'shadow' | 'box'; subPos: number; subFont: string; subBold: boolean; subCodepage: string; subAssOverride: boolean; subDelay: number;
+  subSize: number; subColor: string; subBackground: 'none' | 'shadow' | 'box'; subPos: number; subFont: string; /** The main font in styled (ASS) subtitles too. */ subFontAss: boolean; subBold: boolean; subCodepage: string; subAssOverride: boolean; subDelay: number;
   resume: 'always' | 'ask' | 'never'; watchedAt: number; markWatched: boolean; autoplayNext: boolean; keepScreenOn: boolean; orientation: 'auto' | 'landscape' | 'sensor';
   aspect: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3' | '21:9';
   sleepTimer: number;
@@ -62,7 +62,7 @@ export const DEFAULT_FILTERS: PlayerPrefs['filters'] = { brightness: 100, contra
 export const DEFAULT_PREFS: PlayerPrefs = {
   doubleTapSeek: 10, swipeSeek: true, swipeVolume: true, swipeBrightness: true, longPressSpeed: 2, pinchZoom: true,
   speedPresets: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4], defaultSpeed: 1, pitchCorrection: true, volumeBoost: 30,
-  subSize: 100, subColor: '#ffffff', subBackground: 'shadow', subPos: 100, subFont: '', subBold: false, subCodepage: '', subAssOverride: false, subDelay: 0,
+  subSize: 100, subColor: '#ffffff', subBackground: 'shadow', subPos: 100, subFont: '', subFontAss: false, subBold: false, subCodepage: '', subAssOverride: false, subDelay: 0,
   resume: 'always', watchedAt: 90, markWatched: true, autoplayNext: true, keepScreenOn: true, orientation: 'auto',
   aspect: 'fit', sleepTimer: 0,
   skipAmount: 85, autoSkip: 'button', skipSponsor: 'button', skipSilence: false, heatmap: true, filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
