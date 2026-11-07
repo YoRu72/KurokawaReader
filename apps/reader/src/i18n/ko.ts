@@ -106,6 +106,7 @@ export const ko: Partial<Strings> = {
   extractInPlace: '제자리에서 풀기', extractInPlaceHint: '파일이 나올 때마다 압축 파일이 줄어들어 디스크에는 파일만큼의 공간만 있으면 됩니다. 중간에 멈춰도 나중에 이어서 풉니다.', deleteArchiveAfter: '푼 뒤 압축 파일 삭제', extracting: '푸는 중…', extracted: '{n} 풀었습니다', extractContinue: '이어서 풀기', extractResumable: '일부만 풀림', extractPausedInPlace: '멈췄습니다. 압축 파일은 그대로 남아 이어서 풀 수 있습니다', 
   notAnArchive: '이 앱이 열 수 있는 압축 파일이 아닙니다.', encrypted: '암호화됨', password: '비밀번호', passwordNeeded: '이 압축 파일에는 비밀번호가 필요합니다.', wrongPassword: '비밀번호가 틀렸습니다.', noSpace: '디스크 공간이 부족합니다.', andMore: '…외 {n}개', openArchive: '압축 파일 열기', createZip: 'zip 만들기', zipping: '압축 중…', zipped: '{name} 만들었습니다 ({size})',
   otherApps: '다른 Kurokawa 앱', otherAppsHint: '앱들은 같은 디자인, 같은 AniList 연결, 같은 부가 기능 저장소를 공유합니다.', appTools: 'Kurokawa Tools', appToolsDesc: '다운로드, 토렌트, 스트리밍과 애니·자막·압축 파일 부가 기능.', appInstalled: '설치됨 · 열기', appGet: '받기', appOpenReleases: '릴리스 페이지 열기', appInstallerOpened: '설치 프로그램에 전달했습니다', 
+  prevPage: "이전 페이지",
   moreTools: "기타 도구",
   iconCantRead: "이 이미지를 읽을 수 없습니다.",
   iconCropTitle: "아이콘 자르기",

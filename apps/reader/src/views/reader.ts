@@ -23,6 +23,7 @@ import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
 import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
+const DOCK_KEY = 'kr.reader.dock';
 import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
@@ -161,13 +162,24 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
     more: () => iconButton('more', t('more'), () => openMore()),
   };
-  const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => TOOLBAR_ITEMS[id]())); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(TOOLBAR_ITEMS.more()); };
+  // (On a computer the tools sit in the top bar with their names — see the styles —; a phone keeps the floating icons.)
+  const named = (b: HTMLElement) => { const l = b.getAttribute('aria-label'); if (l && b.classList.contains('icon-btn')) b.append(h('span', { class: 'tb-label' }, l)); return b; };
+  const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => named(TOOLBAR_ITEMS[id]()))); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(named(TOOLBAR_ITEMS.more())); };
   renderToolbar();
   onDispose(onSettingsChange(() => renderToolbar()));
   reader.append(scroll);
   const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
+  // A computer's page-turn arrows at the two sides of the text: shown while the mouse moves, gone when it rests.
+  const arrow = (fwd: boolean) => h('button', { type: 'button', class: `page-arrow ${fwd ? 'next' : 'prev'}`, title: fwd ? t('nextPage') : t('prevPage'), 'aria-label': fwd ? t('nextPage') : t('prevPage'), onclick: () => turnPage(!fwd) }, icon(fwd ? 'chevronRight' : 'chevronLeft'));
+  const arrows = [arrow(false), arrow(true)];
+  let restT = 0; const awake = () => { root.classList.add('mouse-awake'); window.clearTimeout(restT); restT = window.setTimeout(() => root.classList.remove('mouse-awake'), 1800); };
+  root.addEventListener('mousemove', awake); onDispose(() => window.clearTimeout(restT));
+  reader.append(...arrows);
   root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
   syncChrome();
+  panel.onClose = () => { try { localStorage.removeItem(DOCK_KEY); } catch { /* private mode */ } };
+  { let was: string | null = null; try { was = localStorage.getItem(DOCK_KEY); } catch { /* private mode */ }
+    if (was && SidePanel.canDock()) { const tab = was as 'toc'; const tm = window.setTimeout(() => { if (root.isConnected && !panel.isOpen) openContents(tab); }, 900); onDispose(() => window.clearTimeout(tm)); } }
   const chapterMode = () => getSettings().readingMode !== 'continuous';
   const flowMode = () => getSettings().readingMode === 'flow';
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
@@ -830,13 +842,19 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(back.dispose);
 
   /* ---------- links & taps ---------- */
+  flow.addEventListener('dblclick', (e) => {
+    if (!document.documentElement.classList.contains('pc')) return;
+    const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null; if (!img || !allImages.length || !getSettings().pictureZoom) return;
+    const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); document.getSelection()?.removeAllRanges(); showGallery(idx); }
+  });
   flow.addEventListener('click', (e) => {
     // A picture first — even one inside a link (books often link their pictures), unless it is a small one in a
     // line of text (a footnote's mark): tapped, it opens on its own, to look closer, save, copy or share.
     const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
     const linkOf = (e.target as HTMLElement).closest('a[data-kr-anchor]') as HTMLElement | null;
     const small = !!img && (img.classList.contains('inline') || img.getBoundingClientRect().width < 64);
-    if (img && allImages.length && getSettings().pictureZoom && !(linkOf && small)) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); showGallery(idx); return; } }
+    // (On a computer a picture opens with a double-click — a single one is too easily made while reading.)
+    if (img && allImages.length && getSettings().pictureZoom && !(linkOf && small) && !document.documentElement.classList.contains('pc')) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); showGallery(idx); return; } }
     if (linkOf) { e.preventDefault(); back.remember(); scrollToAnchor(linkOf.dataset.krAnchor!); return; }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
@@ -1004,6 +1022,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   /* ---------- panel: contents / bookmarks / highlights ---------- */
   function openContents(tab: 'toc' | 'bookmarks' | 'highlights' | 'notes'): void {
+    // (Docked on a computer, it is opened again with the next book — until it is closed.)
+    try { if (SidePanel.canDock()) localStorage.setItem(DOCK_KEY, tab); } catch { /* private mode */ }
     panel.open(t('contents'), [
       { id: 'toc', label: t('contents'), render: (body) => {
         const cur = currentLocator();
@@ -1011,7 +1031,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         for (const doc of docs) {
           const ul = h('ul', { class: 'toc-list' });
           if (docs.length > 1) body.append(h('div', { class: 'toc-book', dir: 'auto' }, doc.book.title));
-          body.append(h('ul', { class: 'toc-list' }, h('li', null, h('button', { type: 'button', onclick: () => { scrollToAnchor(doc.wrapper.id, false); panel.close(); } }, icon('books'), doc.book.title))));
+          body.append(h('ul', { class: 'toc-list' }, h('li', null, h('button', { type: 'button', onclick: () => { scrollToAnchor(doc.wrapper.id, false); panel.dismiss(); } }, icon('books'), doc.book.title))));
           const toc = doc.render?.toc ?? [];
           if (!toc.length) body.append(h('p', { style: { color: 'var(--text-dim)', padding: '0 10px', fontSize: '13px' } }, t('noContents')));
           // Each entry's length: minutes at the reader's pace (or a usual one), from the words up to the next entry.
@@ -1019,7 +1039,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           const starts = toc.map((it) => { const el = document.getElementById(it.anchor); return el ? doc.allBlocks.findIndex((b) => b === el || el.contains(b) || (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) : -1; });
           const cum: number[] = [0]; for (const b of doc.allBlocks) cum.push(cum[cum.length - 1] + wordCount(b));
           const lengthOf = (i: number) => { const a = starts[i]; if (a < 0) return 0; let j = i + 1; while (j < starts.length && (starts[j] < 0 || starts[j] <= a)) j++; const b = j < starts.length ? starts[j] : doc.allBlocks.length; return Math.round((cum[b] - cum[a]) / speed); };
-          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.close(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
+          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.dismiss(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
           body.append(ul);
           // (The translation on: each title translated, its original beneath.)
           const labels = toc.map((x) => x.label);
@@ -1031,7 +1051,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         const all = docs.flatMap((d) => (d.book.bookmarks ?? []).map((bm) => ({ doc: d, bm }))).sort((a, b) => b.bm.createdAt - a.bm.createdAt);
         if (!all.length) { body.append(h('p', { class: 'center' }, t('noBookmarks'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...all.map(({ doc, bm }) => h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); scrollToLocator(bm.locator); panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); scrollToLocator(bm.locator); panel.dismiss(); } },
             h('span', { dir: 'auto' }, bm.label), h('span', { class: 'meta', dir: 'auto' }, (docs.length > 1 ? doc.book.title + ' · ' : '') + (bm.excerpt ?? ''))),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); doc.book.bookmarks = doc.book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(doc.book.id, (b) => { b.bookmarks = doc.book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
@@ -1039,7 +1059,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         const all = docs.flatMap((d) => (d.book.highlights ?? []).filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).map((hl, i) => ({ doc: d, hl, n: i + 1 })));
         if (!all.length) { body.append(h('p', { class: 'center' }, t('noNotes'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...all.map(({ doc, hl, n }) => h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { const m = doc.wrapper.querySelector(`mark[data-hl="${hl.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${hl.id}`; scrollToAnchor(m.id); } panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { const m = doc.wrapper.querySelector(`mark[data-hl="${hl.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${hl.id}`; scrollToAnchor(m.id); } panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(n)), h('span', { dir: 'auto', class: 'meta' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { hl.note = undefined; doc.wrapper.querySelectorAll(`mark[data-hl="${hl.id}"]`).forEach((m) => { (m as HTMLElement).title = ''; m.classList.remove('has-note'); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); panel.refresh(); } }, icon('trash'))))));
@@ -1048,11 +1068,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         const all = docs.flatMap((d) => (d.book.highlights ?? []).map((hl) => ({ doc: d, hl }))).sort((a, b) => b.hl.createdAt - a.hl.createdAt);
         if (!all.length) { body.append(h('p', { class: 'center' }, t('noHighlights')));  return; }
         body.append(h('ul', { class: 'plain-list' }, ...all.map(({ doc, hl }) => h('li', null,
-          h('button', { type: 'button', style: { flex: '1' }, onclick: () => { const m = doc.wrapper.querySelector(`mark[data-hl="${hl.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${hl.id}`; scrollToAnchor(m.id); } panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1' }, onclick: () => { const m = doc.wrapper.querySelector(`mark[data-hl="${hl.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${hl.id}`; scrollToAnchor(m.id); } panel.dismiss(); } },
             h('mark', { class: 'kr-hl', 'data-color': hl.color, dir: 'auto', style: { fontFamily: 'var(--font-read)' } }, hl.text.length > 160 ? hl.text.slice(0, 160) + '…' : hl.text)),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await removeHighlight(doc, hl.id); panel.refresh(); } }, icon('trash'))))));
       } },
-    ], tab);
+    ], tab, { dock: true });
   }
 
   /* ---------- search ---------- */
@@ -1259,7 +1279,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         };
         if (langMode) {
           const piece = (text: string, at: [number, number] | null, cls: string) => { if (!at) return h('span', { class: cls, dir: 'auto' }, text.length > 160 ? `${text.slice(0, 160)}…` : text); const [s0, e0] = at; return h('span', { class: cls, dir: 'auto' }, (s0 > 70 ? '…' : '') + text.slice(Math.max(0, s0 - 70), s0), h('mark', null, text.slice(s0, e0)), text.slice(e0, e0 + 90) + (e0 + 90 < text.length ? '…' : '')); };
-          const prow = (hit: PairHit) => h('li', { class: 'hit pair-hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { if (window.innerWidth < 900) panel.close(); goToPair(hit); } },
+          const prow = (hit: PairHit) => h('li', { class: 'hit pair-hit' }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { if (window.innerWidth < 900) panel.dismiss(); goToPair(hit); } },
             h('span', { class: 'meta', dir: 'auto' }, hit.label, h('b', { class: 'hit-pct' }, localDigits(hit.pct.toFixed(1)) + '%')),
             piece(hit.orig, hit.inOrig, 'ctx orig'), hit.tr ? piece(hit.tr, hit.inTr, 'ctx trl') : h('span', { class: 'ctx trl none' }, t('searchNotTranslated'))));
           let m = 0; const hits2 = await searchPairs(q, langMode, (hs) => { if (id !== runId) return; m += hs.length; more.before(...hs.slice(0, Math.max(0, 300 - list.children.length)).map(prow)); count.textContent = `${t('resultsCount', { n: m })}…`; }, () => id === runId);
@@ -1296,7 +1316,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 200); });
       if (initial) void run();
       setTimeout(() => input.focus(), 50);
-    } }]);
+    } }], undefined, { dock: true });
     void searchHighlight;
   }
 
@@ -1539,6 +1559,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
 
   /* ---------- keyboard ---------- */
+  /** A screen on, or back (Space and Shift+Space, PageDown, the computer's arrows): at a chapter's end, the next one. */
+  function turnPage(back: boolean): void {
+    const page = scroll.clientHeight * 0.9;
+    if (flowMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); return; } }
+    scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' });
+  }
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); else void leaveFullscreen(root); return; }
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
@@ -1548,12 +1574,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); showUnit(fwd ? k + 1 : k - 1, !fwd); break; }
       case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
       case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
-      case ' ': case 'PageDown': {
-        e.preventDefault();
-        const back = e.shiftKey;
-        if (flowMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); break; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); break; } }
-        scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' }); break;
-      }
+      case ' ': case 'PageDown': { e.preventDefault(); turnPage(e.shiftKey); break; }
       case 'PageUp': { e.preventDefault(); if (flowMode() && scroll.scrollTop <= 1 && units()[currentUnitIndex() - 1]) { showUnit(currentUnitIndex() - 1, true); break; } scroll.scrollBy({ top: -page, behavior: 'smooth' }); break; }
       case 'Home': scroll.scrollTop = 0; break;
       case 'End': scroll.scrollTop = scroll.scrollHeight; break;
@@ -1829,13 +1850,13 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       { id: 'toc', label: t('contents'), render: async (body) => {
         outline ??= await viewer.outline();
         if (!outline.length) { body.append(h('p', { class: 'center' }, t('noContents'))); return; }
-        body.append(h('ul', { class: 'toc-list' }, ...outline.map((it) => h('li', { class: `depth-${Math.min(3, it.depth)}` }, h('button', { type: 'button', dir: 'auto', class: it.page === viewer.current ? 'current' : '', onclick: () => { if (it.page) { back.remember(); viewer.goTo(it.page); } panel.close(); } }, h('span', { style: { flex: '1' } }, it.label), it.page ? h('span', { class: 'meta' }, String(it.page)) : null)))));
+        body.append(h('ul', { class: 'toc-list' }, ...outline.map((it) => h('li', { class: `depth-${Math.min(3, it.depth)}` }, h('button', { type: 'button', dir: 'auto', class: it.page === viewer.current ? 'current' : '', onclick: () => { if (it.page) { back.remember(); viewer.goTo(it.page); } panel.dismiss(); } }, h('span', { style: { flex: '1' } }, it.label), it.page ? h('span', { class: 'meta' }, String(it.page)) : null)))));
       } },
       { id: 'bookmarks', label: t('bookmarks'), render: (body) => {
         const list = [...(book.bookmarks ?? [])].sort((a, b) => b.createdAt - a.createdAt);
         if (!list.length) { body.append(h('p', { class: 'center' }, t('noBookmarks'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...list.map((bm) => h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); panel.close(); } }, h('span', null, bm.label), bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); panel.dismiss(); } }, h('span', null, bm.label), bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
@@ -1844,19 +1865,19 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         if (!pins.length && !noted.length) { body.append(h('p', { class: 'center' }, t('noPdfNotes'))); return; }
         const list = h('ul', { class: 'plain-list' });
         pins.forEach((pin, i) => list.append(h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: viewer.total }))),
             h('span', { dir: 'auto' }, pin.note)),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash')))));
         noted.forEach((hl, i) => list.append(h('li', null,
-          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); panel.close(); } },
+          h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: hl.page, total: viewer.total }))),
             h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text),
             h('span', { dir: 'auto' }, hl.note!)),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) x.note = undefined; }); const local = (book.pdfHighlights ?? []).find((y) => y.id === hl.id); if (local) local.note = undefined; renderHighlights(hl.page); panel.refresh(); } }, icon('trash')))));
         body.append(list);
       } },
-    ], tab);
+    ], tab, { dock: true });
   }
 
   /* ---------- PDF text highlights ---------- */
@@ -2090,7 +2111,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       const list = h('ul', { class: 'plain-list' });
       body.append(input, keepToggle(() => { lastQ = ''; lastHits = []; }), status, list);
       let timer: number | undefined;
-      const rowOf = (hit: PdfSearchHit, i: number, q: string) => h('li', { class: 'hit' + (i === hitAt && q === lastQ ? ' current' : '') }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { lastQ = q; showHit(i); if (window.innerWidth < 900) panel.close(); } },
+      const rowOf = (hit: PdfSearchHit, i: number, q: string) => h('li', { class: 'hit' + (i === hitAt && q === lastQ ? ' current' : '') }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { lastQ = q; showHit(i); if (window.innerWidth < 900) panel.dismiss(); } },
         h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after)));
       const run = async () => {
         searchToken.cancelled = true; searchToken = { cancelled: false };
@@ -2114,7 +2135,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 350); });
       if (initial) void run();
       setTimeout(() => input.focus(), 50);
-    } }]);
+    } }], undefined, { dock: true });
   }
 
   function openMore() {
