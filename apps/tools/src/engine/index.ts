@@ -36,12 +36,19 @@ export async function retryPlatformEngine(): Promise<boolean> { await window.kur
 
 /* ---------- what the user typed ---------- */
 /** Links, magnets and torrents out of free text (several, one per line or space-separated). */
+/** Whether bytes are a .torrent: a bencoded dictionary with an «info» in it (not just any file called one). */
+export function isTorrentBytes(b: Uint8Array): boolean {
+  if (b.length < 20 || b[0] !== 0x64 /* d */) return false;
+  const head = new TextDecoder('latin1').decode(b.subarray(0, Math.min(b.length, 1 << 20)));
+  return /\d+:info/.test(head) && /^d\d+:/.test(head);
+}
+export const torrentB64Ok = (b64: string): boolean => { try { const bin = atob(b64); const u = new Uint8Array(Math.min(bin.length, 1 << 20)); for (let i = 0; i < u.length; i++) u[i] = bin.charCodeAt(i); return isTorrentBytes(u); } catch { return false; } };
 export function parseSources(text: string): TaskSource[] {
   const out: TaskSource[] = [];
   for (const raw0 of text.split(/[\s\n]+/)) for (const raw of (/\[[\da-zA-Z]+-[\da-zA-Z]+(?::\d+)?\]/.test(raw0) ? expandPattern(raw0) : [raw0])) {
     const s = raw.trim(); if (!s) continue;
     if (/^magnet:\?/i.test(s)) out.push({ magnet: s });
-    else if (/^data:application\/x-bittorrent;base64,/i.test(s)) out.push({ torrent: s.split(',')[1] });
+    else if (/^data:application\/x-bittorrent;base64,/i.test(s)) { if (torrentB64Ok(s.split(',')[1] ?? '')) out.push({ torrent: s.split(',')[1] }); }
     else if (/^(https?|ftp|sftp):\/\/\S+/i.test(s)) out.push({ url: s });
     else if (/^[a-f0-9]{40}$/i.test(s) || /^[a-z2-7]{32}$/i.test(s)) out.push({ magnet: `magnet:?xt=urn:btih:${s}` });
     else if (/^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(s)) out.push({ url: `https://${s}` });

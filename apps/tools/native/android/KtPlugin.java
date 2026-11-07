@@ -228,6 +228,24 @@ public class KtPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("all", all); r.put("writable", !dir.isEmpty() && !dir.startsWith("content:") && KtEngine.writable(new File(dir))); r.put("defaultDir", engine().defaultDir().getAbsolutePath()); call.resolve(r);
     }
     /** Whether notifications are allowed; `ask`: the system's dialog, or — once refused for good — the app's notification settings. */
+    /** A job of the page's own (a clip being cut) in the notifications: its progress while it runs, then that it is
+     *  done (or failed), a tap opening the app. */
+    @PluginMethod public void progressNote(PluginCall call) {
+        try {
+            android.content.Context c = getContext(); KtService.channels(c);
+            int nid = 0x4b5400 + (call.getString("id", "job").hashCode() & 0xffff); int pct = call.getInt("percent", -1); boolean done = Boolean.TRUE.equals(call.getBoolean("done", false)); boolean failed = Boolean.TRUE.equals(call.getBoolean("failed", false));
+            Intent open = c.getPackageManager().getLaunchIntentForPackage(c.getPackageName());
+            android.app.PendingIntent pi = open == null ? null : android.app.PendingIntent.getActivity(c, nid, open, android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+            androidx.core.app.NotificationCompat.Builder b = new androidx.core.app.NotificationCompat.Builder(c, done ? KtService.CH_DONE : KtService.CH_RUN)
+                .setSmallIcon(done ? (failed ? android.R.drawable.stat_notify_error : android.R.drawable.stat_sys_download_done) : android.R.drawable.stat_sys_download)
+                .setContentTitle(call.getString("title", "")).setContentText(call.getString("text", "")).setOnlyAlertOnce(!done).setOngoing(!done).setAutoCancel(done);
+            if (pi != null) b.setContentIntent(pi);
+            if (!done) b.setProgress(100, Math.max(0, Math.min(100, pct)), pct < 0);
+            androidx.core.app.NotificationManagerCompat nm = androidx.core.app.NotificationManagerCompat.from(c);
+            if (nm.areNotificationsEnabled()) nm.notify(nid, b.build());
+            call.resolve();
+        } catch (SecurityException e) { call.resolve(); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+    }
     @PluginMethod public void notifyAccess(PluginCall call) {
         android.content.Context c = getContext(); boolean on = androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled();
         if (!on && Boolean.TRUE.equals(call.getBoolean("ask", false))) {
@@ -271,6 +289,8 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void setLimits(PluginCall call) { run(call, () -> { engine().setLimits(call.getLong("down", 0L), call.getLong("up", 0L)); call.resolve(); }); }
     @PluginMethod public void configure(PluginCall call) { run(call, () -> { engine().configure(new JSONObject(call.getData().toString())); call.resolve(); }); }
     @PluginMethod public void torrentInfo(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("info", obj(engine().torrentInfo(new JSONObject(call.getObject("source").toString())))); call.resolve(r); }); }
+    /** The player's word on a video being watched while it comes: its length, so the window ahead is sized from its byte rate. */
+    @PluginMethod public void streamHint(PluginCall call) { try { engine().stream().hint(call.getString("id", ""), call.getInt("fileIndex", 0), call.getDouble("duration", 0.0), call.getLong("size", 0L)); } catch (Throwable ignored) {} call.resolve(); }
     @PluginMethod public void streamUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().url(call.getString("id", ""), call.getInt("fileIndex", 0))); call.resolve(r); }); }
     @PluginMethod public void defaultDir(PluginCall call) { JSObject r = new JSObject(); r.put("dir", engine().defaultDir().getAbsolutePath()); call.resolve(r); }
 
@@ -926,7 +946,15 @@ public class KtPlugin extends Plugin {
         File[] kids = dir != null ? dir.listFiles() : null; if (kids != null) for (File k : kids) if (k.isFile() && !k.equals(f) && k.getName().toLowerCase().startsWith(base)) out.put(k.getAbsolutePath());
         JSObject r = new JSObject(); r.put("paths", out); call.resolve(r);
     }
-    @PluginMethod public void clipsDir(PluginCall call) { File d = new File(engine().defaultDir(), "Clips"); d.mkdirs(); JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); call.resolve(r); }
+    /** Where clips go: Movies/KUROKAWACLIPS (where the gallery and other apps find videos), else the download folder. */
+    @PluginMethod public void clipsDir(PluginCall call) {
+        File d = null;
+        try { File pub = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES), "KUROKAWACLIPS"); if ((pub.isDirectory() || pub.mkdirs()) && pub.canWrite()) d = pub; } catch (Throwable ignored) {}
+        if (d == null) d = engine().defaultDir();
+        JSObject r = new JSObject(); r.put("dir", d.getAbsolutePath()); call.resolve(r);
+    }
+    /** A file just made (a clip) shown to the gallery and other apps at once. */
+    @PluginMethod public void mediaScan(PluginCall call) { try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { call.getString("path", "") }, null, null); } catch (Throwable ignored) {} call.resolve(); }
     /** A small text file the user keeps (an exported list, a settings backup): put in Downloads/Kurokawa. */
     @PluginMethod public void saveText(PluginCall call) {
         bg.execute(() -> {

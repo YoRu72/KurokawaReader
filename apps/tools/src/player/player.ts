@@ -141,6 +141,8 @@ export function openPlayer(src: PlayerSource): void {
     // (This video's picture as it was left: zoom, turn, mirror, crop.)
     if (mem && (mem.zoom || mem.rotate || mem.flipH || mem.flipV || mem.crop)) { zoom = mem.zoom ?? 1; rotate = (mem.rotate ?? 0) as typeof rotate; flipH = !!mem.flipH; flipV = !!mem.flipV; crop = mem.crop ?? ''; applyTransform(); }
     void video.play().catch(() => undefined);
+    // (A torrent watched while it comes, on a phone: its length told, so the download keeps ~30 s of it ahead.)
+    if (src.task?.kind === 'torrent' && Number.isFinite(video.duration) && video.duration > 0) { const f = src.task.files.find((g) => g.index === (src.fileIndex ?? 0)); void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { streamHint?(o: { id: string; fileIndex: number; duration: number; size: number }): Promise<void> } | null)?.streamHint?.({ id: src.task!.id, fileIndex: src.fileIndex ?? 0, duration: video.duration, size: f?.size ?? 0 }).catch(() => undefined)); }
     measureFps(); void checkSound(); window.setTimeout(() => void autoSubs(), 4000);
   }, { once: true });
   video.addEventListener('timeupdate', onTime); video.addEventListener('progress', drawBuffer);
@@ -156,7 +158,22 @@ export function openPlayer(src: PlayerSource): void {
     showControls();
   });
   video.addEventListener('error', () => { const err = video.error; if (!mpv && !converted && !pictureTried && (err?.code === 4 || err?.code === 3)) { void import('./transcode').then(async (T) => { if (T.canConvert()) { const c = await import('./compat'); const pr = await c.probe(src.url).catch(() => null); if (pr) tracksFound = pr; if (await startPicture(T.pictureProblem(pr?.video) ?? (pr?.video?.codec ?? '?').toUpperCase(), Math.max(0, pr?.audio.findIndex((a) => a.isDefault) ?? 0), pr?.duration)) return; } toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); }); return; } toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); });
-  video.addEventListener('waiting', () => centre.classList.add('busy')); video.addEventListener('playing', () => centre.classList.remove('busy')); video.addEventListener('canplay', () => centre.classList.remove('busy'));
+  // Waiting (torrentplayer's honest status): after a moment, why — what the swarm gives now, from how many peers.
+  const waitLine = h('div', { class: 'kt-wait', hidden: true }); centre.append(waitLine); let waitTimer = 0;
+  const waitTick = async () => {
+    if (!centre.classList.contains('busy') || playerGone) { waitLine.hidden = true; return; }
+    const tk = src.task; let down = 0, peers: number | undefined;
+    if (tk?.kind === 'torrent') {
+      const d = window.kurokawaTools as unknown as { streamStats?(o: { id: string }): Promise<{ down: number; peers: number } | null> } | undefined;
+      const st = await d?.streamStats?.({ id: tk.id }).catch(() => null);
+      if (st) { down = st.down; peers = st.peers; } else { const { getEngine } = await import('../engine'); const x = (await getEngine().list().catch(() => [] as Task[])).find((y) => y.id === tk.id); if (x) { down = x.downSpeed; peers = x.peers; } }
+      waitLine.textContent = peers === 0 ? t('waitNoPeers') : t('waitSwarm', { speed: `${formatBytes(down)}/s`, n: localDigits(peers ?? 0) });
+    } else waitLine.textContent = t('waitBuffering');
+    waitLine.hidden = false; waitTimer = window.setTimeout(() => void waitTick(), 1000);
+  };
+  video.addEventListener('waiting', () => { centre.classList.add('busy'); clearTimeout(waitTimer); waitTimer = window.setTimeout(() => void waitTick(), 1500); });
+  const unbusy = () => { centre.classList.remove('busy'); clearTimeout(waitTimer); waitLine.hidden = true; };
+  video.addEventListener('playing', unbusy); video.addEventListener('canplay', unbusy);
   let lastPosState = 0;
   function onTime() {
     const d = video.duration || 0, c = video.currentTime;
@@ -331,7 +348,16 @@ export function openPlayer(src: PlayerSource): void {
   function cycleAspect() { aspect = ASPECTS[(ASPECTS.indexOf(aspect) + 1) % ASPECTS.length]; applyAspect(); flashText(aspectName(aspect)); remember(key, { aspect }); }
   const aspectName = (a: PlayerPrefs['aspect']) => (a === 'fit' ? t('aspectFit') : a === 'fill' ? t('aspectFill') : a === 'stretch' ? t('aspectStretch') : localDigits(a));
   function applyAspectMpv(): boolean { if (!mpv) return false; mpv.set('keepaspect', aspect !== 'stretch'); mpv.set('panscan', aspect === 'fill' ? 1 : 0); mpv.set('video-aspect-override', /^\d/.test(aspect) ? aspect : 'no'); return true; }
-  function applyAspect() { if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
+  // Where the picture is on the screen (its bars left out): the subtitles are placed and sized in it.
+  function layoutPicture() {
+    const r = stage.getBoundingClientRect(); if (!r.width || !r.height) return;
+    const vw = video.videoWidth || 0, vh = video.videoHeight || 0; let w = r.width, hh = r.height;
+    if (vw && vh && aspect !== 'fill' && aspect !== 'stretch') { const k = /^(\d+):(\d+)$/.exec(aspect); const ar = k ? Number(k[1]) / Number(k[2]) : vw / vh; if (r.width / r.height > ar) w = r.height * ar; else hh = r.width / ar; }
+    const l = (r.width - w) / 2, tp = (r.height - hh) / 2; const st = root.style;
+    st.setProperty('--vr-l', `${l}px`); st.setProperty('--vr-t', `${tp}px`); st.setProperty('--vr-w', `${w}px`); st.setProperty('--vr-h', `${hh}px`); st.setProperty('--vr-b', `${r.height - tp - hh}px`);
+  }
+  new ResizeObserver(() => layoutPicture()).observe(stage); video.addEventListener('resize', () => layoutPicture()); video.addEventListener('loadedmetadata', () => layoutPicture());
+  function applyAspect() { layoutPicture(); if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
   function cycleCrop() { crop = CROPS[(CROPS.indexOf(crop) + 1) % CROPS.length]; applyTransform(); flashText(crop ? `${t('cropTo')} ${localDigits(crop)}` : t('cropOff')); }
   function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(getPrefs().frameSubs === true); toast(t('screenshotSaved')); return true; }
   function screenshot() { if (screenshotMpv()) return; try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); // (The subtitles only when asked: an ASS track as libass drew it, in its own fonts; an SRT in the player's look.)
@@ -374,8 +400,8 @@ export function openPlayer(src: PlayerSource): void {
   }
   function applySubStyle() {
     const p = getPrefs(); const st = root.style;
-    st.setProperty('--sub-size', `${p.subSize}%`); st.setProperty('--sub-color', p.subColor); st.setProperty('--sub-pos', `${100 - p.subPos}%`); st.setProperty('--sub-font', p.subFont ? `"${p.subFont}", ` : '');
-    st.setProperty('--sub-outline', p.subOutline); st.setProperty('--sub-outline-w', `${p.subOutlineWidth}px`); st.setProperty('--sub-bg-a', String(p.subBgOpacity / 100)); st.setProperty('--sub2-pos', `${p.sub2Pos}%`); st.setProperty('--sub2-size', `${p.sub2Size}%`);
+    st.setProperty('--sub-size', String(p.subSize)); st.setProperty('--sub-color', p.subColor); st.setProperty('--sub-lift', String(Math.max(0, 100 - p.subPos) / 100)); st.setProperty('--sub-font', p.subFont ? `"${p.subFont}", ` : '');
+    st.setProperty('--sub-outline', p.subOutline); st.setProperty('--sub-outline-w', `${p.subOutlineWidth}px`); st.setProperty('--sub-bg-a', String(p.subBgOpacity / 100)); st.setProperty('--sub2-lift', String(Math.max(0, p.sub2Pos - 10) / 100)); st.setProperty('--sub2-size', String(p.sub2Size));
     root.classList.toggle('sub-bold', p.subBold); root.classList.toggle('sub-italic', p.subItalic); root.dataset.subBg = p.subBackground;
     // (Appearance: the accent, the seek bar, the shade, the title, the marks, the size — REX Player's page.)
     if (p.accent) st.setProperty('--kt-accent', p.accent); else st.removeProperty('--kt-accent');
@@ -425,10 +451,18 @@ export function openPlayer(src: PlayerSource): void {
     if (heardAt === null) { flashText(t('subSyncFirst')); return; }
     subDelay = Math.round((subDelay + heardAt - video.currentTime) * 100) / 100; heardAt = null; ass?.setOffset(-subDelay); remember(key, { subDelay }); flashText(t('subDelayNow', { s: subDelay.toFixed(2) }), true);
   }
+  /** The fonts the release itself brings for its styled subtitles: the video's attachments (a Matroska's), and font
+   *  files in its torrent (a «Fonts» folder) once they are on the disk. */
+  async function fileFonts(): Promise<string[]> {
+    const out: string[] = [];
+    try { const E = await import('./embedded'); if (E.canReadEmbedded() && (src.localPath || /^https?:\/\/(127\.0\.0\.1|localhost)/.test(src.url))) out.push(...await E.attachedFonts(src.localPath ?? src.url)); } catch { /* none */ }
+    const tk = src.task; if (tk) { const { localPathOf } = await import('../engine/localPath'); for (const f of tk.files.filter((g) => /\.(ttf|otf|ttc|woff2?)$/i.test(g.path) && g.size > 0 && g.done >= g.size).slice(0, 80)) { const lp = localPathOf(tk, f.index); const b = lp ? await readLocal(lp).catch(() => null) : null; if (b) out.push(URL.createObjectURL(new Blob([b as Uint8Array<ArrayBuffer>]))); } }
+    return out;
+  }
   async function useTrack(tr: SubTrack | null) {
     current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
     if (mpv) { mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(tr.ass, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
-    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, [], own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
+    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(tr.ass!)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, tr.ass, await fileFonts(), own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
   function cycleSub() { chosenByHand = true; if (!tracks.length) { void subsSheet(); return; } const i = current ? tracks.indexOf(current) : -1; const nx = tracks[i + 1] ?? null; void useTrack(nx); flashText(nx ? nx.name : t('subsOff')); }
@@ -472,6 +506,22 @@ export function openPlayer(src: PlayerSource): void {
     root.classList.remove('kt-drop'); const fs = [...(e.dataTransfer?.files ?? [])].filter((f) => /\.(srt|ass|ssa|vtt|sub|zip|gz)$/i.test(f.name)); if (!fs.length) return; e.preventDefault();
     void (async () => { let last: SubTrack | null = null; for (const f of fs.slice(0, 8)) last = (await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer()))) ?? last; if (last) { chosenByHand = true; await useTrack(last); toast(t('subsLoaded', { name: last.name })); } })();
   });
+  // The torrent's own subtitle files, for a video watched while it comes (torrentplayer's matching): the same name
+  // (Show.mkv → Show.en.srt), a «Subs»/«Subtitles» folder beside it, or any when the torrent has a single video —
+  // read through the stream, so they come before the rest of the torrent.
+  void (async () => {
+    const tk = src.task; if (!tk || tk.kind !== 'torrent' || src.localPath || tk.files.length < 2) return;
+    const me = tk.files.find((f) => f.index === (src.fileIndex ?? 0)); if (!me) return;
+    const stem = (p0: string) => (p0.split('/').pop() ?? p0).replace(/\.[^.]+$/, '').toLowerCase(); const dirOf = (p0: string) => (p0.includes('/') ? p0.slice(0, p0.lastIndexOf('/')) : '');
+    const vids = tk.files.filter((f) => /\.(mkv|mp4|m4v|webm|avi|mov|ts)$/i.test(f.path)).length; const myStem = stem(me.path); const myDir = dirOf(me.path);
+    const subs = tk.files.filter((f) => /\.(srt|ass|ssa|vtt)$/i.test(f.path)).filter((f) => { const n = stem(f.path); const d = dirOf(f.path); const inSubs = /(^|\/)(subs?|subtitles?|subz)(\/|$)/i.test(d.slice(myDir.length)) && d.startsWith(myDir); return n === myStem || n.startsWith(`${myStem}.`) || (inSubs && (n.includes(myStem) || vids === 1 || d.toLowerCase().endsWith(myStem))) || (vids === 1 && (d === myDir || inSubs)); }).slice(0, 8);
+    if (!subs.length) return;
+    const { getEngine } = await import('../engine'); const eng = getEngine(); if (!eng.streamUrl) return;
+    for (const f of subs) {
+      if (playerGone) return;
+      try { const u = await eng.streamUrl(tk.id, f.index); const r = await fetch(u, { signal: AbortSignal.timeout(60000) }); if (!r.ok) continue; const b = new Uint8Array(await r.arrayBuffer()); const tr = await addTrackFromBytes(f.path.split('/').pop()!, b); if (tr) offer(tr, subs.length === 1); } catch { /* the next */ }
+    }
+  })();
   // Subtitles beside a local file (same base name) are offered first.
   void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr) offer(tr, list.length === 1); } } })();
 

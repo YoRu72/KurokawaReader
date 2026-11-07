@@ -55,7 +55,12 @@ public class MainActivity extends BridgeActivity {
             // says — where to start, the title, subtitles, headers (MX Player's extras) —, the position handed back.)
             if (isMedia(intent, d)) { handMedia(intent, d); return; }
             if ("magnet".equals(d.getScheme()) || "http".equals(d.getScheme()) || "https".equals(d.getScheme())) u = d.toString();
-            else if ("content".equals(d.getScheme()) || "file".equals(d.getScheme())) u = readTorrent(d);
+            else if ("content".equals(d.getScheme()) || "file".equals(d.getScheme())) {
+                u = readTorrent(d);
+                // (Not a torrent after all — a file manager calls many files «octet-stream», a subtitle among them —:
+                // kept for the Files page to save, as a shared file is, never read as a torrent.)
+                if (u == null) { java.util.List<Uri> one = new java.util.ArrayList<>(); one.add(d); KtPlugin.sharedIn(one); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/files?save=1'", null), 400); return; }
+            }
         } else if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
             // (Files shared to «Save to device» — the alias .KtSave — or anything shared that is not a torrent: kept for
             // the Files page to save where the reader chooses.)
@@ -66,7 +71,7 @@ public class MainActivity extends BridgeActivity {
             if (toSave || us.size() > 1 || (us.size() == 1 && !isTorrentLike(intent, us.get(0)))) {
                 if (us.isEmpty()) { String text = intent.getStringExtra(Intent.EXTRA_TEXT); if (text != null) u = text.trim(); }
                 else { KtPlugin.sharedIn(us); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/files?save=1'", null), 400); return; }
-            } else if (!us.isEmpty()) u = readTorrent(us.get(0));
+            } else if (!us.isEmpty()) { u = readTorrent(us.get(0)); if (u == null) { KtPlugin.sharedIn(us); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/files?save=1'", null), 400); return; } }
             else { String text = intent.getStringExtra(Intent.EXTRA_TEXT); if (text != null) u = text.trim(); }
         }
         if (u == null) return;
@@ -210,7 +215,11 @@ public class MainActivity extends BridgeActivity {
             if (in == null) return null;
             java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[8192]; int n; long total = 0;
             while ((n = in.read(b)) > 0) { bo.write(b, 0, n); total += n; if (total > 20_000_000) return null; }
-            return "data:application/x-bittorrent;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP);
+            byte[] all = bo.toByteArray();
+            // (A torrent is a bencoded dictionary holding «info»: anything else is not read as one.)
+            String head = new String(all, 0, Math.min(all.length, 1 << 20), java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (all.length < 20 || all[0] != 'd' || !head.matches("(?s)^d\\d+:.*\\d+:info.*")) return null;
+            return "data:application/x-bittorrent;base64," + android.util.Base64.encodeToString(all, android.util.Base64.NO_WRAP);
         } catch (Exception e) { return null; }
     }
 }

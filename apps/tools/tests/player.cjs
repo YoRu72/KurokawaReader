@@ -29,10 +29,16 @@ const serve = () => http.createServer((req, res) => {
     const api = {
       addListener: () => Promise.resolve({ remove() {} }), list: async () => ({ tasks: [task] }),
       localUrl: async (o) => ({ url: `http://127.0.0.1:${port}/media/${o.path.split('/').pop()}` }), siblings: async () => ({ paths: ['/sdcard/Download/clip.srt'] }),
+      ffmpeg: async (o) => (window.__ffOn ? window.__ff(o.args) : { code: 1, log: 'off' }), writeTemp: async (o) => ({ path: await window.__tmp(o.name, o.text) }), clipsDir: async () => ({ dir: '/sdcard/Movies/KUROKAWACLIPS' }),
+      packStatus: async () => ({ python: { version: null, size: 0 }, ffmpeg: { version: window.__ffOn ? 'test' : null, size: 1 }, mpv: { version: null, size: 0 } }),
+      progressNote: async (o) => { (window.__notes ??= []).push(o); }, mediaScan: async (o) => { window.__scanned = o.path; }, openWith: async () => {},
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
   }, port);
+  const real = (x) => x.replace('/sdcard/Download/', MEDIA + '/').replace('/sdcard/Movies/KUROKAWACLIPS/', MEDIA + '/').replace('/sdcard/tmp/', MEDIA + '/');
+  await p.exposeFunction('__ff', (args) => { try { require('node:child_process').execFileSync('ffmpeg', args.map(real), { stdio: ['ignore', 'pipe', 'pipe'] }); return { code: 0, log: '' }; } catch (e) { return { code: e.status || 1, log: String(e.stderr || e.message) }; } });
+  await p.exposeFunction('__tmp', (name, text) => { fs.writeFileSync(path.join(MEDIA, name), text || ''); return '/sdcard/tmp/' + name; });
   await p.goto(`http://127.0.0.1:${port}/`); await p.waitForSelector('.task-card');
   await p.click('.task-card button[aria-label="Play"]'); await p.waitForSelector('.kt-player video.kt-video');
   await p.waitForFunction(() => document.querySelector('.kt-video').currentTime > 0.3, null, { timeout: 15000 });
@@ -41,6 +47,16 @@ const serve = () => http.createServer((req, res) => {
   const seek = (s) => p.evaluate((s) => { document.querySelector('.kt-video').currentTime = s; }, s);
   await seek(1.5); await p.waitForTimeout(500);
   check('the subtitle beside the file found and shown', /First line/.test(await p.$eval('.kt-subs', (e) => e.textContent)));
+  // On a phone held upright: the line inside the picture (not in the bar below it, nor over the controls), sized from
+  // the picture, its font valid (a size the browser threw away left the page's own font).
+  {
+    await p.setViewportSize({ width: 412, height: 900 }); await p.waitForTimeout(500);
+    const g = await p.evaluate(() => { const v = document.querySelector('.kt-player video').getBoundingClientRect(); const c = document.querySelector('.kt-subs .kt-cue'); const r = c.getBoundingClientRect(); const cs = getComputedStyle(c); return { v: [v.top, v.bottom], vw: document.querySelector('.kt-player video').videoWidth, vh: document.querySelector('.kt-player video').videoHeight, cue: [r.top, r.bottom], size: parseFloat(cs.fontSize), weight: cs.fontWeight, lh: cs.lineHeight, bar: document.querySelector('.kt-bottom')?.getBoundingClientRect().top ?? 0 }; });
+    const picH = 412 * g.vh / g.vw; const picTop = (900 - picH) / 2, picBottom = picTop + picH; console.log('portrait:', JSON.stringify(g), 'picture', Math.round(picTop), Math.round(picBottom));
+    check('upright phone: the subtitle inside the picture', g.cue[0] >= picTop - 2 && g.cue[1] <= picBottom + 2);
+    check('…sized from the picture, its own font kept (600, line-height set)', g.size >= 15 && g.size <= 0.12 * picH + 15 && g.weight === '600' && g.lh !== 'normal');
+    await p.setViewportSize({ width: 900, height: 520 }); await p.waitForTimeout(400);
+  }
   // Double taps on the right: +10, then +10 more (adding up in the ripple).
   await p.evaluate(() => document.querySelector('.kt-video').pause()); await seek(0);
   const box = await p.$eval('.kt-stage', (e) => { const r = e.getBoundingClientRect(); return { x: r.left + r.width * 0.92, y: r.top + r.height / 2 }; });
@@ -100,6 +116,30 @@ const serve = () => http.createServer((req, res) => {
   check('the range\'s length, and A nudged a second on', /00:03\.000/.test(len1) && /00:02\.000/.test(len2) && /00:00:03\.000/.test(aVal));
   await p.locator('.sheet .cut-opts .row', { hasText: 'What to make' }).locator('.pick-btn').click(); await p.locator('.sheet .dest-row', { hasText: 'GIF' }).last().click(); await p.waitForTimeout(100);
   check('a GIF: its width and frame rate offered', /Width/.test(await p.$eval('.sheet .cut-opts', (e) => e.textContent)));
+  // A fast clip, cut for real (the machine's ffmpeg): from 7 s, it begins on the keyframe at or before it — not seconds
+  // late —, in the background (its card, its notifications), saved where clips go, with a pop-up when done.
+  {
+    await p.evaluate(() => { document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()); window.__ffOn = true; window.__notes = []; });
+    const kfs = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v', '-skip_frame', 'nokey', '-show_entries', 'frame=pts_time', '-of', 'csv=p=0', path.join(MEDIA, 'clip.webm')]).toString().trim().split('\n').map(Number).filter((x) => x <= 7.05);
+    const kf = Math.max(...kfs); console.log('keyframes up to 7 s:', kfs.join(', '));
+    await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Cut a clip' }).click(); await p.waitForSelector('.sheet .cut-track');
+    await p.locator('.sheet .cut-opts .row', { hasText: 'What to make' }).locator('.pick-btn').click(); await p.locator('.sheet .dest-row', { hasText: 'Video' }).last().click(); await p.waitForTimeout(100);
+    for (const [i, v] of [[1, '00:00:11.000'], [0, '00:00:07.000']]) { const inp = p.locator(`.sheet .cut-end >> nth=${i} >> input`); await inp.fill(v); await inp.dispatchEvent('change'); }
+    const fastRow = p.locator('.sheet .cut-opts .row', { hasText: /Way|Mode|How/ }); if (await fastRow.count()) { await fastRow.first().locator('.pick-btn').click(); await p.locator('.sheet .dest-row', { hasText: /Fast/ }).last().click(); }
+    await p.click('.sheet .btn.primary:has-text("Export")');
+    await p.waitForSelector('.clip-tray .clip-card', { timeout: 10000 });
+    check('cut in the background: the sheet gone, its card on the page', !(await p.$('.sheet .cut-track')) && !!(await p.$('.clip-tray .clip-card')));
+    await p.waitForSelector('.clip-card.done', { timeout: 30000 }).catch(() => {});
+    const out = fs.readdirSync(MEDIA).find((f) => /^clip 000007000-000011000\.webm$/.test(f));
+    const toastTxt = await p.$eval('.toast', (e) => e.textContent).catch(() => ''); const card = await p.$eval('.clip-card', (e) => e.textContent).catch(() => '');
+    console.log('clip:', out, '| toast:', toastTxt, '| card:', card, '| notes:', await p.evaluate(() => window.__notes.map((n) => `${n.percent ?? ''}${n.done ? ' done' : ''}`).join(',')));
+    const dur = out ? Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path.join(MEDIA, out)]).toString()) : 0;
+    check('saved in the clips folder, named by its range', !!out && (await p.evaluate(() => window.__scanned)) === `/sdcard/Movies/KUROKAWACLIPS/${out}`);
+    console.log('clip length', dur, 'want', 11 - kf); check('it begins on the keyframe before A: as long as B − that keyframe (not seconds short)', Math.abs(dur - (11 - kf)) < 0.6);
+    check('a pop-up says so, with the clip to open; the notifications too', /Clip saved/.test(toastTxt) && /Open/.test(toastTxt) && (await p.evaluate(() => window.__notes.some((n) => n.done))));
+    if (kf < 6.95) check('…and says where it starts', /starts at 0:0\d/.test(card));
+    await p.evaluate(() => { window.__ffOn = false; document.querySelectorAll('.clip-tray').forEach((e) => e.remove()); });
+  }
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
   // The preferences panel.
   await p.click('.kt-top button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Player settings' }).click(); await p.waitForSelector('.sheet .pp-group');

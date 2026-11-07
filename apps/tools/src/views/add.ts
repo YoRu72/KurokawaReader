@@ -2,7 +2,7 @@
 // name, the connections; for a torrent, its files picked once the metadata is here.
 import { h, icon, openSheet, toast } from '../ui/dom';
 import { t, formatBytes, countFiles, localDigits } from '../i18n';
-import { getEngine, parseSources, isVideo, magnetName } from '../engine';
+import { getEngine, parseSources, isVideo, magnetName, isTorrentBytes } from '../engine';
 import type { Task, TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
 import { isIos } from './ipa';
@@ -28,7 +28,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const fileIn = h('input', { type: 'file', accept: '.torrent,application/x-bittorrent', hidden: true }) as HTMLInputElement;
   let torrentFile: { name: string; b64: string } | null = null;
   const fileNote = h('p', { class: 'src', hidden: true });
-  fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (!f) return; torrentFile = { name: f.name, b64: toBase64(await f.arrayBuffer()) }; fileNote.textContent = f.name; fileNote.hidden = false; clear.hidden = false; void metadata(); });
+  fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (!f) return; const buf = await f.arrayBuffer(); if (!isTorrentBytes(new Uint8Array(buf))) { toast(t('notATorrentName', { name: f.name }), 'error', 6000); fileIn.value = ''; return; } torrentFile = { name: f.name, b64: toBase64(buf) }; fileNote.textContent = f.name; fileNote.hidden = false; clear.hidden = false; void metadata(); });
   const tools = h('div', { class: 'add-tools' },
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const s = await clipboardText(); if (!parseSources(s).length) { toast(t('nothingToPaste'), 'error'); return; } ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + s.trim(); clear.hidden = false; void metadata(); void refreshJar(); } }, icon('copy'), t('pasteLink')),
     ...(eng.can.torrents ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('file'), t('pickTorrentFile'))] : []),
@@ -229,7 +229,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; }
   });
   if (how.video) ta.placeholder = t('fabVideoHint');
-  if (how.torrent) { const f = how.torrent; void f.arrayBuffer().then((b) => { torrentFile = { name: f.name, b64: toBase64(b) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); }); }
+  if (how.torrent) { const f = how.torrent; void f.arrayBuffer().then((b) => { if (!isTorrentBytes(new Uint8Array(b))) { toast(t('notATorrentName', { name: f.name }), 'error', 6000); return; } torrentFile = { name: f.name, b64: toBase64(b) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); }); }
   else if (how.pickTorrent) fileIn.click(); else setTimeout(() => ta.focus(), 60);
 }
 
