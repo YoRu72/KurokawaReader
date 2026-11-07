@@ -917,3 +917,20 @@ html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-
 .clip-tray .clip-card.failed .get-ic { color: var(--md-error); }
 .clip-tray .get-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 @media (min-width: 900px) { .clip-tray { inset-inline: auto 20px; bottom: 20px; align-items: flex-end; } }
+
+/* The screen translator's lettering and glossary. */
+.scr-font-pick { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.scr-font-sample { font-size: 18px; max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+.scr-terms { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.scr-term { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; }
+.scr-term .input { min-width: 0; }
+.scr-term-arrow { opacity: .6; }
+@media (max-width: 600px) { .scr-term { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; } .scr-term select { grid-column: span 2; } }
+.scr-bulk textarea { width: 100%; margin: 8px 0; }
+.kt-ov-box[data-kind='dialogue'], .kt-ov-box[data-kind='thought'], .kt-ov-box[data-kind='sfx'] { text-align: center; }
+
+/* Cards one after another on a page breathe: the gap a page with its own spacing (settings, a task, the screen
+   translator) already gives, every other page now has too. */
+.view .body:not(.task-detail):not(.settings-body):not(.screen-body) > .card + .card { margin-top: 14px; }
+[dir='rtl'] .scr-term-arrow { display: inline-block; transform: scaleX(-1); }
+.scr-term input[type='text'] { height: 44px; padding: 0 14px; }

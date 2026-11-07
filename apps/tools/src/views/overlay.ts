@@ -41,31 +41,36 @@ async function frozen(root: HTMLElement, cfg: ScreenConfig, again: boolean): Pro
       else if (blocks.length) { const tr = await translateTexts(blocks.map((b) => b.text), cfg); blocks.forEach((b, i) => { b.tr = tr[i]; }); }
       if (!blocks.length) { hint.textContent = t('scr_noText'); setTimeout(close, 1400); return; }
       hint.hidden = true; shade.classList.remove('busy'); shade.classList.add('done');
-      draw(blocks); toolbar(blocks);
+      await draw(blocks); toolbar(blocks);
     } catch (e) { const m = String((e as Error).message ?? e); hint.textContent = m === 'ocr-missing' ? t('scrOvNoOcr') : /deeplKey/.test(m) ? t('scrNeedEngine') : `${t('scr_failed')}: ${m.slice(0, 160)}`; shade.classList.remove('busy'); }
   };
   const colours = (() => { try { const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; const x = c.getContext('2d', { willReadFrequently: true })!; x.drawImage(img, 0, 0); return x; } catch { return null; } })();
   const s = job.scale ?? 1;
-  const around = (b: Block): [string, string] | null => {
+  const around = (b: Block): [string, string, { r: number; g: number; b: number }] | null => {
     if (!colours || cfg.style.smart === false) return null;
     const count = new Map<number, number>(); let best = 0, bestN = -1;
     const px = (x: number, y: number) => { const d = colours.getImageData(Math.max(0, Math.min(img.naturalWidth - 1, Math.round(x * s))), Math.max(0, Math.min(img.naturalHeight - 1, Math.round(y * s))), 1, 1).data; const k = ((d[0] & 0xf0) << 16) | ((d[1] & 0xf0) << 8) | (d[2] & 0xf0); const n = (count.get(k) ?? 0) + 1; count.set(k, n); if (n > bestN) { bestN = n; best = k; } };
     for (let i = 0; i <= 12; i++) { const x = b.x - 2 + (b.width + 4) * i / 12; px(x, b.y - 2); px(x, b.y + b.height + 2); }
     for (let i = 0; i <= 6; i++) { const y = b.y + b.height * i / 6; px(b.x - 2, y); px(b.x + b.width + 2, y); }
     const r = (best >> 16) & 255, g = (best >> 8) & 255, bl = best & 255; const lum = 0.299 * r + 0.587 * g + 0.114 * bl;
-    return [`rgb(${r + 8},${g + 8},${bl + 8})`, lum > 140 ? '#111' : '#fff'];
+    return [`rgb(${r + 8},${g + 8},${bl + 8})`, lum > 140 ? '#111' : '#fff', { r, g, b: bl }];
   };
-  function draw(blocks: Block[]): void {
+  async function draw(blocks: Block[]): Promise<void> {
     const st = cfg.style; boxes.replaceChildren();
-    for (const b of blocks) {
-      if (!b.tr) continue; const col = around(b);
+    // (Each block's kind — a balloon's words, a thought, a box, a sound effect, a sign — and the font set for it.)
+    const L = await import('../screen/lettering'); const cols = blocks.map((b) => around(b));
+    const kinds = L.kindsOf(blocks.map((b, i) => ({ text: b.text, height: b.height, bg: cols[i]?.[2] ?? null })), L.glossaryFor(cfg));
+    const fams = await Promise.all(kinds.map((k) => L.fontFamily(L.fontFor(cfg, k))));
+    blocks.forEach((b, i) => {
+      if (!b.tr) return; const col = cols[i];
       const el = h('div', { class: 'kt-ov-box', dir: 'auto', title: b.text, style: { left: `${b.x}px`, top: `${b.y}px`, minWidth: `${Math.max(24, b.width)}px`, minHeight: `${Math.max(14, b.height)}px`, maxWidth: `${Math.max(b.width * 1.6, 120)}px`, color: col?.[1] ?? st.fg, background: st.bgMode === 'none' ? 'transparent' : col?.[0] ?? `color-mix(in srgb, ${st.bg} ${Math.round(st.bgAlpha * 100)}%, transparent)`, borderRadius: `${st.radius}px`, fontWeight: st.bold ? '700' : '400', textAlign: st.center ? 'center' : 'start', textShadow: st.outline ? '0 0 3px #000, 0 0 2px #000' : 'none' } }, b.tr);
       el.addEventListener('click', (e) => { e.stopPropagation(); void navigator.clipboard?.writeText(b.tr ?? '').catch(() => undefined); el.classList.add('copied'); setTimeout(() => el.classList.remove('copied'), 700); });
       boxes.append(el);
       // (The text fitted to the words' own height: smaller until it fits, never under 9 px.)
       let size = Math.max(10, Math.min(st.size * 1.4, b.height * 0.92)); el.style.fontSize = `${size}px`;
+      el.dataset.kind = kinds[i]; if (fams[i]) el.style.fontFamily = `"${fams[i]}", var(--font-ui), sans-serif`;
       while (size > 9 && (el.scrollHeight > Math.max(b.height, 14) * 1.25 || el.scrollWidth > el.clientWidth + 1)) { size -= 1; el.style.fontSize = `${size}px`; }
-    }
+    });
   }
   function toolbar(blocks: Block[]): void {
     bar.hidden = false;

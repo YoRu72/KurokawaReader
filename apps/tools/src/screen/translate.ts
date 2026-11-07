@@ -7,14 +7,20 @@ import { AI_PRESETS, type ScreenConfig } from './config';
 
 const cache = new Map<string, string>();
 const hasLetters = (s: string): boolean => /\p{L}/u.test(s);
-const idOf = (c: ScreenConfig): string => `${c.engine}|${c.source}|${c.target}|${c.engine === 'ai' ? `${c.ai.preset}${c.ai.base}${c.ai.model}${c.ai.prompt.length}` : ''}`;
+// (The glossary in the cache's key: a term added or changed is not answered by what was translated before it.)
+const hashOf = (s: string) => { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) | 0; return x.toString(36); };
+const idOf = (c: ScreenConfig): string => `${c.engine}|${c.source}|${c.target}|${c.engine === 'ai' ? `${c.ai.preset}${c.ai.base}${c.ai.model}${c.ai.prompt.length}` : ''}|${c.glossary?.on ? hashOf(JSON.stringify(c.glossary.entries)) : ''}`;
 
 /** The translations of `texts`, in order; lines without letters come back as they are. */
+import { glossaryFor, protect, restore, glossaryPrompt } from './lettering';
+
 export async function translateTexts(texts: string[], c: ScreenConfig): Promise<string[]> {
   const out = texts.slice(); const ask: string[] = []; const id = idOf(c);
   for (const tx of texts) if (hasLetters(tx) && !cache.has(`${id}\u0000${tx}`) && !ask.includes(tx)) ask.push(tx);
   if (ask.length) {
-    const got = c.engine === 'deepl' ? await deepl(ask, c) : c.engine === 'ai' ? await ai(ask, c) : c.engine === 'microsoft' ? await keyless(ask, c, 'microsoft') : await keyless(ask, c, 'google');
+    // (The reader's glossary: told to an AI model; out of reach of the other translators, put back after.)
+    const g = glossaryFor(c); const p = c.engine === 'ai' ? { texts: ask, used: new Map<number, string>() } : protect(ask, g);
+    const got = restore(c.engine === 'deepl' ? await deepl(p.texts, c) : c.engine === 'ai' ? await ai(p.texts, c) : c.engine === 'microsoft' ? await keyless(p.texts, c, 'microsoft') : await keyless(p.texts, c, 'google'), p.used);
     ask.forEach((tx, i) => cache.set(`${id}\u0000${tx}`, got[i] ?? tx));
     if (cache.size > 6000) for (const k of [...cache.keys()].slice(0, 2000)) cache.delete(k);
   }
@@ -105,7 +111,7 @@ export function parseArray(raw: string, n: number): string[] | null {
 async function ai(texts: string[], c: ScreenConfig): Promise<string[]> {
   const p = AI_PRESETS.find((x) => x.id === c.ai.preset) ?? AI_PRESETS[0];
   const style = c.ai.preset === 'custom' ? c.ai.style : p.style; const base = (c.ai.base.trim() || p.base).replace(/\/+$/, ''); const model = c.ai.model.trim() || p.model; const key = c.ai.key.trim();
-  const system = `${c.ai.prompt.trim() || `Translate into the language whose code is «${c.target}»: natural, accurate and idiomatic, faithful to the meaning and tone.`}\n\n${RULES} Target language: ${c.target}.`;
+  const system = `${c.ai.prompt.trim() || `Translate into the language whose code is «${c.target}»: natural, accurate and idiomatic, faithful to the meaning and tone.`}\n\n${RULES} Target language: ${c.target}.${glossaryPrompt(glossaryFor(c))}`;
   const once = async (part: string[]): Promise<string[]> => {
     const user = JSON.stringify(part); let reply = '';
     if (style === 'gemini') {

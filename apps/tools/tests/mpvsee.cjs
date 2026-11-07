@@ -36,7 +36,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
     if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); const st = JSON.parse(localStorage.getItem('kt.settings') || '{}'); st.playerWith = 'app'; st.subLangs = ['ar', 'en']; localStorage.setItem('kt.settings', JSON.stringify(st));
   });
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]');
-  await p.waitForSelector('.get-card'); await p.click('.get-card .btn.primary');
+  await p.waitForTimeout(300); if (await p.$('.get-card')) await p.click('.get-card .btn.primary'); // (the player is built in)
   await p.waitForSelector('.kt-mpv-video', { state: 'attached', timeout: 15000 });
   for (const [prop, value] of [['duration', 23.9 * 60], ['video-params/w', 1920], ['video-params/h', 1080], ['pause', false], ['time-pos', 12]]) await p.evaluate(([a, b]) => window.__emit('mpv', { prop: a, value: b }), [prop, value]);
   await p.evaluate(() => window.__emit('mpv', { event: 'loaded' }));

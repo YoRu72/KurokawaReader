@@ -146,15 +146,18 @@ const DEFAULTS: Settings = {
   categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, torrent: { dht: true, lsd: true, upnp: true, natpmp: true, enc: 'enabled', seedRatio: 0, seedMinutes: 0 }, doh: 'off', secureScreen: false, playerWith: 'ask', archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
 };
 
+/** Parts of the app once offered as add-ons and now always there: the player. */
+export const BUILT_IN = ['player'];
+const withBuiltIn = (s: Settings): Settings => (BUILT_IN.every((b) => s.addons.includes(b)) ? s : { ...s, addons: [...s.addons, ...BUILT_IN.filter((b) => !s.addons.includes(b))] });
 let current: Settings = load();
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
 function load(): Settings {
-  try { return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>), aria2: { ...DEFAULTS.aria2, ...((JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>).aria2 ?? {}) } }; } catch { return { ...DEFAULTS }; }
+  try { return withBuiltIn({ ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>), aria2: { ...DEFAULTS.aria2, ...((JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>).aria2 ?? {}) } }); } catch { return withBuiltIn({ ...DEFAULTS }); }
 }
 export const getSettings = (): Settings => current;
 export function updateSettings(patch: Partial<Settings>): Settings {
-  current = { ...current, ...patch };
+  current = withBuiltIn({ ...current, ...patch });
   try { localStorage.setItem(KEY, JSON.stringify(current)); } catch { /* private mode */ }
   applyChrome(current);
   listeners.forEach((fn) => fn(current));

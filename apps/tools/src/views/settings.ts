@@ -3,7 +3,7 @@
 import { brandIcon, setBrandIcon } from '../ui/brandIcon';
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
-import { getSettings, updateSettings, type Accent, type UiMode, type DarkTone } from '../settings';
+import { BUILT_IN, getSettings, updateSettings, type Accent, type UiMode, type DarkTone } from '../settings';
 import { back, navigate } from '../router';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
@@ -188,7 +188,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         if (!parents.length) { addonsBox.replaceChildren(h('p', { class: 'src' }, t('addonsNone'))); return; }
         const rowOf = (a: AddonEntry, child = false): HTMLElement => {
           const ok = !a.platforms || a.platforms.includes(plat === 'ios' ? 'ios' : plat);
-          const on = installed(a.id); const btn = h('button', { type: 'button', class: `btn small ${on ? 'tonal' : 'primary'}`, disabled: !ok }, icon(on ? (upd.includes(a.id) ? 'refresh' : 'trash') : 'download'), on ? (upd.includes(a.id) ? t('addonUpdate') : t('addonRemove')) : t('addonInstall')) as HTMLButtonElement;
+          // (The player is part of the app now: said so, nothing to install or remove.)
+          const builtIn = BUILT_IN.includes(a.id); const on = builtIn || installed(a.id); const btn = h('button', { type: 'button', class: `btn small ${on ? 'tonal' : 'primary'}`, disabled: !ok || (builtIn && !upd.includes(a.id)) }, icon(on ? (upd.includes(a.id) ? 'refresh' : builtIn ? 'check' : 'trash') : 'download'), on ? (upd.includes(a.id) ? t('addonUpdate') : builtIn ? t('addonBuiltIn') : t('addonRemove')) : t('addonInstall')) as HTMLButtonElement;
           btn.addEventListener('click', async () => { btn.disabled = true; try { if (on && !upd.includes(a.id)) { await uninstall(a.id); toast(t('addonRemovedToast', { name: nameOf(a, lang) })); } else { await install(a.id); toast(t('addonInstalledToast', { name: nameOf(a, lang) })); } await drawAddons(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); btn.disabled = false; } });
           const kids = (a.children ?? []).map((id) => ix.addons.find((x) => x.id === id)).filter(Boolean) as AddonEntry[];
           const withSettings = [a, ...kids].filter((x) => x.settings?.length && installed(x.id));

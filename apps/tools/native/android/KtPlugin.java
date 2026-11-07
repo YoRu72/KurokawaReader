@@ -228,6 +228,21 @@ public class KtPlugin extends Plugin {
         JSObject r = new JSObject(); r.put("all", all); r.put("writable", !dir.isEmpty() && !dir.startsWith("content:") && KtEngine.writable(new File(dir))); r.put("defaultDir", engine().defaultDir().getAbsolutePath()); call.resolve(r);
     }
     /** Whether notifications are allowed; `ask`: the system's dialog, or — once refused for good — the app's notification settings. */
+    /** A font for the screen translator's lettering, kept in the app's own folder (where the floating translator
+     *  opens it): its bytes in, its path out. */
+    @PluginMethod public void screenFontAdd(PluginCall call) {
+        bg.execute(() -> {
+            try {
+                String name = call.getString("name", "font.ttf").replaceAll("[\\\\/:*?\"<>|]+", "_"); byte[] b = android.util.Base64.decode(call.getString("b64", ""), android.util.Base64.DEFAULT);
+                if (b.length < 1000 || b.length > 40_000_000) { call.reject("size"); return; }
+                File dir = new File(getContext().getFilesDir(), "screen-fonts"); dir.mkdirs(); File f = new File(dir, System.currentTimeMillis() + "-" + name);
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(f)) { o.write(b); }
+                try { android.graphics.Typeface.createFromFile(f); } catch (Throwable e) { f.delete(); call.reject("font"); return; }
+                JSObject r = new JSObject(); r.put("path", f.getAbsolutePath()); call.resolve(r);
+            } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    @PluginMethod public void screenFontRemove(PluginCall call) { try { File f = new File(call.getString("path", "")); File dir = new File(getContext().getFilesDir(), "screen-fonts"); if (f.getCanonicalPath().startsWith(dir.getCanonicalPath() + File.separator)) f.delete(); } catch (Throwable ignored) {} call.resolve(); }
     /** A job of the page's own (a clip being cut) in the notifications: its progress while it runs, then that it is
      *  done (or failed), a tap opening the app. */
     @PluginMethod public void progressNote(PluginCall call) {

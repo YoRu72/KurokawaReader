@@ -45,7 +45,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
           e ? h('button', { type: 'button', class: 'btn text small', onclick: () => scoreSheet() }, icon('star'), e.score ? localDigits(e.score) : t('animeScore')) : h('button', { type: 'button', class: 'btn tonal small', onclick: () => void saveEntry({ status: 'PLANNING', progress: 0, score: 0 }) }, icon('bookmark'), t('animeAddToList')),
           e ? iconButton('trash', t('animeRemoveEntry'), () => void removeEntry()) : null));
     // Synopsis
-    const syn = a.description ? h('section', { class: 'card anime-synopsis' }, h('h3', null, t('animeSynopsis')), h('p', { class: 'clamp', dir: 'auto', onclick: (ev: Event) => (ev.currentTarget as HTMLElement).classList.toggle('clamp') }, a.description)) : null;
+    const syn = a.description ? h('section', { class: 'card anime-synopsis' }, h('h3', null, t('animeSynopsis')), h('p', { class: 'clamp', dir: 'auto', onclick: (ev: Event) => (ev.currentTarget as HTMLElement).classList.toggle('clamp') }, a.description.replace(/\r/g, '').replace(/[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').trim())) : null;
     // Episodes
     const eps: HTMLElement[] = [];
     const sched = new Map((a.schedule ?? []).map((x) => [x.episode, x.airingAt]));
