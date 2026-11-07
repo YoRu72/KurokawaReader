@@ -53,6 +53,13 @@ public class TrT {
     check("Google codes", KtTranslate.googleCode("zh").equals("zh-CN") && KtTranslate.googleCode("he").equals("iw") && KtTranslate.googleCode("").equals("auto"));
 
     // Microsoft, and the keyless engines standing in for each other
+    // The glossary: a term masked from Google (whole words only) and put back as the reader's translation.
+    {
+      KtTranslate.Config gl = KtTranslate.Config.from(KtJson.map("engine", "google", "target", "ar", "googleBase", base, "glossary", KtJson.map("on", true, "entries", KtJson.list(KtJson.map("from", "Ken", "to", "كين", "lang", "ar"), KtJson.map("from", "Sword", "to", "سيف", "lang", "ja")))));
+      List<String> gr = KtTranslate.translate(Arrays.asList("Ken met Kenneth", "the Sword"), gl);
+      check("glossary: the term kept as the reader's (" + gr.get(0) + ")", gr.get(0).contains("كين") && gr.get(0).contains("KENNETH") && !gr.get(0).contains("[["));
+      check("glossary: another language's term left to the translator", gr.get(1).contains("SWORD"));
+    }
     KtTranslate.Config ms = KtTranslate.Config.from(KtJson.map("engine", "microsoft", "target", "ar", "microsoftBase", base, "microsoftAuth", base + "/translate/auth"));
     before = hits.get(); r = KtTranslate.translate(Arrays.asList("red", "blue"), ms);
     check("Microsoft: a token then one request " + r, r.equals(Arrays.asList("ms:«RED»/ar", "ms:«BLUE»/ar")) && hits.get() == before + 2);

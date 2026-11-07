@@ -410,7 +410,7 @@ public class KtScreenService extends Service {
                 List<String> texts = new ArrayList<>(); for (KtScreenA11y.Block k : blocks) texts.add(k.text);
                 List<String> tr = KtTranslate.translate(texts, KtTranslate.Config.from(cfg));
                 for (int k = 0; k < blocks.size(); k++) blocks.get(k).tr = tr.get(k);
-                KtLettering.kinds(blocks, KtLettering.glossary(cfg));
+                KtLetterFace.kinds(blocks, KtLettering.glossary(cfg));
                 if (my != gen) return;
                 final List<KtScreenA11y.Block> done = blocks; final boolean pic = picture; final int base = at;
                 ui.post(() -> {
@@ -471,7 +471,7 @@ public class KtScreenService extends Service {
             TextView t = new TextView(this); t.setText(k.tr);
             int fgc = smart && k.bg != 0 ? k.fg : fg; int bgc = smart && k.bg != 0 ? k.bg : bg;
             // (Lettered in the font set for its kind — a balloon's words, a thought, a box, a sound effect —, balloons centred.)
-            Typeface face = KtLettering.face(cfg, k.kind); t.setTextColor(fgc); if (face != null) t.setTypeface(face, bold ? Typeface.BOLD : Typeface.NORMAL); else if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+            Typeface face = KtLetterFace.face(cfg, k.kind); t.setTextColor(fgc); if (face != null) t.setTypeface(face, bold ? Typeface.BOLD : Typeface.NORMAL); else if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
             if (outline) t.setShadowLayer(px(2), 0, 0, (fgc & 0xFFFFFF) > 0x888888 ? Color.BLACK : Color.WHITE);
             GradientDrawable g = new GradientDrawable(); g.setColor((alpha << 24) | (bgc & 0xFFFFFF)); g.setCornerRadius(radius); if (!"none".equals(s(st, "bgMode", "fill"))) t.setBackground(g);
             t.setGravity((center || (k.kind != null && !"box".equals(k.kind) && !"sign".equals(k.kind) && b(sub("letter"), "kinds", true)) ? Gravity.CENTER_HORIZONTAL : Gravity.START) | Gravity.CENTER_VERTICAL); t.setPadding(px(2), 0, px(2), 0); t.setIncludeFontPadding(false);
