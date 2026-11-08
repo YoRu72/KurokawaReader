@@ -8,7 +8,9 @@ function check(): void {
   const a = document.activeElement as HTMLElement | null; const typing = !!a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(checkbox|radio|range|button|submit|file|color)$/i.test((a as HTMLInputElement).type)) || a.isContentEditable);
   document.documentElement.classList.toggle('kb-open', typing && h < tallest * 0.78);
 }
+let watching = false;
 export function watchKeyboard(): void {
+  if (watching) return; watching = true;
   wide = window.innerWidth; tallest = window.visualViewport?.height ?? window.innerHeight;
   window.addEventListener('resize', check); window.visualViewport?.addEventListener('resize', check);
   document.addEventListener('focusin', () => setTimeout(check, 250)); document.addEventListener('focusout', () => setTimeout(check, 50));

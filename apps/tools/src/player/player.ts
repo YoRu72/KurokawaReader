@@ -885,15 +885,26 @@ export function openPlayer(src: PlayerSource): void {
     sh.body.append(h('div', { class: 'kt-tool-grid' }, ...toolsHere().map((x) => { const b = toolButton(x, true); b.addEventListener('click', () => sh.close()); return b; })),
       h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); layoutSheet(); } }, icon('layout'), t('playerLayout'))));
   }
+  /** The player's buttons where the reader wants them: each tool on the bottom bar, the top bar or neither, in the
+   *  order chosen (the grid of every tool stays a tap away). */
   function layoutSheet() {
-    const sh = openSheet(t('playerLayout'), t('close')); const list = h('div', { class: 'dest-list' });
-    const draw = () => { const bar = getPrefs().bar; const all = [...bar.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x), ...toolsHere().filter((x) => !bar.includes(x.id))];
-      list.replaceChildren(...all.map((x) => { const on = bar.includes(x.id); const i = bar.indexOf(x.id);
-        return h('div', { class: 'dest-row' + (on ? ' on' : '') }, h('input', { type: 'checkbox', checked: on, 'aria-label': x.label, onchange: () => { updatePrefs({ bar: on ? bar.filter((y) => y !== x.id) : [...bar, x.id] }); draw(); drawTools(); } }), x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), h('span', { class: 'grow' }, x.label),
-          on ? iconButton('arrowUp', t('moveUp'), () => { if (i <= 0) return; const b2 = [...bar]; [b2[i - 1], b2[i]] = [b2[i], b2[i - 1]]; updatePrefs({ bar: b2 }); draw(); drawTools(); }) : null,
-          on ? iconButton('arrowDown', t('moveDown'), () => { if (i >= bar.length - 1) return; const b2 = [...bar]; [b2[i + 1], b2[i]] = [b2[i], b2[i + 1]]; updatePrefs({ bar: b2 }); draw(); drawTools(); }) : null); })); };
-    draw(); sh.body.prepend(h('p', { class: 'hint' }, t('playerLayoutHint'))); sh.body.append(list);
-    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updatePrefs({ bar: [...DEFAULT_PREFS.bar] }); draw(); drawTools(); } }, t('reset')));
+    const sh = openSheet(t('playerLayout'), t('close')); const list = h('div', { class: 'dest-list kt-layout' });
+    type Place = 'bar' | 'topTools';
+    const lists = () => ({ bar: [...getPrefs().bar], topTools: [...(getPrefs().topTools ?? [])] });
+    const placeOf = (id: string): Place | null => { const l = lists(); return l.bar.includes(id) ? 'bar' : l.topTools.includes(id) ? 'topTools' : null; };
+    const save = (l: { bar: string[]; topTools: string[] }) => { updatePrefs({ bar: l.bar, topTools: l.topTools }); draw(); drawTools(); };
+    const draw = () => { const l = lists(); const here = toolsHere(); const by = (ids: string[]) => ids.map((id) => here.find((x) => x.id === id)).filter((x): x is Tool => !!x);
+      const all = [...by(l.bar), ...by(l.topTools), ...here.filter((x) => !l.bar.includes(x.id) && !l.topTools.includes(x.id))];
+      list.replaceChildren(...all.map((x) => { const pl = placeOf(x.id); const arr = pl ? l[pl] : []; const i = arr.indexOf(x.id);
+        const move = (d: number) => { const j = i + d; if (!pl || j < 0 || j >= arr.length) return; const n = [...arr]; [n[i], n[j]] = [n[j], n[i]]; save({ ...l, [pl]: n }); };
+        const setPlace = (to: Place | null) => { const n = { bar: l.bar.filter((y) => y !== x.id), topTools: l.topTools.filter((y) => y !== x.id) }; if (to) n[to].push(x.id); save(n); };
+        const seg = (to: Place, label: string) => h('button', { type: 'button', class: 'chip small' + (pl === to ? ' on' : ''), 'aria-pressed': String(pl === to), onclick: () => setPlace(pl === to ? null : to) }, label);
+        return h('div', { class: 'dest-row' + (pl ? ' on' : '') },
+          x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), h('span', { class: 'grow', dir: 'auto' }, x.label),
+          h('span', { class: 'kt-place' }, seg('bar', t('layoutBottom')), seg('topTools', t('layoutTop'))),
+          pl ? iconButton('arrowUp', t('moveUp'), () => move(-1)) : null, pl ? iconButton('arrowDown', t('moveDown'), () => move(1)) : null); })); };
+    draw(); sh.body.prepend(h('p', { class: 'hint' }, t('playerLayoutHint2'))); sh.body.append(list);
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updatePrefs({ bar: [...DEFAULT_PREFS.bar], topTools: [...(DEFAULT_PREFS.topTools ?? [])] }); draw(); drawTools(); } }, t('reset')));
   }
   /** Frame by frame (REX Player's frame navigation): a frame back or on, ten at a time, the frame's number and time,
    *  saved as a picture, made A or B of the cut. */

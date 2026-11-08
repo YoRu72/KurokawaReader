@@ -182,6 +182,17 @@ const serve = () => http.createServer((req, res) => {
     const ff = await (async () => { await seek(2); await p.waitForTimeout(400); return p.$eval('.kt-subs .kt-cue', (c) => getComputedStyle(c).fontFamily).catch(() => ''); })();
     check('the plain lines drawn in it', /Caladea/.test(ff), ff);
   }
+  {
+    // The buttons where the reader wants them: the screenshot put on the top bar from Tools → Layout.
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    await p.evaluate(() => document.querySelector('.kt-bottom button[aria-label="Tools"]').click()); await p.waitForSelector('.kt-tool-grid');
+    await p.evaluate(() => [...document.querySelectorAll('.sheet button')].find((b) => /Layout|layout/.test(b.textContent))?.click()); await p.waitForSelector('.kt-layout .dest-row');
+    await p.locator('.kt-layout .dest-row', { hasText: 'Screenshot' }).locator('.kt-place .chip >> nth=1').click(); await p.waitForTimeout(300);
+    check('a tool put on the top bar from the layout', await p.$eval('.kt-top-tools', (e) => !!e.querySelector('[aria-label="Screenshot"]')));
+    await p.locator('.kt-layout .dest-row', { hasText: 'Screenshot' }).locator('.kt-place .chip >> nth=1').click(); await p.waitForTimeout(200);
+    check('…and taken off again', await p.$eval('.kt-top-tools', (e) => !e.querySelector('[aria-label="Screenshot"]')));
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  }
   check('no page errors', !errors.length);
   await br.close(); web.close(); fs.rmSync(MEDIA, { recursive: true, force: true });
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
