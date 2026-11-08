@@ -134,7 +134,8 @@ jobs:
         run: |
           cd desktop; V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
-          npm install
+          # (Prebuilt native modules come from GitHub's release downloads, which fail now and then: three tries.)
+          for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
           node fetch-aria2.mjs
           npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
           node ffmpeg-pack.cjs
@@ -170,7 +171,8 @@ jobs:
         run: |
           cd desktop; V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
-          npm install
+          # (Prebuilt native modules come from GitHub's release downloads, which fail now and then: three tries.)
+          for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
           node fetch-aria2.mjs
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
           node ffmpeg-pack.cjs x64
@@ -205,7 +207,8 @@ jobs:
         run: |
           cd desktop; V=${{ needs.version.outputs.v }}
           npm version "$V" --no-git-tag-version --allow-same-version || true
-          npm install
+          # (Prebuilt native modules come from GitHub's release downloads, which fail now and then: three tries.)
+          for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
           node fetch-aria2.mjs
           npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee $RUNNER_TEMP/linux-build.log | tail -n 60
           node ffmpeg-pack.cjs
