@@ -68,7 +68,7 @@ export class Aria2Engine implements Engine {
     return this.last;
   }
   async add(o: AddOptions): Promise<Task> {
-    if (o.source.url && /mega(?:\.co)?\.nz\//i.test(o.source.url)) { const M = await import('../downloads/mega'); if (M.isMega(o.source.url)) return M.addVia(this, o); }
+    { const C = await import('../downloads/cloud'); if (C.maybeCloud(o.source.url)) { const tk = await C.addVia(this, o); if (tk) return tk; } }
     o = (await import('./connections')).withConnections(o);
     const opts: Record<string, string> = {};
     if (o.dir) opts.dir = o.dir; if (o.name && o.source.url) opts.out = o.name; if (o.paused) opts.pause = 'true';

@@ -74,7 +74,9 @@ export interface Task {
     /** The DHT was asked (turned on for the session) because no peer came by the trackers. */
     dhtFallback?: boolean;
     /** A MEGA file: its key (decrypted as it comes), its link, its handle and the folder it is in. */
-    megaKey?: string; mega?: string; megaHandle?: string; megaFolder?: string };
+    megaKey?: string; mega?: string; megaHandle?: string; megaFolder?: string;
+    /** A Google Drive file's id (its address renewed from it), the link it came from, its resource key, a Doc's kind. */
+    gdrive?: string; gdriveLink?: string; gdriveRk?: string; gdriveDoc?: string };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }
