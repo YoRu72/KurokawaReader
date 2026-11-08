@@ -192,13 +192,30 @@ export async function imageViewer(items: Entry[], index: number, urlOf: (p: stri
   const show = async () => { const my = ++showing; const e = items[i]; if (title) title.textContent = e.name; counter.textContent = `${localDigits(i + 1)} / ${localDigits(items.length)}`; scale = 1; tx = ty = 0; apply(); const v = isVid(e); img.hidden = v; vid.hidden = !v; play.hidden = !v; for (const b of imageOnly) b.hidden = v; vid.removeAttribute('src'); vidUrl = '';
     if (v) { const u = await urlOf(e.path); if (my !== showing) return; vidUrl = u ?? ''; if (u) vid.src = `${u}#t=1`; return; }
     img.classList.add('loading'); const u = needsDecode(e.name) ? await decodeIt(e) : await urlOf(e.path); if (my !== showing) return; img.src = u ?? ''; img.classList.remove('loading'); img.onerror = () => { if (my !== showing) return; void decodeIt(e).then((d) => { if (d && my === showing) img.src = d; }); }; };
-  // (Pointers: one drags when zoomed or swipes to the next picture; two pinch.)
-  const pts = new Map<number, { x: number; y: number }>(); let startDist = 0, startScale = 1, sx = 0, sy = 0, stx = 0, sty = 0;
-  stage.addEventListener('pointerdown', (ev) => { if (play.contains(ev.target as Node)) return; stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; } else { sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; } });
-  stage.addEventListener('pointermove', (ev) => { if (!pts.has(ev.pointerId)) return; pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; scale = Math.max(1, Math.min(6, startScale * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, startDist))); apply(); } else if (scale > 1) { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); apply(); } else if (items.length > 1) { tx = ev.clientX - sx; apply(); vid.style.transform = img.style.transform; } });
-  const up = (ev: PointerEvent) => { if (!pts.has(ev.pointerId)) return; pts.delete(ev.pointerId); if (pts.size === 0 && scale === 1) { const dx = ev.clientX - sx; tx = 0; apply(); vid.style.transform = ''; if (Math.abs(dx) > 60 && items.length > 1) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; void show(); } } };
-  stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
-  stage.addEventListener('dblclick', () => { scale = scale > 1 ? 1 : 2.5; tx = ty = 0; apply(); });
+  // (Pointers: one drags when zoomed, swipes sideways to the next picture, or down to close; two pinch; a double tap
+  // zooms in where it was tapped, and out again.)
+  const pts = new Map<number, { x: number; y: number }>(); let startDist = 0, startScale = 1, sx = 0, sy = 0, stx = 0, sty = 0; let axis: '' | 'x' | 'y' = ''; let lastTap = 0, lastX = 0, lastY = 0;
+  const zoomAt = (x: number, y: number) => { if (scale > 1) { scale = 1; tx = ty = 0; } else { const r = stage.getBoundingClientRect(); scale = 2.5; tx = (r.left + r.width / 2 - x) * (scale - 1); ty = (r.top + r.height / 2 - y) * (scale - 1); } img.style.transition = 'transform .18s ease'; apply(); setTimeout(() => { img.style.transition = ''; }, 200); };
+  stage.addEventListener('pointerdown', (ev) => { if (play.contains(ev.target as Node)) return; stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; } else { sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; axis = ''; } });
+  stage.addEventListener('pointermove', (ev) => {
+    if (!pts.has(ev.pointerId)) return; pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; scale = Math.max(1, Math.min(6, startScale * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, startDist))); apply(); return; }
+    if (scale > 1) { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); apply(); return; }
+    const mx = ev.clientX - sx, my = ev.clientY - sy;
+    if (!axis) { if (Math.abs(mx) < 10 && Math.abs(my) < 10) return; axis = my > 0 && my > Math.abs(mx) * 1.2 ? 'y' : 'x'; }
+    if (axis === 'y') { ty = Math.max(0, my); tx = 0; apply(); vid.style.transform = img.style.transform; sh.el.style.opacity = String(Math.max(0.35, 1 - ty / 500)); }
+    else if (items.length > 1) { tx = mx; apply(); vid.style.transform = img.style.transform; }
+  });
+  const up = (ev: PointerEvent) => {
+    if (!pts.has(ev.pointerId)) return; pts.delete(ev.pointerId); if (pts.size !== 0 || scale !== 1) return;
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (axis === 'y' && dy > 110) { sh.close(); return; }
+    tx = ty = 0; apply(); vid.style.transform = ''; sh.el.style.opacity = '';
+    if (axis === 'x' && Math.abs(dx) > 60 && items.length > 1) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; void show(); return; }
+    if (!axis && ev.pointerType !== 'mouse') { const now = Date.now(); if (now - lastTap < 300 && Math.hypot(ev.clientX - lastX, ev.clientY - lastY) < 30) { lastTap = 0; zoomAt(ev.clientX, ev.clientY); } else { lastTap = now; lastX = ev.clientX; lastY = ev.clientY; } }
+  };
+  stage.addEventListener('pointerup', (ev) => { const zoomed = scale > 1; up(ev); if (zoomed && pts.size === 0 && !axis && ev.pointerType !== 'mouse') { const now = Date.now(); if (now - lastTap < 300) { lastTap = 0; zoomAt(ev.clientX, ev.clientY); } else { lastTap = now; lastX = ev.clientX; lastY = ev.clientY; } } }); stage.addEventListener('pointercancel', up);
+  stage.addEventListener('dblclick', (ev) => { if ((ev as MouseEvent).detail && matchMedia('(pointer: fine)').matches) zoomAt(ev.clientX, ev.clientY); });
   sh.body.append(stage, h('div', { class: 'row files-viewer-bar' }, iconButton('chevronLeft', t('previous'), () => { i = (i - 1 + items.length) % items.length; void show(); }), counter, iconButton('chevronRight', t('next'), () => { i = (i + 1) % items.length; void show(); })));
   const imageOnly: HTMLElement[] = []; const mark = (b: HTMLElement) => { imageOnly.push(b); return b; };
   const ocr = pl as unknown as { ocrFile?(o: { path: string; lang: string }): Promise<{ text: string }> } | null;

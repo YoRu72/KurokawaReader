@@ -10,6 +10,7 @@ import { nativePlatform } from '../native';
 import * as al from '../anilist';
 import * as guide from '../anime/guide';
 import type { Anime, Season, AlStatus } from '../anilist';
+import { pullToRefresh } from '../ui/gestures';
 
 export type AnimeTab = 'discover' | 'search' | 'season' | 'schedule' | 'list' | 'library' | 'diary';
 const TAB_KEY = 'kt.anime.tab';
@@ -174,7 +175,9 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
     }
   };
   draw();
-  root.dispose = () => { window.clearInterval(timer); token++; };
+  // (Pulled down at the top: the open tab read again.)
+  const unPull = pullToRefresh(root, () => { const y = body.scrollTop; draw(); body.scrollTop = y; }, { scroller: () => body });
+  root.dispose = () => { window.clearInterval(timer); token++; unPull(); };
   return root;
 }
 /** «٣ حلقات للمشاهدة» — the count with its noun in Arabic and English; CJK strings carry their own counter. */

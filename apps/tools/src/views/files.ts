@@ -6,6 +6,8 @@
 // shared, zipped, with properties; the operations as jobs with their progress and a question when a name is taken;
 // what other apps share to «Save to device» saved where you choose.
 import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
+import { swipeable } from '../ui/swipe';
+import { pullToRefresh } from '../ui/gestures';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
 import { t, formatBytes, formatDate, formatDateShort, localDigits, countFiles, countItems, countFolders } from '../i18n';
 import { ktPlugin, listen, nativePlatform } from '../native';
@@ -197,6 +199,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (A computer's right-click: the item's menu at the pointer; a long press — or a right-click while choosing —: choosing.)
     onLongPress(el, (ev) => { if (ev.type === 'contextmenu' && !selecting && document.documentElement.classList.contains('pc')) { itemSheet(e, ev); return; } if (!selecting) { selecting = true; } toggle(e); });
     if (((thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc) && prefs.thumbs !== false) io.observe(ic);
+    // (A phone: a row swiped back toward the reading's start is deleted (asked first, as always) — the other way
+    // is the drawer's.)
+    if (!po.embedded && !ae.special && !isApps(e.path) && !isVirtual(e.path) && plug()) {
+      const del = { label: t('delete'), icon: 'trash', run: () => void confirmDelete([e.path]) }; const back = () => (getComputedStyle(document.documentElement).direction === 'rtl' ? { right: del } : { left: del });
+      swipeable(el, back, icon, () => !selecting && !collection);
+    }
     if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;
   };
@@ -501,7 +509,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   window.addEventListener('keydown', onKeys);
   const unSwipe = swipeToOpen(root, () => drawer());
-  root.dispose = () => { gone = true; unSwipe(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
+  // (Pulled down at the top: the folder read again — what another app changed shows.)
+  const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
+  root.dispose = () => { gone = true; unSwipe(); unPull(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };
