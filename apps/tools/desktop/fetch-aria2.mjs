@@ -27,7 +27,9 @@ const outDir = path.join(here, 'aria2', `${plat}-${arch}`); await fs.mkdir(outDi
 const exe = plat === 'win' ? 'aria2c.exe' : 'aria2c';
 if (await fs.stat(path.join(outDir, exe)).then(() => true).catch(() => false)) { console.log('fetch-aria2: already here'); process.exit(0); }
 const zip = path.join(outDir, 'aria2.zip');
-const r = await fetch(url, { redirect: 'follow' }); if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+// (GitHub's release downloads answer 5xx now and then: tried five times, waiting longer each time.)
+let r = null; for (let i = 0; i < 5; i++) { r = await fetch(url, { redirect: 'follow' }).catch((e) => ({ ok: false, status: String(e?.message ?? e) })); if (r.ok) break; console.log(`fetch-aria2: HTTP ${r.status}, again in ${5 * (i + 1)} s`); await new Promise((ok) => setTimeout(ok, 5000 * (i + 1))); }
+if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
 await new Promise((res, rej) => { const ws = createWriteStream(zip); r.body.pipeTo(new WritableStream({ write(c) { ws.write(Buffer.from(c)); }, close() { ws.end(res); }, abort: rej })).catch(rej); });
 // Unzip in Node itself (Git Bash's tar on Windows reads «D:\...» as a host name; unzip may be missing).
 const tmp = path.join(outDir, 'x'); await fs.mkdir(tmp, { recursive: true });
