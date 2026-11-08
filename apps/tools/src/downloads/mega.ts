@@ -5,6 +5,7 @@
 // requests its site makes.
 import { request } from '../http';
 import type { AddOptions, Engine, Task } from '../engine/types';
+import type { CloudFile, CloudInfo } from './cloud';
 
 /** A MEGA link of any form: mega.nz/file/…#key, /folder/…#key (and a file or folder inside it), /embed/…, and the
  *  old #!id!key and #F!id!key. */
@@ -60,8 +61,8 @@ async function api<T>(body: unknown[], node?: string): Promise<T> {
   }
 }
 
-export interface MegaFile { handle: string; name: string; path: string; size: number; key: Uint8Array; folder?: string }
-export interface MegaInfo { name: string; folder: boolean; files: MegaFile[] }
+export interface MegaFile extends CloudFile { handle: string; key: Uint8Array; folder?: string }
+export type MegaInfo = CloudInfo<MegaFile>;
 
 /** What a link holds: its name and its files (a folder's with their place in it). */
 export async function megaInfo(u: string): Promise<MegaInfo> {
@@ -69,7 +70,7 @@ export async function megaInfo(u: string): Promise<MegaInfo> {
   if (l.kind === 'file') {
     const r = await api<{ s: number; at: string }>([{ a: 'g', p: l.id }]);
     const name = (await attrs(r.at, l.key)).n || `${l.id}.bin`;
-    return { name, folder: false, files: [{ handle: l.id, name, path: name, size: r.s, key: l.key }] };
+    return { service: 'MEGA', name, folder: false, files: [{ id: l.id, handle: l.id, name, path: name, size: r.s, key: l.key }] };
   }
   type Node = { h: string; p: string; t: number; a: string; k: string; s?: number };
   const r = await api<{ f: Node[] }>([{ a: 'f', c: 1, r: 1, ca: 1 }], l.id);
@@ -86,7 +87,7 @@ export async function megaInfo(u: string): Promise<MegaInfo> {
   const top = topId ? nodes.get(topId) : undefined;
   let files = [...nodes.values()].filter((x) => x.n.t === 0 && (!topId || under(x.n.h)));
   if (l.sub?.kind === 'file') files = files.filter((x) => x.n.h === l.sub!.id);
-  return { name: top?.name ?? l.id, folder: true, files: files.map((x) => { const p = pathOf(x.n.h); return { handle: x.n.h, name: x.name, path: p.join('/'), size: x.n.s ?? 0, key: x.key, folder: l.id }; }).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true })) };
+  return { service: 'MEGA', name: top?.name ?? l.id, folder: true, files: files.map((x) => { const p = pathOf(x.n.h); return { id: x.n.h, handle: x.n.h, name: x.name, path: p.join('/'), size: x.n.s ?? 0, key: x.key, folder: l.id }; }).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true })) };
 }
 
 /** A file's storage address now (MEGA gives a fresh one each time; it lasts some hours). */
@@ -95,25 +96,14 @@ export async function megaUrl(f: MegaFile): Promise<string> {
   const g = Array.isArray(r.g) ? r.g[0] : r.g; if (!g) throw new MegaError(-9); return g;
 }
 
-/** The files added as downloads (a folder's in its own folder, its tree kept). */
-export async function addMegaFiles(eng: Engine, info: MegaInfo, files: MegaFile[], base: Omit<AddOptions, 'source'>, link: string): Promise<Task[]> {
-  const out: Task[] = []; const dirSep = (base.dir ?? '').includes('\\') ? '\\' : '/';
+/** The files added as downloads (a folder's in its own folder, its tree kept: `dirFor`). */
+export async function addMegaFiles(eng: Engine, info: MegaInfo, files: MegaFile[], base: Omit<AddOptions, 'source'>, link: string, dirFor: (f: MegaFile) => string | undefined): Promise<Task[]> {
+  const out: Task[] = [];
   for (const f of files) {
     const url = await megaUrl(f);
-    const sub = info.folder ? [info.name, ...f.path.split('/').slice(0, -1)].filter(Boolean).map((s) => s.replace(/[\\/:*?"<>|]/g, '_')).join(dirSep) : '';
-    const dir = sub ? (base.dir ? `${base.dir.replace(/[\\/]$/, '')}${dirSep}${sub}` : sub) : base.dir;
-    out.push(await eng.add({ ...base, source: { url }, dir: dir || undefined, name: f.name, meta: { ...(base.meta ?? {}), megaKey: toB64u(f.key), mega: link, megaHandle: f.handle, ...(f.folder ? { megaFolder: f.folder } : {}) } }));
+    out.push(await eng.add({ ...base, source: { url }, dir: dirFor(f), name: f.name, meta: { ...(base.meta ?? {}), megaKey: toB64u(f.key), mega: link, megaHandle: f.handle, ...(f.folder ? { megaFolder: f.folder } : {}) } }));
   }
   return out;
-}
-
-/** A MEGA link added from anywhere (a rule, the clipboard, a page's links, the app's browser): every file it holds,
- *  the first returned as the task. */
-export async function addVia(eng: Engine, o: AddOptions): Promise<Task> {
-  const info = await megaInfo(o.source.url!); if (!info.files.length) throw new MegaError(-9);
-  const files = info.files.length === 1 && o.name ? [{ ...info.files[0], name: o.name }] : info.files;
-  const tks = await addMegaFiles(eng, info, files, { ...o, name: undefined }, o.source.url!);
-  return tks[0];
 }
 /** A MEGA download whose storage address ran out (it lasts some hours): a new one asked of MEGA and the download
  *  taken up again — once per download while the app runs. */
@@ -121,7 +111,7 @@ const renewed = new Set<string>();
 export async function renewFailed(eng: Engine, tasks: Task[]): Promise<void> {
   for (const x of tasks) {
     if (x.state !== 'failed' || !x.meta?.megaHandle || renewed.has(x.id) || !eng.setUrl) continue; renewed.add(x.id);
-    try { const url = await megaUrl({ handle: x.meta.megaHandle, folder: x.meta.megaFolder, name: x.name, path: x.name, size: x.total, key: new Uint8Array() }); await eng.setUrl(x.id, url); await eng.resume(x.id); } catch { /* left failed: its error stays */ }
+    try { const url = await megaUrl({ id: x.meta.megaHandle, handle: x.meta.megaHandle, folder: x.meta.megaFolder, name: x.name, path: x.name, size: x.total, key: new Uint8Array() }); await eng.setUrl(x.id, url); await eng.resume(x.id); } catch { /* left failed: its error stays */ }
   }
 }
 

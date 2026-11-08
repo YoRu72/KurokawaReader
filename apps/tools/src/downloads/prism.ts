@@ -32,7 +32,7 @@ export async function verifySheet(path: string): Promise<void> {
 }
 
 /* ---------- the grabber ---------- */
-const KINDS: [string, string, RegExp][] = [['mega', 'catMega', /https?:\/\/(?:www\.)?mega(?:\.co)?\.nz\/(?:file|folder|embed|#F?!)/i], ['video', 'catVideo', /\.(mkv|mp4|m4v|webm|avi|mov|ts|wmv|flv|m3u8|mpd)(\?|$)/i], ['music', 'catMusic', /\.(mp3|m4a|flac|ogg|opus|wav|aac)(\?|$)/i], ['compressed', 'catCompressed', /\.(zip|7z|rar|tar|gz|xz|bz2|iso)(\?|$)/i], ['documents', 'catDocuments', /\.(pdf|epub|docx?|xlsx?|pptx?|txt|cbz|cbr|mobi|azw3)(\?|$)/i], ['images', 'catImages', /\.(jpe?g|png|gif|webp|avif|svg)(\?|$)/i], ['programs', 'catPrograms', /\.(apk|apks|xapk|exe|msi|dmg|appimage|deb|rpm)(\?|$)/i], ['torrents', 'grabTorrents', /^magnet:|\.torrent(\?|$)/i]];
+const KINDS: [string, string, RegExp][] = [['mega', 'catMega', /https?:\/\/(?:www\.)?mega(?:\.co)?\.nz\/(?:file|folder|embed|#F?!)/i], ['gdrive', 'catDrive', /https?:\/\/(?:drive\.google\.com\/(?:(?:a\/[^/]+\/)?(?:u\/\d+\/)?(?:file\/d\/|drive\/(?:u\/\d+\/)?(?:mobile\/)?folders\/|open\?|uc\?|folderview\?|embeddedfolderview\?))|docs\.google\.com\/(?:document|spreadsheets|presentation|drawings)\/d\/|drive\.usercontent\.google\.com\/download)/i], ['video', 'catVideo', /\.(mkv|mp4|m4v|webm|avi|mov|ts|wmv|flv|m3u8|mpd)(\?|$)/i], ['music', 'catMusic', /\.(mp3|m4a|flac|ogg|opus|wav|aac)(\?|$)/i], ['compressed', 'catCompressed', /\.(zip|7z|rar|tar|gz|xz|bz2|iso)(\?|$)/i], ['documents', 'catDocuments', /\.(pdf|epub|docx?|xlsx?|pptx?|txt|cbz|cbr|mobi|azw3)(\?|$)/i], ['images', 'catImages', /\.(jpe?g|png|gif|webp|avif|svg)(\?|$)/i], ['programs', 'catPrograms', /\.(apk|apks|xapk|exe|msi|dmg|appimage|deb|rpm)(\?|$)/i], ['torrents', 'grabTorrents', /^magnet:|\.torrent(\?|$)/i]];
 /** A grabber project (Prism's): a page, how deep to follow its links, the kind of file wanted — kept to run again. */
 export interface GrabProject { url: string; depth: number; below: boolean; kind: string; at: number }
 const PKEY = 'kt.grab.projects';
@@ -128,7 +128,10 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
       // addresses written in its scripts — the same reading the app's browser does, without running the page.)
       if (d === 0) for (const m of mediaInHtml(doc, r.body, page)) if (!seen.has(m.href)) { seen.add(m.href); links.push(m); }
       // (MEGA links written as text — a forum post, a paste, a script — not only as links.)
-      { const { megaLinks } = await import('./mega'); for (const m of megaLinks(r.body.replace(/&amp;/g, '&').replace(/\\\//g, '/'))) if (!seen.has(m)) { seen.add(m); links.push({ href: m, text: 'MEGA', kind: 'mega' }); } }
+      // (Google Drive's too: a file, a folder, a Doc.)
+      { const text = r.body.replace(/&amp;/g, '&').replace(/\\\//g, '/'); const { megaLinks } = await import('./mega'); const { driveLinks } = await import('./gdrive');
+        for (const m of megaLinks(text)) if (!seen.has(m)) { seen.add(m); links.push({ href: m, text: 'MEGA', kind: 'mega' }); }
+        for (const m of driveLinks(text)) if (!seen.has(m) && !seen.has(m.split('#')[0])) { seen.add(m); links.push({ href: m, text: 'Google Drive', kind: 'gdrive' }); } }
       for (const el of Array.from(doc.querySelectorAll('a[href], source[src], video[src], audio[src], img[src]'))) {
         const raw = el.getAttribute('href') ?? el.getAttribute('src') ?? ''; let href: string;
         try { href = raw.startsWith('magnet:') ? raw : new URL(raw, page).href; } catch { continue; }

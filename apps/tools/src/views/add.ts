@@ -44,8 +44,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: given.stem, class: 'grow' }) as HTMLInputElement;
   const ext = h('input', { type: 'text', dir: 'ltr', placeholder: t('extension'), value: given.ext, class: 'ext-in', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
   const sizeLine = h('div', { class: 'src add-size' }); const megaBox = h('div', { class: 'mega-box', hidden: true });
-  // (A MEGA link: its name and files read from MEGA with the link's key; a folder's files chosen here.)
-  let mega: { url: string; info: import('../downloads/mega').MegaInfo; chosen: Set<string> } | null = null; const storageLine = h('div', { class: 'src add-storage' });
+  // (A cloud's link — MEGA, Google Drive: its name and files read from the cloud; a folder's files chosen here.)
+  let mega: { url: string; cloud: import('../downloads/cloud').Cloud; info: import('../downloads/cloud').CloudInfo; chosen: Set<string> } | null = null; const storageLine = h('div', { class: 'src add-storage' });
   let probed: Probe | null = null; let probeToken = 0; let probing: Promise<void> = Promise.resolve(); let nameTouched = !!how.name;
   name.addEventListener('input', () => { nameTouched = true; }); ext.addEventListener('input', () => { nameTouched = true; });
   const showStorage = async () => { const free = await freeSpaceAt(getSettings().downloadDir || '').catch(() => -1); if (free < 0) { storageLine.hidden = true; return; } storageLine.hidden = false; const need = probed?.size ?? 0; storageLine.replaceChildren(icon('storage'), h('span', null, t('storageFree', { free: formatBytes(free) }))); if (need && need > free) storageLine.append(h('b', { class: 'danger' }, ` · ${t('storageShort')}`)); };
@@ -54,21 +54,28 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (!u || !/^https?:/i.test(u)) { sizeLine.hidden = true; void showStorage(); return; }
     sizeLine.hidden = false; sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('lookingAtLink')}`);
     mega = null; megaBox.hidden = true;
-    const M = await import('../downloads/mega');
-    if (M.isMega(u)) {
-      sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('megaReading')}`);
+    const C = await import('../downloads/cloud'); const cloud = await C.cloudOf(u);
+    if (cloud) {
+      sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('cloudReading', { service: cloud.service })}`);
       try {
-        const info = await M.megaInfo(u); if (my !== probeToken) return;
-        mega = { url: u, info, chosen: new Set(info.files.map((f) => f.handle)) };
-        const total = info.files.reduce((n, f) => n + f.size, 0);
-        sizeLine.replaceChildren(icon('cloud'), h('span', { dir: 'auto' }, `MEGA · ${info.name} · ${info.folder ? `${t('megaFiles', { n: localDigits(info.files.length) })} · ` : ''}${formatBytes(total)}`));
+        const info = await cloud.info(u); if (my !== probeToken) return;
+        const st = { url: u, cloud, info, chosen: new Set(info.files.map((f) => f.id)) }; mega = st;
+        const summary = () => { const known = info.files.filter((f) => f.size > 0); const total = known.reduce((n, f) => n + f.size, 0); const sz = !known.length ? t('sizeUnknown') : `${known.length < info.files.length ? '≥ ' : ''}${formatBytes(total)}`; sizeLine.replaceChildren(icon('cloud'), h('span', { dir: 'auto' }, `${cloud.service} · ${info.name} · ${info.folder ? `${t('megaFiles', { n: localDigits(info.files.length) })} · ` : ''}${sz}`)); if (info.more) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('cloudMore')}`)); };
+        summary();
+        if (!info.files.length) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('cloudEmpty')}`));
         if (!nameTouched && !info.folder) { const m = /^(.*?)(?:\.([^.]{1,8}))?$/.exec(info.name)!; name.value = m[1]; ext.value = m[2] ?? ''; }
         if (info.folder && info.files.length > 1) {
-          const rows = info.files.map((f) => { const cb = h('input', { type: 'checkbox', checked: true, onchange: () => { if (cb.checked) mega!.chosen.add(f.handle); else mega!.chosen.delete(f.handle); all.checked = mega!.chosen.size === info.files.length; all.indeterminate = mega!.chosen.size > 0 && !all.checked; } }) as HTMLInputElement; return { f, cb, el: h('label', { class: 'dest-row mega-file' }, cb, h('span', { class: 'grow', dir: 'auto' }, f.path), h('small', { class: 'src' }, formatBytes(f.size))) }; });
-          const all = h('input', { type: 'checkbox', checked: true, onchange: () => { for (const r2 of rows) { r2.cb.checked = all.checked; if (all.checked) mega!.chosen.add(r2.f.handle); else mega!.chosen.delete(r2.f.handle); } all.indeterminate = false; } }) as HTMLInputElement;
-          megaBox.replaceChildren(h('label', { class: 'dest-row mega-all' }, all, h('b', { class: 'grow' }, t('filesSelectAll'))), h('div', { class: 'mega-files' }, ...rows.map((r2) => r2.el))); megaBox.hidden = false;
+          const tick = () => { all.checked = st.chosen.size === info.files.length; all.indeterminate = st.chosen.size > 0 && !all.checked; count.textContent = t('cloudChosen', { n: localDigits(st.chosen.size), all: localDigits(info.files.length) }); };
+          const rows = info.files.map((f) => { const cb = h('input', { type: 'checkbox', checked: true, onchange: () => { if (cb.checked) st.chosen.add(f.id); else st.chosen.delete(f.id); tick(); } }) as HTMLInputElement; const sz = h('small', { class: 'src' }, f.size > 0 ? formatBytes(f.size) : '…'); return { f, cb, sz, el: h('label', { class: 'dest-row mega-file' }, cb, h('span', { class: 'grow', dir: 'auto' }, f.path), sz) }; });
+          const all = h('input', { type: 'checkbox', checked: true, onchange: () => { for (const r2 of rows) { r2.cb.checked = all.checked; if (all.checked) st.chosen.add(r2.f.id); else st.chosen.delete(r2.f.id); } tick(); } }) as HTMLInputElement;
+          const count = h('small', { class: 'src' });
+          // (A filter, for a big folder: «ep 0», «.mkv», «1080».)
+          const filter = h('input', { type: 'search', class: 'mega-filter', dir: 'auto', placeholder: t('cloudFilter'), oninput: () => { const q = filter.value.trim().toLowerCase(); for (const r2 of rows) r2.el.hidden = !!q && !r2.f.path.toLowerCase().includes(q); } }) as HTMLInputElement;
+          const onlyShown = h('button', { type: 'button', class: 'chip', onclick: () => { for (const r2 of rows) { r2.cb.checked = !r2.el.hidden; if (r2.cb.checked) st.chosen.add(r2.f.id); else st.chosen.delete(r2.f.id); } tick(); } }, icon('check'), t('cloudOnlyShown'));
+          megaBox.replaceChildren(...(info.files.length > 8 ? [h('div', { class: 'mega-tools' }, filter, onlyShown)] : []), h('label', { class: 'dest-row mega-all' }, all, h('b', { class: 'grow' }, t('filesSelectAll')), count), h('div', { class: 'mega-files' }, ...rows.map((r2) => r2.el))); megaBox.hidden = false; tick();
+          if (cloud.sizes) void cloud.sizes(info.files, (f, size) => { const r2 = rows.find((x) => x.f === f); if (size > 0) { f.size = size; if (r2) r2.sz.textContent = formatBytes(size); } else if (r2) r2.sz.textContent = '—'; if (my === probeToken) summary(); }, () => my !== probeToken);
         }
-      } catch (e) { if (my !== probeToken) return; const m = String((e as Error).message ?? e); sizeLine.replaceChildren(icon('info'), h('b', { class: 'danger' }, /^megaErr/.test(m) ? t(m as 'megaErrGone') : `MEGA: ${m}`)); }
+      } catch (e) { if (my !== probeToken) return; const m = String((e as Error).message ?? e); sizeLine.replaceChildren(icon('info'), h('b', { class: 'danger' }, C.cloudErrKey(m) ? t(m as 'megaErrGone') : `${cloud.service}: ${m}`)); }
       void showStorage(); return;
     }
     const r = await probeUrl(u, hdrs).catch(() => null); if (my !== probeToken) return;
@@ -229,14 +236,15 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     try {
       for (const src of srcs) {
-        // (MEGA: its files, read with the link's key, each a download decrypted as it comes.)
-        { const M = await import('../downloads/mega'); if (src.url && M.isMega(src.url)) {
-          const info = mega?.url === src.url ? mega.info : await M.megaInfo(src.url); const files = mega?.url === src.url ? info.files.filter((f) => mega!.chosen.has(f.handle)) : info.files;
+        // (A cloud's link — MEGA, Google Drive: its chosen files, each a download of its own.)
+        { const C = await import('../downloads/cloud'); const cloud = await C.cloudOf(src.url); if (cloud && src.url) {
+          const info = mega?.url === src.url ? mega.info : await cloud.info(src.url); const files = mega?.url === src.url ? info.files.filter((f) => mega!.chosen.has(f.id)) : info.files;
           if (!files.length) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }
           if (!info.folder && srcs.length === 1 && name.value.trim()) files[0] = { ...files[0], name: `${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` };
           const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true;
-          const tks = await M.addMegaFiles(eng, info, files, { dir: getSettings().downloadDir || undefined, paused: paused.checked, meta }, src.url);
-          toast(tks.length === 1 ? t('taskAdded', { name: tks[0].name }) : t('megaAdded', { n: localDigits(tks.length), name: info.name })); continue;
+          const r = await cloud.add(eng, info, files, { dir: getSettings().downloadDir || undefined, paused: paused.checked, meta }, src.url);
+          if (!r.tasks.length) { const m = r.error ?? 'driveErrGone'; throw new Error(C.cloudErrKey(m) ? t(m as 'megaErrGone') : m); }
+          toast(r.tasks.length === 1 && !r.failed ? t('taskAdded', { name: r.tasks[0].name }) : t('cloudAdded', { service: cloud.service, n: localDigits(r.tasks.length), name: info.name }) + (r.failed ? ` · ${t('cloudSomeFailed', { n: localDigits(r.failed) })}${r.error && C.cloudErrKey(r.error) ? ` (${t(r.error as 'megaErrGone')})` : ''}` : ''), r.failed ? 'error' : undefined, r.failed ? 6000 : undefined); continue;
         } }
         if (srcs.length > 1 && src.url && videoEnabled() && isVideoHost(src.url)) { const tk = await eng.add({ source: src, dir: videoDir, paused: paused.checked, video: { ...preferredFormat(), container: preferredFormat().audioOnly ? undefined : getSettings().videoContainer, embedThumb: getSettings().videoEmbedThumb, sponsorblock: getSettings().videoSponsor } }); toast(t('taskAdded', { name: tk.name || src.url })); continue; }
         const videoish = !!src.magnet || !!src.torrent || isVideo(src.url ?? '');
