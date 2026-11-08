@@ -9,7 +9,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
 (async () => {
   await new Promise((r) => server.listen(5481, r));
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 412, height: 900 }, deviceScaleFactor: 1 });
-  const errors = []; p.on('pageerror', (e) => errors.push(String(e))); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+  const errors = []; p.on('pageerror', (e) => errors.push(String(e))); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); }); await p.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
   await p.addInitScript(() => {
     // the pretend phone
     const tree = { '/storage/emulated/0/Download/Kurokawa': { 'Movie.mkv': 734003200, 'Song.mp3': 5000000, 'notes.txt': 1200, 'photo.jpg': 2500000, 'pack.zip': 90000, 'app.apk': 30000000, Sub: {} }, '/storage/emulated/0': { DCIM: {}, Music: {}, 'readme.md': 300 } };

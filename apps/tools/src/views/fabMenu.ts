@@ -8,7 +8,7 @@ import { getEngine, parseSources } from '../engine';
 import { canInstallApps, installSheet } from './apk';
 import { isIos } from './ipa';
 import { videoEnabled, videoSupported, videoVersion } from '../video/ytdlp';
-import { getSettings } from '../settings';
+import { getSettings, updateSettings } from '../settings';
 import { navigate } from '../router';
 import { clipboardText } from '../native';
 /** The add sheet, loaded on the first tap that opens it (it and the video panel are not on the first screen). */
@@ -39,6 +39,11 @@ export function fabMenu(anchor: HTMLElement): void {
     // (On an iPhone or iPad: an iOS app — an IPA — looked into and handed to SideStore, AltStore or TrollStore.)
     ...(!installer && isIos() ? [item('apps', t('installIosApp'), t('installIosAppHint'), () => void import('./ipa').then((m) => m.pickIpa()))] : []),
     ...(installer ? [item('apps', t('installAnApp'), t('installAnAppHint'), () => void (async () => { const { pickFiles } = await import('../archives'); const [f] = (await pickFiles(false).catch(() => [] as string[])) ?? []; if (f) await installer.installSheet(f); })())] : []));
+  // (The menu as the reader wants it: entries left out, the rest in their order; «Edit this menu» last.)
+  const every = [...menu.children] as HTMLElement[]; const S = getSettings(); const hid = new Set(S.fabHidden ?? []); const ord = S.fabOrder ?? [];
+  const rank = (el: HTMLElement) => { const i = ord.indexOf(el.dataset.act ?? ''); return i < 0 ? 100 + every.indexOf(el) : i; };
+  menu.replaceChildren(...every.filter((el) => !hid.has(el.dataset.act ?? '')).sort((x, y) => rank(x) - rank(y)),
+    h('button', { type: 'button', class: 'fab-item fab-edit', role: 'menuitem', onclick: () => { close(); editMenu(every); } }, h('span', { class: 'fab-item-ic' }, icon('pencil')), h('span', { class: 'fab-item-label' }, t('fabEdit'))));
   const scrim = h('div', { class: 'fab-scrim', onclick: close });
   open = h('div', { class: 'fab-menu-wrap' }, scrim, menu);
   document.body.append(open); anchor.classList.add('open'); anchor.setAttribute('aria-expanded', 'true');
@@ -60,4 +65,24 @@ async function videoEntry(): Promise<void> {
   if (!videoSupported()) { toast(t('videoYtdlpNotHereLong'), 'error', 6000); return; }
   const { needAddon } = await import('../addons/need');
   if (await needAddon('video', t('addonWhyVideo'))) addSheet('', { video: true });
+}
+
+/** «Edit this menu»: each way of adding on the menu or not, and in what order. */
+function editMenu(every: HTMLElement[]): void {
+  void import('../ui/dom').then(({ openSheet, iconButton }) => {
+    const sh = openSheet(t('fabEdit'), t('close')); const list = h('div', { class: 'dest-list' });
+    const entries = every.map((el) => ({ id: el.dataset.act ?? '', ic: el.dataset.act ?? 'plus', label: (el.querySelector('.fab-item-label')?.firstChild?.textContent ?? '').trim() }));
+    const draw = () => {
+      const S = getSettings(); const ord = S.fabOrder ?? []; const hid = new Set(S.fabHidden ?? []);
+      const rank = (id: string) => { const i = ord.indexOf(id); return i < 0 ? 100 + entries.findIndex((e) => e.id === id) : i; };
+      const sorted = [...entries].sort((a, b) => rank(a.id) - rank(b.id)); const ids = sorted.map((e) => e.id);
+      const move = (i: number, d: number) => { const j = i + d; if (j < 0 || j >= ids.length) return; const n = [...ids]; [n[i], n[j]] = [n[j], n[i]]; updateSettings({ fabOrder: n }); draw(); };
+      list.replaceChildren(...sorted.map((e, i) => h('div', { class: 'dest-row' + (hid.has(e.id) ? '' : ' on') },
+        h('input', { type: 'checkbox', checked: !hid.has(e.id), 'aria-label': e.label, onchange: (ev: Event) => { const on = (ev.target as HTMLInputElement).checked; const hs = new Set(getSettings().fabHidden ?? []); if (on) hs.delete(e.id); else hs.add(e.id); updateSettings({ fabHidden: [...hs], fabOrder: ids }); draw(); } }),
+        icon(e.ic), h('span', { class: 'grow', dir: 'auto' }, e.label), iconButton('arrowUp', t('moveUp'), () => move(i, -1)), iconButton('arrowDown', t('moveDown'), () => move(i, 1)))));
+    };
+    sh.body.append(h('p', { class: 'hint' }, t('fabEditHint')), list);
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updateSettings({ fabOrder: [], fabHidden: [] }); draw(); } }, icon('refresh'), t('reset')));
+    draw();
+  });
 }

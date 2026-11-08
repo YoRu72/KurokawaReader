@@ -15,6 +15,11 @@ const lang = process.argv[2] || 'en';
   await p.click('.fab'); await p.waitForSelector('.fab-menu'); const menu = await p.$$eval('.fab-item', (e) => e.map((x) => x.innerText.replace(/\s+/g, ' ')));
   ok('the + opens a menu of ways to add (link, clipboard, video, page)', menu.length >= 4);
   ok('the video entry says where yt-dlp stands', menu.some((m) => /yt-dlp|Not available here|غير متاح هنا/.test(m)));
+  // The menu as the reader wants it: «Edit this menu» leaves the clipboard entry off.
+  await p.click('.fab-edit'); await p.waitForSelector('.sheet .dest-row'); await p.locator('.sheet .dest-row >> nth=1').locator('input').uncheck(); await p.waitForTimeout(150);
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  await p.click('.fab'); await p.waitForSelector('.fab-menu'); const menu2 = await p.$$eval('.fab-item:not(.fab-edit)', (e) => e.map((x) => x.dataset.act));
+  ok('an entry left off the + menu', !menu2.includes('copy') && menu2[0] === 'link' && menu2.length === menu.filter((m) => !/Edit this menu|تحرير هذه القائمة/.test(m)).length - 1);
   await p.click('.fab-item >> nth=0'); await p.waitForSelector('.add-sheet'); await p.fill('.add-input', 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Test+Torrent\nhttps://example.org/file.zip');
   ok('the add sheet opens, with its options', !!(await p.$('.add-sheet .add-options')));
   // The batch pre-flight: two links typed → a «check» button; the web's fetch cannot reach them, so each is reported as unreachable or unsupported and left unchecked.

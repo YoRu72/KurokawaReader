@@ -110,6 +110,12 @@ export function formatHijri(d: Date, opts: Intl.DateTimeFormatOptions = { dateSt
   const nu = current === 'ar' ? (digitsPref() === 'western' ? '-nu-latn' : '-nu-arab') : '';
   return new Intl.DateTimeFormat(`${base}-u-ca-islamic-umalqura${nu}`, opts).format(d);
 }
+/** A date kept short (a grid's narrow cells): the day and month this year, with a two-digit year before. */
+export function formatDateShort(ts: number | undefined): string {
+  if (!ts) return ''; if (calendarPref() !== 'gregory') return formatDate(ts);
+  const d = new Date(ts); const same = d.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat(dateLocale(), same ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'numeric', year: '2-digit' }).format(d);
+}
 export function formatDate(ts: number | undefined): string {
   if (!ts) return '';
   const civil = new Intl.DateTimeFormat(dateLocale(), { dateStyle: 'medium' }).format(new Date(ts));

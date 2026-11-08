@@ -23,7 +23,15 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   await tab('files'); const h3 = await p.evaluate(() => location.hash); check('the open tab tapped: its start', h3 === '#/files', h3);
   await p.evaluate(() => { location.hash = '#/courses'; }); await p.waitForTimeout(300);
   check('Courses lights Videos', JSON.stringify(await lit()) === '["videos"]', await lit());
-  check('no page errors', !errors.filter((e) => !/lights|goes|comes|tapped|lit/.test(e)).length);
+  // The bar as the reader wants it (Settings → The app → Bottom bar): Search left off, Files moved to the front.
+  await p.goto(base + '#/settings'); await p.waitForTimeout(500);
+  await p.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Customize/.test(b.textContent))?.click()); await p.waitForSelector('.nav-custom .dest-row');
+  await p.locator('.nav-custom .dest-row', { hasText: 'Search' }).locator('input').uncheck();
+  for (let i = 0; i < 6; i++) { const b = p.locator('.nav-custom .dest-row', { hasText: 'Files' }).locator('button[aria-label="Up"]'); await b.click(); await p.waitForTimeout(60); }
+  await p.waitForTimeout(400);
+  const order = await p.$$eval('.bottom-nav [data-dest], .nav-rail [data-dest]', (e) => e.map((x) => x.dataset.dest));
+  check('the bar as chosen: Files first, Search off, Settings last', order[0] === 'files' && !order.includes('search') && order[order.length - 1] === 'settings', order);
+  check('no page errors', !errors.filter((e) => !/lights|goes|comes|tapped|lit|bar as chosen/.test(e)).length);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
 })().catch((e) => { console.error(e); process.exit(1); });

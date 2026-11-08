@@ -7,7 +7,7 @@
 // what other apps share to «Save to device» saved where you choose.
 import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
-import { t, formatBytes, formatDate, localDigits, countFiles, countItems, countFolders } from '../i18n';
+import { t, formatBytes, formatDate, formatDateShort, localDigits, countFiles, countItems, countFolders } from '../i18n';
 import { ktPlugin, listen, nativePlatform } from '../native';
 import { navigate } from '../router';
 import { kindOfFile } from './taskFiles';
@@ -149,12 +149,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const askAccess = async () => { const pl = plug(); if (!pl) return; const sh = openSheet(t('filesAccessTitle'), t('close')); sh.body.append(h('p', { class: 'hint' }, t('filesAccessHint'))); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void pl.filesAccess({ ask: true }); } }, icon('key'), t('filesAccessAllow'))); };
   const drawCrumbs = () => {
-    if (collection) { const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); return; }
+    if (collection) { crumbs.hidden = true; const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); return; }
     titleEl.textContent = at === (roots.find((x) => x.path === at)?.path) ? (roots.find((x) => x.path === at)?.name ?? baseOf(at)) : baseOf(at) || t('navFiles');
     const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? (isApps(at) ? 'apps://' : isArc(at) ? arcPath(parseArc(at).archive) : isRemote(at) ? `remote://${parseRemote(at).id}` : at.startsWith('saf://') ? at.replace(/^(saf:\/\/[^/]*).*$/, '$1') : at.startsWith('root://') ? 'root://' : '/'); const rest = at.slice(base.length).split('/').filter(Boolean);
     const parts: HTMLElement[] = [...(isArc(at) ? [h('button', { type: 'button', class: 'crumb', onclick: () => go(parentOf(parseArc(at).archive)) }, icon('archive')), h('span', { class: 'crumb-sep' }, '›')] : []), h('button', { type: 'button', class: 'crumb', onclick: () => go(base) }, isApps(at) ? t('appsTitle') : isArc(at) ? arcName(at) : (r?.name ?? '/'))];
     let acc = base; for (const seg of rest) { acc += `/${seg}`; const p = acc; parts.push(h('span', { class: 'crumb-sep' }, '›'), h('button', { type: 'button', class: 'crumb', onclick: () => go(p) }, seg)); }
     crumbs.replaceChildren(...parts); crumbs.scrollLeft = crumbs.scrollWidth;
+    // (At a place's own top the path would only say the title again: left out until there is a way back to show.)
+    crumbs.hidden = parts.length === 1 && !rest.length && !isArc(at);
   };
   const drawKinds = () => kindRow.replaceChildren(...KINDS.map(([k, label]) => h('button', { type: 'button', class: 'chip small' + (prefs.kind === k ? ' on' : ''), onclick: () => { prefs.kind = k; savePrefs(); drawKinds(); draw(); } }, t(label as 'filesKindAll'))));
 
@@ -188,7 +190,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
     const ae = e as AppEntry; const appIc = !!ae.pkg && isApps(e.path) && e.dir;
     const ic = h('span', { class: 'files-ic' + ((thumbable && (!isVirtual(e.path) || isArc(e.path)) || appIc) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': (thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc ? e.path : undefined }, icon(e.dir ? (ae.special ? 'folder' : appIc ? 'apps' : 'folder') : ICON[k] ?? 'file'));
-    const meta = ae.sub ? (ae.pkg && e.dir && !ae.special ? `${ae.sub} · ${formatBytes(e.size)}` : ae.sub) : e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${formatDate(e.mtime)}`;
+    const meta = ae.sub ? (ae.pkg && e.dir && !ae.special ? `${ae.sub} · ${formatBytes(e.size)}` : ae.sub) : e.dir ? (e.count !== undefined && e.count >= 0 ? countItems(e.count) : '') : collection ? `${formatBytes(e.size)} · ${baseOf(parentOf(e.path))}` : `${formatBytes(e.size)} · ${prefs.view === 'grid' ? formatDateShort(e.mtime) : formatDate(e.mtime)}`;
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'auto' }, e.name), h('small', { class: 'src' }, meta)),
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }));

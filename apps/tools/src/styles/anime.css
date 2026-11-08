@@ -579,3 +579,5 @@ html.pc .kt-player .kt-bottom .chip:hover, html.pc .kt-player .kt-bottom .kt-chi
 .sub-font-row { cursor: pointer; border-radius: 14px; }
 .sub-font-row.on { background: color-mix(in srgb, var(--md-primary) 14%, transparent); }
 .sub-font-sample { font-size: 18px; display: block; }
+.kt-layout .dest-row { gap: 8px; }
+.kt-place { display: inline-flex; gap: 4px; flex: none; }

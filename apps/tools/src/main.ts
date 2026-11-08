@@ -7,6 +7,7 @@ import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './rou
 import { h, icon, closeSheets } from './ui/dom';
 import { goBack, wirePcBack } from './ui/backstack';
 import { applyChrome, onSettingsChange, getSettings } from './settings';
+import { navPlacesAll } from './ui/navPlaces';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
 import { scheduleAutoCheck } from './updates';
@@ -29,16 +30,14 @@ function lazyView(make: () => Promise<HTMLElement & { dispose?: () => void }>): 
 }
 
 /* The navigation: a bar at the bottom on phones, a rail at the side on a PC (the reader's look). */
-const DESTS = (): [string, string, string, () => void][] => [
-  ['downloads', 'download', 'navDownloads', () => goTab('downloads', '/')],
-  ['search', 'search', 'navSearch', () => goTab('search', '/search')],
-  ...(getSettings().addons.includes('anime') ? [['anime', 'tv', 'navAnime', () => goTab('anime', '/anime')] as [string, string, string, () => void]] : []),
-  ...(getSettings().addons.includes('tv') ? [['tv', 'film', 'navTv', () => goTab('tv', '/tv')] as [string, string, string, () => void]] : []),
-  ...(getSettings().addons.includes('player') && getSettings().videosTab !== false ? [['videos', 'playCircle', 'navVideos', () => goTab('videos', '/videos')] as [string, string, string, () => void]] : []),
-  ...(getSettings().addons.includes('files') ? [['files', 'folder', 'navFiles', () => goTab('files', '/files')] as [string, string, string, () => void]] : []),
-  ...(getSettings().addons.includes('subtitles') ? [['subs', 'subtitles', 'navSubs', () => goTab('subs', '/subs')] as [string, string, string, () => void]] : []),
-  ['settings', 'settings', 'navSettings', () => goTab('settings', '/settings')],
-];
+const ALL_DESTS = (): [string, string, string, () => void][] => navPlacesAll(getSettings()).map(([id, ic, key, path]) => [id, ic, key, () => goTab(id, path)]);
+/** The places in the reader's order, those hidden left out (Settings always there, always last). */
+const DESTS = (): [string, string, string, () => void][] => {
+  const s = getSettings(); const all = ALL_DESTS(); const order = s.navOrder ?? []; const hidden = new Set(s.navHidden ?? []);
+  const rank = (n: string) => { const i = order.indexOf(n); return i < 0 ? 100 + all.findIndex((d) => d[0] === n) : i; };
+  return [...all.filter((d) => d[0] !== 'settings' && !hidden.has(d[0])).sort((a, b) => rank(a[0]) - rank(b[0])), all[all.length - 1]];
+};
+const navKey = (s: ReturnType<typeof getSettings>) => s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (s.videosTab === false ? '-' : '') + JSON.stringify([s.navOrder ?? [], s.navHidden ?? []]);
 const wide = matchMedia('(min-width: 1024px) and (pointer: fine)');
 const isPc = () => (!!window.kurokawaTools && matchMedia('(min-width: 720px)').matches) || wide.matches;
 let nav: HTMLElement | null = null;
@@ -63,7 +62,7 @@ function fitRail(): void {
 }
 window.addEventListener('resize', () => { if (isPc()) fitRail(); }, { passive: true });
 function placeNav(): void {
-  nav?.remove(); nav = buildNav(); nav.dataset.addons = getSettings().addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (getSettings().videosTab === false ? '-' : ''); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
+  nav?.remove(); nav = buildNav(); nav.dataset.addons = navKey(getSettings()); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
   document.documentElement.classList.toggle('pc', isPc()); if (isPc()) fitRail();
   if (isPc()) document.body.prepend(nav); else document.body.append(nav); void import('./ui/keyboard').then((m) => m.watchKeyboard());
   markNav(parseRoute());
@@ -167,7 +166,7 @@ else {
   placeNav();
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
-  onSettingsChange((s) => { applyChrome(s); const want = s.addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (getSettings().videosTab === false ? '-' : ''); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
+  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
   if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
   void import('./downloads/power').then((m) => m.applyPower());
