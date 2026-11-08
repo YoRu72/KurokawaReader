@@ -68,8 +68,8 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.click('.kt-bottom button[aria-label="Tools"]'); await p.waitForSelector('.kt-tool-grid');
   const tools = await p.$$eval('.kt-tool-grid .kt-tool', (e) => e.map((x) => x.textContent.trim())); console.log('tools:', tools.length, tools.join(' | '));
   check('every tool of REX\'s legend in the grid', ['Chapters / bookmarks', 'Playback speed', 'Decoder', 'Screen rotation', 'Frame navigation', 'Video zoom', 'Aspect ratio', 'Lock', 'Audio tracks', 'Subtitles', 'Current chapter', 'Repeat', 'Shuffle', 'Horizontal flip', 'Vertical flip', 'A-B loop', 'Custom skip', 'Background', 'Ambient', 'Sleep', 'Video quality', 'Cut'].every((w) => tools.some((x) => x.toLowerCase().includes(w.toLowerCase()))));
-  await p.locator('.sheet button', { hasText: 'Player layout' }).click(); await p.waitForSelector('.sheet .dest-row input[aria-label="Decoder"]');
-  await p.check('.sheet .dest-row input[aria-label="Decoder"]'); await p.waitForTimeout(100);
+  await p.locator('.sheet button', { hasText: 'Player layout' }).click(); await p.waitForSelector('.kt-layout .dest-row');
+  await p.locator('.kt-layout .dest-row', { hasText: 'Decoder' }).locator('.kt-place .chip >> nth=0').click(); await p.waitForTimeout(100);
   check('a tool put on the bar from the layout', !!(await p.$('.kt-tools button[aria-label="Decoder"]')));
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()));
   await p.evaluate(() => document.querySelector('.kt-bottom button[aria-label="Tools"]').click()); await p.waitForSelector('.kt-tool-grid'); await p.locator('.kt-tool', { hasText: 'Frame navigation' }).click(); await p.waitForSelector('.kt-framepad'); await p.click('.kt-framepad .kt-fp-info'); await p.waitForSelector('.kt-frame-row');
