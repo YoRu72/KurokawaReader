@@ -31,6 +31,7 @@ const serve = () => http.createServer((req, res) => {
       localUrl: async (o) => ({ url: `http://127.0.0.1:${port}/media/${o.path.split('/').pop()}` }), siblings: async () => ({ paths: ['/sdcard/Download/clip.srt'] }),
       ffmpeg: async (o) => (window.__ffOn ? window.__ff(o.args) : { code: 1, log: 'off' }), writeTemp: async (o) => ({ path: await window.__tmp(o.name, o.text) }), clipsDir: async () => ({ dir: '/sdcard/Movies/KUROKAWACLIPS' }),
       packStatus: async () => ({ python: { version: null, size: 0 }, ffmpeg: { version: window.__ffOn ? 'test' : null, size: 1 }, mpv: { version: null, size: 0 } }),
+      httpRequest: async (o) => { if (/\/audio\/transcriptions$/.test(o.url)) { const body = atob(o.body || ''); (window.__voice ??= []).push({ url: o.url, auth: o.headers?.Authorization, model: /name="model"\r\n\r\n([^\r]+)/.exec(body)?.[1], bytes: body.length, b64: o.bodyBase64 }); return { status: 200, headers: {}, body: JSON.stringify({ segments: [{ start: 1.2, end: 2.8, text: ' Heard one' }, { start: 4, end: 4.1, text: ' ' }, { start: 6, end: 7.5, text: ' Heard two', no_speech_prob: 0.1 }] }) }; } return {}; },
       progressNote: async (o) => { (window.__notes ??= []).push(o); }, mediaScan: async (o) => { window.__scanned = o.path; }, openWith: async () => {},
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -192,6 +193,23 @@ const serve = () => http.createServer((req, res) => {
     await p.locator('.kt-layout .dest-row', { hasText: 'Screenshot' }).locator('.kt-place .chip >> nth=1').click(); await p.waitForTimeout(200);
     check('…and taken off again', await p.$eval('.kt-top-tools', (e) => !e.querySelector('[aria-label="Screenshot"]')));
     await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  }
+  {
+    // Subtitles from the voice: the sound taken out by ffmpeg, sent to Whisper (stubbed), the lines on the video's clock.
+    await p.evaluate(() => { window.__ffOn = true; document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()); });
+    await p.click('.kt-top button[aria-label="Subtitles"]'); await p.waitForSelector('.sheet button:has-text("From the voice")'); await p.evaluate(() => [...document.querySelectorAll('.sheet button')].find((b) => /From the voice/.test(b.textContent))?.click());
+    await p.waitForSelector('.sheet input[type=password]'); await p.fill('.sheet input[type=password]', 'gsk_test'); await p.dispatchEvent('.sheet input[type=password]', 'change');
+    await p.evaluate(() => [...document.querySelectorAll('.sheet button')].find((b) => /Make subtitles/.test(b.textContent))?.click());
+    await p.waitForFunction(() => /Lines heard/.test(document.querySelector('.sheet')?.textContent || ''), null, { timeout: 30000 }).catch(() => undefined);
+    const calls = await p.evaluate(() => window.__voice ?? []);
+    check('the sound sent to Whisper (Groq, the key, its model, the audio as bytes)', calls.length === 1 && /api\.groq\.com\/openai\/v1\/audio\/transcriptions/.test(calls[0].url) && calls[0].auth === 'Bearer gsk_test' && calls[0].model === 'whisper-large-v3-turbo' && calls[0].b64 && calls[0].bytes > 1000);
+    check('the lines heard, empty ones left out', /Lines heard: 2/.test(await p.$eval('.sheet', (e) => e.textContent)));
+    check('saved as ASS or SRT', !!(await p.$('.sheet button:has-text("Save as ASS")')) && !!(await p.$('.sheet button:has-text("Save as SRT")')));
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+    await seek(6.5); await p.waitForTimeout(500);
+    const seen = []; for (const at of [1.5, 2.5, 5.2, 5.6, 6, 6.5, 7]) { await seek(at); await p.waitForTimeout(350); seen.push(at + ':' + await p.$eval('.kt-subs', (e) => e.textContent)); } console.log('voice seen', JSON.stringify(seen));
+    check('shown on the video at their time (the delay set earlier kept)', seen.some((x) => /Heard one/.test(x)) && seen.some((x) => /Heard two/.test(x)));
+    await p.evaluate(() => { window.__ffOn = false; });
   }
   check('no page errors', !errors.length);
   await br.close(); web.close(); fs.rmSync(MEDIA, { recursive: true, force: true });

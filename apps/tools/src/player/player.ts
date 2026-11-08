@@ -541,6 +541,7 @@ export function openPlayer(src: PlayerSource): void {
     const fileIn = h('input', { type: 'file', ...(ktPlugin() ? {} : { accept: '.srt,.ass,.ssa,.vtt,.sub,.txt,.zip,.gz' }), hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void voiceSheet(); } }, icon('mic'), t('voiceSubs')),
       ...(ktPlugin() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void localSubs(); } }, icon('folder'), t('subsOnPhone'))] : []));
     const delay = h('input', { type: 'number', step: '0.05', value: subDelay.toFixed(2), style: { width: '6em' }, onchange: () => { subDelay = Number(delay.value) || 0; ass?.setOffset(-subDelay); remember(key, { subDelay }); } }) as HTMLInputElement;
     const nudge = (d: number) => { nudgeSub(d); delay.value = subDelay.toFixed(2); };
@@ -619,6 +620,50 @@ export function openPlayer(src: PlayerSource): void {
   }
   /** Subtitles for this very episode through the Subtitles add-on, loaded straight into the player — searched by the
    *  show's name as read from the file, or by your own words. */
+  /** Subtitles from the voice (Whisper through Groq, OpenAI or another such service): the sound sent in parts, the
+   *  lines shown as they come back, then translated into the reader's language if asked; saved as ASS or SRT. */
+  let voiceRun: { stop: boolean } | null = null;
+  async function voiceSheet() {
+    const V = await import('./voiceSubs'); const { SCREEN_LANGS } = await import('../screen/config');
+    const sh = openSheet(t('voiceSubs'), t('close')); const cfg = { ...getPrefs().voice };
+    const save = () => updatePrefs({ voice: { ...cfg } });
+    const prov = h('select', { class: 'select', onchange: (e: Event) => { cfg.provider = (e.target as HTMLSelectElement).value as typeof cfg.provider; save(); keyLink.href = V.VOICE_PRESETS[cfg.provider].keyUrl; baseRow.hidden = cfg.provider !== 'custom'; } }, ...(Object.keys(V.VOICE_PRESETS) as (keyof typeof V.VOICE_PRESETS)[]).map((k) => h('option', { value: k, selected: cfg.provider === k }, V.VOICE_PRESETS[k].label)));
+    const keyLink = h('a', { href: V.VOICE_PRESETS[cfg.provider].keyUrl, target: '_blank', rel: 'noopener' }, t('getKey')) as HTMLAnchorElement;
+    const key = h('input', { class: 'input', type: 'password', value: cfg.key, placeholder: t('apiKey'), autocomplete: 'off', onchange: (e: Event) => { cfg.key = (e.target as HTMLInputElement).value.trim(); save(); } });
+    const base = h('input', { class: 'input', type: 'url', value: cfg.base, placeholder: 'https://…/v1', onchange: (e: Event) => { cfg.base = (e.target as HTMLInputElement).value.trim(); save(); } });
+    const baseRow = h('div', { class: 'row', hidden: cfg.provider !== 'custom' }, h('span', null, t('apiBase')), base);
+    const langSel = (val: string, none: string, f: (v: string) => void) => h('select', { class: 'select', onchange: (e: Event) => f((e.target as HTMLSelectElement).value) }, h('option', { value: none === 'auto' ? 'auto' : '', selected: !val || val === 'auto' }, none === 'auto' ? t('scr_detect') : t('voiceNoTranslate')), ...SCREEN_LANGS.map(([c, l]) => h('option', { value: c, selected: val === c }, l)));
+    const status = h('p', { class: 'hint', dir: 'auto' }); const bar = h('div', { class: 'task-bar thin', hidden: true }, h('i', { style: { width: '0%' } }));
+    const go = h('button', { type: 'button', class: 'btn primary' }, icon('mic'), t('voiceStart')) as HTMLButtonElement;
+    const outs = h('div', { class: 'row-actions wrap' });
+    sh.body.append(h('p', { class: 'hint' }, t('voiceHint')),
+      h('div', { class: 'row' }, h('span', null, t('voiceService')), prov), baseRow, h('div', { class: 'row' }, h('span', null, t('apiKey'), h('small', { class: 'src' }, keyLink)), key),
+      h('div', { class: 'row' }, h('span', null, t('voiceSpoken')), langSel(cfg.lang, 'auto', (v) => { cfg.lang = v; save(); })),
+      h('div', { class: 'row' }, h('span', null, t('voiceTranslate')), langSel(getPrefs().voiceTo, '', (v) => updatePrefs({ voiceTo: v }))),
+      bar, status, outs);
+    sh.actions.append(go);
+    go.onclick = async () => {
+      if (voiceRun) { voiceRun.stop = true; return; }
+      if (!cfg.key) { status.textContent = t('voiceNeedKey'); key.focus(); return; }
+      const packs = await import('../packs'); if (packs.packsHere() && !(await packs.ensurePacks(['ffmpeg'], t('packWhyVoice')))) return;
+      const run = { stop: false }; voiceRun = run; go.replaceChildren(icon('close'), t('cancel')); bar.hidden = false; outs.replaceChildren();
+      const id = 'voice'; const name = t('voiceTrackName');
+      const tr: SubTrack = { id, name, lang: cfg.lang !== 'auto' ? cfg.lang : undefined, cues: [], fmt: 'srt' }; tracks = [...tracks.filter((x) => x.id !== id), tr];
+      try {
+        const source = src.localPath ?? src.url; const dur = Number.isFinite(video.duration) ? video.duration : 0; if (!dur) throw new Error(t('voiceNoLength'));
+        const cues = await V.transcribe(source, dur, cfg, (done, total, phase) => { (bar.firstChild as HTMLElement).style.width = `${Math.round((done / total) * 100)}%`; status.textContent = t(phase === 'audio' ? 'voiceAudio' : 'voiceListening', { n: localDigits(Math.min(total, done + 1)), total: localDigits(total) }); }, () => run.stop || playerGone);
+        if (run.stop) { status.textContent = t('cancelled'); return; }
+        tr.cues = cues; await useTrack(tr);
+        status.textContent = t('voiceDone', { n: localDigits(cues.length) }); flashText(t('voiceDone', { n: localDigits(cues.length) }));
+        const rtl = /^(ar|fa|ur|he)/.test(cfg.lang) || cues.some((c) => /[\u0600-\u06FF]/.test(c.text));
+        const { saveText } = await import('../native'); const stem = src.name.replace(/\.[^.]+$/, '');
+        outs.append(h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const pth = await saveText(`${stem}.ass`, V.toAss(tr.cues, stem, rtl)); if (pth) toast(t('savedTo', { path: pth })); } }, icon('download'), t('voiceSaveAss')),
+          h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const pth = await saveText(`${stem}.srt`, V.toSrt(tr.cues)); if (pth) toast(t('savedTo', { path: pth })); } }, icon('download'), t('voiceSaveSrt')));
+        const to = getPrefs().voiceTo; if (to && cues.length) { const st2 = h('p', { class: 'hint', dir: 'auto' }); outs.after(st2); await translateTrack(tr, to, false, st2); }
+      } catch (e) { const m = String((e as Error).message ?? e); status.textContent = m === 'voice-key' ? t('voiceBadKey') : m === 'ffmpeg-missing' ? t('voiceNoFfmpeg') : m; }
+      finally { voiceRun = null; go.replaceChildren(icon('mic'), t('voiceStart')); bar.hidden = true; }
+    };
+  }
   async function findSubs() {
     const { getSettings } = await import('../settings');
     const sh = openSheet(t('subsFind'), t('close'));
