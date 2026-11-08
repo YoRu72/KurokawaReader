@@ -166,6 +166,11 @@ else {
   placeNav();
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
+  void import('./ui/gestures').then((g) => g.pageSwipe({
+    enabled: () => getSettings().swipeTabs !== false,
+    view: () => current,
+    step: (dir) => { const ds = DESTS(); const i = ds.findIndex((d) => d[0] === destOf(parseRoute())); const nx = ds[i + dir]; if (i < 0 || !nx) return false; nx[3](); return true; },
+  }));
   onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
   if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());

@@ -972,3 +972,17 @@ html:not(.pc) .settings-body .card.collapsed > h3.card-title svg { margin-inline
 .mega-file { padding: 8px 12px; } .mega-file small { flex: none; }
 .mega-tools { display: flex; gap: 8px; align-items: center; margin: 0 0 6px; } .mega-tools .mega-filter { flex: 1; min-width: 0; }
 .mega-all small { flex: none; }
+/* Pull to refresh: a round mark under the top of the list. */
+.ptr-mark { position: fixed; z-index: 60; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--md-on-surface-dim); box-shadow: var(--el-2); pointer-events: none; opacity: 0; transform: translate(-50%, -40px); }
+.ptr-mark.ready { color: var(--md-primary); }
+.ptr-mark.spin svg { animation: ptr-spin .8s linear infinite; color: var(--md-primary); }
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
+/* A place reached by a sideways swipe: it comes in from that side. */
+html.page-in-next #app > .view { animation: page-in-next .24s var(--ease-emph-decel, ease-out); }
+html.page-in-prev #app > .view { animation: page-in-prev .24s var(--ease-emph-decel, ease-out); }
+@keyframes page-in-next { from { transform: translateX(36px); opacity: .4; } }
+@keyframes page-in-prev { from { transform: translateX(-36px); opacity: .4; } }
+html[dir='rtl'].page-in-next #app > .view { animation-name: page-in-prev; }
+html[dir='rtl'].page-in-prev #app > .view { animation-name: page-in-next; }
+@media (prefers-reduced-motion: reduce) { html.page-in-next #app > .view, html.page-in-prev #app > .view { animation: none; } }
+.sheet { will-change: auto; }

@@ -20,8 +20,8 @@ export function swipeToOpen(area: HTMLElement, open: () => void): () => void {
   };
   const end = () => { on = false; };
   area.addEventListener('touchstart', start, { passive: true }); area.addEventListener('touchmove', move, { passive: true });
-  area.addEventListener('touchend', end); area.addEventListener('touchcancel', end);
-  return () => { area.removeEventListener('touchstart', start); area.removeEventListener('touchmove', move); area.removeEventListener('touchend', end); area.removeEventListener('touchcancel', end); };
+  area.addEventListener('touchend', end); area.addEventListener('touchcancel', end); area.dataset.edgeDrawer = '1';
+  return () => { delete area.dataset.edgeDrawer; area.removeEventListener('touchstart', start); area.removeEventListener('touchmove', move); area.removeEventListener('touchend', end); area.removeEventListener('touchcancel', end); };
 }
 
 /** Makes a sheet a side drawer: it slides in from the start side and follows a finger swiping it back shut. */

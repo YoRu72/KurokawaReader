@@ -1,4 +1,5 @@
 // Tiny DOM helpers — no framework, so the bundle stays small and offline-friendly.
+import { dragToClose } from './gestures';
 
 type Child = Node | string | number | null | undefined | false | Child[];
 
@@ -222,6 +223,7 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   (el as HTMLElement & { __close?: () => void }).__close = close;
   document.body.append(scrim, el);
   if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
+  else dragToClose(el, scrim, close);
   return { body, actions, close, el };
 }
 /** A sheet as a computer's menu: beside the pointer (or under the button that opened it), kept on the screen. */

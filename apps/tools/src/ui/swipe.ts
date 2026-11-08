@@ -3,6 +3,7 @@
 export interface SwipeAction { label: string; icon: string; run: () => void }
 export function swipeable(el: HTMLElement, sides: () => { right?: SwipeAction | null; left?: SwipeAction | null }, icon: (name: string) => SVGElement | HTMLElement, enabled: () => boolean = () => true): void {
   let x0 = 0, y0 = 0, dx = 0, axis: '' | 'x' | 'y' = '', id = -1, act: { right?: SwipeAction | null; left?: SwipeAction | null } = {};
+  el.dataset.swipe = '1'; el.style.touchAction = 'pan-y';
   const under = document.createElement('span'); under.className = 'swipe-under'; under.setAttribute('aria-hidden', 'true');
   const kids = () => [...el.children].filter((c) => c !== under) as HTMLElement[];
   const reset = () => { el.classList.remove('swiping', 'swipe-r', 'swipe-l', 'armed'); for (const k of kids()) { k.style.transform = ''; } under.remove(); dx = 0; axis = ''; id = -1; };

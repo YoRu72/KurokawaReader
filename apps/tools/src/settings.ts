@@ -19,6 +19,8 @@ export interface Settings {
   maxActive: number;
   /** The bottom bar's places in the reader's order, and those left off it (Settings always stays). */
   navOrder?: string[]; navHidden?: string[];
+  /** A page swiped sideways goes to the bottom bar's next or previous place (on by default). */
+  swipeTabs?: boolean;
   /** The + menu's entries in the reader's order, and those left off. */
   fabOrder?: string[]; fabHidden?: string[];
   /** Connections per file download (0: the app decides; fewer suit a weak phone link, more a fast one). */
