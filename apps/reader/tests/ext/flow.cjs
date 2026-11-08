@@ -111,6 +111,13 @@ const SITE = 'http://localhost:5403';
     await page.evaluate((h) => { location.hash = h; }, here); await page.waitForSelector('.src-grid .src-card'); await page.waitForTimeout(300);
     // Held on the shelf: the card's cover on its own.
     await page.waitForSelector('.src-grid .src-card .src-cover img', { timeout: 10000 }).catch(() => {});
+    // Held (Mihon's long press in Browse): into the library at once — its chapters left on the site —, the tags asked.
+    await page.dispatchEvent('.src-grid .src-card', 'contextmenu'); await page.waitForSelector('.sheet .btn.primary');
+    await page.click('.sheet .btn.primary'); await page.waitForTimeout(1500);
+    const added = await page.$eval('.src-grid .src-card', (e) => e.classList.contains('in-library')).catch(() => false);
+    const inDb = await page.evaluate(async () => { const r = indexedDB.open('kurokawa'); return await new Promise((ok) => { r.onsuccess = () => { try { const q = r.result.transaction('books').objectStore('books').count(); q.onsuccess = () => ok(q.result); q.onerror = () => ok(-1); } catch { ok(-2); } }; r.onerror = () => ok(-3); }); });
+    ok('held on a shelf: added to the library in one step, marked so', added, JSON.stringify({ added, inDb }));
+    // Held again (in the library now): the sheet of choices, the cover among them.
     await page.dispatchEvent('.src-grid .src-card', 'contextmenu'); await page.waitForSelector('.sheet .dest-row');
     const viewRow = await page.$('.sheet .dest-row:has-text("View the cover")');
     if (viewRow) { await viewRow.click(); await page.waitForSelector('.cover-view img', { timeout: 5000 }).catch(() => {}); }
