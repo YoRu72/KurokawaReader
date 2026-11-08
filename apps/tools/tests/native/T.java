@@ -100,6 +100,17 @@ public class T {
     cutAfter = 200 << 10; limit = 16; File out13 = new File(dir, "cut.part"); out13.delete(); boolean ok13;
     try { KrDownloader.fetch(u, out13, Integer.getInteger("c13", 6), op, new AtomicBoolean(), new AtomicLong(), new KrDownloader.Result(), () -> {}, new KrDownloader.Opts()); ok13 = Arrays.equals(java.nio.file.Files.readAllBytes(out13.toPath()), data); } catch (Exception e) { System.out.println("run13 threw " + e); ok13 = false; }
     cutAfter = 0; System.out.println("run13 connections cut every 200 KB, done anyway: " + ok13);
+    // 14: a MEGA file: the server sends it encrypted (AES-128-CTR), the file is written decrypted — over several
+    // connections, each at its own place, and resumed halfway.
+    byte[] plain = data.clone(); byte[] mk = new byte[32]; new Random(7).nextBytes(mk);
+    { byte[] a16 = new byte[16]; for (int i = 0; i < 16; i++) a16[i] = (byte) (mk[i] ^ mk[i + 16]); byte[] iv = new byte[16]; System.arraycopy(mk, 16, iv, 0, 8);
+      javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/CTR/NoPadding"); c.init(javax.crypto.Cipher.ENCRYPT_MODE, new javax.crypto.spec.SecretKeySpec(a16, "AES"), new javax.crypto.spec.IvParameterSpec(iv)); data = c.doFinal(plain); }
+    etag = "\"mega\""; limit = 16; File out14 = new File(dir, "mega.part"); out14.delete(); File st14 = new File(dir, "mega.state"); st14.delete();
+    KrDownloader.Opts o14 = new KrDownloader.Opts(); o14.megaKey = mk; o14.state = st14; AtomicBoolean c14 = new AtomicBoolean(); AtomicLong g14 = new AtomicLong();
+    KrDownloader.fetch(u, out14, 6, op, c14, g14, new KrDownloader.Result(), () -> { if (g14.get() > (7 << 20)) c14.set(true); }, o14);
+    c14.set(false); KrDownloader.fetch(u, out14, 6, op, c14, new AtomicLong(), new KrDownloader.Result(), () -> {}, o14);
+    boolean ok14 = Arrays.equals(java.nio.file.Files.readAllBytes(out14.toPath()), plain); data = plain; etag = "\"v1\"";
+    System.out.println("run14 MEGA file decrypted as written, resumed: " + ok14);
     // 12: what a finished file is, from its bytes: an APK, a bundle, an e-book, a video, a PDF, a ZIP — and only weak names changed.
     java.util.function.BiFunction<String, String[], File> zipOf = (nm, entries) -> { try { File z = new File(dir, nm); try (java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(z))) { for (String e : entries) { zo.putNextEntry(new java.util.zip.ZipEntry(e)); zo.write(e.equals("mimetype") ? "application/epub+zip".getBytes() : new byte[] { 1, 2, 3 }); zo.closeEntry(); } } return z; } catch (Exception e) { throw new RuntimeException(e); } };
     java.util.function.BiFunction<String, byte[], File> raw = (nm, head) -> { try { File z = new File(dir, nm); byte[] all = Arrays.copyOf(head, 1024); java.nio.file.Files.write(z.toPath(), all); return z; } catch (Exception e) { throw new RuntimeException(e); } };
@@ -120,6 +131,6 @@ public class T {
     };
     boolean ok12 = true; for (String[] c : cases) if (!java.util.Objects.equals(c[0], c[1])) { ok12 = false; System.out.println("  sniff got " + c[0] + " wanted " + c[1]); }
     System.out.println("run12 file types from their bytes: " + ok12);
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && ok12 && ok13 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && ok12 && ok13 && ok14 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }

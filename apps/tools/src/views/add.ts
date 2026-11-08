@@ -43,7 +43,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const given = splitName(how.name ?? '');
   const name = h('input', { type: 'text', dir: 'auto', placeholder: t('fileName'), value: given.stem, class: 'grow' }) as HTMLInputElement;
   const ext = h('input', { type: 'text', dir: 'ltr', placeholder: t('extension'), value: given.ext, class: 'ext-in', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
-  const sizeLine = h('div', { class: 'src add-size' }); const storageLine = h('div', { class: 'src add-storage' });
+  const sizeLine = h('div', { class: 'src add-size' }); const megaBox = h('div', { class: 'mega-box', hidden: true });
+  // (A MEGA link: its name and files read from MEGA with the link's key; a folder's files chosen here.)
+  let mega: { url: string; info: import('../downloads/mega').MegaInfo; chosen: Set<string> } | null = null; const storageLine = h('div', { class: 'src add-storage' });
   let probed: Probe | null = null; let probeToken = 0; let probing: Promise<void> = Promise.resolve(); let nameTouched = !!how.name;
   name.addEventListener('input', () => { nameTouched = true; }); ext.addEventListener('input', () => { nameTouched = true; });
   const showStorage = async () => { const free = await freeSpaceAt(getSettings().downloadDir || '').catch(() => -1); if (free < 0) { storageLine.hidden = true; return; } storageLine.hidden = false; const need = probed?.size ?? 0; storageLine.replaceChildren(icon('storage'), h('span', null, t('storageFree', { free: formatBytes(free) }))); if (need && need > free) storageLine.append(h('b', { class: 'danger' }, ` · ${t('storageShort')}`)); };
@@ -51,6 +53,24 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     const my = ++probeToken; probed = null;
     if (!u || !/^https?:/i.test(u)) { sizeLine.hidden = true; void showStorage(); return; }
     sizeLine.hidden = false; sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('lookingAtLink')}`);
+    mega = null; megaBox.hidden = true;
+    const M = await import('../downloads/mega');
+    if (M.isMega(u)) {
+      sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('megaReading')}`);
+      try {
+        const info = await M.megaInfo(u); if (my !== probeToken) return;
+        mega = { url: u, info, chosen: new Set(info.files.map((f) => f.handle)) };
+        const total = info.files.reduce((n, f) => n + f.size, 0);
+        sizeLine.replaceChildren(icon('cloud'), h('span', { dir: 'auto' }, `MEGA · ${info.name} · ${info.folder ? `${t('megaFiles', { n: localDigits(info.files.length) })} · ` : ''}${formatBytes(total)}`));
+        if (!nameTouched && !info.folder) { const m = /^(.*?)(?:\.([^.]{1,8}))?$/.exec(info.name)!; name.value = m[1]; ext.value = m[2] ?? ''; }
+        if (info.folder && info.files.length > 1) {
+          const rows = info.files.map((f) => { const cb = h('input', { type: 'checkbox', checked: true, onchange: () => { if (cb.checked) mega!.chosen.add(f.handle); else mega!.chosen.delete(f.handle); all.checked = mega!.chosen.size === info.files.length; all.indeterminate = mega!.chosen.size > 0 && !all.checked; } }) as HTMLInputElement; return { f, cb, el: h('label', { class: 'dest-row mega-file' }, cb, h('span', { class: 'grow', dir: 'auto' }, f.path), h('small', { class: 'src' }, formatBytes(f.size))) }; });
+          const all = h('input', { type: 'checkbox', checked: true, onchange: () => { for (const r2 of rows) { r2.cb.checked = all.checked; if (all.checked) mega!.chosen.add(r2.f.handle); else mega!.chosen.delete(r2.f.handle); } all.indeterminate = false; } }) as HTMLInputElement;
+          megaBox.replaceChildren(h('label', { class: 'dest-row mega-all' }, all, h('b', { class: 'grow' }, t('filesSelectAll'))), h('div', { class: 'mega-files' }, ...rows.map((r2) => r2.el))); megaBox.hidden = false;
+        }
+      } catch (e) { if (my !== probeToken) return; const m = String((e as Error).message ?? e); sizeLine.replaceChildren(icon('info'), h('b', { class: 'danger' }, /^megaErr/.test(m) ? t(m as 'megaErrGone') : `MEGA: ${m}`)); }
+      void showStorage(); return;
+    }
     const r = await probeUrl(u, hdrs).catch(() => null); if (my !== probeToken) return;
     if (!r) { sizeLine.hidden = true; void showStorage(); return; }
     probed = r;
@@ -78,7 +98,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   let info: TorrentInfo | null = null; let chosen = new Set<number>(); let metaToken = 0;
   const saveAs = h('div', { class: 'save-as' },
     h('div', { class: 'field' }, h('span', { class: 'label' }, t('saveAs')), h('div', { class: 'save-as-row' }, name, h('span', { class: 'dot' }, '.'), ext)),
-    sizeLine, storageLine,
+    sizeLine, megaBox, storageLine,
     h('div', { class: 'dest-row static' }, icon('folder'), h('span', { class: 'label' }, t('saveTo')), dir, (window.kurokawaTools || ktPlugin()) ? h('button', { type: 'button', class: 'btn text small', onclick: () => void pick() }, t('changeFolder')) : null),
     dirMenu);
   const quick = h('div', { class: 'check-grid' },
@@ -209,6 +229,15 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     try {
       for (const src of srcs) {
+        // (MEGA: its files, read with the link's key, each a download decrypted as it comes.)
+        { const M = await import('../downloads/mega'); if (src.url && M.isMega(src.url)) {
+          const info = mega?.url === src.url ? mega.info : await M.megaInfo(src.url); const files = mega?.url === src.url ? info.files.filter((f) => mega!.chosen.has(f.handle)) : info.files;
+          if (!files.length) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }
+          if (!info.folder && srcs.length === 1 && name.value.trim()) files[0] = { ...files[0], name: `${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` };
+          const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true;
+          const tks = await M.addMegaFiles(eng, info, files, { dir: getSettings().downloadDir || undefined, paused: paused.checked, meta }, src.url);
+          toast(tks.length === 1 ? t('taskAdded', { name: tks[0].name }) : t('megaAdded', { n: localDigits(tks.length), name: info.name })); continue;
+        } }
         if (srcs.length > 1 && src.url && videoEnabled() && isVideoHost(src.url)) { const tk = await eng.add({ source: src, dir: videoDir, paused: paused.checked, video: { ...preferredFormat(), container: preferredFormat().audioOnly ? undefined : getSettings().videoContainer, embedThumb: getSettings().videoEmbedThumb, sponsorblock: getSettings().videoSponsor } }); toast(t('taskAdded', { name: tk.name || src.url })); continue; }
         const videoish = !!src.magnet || !!src.torrent || isVideo(src.url ?? '');
         if (info && srcs.length === 1 && !chosen.size) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }

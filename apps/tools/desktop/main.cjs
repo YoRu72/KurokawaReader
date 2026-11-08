@@ -421,6 +421,17 @@ ipcMain.handle('kt:writeTemp', async (_e, o) => { const dir = path.join(app.getP
 ipcMain.handle('kt:siblings', async (_e, p) => { try { const dir = path.dirname(String(p)); const base = path.basename(String(p)).replace(/\.[^.]+$/, '').toLowerCase(); return (await fs.promises.readdir(dir)).filter((n) => n.toLowerCase().startsWith(base) && n !== path.basename(String(p))).map((n) => path.join(dir, n)); } catch { return []; } });
 // (Through the app's own local server: a page on app:// may not read file:// media, and a Windows path is no URL.)
 ipcMain.handle('kt:fileUrl', (_e, p) => StreamProxy.fileUrl(String(p)));
+// A MEGA file aria2 fetched as MEGA keeps it (encrypted): decrypted in place once it is whole (AES-128-CTR; the key
+// the node key's halves XORed, the counter's first half its third quarter). Written beside, then put in its place.
+ipcMain.handle('kt:megaDecrypt', async (_e, o) => {
+  const crypto = require('node:crypto'); const fsp = require('node:fs/promises'); const { pipeline } = require('node:stream/promises');
+  const k = Buffer.from(String(o.key).replace(/-/g, '+').replace(/_/g, '/'), 'base64'); if (k.length !== 32) throw new Error('mega: key');
+  const key = Buffer.alloc(16); for (let i = 0; i < 16; i++) key[i] = k[i] ^ k[i + 16];
+  const iv = Buffer.alloc(16); k.copy(iv, 0, 16, 24);
+  const src = String(o.path); const tmp = `${src}.kt-mega`;
+  await pipeline(fs.createReadStream(src), crypto.createDecipheriv('aes-128-ctr', key, iv), fs.createWriteStream(tmp));
+  await fsp.rename(tmp, src); return true;
+});
 
 /* ---------- updates: the repository's tools-v* releases ---------- */
 const cmp = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; } return 0; };

@@ -72,7 +72,9 @@ export interface Task {
     /** A video download's live facts from yt-dlp: resolution, codecs, container, approximate size, length in seconds. */
     res?: string; vcodec?: string; acodec?: string; ext?: string; sizeApprox?: number; duration?: number;
     /** The DHT was asked (turned on for the session) because no peer came by the trackers. */
-    dhtFallback?: boolean };
+    dhtFallback?: boolean;
+    /** A MEGA file: its key (decrypted as it comes), its link, its handle and the folder it is in. */
+    megaKey?: string; mega?: string; megaHandle?: string; megaFolder?: string };
   /** Which engine holds it (the platform's, 'aria2' for a remote aria2, 'browser'). */
   engine: EngineId;
 }

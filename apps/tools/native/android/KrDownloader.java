@@ -59,7 +59,27 @@ final class KrDownloader {
     }
     /** The limit over every HTTP download at once (set from the settings). */
     static final Limiter GLOBAL = new Limiter(0);
-    static final class Opts { int retries = 5; File state; /** This download's own speed limit, when it has one. */ Limiter limiter; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
+    /** The file a download is written to: as it is, or — a MEGA file — through its decryption. */
+    static RandomAccessFile writer(File out, Opts opt) throws IOException { return opt != null && opt.megaKey != null && opt.megaKey.length == 32 ? new CtrFile(out, opt.megaKey) : new RandomAccessFile(out, "rw"); }
+    /** A file whose every write is decrypted at its own place (MEGA: AES-128-CTR, the key the two halves of the node key
+     *  XORed, the counter's first half the key's third quarter, its second half the block number) — so ranges, several
+     *  connections and resuming all work as for any download. */
+    static final class CtrFile extends RandomAccessFile {
+        private final javax.crypto.spec.SecretKeySpec key; private final byte[] nonce = new byte[8];
+        CtrFile(File f, byte[] k) throws IOException { super(f, "rw"); byte[] a = new byte[16]; for (int i = 0; i < 16; i++) a[i] = (byte) (k[i] ^ k[i + 16]); key = new javax.crypto.spec.SecretKeySpec(a, "AES"); System.arraycopy(k, 16, nonce, 0, 8); }
+        static byte[] decrypt(javax.crypto.spec.SecretKeySpec key, byte[] nonce, long pos, byte[] b, int off, int len) throws IOException {
+            try {
+                byte[] iv = new byte[16]; System.arraycopy(nonce, 0, iv, 0, 8); long blk = pos >>> 4; for (int i = 15; i >= 8; i--) { iv[i] = (byte) blk; blk >>>= 8; }
+                javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/CTR/NoPadding"); c.init(javax.crypto.Cipher.DECRYPT_MODE, key, new javax.crypto.spec.IvParameterSpec(iv));
+                int skip = (int) (pos & 15); if (skip > 0) c.update(new byte[skip]);
+                return c.update(b, off, len);
+            } catch (java.security.GeneralSecurityException e) { throw new IOException("mega: " + e.getMessage()); }
+        }
+        @Override public void write(byte[] b, int off, int len) throws IOException { if (len <= 0) return; super.write(decrypt(key, nonce, getFilePointer(), b, off, len), 0, len); }
+        @Override public void write(byte[] b) throws IOException { write(b, 0, b.length); }
+        @Override public void write(int x) throws IOException { write(new byte[] { (byte) x }, 0, 1); }
+    }
+    static final class Opts { int retries = 5; File state; /** A MEGA file's key (32 bytes): what comes is decrypted as it is written (AES-128-CTR, any offset). */ byte[] megaKey; /** This download's own speed limit, when it has one. */ Limiter limiter; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
         /** Told the server's name and type as soon as it answers; the .part file to use from then on (null: as it is). */ java.util.function.BiFunction<String, String, File> named;
         /** Connections added while they help (Ookla's «connection scaling»): a few first, more while the speed still
          *  rises, none once it holds — a server that limits each connection is filled, one that does not is not
@@ -262,7 +282,7 @@ final class KrDownloader {
             if (opt.state != null) opt.state.delete();
             try { res.total = Long.parseLong(probe.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             got.set(0);
-            try (InputStream in = probe.getInputStream(); RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
+            try (InputStream in = probe.getInputStream(); RandomAccessFile raf = writer(out, opt)) {
                 raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter);
             } finally { probe.disconnect(); }
             if (res.total < 0) res.total = got.get();
@@ -277,7 +297,7 @@ final class KrDownloader {
             if (rc >= 400) { c.disconnect(); throw new Status(rc); }
             try { res.total = Long.parseLong(c.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             got.set(0);
-            try (InputStream in = c.getInputStream(); RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
+            try (InputStream in = c.getInputStream(); RandomAccessFile raf = writer(out, opt)) {
                 raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter);
             } finally { c.disconnect(); }
             if (res.total < 0) res.total = got.get();
@@ -337,7 +357,7 @@ final class KrDownloader {
             final int wid = i;
             workers[i] = new Thread(() -> {
                 final boolean[] gone = { false };
-                try (RandomAccessFile raf = new RandomAccessFile(out, "rw")) {
+                try (RandomAccessFile raf = writer(out, opt)) {
                     while (fail.get() == null && !cancelled.get()) {
                         long[] given = back.poll(); int idx; long from, toIncl;
                         if (given != null) { idx = (int) given[0]; from = given[1]; toIncl = given[2]; }

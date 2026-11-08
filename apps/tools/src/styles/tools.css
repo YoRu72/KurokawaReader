@@ -968,3 +968,5 @@ html:not(.pc) .settings-body .card.collapsed > h3.card-title svg { margin-inline
 .task-card > .swipe-under svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .task-card > :not(.swipe-under) { position: relative; z-index: 1; transition: transform .22s cubic-bezier(.2,.9,.3,1.2); }
 .task-card.swiping > :not(.swipe-under) { transition: none; background: inherit; }
+.mega-box { margin: 6px 0 4px; } .mega-files { max-height: 260px; overflow-y: auto; border-radius: 14px; background: var(--md-surface-container-low, var(--md-surface-container)); }
+.mega-file { padding: 8px 12px; } .mega-file small { flex: none; }
