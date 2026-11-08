@@ -163,6 +163,7 @@ const PATHS: Record<string, string> = {
   hq: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9v6M11 9v6M7 12h4"/><path d="M14 9h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2zM16.5 14.5l1.5 1.5"/>',
   scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/>',
   chapters: '<path d="M8 3h11v18l-5.5-4L8 21z"/><path d="M5 6v15"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
   gesture: '<path d="M4 15c2-3 4-6 6-6s1 6 3 6 3-8 5-8 2 3 2 3"/>',
   minus: '<path d="M5 12h14"/>',

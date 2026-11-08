@@ -19,6 +19,8 @@ export interface Settings {
   maxActive: number;
   /** The bottom bar's places in the reader's order, and those left off it (Settings always stays). */
   navOrder?: string[]; navHidden?: string[];
+  /** The + menu's entries in the reader's order, and those left off. */
+  fabOrder?: string[]; fabHidden?: string[];
   /** Connections per file download (0: the app decides; fewer suit a weak phone link, more a fast one). */
   connections: number;
   /** Connections over every file download at once (the phone's engine). */
