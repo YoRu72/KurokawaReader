@@ -168,6 +168,7 @@ const serve = () => http.createServer((req, res) => {
   }
   {
     // The main subtitle font: a font file added from the subtitle style, chosen at once, the plain lines drawn in it.
+    { await seek(2); await p.waitForTimeout(300); const f0 = await p.$eval('.kt-subs .kt-cue', (c) => getComputedStyle(c).fontFamily).catch(() => ''); check('with no font chosen, Arabic letters in Uthman Taha Naskh (Latin in the regular font)', /KT Uthman/.test(f0) && /KT Uthman.*(Inter|system-ui|sans)/.test(f0), f0); }
     await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
     await p.click('.kt-top button[aria-label="Subtitles"]'); await p.click('.sheet .sub-font-btn'); await p.waitForSelector('.sheet .sub-font-row');
     check('the font sheet: the system font first, chosen', await p.$eval('.sheet .sub-font-row', (e) => e.classList.contains('on')));

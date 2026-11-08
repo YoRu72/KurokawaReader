@@ -115,7 +115,7 @@
 /* (Inside the picture, above the controls only where the picture reaches under them.) */
 .kt-player:not(.hide-ui) .kt-subs:not(.top) { bottom: max(calc(var(--vr-b, 0px) + var(--vr-h, 100%) * (.05 + var(--sub-lift))), calc(var(--kt-bottom-h, 110px) + 10px)); }
 /* (Sized from the picture, as players do — about a nineteenth of its height —, not from the screen.) */
-.kt-cue { font: 600 clamp(15px, calc(var(--vr-h, 540px) * .058 * var(--sub-size) / 100), 84px) / 1.3 var(--sub-font) var(--font-ui), system-ui, sans-serif; color: var(--sub-color); padding: 1px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.kt-cue { font: 600 clamp(15px, calc(var(--vr-h, 540px) * .058 * var(--sub-size) / 100), 84px) / 1.3 var(--sub-font) 'KT Uthman', var(--font-ui), system-ui, sans-serif; color: var(--sub-color); padding: 1px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .kt-player.sub-bold .kt-cue { font-weight: 800; }
 .kt-player[data-sub-bg='shadow'] .kt-cue { text-shadow: 0 0 4px #000, 0 2px 3px #000, 0 0 10px rgb(0 0 0 / .8); }
 .kt-player[data-sub-bg='box'] .kt-cue { background: rgb(0 0 0 / .6); }
