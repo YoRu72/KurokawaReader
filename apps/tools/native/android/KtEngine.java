@@ -566,6 +566,8 @@ final class KtEngine {
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
                 final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = x.meta != null && x.meta.optBoolean("noRetry") ? 0 : retries; opt.state = state; opt.expectName = safe;
                 if (x.limiter == null) x.limiter = new KrDownloader.Limiter(x.limitDown); else x.limiter.set(x.limitDown); opt.limiter = x.limiter;
+                // (A MEGA file: its key given to the downloader, which writes it decrypted.)
+                if (x.meta != null && !x.meta.optString("megaKey", "").isEmpty()) try { opt.megaKey = android.util.Base64.decode(x.meta.optString("megaKey"), android.util.Base64.URL_SAFE | android.util.Base64.NO_PADDING | android.util.Base64.NO_WRAP); } catch (Throwable ignored) {}
                 // (The server's own name for the file — Content-Disposition, or the right extension for its type — taken
                 // as soon as the server answers, not at the end: an APK no longer shows as «.bin» while it comes.)
                 final File dirF = dir;
