@@ -1,6 +1,7 @@
 // The downloads: every task as a card — its name, a progress bar, speeds, peers, what is left — with pause,
 // resume, play, remove; filters over them (all, active, finished, failed) and the options sheet (filter, sort,
 // display, as the reader's Library has it); a search; selecting several for one action; the + for a new one.
+import { swipeable } from '../ui/swipe';
 import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countItems } from '../i18n';
@@ -181,11 +182,16 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
         h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
         h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i', { style: { width: `${bar(x)}%` } })))),
       h('span', { class: 'task-actions' }));
+    // (A phone: swiped to the right, its first action — pause, resume, retry —; to the left, removed (asked first).)
+    swipeable(el, () => { const cur = tasks.find((y) => y.id === x.id) ?? x; const eng = getEngine();
+      const right = ACTIVE.includes(cur.state) && eng.can.pause ? { label: t('pause'), icon: 'pause', run: () => void eng.pause(cur.id).catch((er) => toast(String(er.message ?? er), 'error')) }
+        : cur.state === 'paused' || cur.state === 'failed' ? { label: t(cur.state === 'failed' ? 'retry' : 'resume'), icon: cur.state === 'failed' ? 'refresh' : 'play', run: () => void eng.resume(cur.id).catch((er) => toast(String(er.message ?? er), 'error')) } : null;
+      return { right, left: { label: t('removeTask'), icon: 'trash', run: () => removeSheet([cur]) } }; }, icon, () => !selecting);
     update(el, x); return el;
   };
   const update = (el: HTMLElement, x: Task) => {
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
-    el.className = `task-card state-${x.state}`;
+    { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
     (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
     (el.querySelector('.task-bar i') as HTMLElement).style.width = `${bar(x)}%`;

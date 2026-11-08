@@ -945,3 +945,26 @@ html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-
 html.kb-open .bottom-nav { display: none; }
 html.kb-open .view .body { padding-bottom: 12px; }
 .refreshing { opacity: .55; transition: opacity .15s; pointer-events: none; }
+
+/* ---------- Mobile polish (0.16.22) ---------- */
+/* A bottom bar with more than five places: Material 3's way — every place by its icon, the open one named too —, so
+   no name is cut to «Downloa…». */
+.bottom-nav[data-count="6"] .nav-item:not(.active) .nav-label, .bottom-nav[data-count="7"] .nav-item:not(.active) .nav-label,
+.bottom-nav[data-count="8"] .nav-item:not(.active) .nav-label { display: none; }
+.bottom-nav[data-count="6"], .bottom-nav[data-count="7"], .bottom-nav[data-count="8"] { align-items: center; }
+.bottom-nav[data-count="6"] .nav-item.active .nav-label, .bottom-nav[data-count="7"] .nav-item.active .nav-label, .bottom-nav[data-count="8"] .nav-item.active .nav-label { font-size: 11.5px; overflow: visible; max-width: none; }
+.bottom-nav[data-count="6"] .nav-item, .bottom-nav[data-count="7"] .nav-item, .bottom-nav[data-count="8"] .nav-item { min-height: 52px; justify-content: center; }
+/* Settings on a phone: the sections as one tight list, in sentence case — not a column of capitals far apart. */
+html:not(.pc) .settings-body .card { margin-bottom: 8px; }
+html:not(.pc) .settings-body .card.collapsed { padding-block: 13px; }
+html:not(.pc) .settings-body .card > h3.card-title { text-transform: none; letter-spacing: 0; font-size: 15.5px; font-weight: 600; color: var(--md-on-surface); }
+html:not(.pc) .settings-body .card.collapsed > h3.card-title svg { margin-inline-start: auto; order: 2; }
+/* A download swiped aside: the action it will do shown under it. */
+.task-card { touch-action: pan-y; position: relative; overflow: hidden; }
+.task-card > .swipe-under { position: absolute; inset: 0; display: flex; align-items: center; gap: 8px; padding: 0 24px; font: 600 13.5px var(--font-ui); z-index: 0; }
+.task-card.swipe-r > .swipe-under { justify-content: flex-start; background: color-mix(in srgb, var(--md-primary) 22%, var(--md-surface-container)); color: var(--md-primary); }
+.task-card.swipe-l > .swipe-under { justify-content: flex-end; background: color-mix(in srgb, var(--md-error) 22%, var(--md-surface-container)); color: var(--md-error); }
+.task-card.swiping > .swipe-under { opacity: .55; } .task-card.swiping.armed > .swipe-under { opacity: 1; }
+.task-card > .swipe-under svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.task-card > :not(.swipe-under) { position: relative; z-index: 1; transition: transform .22s cubic-bezier(.2,.9,.3,1.2); }
+.task-card.swiping > :not(.swipe-under) { transition: none; background: inherit; }

@@ -446,7 +446,9 @@ function findShapes(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][
       const mm = a[2] as number[] | null; if (!mm) continue;
       const pts = [[mm[0], mm[1]], [mm[2], mm[1]], [mm[0], mm[3]], [mm[2], mm[3]]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
       const l = Math.min(...pts.map((q) => q[0])), r = Math.max(...pts.map((q) => q[0])), bottom = Math.min(...pts.map((q) => q[1])), top = Math.max(...pts.map((q) => q[1]));
-      if ((r - l >= 8 && top - bottom >= 8) || (thin && Math.max(r - l, top - bottom) >= 6)) out.push({ l, r, top, bottom });
+      // (Thin: a rule, even a short piece of one — Word draws a cell's border in pieces, the bits at the corners a few
+      // points long; without them the rule of a row does not reach the next row's and the table is not seen.)
+      if ((r - l >= 8 && top - bottom >= 8) || (thin && (Math.max(r - l, top - bottom) >= 6 || (Math.max(r - l, top - bottom) >= 2 && Math.min(r - l, top - bottom) <= 1.2)))) out.push({ l, r, top, bottom });
     }
   }
   return out;
@@ -503,16 +505,16 @@ function pullDiagrams(lines: Line[], shapes: Box[], boxes: Box[], W: number, H: 
  *  another into a grid. The lines of text inside become the table's cells; a line outside keeps its place. */
 function pullGrids(lines: Line[], shapes: Box[], W: number, H: number): Line[] {
   const inPage = shapes.filter((s) => s.l > -2 && s.r < W + 2 && s.bottom > -2 && s.top < H + 2);
-  const hs = inPage.filter((s) => s.top - s.bottom <= 2 && s.r - s.l >= 6).map((s) => ({ x0: s.l, x1: s.r, y: (s.top + s.bottom) / 2, w: s.top - s.bottom }));
-  const vs = inPage.filter((s) => s.r - s.l <= 2 && s.top - s.bottom >= 6).map((s) => ({ y0: s.bottom, y1: s.top, x: (s.l + s.r) / 2, w: s.r - s.l }));
+  const hs = inPage.filter((s) => s.top - s.bottom <= 2 && s.r - s.l >= 2).map((s) => ({ x0: s.l, x1: s.r, y: (s.top + s.bottom) / 2, w: s.top - s.bottom }));
+  const vs = inPage.filter((s) => s.r - s.l <= 2 && s.top - s.bottom >= 2).map((s) => ({ y0: s.bottom, y1: s.top, x: (s.l + s.r) / 2, w: s.r - s.l }));
   if (hs.length < 2 || vs.length < 2) return lines;
   // Rules that meet belong to one table.
   const n = hs.length + vs.length; const up = Array.from({ length: n }, (_, i) => i);
   const find = (i: number): number => (up[i] === i ? i : (up[i] = find(up[i])));
   hs.forEach((h, i) => vs.forEach((v, j) => { if (v.x > h.x0 - 2 && v.x < h.x1 + 2 && h.y > v.y0 - 2 && h.y < v.y1 + 2) up[find(i)] = find(hs.length + j); }));
   // (A rule drawn in pieces — one per row, as TeX does — is one rule.)
-  vs.forEach((v, j) => vs.forEach((w, k) => { if (k > j && Math.abs(v.x - w.x) < 1.5 && v.y0 < w.y1 + 2 && w.y0 < v.y1 + 2) up[find(hs.length + j)] = find(hs.length + k); }));
-  hs.forEach((g, j) => hs.forEach((w, k) => { if (k > j && Math.abs(g.y - w.y) < 1.5 && g.x0 < w.x1 + 2 && w.x0 < g.x1 + 2) up[find(j)] = find(k); }));
+  vs.forEach((v, j) => vs.forEach((w, k) => { if (k > j && Math.abs(v.x - w.x) < 1.5 && v.y0 < w.y1 + 4 && w.y0 < v.y1 + 4) up[find(hs.length + j)] = find(hs.length + k); }));
+  hs.forEach((g, j) => hs.forEach((w, k) => { if (k > j && Math.abs(g.y - w.y) < 1.5 && g.x0 < w.x1 + 4 && w.x0 < g.x1 + 4) up[find(j)] = find(k); }));
   const groups = new Map<number, number[]>();
   for (let i = 0; i < n; i++) (groups.get(find(i)) ?? groups.set(find(i), []).get(find(i))!).push(i);
   const cluster = (vals: number[]) => { const out: number[] = []; for (const v of [...vals].sort((a, b) => a - b)) if (!out.length || v - out[out.length - 1] > 1.5) out.push(v); return out; };
@@ -1609,7 +1611,11 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   while (body.length > 1 && footer.length < 2 && cutBottom(body.length - 1)) footer.unshift(body.pop()!);
   // Columns: a gutter down the middle splits the text into regions — full-width lines (titles, an abstract)
   // and runs of lines set in two columns.
-  const gutter = findGutter(body, W);
+  // (A ruled table's columns are not the page's: its lines are left out when looking for a gutter, or a table of
+  // two or three columns down the page reads as a page set in columns and its cells come apart.)
+  const ruled = pullGrids(body, findShapes(pdfjs, ol, true), W, H).filter((l) => l.grid).map((l) => l.grid!);
+  const inRuled = (l: Line) => ruled.some((g) => l.base < g.ys[0] + 1 && l.base > g.ys[g.ys.length - 1] - 1 && l.l > g.xs[0] - 2 && l.r < g.xs[g.xs.length - 1] + 2);
+  const gutter = findGutter(ruled.length ? body.filter((l) => !inRuled(l)) : body, W);
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D gutter', JSON.stringify(gutter), body.length);
   // A designed page (a worksheet, a slide, an infographic): text in boxes scattered over the page, not a column
   // of text. Each box keeps its place on the page as a frame, over the page's drawing.
@@ -1709,6 +1715,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const Lb = median(body.map((l) => l.l)), Rb = median(body.map((l) => l.r));
   const rule = rules.filter((r) => r.y < H * 0.75 && r.y > H * 0.05 && r.x1 - r.x0 < (Rb - Lb) * 0.75)
     .filter((r) => body.some((l) => l.base < r.y) && body.some((l) => l.base > r.y))
+    // (A border of a ruled table is no footnote rule: the table's lower rows are not footnotes.)
+    .filter((r) => !ruled.some((g) => r.y <= g.ys[0] + 2 && r.y >= g.ys[g.ys.length - 1] - 2 && r.x0 >= g.xs[0] - 2 && r.x1 <= g.xs[g.xs.length - 1] + 2))
     .sort((a, b) => b.y - a.y)[0];
   if (rule) {
     const below = body.filter((l) => l.base < rule.y);

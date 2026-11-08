@@ -572,6 +572,54 @@ export async function buildPdfWorker(outFile) {
 `, 'font id');
   src = replaceOnce(src, `const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap",`, `const EXPORT_DATA_EXTRA_PROPERTIES = ["krRaw", "krToUnicodeRepaired", "krNoToUnicode", "krSpaceCode", "krLegacy", "krId", "cMap",`, 'export extra');
 
+  // N) A composite TrueType font whose /ToUnicode leaves glyphs out — the harakat of many Arabic books (KFGQPC's fonts
+  // among them): the marks are drawn but have no text, so copying, searching and PDF → Word lose them. The font's own
+  // cmap still says what each glyph is: a glyph /ToUnicode does not name is given the character the font maps to it
+  // (combining marks and Arabic only, where a font's own map is trustworthy); a mark /ToUnicode calls a space (as
+  // these books' producer does, to keep the marks out of copied text) is a mark again.
+  src = replaceOnce(src, `          charCodeToGlyphId[charCode] = glyphId;
+        }
+      });
+    } else {
+      const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding);`, `          charCodeToGlyphId[charCode] = glyphId;
+        }
+      });
+      try {
+        const tu = properties.toUnicode;
+        if (tables.cmap && tu && typeof tu.amend === "function" && typeof tu.has === "function") {
+          // (Read here: pdf.js's own reader prefers the Mac table — a few Latin letters — where the font has both.)
+          const own = [];
+          const base = (font.start || 0) + tables.cmap.offset; const savePos = font.pos;
+          font.pos = base; font.skip(2); const nT = font.getUint16(); const subs = [];
+          for (let i = 0; i < nT; i++) { const pid = font.getUint16(), eid = font.getUint16(), off = font.getInt32() >>> 0; if ((pid === 3 && (eid === 1 || eid === 10)) || pid === 0) subs.push(off); }
+          for (const off of subs) {
+            font.pos = base + off; const fmt = font.getUint16(); if (fmt !== 4) continue;
+            font.skip(4); const segX2 = font.getUint16(); const n = segX2 >> 1; font.skip(6);
+            const ends = [], starts = [], deltas = [], offs = [];
+            for (let k = 0; k < n; k++) ends.push(font.getUint16()); font.skip(2);
+            for (let k = 0; k < n; k++) starts.push(font.getUint16());
+            for (let k = 0; k < n; k++) deltas.push(font.getUint16());
+            const offAt = font.pos; for (let k = 0; k < n; k++) offs.push(font.getUint16());
+            for (let k = 0; k < n; k++) for (let c = starts[k]; c <= ends[k] && c !== 0xffff; c++) {
+              if (!((c >= 0x300 && c <= 0x36f) || (c >= 0x600 && c <= 0x6ff) || (c >= 0x8d3 && c <= 0x8ff))) continue;
+              let g;
+              if (offs[k] === 0) g = (c + deltas[k]) & 0xffff;
+              else { font.pos = offAt + k * 2 + offs[k] + (c - starts[k]) * 2; g = font.getUint16(); if (g) g = (g + deltas[k]) & 0xffff; }
+              if (g) own.push({ charCode: c, glyphId: g });
+            }
+            break;
+          }
+          font.pos = savePos;
+          const byGlyph = new Map();
+          for (const m of own) if (m && m.glyphId > 0 && !byGlyph.has(m.glyphId) && ((m.charCode >= 0x300 && m.charCode <= 0x36f) || (m.charCode >= 0x600 && m.charCode <= 0x6ff) || (m.charCode >= 0x8d3 && m.charCode <= 0x8ff))) byGlyph.set(m.glyphId, m.charCode);
+          const add = {};
+          for (const code in charCodeToGlyphId) { const u = byGlyph.get(charCodeToGlyphId[code]); const mark = u !== undefined && ((u >= 0x64b && u <= 0x65f) || u === 0x670 || (u >= 0x6d6 && u <= 0x6ed) || (u >= 0x300 && u <= 0x36f) || (u >= 0x8d3 && u <= 0x8ff)); if (u !== undefined && (!tu.has(+code) || tu.get(+code) === "" || (mark && /^\\s$/.test(tu.get(+code))))) add[code] = String.fromCodePoint(u); }
+          if (Object.keys(add).length) tu.amend(add);
+        }
+      } catch (e) {}
+    } else {
+      const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding);`, 'marks from the font cmap');
+
   const out = await esbuild.transform(src, { minify: !process.env.NOMINIFY, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);
 }
