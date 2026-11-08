@@ -38,7 +38,7 @@ jobs:
         run: |
           set -o pipefail
           # (A release build, unsigned: R8 runs — a class it strips wrongly, or a rule it rejects, shows here and not on release day.)
-          cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
+          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
           ls -la app/build/outputs/apk/release/ | awk '{print $5, $9}'
       - name: Report failure
         if: failure()

@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cd android && chmod +x gradlew && ./gradlew compileDebugJavaWithJavac --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -E "error:|warning: \[|BUILD" | head -n 200
+          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew compileDebugJavaWithJavac --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -E "error:|warning: \[|BUILD" | head -n 200
       - name: Report failure
         if: failure()
         env: { GH_TOKEN: "${{ github.token }}" }
