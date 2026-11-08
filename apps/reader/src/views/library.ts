@@ -328,8 +328,10 @@ export function libraryView(): HTMLElement {
     function actions(): (HTMLElement | null)[] {
       const list = bookActions();
       const wide = window.matchMedia('(min-width: 720px)').matches;
-      if (wide) return list.map(([ic, label, fn, cls]) => act(ic, label, fn, cls));
-      const shown = list.slice(0, 4), rest = list.slice(4);
+      // (A wide screen shows as many as fit beside the count — the rest behind «More», never off the edge.)
+      const room = wide ? Math.max(4, Math.floor((window.innerWidth - 24 - 330) / 118)) : 4;
+      if (wide && list.length <= room) return list.map(([ic, label, fn, cls]) => act(ic, label, fn, cls));
+      const shown = list.slice(0, wide ? room - 1 : 4), rest = list.slice(shown.length);
       const more = act('more', t('more'), () => {
         const sh = openSheet(t('selectedCount', { n }), t('close'), { stack: true });
         sh.body.style.fontFamily = 'var(--font-ui)';
