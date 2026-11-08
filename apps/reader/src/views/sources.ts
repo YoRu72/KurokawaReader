@@ -1061,7 +1061,7 @@ function browseView(src: Source, q: string, shelf: string | undefined, tags: str
       formatMarks(b.formats),
       b.description && src.id === 'shamela' && q && String(filters.mode) !== 'titles' ? h('span', { class: 'src-snippet', dir: 'auto' }, b.description) : null);
     // Held: added to the library from here, with the tags asked (as Mihon's long press in Browse).
-    onHoldOrContext(el, () => void quickAdd(src, b, lib, hnd ?? null, rows, el));
+    onHoldOrContext(el, () => void holdAdd(src, b, lib, hnd ?? null, rows, el));
     // A book already in the library (fetched from here before): marked so, and opened from its card.
     if (b.look !== 'folder' && (lib.has(b.id) || b.alts?.some((a) => lib.has(a.id)))) { el.classList.add('in-library'); cover.append(h('span', { class: 'have-mark' }, icon('check'), t('inLibrary'))); }
     // A folder: its first volume's cover (or its own picture) as it comes near, how many volumes it holds.
@@ -1467,6 +1467,47 @@ function seriesRefButton(srcId: string, link: string, title: string, author: () 
   return btn;
 }
 
+/** Titles the same once case, marks, punctuation and «Vol. 3»-like tails are set aside. */
+const normTitle = (x: string) => x.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\b(vol(ume)?|chapter|ch|season|part)\.?\s*\d+.*$/i, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function similar(a: string, b: string): boolean {
+  const x = normTitle(a), y = normTitle(b); if (!x || !y) return false; if (x === y) return true;
+  if (Math.min(x.length, y.length) >= 6 && (x.includes(y) || y.includes(x))) return true;
+  const wa = new Set(x.split(' ').filter((w) => w.length > 2)), wb = new Set(y.split(' ').filter((w) => w.length > 2)); if (wa.size < 2 || wb.size < 2) return false;
+  let both = 0; for (const w of wa) if (wb.has(w)) both++; return both / Math.max(wa.size, wb.size) >= 0.75;
+}
+/** Library entries with a name like this one (Mihon's «Possible duplicates»): open one of them, or add anyway. */
+async function duplicatesFirst(title: string): Promise<boolean> {
+  const dup = (await db.allBooks()).filter((x) => similar(x.title, title)).slice(0, 6); if (!dup.length) return true;
+  return new Promise<boolean>((resolve) => {
+    const sh = openSheet(t('possibleDuplicates'), t('close')); let done = false; const end = (v: boolean) => { if (done) return; done = true; resolve(v); };
+    sh.body.append(h('p', { class: 'hint' }, t('possibleDuplicatesHint')), h('div', { class: 'dest-list' }, ...dup.map((x) => h('button', { type: 'button', class: 'dest-row', onclick: () => { end(false); sh.close(); navigate(x.format === 'series' && x.remote?.link ? x.remote.link : `/read/${x.id}`); } }, icon('book'), h('span', { class: 'grow' }, h('b', { dir: 'auto' }, x.title), x.author ? h('small', { class: 'src', dir: 'auto' }, x.author) : null)))));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { end(false); sh.close(); } }, t('cancel')), h('button', { type: 'button', class: 'btn primary', onclick: () => { end(true); sh.close(); } }, icon('plus'), t('addAnyway')));
+    void import('../ui/pdftools').then((m) => m.onSheetClosed(sh.el, () => end(false)));
+  });
+}
+/**
+ * A cover held in a source's list (Mihon's long press in Browse): a series or a web novel not in the library yet goes
+ * straight in — its volumes or chapters left on the source, nothing downloaded —, after a look for entries with the
+ * same name and the reader's tags asked; anything else (a file, something already there) gets the sheet of choices.
+ */
+async function holdAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>, coverEl?: HTMLElement): Promise<void> {
+  const inLib = lib.get(b.id) ?? (b.alts ?? []).map((a) => lib.get(a.id)).find(Boolean);
+  const series = b.look === 'series'; const novel = !!hnd && !b.file && b.look !== 'folder' && !series;
+  if (inLib || (!series && !novel)) return quickAdd(src, b, lib, hnd, rows, coverEl);
+  const link = series ? bookPath(src.id, b.id) : '';
+  if (series && await seriesRef(src.id, link)) return quickAdd(src, b, lib, hnd, rows, coverEl);
+  try {
+    if (!(await duplicatesFirst(b.title))) return;
+    const place = await askPlacement(`${src.id}|${b.id}`, b.title); if (place.deviceOnly) return quickAdd(src, b, lib, hnd, rows, coverEl);
+    let book: Book;
+    if (series) book = await addSeriesRef(src.id, link, b.title, b.author, coverEl?.querySelector('img'), hnd ?? undefined);
+    else { const d = await src.details(b.id); const nv = d.raw as WebNovel; book = (await findInLibrary(nv.src, nv.path)) ?? await addNovelToLibrary(nv, await coverBlob(d.cover, hnd!)); }
+    if (place.tags?.length) await db.updateBook(book.id, (x) => { x.tags = [...new Set([...(x.tags ?? []), ...place.tags!])]; });
+    lib.set(b.id, book.id); rows.get(b.id)?.(book.id);
+    if (coverEl) { coverEl.classList.add('in-library'); const cv = coverEl.querySelector('.src-cover, .cover') ?? coverEl; if (!cv.querySelector('.have-mark')) cv.append(h('span', { class: 'have-mark' }, icon('check'), t('inLibrary'))); }
+    toast(t('addedToLibrary'));
+  } catch (e) { if (!/^cancelled/.test(String((e as Error)?.message ?? e))) toast(String((e as Error)?.message ?? e), 'error'); }
+}
 async function quickAdd(src: Source, b: SourceBook, lib: Map<string, string>, hnd: Handle | null, rows: Map<string, (bookId: string) => void>, coverEl?: HTMLElement): Promise<void> {
   const sh = openSheet(b.title, t('close'));
   sh.body.style.fontFamily = 'var(--font-ui)';

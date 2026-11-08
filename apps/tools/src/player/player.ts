@@ -464,7 +464,10 @@ export function openPlayer(src: PlayerSource): void {
     current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
     const SF = await import('./subFont'); const styled = tr?.ass ? SF.styledText(tr.ass) : '';
     if (mpv) { await SF.mpvFont((n, v) => mpv!.set(n, v)); mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(styled, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
-    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(styled)).catch(() => ({})); ass = await createAssRenderer(video, assCanvas, styled, await fileFonts(), own); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
+    if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(styled)).catch(() => ({})); const ff = await fileFonts();
+      // (No fonts in the video nor the torrent, and Arabic lines: Uthman Taha Naskh for whatever font they name that is not here.)
+      const uth = !ff.length && !getPrefs().subFont && /[\u0600-\u06FF]/.test(styled) ? { name: 'kt uthman', url: new URL((await import('../assets/fonts/UthmanTN1.woff2')).default, new URL('assets/', document.baseURI)).href } : undefined;
+      ass = await createAssRenderer(video, assCanvas, styled, ff, own, uth); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
   function cycleSub() { chosenByHand = true; if (!tracks.length) { void subsSheet(); return; } const i = current ? tracks.indexOf(current) : -1; const nx = tracks[i + 1] ?? null; void useTrack(nx); flashText(nx ? nx.name : t('subsOff')); }

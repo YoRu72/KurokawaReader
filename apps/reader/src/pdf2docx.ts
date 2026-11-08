@@ -1812,13 +1812,13 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
 
 /** How many lanes (page readers in workers of their own, see pdf2docx.lane.ts) a book is read in: none on a
  *  device with few cores (the app's thread and pdf.js's worker are all it has), else one lane for each two cores
- *  beyond the app's own, up to four. */
+ *  beyond the app's own, up to six (a computer with many cores; a phone's eight make three). */
 function laneCount(pages: number, size: number): number {
   const forced = (globalThis as { krLanes?: number }).krLanes;
   if (forced !== undefined) return forced;
   if (pages < 8 || size > 80 * 1024 * 1024 || typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') return 0;
   const cores = navigator.hardwareConcurrency ?? 2;
-  return Math.min(4, Math.floor((cores - 2) / 2), Math.ceil(pages / 4), size > 40 * 1024 * 1024 ? 2 : 4);
+  return Math.min(6, Math.floor((cores - 2) / 2), Math.ceil(pages / 4), size > 40 * 1024 * 1024 ? 2 : 6);
 }
 
 /**

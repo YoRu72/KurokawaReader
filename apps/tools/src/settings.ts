@@ -17,6 +17,8 @@ export interface Settings {
   /** Folders chosen lately in the Add sheet, newest first. */
   recentDirs?: string[];
   maxActive: number;
+  /** Connections per file download (0: the app decides; fewer suit a weak phone link, more a fast one). */
+  connections: number;
   /** Connections over every file download at once (the phone's engine). */
   connBudget?: number;
   /** Streams (HLS playlists) fetched by the app itself — pieces joined here — rather than by yt-dlp. Default on. */
@@ -138,7 +140,7 @@ export interface Settings {
 const KEY = 'kt.settings';
 const DEFAULTS: Settings = {
   uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff',
-  downloadDir: '', maxActive: 3, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: false,
+  downloadDir: '', maxActive: 3, connections: 0, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: false,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',

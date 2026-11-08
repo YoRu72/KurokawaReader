@@ -48,7 +48,10 @@ export async function getCard(o: GetCardOptions): Promise<boolean> {
     fold.addEventListener('click', (e) => { e.stopPropagation(); el.classList.add('mini'); });
     el.addEventListener('click', () => { if (el.classList.contains('mini')) el.classList.remove('mini'); });
     const sizes = rows.map((r) => r.s.size ?? 0); const got = rows.map(() => 0);
-    later.addEventListener('click', () => { if (running) o.cancel?.(); finish(false); });
+    // (Only Cancel pressed here counts as cancelled: any other failure — a dropped link, a server saying «canceled» —
+    // shows its reason and Retry, never a silent «Cancelled».)
+    let stopped = false;
+    later.addEventListener('click', () => { if (running) { stopped = true; o.cancel?.(); } finish(false); });
     get.addEventListener('click', async () => {
       running = true; get.disabled = true; later.textContent = t('cancel'); overall.hidden = false; status.hidden = true; el.classList.add('running');
       const move = (i: number, d: number, tt: number) => {
@@ -67,7 +70,7 @@ export async function getCard(o: GetCardOptions): Promise<boolean> {
         setTimeout(() => finish(true), 700);
       } catch (e) {
         running = false; const m = String((e as Error).message ?? e);
-        if (/cancel/i.test(m)) { finish(false); return; }
+        if (stopped || done) { finish(false); return; }
         status.hidden = false; status.textContent = /checksum/i.test(m) ? t('packChecksum') : t('packFailed', { why: m });
         get.disabled = false; get.lastChild!.textContent = t('retry'); later.textContent = t('notNow'); el.classList.remove('running', 'mini');
       }

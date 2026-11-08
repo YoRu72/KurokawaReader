@@ -65,7 +65,7 @@ window.addEventListener('resize', () => { if (isPc()) fitRail(); }, { passive: t
 function placeNav(): void {
   nav?.remove(); nav = buildNav(); nav.dataset.addons = getSettings().addons.filter((a) => a === 'anime' || a === 'subtitles' || a === 'tv' || a === 'player' || a === 'files').sort().join() + (getSettings().videosTab === false ? '-' : ''); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
   document.documentElement.classList.toggle('pc', isPc()); if (isPc()) fitRail();
-  if (isPc()) document.body.prepend(nav); else document.body.append(nav);
+  if (isPc()) document.body.prepend(nav); else document.body.append(nav); void import('./ui/keyboard').then((m) => m.watchKeyboard());
   markNav(parseRoute());
 }
 const destOf = sectionOfRoute;

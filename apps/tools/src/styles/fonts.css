@@ -36,3 +36,12 @@
 html[dir='rtl'] { --font-ui: var(--font-ui-ar); }
 /* Chinese, Japanese and Korean interfaces use the platform's own CJK sans; reading text in those scripts falls back to it too. */
 html[lang^='ja'], html[lang^='zh'], html[lang^='ko'] { --font-ui: var(--font-cjk); }
+/* Arabic subtitles with no font of their own (plain subtitles, styled ones whose video brings none): Uthman Taha
+   Naskh, for Arabic letters only — every other script keeps the regular font. */
+@font-face {
+  font-family: 'KT Uthman';
+  src: url('../assets/fonts/UthmanTN1.woff2') format('woff2');
+  font-weight: 400 700;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}

@@ -10,7 +10,7 @@ export class NativeEngine implements Engine {
   constructor(private p: KtPlugin) {}
   static here(): NativeEngine | null { const p = ktPlugin(); return p ? new NativeEngine(p) : null; }
   async list() { return (await this.p.list()).tasks as Task[]; }
-  async add(o: AddOptions) { return (await this.p.add(o as unknown as Record<string, unknown>)).task as Task; }
+  async add(o: AddOptions) { const { withConnections } = await import('./connections'); return (await this.p.add(withConnections(o) as unknown as Record<string, unknown>)).task as Task; }
   pause(id: string) { return this.p.pause({ id }); }
   resume(id: string) { return this.p.resume({ id }); }
   remove(id: string, deleteFiles: boolean) { return this.p.remove({ id, deleteFiles }); }

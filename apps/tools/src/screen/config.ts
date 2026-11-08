@@ -15,7 +15,7 @@ export interface ScreenConfig {
   display: 'overlay' | 'panel';
   auto: 'scroll' | 'interval'; interval: number; settle: number; autoStop: number;
   hideAfter: number; tapClose: boolean; speak: boolean; ttsRate: number; history: boolean;
-  style: { size: number; bg: string; bgAlpha: number; fg: string; smart: boolean; radius: number; center: boolean; outline: boolean; bold: boolean; bgMode: 'fill' | 'none' };
+  style: { size: number; bg: string; bgAlpha: number; fg: string; smart: boolean; radius: number; center: boolean; outline: boolean; bold: boolean; /** erase: the words taken off the picture behind them (Ascent's way); fill: a box of one colour; none: bare text. */ bgMode: 'erase' | 'fill' | 'none'; erased?: boolean };
   bubble: { size: number; alpha: number; color: string; dim: boolean; dimAfter: number; edge: boolean };
   actions: { tap: Action; double: Action; long: Action };
   /** On a computer: the shortcuts on, kept in the tray, started with the computer, how the picture is read. */
@@ -51,11 +51,11 @@ export const SCREEN_LANGS: [string, string][] = [
 ];
 
 export const DEFAULT_SCREEN: ScreenConfig = {
-  engine: 'google', source: 'auto', target: 'ar', deeplKey: '',
+  engine: 'google', source: 'auto', target: 'en', deeplKey: '',
   ai: { preset: 'gemini', style: 'gemini', base: '', key: '', model: '', prompt: '' },
   read: 'auto', mode: 'full', display: 'overlay', auto: 'scroll', interval: 3, settle: 0.5, autoStop: 30,
   hideAfter: 0, tapClose: true, speak: false, ttsRate: 1, history: true,
-  style: { size: 15, bg: '#1E1E1E', bgAlpha: 0.88, fg: '#FFFFFF', smart: true, radius: 6, center: false, outline: false, bold: false, bgMode: 'fill' },
+  style: { size: 15, bg: '#1E1E1E', bgAlpha: 0.88, fg: '#FFFFFF', smart: true, radius: 6, center: false, outline: false, bold: false, bgMode: 'erase', erased: true },
   bubble: { size: 52, alpha: 0.92, color: '#6750A4', dim: true, dimAfter: 4, edge: true },
   actions: { tap: 'translate', double: 'region', long: 'menu' },
   pcOn: false, pc: { keys: { ...PC_KEYS }, tray: true, startup: false, ocr: 'system', closeOnBlur: true },
@@ -70,13 +70,18 @@ function merge<T extends object>(base: T, over: Deep<T> | undefined): T {
   for (const [k, v] of Object.entries(over)) { const b = (base as Record<string, unknown>)[k]; out[k] = b && typeof b === 'object' && !Array.isArray(b) && v && typeof v === 'object' ? merge(b as object, v as Deep<object>) : v; }
   return out as T;
 }
-export function loadScreen(): ScreenConfig { try { return merge(DEFAULT_SCREEN, JSON.parse(localStorage.getItem(KEY) ?? '{}') as Deep<ScreenConfig>); } catch { return merge(DEFAULT_SCREEN, {}); } }
+export function loadScreen(): ScreenConfig {
+  let c: ScreenConfig; try { c = merge(DEFAULT_SCREEN, JSON.parse(localStorage.getItem(KEY) ?? '{}') as Deep<ScreenConfig>); } catch { c = merge(DEFAULT_SCREEN, {}); }
+  // (Once: the box of one colour becomes the words taken off the picture — the better look — unless bare text was chosen.)
+  if (!c.style.erased) { c.style = { ...c.style, bgMode: c.style.bgMode === 'none' ? 'none' : 'erase', erased: true }; saveScreen(c); }
+  return c;
+}
 export function saveScreen(c: ScreenConfig): void { try { localStorage.setItem(KEY, JSON.stringify(c)); } catch { /* storage full or blocked */ } }
 
 /** The words the bubble shows (its menu, its notes), in the app's language. */
 export function screenLabels(): Record<string, string> {
   const k = ['translate', 'translateScreen', 'region', 'fixed', 'fixedSet', 'fixedChange', 'autoOn', 'autoOff', 'autoStarted', 'autoStopped', 'readAs', 'readText', 'readPicture', 'readAuto', 'list', 'copy', 'copied', 'clear', 'openApp', 'close',
-    'noText', 'needA11y', 'needCapture', 'needOverlay', 'needDeepl', 'captureFailed', 'failed', 'drawFixed', 'drawRegion', 'translations', 'noteTitle', 'noteText', 'channel', 'bubble', 'clipboard', 'quit', 'smaller', 'bigger', 'textSize', 'ai', 'onlyGoogle'];
+    'noText', 'detect', 'needA11y', 'needCapture', 'needOverlay', 'needDeepl', 'captureFailed', 'failed', 'drawFixed', 'drawRegion', 'translations', 'noteTitle', 'noteText', 'channel', 'bubble', 'clipboard', 'quit', 'smaller', 'bigger', 'textSize', 'ai', 'onlyGoogle'];
   const out: Record<string, string> = {};
   for (const x of k) out[x] = t(`scr_${x}` as 'scr_translate');
   return out;

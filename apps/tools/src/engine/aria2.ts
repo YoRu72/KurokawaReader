@@ -68,6 +68,7 @@ export class Aria2Engine implements Engine {
     return this.last;
   }
   async add(o: AddOptions): Promise<Task> {
+    o = (await import('./connections')).withConnections(o);
     const opts: Record<string, string> = {};
     if (o.dir) opts.dir = o.dir; if (o.name && o.source.url) opts.out = o.name; if (o.paused) opts.pause = 'true';
     if (o.connections) { opts.split = String(o.connections); opts['max-connection-per-server'] = String(Math.min(16, o.connections)); }

@@ -44,7 +44,20 @@ final class KtPacks {
             // (GitHub answers 5xx and times out now and then: the fetch is tried up to six times with a growing pause, taking
             // up where it stopped (a Range from the bytes already here), through the resolver on the way the site is reached.)
             long done = 0, total = -1, lastTell = 0; java.io.IOException last = null; tmp.delete();
-            for (int attempt = 0; attempt < 6; attempt++) {
+            // (First over several connections at once, as the downloads are — a pack is tens of megabytes and GitHub's
+            // storage gives one connection only so much; a weak link's dropped connections taken up where they stopped.
+            // The single connection below is the fallback.)
+            boolean fast = false;
+            try {
+                final java.util.concurrent.atomic.AtomicLong gotB = new java.util.concurrent.atomic.AtomicLong(); final KrDownloader.Result res = new KrDownloader.Result(); final long[] told = { 0 };
+                File part = new File(ctx.getCacheDir(), "pack-" + name + ".part");
+                KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = 8; opt.state = new File(ctx.getCacheDir(), "pack-" + name + ".state");
+                KrDownloader.fetch(new URL(url), part, 8, u -> { HttpURLConnection c = KrDoh.open(u); c.setInstanceFollowRedirects(false); c.setConnectTimeout(20000); c.setReadTimeout(60000); c.setRequestProperty("User-Agent", "KurokawaTools"); return c; },
+                    cancel != null ? cancel : new AtomicBoolean(), gotB, res, () -> { long now = System.currentTimeMillis(); if (pr != null && now - told[0] > 250) { told[0] = now; pr.on(gotB.get(), res.total); } }, opt);
+                if (cancel != null && cancel.get()) { part.delete(); opt.state.delete(); throw new InterruptedException("cancelled"); }
+                if (res.total > 0 && part.length() == res.total && part.renameTo(tmp)) { fast = true; done = total = res.total; } else part.delete();
+            } catch (InterruptedException e) { throw e; } catch (Exception e) { if (cancel != null && cancel.get()) throw new InterruptedException("cancelled"); }
+            for (int attempt = 0; attempt < 6 && !fast; attempt++) {
                 if (cancel != null && cancel.get()) throw new InterruptedException("cancelled");
                 if (attempt > 0) { try { Thread.sleep(Math.min(20000L, 1500L * (1L << (attempt - 1)))); } catch (InterruptedException ie) { throw new InterruptedException("cancelled"); } }
                 HttpURLConnection c = null; URL u = new URL(url);

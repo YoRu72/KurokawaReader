@@ -337,6 +337,7 @@ final class KrDownloader {
                             URL u = attempt >= 2 ? url : direct;
                             HttpURLConnection c = null;
                             long[] wrote = new long[1];
+                            final long tryFrom = pos;
                             try {
                                 c = follow(u, opener, "bytes=" + pos + "-" + (seg.stopAt - 1));
                                 int rc = c.getResponseCode();
@@ -349,8 +350,10 @@ final class KrDownloader {
                                 // (An answer that ended early without an error is a failed attempt too.)
                                 if (pos < seg.stopAt && !cancelled.get()) throw new IOException("Connection closed early");
                             } catch (Exception e) {
-                                // (What came before the break is in the file already: the next attempt goes on from there.)
-                                pos += wrote[0];
+                                // (What came before the break is in the file already: the next attempt goes on from there. An
+                                // attempt that brought bytes is no failure to count — a weak phone link drops a connection every
+                                // few hundred kilobytes and still gets there —; only attempts that brought nothing use the retries.)
+                                pos += wrote[0]; final boolean moved = pos > tryFrom; if (moved) attempt = -1;
                                 if (c != null) c.disconnect();
                                 int sc = e instanceof Status ? ((Status) e).code : 0;
                                 if (sc == 0 && cut(e) && alive.get() > 1) sc = 429;
@@ -359,6 +362,7 @@ final class KrDownloader {
                                 // A server refusing one connection too many: this one stops, its part to the others.
                                 if ((sc == 429 || sc == 503) && alive.decrementAndGet() >= 1) { gone[0] = true; synchronized (seg) { seg.active = false; back.add(new long[]{ idx, pos, seg.stopAt - 1 }); } res.refused = true; res.connections = alive.get(); leave = true; break; } else if (sc == 429 || sc == 503) alive.incrementAndGet();
                                 if (attempt >= opt.retries) throw e;
+                                if (moved) { try { Thread.sleep(250); } catch (InterruptedException ie) { throw e; } continue; }
                                 try { Thread.sleep(Math.min(8000L, 400L * (attempt + 1) * (sc == 429 || sc == 503 ? 3 : 1))); } catch (InterruptedException ie) { throw e; }
                             } finally { if (c != null) c.disconnect(); }
                         }
