@@ -209,6 +209,19 @@ const serve = () => http.createServer((req, res) => {
     await seek(6.5); await p.waitForTimeout(500);
     const seen = []; for (const at of [1.5, 2.5, 5.2, 5.6, 6, 6.5, 7]) { await seek(at); await p.waitForTimeout(350); seen.push(at + ':' + await p.$eval('.kt-subs', (e) => e.textContent)); } console.log('voice seen', JSON.stringify(seen));
     check('shown on the video at their time (the delay set earlier kept)', seen.some((x) => /Heard one/.test(x)) && seen.some((x) => /Heard two/.test(x)));
+    // Your own machine: a local server, no key, the model picked from the list by what it needs.
+    await p.evaluate(() => { window.__voice = []; document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()); });
+    await p.click('.kt-top button[aria-label="Subtitles"]'); await p.waitForSelector('.sheet button:has-text("From the voice")'); await p.evaluate(() => [...document.querySelectorAll('.sheet button')].find((b) => /From the voice/.test(b.textContent))?.click());
+    await p.waitForSelector('.voice-model'); await p.selectOption('.sheet select >> nth=0', 'local'); await p.waitForTimeout(150);
+    const listed = await p.$$eval('.voice-model', (e) => e.map((x) => x.textContent.replace(/\s+/g, ' ')));
+    check('each local model with what it needs', listed.length === 6 && listed.some((x) => /faster-whisper-medium/.test(x) && /needs ~5 GB of memory/.test(x) && /1\.5 GB/.test(x)));
+    await p.locator('.voice-model', { hasText: 'faster-whisper-medium' }).click(); await p.fill('.sheet input[type=password]', ''); await p.dispatchEvent('.sheet input[type=password]', 'change');
+    await p.screenshot({ path: process.env.SHOT_VOICE || '/dev/null' }).catch(() => undefined);
+    await p.evaluate(() => [...document.querySelectorAll('.sheet button')].find((b) => /Make subtitles/.test(b.textContent))?.click());
+    await p.waitForFunction(() => (window.__voice ?? []).length > 0, null, { timeout: 30000 }).catch(() => undefined);
+    const lc = await p.evaluate(() => window.__voice ?? []);
+    check('sent to the local server with the model chosen, no key', lc.length === 1 && lc[0].url === 'http://127.0.0.1:8000/v1/audio/transcriptions' && !lc[0].auth && lc[0].model === 'Systran/faster-whisper-medium');
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
     await p.evaluate(() => { window.__ffOn = false; });
   }
   check('no page errors', !errors.length);

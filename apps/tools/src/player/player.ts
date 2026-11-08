@@ -627,24 +627,46 @@ export function openPlayer(src: PlayerSource): void {
     const V = await import('./voiceSubs'); const { SCREEN_LANGS } = await import('../screen/config');
     const sh = openSheet(t('voiceSubs'), t('close')); const cfg = { ...getPrefs().voice };
     const save = () => updatePrefs({ voice: { ...cfg } });
-    const prov = h('select', { class: 'select', onchange: (e: Event) => { cfg.provider = (e.target as HTMLSelectElement).value as typeof cfg.provider; save(); keyLink.href = V.VOICE_PRESETS[cfg.provider].keyUrl; baseRow.hidden = cfg.provider !== 'custom'; } }, ...(Object.keys(V.VOICE_PRESETS) as (keyof typeof V.VOICE_PRESETS)[]).map((k) => h('option', { value: k, selected: cfg.provider === k }, V.VOICE_PRESETS[k].label)));
-    const keyLink = h('a', { href: V.VOICE_PRESETS[cfg.provider].keyUrl, target: '_blank', rel: 'noopener' }, t('getKey')) as HTMLAnchorElement;
+    const P = () => V.VOICE_PRESETS[cfg.provider];
+    const label = (l: string) => (l.startsWith('voice') ? t(l as 'voiceLocal') : l);
+    const prov = h('select', { class: 'select', onchange: (e: Event) => { cfg.provider = (e.target as HTMLSelectElement).value as typeof cfg.provider; cfg.model = ''; cfg.base = ''; save(); drawService(); } }, ...(Object.keys(V.VOICE_PRESETS) as (keyof typeof V.VOICE_PRESETS)[]).map((k) => h('option', { value: k, selected: cfg.provider === k }, label(V.VOICE_PRESETS[k].label))));
+    const keyLink = h('a', { target: '_blank', rel: 'noopener' }, t('getKey')) as HTMLAnchorElement;
     const key = h('input', { class: 'input', type: 'password', value: cfg.key, placeholder: t('apiKey'), autocomplete: 'off', onchange: (e: Event) => { cfg.key = (e.target as HTMLInputElement).value.trim(); save(); } });
-    const base = h('input', { class: 'input', type: 'url', value: cfg.base, placeholder: 'https://…/v1', onchange: (e: Event) => { cfg.base = (e.target as HTMLInputElement).value.trim(); save(); } });
-    const baseRow = h('div', { class: 'row', hidden: cfg.provider !== 'custom' }, h('span', null, t('apiBase')), base);
+    const keyRow = h('div', { class: 'row' }, h('span', null, t('apiKey'), h('small', { class: 'src' }, keyLink)), key);
+    const base = h('input', { class: 'input', type: 'url', dir: 'ltr', onchange: (e: Event) => { cfg.base = (e.target as HTMLInputElement).value.trim(); save(); } }) as HTMLInputElement;
+    const baseRow = h('div', { class: 'row' }, h('span', null, t('apiBase')), base);
+    // (The models the service offers, each with what it gives and what it needs — the reader's own machine's memory for
+    // a local server —, so the best one that fits is chosen; any other model by its name.)
+    const models = h('div', { class: 'voice-models' }); const own = h('input', { class: 'input', type: 'text', dir: 'ltr', placeholder: t('voiceOwnModel'), onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (v) { cfg.model = v; save(); drawModels(); } } }) as HTMLInputElement;
+    const dots = (n: number) => h('span', { class: 'voice-dots', 'aria-label': `${n}/5` }, ...[1, 2, 3, 4, 5].map((k) => h('i', { class: k <= n ? 'on' : '' })));
+    const drawModels = () => {
+      const p = P(); const cur = cfg.model || p.model; const guide = cfg.provider === 'whispercpp';
+      models.replaceChildren(...p.models.map((m) => h(guide ? 'div' : 'label', { class: 'voice-model' + (!guide && cur === m.id ? ' on' : '') },
+        guide ? null : h('input', { type: 'radio', name: 'kt-voice-model', checked: cur === m.id, onchange: () => { cfg.model = m.id; save(); drawModels(); } }),
+        h('span', { class: 'grow' }, h('b', { dir: 'ltr' }, m.id), h('span', { class: 'voice-meta' }, h('span', null, t('voiceQuality')), dots(m.quality), h('span', null, t('voiceSpeed')), dots(m.speed)),
+          h('small', { class: 'src' }, [m.need ? t('voiceNeeds', { mem: m.need }) : '', m.size ? t('voiceFile', { size: m.size }) : '', m.langs === 'en' ? t('voiceEnglishOnly') : '', m.note ? t(m.note as 'voiceNoteBest') : ''].filter(Boolean).join(' · '))))));
+      own.value = cur && !p.models.some((m) => m.id === cur) ? cur : '';
+    };
+    const drawService = () => {
+      const p = P(); keyLink.href = p.keyUrl; keyLink.hidden = !p.keyUrl; key.placeholder = p.keyless ? t('voiceKeyOptional') : t('apiKey');
+      base.value = cfg.base; base.placeholder = p.base || 'https://…/v1'; baseRow.hidden = !(cfg.provider === 'custom' || cfg.provider === 'local' || cfg.provider === 'whispercpp');
+      localHint.hidden = !(cfg.provider === 'local' || cfg.provider === 'whispercpp'); localHint.textContent = cfg.provider === 'whispercpp' ? t('voiceCppHint') : t('voiceLocalHint');
+      ownRow.hidden = cfg.provider === 'whispercpp'; drawModels();
+    };
+    const localHint = h('p', { class: 'hint' }); const ownRow = h('div', { class: 'row' }, h('span', null, t('voiceOtherModel')), own);
     const langSel = (val: string, none: string, f: (v: string) => void) => h('select', { class: 'select', onchange: (e: Event) => f((e.target as HTMLSelectElement).value) }, h('option', { value: none === 'auto' ? 'auto' : '', selected: !val || val === 'auto' }, none === 'auto' ? t('scr_detect') : t('voiceNoTranslate')), ...SCREEN_LANGS.map(([c, l]) => h('option', { value: c, selected: val === c }, l)));
     const status = h('p', { class: 'hint', dir: 'auto' }); const bar = h('div', { class: 'task-bar thin', hidden: true }, h('i', { style: { width: '0%' } }));
     const go = h('button', { type: 'button', class: 'btn primary' }, icon('mic'), t('voiceStart')) as HTMLButtonElement;
     const outs = h('div', { class: 'row-actions wrap' });
     sh.body.append(h('p', { class: 'hint' }, t('voiceHint')),
-      h('div', { class: 'row' }, h('span', null, t('voiceService')), prov), baseRow, h('div', { class: 'row' }, h('span', null, t('apiKey'), h('small', { class: 'src' }, keyLink)), key),
+      h('div', { class: 'row' }, h('span', null, t('voiceService')), prov), localHint, baseRow, keyRow, h('h4', null, t('voiceModel')), models, ownRow,
       h('div', { class: 'row' }, h('span', null, t('voiceSpoken')), langSel(cfg.lang, 'auto', (v) => { cfg.lang = v; save(); })),
       h('div', { class: 'row' }, h('span', null, t('voiceTranslate')), langSel(getPrefs().voiceTo, '', (v) => updatePrefs({ voiceTo: v }))),
       bar, status, outs);
-    sh.actions.append(go);
+    drawService(); sh.actions.append(go);
     go.onclick = async () => {
       if (voiceRun) { voiceRun.stop = true; return; }
-      if (!cfg.key) { status.textContent = t('voiceNeedKey'); key.focus(); return; }
+      if (!cfg.key && !V.VOICE_PRESETS[cfg.provider].keyless) { status.textContent = t('voiceNeedKey'); key.focus(); return; }
       const packs = await import('../packs'); if (packs.packsHere() && !(await packs.ensurePacks(['ffmpeg'], t('packWhyVoice')))) return;
       const run = { stop: false }; voiceRun = run; go.replaceChildren(icon('close'), t('cancel')); bar.hidden = false; outs.replaceChildren();
       const id = 'voice'; const name = t('voiceTrackName');

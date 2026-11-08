@@ -581,3 +581,11 @@ html.pc .kt-player .kt-bottom .chip:hover, html.pc .kt-player .kt-bottom .kt-chi
 .sub-font-sample { font-size: 18px; display: block; }
 .kt-layout .dest-row { gap: 8px; }
 .kt-place { display: inline-flex; gap: 4px; flex: none; }
+.voice-models { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.voice-model { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container); cursor: pointer; }
+.voice-model.on { outline: 2px solid var(--md-primary); }
+.voice-model b { display: block; font-size: 13.5px; word-break: break-all; }
+.voice-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 4px 0 2px; color: var(--md-on-surface-variant); }
+.voice-dots { display: inline-flex; gap: 3px; margin-inline-end: 8px; }
+.voice-dots i { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--md-on-surface) 18%, transparent); }
+.voice-dots i.on { background: var(--md-primary); }
