@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: cd desktop && npm install --no-audit --no-fund && (node fetch-aria2.mjs || true)
+      - run: cd desktop && (npm install --no-audit --no-fund || (sleep 20 && npm install --no-audit --no-fund) || (sleep 20 && npm install --no-audit --no-fund)) && (node fetch-aria2.mjs || true)
       - run: node tests/webstream.cjs
         env: { CI: '1' }
   mac-pack:
@@ -30,7 +30,7 @@ jobs:
         with: { node-version: 22 }
       - run: npm install && npm run build
       - run: |
-          cd desktop && npm install --no-audit --no-fund && node fetch-aria2.mjs || true
+          cd desktop && (npm install --no-audit --no-fund || (sleep 20 && npm install --no-audit --no-fund) || (sleep 20 && npm install --no-audit --no-fund)) && (node fetch-aria2.mjs || true)
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --universal --publish never 2>&1 | tail -n 40
           ls out
           find out -path '*webtorrent/package.json' | head -2
