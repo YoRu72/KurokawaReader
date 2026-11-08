@@ -73,6 +73,16 @@ final class KtScreenOcr {
             k.bg = 0xFF000000 | best | 0x080808;
             double lum = 0.299 * Color.red(k.bg) + 0.587 * Color.green(k.bg) + 0.114 * Color.blue(k.bg);
             k.fg = lum > 140 ? 0xFF111111 : 0xFFFFFFFF;
+            // (The words taken off the picture behind them, for the translation to sit on — a balloon stays a balloon, a
+            // sky stays a sky; not for huge blocks, where the box of one colour does.)
+            int pad = 4, px0 = Math.max(0, r.left - pad), py0 = Math.max(0, r.top - pad), px1 = Math.min(b.getWidth(), r.right + pad), py1 = Math.min(b.getHeight(), r.bottom + pad);
+            int pw = px1 - px0, ph = py1 - py0;
+            if (pw > 8 && ph > 8 && (long) pw * ph < 600_000L && px0 == r.left - pad && py0 == r.top - pad) {
+                int[] pix = new int[pw * ph]; b.getPixels(pix, 0, pw, px0, py0, pw, ph);
+                k.patch = KtInpaint.clean(pix, pw, ph); k.pw = pw; k.ph = ph; k.pad = pad;
+                int avg = KtInpaint.average(k.patch); double l2 = 0.299 * Color.red(avg) + 0.587 * Color.green(avg) + 0.114 * Color.blue(avg);
+                k.fg = l2 > 140 ? 0xFF111111 : 0xFFFFFFFF;
+            }
         } catch (Throwable ignored) {}
     }
 }

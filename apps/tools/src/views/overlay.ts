@@ -1,6 +1,7 @@
 // The computer's screen translator, on the screen itself (desktop/screentr.cjs opens these windows): the frozen
 // screen to draw a region on — or all of it — with the translations drawn over the words, on their own colours;
 // the small caption window of «auto», under a watched region; the clipboard's text translated by the mouse.
+import { clean } from '../screen/inpaint';
 import { h, icon } from '../ui/dom';
 import { t } from '../i18n';
 import { loadScreen, type ScreenConfig } from '../screen/config';
@@ -65,6 +66,11 @@ async function frozen(root: HTMLElement, cfg: ScreenConfig, again: boolean): Pro
       if (!b.tr) return; const col = cols[i];
       const el = h('div', { class: 'kt-ov-box', dir: 'auto', title: b.text, style: { left: `${b.x}px`, top: `${b.y}px`, minWidth: `${Math.max(24, b.width)}px`, minHeight: `${Math.max(14, b.height)}px`, maxWidth: `${Math.max(b.width * 1.6, 120)}px`, color: col?.[1] ?? st.fg, background: st.bgMode === 'none' ? 'transparent' : col?.[0] ?? `color-mix(in srgb, ${st.bg} ${Math.round(st.bgAlpha * 100)}%, transparent)`, borderRadius: `${st.radius}px`, fontWeight: st.bold ? '700' : '400', textAlign: st.center ? 'center' : 'start', textShadow: st.outline ? '0 0 3px #000, 0 0 2px #000' : 'none' } }, b.tr);
       el.addEventListener('click', (e) => { e.stopPropagation(); void navigator.clipboard?.writeText(b.tr ?? '').catch(() => undefined); el.classList.add('copied'); setTimeout(() => el.classList.remove('copied'), 700); });
+      // (The picture behind with the words taken off: the translation lettered on it, Ascent's way.)
+      if (st.bgMode === 'erase' && st.smart !== false && colours) { try { const pad = 4, sx = Math.max(0, Math.round((b.x - pad) * s)), sy = Math.max(0, Math.round((b.y - pad) * s)), sw = Math.min(img.naturalWidth - sx, Math.round((b.width + 2 * pad) * s)), sh = Math.min(img.naturalHeight - sy, Math.round((b.height + 2 * pad) * s));
+        if (sw > 8 && sh > 8 && sw * sh < 1_500_000) { const d = colours.getImageData(sx, sy, sw, sh); const cl = clean(d.data, sw, sh); const cv = document.createElement('canvas'); cv.width = sw; cv.height = sh; cv.getContext('2d')!.putImageData(new ImageData(cl as Uint8ClampedArray<ArrayBuffer>, sw, sh), 0, 0);
+          el.style.background = `url(${cv.toDataURL()}) center / ${(sw / s).toFixed(1)}px ${(sh / s).toFixed(1)}px no-repeat`; el.style.left = `${b.x}px`; el.style.top = `${b.y}px`; el.style.width = `${b.width}px`; el.style.height = `${b.height}px`; el.style.maxWidth = `${b.width}px`; el.style.borderRadius = '0'; el.classList.add('erased');
+          let sum = 0; for (let k = 0; k < cl.length; k += 4) sum += 0.299 * cl[k] + 0.587 * cl[k + 1] + 0.114 * cl[k + 2]; el.style.color = sum / (cl.length / 4) > 140 ? '#111' : '#fff'; } } catch { /* a box of one colour, then */ } }
       boxes.append(el);
       // (The text fitted to the words' own height: smaller until it fits, never under 9 px.)
       let size = Math.max(10, Math.min(st.size * 1.4, b.height * 0.92)); el.style.fontSize = `${size}px`;

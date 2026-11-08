@@ -66,10 +66,10 @@ const errors = []; const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL
   await o.waitForSelector('.kt-ov-box', { timeout: 8000 });
   const oc = await o.evaluate(() => window.__calls); const reg = oc.find((x) => x[0] === 'region');
   check('the region drawn sent (in screen pixels)', reg && reg[1].x === 90 && reg[1].y === 90 && reg[1].width === 330 && reg[1].height === 90);
-  const box = await o.$eval('.kt-ov-box', (e) => ({ text: e.textContent, left: e.style.left, top: e.style.top, bg: getComputedStyle(e).backgroundColor, color: getComputedStyle(e).color }));
+  const box = await o.$eval('.kt-ov-box', (e) => ({ text: e.textContent, left: e.style.left, top: e.style.top, bg: getComputedStyle(e).backgroundColor, img: getComputedStyle(e).backgroundImage.slice(0, 30), erased: e.classList.contains('erased'), color: getComputedStyle(e).color }));
   console.log('box:', JSON.stringify(box));
   check('translated, over the words', box.text === 'TR(Hello there)' && box.left === '105px' && box.top === '110px');
-  check('on the colour around the words (dark blue: white text)', /rgb\((3\d|40|4\d), (4\d|5\d|6\d), (1[2-4]\d)\)/.test(box.bg) && box.color === 'rgb(255, 255, 255)');
+  check('on the picture behind with the words taken off (dark blue: white text)', box.erased && /^url\("data:image\/png/.test(box.img) && box.color === 'rgb(255, 255, 255)');
   check('lines without letters not sent to the translator', !oc.some((x) => x[0] === 'http' && /q=42/.test(x[1])));
   await o.click('.kt-ov-box'); check('a click on a translation copies it', await o.$eval('.kt-ov-box', (e) => e.classList.contains('copied')));
   await o.keyboard.press('Escape'); await o.waitForTimeout(200);

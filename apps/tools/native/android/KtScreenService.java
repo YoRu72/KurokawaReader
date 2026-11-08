@@ -230,8 +230,8 @@ public class KtScreenService extends Service {
         GradientDrawable g = new GradientDrawable(); g.setColor(0xF51E1F22); g.setCornerRadius(px(22)); g.setStroke(px(1), 0x33FFFFFF); box.setBackground(g); if (Build.VERSION.SDK_INT >= 21) box.setElevation(px(10));
         // The head: engine · language, each a chip that changes it.
         LinearLayout head = new LinearLayout(this); head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView eng = chip(engineLabel(), (v) -> { cycleEngine(); showMenu(); }); TextView lang = chip("→ " + langLabel(s(cfg, "target", "ar")), (v) -> { remove(menu); menu = null; showLangs(); });
-        head.addView(eng); head.addView(lang); box.addView(head);
+        TextView eng = chip(engineLabel(), (v) -> { cycleEngine(); showMenu(); }); TextView from = chip(langLabel(s(cfg, "source", "auto")), (v) -> { remove(menu); menu = null; showLangs("source"); }); TextView lang = chip("→ " + langLabel(s(cfg, "target", "en")), (v) -> { remove(menu); menu = null; showLangs("target"); });
+        head.addView(eng); head.addView(from); head.addView(lang); box.addView(head);
         String[][] items = { { "translate", "文A", label("translateScreen", "Translate the screen") }, { "region", "▭", label("region", "Translate a region") },
             { "fixed", "▣", fixed() == null ? label("fixedSet", "Set a fixed region") : label("fixed", "Translate the fixed region") }, { "auto", autoOn ? "■" : "▶", autoOn ? label("autoOff", "Stop auto translation") : label("autoOn", "Auto translate") },
             { "read", "\uD83D\uDC41", label("readAs", "Read as") + ": " + readLabel() }, { "panel", "☰", label("list", "Show as a list") }, { "copy", "⧉", label("copy", "Copy") }, { "clear", "⌫", label("clear", "Clear") },
@@ -283,15 +283,16 @@ public class KtScreenService extends Service {
         if (next.equals(e)) { toast(label("onlyGoogle", "Add a DeepL key or an AI model in the app to switch")); return; }
         cfg.put("engine", next); save(); KtTranslate.forget(); toast(engineLabel());
     }
-    private String langLabel(String code) { for (Object o : KtJson.arr(cfg.get("langs"))) { List<Object> l = KtJson.arr(o); if (l.size() >= 2 && code.equals(l.get(0))) return String.valueOf(l.get(1)); } return code; }
-    /** The language to translate into, chosen from a list by the bubble. */
-    private void showLangs() {
+    private String langLabel(String code) { if ("auto".equals(code)) return label("detect", "Detect"); for (Object o : KtJson.arr(cfg.get("langs"))) { List<Object> l = KtJson.arr(o); if (l.size() >= 2 && code.equals(l.get(0))) return String.valueOf(l.get(1)); } return code; }
+    /** The language to translate from (`which` = source, «Detect» first) or into (target), chosen from a list by the bubble. */
+    private void showLangs(final String which) {
         ScrollView sv = new ScrollView(this); LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); list.setPadding(px(8), px(8), px(8), px(8)); sv.addView(list);
         GradientDrawable g = new GradientDrawable(); g.setColor(0xF51E1F22); g.setCornerRadius(px(20)); sv.setBackground(g);
-        String cur = s(cfg, "target", "ar");
-        for (Object o : KtJson.arr(cfg.get("langs"))) { List<Object> l = KtJson.arr(o); if (l.size() < 2) continue; final String code = String.valueOf(l.get(0));
+        String cur = s(cfg, which, "source".equals(which) ? "auto" : "en");
+        List<Object> all = new ArrayList<>(); if ("source".equals(which)) all.add(java.util.Arrays.asList((Object) "auto", label("detect", "Detect"))); all.addAll(KtJson.arr(cfg.get("langs")));
+        for (Object o : all) { List<Object> l = KtJson.arr(o); if (l.size() < 2) continue; final String code = String.valueOf(l.get(0));
             TextView t = new TextView(this); t.setText((code.equals(cur) ? "✓  " : "    ") + l.get(1)); t.setTextColor(code.equals(cur) ? 0xFF8AB4F8 : Color.WHITE); t.setTextSize(15); t.setPadding(px(14), px(9), px(14), px(9)); t.setMinWidth(px(200));
-            t.setOnClickListener((v) -> { remove(menu); menu = null; cfg.put("target", code); save(); toast("→ " + langLabel(code)); if (!shown.isEmpty()) translate(lastArea, true); });
+            t.setOnClickListener((v) -> { remove(menu); menu = null; cfg.put(which, code); save(); toast(("source".equals(which) ? "" : "→ ") + langLabel(code)); if (!shown.isEmpty()) translate(lastArea, true); });
             list.addView(t); }
         sv.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.min((int) (sh * 0.6), px(44) * Math.max(1, list.getChildCount()) + px(16))));
         FrameLayout wrap = new FrameLayout(this); wrap.addView(sv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.min((int) (sh * 0.6), px(44) * Math.max(1, list.getChildCount()) + px(16))));
@@ -473,9 +474,11 @@ public class KtScreenService extends Service {
             // (Lettered in the font set for its kind — a balloon's words, a thought, a box, a sound effect —, balloons centred.)
             Typeface face = KtLetterFace.face(cfg, k.kind); t.setTextColor(fgc); if (face != null) t.setTypeface(face, bold ? Typeface.BOLD : Typeface.NORMAL); else if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
             if (outline) t.setShadowLayer(px(2), 0, 0, (fgc & 0xFFFFFF) > 0x888888 ? Color.BLACK : Color.WHITE);
-            GradientDrawable g = new GradientDrawable(); g.setColor((alpha << 24) | (bgc & 0xFFFFFF)); g.setCornerRadius(radius); if (!"none".equals(s(st, "bgMode", "fill"))) t.setBackground(g);
+            GradientDrawable g = new GradientDrawable(); g.setColor((alpha << 24) | (bgc & 0xFFFFFF)); g.setCornerRadius(radius);
+            // (The picture behind with the words taken off, when there is one: the translation lettered on it.)
+            if (!"none".equals(s(st, "bgMode", "erase"))) { if (smart && k.patch != null && "erase".equals(s(st, "bgMode", "erase"))) { try { Bitmap pb = Bitmap.createBitmap(k.patch, k.pw, k.ph, Bitmap.Config.ARGB_8888); Bitmap in = Bitmap.createBitmap(pb, k.pad, k.pad, Math.max(1, Math.min(k.pw - 2 * k.pad, k.r.width())), Math.max(1, Math.min(k.ph - 2 * k.pad, k.r.height()))); t.setBackground(new android.graphics.drawable.BitmapDrawable(getResources(), in)); } catch (Throwable e) { t.setBackground(g); } } else t.setBackground(g); }
             t.setGravity((center || (k.kind != null && !"box".equals(k.kind) && !"sign".equals(k.kind) && b(sub("letter"), "kinds", true)) ? Gravity.CENTER_HORIZONTAL : Gravity.START) | Gravity.CENTER_VERTICAL); t.setPadding(px(2), 0, px(2), 0); t.setIncludeFontPadding(false);
-            int w = Math.max(k.r.width(), px(36)), h = Math.max(k.r.height(), px(14));
+            boolean er = k.patch != null && smart && "erase".equals(s(st, "bgMode", "erase")); int w = er ? k.r.width() : Math.max(k.r.width(), px(36)), h = er ? k.r.height() : Math.max(k.r.height(), px(14));
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
             // (As big as the words' box allows — up to twice the size set —, never under 8.)
             TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(t, 8, (int) Math.max(9, Math.min(size * 2, h / sd)), 1, TypedValue.COMPLEX_UNIT_SP);
@@ -541,8 +544,8 @@ public class KtScreenService extends Service {
         if (!b(cfg, "speak", false)) return;
         StringBuilder sb = new StringBuilder(); for (KtScreenA11y.Block k : blocks) if (k.tr != null) sb.append(k.tr).append(". ");
         final String text = sb.toString();
-        if (tts == null) { tts = new TextToSpeech(this, (st) -> { ttsReady = st == TextToSpeech.SUCCESS; if (ttsReady) { try { tts.setLanguage(Locale.forLanguageTag(s(cfg, "target", "ar"))); tts.setSpeechRate((float) n(cfg, "ttsRate", 1)); } catch (Throwable ignored) {} tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kt"); } }); return; }
-        if (ttsReady) { try { tts.setLanguage(Locale.forLanguageTag(s(cfg, "target", "ar"))); } catch (Throwable ignored) {} tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kt"); }
+        if (tts == null) { tts = new TextToSpeech(this, (st) -> { ttsReady = st == TextToSpeech.SUCCESS; if (ttsReady) { try { tts.setLanguage(Locale.forLanguageTag(s(cfg, "target", "en"))); tts.setSpeechRate((float) n(cfg, "ttsRate", 1)); } catch (Throwable ignored) {} tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kt"); } }); return; }
+        if (ttsReady) { try { tts.setLanguage(Locale.forLanguageTag(s(cfg, "target", "en"))); } catch (Throwable ignored) {} tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kt"); }
     }
     private void toast(String m) { ui.post(() -> { try { Toast.makeText(getApplicationContext(), m, Toast.LENGTH_SHORT).show(); } catch (Throwable ignored) {} }); }
 

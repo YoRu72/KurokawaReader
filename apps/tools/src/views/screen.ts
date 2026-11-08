@@ -236,7 +236,7 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       h('div', { class: 'screen-preview', style: `--bg:${sty.bg};--fg:${sty.fg};--a:${sty.bgAlpha};--r:${sty.radius}px;--s:${sty.size}px` }, h('span', { class: sty.bgMode === 'none' ? 'bare' : '', style: `${sty.bold ? 'font-weight:700;' : ''}${sty.center ? 'text-align:center;' : ''}${sty.outline ? 'text-shadow:0 0 3px #000,0 0 2px #000;' : ''}` }, t('scrPreview'))),
       row(t('scrSize'), num(sty.size, 9, 28, 1, (v) => set((c) => { c.style.size = v; }), 'size')),
       toggle(t('scrSmart'), sty.smart, (v) => set((c) => { c.style.smart = v; }), t('scrSmartHint')),
-      row(t('scrBg'), h('span', { class: 'screen-colours' }, colour(sty.bg, (v) => set((c) => { c.style.bg = v; }, true), 'bg'), select(sty.bgMode, [['fill', t('scrBgFill')], ['none', t('scrBgNone')]], (v) => set((c) => { c.style.bgMode = v; }, true), 'bgMode'))),
+      row(t('scrBg'), h('span', { class: 'screen-colours' }, colour(sty.bg, (v) => set((c) => { c.style.bg = v; }, true), 'bg'), select(sty.bgMode, [['erase', t('scrBgErase')], ['fill', t('scrBgFill')], ['none', t('scrBgNone')]], (v) => set((c) => { c.style.bgMode = v; }, true), 'bgMode'))),
       row(t('scrOpacity'), num(Math.round(sty.bgAlpha * 100), 30, 100, 5, (v) => set((c) => { c.style.bgAlpha = v / 100; }), 'bgAlpha', '%')),
       row(t('scrFg'), colour(sty.fg, (v) => set((c) => { c.style.fg = v; }, true), 'fg')),
       row(t('scrRadius'), num(sty.radius, 0, 16, 1, (v) => set((c) => { c.style.radius = v; }), 'radius')),
