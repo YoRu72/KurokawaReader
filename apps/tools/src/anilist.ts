@@ -115,6 +115,11 @@ export function queryVariants(q: string): string[] {
   const w = words.split(' '); if (w.length > 2) add(w.slice(0, -1).join(' ')); if (w.length > 3) add(w.slice(0, 3).join(' '));
   return out.slice(0, 4);
 }
+/** MyAnimeList's ids for the words (the start of a word is enough), best first. */
+async function byPrefix(q: string, adult: boolean): Promise<number[]> {
+  const r = await request(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(q)}&limit=15${adult ? '' : '&sfw=true'}`); if (r.status !== 200) return [];
+  return [...new Set(((JSON.parse(r.body) as { data?: { mal_id: number }[] }).data ?? []).map((x) => x.mal_id))];
+}
 export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Anime[]; hasNext: boolean; used?: string }> {
   const v: Record<string, unknown> = { page, adult: f.adult ? undefined : false, sort: [f.sort || (f.q ? 'SEARCH_MATCH' : 'POPULARITY_DESC')] };
   if (f.q?.trim()) v.q = f.q.trim(); if (f.genres?.length) v.genres = f.genres; if (f.tags?.length) v.tags = f.tags; if (f.notTags?.length) v.notTags = f.notTags;
@@ -124,11 +129,17 @@ export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Ani
   // so the genres, tags, sort and the rest still work on AniList's side.)
   if (f.studios?.length) { const ids = [...new Set((await Promise.all(f.studios.map((s) => studioIds(s.id)))).flat())]; if (!ids.length) return { media: [], hasNext: false }; v.ids = ids; }
   const key = JSON.stringify(v); const had = searchCache.get(key); if (had && Date.now() - had.at < 5 * 60000) return had.v;
-  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt, $ids: [Int]) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, id_in: $ids, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars);
+  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt, $ids: [Int], $mal: [Int]) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, id_in: $ids, idMal_in: $mal, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars);
   let d = await ask(v); let used: string | undefined;
   // (Nothing for the words as typed — a file's name, «Season 2», a subtitle, a typo's last word —: the same search with
   // the words cleaned up, then shortened; the results say which words found them.)
   if (page === 1 && v.q && !d.Page.media.length) for (const q of queryVariants(String(v.q))) { const r = await ask({ ...v, q }); if (r.Page.media.length) { d = r; used = q; break; } }
+  // (Still little — a word not finished yet, «Grot» for «Grotesqque»: AniList finds whole words only —: MyAnimeList's
+  // search, which matches the start of words, through Jikan, its shows then read from AniList in MyAnimeList's order.)
+  if (page === 1 && v.q && d.Page.media.length < 3 && String(v.q).length >= 3) {
+    const more = await byPrefix(String(v.q), !!f.adult).then((mal) => (mal.length ? ask({ ...v, q: undefined, sort: undefined, mal }).then((r) => r.Page.media.sort((a, b) => mal.indexOf(a.idMal ?? 0) - mal.indexOf(b.idMal ?? 0))) : [])).catch(() => [] as Raw[]);
+    const seen = new Set(d.Page.media.map((m) => m.id)); d = { Page: { ...d.Page, media: [...d.Page.media, ...more.filter((m) => !seen.has(m.id))] } }; if (more.length) used = undefined;
+  }
   const out = { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage, used };
   searchCache.set(key, { at: Date.now(), v: out }); if (searchCache.size > 60) searchCache.delete(searchCache.keys().next().value!);
   return out;

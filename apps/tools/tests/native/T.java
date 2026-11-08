@@ -3,7 +3,7 @@
 // again and the file changed on the server: downloaded afresh. Run by downloader.sh.
 import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.atomic.*; import java.security.*;
 public class T {
-  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static volatile boolean apk = false; static volatile int deny = 0; static volatile boolean capped = false; static AtomicInteger tag = new AtomicInteger();
+  static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static volatile boolean apk = false; static volatile int deny = 0; static volatile boolean capped = false; static volatile long cutAfter = 0; static AtomicInteger tag = new AtomicInteger();
   public static void main(String[] a) throws Exception {
     data = new byte[20 << 20]; new Random(1).nextBytes(data);
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
@@ -19,8 +19,8 @@ public class T {
         String[] p = range.substring(6).split("-"); long f = Long.parseLong(p[0]), t = p.length > 1 && !p[1].isEmpty() ? Long.parseLong(p[1]) : data.length - 1;
         ex.getResponseHeaders().add("Content-Range", "bytes " + f + "-" + t + "/" + data.length); ex.sendResponseHeaders(206, t - f + 1);
         if (slowFirst && f % (1310720) != 0) splits.incrementAndGet();
-        final boolean slow = slowFirst && f == 0;
-        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); Thread.sleep(slow ? 150 : capped ? 40 : 2); } } catch (InterruptedException e) {}
+        final boolean slow = slowFirst && f == 0; long sent = 0;
+        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); sent += n; if (cutAfter > 0 && sent >= cutAfter) { ex.getResponseBody().flush(); throw new java.io.IOException("cut"); } Thread.sleep(slow ? 150 : capped ? 40 : 2); } } catch (InterruptedException e) {}
       } finally { if (!probe) busy.decrementAndGet(); }
     });
     s.start(); URL u = new URL("http://127.0.0.1:" + s.getAddress().getPort() + "/f");
@@ -95,6 +95,11 @@ public class T {
     KrDownloader.fetch(u, out11, 12, op, new AtomicBoolean(), new AtomicLong(), r11, () -> {}, new KrDownloader.Opts());
     long ms11 = System.currentTimeMillis() - t11; boolean ok11 = Arrays.equals(java.nio.file.Files.readAllBytes(out11.toPath()), data) && r11.connections > 3; capped = false;
     System.out.println("run11 scaled to " + r11.connections + " connections (started with 3) in " + ms11 + " ms, match=" + ok11);
+    // 13: a weak phone link that drops every connection after 200 KB (each chunk needs many tries, each going on
+    // from where the last stopped): finished all the same, not given up after the retries.
+    cutAfter = 200 << 10; limit = 16; File out13 = new File(dir, "cut.part"); out13.delete(); boolean ok13;
+    try { KrDownloader.fetch(u, out13, Integer.getInteger("c13", 6), op, new AtomicBoolean(), new AtomicLong(), new KrDownloader.Result(), () -> {}, new KrDownloader.Opts()); ok13 = Arrays.equals(java.nio.file.Files.readAllBytes(out13.toPath()), data); } catch (Exception e) { System.out.println("run13 threw " + e); ok13 = false; }
+    cutAfter = 0; System.out.println("run13 connections cut every 200 KB, done anyway: " + ok13);
     // 12: what a finished file is, from its bytes: an APK, a bundle, an e-book, a video, a PDF, a ZIP — and only weak names changed.
     java.util.function.BiFunction<String, String[], File> zipOf = (nm, entries) -> { try { File z = new File(dir, nm); try (java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(z))) { for (String e : entries) { zo.putNextEntry(new java.util.zip.ZipEntry(e)); zo.write(e.equals("mimetype") ? "application/epub+zip".getBytes() : new byte[] { 1, 2, 3 }); zo.closeEntry(); } } return z; } catch (Exception e) { throw new RuntimeException(e); } };
     java.util.function.BiFunction<String, byte[], File> raw = (nm, head) -> { try { File z = new File(dir, nm); byte[] all = Arrays.copyOf(head, 1024); java.nio.file.Files.write(z.toPath(), all); return z; } catch (Exception e) { throw new RuntimeException(e); } };
@@ -115,6 +120,6 @@ public class T {
     };
     boolean ok12 = true; for (String[] c : cases) if (!java.util.Objects.equals(c[0], c[1])) { ok12 = false; System.out.println("  sniff got " + c[0] + " wanted " + c[1]); }
     System.out.println("run12 file types from their bytes: " + ok12);
-    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && ok12 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
+    s.stop(0); System.exit(ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && ok12 && ok13 && splits.get() > 0 && got.get() == data.length && first.get() > (4 << 20) ? 0 : 1);
   }
 }

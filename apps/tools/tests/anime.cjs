@@ -78,6 +78,18 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   if (review.length !== 2) errors.push('review');
   // Search by genre and tag: the filters sheet, a genre and a tag (and one left out), results asked with them.
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .scrim').forEach((e) => e.remove()));
+  {
+    // A word not finished yet («Grot»): AniList finds nothing (whole words only), MyAnimeList's search (Jikan) finds the
+    // start of the word, and its show is read from AniList by its MyAnimeList id.
+    await p.route('https://graphql.anilist.co/**', (r) => { const b = JSON.parse(r.request().postData() || '{}'); if (b.variables?.q === 'Grot' || (b.variables?.q && /^Grot/.test(b.variables.q))) return r.fulfill({ json: { data: { Page: { pageInfo: { hasNextPage: false }, media: [] } } } }); if (b.variables?.mal) return r.fulfill({ json: { data: { Page: { pageInfo: { hasNextPage: false }, media: b.variables.mal.includes(77) ? [MEDIA(77, 'Grotesqque')] : [] } } } }); return r.fallback(); });
+    await p.route('https://api.jikan.moe/**', (r) => r.fulfill({ json: { data: /q=Grot/.test(r.request().url()) ? [{ mal_id: 77 }] : [] }, headers: { 'access-control-allow-origin': '*' } }));
+    await p.goto(`http://127.0.0.1:${port}/#/anime?tab=search`); await p.waitForSelector('.search-form .search-input'); await p.evaluate(() => { localStorage.removeItem('kt.anime.search'); });
+    await p.fill('.search-form .search-input', 'Grot'); await p.waitForTimeout(1500);
+    const found = await p.evaluate(() => document.querySelector('.view .body')?.innerText || '');
+    console.log(/Grotesqque/.test(found) ? 'ok   «Grot» finds Grotesqque (start of a word, through MyAnimeList)' : 'FAIL «Grot» found nothing: ' + found.slice(0, 200)); if (!/Grotesqque/.test(found)) errors.push('prefix search');
+    await p.fill('.search-form .search-input', ''); await p.waitForTimeout(500); await p.evaluate(() => localStorage.removeItem('kt.anime.search'));
+    await p.unroute('https://api.jikan.moe/**');
+  }
   await p.goto(`http://127.0.0.1:${port}/#/anime?tab=search`); await p.waitForSelector('.anime-filter-btn'); await p.waitForTimeout(500);
   await p.click('.anime-filter-btn'); await p.waitForSelector('.anime-filters .chip'); await p.waitForTimeout(300);
   await p.locator('.anime-filters .chip', { hasText: 'Fantasy' }).click(); await p.locator('.anime-filters details', { hasText: 'Setting' }).locator('summary').click();

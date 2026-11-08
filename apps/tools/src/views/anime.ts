@@ -82,15 +82,15 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
         f.q = input.value.trim(); saveFilters(f); const mine = ++runs;
         const any = f.q || f.genres?.length || f.tags?.length || f.formats?.length || f.status || f.season || f.year || f.minScore || f.from || f.sort;
         if (!any) { results.replaceChildren(...[historyChips('anime', (q) => { input.value = q; void run(); })].filter((x): x is HTMLElement => !!x), h('p', { class: 'hint' }, t('animeSearchStart'))); more.hidden = true; void tagSuggestions(results, (g) => { f.genres = [...new Set([...(f.genres ?? []), g])]; saveFilters(f); drawActive(); void run(); }); return; }
-        if (!next) { page = 1; all = []; results.replaceChildren(spinner()); } else { page++; more.disabled = true; }
+        if (!next) { page = 1; all = []; if (results.querySelector('.anime-grid, .grid, .empty')) results.classList.add('refreshing'); else results.replaceChildren(spinner()); } else { page++; more.disabled = true; }
         try {
           const r = await al.searchBy({ ...f, adult: getSettings().animeAdult }, page); if (my !== token || mine !== runs) return;
-          all = all.concat(r.media); if (!next) used = r.used; results.replaceChildren(...(used && all.length ? [h('p', { class: 'hint small' }, t('searchShowingFor', { q: used }))] : []), studioBox, all.length ? grid(all) : h('p', { class: 'empty small' }, t('noResults')), more); more.hidden = !r.hasNext; more.disabled = false;
+          all = all.concat(r.media); if (!next) used = r.used; results.classList.remove('refreshing'); results.replaceChildren(...(used && all.length ? [h('p', { class: 'hint small' }, t('searchShowingFor', { q: used }))] : []), studioBox, all.length ? grid(all) : h('p', { class: 'empty small' }, t('noResults')), more); more.hidden = !r.hasNext; more.disabled = false;
           // (Studios whose name matches the words: a row of them above the shows, each opening its works.)
           if (!next && f.q && f.q.length >= 2) { const words = f.q; void al.searchStudios(words).then(async (ss) => { if (mine !== runs || my !== token || !ss.length) return; const { rail, tile, hueOf } = await import('../ui/discover'); const { studioPath } = await import('./animeDiscover'); const r2 = rail(t('dcStudios'), 'apps', { kind: 'square' }); r2.fill(ss.slice(0, 10).map((s) => tile({ image: s.image, label: s.name, sub: s.count ? countWorks(s.count) : undefined, color: s.color ?? hueOf(s.name), onClick: () => navigate(studioPath(s.id, s.name)) }, true))); studioBox.replaceChildren(r2.el); }).catch(() => undefined); }
-        } catch (e) { if (mine === runs) results.replaceChildren(fail(e)); }
+        } catch (e) { if (mine === runs) { results.classList.remove('refreshing'); results.replaceChildren(fail(e)); } }
       };
-      input.addEventListener('input', debounce(() => void run(), 400));
+      input.addEventListener('input', debounce(() => void run(), 300));
       input.addEventListener('change', () => rememberSearch('anime', input.value));
       body.append(h('form', { class: 'search-form row', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, input, fbtn, lucky), active, results);
       drawActive(); void run(); setTimeout(() => input.focus(), 50);

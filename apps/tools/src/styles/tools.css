@@ -938,3 +938,10 @@ html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-
 .view .body:not(.task-detail):not(.settings-body):not(.screen-body) > .card + .card { margin-top: 14px; }
 [dir='rtl'] .scr-term-arrow { display: inline-block; transform: scaleX(-1); }
 .scr-term input[type='text'] { height: 44px; padding: 0 14px; }
+.speed-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 8px 4px; border-radius: 12px; }
+.speed-row .task-bar { grid-column: 1 / -1; }
+.speed-row.on { background: color-mix(in srgb, var(--md-primary) 10%, transparent); }
+.speed-row.best .speed-v { color: var(--md-primary); }
+html.kb-open .bottom-nav { display: none; }
+html.kb-open .view .body { padding-bottom: 12px; }
+.refreshing { opacity: .55; transition: opacity .15s; pointer-events: none; }

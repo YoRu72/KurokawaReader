@@ -55,7 +55,7 @@ export async function install(id: string): Promise<void> {
   if (e.packs?.length) {
     const { ensurePacks, packsHere } = await import('./packs'); const { t, getLang } = await import('./i18n');
     // (Install was pressed: the packs start at once, the card shows them coming and can cancel.)
-    if (packsHere() && !(await ensurePacks(e.packs, t('packWhyAddon', { name: nameOf(e, getLang()) }), { start: true }))) throw new Error(t('cancelled'));
+    if (packsHere() && !(await ensurePacks(e.packs, t('packWhyAddon', { name: nameOf(e, getLang()) }), { start: true }))) throw Object.assign(new Error(t('cancelled')), { name: 'AbortError' });
   }
   const ids = [id, ...(e.children ?? [])];
   for (const k of ids) {
