@@ -40,10 +40,50 @@ export const HIGHLIGHT_COLORS: [HighlightColor, string][] = [['amber', 'var(--hl
 export function selectionText(sel: Selection): string {
   if (sel.rangeCount === 0) return '';
   const range = sel.getRangeAt(0);
+  return pdfRangeText(range) ?? withoutReadings(range) ?? sel.toString();
+}
+
+/**
+ * The words of a range in a PDF's text layer as they are read (see selectionText), or null when the range is not in
+ * one. Each page is read apart, in page order (a range from one page into the next held both pages' pieces as one,
+ * and read them mixed). With `flow` the lines are run together as running text — for a passage set again (the
+ * picture card), where the PDF's own line ends mean nothing: a line that reaches the far edge of its column goes on
+ * into the next (a word cut by a hyphen joined again), and a line that stops short (a paragraph's last, a heading, a
+ * centred verse) keeps its break.
+ */
+export function pdfRangeText(range: Range, flow = false): string | null {
   const anc = range.commonAncestorContainer;
-  const layer = (anc.nodeType === 1 ? (anc as Element) : anc.parentElement)?.closest('.textLayer, .pdf-page, .pdf-inner, .pdf-scroll');
-  if (!layer) return withoutReadings(range) ?? sel.toString();
-  const spans = Array.from(layer.querySelectorAll<HTMLElement>('.textLayer > span')).filter((el) => el.firstChild && range.intersectsNode(el));
+  const el = anc.nodeType === 1 ? (anc as Element) : anc.parentElement;
+  const layer = el?.closest('.textLayer, .pdf-page, .pdf-inner, .pdf-scroll');
+  if (!layer) return null;
+  const layers = layer.classList.contains('textLayer') ? [layer as HTMLElement] : Array.from(layer.querySelectorAll<HTMLElement>('.textLayer')).filter((l) => range.intersectsNode(l));
+  let out = '', open = false;
+  for (const l of layers) {
+    const r = layerText(l, range, flow); if (!r.text) continue;
+    out = !out ? r.text : flow && open ? runOn(out, r.text) : `${out}\n${r.text}`;
+    open = r.open;
+  }
+  return out.trim();
+}
+
+/** What goes between a line that ran to its column's edge and the next, when they are run together: nothing after a
+ *  hyphen cutting a word (the hyphen goes, see runOn) or between letters of a script set without spaces, else a space. */
+function flowJoin(before: string, next: string): string {
+  const last = before[before.length - 1], first = next[0] ?? '';
+  if (last === '\u00ad' || ((last === '-' || last === '\u2010') && /\p{Ll}/u.test(first))) return '';
+  if (/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af\u0e00-\u0e7f\u3001\u3002\uff0c]/.test(last) && /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af\u0e00-\u0e7f]/.test(first)) return '';
+  return ' ';
+}
+/** The two lines run together: a hyphen that cut the word is taken out with the join. */
+function runOn(before: string, next: string): string {
+  const j = flowJoin(before, next);
+  return j === '' && /[-\u2010\u00ad]$/.test(before) ? before.slice(0, -1) + next : before + j + next;
+}
+
+/** One page's text layer: the words of the range on it, in reading order; `open` when its last line ran to the edge. */
+function layerText(layer: HTMLElement, range: Range, flow: boolean): { text: string; open: boolean } {
+  const all = Array.from(layer.querySelectorAll<HTMLElement>(':scope > span'));
+  const spans = all.filter((el) => el.firstChild && range.intersectsNode(el));
   // Columns of vertical writing are laid in reading order already: taken as they come, a paragraph's columns
   // run on and paragraphs end lines.
   const cut = (el: HTMLElement) => {
@@ -57,31 +97,27 @@ export function selectionText(sel: Selection): string {
   let vText = '';
   for (const el of vSpans) vText = joinColumn(vText, cut(el)) + (el.dataset.br ? '\n' : '');
   vText = vText.trim();
-  if (vSpans.length === spans.length) return vText;
+  if (vSpans.length === spans.length) return { text: vText, open: false };
   // Geometry decides the order: pieces are grouped into lines by their vertical position, and
   // within a line read right-to-left when the line is mostly Arabic/Hebrew, else left-to-right.
   // Pieces are joined by the gap between them (not with a space each): PDFs made by Word and the
   // like cut Arabic with harakat into many small pieces, often one letter or one mark each.
   type Piece = LinePiece & { y: number; b: number };
+  // (A page shown turned: its boxes are read back as the page was written.)
+  const rot = Number(layer.dataset.rot ?? 0);
+  const place = (rc: DOMRect): { l: number; r: number; y: number; h: number } =>
+    rot === 90 ? { l: rc.top, r: rc.bottom, y: -(rc.left + rc.right) / 2, h: rc.width || 10 }
+    : rot === 180 ? { l: -rc.right, r: -rc.left, y: -(rc.top + rc.bottom) / 2, h: rc.height || 10 }
+    : rot === 270 ? { l: -rc.bottom, r: -rc.top, y: (rc.left + rc.right) / 2, h: rc.width || 10 }
+    : { l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10 };
   const pieces: Piece[] = [];
   for (const el of spans) {
     if (el.dataset.v) continue;
     const b = Number(el.dataset.b ?? 0);
-    const node = el.firstChild!;
-    let text = el.textContent ?? '';
-    if (node === range.startContainer && node === range.endContainer) text = text.slice(range.startOffset, range.endOffset);
-    else if (node === range.startContainer) text = text.slice(range.startOffset);
-    else if (node === range.endContainer) text = text.slice(0, range.endOffset);
-    text = cleanPdfText(text);
+    let text = cleanPdfText(cut(el));
     if (/^\u2009+$/.test(text)) text = '\u2009'; // a real space the PDF draws (see scripts/patch-pdfjs.mjs)
     else if (!text.trim()) continue;
-    const rc = el.getBoundingClientRect();
-    // (A page shown turned: its boxes are read back as the page was written.)
-    const rot = Number((el.parentElement as HTMLElement | null)?.dataset.rot ?? 0);
-    if (rot === 90) pieces.push({ text, l: rc.top, r: rc.bottom, y: -(rc.left + rc.right) / 2, h: rc.width || 10, b });
-    else if (rot === 180) pieces.push({ text, l: -rc.right, r: -rc.left, y: -(rc.top + rc.bottom) / 2, h: rc.height || 10, b });
-    else if (rot === 270) pieces.push({ text, l: -rc.bottom, r: -rc.top, y: (rc.left + rc.right) / 2, h: rc.width || 10, b });
-    else pieces.push({ text, l: rc.left, r: rc.right, y: rc.top + rc.height / 2, h: rc.height || 10, b });
+    pieces.push({ text, ...place(el.getBoundingClientRect()), b });
   }
   // The layer's blocks (a box of text, a column, a label beside a paragraph) are read one after the other as
   // the layer laid them; within a block, lines by their vertical position.
@@ -89,7 +125,10 @@ export function selectionText(sel: Selection): string {
   for (const p of pieces) { const list = blocks.get(p.b); if (list) list.push(p); else blocks.set(p.b, [p]); }
   // (The page's own direction, for the lines of both scripts: what the whole layer holds, not the selection.)
   const pageRtl = rtlByCount((layer.closest('.pdf-page') ?? layer).textContent ?? '');
+  // (Running text: the edges of each block's column, from all its words on the page — not only those picked.)
+  const whole = flow ? all.filter((el) => !el.dataset.v && el.textContent?.trim()).map((el) => ({ b: Number(el.dataset.b ?? 0), ...place(el.getBoundingClientRect()) })) : [];
   const texts: string[] = [];
+  let open = false;
   for (const b of [...blocks.keys()].sort((x, y) => x - y)) {
     const kept = attachMarks(blocks.get(b)!);
     kept.sort((a, b2) => a.y - b2.y);
@@ -97,17 +136,24 @@ export function selectionText(sel: Selection): string {
     for (const p of kept) { const cur = lines[lines.length - 1]; if (cur && Math.abs(cur[0].y - p.y) < Math.max(cur[0].h, p.h) * 0.6) cur.push(p); else lines.push([p]); }
     // A block in columns is copied column by column (the right one first on a right-to-left page).
     const cols = findColumns(lines);
-    let ordered = lines;
-    if (cols) {
-      const byCol = cols.map(([a, b2]) => lines.map((line) => line.filter((p) => (p.l + p.r) / 2 >= a && (p.l + p.r) / 2 < b2)).filter((l) => l.length));
-      if (isRtlText(kept.map((p) => p.text).join(''))) byCol.reverse();
-      ordered = byCol.flat();
+    const groups = cols ? cols.map(([a, b2]) => ({ a, b: b2, lines: lines.map((line) => line.filter((p) => (p.l + p.r) / 2 >= a && (p.l + p.r) / 2 < b2)).filter((l) => l.length) })) : [{ a: -Infinity, b: Infinity, lines }];
+    if (cols && isRtlText(kept.map((p) => p.text).join(''))) groups.reverse();
+    for (const g of groups) {
+      if (!flow) { texts.push(...g.lines.map((line) => joinLine(line, pageRtl).text).filter(Boolean)); continue; }
+      const mine = whole.filter((w) => w.b === b && (w.l + w.r) / 2 >= g.a && (w.l + w.r) / 2 < g.b);
+      const edgeL = Math.min(...mine.map((w) => w.l)), edgeR = Math.max(...mine.map((w) => w.r));
+      let text = texts.length ? texts.pop()! : '';
+      for (const line of g.lines) {
+        const tx = joinLine(line, pageRtl).text; if (!tx) continue;
+        text = !text ? tx : open ? runOn(text, tx) : `${text}\n${tx}`;
+        const hh = Math.max(...line.map((p) => p.h)), l = Math.min(...line.map((p) => p.l)), r = Math.max(...line.map((p) => p.r));
+        open = isRtlText(tx) ? l <= edgeL + hh * 1.2 : r >= edgeR - hh * 1.2;
+      }
+      texts.push(text);
     }
-    texts.push(...ordered.map((line) => joinLine(line, pageRtl).text).filter(Boolean));
   }
-  const out = texts.join('\n');
-  const flat = fixArabic(out.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
-  return vText ? [flat, vText].filter(Boolean).join('\n') : flat;
+  const flat = fixArabic(texts.join('\n').replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' '));
+  return { text: vText ? [flat, vText].filter(Boolean).join('\n') : flat, open: open && !vText };
 }
 
 const COMMON_AR = /\b(في|من|على|إلى|الى|أن|ان|كان|هذا|هذه|التي|الذي|ما|لا|قال|عن|ثم|أو|او|كل|بين|عند|حتى|إذا|اذا|لم|قد|هو|هي|ذلك|بعد|قبل|غير|مع|يا|إن|لكن)\b/g;

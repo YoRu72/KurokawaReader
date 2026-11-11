@@ -138,7 +138,7 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
   const textH = runs.reduce((n, r, i) => n + (r === 'pic' ? picH : r.length * lh - (lh - fontSize)) + (i ? gap : 0), 0);
   const H = plain ? pad * 2 + textH : pad * 2 + 110 + textH + 150;
   const c = document.createElement('canvas');
-  c.width = W; c.height = H;
+  c.width = W; c.height = H; c.dataset.text = o.text; c.dataset.dir = rtl ? 'rtl' : 'ltr';   // (what it was given: for the tests)
   const ctx = c.getContext('2d')!;
   await paintBackground(ctx, W, H, L);
 
@@ -186,27 +186,47 @@ export async function renderTextCard(o: TextCardOptions): Promise<Blob> {
   return canvasToBlob(await renderTextCanvas(o), 'image/png');
 }
 
-/** Preview the snapshot with Save / Share / Copy and a style switch. */
-export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }): void {
+/** The ways a passage can be pictured, when there is more than the card (a PDF: the page itself, cut out): the one
+ *  shown first, each drawn when it is picked, the options each has under the preview, and the pick remembered. */
+export type SnapKind = 'page' | 'card';
+export interface SnapChoice { kind: SnapKind; kinds: SnapKind[]; draw(kind: SnapKind): Promise<HTMLCanvasElement>; options(kind: SnapKind, redraw: () => void): HTMLElement | null; picked(kind: SnapKind): void }
+
+/** Preview the snapshot with Save / Share / Copy and a style switch (and, with `choice`, the kinds to choose from). */
+export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }, choice?: SnapChoice): void {
   const sheet = openSheet(t('textAsImage'), t('close'));
   sheet.body.style.fontFamily = 'var(--font-ui)';
   const holder = h('div', { class: 'snap-holder' });
-  const mount = (c: HTMLCanvasElement) => { holder.replaceChildren(c); c.className = 'snap-preview'; canvas = c; };
+  let blob: Blob | null = null;
+  // (A picture replaced is let go of at once: a page cut can be large.)
+  const mount = (c: HTMLCanvasElement) => { const old = holder.firstChild as HTMLCanvasElement | null; holder.replaceChildren(c); c.className = 'snap-preview'; canvas = c; blob = null; if (old && old !== c) old.width = old.height = 0; };
   mount(canvas);
+  let kind: SnapKind = choice?.kind ?? 'card';
+  const opts = h('div', { class: 'snap-options' });
+  let seq = 0;
+  const redraw = async () => { const my = ++seq; const c = kind === 'card' ? await rerender(getSettings().snapStyle, picOn) : await choice!.draw(kind); if (my === seq) mount(c); else c.width = c.height = 0; };
+  const fillOpts = () => { opts.replaceChildren(); const o = choice?.options(kind, () => void redraw().catch((e) => toast(String((e as Error).message ?? e), 'error'))); if (o) opts.append(o); };
+  if (choice && choice.kinds.length > 1) {
+    const seg = h('div', { class: 'segmented snap-kind', role: 'radiogroup', 'aria-label': t('textAsImage') });
+    const paint = () => seg.replaceChildren(...choice.kinds.map((k) => h('button', { type: 'button', role: 'radio', 'aria-pressed': String(k === kind), 'aria-checked': String(k === kind), 'data-kind': k, onclick: () => {
+      if (k === kind) return; kind = k; choice.picked(k); paint(); fillOpts(); styleBtn.hidden = kind !== 'card'; void redraw().catch((e) => toast(String((e as Error).message ?? e), 'error'));
+    } }, t(k === 'page' ? 'snapAsPage' : 'snapAsCard'))));
+    paint(); sheet.body.appendChild(seg);
+  }
   sheet.body.appendChild(holder);
+  if (choice) { fillOpts(); sheet.body.appendChild(opts); }
   let picOn = picture?.on ?? false;
   // (A picture the words touched: shown with them, or not — on unless it only came before the words.)
   if (picture?.has) {
     const box = h('input', { type: 'checkbox', checked: picOn }) as HTMLInputElement;
-    box.addEventListener('change', async () => { picOn = box.checked; blob = null; mount(await rerender(getSettings().snapStyle, picOn)); });
+    box.addEventListener('change', async () => { picOn = box.checked; mount(await rerender(getSettings().snapStyle, picOn)); });
     sheet.body.appendChild(h('label', { class: 'check-row snap-pic-row' }, box, h('span', null, t('snapIncludePicture'))));
   }
-  let blob: Blob | null = null;
   const png = async () => blob ?? (blob = await canvasToBlob(canvas, 'image/png'));
   const styleBtn = h('button', { class: 'btn small', type: 'button' }, t(getSettings().snapStyle === 'plain' ? 'snapCard' : 'snapPlain'));
+  styleBtn.hidden = kind !== 'card';
   styleBtn.addEventListener('click', async () => {
     const next = getSettings().snapStyle === 'plain' ? 'card' : 'plain';
-    updateSettings({ snapStyle: next }); blob = null;
+    updateSettings({ snapStyle: next });
     styleBtn.textContent = t(next === 'plain' ? 'snapCard' : 'snapPlain');
     mount(await rerender(next, picOn));
   });

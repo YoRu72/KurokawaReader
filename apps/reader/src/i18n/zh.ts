@@ -38,6 +38,7 @@ export const zh: Partial<Strings> = {
   shareImage: '分享图片', savePageImage: '将页面存为 PNG', sharePage: '分享页面', pagesGrid: '页面', pageSaved: '页面已保存', imageSaved: '图片已保存', shareUnavailable: '这里无法分享，已改为保存文件。',
 
   note: '笔记', addNote: '添加笔记', notePlaceholder: '写点什么…', noteSaved: '笔记已保存', textAsImage: '文字转图片', shareText: '分享', systemTranslate: '用其他应用翻译…', searchWeb: '网页搜索', wikipedia: '维基百科', highlightColor: '高亮颜色', removeHighlight: '删除高亮',
+  snapAsPage: '按页面原样', snapAsCard: '做成卡片', snapWholeWidth: '整栏宽度', snapOnlyWords: '仅所选文字', snapOriginalColors: '原始颜色', snapAsShown: '按显示效果', snapCaption: '下方附书名和页码', snapPageCaption: '{title} · 第{n}页', cutPagePart: '截取页面的一部分', cutPageHint: '拖动框选要保留的部分，然后点「完成」',
 
   folders: '文件夹', newFolder: '新建文件夹', folderName: '文件夹名称', allBooks: '全部图书', moveToFolder: '移动到文件夹', removeFromFolder: '移出文件夹', deleteFolder: '删除文件夹', deleteFolderConfirm: '删除文件夹“{name}”？书会留在书库中。', renameFolder: '重命名文件夹', dropOnFolder: '拖到文件夹上即可移动', emptyFolder: '此文件夹是空的', importHere: '添加到此文件夹', noFolder: '无文件夹',
 

@@ -1199,6 +1199,25 @@ export class PdfViewer {
     return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), type, 0.92));
   }
 
+  /** Page n's size in points (as the viewer lays it: the page's own turn included). */
+  pageSize(n: number): { width: number; height: number } { return { width: this.baseWidths[n - 1] ?? 0, height: this.baseHeights[n - 1] ?? 0 }; }
+
+  /** A part of page n — `box` as fractions of the whole page (x, y, w, h) — drawn afresh `width` pixels across, from
+   *  the file (not the screen's picture, which may be small or in tiles). The caller lets the canvas go when done. */
+  async renderRegion(n: number, box: [number, number, number, number], width: number): Promise<HTMLCanvasElement> {
+    const page = await this.doc.getPage(n);
+    const base = page.getViewport({ scale: 1 });
+    const k = width / Math.max(1e-6, box[2] * base.width);
+    const W = Math.max(1, Math.round(width)), H = Math.max(1, Math.round(box[3] * base.height * k));
+    const x = Math.round(box[0] * base.width * k), y = Math.round(box[1] * base.height * k);
+    const canvas = offscreen(document.createElement('canvas')); canvas.width = W; canvas.height = H;
+    // (The device's renderer draws the part as it draws a tile: the whole page's width, and where the part lies in it.)
+    if (this.native && await this.nativeDraw(n, canvas, { width: Math.round(base.width * k), tileX: x, tileY: y, tileW: W, tileH: H }).catch(() => false)) return canvas;
+    const ctx = canvas.getContext('2d', { alpha: false })!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    await page.render({ canvas, canvasContext: ctx, viewport: page.getViewport({ scale: k, offsetX: -x, offsetY: -y }) }).promise;
+    return canvas;
+  }
+
   /** Small thumbnails for the pages grid and the strip: drawn two at a time, the ones asked for last (those on
    *  the screen now) first, by the device's own renderer where there is one, each kept once drawn. */
   private thumbs = new Map<string, Promise<string>>();

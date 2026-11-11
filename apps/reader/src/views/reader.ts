@@ -1734,7 +1734,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
       });
     },
-    textImage: async (text, range) => { try { const picture = pictureNear(range); const on = pictureOnByDefault(picture); const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on }; showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on }), { has: !!picture, on }); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } },
+    // (A PDF has its own: the page itself cut out, or the card with the words read as running text — see pdfsnap.)
+    textImage: (text, range) => void import('../ui/pdfsnap').then((m) => m.pdfSnapshot(viewer, range ?? document.createRange(), book, snapName(book.title), getSettings().snapWatermark ? t('appName') : '', text)).catch((err) => toast(String((err as Error).message ?? err), 'error')),
   }));
   void applyOrientation();
   if (getSettings().hideSystemBars) void setImmersive(true);
@@ -2159,6 +2160,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('camera', t('savePageImage'), () => void savePage(false)),
         item('external', t('sharePage'), () => void savePage(true)),
         item('copy', t('copyPageImage'), () => void savePage('copy')),
+        item('images', t('cutPagePart'), () => void import('../ui/pdfsnap').then((m) => m.cutPagePart(viewer, book, snapName(book.title)))),
         item('images', t('savePagesRange'), () => savePagesSheet()),
         item('pen', t('inkNotes'), () => ink?.setOn(true)),
         item('images', t('pageStrip'), () => strip?.toggle()),

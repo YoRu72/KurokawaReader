@@ -38,6 +38,7 @@ export const ko: Partial<Strings> = {
   shareImage: '이미지 공유', savePageImage: '페이지를 PNG로 저장', sharePage: '페이지 공유', pagesGrid: '페이지', pageSaved: '페이지를 저장했습니다', imageSaved: '이미지를 저장했습니다', shareUnavailable: '여기서는 공유할 수 없어 파일로 저장했습니다.',
 
   note: '메모', addNote: '메모 추가', notePlaceholder: '메모 쓰기…', noteSaved: '메모를 저장했습니다', textAsImage: '텍스트를 이미지로', shareText: '공유', systemTranslate: '다른 앱으로 번역…', searchWeb: '웹 검색', wikipedia: '위키백과', highlightColor: '형광펜 색', removeHighlight: '형광펜 지우기',
+  snapAsPage: '페이지 그대로', snapAsCard: '카드로', snapWholeWidth: '텍스트 단 전체 너비', snapOnlyWords: '선택한 단어만', snapOriginalColors: '원래 색', snapAsShown: '보이는 대로', snapCaption: '아래에 제목과 쪽 번호', snapPageCaption: '{title} · {n}쪽', cutPagePart: '페이지 일부 잘라내기', cutPageHint: '남길 부분을 드래그한 뒤 「완료」',
 
   folders: '폴더', newFolder: '새 폴더', folderName: '폴더 이름', allBooks: '모든 책', moveToFolder: '폴더로 이동', removeFromFolder: '폴더에서 빼기', deleteFolder: '폴더 삭제', deleteFolderConfirm: '“{name}” 폴더를 삭제할까요? 책은 서재에 남습니다.', renameFolder: '폴더 이름 바꾸기', dropOnFolder: '폴더에 놓아 이동', emptyFolder: '이 폴더는 비어 있습니다', importHere: '이 폴더에 추가', noFolder: '폴더 없음',
 
