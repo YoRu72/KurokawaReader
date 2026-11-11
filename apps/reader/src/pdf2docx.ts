@@ -28,7 +28,7 @@ export type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; see
   /** Every glyph run kept (a lane: the cap on uses is applied where the lanes' pages come together). */
   keepAll?: boolean };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
   /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
   tints?: { base: string; mark: string; color: string }[] };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
@@ -1425,7 +1425,8 @@ function keepMark(m: Piece, host: Piece, base: string): void {
     if (k < 0) return;
     const h = host.codes[k];
     const ch = u[1] && [...u[1]].every((c) => COMBINING.test(c)) ? u[1] : mark;
-    host.codes[k] = [h[0], h[1] + ch, h[2], h[3], h[4], h[5], h[6]];
+    // (Not onto a glyph whose text is not trusted, nor twice onto one that names the mark already.)
+    if (h[1] !== '\uffff' && !h[1].includes(ch)) host.codes[k] = [h[0], h[1] + ch, h[2], h[3], h[4], h[5], h[6]];
     host.codes.splice(k + 1, 0, [u[0], '', u[2], u[3], u[4], 0, h[6]]);
   }
 }
@@ -1447,7 +1448,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const pieces: Piece[] = [];
   const turnedItems: { text: string; angle: number; e: number; f: number; w: number; h: number; font: string; color: string; bold: boolean }[] = [];
   let spanSeq = 0;
-  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; hidden?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean; krTints?: Piece['tints'] }[]) {
+  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; hidden?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean; krTints?: Piece['tints']; krInked?: boolean }[]) {
     if (typeof it.str !== 'string') continue;
     let text = cleanPdfText(it.str);
     if (/^\u2009+$/.test(text)) text = '\u2009'; else if (!text.trim()) continue;
@@ -1465,7 +1466,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     if (store.same?.has(it.fontName)) it.fontName = store.same.get(it.fontName)!;
     // Fill+stroke "bold": Word's own synthetic bold strokes about 1/35 em; a much thinner stroke is
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
-    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.hidden ? { hidden: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}), ...(it.krTints?.length ? { tints: it.krTints } : {}) });
+    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.hidden ? { hidden: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(it.krInked ? { inked: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}), ...(it.krTints?.length ? { tints: it.krTints } : {}) });
     if (it.fontName && !fonts.has(it.fontName)) {
       let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
