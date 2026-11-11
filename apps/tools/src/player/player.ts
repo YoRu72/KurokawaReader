@@ -457,6 +457,7 @@ export function openPlayer(src: PlayerSource): void {
   async function fileFonts(): Promise<string[]> {
     const out: string[] = [];
     try { const E = await import('./embedded'); if (E.canReadEmbedded() && (src.localPath || /^https?:\/\/(127\.0\.0\.1|localhost)/.test(src.url))) out.push(...await E.attachedFonts(src.localPath ?? src.url)); } catch { /* none */ }
+    out.push(...packFonts);
     const tk = src.task; if (tk) { const { localPathOf } = await import('../engine/localPath'); for (const f of tk.files.filter((g) => /\.(ttf|otf|ttc|woff2?)$/i.test(g.path) && g.size > 0 && g.done >= g.size).slice(0, 80)) { const lp = localPathOf(tk, f.index); const b = lp ? await readLocal(lp).catch(() => null) : null; if (b) out.push(URL.createObjectURL(new Blob([b as Uint8Array<ArrayBuffer>]))); } }
     return out;
   }
@@ -530,15 +531,61 @@ export function openPlayer(src: PlayerSource): void {
   // Subtitles beside a local file (same base name) are offered first.
   void (async () => { if (!src.localPath) return; const list = (await siblingFiles(src.localPath)).filter((x) => /\.(srt|ass|ssa|vtt)$/i.test(x)).slice(0, 8); for (const f of list) { const b = await readLocal(f); if (b) { const tr = await addTrackFromBytes(f.split(/[\\/]/).pop()!, b); if (tr) offer(tr, list.length === 1); } } })();
 
+  // The show's subtitle pack (./subPacks): this episode's file loaded by itself — the one chosen by hand for it, else
+  // the match — before the online search, which then leaves it be; every candidate a track to switch to.
+  let packFonts: string[] = []; let packInfo: { key: string; want: import('./subMatch').Want; scan: import('./subPacks').PackScan; file?: import('./subPacks').PackFile; cands: import('./subPacks').PackFile[]; manual: boolean } | null = null;
+  const packTracks = new Map<string, import('./subPacks').PackFile>();
+  const showMeta = async () => { const { parseFilename } = await import('../anime/anitomy'); const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); return { key: (await import('./subPacks')).showKey(m ?? { title: parsed.title }), episode: m?.episode ?? parsed.episode, season: m?.season ?? parsed.season, title: m?.title ?? parsed.title }; };
+  async function packFile(f: import('./subPacks').PackFile, also: import('./subPacks').PackFile[] = []): Promise<SubTrack | null> {
+    const PK = await import('./subPacks'); let mine: SubTrack | null = null;
+    if (/\.(ass|ssa)$/i.test(f.path) && !packFonts.length && packInfo) for (const ft of packInfo.scan.fonts.slice(0, 80)) { const b = await PK.readPackFile(ft).catch(() => null); if (b) packFonts.push(URL.createObjectURL(new Blob([b as Uint8Array<ArrayBuffer>]))); }
+    for (const c of [f, ...also.filter((x) => x !== f)].slice(0, 12)) { const b = await PK.readPackFile(c).catch(() => null); if (!b) continue; const tr = await addTrackFromBytes(c.path.split('/').pop() ?? c.path, b); if (tr) { packTracks.set(tr.id, c); if (c === f) mine = tr; } }
+    return mine;
+  }
+  async function packSubs(): Promise<void> {
+    const PK = await import('./subPacks'); const s = await showMeta(); const p = PK.packOf(s.key); if (!s.key || !p?.on || s.episode === undefined) return;
+    const want = PK.wantFor(p, s.season, s.episode); let scan: import('./subPacks').PackScan;
+    try { scan = await PK.scanPack(p); } catch (e) { toast(t('packUnreadable', { name: String((e as Error).message ?? e) }), 'error'); return; }
+    const r = PK.fileFor(p, scan, want, getSettings().subLangs); packInfo = { key: s.key, want, scan, ...r };
+    if (!r.file) { toast(t('packNoEpisode', { n: localDigits(s.episode) })); return; }
+    const tr = await packFile(r.file, r.cands); if (!tr || playerGone) return;
+    chosenByHand = true; await useTrack(tr);
+  }
+  const packRun: Promise<void> | null = packSubs().catch(() => undefined);
+  /** A pack file chosen in the subtitles sheet (or null: back to automatic), kept for this episode and loaded. */
+  async function packChose(f: import('./subPacks').PackFile | null): Promise<void> {
+    if (!packInfo) return; const PK = await import('./subPacks'); const { pickedByHand } = await import('../views/subPackSheet');
+    const asked = pickedByHand(packInfo.key, packInfo.want, f); const p = PK.packOf(packInfo.key); if (!p) return;
+    const r = PK.fileFor(p, packInfo.scan, PK.wantFor(p, packInfo.want.season, packInfo.want.episode), getSettings().subLangs); packInfo = { ...packInfo, ...r };
+    if (!r.file) return; const tr = await packFile(r.file); if (tr) { chosenByHand = true; await useTrack(tr); if (!asked) toast(t('subsLoaded', { name: tr.name })); } // (the shift's question left on screen)
+  }
+  /** The pack rows of the subtitles sheet: the pack, this episode's file, «Choose another file», «Back to automatic»;
+   *  assigning one when there is none. */
+  async function packRows(close: () => void): Promise<HTMLElement> {
+    const PK = await import('./subPacks'); const s = await showMeta(); const p = PK.packOf(s.key); const box = h('div', { class: 'kt-pack' }, h('h4', null, t('subPackTitle')));
+    const assign = async (kind: 'folder' | 'archive') => { if (!s.key) return; const sr = await PK.pickPackSource(kind).catch(() => null); if (!sr) return; if (/^content:/.test(sr.path)) { toast(t('packPhoneFolder'), 'error', 6000); return; } PK.setPack(s.key, { ...sr, at: Date.now(), on: true, title: s.title }); toast(t('packSet', { name: sr.path.split(/[\\/]/).pop() ?? sr.path })); close(); packInfo = null; chosenByHand = false; await packSubs(); };
+    const pickRow = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small pack-pick-folder', onclick: () => void assign('folder') }, icon('folder'), t('packFolder')), h('button', { type: 'button', class: 'btn tonal small pack-pick-archive', onclick: () => void assign('archive') }, icon('archive'), t('packArchive')),
+      p && s.key ? h('button', { type: 'button', class: 'btn text small pack-remove', onclick: () => { PK.setPack(s.key!, null); packInfo = null; toast(t('subPackRemoved')); close(); } }, icon('trash'), t('packRemove')) : null);
+    if (!p || !s.key) { box.append(h('p', { class: 'hint' }, t('packNone')), pickRow); return box; }
+    const count = h('small', { class: 'src pack-count' }); void PK.scanPack(p).then((sc) => import('./subMatch').then((M) => { count.textContent = t('packEpisodes', { n: localDigits(M.covered(sc.files).length) }); })).catch(() => { count.textContent = t('packUnreadable', { name: p.path }); });
+    box.append(h('div', { class: 'dest-row pack-current' }, icon(p.kind === 'folder' ? 'folder' : 'archive'), h('span', { class: 'grow' }, h('span', { class: 'name', dir: 'ltr' }, p.path.split(/[\\/]/).pop() ?? p.path), count)));
+    if (packInfo) {
+      const pi = packInfo; box.append(h('p', { class: 'src pack-this', dir: 'auto' }, pi.file ? t('packFile', { name: pi.file.path.split('/').pop() ?? pi.file.path }) : t('packNoEpisode', { n: localDigits(pi.want.episode) }), pi.manual ? ` · ${t('packByHand')}` : ''),
+        h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small pack-choose', onclick: () => void import('../views/subPackSheet').then((m) => m.chooseFileSheet(pi.scan, pi.want, pi.manual, pi.file, (f) => { close(); void packChose(f); })) }, icon('list'), t('packChoose')),
+          pi.manual ? h('button', { type: 'button', class: 'btn text small pack-auto', onclick: () => { close(); void packChose(null); } }, icon('undo'), t('packAuto')) : null));
+    }
+    box.append(pickRow); return box;
+  }
+
   async function subsSheet() {
     const subFontRows = (await import('./subFont')).fontRows(() => { applySubStyle(); delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime); if (current?.ass || mpv) void useTrack(current); });
     const sh = openSheet(t('navSubs'), t('close')); const p = getPrefs();
     const list = h('div', { class: 'dest-list' }, h('label', { class: 'dest-row' + (!current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: !current, onchange: () => { chosenByHand = true; void useTrack(null); } }), icon('close'), h('span', { class: 'name' }, t('subsOff'))),
-      ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => { chosenByHand = true; void useTrack(tr); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton(secondary === tr ? 'bookmark' : 'bookmarkAdd', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); drawSubs(video.currentTime); }))));
+      ...tracks.map((tr) => h('label', { class: 'dest-row' + (current === tr ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: current === tr, onchange: () => { chosenByHand = true; void useTrack(tr); const pf = packTracks.get(tr.id); if (pf && packInfo) void import('./subMatch').then((M) => import('./subPacks').then((PK) => PK.updatePack(packInfo!.key, { filter: M.variantOf(pf.path) }))); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, tr.name), h('small', { class: 'src' }, `${tr.fmt.toUpperCase()}${tr.lang ? ` · ${tr.lang}` : ''}`), iconButton(secondary === tr ? 'bookmark' : 'bookmarkAdd', t('subsSecondary'), () => { secondary = secondary === tr ? null : tr; toast(secondary ? t('subsSecondaryOn', { name: tr.name }) : t('subsSecondaryOff')); drawSubs(video.currentTime); }))));
     // (mpv: the subtitles inside the file — every one it carries, text or picture —, chosen here; the preferred
     // languages are picked by themselves when the file opens.)
     if (mpv) { const inFile = mpv.tracks().filter((x) => x.type === 'sub' && !x.external); if (inFile.length) list.append(h('h4', null, t('subsInVideo')), ...inFile.map((x) => h('label', { class: 'dest-row' + (x.selected && !current ? ' on' : '') }, h('input', { type: 'radio', name: 'kt-sub', checked: x.selected && !current, onchange: () => { chosenByHand = true; void useTrack(null).then(() => mpv.setTrack('sub', x.id)); } }), icon('subtitles'), h('span', { class: 'name', dir: 'auto' }, x.title || x.lang || `#${x.id}`), h('small', { class: 'src' }, [(x.codec ?? '').toUpperCase(), x.lang].filter(Boolean).join(' · '))))); }
-    const fileIn = h('input', { type: 'file', ...(ktPlugin() ? {} : { accept: '.srt,.ass,.ssa,.vtt,.sub,.txt,.zip,.gz' }), hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const tr = await addTrackFromBytes(f.name, new Uint8Array(await f.arrayBuffer())); if (tr) { await useTrack(tr); sh.close(); } } }) as HTMLInputElement;
+    const fileIn = h('input', { type: 'file', ...(ktPlugin() ? {} : { accept: '.srt,.ass,.ssa,.vtt,.sub,.txt,.zip,.gz' }), hidden: true, onchange: async () => { const f = fileIn.files?.[0]; if (!f) return; const bytes = new Uint8Array(await f.arrayBuffer()); const tr = await addTrackFromBytes(f.name, bytes); if (tr) { await useTrack(tr); sh.close(); } void offerFrom(f, bytes); } }) as HTMLInputElement;
     const actions = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => fileIn.click() }, icon('upload'), t('subsFromFile')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void voiceSheet(); } }, icon('mic'), t('voiceSubs')),
@@ -567,7 +614,8 @@ export function openPlayer(src: PlayerSource): void {
         h('label', { class: 'row switch-row' }, h('span', null, t('subTrKeep')), h('input', { type: 'checkbox', checked: true, onchange: (e: Event) => { keep = (e.target as HTMLInputElement).checked; } })),
         h('button', { type: 'button', class: 'btn tonal', onclick: () => void translateTrack(src.id.includes('→') ? (tracks.find((x) => src.id.startsWith(x.id + '→')) ?? src) : src, target, keep, status) }, icon('translate'), t('subTrGo')), status);
     })();
-    sh.body.append(list, fileIn, actions, ...(exportRow ? [exportRow] : []), ...(second ? [second] : []), trBox,
+    const packBox = await packRows(() => sh.close());
+    sh.body.append(list, fileIn, actions, packBox, ...(exportRow ? [exportRow] : []), ...(second ? [second] : []), trBox,
       h('h4', null, t('subTiming')),
       h('div', { class: 'row' }, h('span', null, t('subDelay'), h('small', { class: 'src' }, t('subDelayHint'))), h('div', { class: 'progress-ctl' }, iconButton('minus', t('less'), () => nudge(-0.1)), delay, iconButton('plus', t('more'), () => nudge(0.1)))),
       h('div', { class: 'row' }, h('span', null, t('subSync'), h('small', { class: 'src' }, t('subSyncHint'))), h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => syncMark('heard') }, icon('speak'), t('subSyncHeardBtn')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { syncMark('seen'); delay.value = subDelay.toFixed(2); } }, icon('eye'), t('subSyncSeenBtn')))),
@@ -580,6 +628,17 @@ export function openPlayer(src: PlayerSource): void {
       ...subFontRows, sw(t('subBold'), 'subBold'), sw(t('subItalic'), 'subItalic'), sw(t('subForceLtr'), 'subForceLtr', () => { delete subBox.dataset.last; delete subTop.dataset.last; drawSubs(video.currentTime); }),
       h('label', { class: 'row switch-row' }, h('span', null, t('subAssOverride'), h('small', { class: 'src' }, t('subAssOverrideHint'))), h('input', { type: 'checkbox', checked: p.subAssOverride, onchange: (e: Event) => { updatePrefs({ subAssOverride: (e.target as HTMLInputElement).checked }); void useTrack(current); } })),
       h('div', { class: 'row' }, h('span', null, t('subCodepage')), pickButton(t('subCodepage'), [['', t('subCodepageAuto')], ['windows-1256', 'Windows-1256 (Arabic)'], ['utf-8', 'UTF-8'], ['windows-1252', 'Windows-1252'], ['windows-1251', 'Windows-1251'], ['shift_jis', 'Shift_JIS'], ['euc-kr', 'EUC-KR'], ['gbk', 'GBK'], ['big5', 'Big5'], ['windows-1254', 'Windows-1254']], p.subCodepage, (v) => updatePrefs({ subCodepage: v }), t('close'))));
+  }
+  /** A subtitle loaded «From a file» that is one of a show's set — a .zip of several episodes, or (on a computer, where
+   *  the file's place is known) a file beside other numbered ones —: offered as the show's pack, in a toast. */
+  async function offerFrom(f: File, bytes: Uint8Array): Promise<void> {
+    const s = await showMeta(); if (!s.key) return; const { offerPack, saveToShow } = await import('../views/subPackSheet');
+    const where = (f as File & { path?: string }).path || (window.kurokawaTools as unknown as { pathForFile?(f: File): string } | undefined)?.pathForFile?.(f);
+    if (where) { void offerPack(s.key, /\.(zip|7z|rar)$/i.test(f.name) ? { path: where, kind: 'archive' } : { path: where.replace(/[\\/][^\\/]*$/, ''), kind: 'folder' }, s.title); return; }
+    const P = await import('./subPack'); if (!P.isZip(bytes)) return;
+    const files = await P.unpackSubtitle(f.name, bytes).catch(() => []); const M = await import('./subMatch'); const n = M.covered(M.packItems(files.map((x) => x.name))).length; if (n < 2) return;
+    // (No place to point at — a phone's picked file —: its subtitles are kept in the show's own folder, which becomes the pack.)
+    toast(t('packOffer', { n: localDigits(n) }), 'info', 9000, { label: t('packOfferYes'), run: () => void saveToShow(s.key!, s.title || f.name, files).then((dir) => toast(t('savedTo', { path: dir }))).catch((e) => toast(String((e as Error).message ?? e), 'error')) });
   }
   /** Subtitle files already on the phone for this series — beside the video, in Downloads, in any folder searched
    *  by the series' name, and inside subtitle packs (.zip) — ranked by the episode, loaded in one tap. */
@@ -612,6 +671,7 @@ export function openPlayer(src: PlayerSource): void {
             if (x.inside) { const { extractArchiveJob } = await import('../archives'); const job = extractArchiveJob({ path: x.path, dest: 'cache:', only: [x.inside], replace: 'replace' }); const r = await job.done; bytes = await readLocal(`${r.dest.replace(/[\\/]$/, '')}/${x.inside}`); }
             else bytes = await readLocal(x.path);
             if (!bytes) throw new Error(t('subsCantRead')); const tr = await addTrackFromBytes(x.name, bytes); if (tr) { chosenByHand = true; await useTrack(tr); sh.close(); toast(t('subsLoaded', { name: x.name })); }
+            const s = await showMeta(); const { offerPack } = await import('../views/subPackSheet'); void offerPack(s.key, x.inside ? { path: x.path, kind: 'archive' } : { path: x.path.replace(/\/[^/]*$/, ''), kind: 'folder' }, s.title);
           } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
         } }, icon(x.inside ? 'archive' : 'subtitles'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, x.name), h('small', { class: 'src', dir: 'ltr' }, (x.inside ? `${x.path.split('/').pop()} › ` : '') + x.path.replace(/\/[^/]*$/, ''))), epOf(x.name) !== undefined ? h('span', { class: 'chip small' + (epOf(x.name) === ep ? ' on' : '') }, t('episodeN', { n: epOf(x.name)! })) : null)));
       } catch (e) { status.textContent = String((e as Error).message ?? e); }
@@ -687,42 +747,17 @@ export function openPlayer(src: PlayerSource): void {
     };
   }
   async function findSubs() {
-    const { getSettings } = await import('../settings');
-    const sh = openSheet(t('subsFind'), t('close'));
-    if (!getSettings().addons.includes('subtitles')) {
-      sh.body.append(h('p', { class: 'hint' }, t('subsNoSources')), h('button', { type: 'button', class: 'btn filled', onclick: () => { sh.close(); close(); location.hash = '#/settings/addons'; } }, icon('plus'), t('subsGetAddon')));
-      return;
-    }
-    const { lookup, enrich } = await import('../subs/lookup'); const { searchSubtitles, queryFor, rankSubs, resolveLink } = await import('../subs/search'); const { parseFilename } = await import('../anime/anitomy');
-    const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); const ep0 = m?.episode ?? parsed.episode;
-    const q = h('input', { type: 'search', dir: 'auto', value: m?.title ?? parsed.title ?? '', placeholder: t('subsSearchHint'), enterkeyhint: 'search' }) as HTMLInputElement;
-    const epIn = h('input', { type: 'number', min: '0', inputmode: 'numeric', value: ep0 != null ? String(ep0) : '', placeholder: t('subsEpisode'), style: { width: '5.5em' }, 'aria-label': t('subsEpisode') }) as HTMLInputElement;
-    const out = h('div', { class: 'sub-results' });
-    const form = h('form', { class: 'row sub-search', onsubmit: (e: Event) => { e.preventDefault(); void run(); } }, q, epIn, h('button', { type: 'submit', class: 'btn tonal small' }, icon('search'), t('search')));
-    sh.body.append(form, out);
-    let token = 0;
-    const run = async () => {
-      const my = ++token; const words = q.value.trim(); const ep = epIn.value.trim() === '' ? undefined : Number(epIn.value);
-      if (!words) { out.replaceChildren(h('p', { class: 'empty small' }, t('subsSearchHint'))); return; }
-      out.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
-      try {
-        const sameShow = words === (m?.title ?? parsed.title ?? '') && m?.anilistId;
-        const cards = sameShow ? await lookup(`anilist:${m!.anilistId}`) : await lookup(words); if (my !== token) return;
-        if (!cards.length) { out.replaceChildren(h('p', { class: 'empty small' }, t('noResults'))); return; }
-        const c = await enrich(cards[0]); const query = queryFor(c, parsed.season, ep, getSettings().subLangs); const list = h('div', { class: 'sub-list' }); if (my !== token) return;
-        out.replaceChildren(h('p', { class: 'src', dir: 'auto' }, `${c.title}${ep != null ? ` · ${t('episodeN', { n: ep })}` : ''}`), list);
-        let all: Awaited<ReturnType<typeof searchSubtitles>> = [];
-        await searchSubtitles(query, (_a, res) => { if (my !== token) return; if (!(res instanceof Error)) all = all.concat(res); list.replaceChildren(...rankSubs(all, getSettings().subLangs, ep).slice(0, 60).map((r) => h('button', { type: 'button', class: 'result-row sub-row', onclick: async () => { try { const { url, name } = await resolveLink(r, query); sh.close(); await loadSubtitleUrl(url, name ?? `${r.title}.${r.archive ?? 'srt'}`, r.language); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, h('span', { class: 'lang-badge' }, (r.language ?? '?').toUpperCase()), h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title), h('small', { class: 'src' }, [r.site, r.hi ? t('subsHI') : '', r.archive ?? ''].filter(Boolean).join(' · ')))))); });
-        if (my === token && !all.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
-      } catch (e) { if (my === token) out.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
-    };
-    void run();
+    const { findSubsSheet } = await import('../subs/findSheet'); const { resolveLink } = await import('../subs/search'); const { parseFilename } = await import('../anime/anitomy');
+    const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name);
+    findSubsSheet({ title: m?.title ?? parsed.title ?? '', anilistId: m?.anilistId, season: parsed.season, episode: m?.episode ?? parsed.episode, onGetAddon: () => close(),
+      onPick: async (r, query, done) => { const { url, name } = await resolveLink(r, query); done(); await loadSubtitleUrl(url, name ?? `${r.title}.${r.archive ?? 'srt'}`, r.language); } });
   }
 
   /** Subtitles fetched by themselves (the Subtitles add-on, the preferred languages) when the video has none of
    *  its own in them after a few seconds: the best-ranked one loaded, quietly. */
   async function autoSubs() {
-    const { getSettings } = await import('../settings'); if (!getPrefs().autoSubs || !getSettings().addons.includes('subtitles') || playerGone) return;
+    await packRun?.catch(() => undefined); // (the show's subtitle pack first: what it loaded is not replaced)
+    const { getSettings } = await import('../settings'); if (!getPrefs().autoSubs || !getSettings().addons.includes('subtitles') || playerGone || packInfo?.file) return;
     const langs = getSettings().subLangs ?? []; const inFile = mpv ? mpv.tracks().filter((x) => x.type === 'sub') : [];
     if (current || inFile.some((x) => !langs.length || langs.some((l) => (x.lang ?? '').startsWith(l) || (ISO3[l] ?? '').split(',').includes(x.lang ?? '')))) return;
     try {

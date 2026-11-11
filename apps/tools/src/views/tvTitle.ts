@@ -39,6 +39,8 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
           h('div', { class: 'row-actions wrap' },
             h('button', { type: 'button', class: 'btn small ' + (inWl ? 'tonal on' : 'tonal'), onclick: () => { const on = lib.toggleWatchlist(mm); toast(on ? t('tvAddedWl') : t('tvRemovedWl')); draw(); } }, icon('bookmark'), inWl ? t('tvInWatchlist') : t('tvAddWatchlist')),
             mm.type === 'series' ? h('button', { type: 'button', class: 'btn small ' + (fol?.enabled ? 'tonal on' : 'text'), onclick: () => followSheet(mm, draw) }, icon('bell'), fol?.enabled ? t('autoOn') : t('tvFollow')) : null,
+            // (A series' subtitles: its pack, each episode's file loaded when it plays, and the search.)
+            mm.type === 'series' ? h('button', { type: 'button', class: 'btn small tonal subs-btn', onclick: () => void import('./subPackSheet').then((x) => x.packSheet({ key: `imdb:${mm.id}`, title: mm.name, imdbId: mm.id, series: true, season: sel > 0 ? sel : 1, lengths: Object.fromEntries(cm.seasonsOf(mm).map((s) => [String(s), (mm.videos ?? []).filter((v) => v.season === s).length])) })) }, icon('subtitles'), t('navSubs')) : null,
             mm.trailer ? h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.youtube.com/watch?v=${mm.trailer}`) }, icon('play'), t('tvTrailer')) : null,
             // (Its IMDb page, and its link copied — to send it to someone.)
             h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.imdb.com/title/${mm.id}/`) }, icon('external'), 'IMDb'),
