@@ -7,6 +7,9 @@ import { AI_PRESETS, type ScreenConfig } from './config';
 
 const cache = new Map<string, string>();
 const hasLetters = (s: string): boolean => /\p{L}/u.test(s);
+/** The text as the cache knows it (as the phone's KtTranslate.norm): composed alike, runs of spaces one space, none at
+ *  the ends of lines — an OCR reading with a space more is not asked again; line breaks kept. */
+export const normText = (s: string): string => s.normalize('NFC').replace(/[ \t\u00A0\u3000]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
 // (The glossary in the cache's key: a term added or changed is not answered by what was translated before it.)
 const hashOf = (s: string) => { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) | 0; return x.toString(36); };
 const idOf = (c: ScreenConfig): string => `${c.engine}|${c.source}|${c.target}|${c.engine === 'ai' ? `${c.ai.preset}${c.ai.base}${c.ai.model}${c.ai.prompt.length}` : ''}|${c.glossary?.on ? hashOf(JSON.stringify(c.glossary.entries)) : ''}`;
@@ -16,15 +19,15 @@ import { glossaryFor, protect, restore, glossaryPrompt } from './lettering';
 
 export async function translateTexts(texts: string[], c: ScreenConfig): Promise<string[]> {
   const out = texts.slice(); const ask: string[] = []; const id = idOf(c);
-  for (const tx of texts) if (hasLetters(tx) && !cache.has(`${id}\u0000${tx}`) && !ask.includes(tx)) ask.push(tx);
+  for (const tx of texts) if (hasLetters(tx) && !cache.has(`${id}\u0000${normText(tx)}`) && !ask.some((a) => normText(a) === normText(tx))) ask.push(tx);
   if (ask.length) {
     // (The reader's glossary: told to an AI model; out of reach of the other translators, put back after.)
     const g = glossaryFor(c); const p = c.engine === 'ai' ? { texts: ask, used: new Map<number, string>() } : protect(ask, g);
     const got = restore(c.engine === 'deepl' ? await deepl(p.texts, c) : c.engine === 'ai' ? await ai(p.texts, c) : c.engine === 'microsoft' ? await keyless(p.texts, c, 'microsoft') : await keyless(p.texts, c, 'google'), p.used);
-    ask.forEach((tx, i) => cache.set(`${id}\u0000${tx}`, got[i] ?? tx));
+    ask.forEach((tx, i) => cache.set(`${id}\u0000${normText(tx)}`, got[i] ?? tx));
     if (cache.size > 6000) for (const k of [...cache.keys()].slice(0, 2000)) cache.delete(k);
   }
-  texts.forEach((tx, i) => { if (hasLetters(tx)) out[i] = cache.get(`${id}\u0000${tx}`) ?? tx; });
+  texts.forEach((tx, i) => { if (hasLetters(tx)) out[i] = cache.get(`${id}\u0000${normText(tx)}`) ?? tx; });
   return out;
 }
 

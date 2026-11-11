@@ -228,7 +228,8 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     if (!PC) autoCard.replaceChildren(h('h3', null, t('scrAuto')), h('p', { class: 'hint' }, t('scrAutoHint')),
       segs(cfg.auto, [['scroll', t('scrAutoScroll')], ['interval', t('scrAutoInterval')]], (v) => set((c) => { c.auto = v; }, true), 'auto'),
       cfg.auto === 'interval' ? row(t('scrInterval'), num(cfg.interval, 1, 15, 1, (v) => set((c) => { c.interval = v; }), 'interval', t('scrSec'))) : row(t('scrSettle'), num(cfg.settle, 0.3, 3, 0.1, (v) => set((c) => { c.settle = Math.round(v * 10) / 10; }), 'settle', t('scrSec')), t('scrSettleHint')),
-      row(t('scrAutoStop'), num(cfg.autoStop, 0, 120, 5, (v) => set((c) => { c.autoStop = v; }), 'autoStop', t('scrMin')), t('scrAutoStopHint')));
+      row(t('scrAutoStop'), num(cfg.autoStop, 0, 120, 5, (v) => set((c) => { c.autoStop = v; }), 'autoStop', t('scrMin')), t('scrAutoStopHint')),
+      toggle(t('scrLookAhead'), cfg.lookAhead, (v) => set((c) => { c.lookAhead = v; }), t('scrLookAheadHint')));
 
     // How the translations look
     const sty = cfg.style;

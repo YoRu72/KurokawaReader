@@ -49,6 +49,17 @@ public class TrT {
     check("Google: a line with a newline of its own asked alone " + r, hits.get() == before + 2 && r.get(1).equals("«PLAIN»/ar"));
     before = hits.get(); KtTranslate.translate(Arrays.asList("hello world", "good night"), g);
     check("cache: a screen read again asks nothing", hits.get() == before);
+    // (The cache keyed by the text with its spacing evened out: an OCR reading with a space more, a non-breaking space,
+    // spaces at the ends is not asked again; another language pair or engine is; least recently used evicted past the cap.)
+    before = hits.get(); r = KtTranslate.translate(Arrays.asList("hello  world", " good night ", "hello world\t"), g);
+    check("cache: the same words spaced otherwise ask nothing " + r, hits.get() == before && r.get(0).equals("«HELLO WORLD»/ar") && r.get(1).equals("«GOOD NIGHT»/ar"));
+    check("cache: looked up without asking", "«GOOD NIGHT»/ar".equals(KtTranslate.peek("good   night", g)) && KtTranslate.peek("never seen", g) == null);
+    KtTranslate.Config gFr = KtTranslate.Config.from(KtJson.map("engine", "google", "target", "fr", "googleBase", base));
+    check("cache: another target language is another key", KtTranslate.peek("hello world", gFr) == null);
+    int oldCap = KtTranslate.cap; KtTranslate.cap = 3; KtTranslate.forget();
+    KtTranslate.translate(Arrays.asList("one a", "two b", "three c"), g); KtTranslate.peek("one a", g); KtTranslate.translate(Arrays.asList("four d"), g);
+    check("cache: past its cap the least recently used goes (" + KtTranslate.cached() + " kept)", KtTranslate.cached() == 3 && KtTranslate.peek("one a", g) != null && KtTranslate.peek("two b", g) == null);
+    KtTranslate.cap = oldCap;
     check("Google: a busy server waited for", KtTranslate.translate(Arrays.asList("busy"), g).get(0).equals("«BUSY»/ar"));
     check("Google codes", KtTranslate.googleCode("zh").equals("zh-CN") && KtTranslate.googleCode("he").equals("iw") && KtTranslate.googleCode("").equals("auto"));
 

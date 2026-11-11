@@ -169,7 +169,7 @@ public class KtPlugin extends Plugin {
         JSObject cfg = call.getObject("config", new JSObject());
         getContext().getSharedPreferences(KtScreenService.PREFS, android.content.Context.MODE_PRIVATE).edit().putString("config", cfg.toString()).apply();
         if (Boolean.TRUE.equals(call.getBoolean("clearFixed", false))) getContext().getSharedPreferences(KtScreenService.PREFS, android.content.Context.MODE_PRIVATE).edit().remove("fl").remove("ft").remove("fr").remove("fb").apply();
-        KtTranslate.forget();
+        // (The cache is not emptied: it is keyed by the translator, the languages and the glossary — a size or a colour changed asks nothing again.)
         if (KtScreenService.self != null) try { getContext().startService(new android.content.Intent(getContext(), KtScreenService.class).setAction(KtScreenService.ACT_CONFIG)); } catch (Throwable ignored) {}
         call.resolve();
     }

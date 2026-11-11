@@ -128,6 +128,7 @@ function startAuto() {
   if (tray) tray.setContextMenu(trayMenu());
   const mins = Number(cfg.autoStop); if (mins > 0) setTimeout(() => stopAuto(), mins * 60000);
 }
+const loose = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 function stopAuto() { if (autoTimer) clearInterval(autoTimer); autoTimer = null; if (caption && !caption.isDestroyed()) caption.close(); caption = null; if (tray) tray.setContextMenu(trayMenu()); }
 async function autoTick() {
   if (autoBusy || !caption || !lastRegion) return; autoBusy = true;
@@ -135,7 +136,9 @@ async function autoTick() {
     const shot = await capture(); if (!shot) return; const s = shot.scale; const r = lastRegion;
     const crop = shot.nimg.crop({ x: Math.round(r.x * s), y: Math.round(r.y * s), width: Math.round(r.width * s), height: Math.round(r.height * s) });
     const blocks = await ocr(crop.toPNG(), cfg.source || 'auto'); const text = blocks.map((b) => b.text).join('\n').trim();
-    if (text && text !== lastAutoText && caption && !caption.isDestroyed()) { lastAutoText = text; caption.webContents.send('kt:screenCaption', { text }); }
+    // (Compared loosely — case, spaces and punctuation aside —: the OCR reading a letter or a full stop otherwise from
+    // one look to the next is not new text, so the caption is neither redrawn nor translated again.)
+    if (text && loose(text) !== loose(lastAutoText) && caption && !caption.isDestroyed()) { lastAutoText = text; caption.webContents.send('kt:screenCaption', { text }); }
   } catch (e) { console.error('[screen auto]', e); } finally { autoBusy = false; }
 }
 

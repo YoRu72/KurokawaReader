@@ -942,4 +942,6 @@ export const zh: Partial<Strings> = {
   packPhoneFolder: "Android 未提供此文件夹的路径；请选择手机存储中的文件夹或压缩包。",
   subsWholeSeason: "整季",
   subsWholeSeasonHint: "集数留空即搜索整季。所选字幕会保存到本作的字幕文件夹并加入其字幕包。",
+  scrLookAhead: "预先翻译",
+  scrLookAheadHint: "在你滚动到之前就翻译屏幕下方的文字，出现时译文立即可见。会消耗流量和翻译额度（DeepL、AI 等付费密钥仅少量）。只有以文字方式读取（无障碍）时才能看到屏幕下方；以图片读取时只读已出现的部分。",
 };

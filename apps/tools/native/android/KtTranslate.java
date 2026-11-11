@@ -52,10 +52,18 @@ final class KtTranslate {
         }
     }
 
-    private static final int CACHE = 3000;
-    private static final Map<String, String> cache = new LinkedHashMap<String, String>(256, 0.75f, true) { @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > CACHE; } };
+    /** Translations kept (the least recently used go first past `cap`), keyed by what translates (engine, languages,
+     *  model, glossary) and the text with its spacing evened out — an OCR reading with a space more is not asked again. */
+    static volatile int cap = 3000;
+    private static final Map<String, String> cache = new LinkedHashMap<String, String>(256, 0.75f, true) { @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > cap; } };
     private static final ExecutorService pool = Executors.newFixedThreadPool(8, (r) -> { Thread t = new Thread(r, "kt-translate"); t.setDaemon(true); return t; });
     static void forget() { synchronized (cache) { cache.clear(); } }
+    /** The text as the cache knows it: Unicode composed alike, runs of spaces one space, no spaces at the ends of lines
+     *  (line breaks kept: a subtitle's two lines stay two). */
+    static String norm(String t) { if (t == null) return ""; String s = java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFC); return s.replaceAll("[ \\t\\u00A0\\u3000]+", " ").replaceAll(" ?\\n ?", "\n").trim(); }
+    /** The translation already known for `text`, or null (nothing asked). */
+    static String peek(String text, Config c) { if (text == null || !hasLetters(text)) return text; synchronized (cache) { return cache.get(c.id() + "\u0000" + norm(text)); } }
+    static int cached() { synchronized (cache) { return cache.size(); } }
 
     /** The translations of `texts`, in order (empty lines and lines with no letters come back as they are). */
     static List<String> translate(List<String> texts, Config c) throws Exception {
@@ -64,9 +72,9 @@ final class KtTranslate {
         for (int k = 0; k < texts.size(); k++) {
             String t = texts.get(k) == null ? "" : texts.get(k);
             if (!hasLetters(t)) { out[k] = t; continue; }
-            String hit; synchronized (cache) { hit = cache.get(c.id() + "\u0000" + t); }
+            String key = norm(t), hit; synchronized (cache) { hit = cache.get(c.id() + "\u0000" + key); }
             if (hit != null) { out[k] = hit; continue; }
-            todo.add(k); if (!firstOf.containsKey(t)) { firstOf.put(t, ask.size()); ask.add(t); }
+            todo.add(k); if (!firstOf.containsKey(key)) { firstOf.put(key, ask.size()); ask.add(t); }
         }
         if (!ask.isEmpty()) {
             List<String> got;
@@ -74,8 +82,8 @@ final class KtTranslate {
             Map<Integer, String> used = new java.util.HashMap<>(); List<String> sent = c.engine.equals("ai") ? ask : KtLettering.protect(ask, c.glossary, used);
             switch (c.engine) { case "deepl": got = deepl(sent, c); break; case "ai": got = ai(sent, c); break; case "microsoft": got = keyless(sent, c, "microsoft"); break; default: got = keyless(sent, c, "google"); }
             got = KtLettering.restore(got, used);
-            synchronized (cache) { for (int k = 0; k < ask.size(); k++) cache.put(c.id() + "\u0000" + ask.get(k), got.get(k)); }
-            for (int k : todo) out[k] = got.get(firstOf.get(texts.get(k)));
+            synchronized (cache) { for (int k = 0; k < ask.size(); k++) cache.put(c.id() + "\u0000" + norm(ask.get(k)), got.get(k)); }
+            for (int k : todo) out[k] = got.get(firstOf.get(norm(texts.get(k))));
         }
         List<String> l = new ArrayList<>(); for (String s : out) l.add(s); return l;
     }
