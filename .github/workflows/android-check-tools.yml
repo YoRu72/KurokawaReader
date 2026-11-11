@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - name: Native tests (downloader, app installer)
-        run: sh tests/native/downloader.sh && sh tests/native/apk.sh
+        run: sh tests/native/downloader.sh && sh tests/native/dlrules.sh && sh tests/native/apk.sh
       - run: npm install
       - run: npm run build
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true

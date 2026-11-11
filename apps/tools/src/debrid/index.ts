@@ -2,6 +2,7 @@
 // fetches it in the cloud and gives back direct links the app downloads at full speed — Real-Debrid,
 // AllDebrid, Premiumize and TorBox behind one interface (Seanime's). Keys live in the add-on's settings.
 import { request } from '../http';
+import { safeDecode } from '../downloads/probe';
 import { addonSettings, loadIndex } from '../addons';
 import { getSettings } from '../settings';
 
@@ -76,7 +77,7 @@ function premiumize(key: string): Debrid {
     async torrent(id) { const d = await ok<{ transfers: Parameters<typeof map>[0][] }>(await request(`${B}/transfer/list?${Q}`)); const t = d.transfers.find((x) => x.id === id); if (!t) throw new Error('Premiumize: transfer gone'); return map(t, true); },
     async torrents() { const d = await ok<{ transfers: Parameters<typeof map>[0][] }>(await request(`${B}/transfer/list?${Q}`)); return Promise.all(d.transfers.map((t) => map(t, false))); },
     async remove(id) { await request(`${B}/transfer/delete?${Q}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ id }) }); },
-    async unrestrict(link) { if (/^https?:\/\/[^/]*premiumize/.test(link)) return { url: link, name: decodeURIComponent(link.split('/').pop() ?? 'file') }; const d = await ok<{ content: { path: string; link: string; size: number }[] }>(await request(`${B}/transfer/directdl?${Q}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ src: link }) })); const c = d.content[0]; if (!c) throw new Error('Premiumize: nothing'); return { url: c.link, name: c.path.split('/').pop() ?? 'file', size: c.size }; },
+    async unrestrict(link) { if (/^https?:\/\/[^/]*premiumize/.test(link)) return { url: link, name: safeDecode(link.split('/').pop() ?? 'file') }; const d = await ok<{ content: { path: string; link: string; size: number }[] }>(await request(`${B}/transfer/directdl?${Q}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ src: link }) })); const c = d.content[0]; if (!c) throw new Error('Premiumize: nothing'); return { url: c.link, name: c.path.split('/').pop() ?? 'file', size: c.size }; },
     async cached(hashes) { const d = await ok<{ response: boolean[] }>(await request(`${B}/cache/check?${Q}&${hashes.map((h) => `items[]=${h}`).join('&')}`)); return new Set(hashes.filter((_, i) => d.response[i])); },
   };
 }

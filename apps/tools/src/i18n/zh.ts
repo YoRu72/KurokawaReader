@@ -1004,4 +1004,6 @@ export const zh: Partial<Strings> = {
   vcAuto: "自动",
   phaseConvert: "正在转换为 {f}",
   phaseEmbed: "正在嵌入封面和标签",
+  downloadNow: "立即下载",
+  batchSomeFailed: "有 {n} 个链接未能添加，已留在输入框中（{error}）",
 };

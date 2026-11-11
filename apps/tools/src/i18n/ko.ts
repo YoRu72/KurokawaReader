@@ -1004,4 +1004,6 @@ export const ko: Partial<Strings> = {
   vcAuto: "자동",
   phaseConvert: "{f}(으)로 변환 중",
   phaseEmbed: "커버와 태그 삽입 중",
+  downloadNow: "지금 다운로드",
+  batchSomeFailed: "링크 {n}개를 추가하지 못해 입력란에 남겨 두었습니다({error})",
 };

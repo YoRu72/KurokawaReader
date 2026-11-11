@@ -1004,4 +1004,6 @@ export const ja: Partial<Strings> = {
   vcAuto: "自動",
   phaseConvert: "{f} に変換中",
   phaseEmbed: "カバーとタグを埋め込み中",
+  downloadNow: "今すぐダウンロード",
+  batchSomeFailed: "{n} 件のリンクを追加できませんでした。入力欄に残しています（{error}）",
 };

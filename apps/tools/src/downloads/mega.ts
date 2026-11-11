@@ -106,11 +106,18 @@ export async function addMegaFiles(eng: Engine, info: MegaInfo, files: MegaFile[
   return out;
 }
 /** A MEGA download whose storage address ran out (it lasts some hours): a new one asked of MEGA and the download
- *  taken up again — once per download while the app runs. */
-const renewed = new Set<string>();
+ *  taken up again — again each time it runs out, and again after a renewal that failed (no network then): the
+ *  waits doubling from 2 minutes to an hour while it gets nowhere, back to 2 minutes once it has come further.
+ *  (Once per download while the app ran: a second expiry, or a try made offline, left it failed for good.) */
+const renewed = new Map<string, { at: number; n: number; done: number }>();
+export const renewDue = (seen: Map<string, { at: number; n: number; done: number }>, x: Task, now = Date.now()): boolean => {
+  const r = seen.get(x.id); const n = r && x.done <= r.done ? r.n : 0;
+  if (r && now - r.at < Math.min(3600_000, 120_000 * 2 ** n)) return false;
+  seen.set(x.id, { at: now, n: r ? n + 1 : 0, done: x.done }); return true;
+};
 export async function renewFailed(eng: Engine, tasks: Task[]): Promise<void> {
   for (const x of tasks) {
-    if (x.state !== 'failed' || !x.meta?.megaHandle || renewed.has(x.id) || !eng.setUrl) continue; renewed.add(x.id);
+    if (x.state !== 'failed' || !x.meta?.megaHandle || !eng.setUrl || !renewDue(renewed, x)) continue;
     try { const url = await megaUrl({ id: x.meta.megaHandle, handle: x.meta.megaHandle, folder: x.meta.megaFolder, name: x.name, path: x.name, size: x.total, key: new Uint8Array() }); await eng.setUrl(x.id, url); await eng.resume(x.id); } catch { /* left failed: its error stays */ }
   }
 }

@@ -39,20 +39,29 @@ export const describe = (r: Rule): string => [r.when.kind && r.when.kind !== 'an
 export async function tickClocks(tasks?: Task[]): Promise<void> {
   const eng = getEngine(); const list = tasks ?? await eng.list().catch(() => [] as Task[]); const now = Date.now();
   for (const x of list) {
-    const m = x.meta as { startAt?: number; stopAt?: number } | undefined; if (!m || x.state === 'done') continue;
-    if (m.stopAt && now >= m.stopAt && (x.state === 'downloading' || x.state === 'queued')) { try { await eng.pause(x.id); } catch { /* next time */ } await setClock(x.id, { stopAt: undefined }); continue; }
-    if (m.startAt && now >= m.startAt && x.state === 'paused') { try { await eng.resume(x.id); } catch { /* next time */ } await setClock(x.id, { startAt: undefined }); }
+    const m = metaOf(x) as { startAt?: number; stopAt?: number }; if (x.state === 'done') continue;
+    // (A stop time come: paused if it runs, and taken off either way — left on a paused one, it paused it again the
+    // minute it was resumed, days later.)
+    if (m.stopAt && now >= m.stopAt) { if (x.state === 'downloading' || x.state === 'queued' || x.state === 'metadata') { try { await eng.pause(x.id); } catch { /* next time */ } } await setClock(x.id, { stopAt: undefined }); continue; }
+    // (A start time come: resumed — a hold, if one applies, keeps it waiting — and left alone by the «later» window.)
+    if (m.startAt && now >= m.startAt && x.state === 'paused') { try { await eng.resume(x.id); } catch { /* next time */ } await setTaskMeta(x.id, { startAt: undefined, schedPaused: undefined, ...((m as { later?: boolean }).later ? { schedSkip: true } : {}) }); }
   }
 }
 type ClockPlug = { setTaskMeta?(o: { id: string; patch: Record<string, unknown> }): Promise<void> };
-/** The clock written on the task (the phone's engine keeps meta; elsewhere it lives here, in the page's memory). */
-const local = new Map<string, { startAt?: number; stopAt?: number }>();
-export async function setClock(id: string, patch: { startAt?: number; stopAt?: number }): Promise<void> {
+/** Keys written on the task (the phone's engine keeps meta; elsewhere they live here, in the page's memory): its clock,
+ *  the scheduler's marks. Only the keys given are touched — undefined takes one off. (Both clock keys were always
+ *  sent, so setting a start time erased the stop time and the other way round.) */
+const local = new Map<string, Record<string, unknown>>();
+export async function setTaskMeta(id: string, patch: Record<string, unknown>): Promise<void> {
   const { ktPlugin } = await import('../native'); const p = ktPlugin() as unknown as ClockPlug | null;
-  if (p?.setTaskMeta) { try { await p.setTaskMeta({ id, patch: { startAt: patch.startAt ?? null, stopAt: patch.stopAt ?? null } }); return; } catch { /* below */ } }
-  local.set(id, { ...local.get(id), ...patch });
+  const wire: Record<string, unknown> = {}; for (const k of Object.keys(patch)) wire[k] = patch[k] ?? null;
+  if (p?.setTaskMeta) { try { await p.setTaskMeta({ id, patch: wire }); return; } catch { /* below */ } }
+  const cur = { ...local.get(id) }; for (const k of Object.keys(patch)) cur[k] = patch[k] ?? null; local.set(id, cur);   // (null: taken off, over what the task's own meta says)
 }
-export const clockOf = (x: Task): { startAt?: number; stopAt?: number } => ({ ...local.get(x.id), ...(x.meta as { startAt?: number; stopAt?: number } | undefined) });
+export const setClock = (id: string, patch: { startAt?: number; stopAt?: number }): Promise<void> => setTaskMeta(id, patch);
+/** The task's meta with what is kept here for it (an engine without meta of its own). */
+export const metaOf = (x: Task): Record<string, unknown> => { const m: Record<string, unknown> = { ...(x.meta as Record<string, unknown> | undefined), ...local.get(x.id) }; for (const k of Object.keys(m)) if (m[k] === null) delete m[k]; return m; };
+export const clockOf = (x: Task): { startAt?: number; stopAt?: number } => metaOf(x) as { startAt?: number; stopAt?: number };
 /** The presets: in an hour, tonight at 23:00, tomorrow at 8:00. */
 export function presets(): [string, number][] {
   const now = new Date(); const inHour = now.getTime() + 3600_000;

@@ -66,7 +66,7 @@ export interface Task {
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
     hf?: string; sha256?: string;
     /** Waits for Wi-Fi (Android); not retried when it fails; a hidden file (a dot name); waits for the schedule's window. */
-    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean; cookieJar?: string;
+    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean; /** Paused by the «later» scheduler (or added paused to wait for its window): what it resumes when the window opens. */ schedPaused?: boolean; /** Started by hand (or by its own clock) while the window was shut: not paused by the scheduler until the window has opened again. */ schedSkip?: boolean; cookieJar?: string;
     /** A stream fetched piece by piece (HLS): the pieces here of all, and the phase (variant, pieces, join, remux). */
     hls?: boolean; frag?: number; frags?: number; phase?: string;
     /** A video download's live facts from yt-dlp: resolution, codecs, container, approximate size, length in seconds. */
@@ -127,7 +127,8 @@ export interface Engine {
   list(): Promise<Task[]>;
   add(o: AddOptions): Promise<Task>;
   pause(id: string): Promise<void>;
-  resume(id: string): Promise<void>;
+  /** `anyway`: «Download now» on one held by the app (Wi‑Fi only on mobile data, a low battery) — the phone's engine only. */
+  resume(id: string, anyway?: boolean): Promise<void>;
   /** The task gone; `deleteFiles` takes its files off the disk too. */
   remove(id: string, deleteFiles: boolean): Promise<void>;
   setFiles?(id: string, priorities: (0 | 1 | 2)[]): Promise<void>;

@@ -77,9 +77,12 @@ export function dispositionName(cd: string | undefined): string | null {
   return null;
 }
 
+/** `%XX` sequences decoded, a bare «%» (or a broken sequence) left as it is: decodeURIComponent throws on «100%.mkv»
+ *  and the download — a whole batch — stopped there. */
+export const safeDecode = (s: string): string => { try { return decodeURIComponent(s); } catch { return s.replace(/(%[0-9a-f]{2})+/gi, (m) => { try { return decodeURIComponent(m); } catch { return m; } }); } };
 /** The name a link gives by itself (its last part, decoded), or the host. */
 export function nameFromUrl(url: string): string {
-  try { const u = new URL(url); const last = u.pathname.split('/').filter(Boolean).pop() ?? ''; const d = decodeURIComponent(last); return d && d !== '/' ? d : u.hostname; } catch { return url.split('?')[0].split('/').pop() ?? url; }
+  try { const u = new URL(url); const last = u.pathname.split('/').filter(Boolean).pop() ?? ''; const d = safeDecode(last); return d && d !== '/' ? d : u.hostname; } catch { return url.split('?')[0].split('/').pop() ?? url; }
 }
 
 /** The stem and the extension of a name («Movie.S01E01.mkv» → mkv; «v1.2» → none, since 2 is not one). */
