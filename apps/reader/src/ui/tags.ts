@@ -16,7 +16,7 @@ export function tagsSheetFor(book: Book, onChange: () => void): void {
     for (const b of await db.allBooks()) for (const n of b.tags ?? []) counts.set(n, (counts.get(n) ?? 0) + 1);
   };
   const set = async (name: string, on: boolean) => {
-    if (on && name !== FAV_TAG && !defs.some((d) => d.name === name)) { defs = [...defs, { name, createdAt: Date.now() }]; await db.setMeta('tags', defs); }
+    if (on && name !== FAV_TAG && !defs.some((d) => d.name === name)) { const def = { name, createdAt: Date.now() }; defs = (await db.updateMeta<TagDef[]>('tags', (cur) => (cur ?? []).some((d) => d.name === name) ? cur : [...(cur ?? []), def])) ?? [...defs, def]; }
     const next = new Set(book.tags ?? []); if (on) next.add(name); else next.delete(name);
     const tags = [...next]; const at = Date.now();
     await db.updateBook(book.id, (b) => { if (tags.length) b.tags = tags; else delete b.tags; b.tagsAt = at; });

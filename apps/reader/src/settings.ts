@@ -406,6 +406,11 @@ export function setBookScoped(on: boolean): void {
   if (on) overrides()[activeBook] = overrides()[activeBook] ?? {}; else delete overrides()[activeBook];
   saveOverrides(); current = merged(); listeners.forEach((fn) => fn(current));
 }
+/** The library's own settings (not a book's on top of them): what a backup keeps. */
+export const globalSettings = (): VisualSettings => globals;
+/** Every book's own settings (a copy), and one book's set (a backup's, restored). */
+export const allBookSettings = (): Record<string, Partial<VisualSettings>> => JSON.parse(JSON.stringify(overrides())) as Record<string, Partial<VisualSettings>>;
+export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = v; saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
 /** Drop the settings kept for books no longer in the library. */
 export function forgetBookSettings(ids: string[]): void { for (const id of ids) delete overrides()[id]; saveOverrides(); }
 

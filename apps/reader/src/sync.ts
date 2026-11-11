@@ -22,9 +22,9 @@ const deviceId = (): string => { let d = localStorage.getItem('kr.device'); if (
 
 /* ---------- tombstones (ids removed locally, so they are not resurrected by the merge) ---------- */
 export async function markDeleted(id: string): Promise<void> {
-  const tomb = (await db.getMeta<Record<string, number>>('sync.deleted')) ?? {};
-  tomb[id] = Date.now();
-  await db.setMeta('sync.deleted', tomb);
+  // (In one transaction: several marked at once — ink strokes erased together — all kept.)
+  const at = Date.now();
+  await db.updateMeta<Record<string, number>>('sync.deleted', (cur) => ({ ...(cur ?? {}), [id]: at }));
   scheduleSync();
 }
 

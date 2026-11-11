@@ -63,6 +63,13 @@ export const folders = (): Folder[] => read<Folder[]>(FKEY, []);
 export function addFolder(name: string): Folder { const f = { id: Math.random().toString(36).slice(2, 10), name: name.trim() }; write(FKEY, [...folders(), f]); return f; }
 export function renameFolder(id: string, name: string): void { write(FKEY, folders().map((f) => (f.id === id ? { ...f, name: name.trim() } : f))); }
 export function removeFolder(id: string): void { write(FKEY, folders().filter((f) => f.id !== id)); saveTerms(terms().filter((x) => x.folder !== id)); const l = read<Record<string, string[]>>(LKEY, {}); for (const k of Object.keys(l)) l[k] = l[k].filter((x) => x !== id); write(LKEY, l); }
+/** Books taken out of the library: their own terms, folder links and destination let go (a folder's terms and
+ *  every book's stay — other books use them). */
+export function forgetBooks(ids: Iterable<string>): void {
+  const gone = new Set(ids); if (!gone.size) return;
+  if (terms().some((x) => x.book && gone.has(x.book))) saveTerms(terms().filter((x) => !x.book || !gone.has(x.book)));
+  for (const k of [LKEY, 'kr.glossaryDest']) { const m = read<Record<string, unknown>>(k, {}); if ([...gone].some((id) => id in m)) { for (const id of gone) if (id !== '*') delete m[id]; write(k, m); } }
+}
 /** The folders a book uses. */
 export const linkedFolders = (bookId?: string): string[] => (bookId ? read<Record<string, string[]>>(LKEY, {})[bookId] ?? [] : []);
 export function setLinked(bookId: string, ids: string[]): void { const l = read<Record<string, string[]>>(LKEY, {}); l[bookId] = [...new Set(ids)]; write(LKEY, l); }

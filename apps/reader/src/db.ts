@@ -176,6 +176,22 @@ function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) 
   );
 }
 
+/** Get, change, put in one readwrite transaction (out-of-line keys when `outKey`). */
+function rmw<T>(store: string, key: string, fn: (cur: T | undefined) => T | undefined, outKey = false): Promise<T | undefined> {
+  return openDb().then((d) => new Promise<T | undefined>((resolve, reject) => {
+    const t = d.transaction(store, 'readwrite'); const s = t.objectStore(store);
+    let out: T | undefined; let failed: unknown;
+    const g = s.get(key);
+    g.onsuccess = () => {
+      try { out = fn(g.result as T | undefined); } catch (e) { failed = e; t.abort(); return; }
+      if (out === undefined) { if (outKey) s.delete(key); } else if (outKey) s.put(out, key); else s.put(out);
+    };
+    t.oncomplete = () => resolve(out);
+    t.onerror = () => reject(failed ?? t.error);
+    t.onabort = () => reject(failed ?? t.error);
+  }));
+}
+
 // Small cache so re-opening a linked book, or re-rendering it, does not re-read it from storage.
 const linkedCache = new Map<string, { size: number; blob: Blob }>();
 async function readLinked(src: FileSource, name: string, mime?: string): Promise<Blob | undefined> {
@@ -223,11 +239,12 @@ export const db = {
     await tx('books', 'readwrite', (s) => s.put(book));
     booksCache?.set(book.id, { ...book }); told();
   },
+  /** Read, change and write a book in ONE transaction (two changes made at once — a position saved while a
+   *  bookmark is added — both kept; read and written apart, the later write lost the other's change). The patch
+   *  must be synchronous: a transaction ends at the first await. */
   async updateBook(id: string, patch: (b: Book) => void): Promise<Book | undefined> {
-    const b = await this.getBook(id);
-    if (!b) return undefined;
-    patch(b);
-    await this.putBook(b);
+    const b = await rmw<Book>('books', id, (cur) => { if (cur) patch(cur); return cur; });
+    if (b) { booksCache?.set(b.id, { ...b }); told(); }
     return b;
   },
   async deleteBook(id: string): Promise<void> {
@@ -262,6 +279,15 @@ export const db = {
   },
   async setMeta<T>(key: string, value: T): Promise<void> {
     await tx('meta', 'readwrite', (s) => s.put(value, key));
+  },
+  /** A meta value read, changed and written in one transaction (lists and counters kept there: two changes at
+   *  once both kept). `fn` is synchronous and returns the new value (undefined: deleted). */
+  async updateMeta<T>(key: string, fn: (cur: T | undefined) => T | undefined): Promise<T | undefined> {
+    return rmw<T>('meta', key, fn, true);
+  },
+  /** Every meta key (for clean-ups that find what belongs to no book). */
+  async metaKeys(): Promise<string[]> {
+    return (await tx<IDBValidKey[]>('meta', 'readonly', (s) => s.getAllKeys())).map(String);
   },
   async deleteMeta(key: string): Promise<void> {
     await tx('meta', 'readwrite', (s) => s.delete(key)).catch(() => undefined);

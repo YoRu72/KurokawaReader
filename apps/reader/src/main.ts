@@ -113,7 +113,10 @@ setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).cat
 // (The app lock, Android: asked for at once when on.)
 void import('./applock').then((m) => m.initAppLock()).catch(() => undefined);
 // (The automatic backup, when due — well after the start, out of its way.)
-setTimeout(() => void import('./backup').then((m) => m.autoBackupIfDue()).catch(() => undefined), 30000);
+// (Once after the update: the keys earlier versions put into the automatic backups taken out of them, and the data
+// deleted books left behind let go.)
+setTimeout(() => void import('./backup').then(async (m) => { await m.scrubAutoBackups().catch(() => undefined); await m.autoBackupIfDue(); }).catch(() => undefined), 30000);
+setTimeout(() => void import('./library').then((m) => m.cleanOrphansOnce()).catch(() => undefined), 35000);
 // AniList changes made while it could not be reached, sent now (and when the network comes back).
 setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import('./ui/track').then((m) => { m.watchPending(); void m.flushTracking(); }).catch(() => undefined); } catch { /* private mode */ } }, 5000);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);

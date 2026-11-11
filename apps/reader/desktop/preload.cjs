@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   // (Several downloads at once: each caller keeps its own listener and reads its own id.)
   addDownloadListener(cb) { const fn = (_e, p) => cb(p); ipcRenderer.on('kr:download-progress', fn); return () => ipcRenderer.removeListener('kr:download-progress', fn); },
   writeBinary(p, b64, append) { return ipcRenderer.invoke('kr:write-binary', p, b64, !!append); },
+  fileSize(p) { return ipcRenderer.invoke('kr:file-size', p); },
   onOpenUrl(cb) { ipcRenderer.on('kr:open-url', (_e, u) => cb(u)); },
   onCommand(cb) { ipcRenderer.on('kr:command', (_e, c) => cb(c)); },
   setProgress(p) { ipcRenderer.send('kr:progress', p); },
