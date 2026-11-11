@@ -158,10 +158,10 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       ...(links ? [iconButton('copy', t('copyLink'), () => void navigator.clipboard?.writeText(links).then(() => toast(t('copied'))))] : []),
       iconButton('trash', t('removeTask'), () => removeSheet(sel, () => setSelecting(false))));
   };
-  const bar = (x: Task) => (x.total ? Math.min(100, (x.done / x.total) * 100) : 0);
+  const bar = (x: Task) => (x.total > 0 ? Math.min(100, (x.done / x.total) * 100) : 0);
   const line2 = (x: Task): string => {
     const show = dlPrefs().show; const parts: string[] = [x.heldBy === 'metered' ? t('heldMetered') : x.heldBy === 'battery' ? t('heldBattery') : stateLabel(x.state)];
-    if (!show.size) { /* sizes hidden */ } else if (x.total) parts.push(t('bytesOf', { done: formatBytes(x.done), total: formatBytes(x.total) })); else if (x.done) parts.push(formatBytes(x.done));
+    if (!show.size) { /* sizes hidden */ } else if (x.total > 0) parts.push(t('bytesOf', { done: formatBytes(x.done), total: formatBytes(x.total) })); else if (x.done) parts.push(formatBytes(x.done));
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
     if ((x.kind === 'video' || x.meta?.hls) && (x.state === 'downloading' || x.state === 'metadata')) { const m = x.meta ?? {}; if (m.frags) parts.push(t('hlsPieces', { i: localDigits(String(m.frag ?? 0)), n: localDigits(String(m.frags)) })); if (m.phase) parts.push(phaseShort(m.phase)); }
     if (x.state === 'downloading' && isStalled(x)) parts.push(t('stalled'));
@@ -185,7 +185,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     // (A phone: swiped to the right, its first action — pause, resume, retry —; to the left, removed (asked first).)
     swipeable(el, () => { const cur = tasks.find((y) => y.id === x.id) ?? x; const eng = getEngine();
       const right = ACTIVE.includes(cur.state) && eng.can.pause ? { label: t('pause'), icon: 'pause', run: () => void eng.pause(cur.id).catch((er) => toast(String(er.message ?? er), 'error')) }
-        : cur.state === 'paused' || cur.state === 'failed' ? { label: t(cur.state === 'failed' ? 'retry' : 'resume'), icon: cur.state === 'failed' ? 'refresh' : 'play', run: () => void eng.resume(cur.id).catch((er) => toast(String(er.message ?? er), 'error')) } : null;
+        : cur.state === 'paused' || cur.state === 'failed' ? { label: t(cur.state === 'failed' ? 'retry' : cur.heldBy ? 'downloadNow' : 'resume'), icon: cur.state === 'failed' ? 'refresh' : 'play', run: () => void eng.resume(cur.id, !!cur.heldBy).catch((er) => toast(String(er.message ?? er), 'error')) } : null;
       return { right, left: { label: t('removeTask'), icon: 'trash', run: () => removeSheet([cur]) } }; }, icon, () => !selecting);
     update(el, x); return el;
   };
@@ -195,11 +195,11 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
     (el.querySelector('.task-bar i') as HTMLElement).style.width = `${bar(x)}%`;
-    (el.querySelector('.task-bar') as HTMLElement).classList.toggle('busy-any', x.state === 'metadata' || x.state === 'checking' || (x.state === 'downloading' && !x.total));
+    (el.querySelector('.task-bar') as HTMLElement).classList.toggle('busy-any', x.state === 'metadata' || x.state === 'checking' || (x.state === 'downloading' && !(x.total > 0)));
     const acts = el.querySelector('.task-actions') as HTMLElement; acts.replaceChildren();
     const eng = getEngine();
     if (ACTIVE.includes(x.state) && eng.can.pause) acts.append(iconButton('pause', t('pause'), (e) => { e.stopPropagation(); void eng.pause(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
-    if (x.state === 'paused') acts.append(iconButton('play', t('resume'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
+    if (x.state === 'paused') acts.append(iconButton('play', t(x.heldBy ? 'downloadNow' : 'resume'), (e) => { e.stopPropagation(); void eng.resume(x.id, !!x.heldBy).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'failed') acts.append(iconButton('refresh', t('retry'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch(() => eng.remove(x.id, false).then(() => eng.add({ source: x.source, dir: x.dir, name: x.name, meta: x.meta }))).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'done' && isVideo(displayName(x))) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
     // (Done: a video or a sound plays in the app; anything else opens in the system's viewer.)

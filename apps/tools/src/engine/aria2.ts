@@ -57,7 +57,7 @@ export class Aria2Engine implements Engine {
   readonly id = 'aria2' as const;
   readonly can = { torrents: true, http: true, stream: false, limits: true, pickFiles: true, pause: true, seeding: true };
   private keep: Record<string, Partial<Task>> = {};
-  private subs = new Set<(t: Task[]) => void>(); private timer = 0; private last: Task[] = [];
+  private subs = new Set<(t: Task[]) => void>(); private timer = 0; private gen = 0; private last: Task[] = [];
   constructor(public rpc: Aria2Rpc) { try { this.keep = JSON.parse(localStorage.getItem(KEEP) ?? '{}'); } catch { /* none */ } }
   private save() { try { localStorage.setItem(KEEP, JSON.stringify(this.keep)); } catch { /* full */ } }
   async list(): Promise<Task[]> {
@@ -117,14 +117,17 @@ export class Aria2Engine implements Engine {
   }
   onChange(fn: (tasks: Task[]) => void): () => void {
     this.subs.add(fn); this.poke();
-    return () => { this.subs.delete(fn); if (!this.subs.size) { clearTimeout(this.timer); this.timer = 0; } };
+    return () => { this.subs.delete(fn); if (!this.subs.size) { clearTimeout(this.timer); this.timer = 0; this.gen++; } };
   }
+  /** One poller: each poke starts a new one and ends the one before — also a poll under way then, which used to set its
+   *  own next timer beside the new poller's (one more poller each pause, resume or add); none once no one listens. */
   private poke(): void {
     if (!this.subs.size) return;
-    clearTimeout(this.timer);
+    clearTimeout(this.timer); const gen = ++this.gen;
     const tick = async () => {
-      try { const tasks = await this.list(); for (const fn of this.subs) fn(tasks); const moving = tasks.some((t) => t.state === 'downloading' || t.state === 'metadata' || t.state === 'seeding' || t.state === 'queued'); this.timer = window.setTimeout(tick, moving ? 1000 : 5000); }
-      catch { this.timer = window.setTimeout(tick, 5000); }
+      if (gen !== this.gen || !this.subs.size) return;
+      try { const tasks = await this.list(); if (gen !== this.gen || !this.subs.size) return; for (const fn of this.subs) fn(tasks); const moving = tasks.some((t) => t.state === 'downloading' || t.state === 'metadata' || t.state === 'seeding' || t.state === 'queued'); this.timer = window.setTimeout(tick, moving ? 1000 : 5000); }
+      catch { if (gen === this.gen && this.subs.size) this.timer = window.setTimeout(tick, 5000); }
     };
     this.timer = window.setTimeout(tick, 0);
   }

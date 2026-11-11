@@ -29,7 +29,7 @@ export function miniView(): HTMLElement {
     pp.replaceChildren(icon(anyActive ? 'pause' : 'play')); pp.title = anyActive ? t('pauseAll') : t('resumeAll'); pp.setAttribute('aria-label', pp.title); pp.disabled = !anyActive && !paused;
     pp.onclick = () => { const e = getEngine(); void Promise.all(anyActive ? act.map((x) => e.pause(x.id)) : tasks.filter((x) => x.state === 'paused').map((x) => e.resume(x.id))); };
     const show = act.slice(0, 4);
-    rows.replaceChildren(...(show.length ? show.map((x) => { const pct = x.total ? Math.min(100, (x.done / x.total) * 100) : 0; return h('div', { class: 'mini-row' },
+    rows.replaceChildren(...(show.length ? show.map((x) => { const pct = x.total > 0 ? Math.min(100, (x.done / x.total) * 100) : 0; return h('div', { class: 'mini-row' },
       h('div', { class: 'mini-line' }, h('span', { class: 'grow mini-name', dir: 'auto' }, displayName(x)), h('small', { class: 'src' }, x.state === 'downloading' ? `${localDigits(Math.floor(pct))}% · ${t('perSecond', { n: formatBytes(x.downSpeed || 0) })}` : stateLabel(x.state))),
       h('div', { class: 'mini-bar' }, h('i', { style: { width: `${pct}%` } }))); }) : [h('p', { class: 'mini-idle' }, t('miniIdle'))]), ...(act.length > 4 ? [h('small', { class: 'src mini-more' }, t('miniMore', { n: localDigits(act.length - 4) }))] : []));
   };

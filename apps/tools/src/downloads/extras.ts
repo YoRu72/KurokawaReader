@@ -44,13 +44,13 @@ export function exportList(tasks: Task[]): ListFile {
 }
 /** Added back from a list (those already here skipped); finished ones only when asked. */
 export async function importList(text: string, opts: { finishedToo: boolean }, have: Task[]): Promise<{ added: number; skipped: number }> {
-  let added = 0, skipped = 0; const eng = getEngine();
+  let added = 0, skipped = 0; const eng = getEngine(); have = [...have];   // (each one added counted as here: a list naming a link twice adds it once)
   let file: ListFile | null = null; try { const j = JSON.parse(text) as ListFile; if (j && Array.isArray(j.downloads)) file = j; } catch { /* plain links */ }
   const items = file ? file.downloads : parseSources(text).map((source) => ({ name: '', source, state: 'queued', size: 0 } as ListFile['downloads'][number]));
   for (const d of items) {
     if (!opts.finishedToo && d.state === 'done') { skipped++; continue; }
     if (duplicateOf(d.source, have)) { skipped++; continue; }
-    try { const task = await eng.add({ source: d.source, name: d.name || undefined, dir: d.dir && !d.dir.startsWith('content:') ? d.dir : getSettings().downloadDir || undefined, meta: d.meta }); if (d.note) setNote(task.id, d.note); added++; } catch { skipped++; }
+    try { const task = await eng.add({ source: d.source, name: d.name || undefined, dir: d.dir && !d.dir.startsWith('content:') ? d.dir : getSettings().downloadDir || undefined, meta: d.meta }); if (d.note) setNote(task.id, d.note); have.push({ ...task, source: d.source }); added++; } catch { skipped++; }
   }
   return { added, skipped };
 }

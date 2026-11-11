@@ -47,12 +47,13 @@ final class KrDownloader {
         Limiter(long bytesPerSecond) { rate = bytesPerSecond; }
         void set(long bytesPerSecond) { rate = Math.max(0, bytesPerSecond); }
         long rate() { return rate; }
-        /** Blocks until `n` bytes may pass (at most a quarter second a turn, so a changed rate is felt soon). */
+        /** Blocks until `n` bytes may pass (at most a quarter second a turn, so a changed rate is felt soon: the rate read
+         *  again each turn, a limit taken off lets the read through at once). The bucket holds at least `n` — capped at
+         *  the rate alone, a limit under the 16 KB a read asks never let one through and the download stood still. */
         void take(int n) throws InterruptedException {
-            long r = rate; if (r <= 0) return;
             for (;;) {
-                long wait;
-                synchronized (this) { long now = System.nanoTime(); tokens = Math.min(r, tokens + (now - lastNs) / 1e9 * r); lastNs = now; if (tokens >= n) { tokens -= n; return; } wait = (long) ((n - tokens) / r * 1000); }
+                long r = rate; if (r <= 0) return; long wait;
+                synchronized (this) { long now = System.nanoTime(); tokens = Math.min(Math.max(r, n), tokens + (now - lastNs) / 1e9 * r); lastNs = now; if (tokens >= n) { tokens -= n; return; } wait = (long) ((n - tokens) / r * 1000); }
                 Thread.sleep(Math.max(5, Math.min(250, wait)));
             }
         }
@@ -66,7 +67,10 @@ final class KrDownloader {
      *  connections and resuming all work as for any download. */
     static final class CtrFile extends RandomAccessFile {
         private final javax.crypto.spec.SecretKeySpec key; private final byte[] nonce = new byte[8];
-        CtrFile(File f, byte[] k) throws IOException { super(f, "rw"); byte[] a = new byte[16]; for (int i = 0; i < 16; i++) a[i] = (byte) (k[i] ^ k[i + 16]); key = new javax.crypto.spec.SecretKeySpec(a, "AES"); System.arraycopy(k, 16, nonce, 0, 8); }
+        CtrFile(File f, byte[] k) throws IOException { super(f, "rw"); key = keyOf(k); System.arraycopy(k, 16, nonce, 0, 8); }
+        static javax.crypto.spec.SecretKeySpec keyOf(byte[] k) { byte[] a = new byte[16]; for (int i = 0; i < 16; i++) a[i] = (byte) (k[i] ^ k[i + 16]); return new javax.crypto.spec.SecretKeySpec(a, "AES"); }
+        /** The server's (encrypted) bytes at `pos` as they are in the file here. */
+        static byte[] plain(byte[] k, long pos, byte[] b) throws IOException { return decrypt(keyOf(k), java.util.Arrays.copyOfRange(k, 16, 24), pos, b, 0, b.length); }
         static byte[] decrypt(javax.crypto.spec.SecretKeySpec key, byte[] nonce, long pos, byte[] b, int off, int len) throws IOException {
             try {
                 byte[] iv = new byte[16]; System.arraycopy(nonce, 0, iv, 0, 8); long blk = pos >>> 4; for (int i = 15; i >= 8; i--) { iv[i] = (byte) blk; blk >>>= 8; }
@@ -314,12 +318,12 @@ final class KrDownloader {
         if (sameSize) {
             localCheck(prev, out);
             boolean sameVersion = !prev.validator.isEmpty() && prev.validator.equals(validator);
-            if (sameVersion || matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12)) { st0 = prev; resumed = true; }
+            if (sameVersion || matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12, mega(opt))) { st0 = prev; resumed = true; }
         } else if (prev == null && out.exists() && out.length() > 0 && out.length() <= total) {
             // (No record kept — lost, or a download begun elsewhere under this name —: the chunks already here found
             // by their bytes, each checked against the server's before it is kept.)
             State r = new State(); r.total = total; r.chunk = Math.max(1L << 20, Math.min(8L << 20, total / Math.max(1, n * 4)));
-            int found = recover(res.finalUrl, opener, out, r, Math.max(1, Math.min(8, maxConnections)), cancelled);
+            int found = recover(res.finalUrl, opener, out, r, Math.max(1, Math.min(8, maxConnections)), cancelled, mega(opt));
             if (found > 0) { try (RandomAccessFile raf = new RandomAccessFile(out, "rw")) { if (raf.length() < total) raf.setLength(total); } st0 = r; resumed = true; }
         }
         final State st;
@@ -357,6 +361,9 @@ final class KrDownloader {
             final int wid = i;
             workers[i] = new Thread(() -> {
                 final boolean[] gone = { false };
+                // (Whether this connection has brought bytes in this download, and how many tries in a row it was cut
+                // before the first byte: what tells a server refusing one more connection from a link that dropped.)
+                final boolean[] servedOnce = { false }; final int[] blanks = { 0 };
                 try (RandomAccessFile raf = writer(out, opt)) {
                     while (fail.get() == null && !cancelled.get()) {
                         long[] given = back.poll(); int idx; long from, toIncl;
@@ -394,17 +401,23 @@ final class KrDownloader {
                                     final long base = pos; final long[] w = wrote;
                                     copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); if (fromStart) st.setPartial(seg.chunk, base + w[0] - chunkStart); long now = System.currentTimeMillis(); if (now - lastSave[0] > 3000) { lastSave[0] = now; st.write(opt.state); } tick.run(); }, wrote, opt.limiter);
                                 }
-                                pos += wrote[0]; wrote[0] = 0;
+                                pos += wrote[0]; wrote[0] = 0; if (pos > tryFrom) { servedOnce[0] = true; blanks[0] = 0; }
                                 // (An answer that ended early without an error is a failed attempt too.)
                                 if (pos < seg.stopAt && !cancelled.get()) throw new IOException("Connection closed early");
                             } catch (Exception e) {
                                 // (What came before the break is in the file already: the next attempt goes on from there. An
                                 // attempt that brought bytes is no failure to count — a weak phone link drops a connection every
                                 // few hundred kilobytes and still gets there —; only attempts that brought nothing use the retries.)
-                                pos += wrote[0]; final boolean moved = pos > tryFrom; if (moved) attempt = -1;
+                                pos += wrote[0]; final boolean moved = pos > tryFrom; if (moved) { attempt = -1; servedOnce[0] = true; blanks[0] = 0; }
                                 if (c != null) c.disconnect();
                                 int sc = e instanceof Status ? ((Status) e).code : 0;
-                                if (sc == 0 && cut(e) && alive.get() > 1) sc = 429;
+                                // (A connection cut is taken as the server refusing one more only when this connection never got a
+                                // byte through and was cut before the first one twice running while others go on — some servers
+                                // drop the extra connection instead of answering 429/503. A cut after bytes came is the network (a
+                                // weak phone link): the range is tried again and the connection kept; taken as a refusal, every
+                                // drop retired a connection for the rest of the download and lowered what this host is asked
+                                // next time, down to one.)
+                                if (sc == 0 && !servedOnce[0] && cut(e) && ++blanks[0] >= 2 && alive.get() > 1) sc = 429;
                                 // (Some storage answers 403 to one connection too many while the others go on: taken as a refusal.)
                                 if ((sc == 403 || sc == 401) && alive.get() > 1 && got.get() > 0) sc = 429;
                                 // A server refusing one connection too many: this one stops, its part to the others.
@@ -466,23 +479,28 @@ final class KrDownloader {
     private static boolean zero(RandomAccessFile raf, long at, byte[] b) throws IOException { raf.seek(Math.max(0, at)); int r = raf.read(b); if (r <= 0) return true; for (int k = 0; k < r; k++) if (b[k] != 0) return false; return true; }
     /** A few done chunks' last 16 KB compared with the server's (the first, the last and some between): whether the
      *  file here is the same as the one there. No done chunk: nothing to lose, so yes. */
-    static boolean matches(URL url, Opener opener, File out, State st, int threads, int samples) {
+    /** A MEGA file's key, or null. */
+    private static byte[] mega(Opts opt) { return opt != null && opt.megaKey != null && opt.megaKey.length == 32 ? opt.megaKey : null; }
+    static boolean matches(URL url, Opener opener, File out, State st, int threads, int samples) { return matches(url, opener, out, st, threads, samples, null); }
+    /** `megaKey`: the file here is the server's decrypted (MEGA), so the server's bytes are decrypted before they are
+     *  compared — compared as they came, they never matched and a MEGA download whose server gave no ETag began again. */
+    static boolean matches(URL url, Opener opener, File out, State st, int threads, int samples, byte[] megaKey) {
         java.util.List<Integer> done = new java.util.ArrayList<>(); for (int i = st.done.nextSetBit(0); i >= 0; i = st.done.nextSetBit(i + 1)) done.add(i);
         if (done.isEmpty()) return true;
         java.util.List<Integer> pick = new java.util.ArrayList<>(); for (int k = 0; k < samples && k < done.size(); k++) pick.add(done.get((int) ((long) k * (done.size() - 1) / Math.max(1, samples - 1))));
-        java.util.List<Integer> ok = check(url, opener, out, st, new java.util.ArrayList<>(new java.util.LinkedHashSet<>(pick)), threads, new AtomicBoolean(false));
+        java.util.List<Integer> ok = check(url, opener, out, st, new java.util.ArrayList<>(new java.util.LinkedHashSet<>(pick)), threads, new AtomicBoolean(false), megaKey);
         return ok != null && ok.size() == new java.util.LinkedHashSet<>(pick).size();
     }
     /** The chunks of a file with no record: those with bytes in them, checked against the server's; how many kept. */
-    static int recover(URL url, Opener opener, File out, State st, int threads, AtomicBoolean cancelled) {
+    static int recover(URL url, Opener opener, File out, State st, int threads, AtomicBoolean cancelled, byte[] megaKey) {
         java.util.List<Integer> cand = new java.util.ArrayList<>(); int chunks = (int) ((st.total + st.chunk - 1) / st.chunk);
         try (RandomAccessFile raf = new RandomAccessFile(out, "r")) { byte[] b = new byte[4096]; long len = raf.length();
             for (int i = 0; i < chunks; i++) { long end = Math.min(st.total, (long) (i + 1) * st.chunk); if (end > len) break; if (!zero(raf, end - Math.min(b.length, end - (long) i * st.chunk), b)) cand.add(i); } } catch (IOException e) { return 0; }
-        java.util.List<Integer> ok = check(url, opener, out, st, cand, threads, cancelled); if (ok == null) return 0;
+        java.util.List<Integer> ok = check(url, opener, out, st, cand, threads, cancelled, megaKey); if (ok == null) return 0;
         for (int i : ok) st.mark(i); return ok.size();
     }
     /** The chunks among `which` whose last 16 KB here are the server's (null: the server could not be asked). */
-    private static java.util.List<Integer> check(URL url, Opener opener, File out, State st, java.util.List<Integer> which, int threads, AtomicBoolean cancelled) {
+    private static java.util.List<Integer> check(URL url, Opener opener, File out, State st, java.util.List<Integer> which, int threads, AtomicBoolean cancelled, byte[] megaKey) {
         final java.util.List<Integer> ok = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); final java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger(); final AtomicBoolean broken = new AtomicBoolean();
         Thread[] ts = new Thread[Math.max(1, Math.min(threads, which.size()))];
         for (int t = 0; t < ts.length; t++) { ts[t] = new Thread(() -> {
@@ -496,6 +514,7 @@ final class KrDownloader {
                         HttpURLConnection c = null;
                         try { c = follow(url, opener, "bytes=" + from + "-" + (from + len - 1)); if (c.getResponseCode() != 206) { broken.set(true); same = false; break; }
                             byte[] theirs = new byte[len]; int got = 0; try (InputStream in = c.getInputStream()) { int r; while (got < len && (r = in.read(theirs, got, len - got)) > 0) got += r; }
+                            if (got == len && megaKey != null) theirs = CtrFile.plain(megaKey, from, theirs);
                             if (got != len || !java.util.Arrays.equals(mine, theirs)) { same = false; break; }
                         } catch (IOException e) { broken.set(true); same = false; break; } finally { if (c != null) c.disconnect(); }
                         if (len == end - start) break;
@@ -512,9 +531,10 @@ final class KrDownloader {
      *  another connection): only what is still this part's is written and counted. */
     private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException { copySeg(in, raf, seg, base, cancelled, got, tick, wrote, null); }
     private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own) throws IOException {
-        byte[] buf = new byte[1 << 17]; int r; boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);
+        byte[] buf = new byte[1 << 17]; int r;
         while (!cancelled.get()) {
             long left; synchronized (seg) { left = seg.stopAt - (base + wrote[0]); } if (left <= 0) break;
+            boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);   // (each read: a limit set while it runs is felt at once)
             int want = (int) Math.min(limited ? 1 << 14 : buf.length, left);
             try { if (own != null) own.take(want); GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
             r = in.read(buf, 0, want); if (r <= 0) break;
@@ -525,8 +545,9 @@ final class KrDownloader {
     /** Copies up to `max` bytes, counting them in `wrote[0]` as they are written. */
     private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException { copy(in, raf, max, cancelled, got, tick, wrote, null); }
     private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own) throws IOException {
-        byte[] buf = new byte[1 << 17]; int r; boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);
+        byte[] buf = new byte[1 << 17]; int r;
         while (wrote[0] < max && !cancelled.get()) {
+            boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);
             int want = (int) Math.min(limited ? 1 << 14 : buf.length, max - wrote[0]);
             try { if (own != null) own.take(want); GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
             if ((r = in.read(buf, 0, want)) <= 0) break;

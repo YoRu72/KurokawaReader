@@ -75,16 +75,16 @@ export function sparkline(hst: TaskHistory): HTMLElement | null {
 
 /** The meter: the percentage large, done of the whole, speed, time left, connections. */
 export function meter(x: Task): HTMLElement {
-  const pct = x.total ? (x.done / x.total) * 100 : x.state === 'done' ? 100 : null; const live = x.state === 'downloading' || x.state === 'metadata';
+  const pct = x.total > 0 ? (x.done / x.total) * 100 : x.state === 'done' ? 100 : null; const live = x.state === 'downloading' || x.state === 'metadata';
   const act = (x.segments ?? []).filter((s) => s.active && s.pos < s.end).length;
   return h('div', { class: 'kt-meter' },
     h('div', { class: 'kt-meter-row' },
       h('div', { class: 'kt-pct', dir: 'ltr' }, pct == null ? '—' : localDigits(pct >= 99.95 || pct === 0 ? Math.round(pct) : pct.toFixed(1)), h('small', null, '%')),
-      h('div', { class: 'kt-of' }, t('bytesOf', { done: formatBytes(x.done), total: x.total ? formatBytes(x.total) : '?' })),
+      h('div', { class: 'kt-of' }, t('bytesOf', { done: formatBytes(x.done), total: x.total > 0 ? formatBytes(x.total) : '?' })),
       h('div', { class: 'kt-kpis' },
         kpi(t('statSpeed'), live ? perSec(x.downSpeed) : '—'), kpi(t('statLeft'), live && x.eta ? fmtSecs(x.eta) : '—'),
         ...(x.kind === 'torrent' ? [kpi(t('statPeers'), `${localDigits(x.peers ?? 0)} · ${localDigits(x.seeds ?? 0)}`)] : x.connections || act ? [kpi(t('connectionsTitle'), `${localDigits(act || x.connections || 0)}${x.connections ? ` / ${localDigits(x.connections)}` : ''}`)] : []))),
-    h('div', { class: 'task-bar big' + (x.total || x.state === 'done' ? '' : ' busy-any') + ` state-${x.state}` }, h('i', { style: { width: `${pct ?? 0}%` } })));
+    h('div', { class: 'task-bar big' + (x.total > 0 || x.state === 'done' ? '' : ' busy-any') + ` state-${x.state}` }, h('i', { style: { width: `${pct ?? 0}%` } })));
 }
 const kpi = (k: string, v: string) => h('div', { class: 'kt-kpi' }, h('div', { class: 'k' }, k), h('div', { class: 'v', dir: 'ltr' }, v));
 
@@ -125,7 +125,7 @@ export function infoList(x: Task, extra: [string, string][] = []): HTMLElement {
     x.source.magnet ? [t('infoMagnet'), x.source.magnet, true] : null,
     x.infoHash ? [t('infoHash'), x.infoHash, true] : null,
     where ? [t('infoSavedTo'), where, true] : null,
-    [t('infoSize'), x.total ? `${formatBytes(x.total)} (${localDigits(x.total.toLocaleString('en'))} B)` : '—'],
+    [t('infoSize'), x.total > 0 ? `${formatBytes(x.total)} (${localDigits(x.total.toLocaleString('en'))} B)` : '—'],
     x.connections ? [t('connectionsTitle'), localDigits(x.connections)] : null,
     [t('infoAdded'), formatDate(x.addedAt)],
     x.doneAt ? [t('infoFinished'), formatDate(x.doneAt)] : null,

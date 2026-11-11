@@ -53,7 +53,7 @@ function notify(x: Task): void {
 export function doneCard(x: Task): void {
   document.querySelectorAll('.done-card').forEach((e) => e.remove());
   const name = displayName(x); const eng = getEngine();
-  const took = x.doneAt && x.addedAt ? (x.doneAt - x.addedAt) / 1000 : 0; const avg = took > 0 && x.total ? x.total / took : 0;
+  const took = x.doneAt && x.addedAt ? (x.doneAt - x.addedAt) / 1000 : 0; const avg = took > 0 && x.total > 0 ? x.total / took : 0;
   const path = x.dir && !x.dir.startsWith('content:') ? `${x.dir.replace(/[\\/]$/, '')}/${x.kind === 'torrent' && x.files.length > 1 ? x.name : name}` : '';
   let timer = 0; const close = () => { window.clearTimeout(timer); el.classList.add('leaving'); setTimeout(() => el.remove(), 180); };
   const btn = (ic: string, label: string, fn: () => void, cls = 'btn small tonal') => h('button', { type: 'button', class: cls, onclick: () => { fn(); close(); } }, icon(ic), label);
