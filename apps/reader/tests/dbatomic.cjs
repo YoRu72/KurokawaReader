@@ -9,7 +9,7 @@ const esbuild = require('esbuild');
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
 const SRC = path.resolve(__dirname, '../src');
 const entry = path.join(os.tmpdir(), 'kr-dbatomic-entry.ts');
-fs.writeFileSync(entry, ['db', 'library', 'storage', 'glossary', 'textrules', 'settings', 'sources/ext/source'].map((m, i) => `import * as m${i} from ${JSON.stringify(path.join(SRC, m))};`).join('\n') + `\n(window as any).T = { db: m0, lib: m1, storage: m2, gloss: m3, rules: m4, settings: m5, source: m6 };\n`);
+fs.writeFileSync(entry, ['db', 'library', 'storage', 'glossary', 'textrules', 'settings', 'sources/ext/source', 'sync'].map((m, i) => `import * as m${i} from ${JSON.stringify(path.join(SRC, m))};`).join('\n') + `\n(window as any).T = { db: m0, lib: m1, storage: m2, gloss: m3, rules: m4, settings: m5, source: m6, sync: m7 };\n`);
 const code = esbuild.buildSync({ entryPoints: [entry], bundle: true, format: 'iife', write: false, platform: 'browser', logLevel: 'error' }).outputFiles[0].text;
 const server = http.createServer((req, res) => { if (req.url.startsWith('/t.js')) { res.setHeader('Content-Type', 'text/javascript'); res.end(code); return; } res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><meta charset="utf-8"><body><script src="/t.js"></script>'); });
 (async () => {
@@ -34,6 +34,13 @@ const server = http.createServer((req, res) => { if (req.url.startsWith('/t.js')
   ok('5: eight changes made at once to one book — all eight kept', r5.fields.every((v, i) => v === i), r5.fields);
   ok('5: a position saved while a bookmark is added — both kept (and in the cached list)', r5.pct === 0.5 && r5.marks === 1 && r5.cachedMarks === 1 && r5.cachedPct === 0.5, r5);
   ok('5: six additions at once to a meta list — all six kept', Array.isArray(r5.meta) && r5.meta.length === 6, r5.meta);
+
+  const r5b = await p.evaluate(async () => {
+    // (Ink strokes erased together: each marked deleted for sync at once.)
+    await Promise.all(['s1', 's2', 's3', 's4', 's5'].map((id) => T.sync.markDeleted(id)));
+    return Object.keys((await T.db.db.getMeta('sync.deleted')) ?? {}).filter((k) => /^s\d$/.test(k)).sort();
+  });
+  ok('5: five deletions marked for sync at once — all five kept', r5b.join() === 's1,s2,s3,s4,s5', r5b);
 
   // ---- 10: deleting a book takes all its data, and no other book's
   const r10 = await p.evaluate(async ([A, B]) => {

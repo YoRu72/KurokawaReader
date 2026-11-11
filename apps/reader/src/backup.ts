@@ -196,13 +196,10 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   }
 
   // folders: merge by name
-  const folders = (await db.getMeta<Folder[]>('folders')) ?? [];
-  for (const f of m.folders ?? []) if (!folders.some((x) => x.name === f.name)) folders.push({ ...f });
-  await db.setMeta('folders', folders);
+  // (Each list read, merged and written in one transaction.)
+  const folders = (await db.updateMeta<Folder[]>('folders', (cur) => { const out = [...(cur ?? [])]; for (const f of m.folders ?? []) if (!out.some((x) => x.name === f.name)) out.push({ ...f }); return out; })) ?? [];
   // tags the user created (empty ones too): merge by name
-  const tagDefs = (await db.getMeta<TagDef[]>('tags')) ?? [];
-  for (const tg of m.tags ?? []) if (!tagDefs.some((x) => x.name === tg.name)) tagDefs.push({ ...tg });
-  await db.setMeta('tags', tagDefs);
+  await db.updateMeta<TagDef[]>('tags', (cur) => { const out = [...(cur ?? [])]; for (const tg of m.tags ?? []) if (!out.some((x) => x.name === tg.name)) out.push({ ...tg }); return out; });
   const folderId = (name?: string) => (name ? folders.find((f) => f.name === name)?.id : undefined);
 
   // fonts (full backups carry the files)

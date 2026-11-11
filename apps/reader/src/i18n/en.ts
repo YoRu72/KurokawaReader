@@ -78,7 +78,7 @@ export const en = {
   sortAuthor: 'Author',
   continueReading: 'Continue reading',
   unknownAuthor: 'Unknown author',
-  deleteConfirm: 'Remove {n} book(s) from the library? The files will be deleted from this device.', deleteConfirmMany: 'Remove {n} books from the library? Their files will be deleted from this device. This cannot be undone.',
+  deleteConfirm: 'Remove {n} book(s) from the library? The files will be deleted from this device. This cannot be undone.', deleteConfirmMany: 'Remove {n} books from the library? Their files will be deleted from this device. This cannot be undone.',
   bookDetails: 'Details',
   format: 'Format',
   size: 'Size',
