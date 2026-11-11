@@ -328,7 +328,15 @@ export async function readNovelFile(bookId: string): Promise<WebNovel | null> {
   try { return JSON.parse(await f.text()) as WebNovel; } catch { return null; }
 }
 /** Write the novel's file back: the content and chapters given merged over what the file holds now. */
-export async function saveNovelFile(book: Book, patch: (cur: WebNovel) => WebNovel): Promise<WebNovel> {
+// (One write of a novel's file at a time: two at once — chapters fetched while new ones are checked for, or let
+// go — each read the file before the other wrote it, and the later write lost the other's chapters.)
+const novelLocks = new Map<string, Promise<unknown>>();
+export function saveNovelFile(book: Book, patch: (cur: WebNovel) => WebNovel): Promise<WebNovel> {
+  const run = (novelLocks.get(book.id) ?? Promise.resolve()).catch(() => undefined).then(() => writeNovelFile(book, patch));
+  novelLocks.set(book.id, run); void run.catch(() => undefined).then(() => { if (novelLocks.get(book.id) === run) novelLocks.delete(book.id); });
+  return run;
+}
+async function writeNovelFile(book: Book, patch: (cur: WebNovel) => WebNovel): Promise<WebNovel> {
   const cur = (await readNovelFile(book.id)); if (!cur) throw new SourceError('parse', 'parse');
   const next = patch(cur);
   const file = new File([JSON.stringify(next)], book.fileName || `${next.title}.webnovel.json`, { type: MIME });

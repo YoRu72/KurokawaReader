@@ -660,6 +660,8 @@ ipcMain.handle('kr:download', async (e, url, name, id) => {
 });
 ipcMain.handle('kr:delete-download', async (_e, p) => { const dir = path.join(app.getPath('userData'), 'downloads'); const f = path.resolve(String(p)); if (!f.startsWith(dir)) return false; try { await fs.promises.unlink(f); return true; } catch { return false; } });
 ipcMain.handle('kr:write-binary', async (_e, p, b64, append) => { const fsp = require('fs/promises'); const buf = Buffer.from(String(b64), 'base64'); if (append) await fsp.appendFile(String(p), buf); else await fsp.writeFile(String(p), buf); return true; });
+// (A file's size, -1 when there is none: books moved out never overwrite a file, and are checked whole before the copy inside goes.)
+ipcMain.handle('kr:file-size', async (_e, p) => { try { return (await require('fs/promises').stat(String(p))).size; } catch { return -1; } });
 ipcMain.handle('kr:folder-write', async (_e, p, text) => { await require('fs/promises').writeFile(String(p), String(text), 'utf8'); return true; });
 ipcMain.handle('kr:default-apps', () => { if (process.platform === 'win32') return shell.openExternal('ms-settings:defaultapps'); if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:'); return false; });
 ipcMain.handle('kr:fullscreen', (_e, v) => { if (!win) return false; const next = v === 'toggle' ? !win.isFullScreen() : !!v; win.setFullScreen(next); return next; });

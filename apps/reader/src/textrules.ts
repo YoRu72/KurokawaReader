@@ -17,6 +17,8 @@ export function saveTextRules(list: TextRule[]): void {
   try { if (list.length) localStorage.setItem(KEY, JSON.stringify(list)); else localStorage.removeItem(KEY); } catch { /* full */ }
   listeners.forEach((fn) => fn());
 }
+/** Books taken out of the library: their own rules let go (every book's stay). */
+export function forgetBooks(ids: Iterable<string>): void { const gone = new Set(ids); if (textRules().some((r) => r.book && gone.has(r.book))) saveTextRules(textRules().filter((r) => !r.book || !gone.has(r.book))); }
 const listeners = new Set<() => void>();
 export function onTextRules(fn: () => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
 

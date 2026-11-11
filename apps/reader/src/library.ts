@@ -58,9 +58,42 @@ export async function listBooks(): Promise<Book[]> {
   return db.allBooks();
 }
 
+/** Every meta key a book's own data is kept under, as `<kind>:<book id>` (translations, the whole-book mark, the
+ *  translator kept on, names scanned for, PDF crop boxes, Anki progress, audiobook place and chapters). A new
+ *  kind of per-book data is added HERE, so deleting a book takes it and the clean-up below finds it. */
+export const BOOK_META = ['tr', 'trs', 'trWhole', 'trKeep', 'glossScan', 'crop', 'anki', 'audio', 'audioch'] as const;
+
 export async function removeBooks(ids: string[]): Promise<void> {
   for (const id of ids) await db.deleteBook(id);
+  await forgetBookData(ids);
+}
+/** All a book keeps besides its record, file and text (db.deleteBook): its meta, its own settings, its glossary
+ *  terms, folder links and destination, its text rules, its place in the reading queue. (Keys matched whole —
+ *  `tr:12` is not `tr:123` — and a glossary folder's or every book's terms kept: other books use them.) */
+export async function forgetBookData(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  for (const id of ids) for (const k of BOOK_META) await db.deleteMeta(`${k}:${id}`);
   forgetBookSettings(ids);
+  const [g, r, q] = await Promise.all([import('./glossary'), import('./textrules'), import('./ui/queue')]);
+  g.forgetBooks(ids); r.forgetBooks(ids);
+  const gone = new Set(ids); const queue = q.getQueue(); if (queue.some((x) => gone.has(x))) q.setQueue(queue.filter((x) => !gone.has(x)));
+}
+/** Once: what deletions made before this clean-up existed left behind (a book's meta and own settings, for books no longer here).
+ *  Only keys certainly a book's; glossary terms and text rules the reader wrote are left alone. */
+export async function cleanOrphans(): Promise<number> {
+  const have = new Set((await db.allBooks()).map((b) => b.id)); let n = 0;
+  const kinds = new Set<string>(BOOK_META);
+  for (const key of await db.metaKeys()) {
+    const i = key.indexOf(':'); if (i < 1 || !kinds.has(key.slice(0, i))) continue;
+    const id = key.slice(i + 1); if (id && !have.has(id)) { await db.deleteMeta(key); n++; }
+  }
+  const dead: string[] = [];
+  try { for (const k of ['kr.bookVisual', 'kr.glossaryLinks', 'kr.glossaryDest']) for (const id of Object.keys(JSON.parse(localStorage.getItem(k) ?? '{}') as object)) if (id !== '*' && !have.has(id)) dead.push(id); } catch { /* unreadable: left */ }
+  if (dead.length) { forgetBookSettings(dead); (await import('./glossary')).forgetBooks(dead); n += dead.length; }
+  return n;
+}
+export async function cleanOrphansOnce(): Promise<void> {
+  try { if (localStorage.getItem('kr.orphansCleaned')) return; await cleanOrphans(); localStorage.setItem('kr.orphansCleaned', '1'); } catch { /* next start */ }
 }
 
 export async function touchBook(id: string): Promise<void> {
