@@ -1,7 +1,8 @@
 // Provider, key, model, language and instructions for the AI features (shared by
 // the translator pill and Settings). Choice lists open as stacked M3 sheets.
 import { kittenPanel } from './kittenpanel';
-import { h, icon, openSheet, pickButton, pickSheet, toast } from './dom';
+import { copyText } from './share';
+import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from './dom';
 import { t, isRtlText, localDigits } from '../i18n';
 import { getSettings, updateSettings, type VisualSettings } from '../settings';
 import { PROVIDERS, providerInfo, effectiveModel, defaultPrompt, langName, AI_VOICES, listModels, customApis, activeCustom, usageOf, testApi, appGet, type AiProvider, type CustomApi } from '../ai';
@@ -61,7 +62,7 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
   const prefillRow = h('label', { class: 'row' }, h('span', { class: 'label' }, t('aiPromptPrefill')), h('span', { class: 'switch' }, prefillCb, h('i')));
   // (The glossary: names and terms always rendered the same.)
   const glossaryBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./glossarysheet').then((m) => m.glossarySheet()) }, icon('define'), t('glossary'));
-  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, glossaryBtn), t('aiPromptHint'));
+  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, glossaryBtn, h('span', { style: { flex: '1' } }), iconButton('copy', t('copyPrompt'), () => void copyText(prompt.value.trim() ? prompt.value : defaultPrompt(getSettings().aiTarget))))), t('aiPromptHint'));
   langField.hidden = s.aiTask !== 'translate'; promptField.hidden = s.aiTask !== 'translate';
 
   // Read-aloud engine and AI voice live here too (same key / provider).

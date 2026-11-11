@@ -39,6 +39,21 @@ export function addTerms(add: Omit<Term, 'id'>[]): number {
   saveTerms(list); return n;
 }
 
+/** A glossary as text, one term to a line — `name = rendering`, then after a tab its kind and its language —, to paste
+ *  into another tool or back (parseTerms reads it). */
+const flat = (s: string) => s.replace(/[\t\r\n]+/g, ' ').trim();
+export const termLine = (x: Pick<Term, 'from' | 'to' | 'kind' | 'lang'>, extra = true): string => `${flat(x.from)} = ${flat(x.to)}` + (extra && (x.kind || x.lang) ? `\t${x.kind ?? ''}\t${x.lang ?? ''}` : '');
+export const termsText = (list: Term[]): string => list.map((x) => termLine(x)).join('\n');
+export function parseTerms(text: string): { from: string; to: string; kind?: TermKind; lang?: string }[] {
+  const out: { from: string; to: string; kind?: TermKind; lang?: string }[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const [pair, kind, lang] = line.split('\t'); const i = pair.includes(' = ') ? pair.indexOf(' = ') : pair.indexOf('=');
+    if (i < 0) continue; const from = pair.slice(0, i).trim(), to = pair.slice(i + (pair.includes(' = ') ? 3 : 1)).trim(); if (!from || !to) continue;
+    out.push({ from, to, ...(['person', 'place', 'group', 'term'].includes(kind?.trim()) ? { kind: kind.trim() as TermKind } : {}), ...(lang?.trim() ? { lang: lang.trim() } : {}) });
+  }
+  return out;
+}
+
 /* ---------- folders: glossaries of their own, for any book ---------- */
 export interface Folder { id: string; name: string }
 const FKEY = 'kr.glossaryFolders', LKEY = 'kr.glossaryLinks';

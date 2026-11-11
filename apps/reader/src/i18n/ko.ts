@@ -161,4 +161,8 @@ export const ko: Partial<Strings> = {
   sortByTitle: "제목",
   sortByRecent: "최근",
   volumesN: "{n}권",
+  copyPrompt: "지침 복사",
+  glossCopyAll: "용어집 전체 복사",
+  glossPasted: "추가된 용어: {n}",
+  copyAllNotes: "메모 전체 복사",
 };

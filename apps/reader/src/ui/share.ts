@@ -90,6 +90,17 @@ export async function shareFile(blob: Blob, filename: string, title?: string): P
   return 'saved';
 }
 
+/** Put text on the clipboard (the async API; a hidden field and the old command where a web view refuses it) and say "Copied". */
+export async function copyText(text: string): Promise<boolean> {
+  let done = false;
+  try { await navigator.clipboard.writeText(text); done = true; } catch { /* a web view without the async API */ }
+  if (!done) {
+    const ta = h('textarea', { style: { position: 'fixed', opacity: '0', top: '0', insetInlineStart: '0' }, readonly: '' }) as HTMLTextAreaElement; ta.value = text; document.body.append(ta); ta.select();
+    try { done = document.execCommand('copy'); } catch { /* none */ } ta.remove();
+  }
+  toast(done ? t('copied') : t('copyTextFailed'), done ? 'info' : 'error'); return done;
+}
+
 export async function shareText(text: string, title?: string): Promise<boolean> {
   const c = cap();
   if (c?.isNativePlatform?.() && c.Plugins?.Share) {

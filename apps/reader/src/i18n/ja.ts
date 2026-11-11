@@ -161,4 +161,8 @@ export const ja: Partial<Strings> = {
   sortByTitle: "タイトル",
   sortByRecent: "新着",
   volumesN: "{n} 巻",
+  copyPrompt: "指示文をコピー",
+  glossCopyAll: "用語集をすべてコピー",
+  glossPasted: "追加した用語：{n}",
+  copyAllNotes: "メモをすべてコピー",
 };
