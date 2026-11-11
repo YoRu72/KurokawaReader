@@ -17,6 +17,24 @@ Stage status is kept in this file; channel-level status for the PC shell is in
 - No feature is removed to make the port easier. Where Rust cannot match Electron, the part stays hybrid
   (existing JavaScript in a helper process) and is said plainly.
 
+## 1a. Torrents are a hard requirement (owner, 2026-11-11)
+
+Torrents are central to the app. The port may not weaken them at any point:
+- **Never without a working torrent engine.** On PC, aria2 and the present streaming stay in place until the Rust
+  engine matches them; on Android, libtorrent4j stays until the Rust engine matches it. The old engine is removed
+  only after the new one has been the default for a release without problems.
+- **Parity list the Rust engine must pass before it becomes the default** (each as a test where CI can run it, and
+  in the owner's phone run on Android): magnet links and .torrent files; metadata fetch from a magnet; choosing
+  files and changing the choice mid-download; download and upload limits; pause, resume, and resume after the app
+  restarts (no re-download of finished pieces); trackers (HTTP and UDP), DHT and peer exchange; seeding and its
+  limits; sequential download for **streaming with seeking** while the rest downloads; moving and renaming; many
+  torrents at once; a torrent of thousands of files; private torrents (no DHT/PEX); recovery from a dropped
+  network; the same progress, speed and peer figures in the interface.
+- **Speed is measured, not assumed**: the same public test torrent downloaded with the old and the new engine on
+  the same connection, on PC and on the owner's phone. The Rust engine must not be slower.
+- If the Rust engine cannot reach parity on a point, that point keeps using the old engine (hybrid) and it is
+  reported before any default changes.
+
 ## 2. Where things stand
 
 | | PC (Electron) | Android |
@@ -83,9 +101,11 @@ The Android app keeps its web interface and its thin Java layer for everything t
 notifications, storage access, accessibility, screen capture, mpv). What moves to Rust is the engine logic, as
 the same `kt-core` the PC uses, built for Android as a native library per processor type and called from Java.
 
-Every stage goes behind a **switch in Settings** (default: the current Java engine) until the owner has run it
-on a phone and confirmed it. Only then does the default change, and one release later the Java version is
-removed.
+Every stage goes behind a **switch in Settings** (default: the current Java engine). **A phone run by the owner
+comes before each stage becomes the default (confirmed 2026-11-11) — its purpose is to find the flaws to fix.**
+For each stage the owner gets a short checklist of what to try and what to look for; whatever the run turns up is
+fixed and the run repeated before the default changes. One release after the default has changed without
+problems, the Java version is removed.
 
 | Stage | Contents | Proof | Risk |
 |---|---|---|---|
