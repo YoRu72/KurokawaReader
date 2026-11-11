@@ -149,6 +149,8 @@ export class ReadingTracker {
   }
 
   async stop(): Promise<void> {
+    // (Never started — incognito: nothing counted. A last tick from lastTick 0 counted the whole page's age.)
+    if (this.timer === undefined) return;
     window.clearInterval(this.timer); window.clearInterval(this.saveTimer);
     document.removeEventListener('visibilitychange', this.onVis);
     this.tick();
