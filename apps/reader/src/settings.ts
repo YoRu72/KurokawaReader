@@ -123,6 +123,9 @@ export interface VisualSettings {
   translator: 'builtin' | 'system';
   snapStyle: 'plain' | 'card';
   snapWatermark: boolean;
+  pdfSnapKind: 'page' | 'card';      // «Text as image» on a PDF: the page itself cut out, or the words set again on a card
+  pdfSnapCut: 'column' | 'words';    // the cut: whole lines across the text column, or only the words picked (the rest masked)
+  pdfSnapCaption: boolean;           // the book's title and the page number under the cut
   invertLineArt: boolean;
   snapFolder: string;
   formatFilter: string[];
@@ -284,6 +287,9 @@ export const DEFAULTS: VisualSettings = {
   translator: 'builtin',
   snapStyle: 'plain',
   snapWatermark: false,
+  pdfSnapKind: 'page',
+  pdfSnapCut: 'column',
+  pdfSnapCaption: true,
   invertLineArt: false,
   snapFolder: 'Screenshots',
   formatFilter: [],

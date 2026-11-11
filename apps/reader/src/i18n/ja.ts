@@ -38,6 +38,7 @@ export const ja: Partial<Strings> = {
   shareImage: '画像を共有', savePageImage: 'ページを PNG で保存', sharePage: 'ページを共有', pagesGrid: 'ページ', pageSaved: 'ページを保存しました', imageSaved: '画像を保存しました', shareUnavailable: 'ここでは共有できないため、ファイルを保存しました。',
 
   note: 'メモ', addNote: 'メモを追加', notePlaceholder: 'メモを書く…', noteSaved: 'メモを保存しました', textAsImage: 'テキストを画像に', shareText: '共有', systemTranslate: '他のアプリで翻訳…', searchWeb: 'ウェブ検索', wikipedia: 'Wikipedia', highlightColor: 'ハイライト色', removeHighlight: 'ハイライトを削除',
+  snapAsPage: 'ページのまま', snapAsCard: 'カードで', snapWholeWidth: '段の幅いっぱい', snapOnlyWords: '選択した語句だけ', snapOriginalColors: '元の色', snapAsShown: '表示どおり', snapCaption: '下に書名とページ', snapPageCaption: '{title} · p. {n}', cutPagePart: 'ページの一部を切り取る', cutPageHint: '残したい部分をドラッグして「完了」',
 
   folders: 'フォルダー', newFolder: '新しいフォルダー', folderName: 'フォルダー名', allBooks: 'すべての本', moveToFolder: 'フォルダーへ移動', removeFromFolder: 'フォルダーから外す', deleteFolder: 'フォルダーを削除', deleteFolderConfirm: 'フォルダー「{name}」を削除しますか？本はライブラリに残ります。', renameFolder: 'フォルダー名を変更', dropOnFolder: 'フォルダーにドロップで移動', emptyFolder: 'このフォルダーは空です', importHere: 'このフォルダーに追加', noFolder: 'フォルダーなし',
 
