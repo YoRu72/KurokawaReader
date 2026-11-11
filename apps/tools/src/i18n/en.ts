@@ -1794,6 +1794,8 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   scrAutoStop: "Stop after",
   scrMin: " min",
   scrAutoStopHint: "0: never.",
+  scrLookAhead: "Translate ahead",
+  scrLookAheadHint: "Translates the text below the screen before you scroll to it, so its translation is there at once. Uses data and translation quota (kept small with paid keys: DeepL, AI). It sees below the screen only when the screen is read as text (accessibility); a picture is only read as it scrolls in.",
   scrLook: "How translations look",
   scrPreview: "Translated text appears like this",
   scrSize: "Text size",

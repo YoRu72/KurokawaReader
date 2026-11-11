@@ -942,4 +942,6 @@ export const ko: Partial<Strings> = {
   packPhoneFolder: "Android가 이 폴더의 경로를 주지 않았습니다. 휴대폰 저장소의 폴더나 압축 파일을 고르세요.",
   subsWholeSeason: "시즌 전체",
   subsWholeSeasonHint: "화수를 비워 두면 시즌 전체를 찾습니다. 고른 자막은 작품의 자막 폴더에 저장되고 팩에 추가됩니다.",
+  scrLookAhead: "미리 번역",
+  scrLookAheadHint: "스크롤하기 전에 화면 아래의 글을 번역해 두어, 나타나는 즉시 번역이 보입니다. 데이터와 번역 사용량을 씁니다(DeepL·AI 같은 유료 키는 소량으로 제한). 화면 아래는 텍스트로 읽을 때(접근성)만 볼 수 있고, 이미지는 나타난 부분만 읽습니다.",
 };

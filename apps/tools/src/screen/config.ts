@@ -14,6 +14,8 @@ export interface ScreenConfig {
   mode: 'full' | 'fixed';
   display: 'overlay' | 'panel';
   auto: 'scroll' | 'interval'; interval: number; settle: number; autoStop: number;
+  /** Auto: the text below the screen (that the app keeps out of view) translated before it is scrolled to; the phone keeps it within a small budget for paid keys. */
+  lookAhead: boolean;
   hideAfter: number; tapClose: boolean; speak: boolean; ttsRate: number; history: boolean;
   style: { size: number; bg: string; bgAlpha: number; fg: string; smart: boolean; radius: number; center: boolean; outline: boolean; bold: boolean; /** erase: the words taken off the picture behind them (Ascent's way); fill: a box of one colour; none: bare text. */ bgMode: 'erase' | 'fill' | 'none'; erased?: boolean };
   bubble: { size: number; alpha: number; color: string; dim: boolean; dimAfter: number; edge: boolean };
@@ -53,7 +55,7 @@ export const SCREEN_LANGS: [string, string][] = [
 export const DEFAULT_SCREEN: ScreenConfig = {
   engine: 'google', source: 'auto', target: 'en', deeplKey: '',
   ai: { preset: 'gemini', style: 'gemini', base: '', key: '', model: '', prompt: '' },
-  read: 'auto', mode: 'full', display: 'overlay', auto: 'scroll', interval: 3, settle: 0.5, autoStop: 30,
+  read: 'auto', mode: 'full', display: 'overlay', auto: 'scroll', interval: 3, settle: 0.5, autoStop: 30, lookAhead: true,
   hideAfter: 0, tapClose: true, speak: false, ttsRate: 1, history: true,
   style: { size: 15, bg: '#1E1E1E', bgAlpha: 0.88, fg: '#FFFFFF', smart: true, radius: 6, center: false, outline: false, bold: false, bgMode: 'erase', erased: true },
   bubble: { size: 52, alpha: 0.92, color: '#6750A4', dim: true, dimAfter: 4, edge: true },

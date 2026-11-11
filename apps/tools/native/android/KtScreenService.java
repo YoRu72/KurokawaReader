@@ -79,7 +79,11 @@ public class KtScreenService extends Service {
         super.onCreate(); self = this; wm = (WindowManager) getSystemService(WINDOW_SERVICE); dp = getResources().getDisplayMetrics().density; measure(); cfg = config(this);
     }
     private void measure() { DisplayMetrics dm = new DisplayMetrics(); wm.getDefaultDisplay().getRealMetrics(dm); sw = dm.widthPixels; sh = dm.heightPixels; }
-    @Override public void onConfigurationChanged(android.content.res.Configuration c) { super.onConfigurationChanged(c); measure(); clear(); if (bubble != null) snap(); }
+    @Override public void onConfigurationChanged(android.content.res.Configuration c) {
+        super.onConfigurationChanged(c); measure(); clear(); if (bubble != null) snap();
+        // (Turned: what was followed no longer fits — read again once it settles.)
+        if (following) follow = new KtScreenTrack.Follow(sh); if (autoOn) { ui.removeCallbacks(settled); ui.postDelayed(settled, 700); }
+    }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String a = intent == null ? ACT_START : String.valueOf(intent.getAction());
@@ -99,7 +103,7 @@ public class KtScreenService extends Service {
     }
     @Override public void onDestroy() {
         self = null; autoOn = false; ui.removeCallbacksAndMessages(null); clear(); remove(menu); remove(picker); remove(closeTarget); remove(bubble); bubble = null;
-        KtScreenCapture.stop(); try { if (tts != null) tts.shutdown(); } catch (Throwable ignored) {} work.shutdownNow();
+        KtScreenCapture.stop(); try { if (tts != null) tts.shutdown(); } catch (Throwable ignored) {} work.shutdownNow(); aheadWork.shutdownNow();
         super.onDestroy();
     }
 
@@ -202,7 +206,9 @@ public class KtScreenService extends Service {
     }
     private boolean nearClose() { if (bp == null) return false; int cx = bp.x + bp.width / 2, cy = bp.y + bp.height / 2; return Math.hypot(cx - sw / 2.0, cy - (sh - px(108))) < px(80); }
     private void highlightClose(boolean on) { if (closeTarget != null) { closeTarget.setScaleX(on ? 1.25f : 1f); closeTarget.setScaleY(on ? 1.25f : 1f); } }
-    private void working(boolean on) { busy = on; ui.post(() -> { if (bubbleText != null) bubbleText.setText(on ? "…" : autoOn ? "文A●" : "文A"); if (on) wake(); }); }
+    private void working(boolean on) { working(on, true); }
+    /** Busy (another reading waits) — said on the bubble when `show`. */
+    private void working(boolean on, boolean show) { busy = on; if (on && !show) return; ui.post(() -> { if (bubbleText != null) bubbleText.setText(on ? "…" : autoOn ? "文A●" : "文A"); if (on) wake(); }); }
 
     /* ---------- what a tap, a double tap or a long press does ---------- */
     private void act(String what) {
@@ -281,7 +287,7 @@ public class KtScreenService extends Service {
         String e = s(cfg, "engine", "google"); boolean deepl = !s(cfg, "deeplKey", "").trim().isEmpty(); Map<String, Object> ai = sub("ai"); boolean hasAi = !s(ai, "key", "").isEmpty() || (!s(ai, "base", "").isEmpty() && !s(ai, "model", "").isEmpty() && !s(ai, "base", "").contains("googleapis") && !s(ai, "base", "").contains("openai.com") && !s(ai, "base", "").contains("anthropic") && !s(ai, "base", "").contains("openrouter"));
         String next = "google".equals(e) ? (deepl ? "deepl" : hasAi ? "ai" : "google") : "deepl".equals(e) ? (hasAi ? "ai" : "google") : "google";
         if (next.equals(e)) { toast(label("onlyGoogle", "Add a DeepL key or an AI model in the app to switch")); return; }
-        cfg.put("engine", next); save(); KtTranslate.forget(); toast(engineLabel());
+        cfg.put("engine", next); save(); staleAll(); toast(engineLabel());   // (the cache kept: it is keyed by the translator too; what is shown asked again at the next reading)
     }
     private String langLabel(String code) { if ("auto".equals(code)) return label("detect", "Detect"); for (Object o : KtJson.arr(cfg.get("langs"))) { List<Object> l = KtJson.arr(o); if (l.size() >= 2 && code.equals(l.get(0))) return String.valueOf(l.get(1)); } return code; }
     /** The language to translate from (`which` = source, «Detect» first) or into (target), chosen from a list by the bubble. */
@@ -292,7 +298,7 @@ public class KtScreenService extends Service {
         List<Object> all = new ArrayList<>(); if ("source".equals(which)) all.add(java.util.Arrays.asList((Object) "auto", label("detect", "Detect"))); all.addAll(KtJson.arr(cfg.get("langs")));
         for (Object o : all) { List<Object> l = KtJson.arr(o); if (l.size() < 2) continue; final String code = String.valueOf(l.get(0));
             TextView t = new TextView(this); t.setText((code.equals(cur) ? "✓  " : "    ") + l.get(1)); t.setTextColor(code.equals(cur) ? 0xFF8AB4F8 : Color.WHITE); t.setTextSize(15); t.setPadding(px(14), px(9), px(14), px(9)); t.setMinWidth(px(200));
-            t.setOnClickListener((v) -> { remove(menu); menu = null; cfg.put(which, code); save(); toast(("source".equals(which) ? "" : "→ ") + langLabel(code)); if (!shown.isEmpty()) translate(lastArea, true); });
+            t.setOnClickListener((v) -> { remove(menu); menu = null; cfg.put(which, code); save(); toast(("source".equals(which) ? "" : "→ ") + langLabel(code)); if (!shown.isEmpty()) { staleAll(); translate(lastArea, true); } });
             list.addView(t); }
         sv.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.min((int) (sh * 0.6), px(44) * Math.max(1, list.getChildCount()) + px(16))));
         FrameLayout wrap = new FrameLayout(this); wrap.addView(sv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.min((int) (sh * 0.6), px(44) * Math.max(1, list.getChildCount()) + px(16))));
@@ -331,7 +337,7 @@ public class KtScreenService extends Service {
 
     /* ---------- auto ---------- */
     private void toggleAuto() {
-        autoOn = !autoOn; ui.removeCallbacks(tick); working(false); KtScreenCapture.watcher = null; following = false;
+        autoOn = !autoOn; ui.removeCallbacks(tick); ui.removeCallbacks(settled); readAgain = false; working(false); KtScreenCapture.watcher = null; following = false;
         if (!autoOn) { toast(label("autoStopped", "Auto translation stopped")); return; }
         double mins = n(cfg, "autoStop", 30); autoUntil = mins > 0 ? System.currentTimeMillis() + (long) (mins * 60000) : Long.MAX_VALUE;
         toast(label("autoStarted", "Auto translation on"));
@@ -344,100 +350,171 @@ public class KtScreenService extends Service {
         if (!busy) translate(lastArea, true);
         ui.postDelayed(this, (long) (Math.max(1, n(cfg, "interval", 3)) * 1000));
     } };
-    private void stopAuto() { autoOn = false; following = false; KtScreenCapture.watcher = null; ui.removeCallbacks(tick); working(false); }
-    private final Runnable settled = () -> { if (autoOn && !busy) translate(lastArea, true); };
-    /** The screen scrolled or changed (the accessibility service says): the translations moved with it when it says by
-     *  how much, else hidden; read again once the screen is still (auto) — the words met before cost nothing. */
-    void screenMoved(boolean scrolled, int dy) {
+    private void stopAuto() { autoOn = false; following = false; readAgain = false; KtScreenCapture.watcher = null; ui.removeCallbacks(tick); ui.removeCallbacks(settled); working(false); }
+    /** Read again once the screen is still; when a reading is under way, right after it (a scroll during a reading is not left unread). */
+    private final Runnable settled = () -> { if (!autoOn) return; if (busy) { readAgain = true; return; } translate(lastArea, true); };
+    private boolean lookAhead() { return b(cfg, "lookAhead", true); }
+    /** The screen scrolled or changed (the accessibility service says): the translations moved with it at once when it
+     *  says by how much (`d`: dx, dy; only those inside `area`, the list that scrolled — not the bar above it), else
+     *  hidden until read again; while it scrolls, what is known already (translated ahead, or met before) drawn as it
+     *  comes in; read again once the screen is still (auto), sooner while it changes, later while readings find nothing new. */
+    void screenMoved(boolean scrolled, int[] d, int[] area) {
         ui.post(() -> {
             if (following) return;   // (the picture itself is followed instead)
-            if (scrolled && !shown.isEmpty() && panel == null) { if (dy != 0) { scrollY += dy; placeAll(); } else hideResults(); }
-            if (autoOn && !"interval".equals(s(cfg, "auto", "scroll"))) { if (System.currentTimeMillis() > autoUntil) { stopAuto(); return; } ui.removeCallbacks(settled); ui.postDelayed(settled, (long) (Math.min(n(cfg, "settle", 0.7), 0.4) * 1000)); }
+            long now = System.currentTimeMillis();
+            if (scrolled) { pace.moved(now); if (d != null && d[1] != 0) dir = d[1] > 0 ? 1 : -1; }
+            if (scrolled && results != null && panel == null) { if (d != null) { synchronized (track) { track.moved(-d[0], -d[1], area); } placeAll(null); } else hideResults(); }
+            if (!autoOn || "interval".equals(s(cfg, "auto", "scroll"))) return;
+            if (now > autoUntil) { stopAuto(); return; }
+            if (scrolled && !busy && KtScreenA11y.self != null && now - peekAt > 300 && !"panel".equals(s(cfg, "display", "overlay"))) { peekAt = now; translate(lastArea, true, true, null); }
+            long settle = (long) (Math.min(n(cfg, "settle", 0.7), 0.4) * 1000);
+            ui.removeCallbacks(settled); ui.postDelayed(settled, scrolled ? settle : Math.max(settle, pace.gap));
         });
     }
     void captureStopped() { ui.post(() -> { if (autoOn && following) stopAuto(); }); }
 
     /* ---------- following a page in the picture (auto, read as a picture) ----------
-       The translations are remembered where they are on the page, not on the screen: «scrollY» is how far the page
-       has moved since the first reading, found frame by frame from the picture (KtScreenMotion). A scroll moves every
-       translation with the page at once — those scrolled back into view are there again straight away — and once the
-       page stands still it is read again, and only lines not met before are translated. */
-    private volatile boolean following = false; private volatile int scrollY = 0; private short[][] prevSig; private volatile long movedAt = 0; private volatile boolean needRead = false; private int noMatch = 0;
-    private volatile int[][] masks = new int[0][];
-    private final List<KtScreenA11y.Block> memory = new ArrayList<>();
+       Each frame is compared with a key frame (KtScreenTrack.Follow — a slow scroll adds up instead of being lost), and
+       the boxes moved with the page at once; those scrolled out are kept for when it comes back. While it scrolls
+       slowly (reading, not flinging) the rows it brings in are read first, the boxes left showing; once it stands
+       still what it brought in is read (all of it, boxes hidden, now and then or when the page was lost). */
+    private volatile boolean following = false; private volatile long movedAt = 0; private volatile boolean needRead = false, lost = false; private volatile int unread = 0; private volatile long fullAt = 0;
+    private volatile int[][] masks = new int[0][]; private int[][] lastMasks = new int[0][];
+    private final KtScreenTrack track = new KtScreenTrack(); private final KtScreenTrack.Pace pace = new KtScreenTrack.Pace(400, 3200); private volatile KtScreenTrack.Follow follow;
+    private volatile boolean readAgain = false; private long peekAt = 0; private volatile int dir = 1;
     private void startFollowing() {
-        if (following) return; following = true; prevSig = null; noMatch = 0; needRead = false;
+        if (following) return; following = true; follow = new KtScreenTrack.Follow(sh); needRead = false; lost = false; unread = 0;
         KtScreenCapture.watcher = new KtScreenCapture.Watcher() {
             @Override public int[][] masks() { return masks; }
             @Override public void frame(short[][] sig, long at) {
-                if (!following || reading) { prevSig = null; return; }
-                short[][] prev = prevSig; prevSig = sig; if (prev == null) return;
-                int d = KtScreenMotion.shift(prev, sig, sh);
-                if (d == KtScreenMotion.NONE) { if (++noMatch == 2) { movedAt = at; needRead = true; ui.post(() -> { memory.clear(); scrollY = 0; if (results != null) results.removeAllViews(); shown = new ArrayList<>(); masks = new int[0][]; }); } return; }   // (another page: what was remembered no longer belongs)
-                noMatch = 0;
-                if (d != 0) { scrollY += d; movedAt = at; needRead = true; ui.post(KtScreenService.this::placeAll); return; }
-                if (needRead && at - movedAt > (long) (Math.max(0.25, n(cfg, "settle", 0.7)) * 1000) && !busy && autoOn) { needRead = false; ui.post(() -> { if (autoOn && !busy) translate(null, true); }); }
+                KtScreenTrack.Follow f = follow; if (f == null) return;
+                if (!following || reading) { f.reset(); return; }
+                KtScreenCapture.gapMs = pace.frameGap(at);
+                int d = f.feed(sig);
+                // (Not the same page twice running: the boxes hidden, not thrown away — a reading pairs them again by their words.)
+                if (d == KtScreenMotion.NONE) { if (f.fails == 2) { movedAt = at; needRead = true; lost = true; unread = 0; ui.post(KtScreenService.this::hideResults); } return; }
+                if (d != 0) {
+                    movedAt = at; needRead = true; unread += d; pace.moved(at);
+                    ui.post(() -> { synchronized (track) { track.moved(0, -d, null); } placeAll(null); });
+                    if (Math.abs(d) <= px(24) && Math.abs(unread) >= sh / 4 && !busy && autoOn && !lost) { final int[] st = KtScreenTrack.strip(unread, sw, sh, px(48)); unread = 0; ui.post(() -> { if (autoOn && !busy) translate(null, true, false, rect(st)); }); }
+                    return;
+                }
+                if (needRead && at - movedAt > (long) (Math.max(0.25, n(cfg, "settle", 0.7)) * 1000) && !busy && autoOn) {
+                    needRead = false; boolean full = lost || at - fullAt > 15000; final int[] st = full ? null : KtScreenTrack.strip(unread, sw, sh, px(48)); unread = 0;
+                    if (full || st != null) ui.post(() -> { if (autoOn && !busy) translate(null, true, false, st == null ? null : rect(st)); });
+                }
             }
         };
     }
     private volatile boolean reading = false;
+    private static Rect rect(int[] a) { return a == null ? null : new Rect(a[0], a[1], a[2], a[3]); }
+    private static int[] box(Rect r) { return r == null ? null : new int[] { r.left, r.top, r.right, r.bottom }; }
 
     /* ---------- reading and translating ---------- */
-    private void translate(Rect area, boolean quiet) {
-        final int my = ++gen; lastArea = area; working(true);
+    private void translate(Rect area, boolean quiet) { translate(area, quiet, false, null); }
+    /** The screen (or `area`) read, what is read paired with what is shown (KtScreenTrack: a line read again keeps its
+     *  box and its translation), what is new or changed translated — first from what is known, then asked — and drawn.
+     *  `cacheOnly`: nothing asked of the translator, no picture taken (a scroll under way); `strip`: a picture of that
+     *  strip read with the boxes left showing (what a slow scroll brought in). */
+    private void translate(Rect area, boolean quiet, boolean cacheOnly, Rect strip) {
+        final int my = ++gen; if (!cacheOnly && strip == null) lastArea = area; working(true, !cacheOnly && strip == null);
         work.execute(() -> {
             try {
-                List<KtScreenA11y.Block> blocks = new ArrayList<>(); String read = s(cfg, "read", "auto"); boolean picture = false; int at = scrollY;
+                List<KtScreenA11y.Block> blocks = new ArrayList<>(); String read = s(cfg, "read", "auto"); boolean picture = false, fresh = false; int[] mark;
+                List<KtScreenTrack.Cand> cands = lookAhead() && autoOn && !cacheOnly && area == null ? new ArrayList<>() : null;
                 if ("text".equals(read) && !KtScreenA11y.declared(this)) read = "auto"; // (a build without the service: a picture then)
-                if (!"picture".equals(read) && KtScreenA11y.self != null) blocks = KtScreenA11y.read(area);
-                if (blocks.isEmpty() && !"text".equals(read)) {
+                synchronized (track) { mark = new int[] { track.movedX, track.movedY }; }
+                if (strip == null && !"picture".equals(read) && KtScreenA11y.self != null) blocks = KtScreenA11y.read(area, cands);
+                if ((blocks.isEmpty() || strip != null) && !"text".equals(read)) {
+                    if (cacheOnly) return;
                     if (!KtScreenCapture.ready()) {
                         if ("text".equals(read)) { if (!quiet) toast(label("needA11y", "Turn on the accessibility service")); return; }
                         pendingAfterConsent = () -> translate(area, quiet);
                         ui.post(() -> { try { startActivity(new Intent(this, KtScreenCapture.Consent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)); } catch (Throwable ignored) {} });
                         return;
                     }
-                    reading = true; at = scrollY;
-                    long since = hideAll(true);
-                    Bitmap shot = KtScreenCapture.grab(since);
-                    hideAll(false); reading = false;
+                    // (Read as a picture with the text tree there too: the tree only to translate ahead, the picture says where.)
+                    if (cands != null && cands.isEmpty() && strip == null && KtScreenA11y.self != null) KtScreenA11y.read(null, cands);
+                    Bitmap shot;
+                    if (strip == null) { reading = true; long since = hideAll(true); shot = KtScreenCapture.grab(since); hideAll(false); reading = false; }
+                    else shot = KtScreenCapture.grab(System.currentTimeMillis() - 1);
+                    synchronized (track) { mark = new int[] { track.movedX, track.movedY }; }
                     if (shot == null) { if (!quiet) toast(label("captureFailed", "The screen could not be read")); return; }
-                    blocks = KtScreenOcr.read(shot, area, s(cfg, "source", "auto")); shot.recycle(); picture = true;
+                    blocks = KtScreenOcr.read(shot, strip != null ? strip : area, s(cfg, "source", "auto")); shot.recycle(); picture = true;
+                    if (strip == null) fullAt = System.currentTimeMillis(); else blocks = outsideOurBoxes(blocks);
+                    if (strip == null && lost) { lost = false; fresh = true; }
                 } else if (blocks.isEmpty() && KtScreenA11y.self == null && !quiet) { toast(label("needA11y", "Turn on the accessibility service")); return; }
                 if (my != gen) return;
-                if (blocks.isEmpty() && !(autoOn && picture)) { if (!quiet) toast(label("noText", "No text found here")); ui.post(this::clear); return; }
-                if (quiet && !picture && same(blocks, shown) && results != null && results.getVisibility() == View.VISIBLE) return;
-                // (Lines met before keep their translation — a page scrolled back costs nothing.)
-                List<String> texts = new ArrayList<>(); for (KtScreenA11y.Block k : blocks) texts.add(k.text);
-                List<String> tr = KtTranslate.translate(texts, KtTranslate.Config.from(cfg));
-                for (int k = 0; k < blocks.size(); k++) blocks.get(k).tr = tr.get(k);
+                if (blocks.isEmpty() && !(autoOn && picture)) { if (!quiet) toast(label("noText", "No text found here")); if (!cacheOnly) ui.post(this::clear); return; }
+                KtTranslate.Config tc = KtTranslate.Config.from(cfg);
                 KtLetterFace.kinds(blocks, KtLettering.glossary(cfg));
+                if ("panel".equals(s(cfg, "display", "overlay"))) {
+                    if (cacheOnly) return;
+                    List<String> texts = new ArrayList<>(); for (KtScreenA11y.Block k : blocks) texts.add(k.text);
+                    List<String> tr = KtTranslate.translate(texts, tc); for (int k = 0; k < blocks.size(); k++) blocks.get(k).tr = tr.get(k);
+                    final List<KtScreenA11y.Block> done = blocks; ui.post(() -> { if (my != gen) return; shown = done; showPanel(); remember(done); speak(done); }); return;
+                }
+                // Paired with what is shown; what is known drawn at once.
+                final KtScreenTrack.Update u; final List<KtScreenTrack.Item> need = new ArrayList<>(); final boolean pic = picture, isStrip = strip != null;
+                synchronized (track) {
+                    if (fresh) track.items.removeIf((i) -> !track.onScreen(i));   // (another page: what was kept out of view no longer belongs)
+                    track.viewport(sw, sh); track.keepMisses = picture ? 1 : 0; track.keepOff = picture && autoOn && area == null;
+                    int ox = track.movedX - mark[0], oy = track.movedY - mark[1];   // (the page moved since the picture was taken)
+                    List<KtScreenTrack.Obs> obs = new ArrayList<>(); for (KtScreenA11y.Block k : blocks) obs.add(new KtScreenTrack.Obs(k.text, k.r.left + ox, k.r.top + oy, k.r.width(), k.r.height(), k));
+                    u = track.update(obs, box(strip != null ? strip : area), isStrip ? (i) -> i.tr != null : null);
+                    for (KtScreenTrack.Item i : track.items) {
+                        if (!track.onScreen(i) || (i.tr != null && i.text.equals(i.trOf))) continue;
+                        String hit = KtTranslate.peek(i.text, tc); if (hit != null) { i.tr = hit; i.trOf = i.text; } else need.add(i);
+                    }
+                }
+                pace.afterRead(u.changed() || !need.isEmpty());
+                ui.post(() -> { if (my != gen) return; render(u.glide, u.resized); if (autoOn && pic && area == null) startFollowing(); });
+                if (cands != null && !cands.isEmpty()) translateAhead(cands, tc, my);
+                if (cacheOnly || need.isEmpty()) return;
+                // What is new or changed, asked of the translator (each text once).
+                List<String> texts = new ArrayList<>(); for (KtScreenTrack.Item i : need) if (!texts.contains(i.text)) texts.add(i.text);
+                List<String> tr = KtTranslate.translate(texts, tc);
+                final List<KtScreenA11y.Block> done = new ArrayList<>();
+                synchronized (track) { for (KtScreenTrack.Item i : need) { int k = texts.indexOf(i.text); if (k < 0) continue; i.tr = tr.get(k); i.trOf = i.text; if (i.data instanceof KtScreenA11y.Block) { KtScreenA11y.Block b = (KtScreenA11y.Block) i.data; b.tr = i.tr; done.add(b); } } }
                 if (my != gen) return;
-                final List<KtScreenA11y.Block> done = blocks; final boolean pic = picture; final int base = at;
-                ui.post(() -> {
-                    if (my != gen) return;
-                    if ("panel".equals(s(cfg, "display", "overlay"))) { shown = done; showPanel(); }
-                    else if (autoOn && pic && area == null) { merge(done, base); startFollowing(); }
-                    else { scrollY = 0; memory.clear(); for (KtScreenA11y.Block k : done) { k.y = k.r.top; memory.add(k); } drawMemory(); }
-                    remember(done); speak(done);
-                });
+                ui.post(() -> { if (my != gen) return; render(null, null); remember(done); speak(done); });
             } catch (Throwable e) {
                 reading = false;
                 String m = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 if (!quiet) toast(m.contains("deeplKey") ? label("needDeepl", "Add your DeepL key in the app") : label("failed", "Translation failed") + ": " + m);
-            } finally { if (my == gen) working(false); }
+            } finally { if (my == gen) { working(false); ui.post(() -> { if (readAgain && autoOn && !busy) { readAgain = false; ui.postDelayed(settled, 150); } }); } }
         });
     }
-    /** A new reading of the page (at page offset `base`) put with what is remembered: the lines in view now replace
-     *  those remembered there; the ones out of view are kept for when the page comes back. */
-    private void merge(List<KtScreenA11y.Block> fresh, int base) {
-        int top = base, bottom = base + sh; List<KtScreenA11y.Block> keep = new ArrayList<>();
-        for (KtScreenA11y.Block m : memory) { int y = m.y, y2 = m.y + m.r.height(); if (y2 < top + px(8) || y > bottom - px(8)) keep.add(m); }
-        for (KtScreenA11y.Block k : fresh) { k.y = k.r.top + base; keep.add(k); }
-        while (keep.size() > 400) keep.remove(0);
-        memory.clear(); memory.addAll(keep); drawMemory();
+    /** What a picture read with the boxes showing found under them is our own translation: left out. */
+    private List<KtScreenA11y.Block> outsideOurBoxes(List<KtScreenA11y.Block> blocks) {
+        int[][] m = masks; List<KtScreenA11y.Block> out = new ArrayList<>();
+        for (KtScreenA11y.Block k : blocks) { long a = (long) Math.max(1, k.r.width()) * Math.max(1, k.r.height()), over = 0; for (int[] b : m) { int w = Math.min(k.r.right, b[2]) - Math.max(k.r.left, b[0]), h = Math.min(k.r.bottom, b[3]) - Math.max(k.r.top, b[1]); if (w > 0 && h > 0) over += (long) w * h; } if (over * 10 < a * 3) out.add(k); }
+        return out;
     }
-    private static boolean same(List<KtScreenA11y.Block> a, List<KtScreenA11y.Block> b) { if (a.size() != b.size()) return false; for (int k = 0; k < a.size(); k++) if (!a.get(k).text.equals(b.get(k).text) || !a.get(k).r.equals(b.get(k).r)) return false; return true; }
+    /** Translating ahead (auto, when set): the text the app keeps out of view, below first (the way it scrolls), a
+     *  little above — translated into the cache after what is on the screen, in batches, within a budget (little for
+     *  a paid key), stopped when a reading of the screen begins; when it scrolls into view it is drawn at once. */
+    private final ExecutorService aheadWork = Executors.newSingleThreadExecutor((r) -> { Thread t = new Thread(r, "kt-screen-ahead"); t.setDaemon(true); t.setPriority(Thread.MIN_PRIORITY); return t; });
+    private final java.util.concurrent.atomic.AtomicBoolean aheadQueued = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private KtScreenTrack.Budget budget; private String budgetFor = "";
+    private void translateAhead(List<KtScreenTrack.Cand> cands, KtTranslate.Config tc, int my) {
+        if (!aheadQueued.compareAndSet(false, true)) return;
+        aheadWork.execute(() -> {
+            try {
+                if (budget == null || !budgetFor.equals(tc.engine)) { budget = KtScreenTrack.Budget.of(tc.engine); budgetFor = tc.engine; }
+                boolean paid = "deepl".equals(tc.engine) || "ai".equals(tc.engine);
+                List<String> todo = KtScreenTrack.ahead(cands, sh, dir, paid ? 30 : 80, paid ? 1500 : 6000, 2, (t) -> KtTranslate.peek(t, tc) != null);
+                for (int k = 0; k < todo.size(); k += 20) {
+                    if (my != gen || !autoOn) return;
+                    List<String> batch = new ArrayList<>(todo.subList(k, Math.min(todo.size(), k + 20))); int chars = 0; for (String t : batch) chars += t.length();
+                    if (!budget.take(chars, System.currentTimeMillis())) return;
+                    try { KtTranslate.translate(batch, tc); } catch (Throwable e) { budget.refused(System.currentTimeMillis()); return; }
+                }
+            } catch (Throwable ignored) {} finally { aheadQueued.set(false); }
+        });
+    }
+    /** After the language or the translator changed: every translation shown asked again (from the cache when known). */
+    private void staleAll() { synchronized (track) { for (KtScreenTrack.Item i : track.items) i.trOf = null; } }
     /** The translator's own views hidden (true) for a picture of the screen, or shown again; when hidden. */
     private long hideAll(boolean hide) {
         CountDownLatch l = new CountDownLatch(1);
@@ -447,62 +524,87 @@ public class KtScreenService extends Service {
     }
 
     /* ---------- drawing the translations over the words ---------- */
-    private void redraw() { drawMemory(); }
+    /** Every translation drawn again (its text's size changed). */
+    private void redraw() { if (results != null) results.removeAllViews(); synchronized (track) { for (KtScreenTrack.Item i : track.items) i.view = null; } render(null, null); }
     @SuppressLint("ClickableViewAccessibility")
-    private void drawMemory() {
-        Map<String, Object> st = sub("style"); boolean tapClose = b(cfg, "tapClose", true) && !autoOn;
-        if (results == null) {
-            results = new FrameLayout(this);
-            // (Over the other app, the translations let touches through — scrolling goes on. The accessibility
-            // service's own layer is trusted by Android to do that at full opacity; an ordinary overlay is kept at
-            // Android 12's 80% for it.)
-            KtScreenA11y a = KtScreenA11y.self; boolean trusted = a != null && Build.VERSION.SDK_INT >= 22;
-            resultsWm = trusted ? (WindowManager) a.getSystemService(Context.WINDOW_SERVICE) : wm;
-            WindowManager.LayoutParams p = params(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, tapClose ? 0 : WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-            if (trusted) p.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY; else if (!tapClose && Build.VERSION.SDK_INT >= 31) p.alpha = 0.8f;
-            results.setOnTouchListener((v, e) -> { if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { clear(); return true; } return false; });
-            try { resultsWm.addView(results, p); } catch (Throwable e) { try { resultsWm = wm; p.type = overlayType(); if (!tapClose && Build.VERSION.SDK_INT >= 31) p.alpha = 0.8f; wm.addView(results, p); } catch (Throwable e2) { results = null; return; } }
+    private boolean ensureResults() {
+        if (results != null) return true;
+        boolean tapClose = b(cfg, "tapClose", true) && !autoOn;
+        results = new FrameLayout(this);
+        // (Over the other app, the translations let touches through — scrolling goes on. The accessibility
+        // service's own layer is trusted by Android to do that at full opacity; an ordinary overlay is kept at
+        // Android 12's 80% for it.)
+        KtScreenA11y a = KtScreenA11y.self; boolean trusted = a != null && Build.VERSION.SDK_INT >= 22;
+        resultsWm = trusted ? (WindowManager) a.getSystemService(Context.WINDOW_SERVICE) : wm;
+        WindowManager.LayoutParams p = params(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, tapClose ? 0 : WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        if (trusted) p.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY; else if (!tapClose && Build.VERSION.SDK_INT >= 31) p.alpha = 0.8f;
+        results.setOnTouchListener((v, e) -> { if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { clear(); return true; } return false; });
+        try { resultsWm.addView(results, p); } catch (Throwable e) { try { resultsWm = wm; p.type = overlayType(); if (!tapClose && Build.VERSION.SDK_INT >= 31) p.alpha = 0.8f; wm.addView(results, p); } catch (Throwable e2) { results = null; return false; } }
+        return true;
+    }
+    /** The boxes brought in line with what is followed: those gone removed, those new (or whose translation or size
+     *  changed) made — no other box is touched, so nothing flickers —, then every box put where its words are now
+     *  (`glide`: corrected by a few pixels, glided there rather than jumping). */
+    private void render(List<KtScreenTrack.Item> glide, List<KtScreenTrack.Item> rebuild) {
+        if (!ensureResults()) return;
+        List<KtScreenTrack.Item> items; synchronized (track) { items = new ArrayList<>(track.items); }
+        java.util.Set<KtScreenTrack.Item> live = new java.util.HashSet<>(items);
+        for (int c = results.getChildCount() - 1; c >= 0; c--) { View v = results.getChildAt(c); Object tg = v.getTag(); if (!(tg instanceof KtScreenTrack.Item) || !live.contains(tg)) { v.animate().cancel(); results.removeViewAt(c); if (tg instanceof KtScreenTrack.Item && ((KtScreenTrack.Item) tg).view == v) ((KtScreenTrack.Item) tg).view = null; } }
+        Map<String, Object> st = sub("style"); List<KtScreenA11y.Block> list = new ArrayList<>();
+        for (KtScreenTrack.Item i : items) {
+            String tr = i.tr; if (tr == null || tr.isEmpty() || !(i.data instanceof KtScreenA11y.Block)) continue;
+            KtScreenA11y.Block k = (KtScreenA11y.Block) i.data; k.tr = tr; list.add(k);
+            View old = i.view instanceof View ? (View) i.view : null;
+            if (old != null && old.getParent() == results && old instanceof TextView && tr.contentEquals(((TextView) old).getText()) && (rebuild == null || !rebuild.contains(i))) continue;
+            if (old != null && old.getParent() == results) results.removeView(old);
+            TextView t = makeView(i, k, tr, st); results.addView(t, new FrameLayout.LayoutParams(t.getLayoutParams().width, t.getLayoutParams().height)); i.view = t;
         }
-        results.removeAllViews(); results.setVisibility(View.VISIBLE);
-        float size = (float) n(st, "size", 15); boolean smart = b(st, "smart", true); int bg = color(s(st, "bg", "#1E1E1E"), 0xFF1E1E1E), fg = color(s(st, "fg", "#FFFFFF"), Color.WHITE); int alpha = (int) Math.round(255 * n(st, "bgAlpha", 0.88));
-        float radius = px(n(st, "radius", 6)); boolean center = b(st, "center", false), outline = b(st, "outline", false), bold = b(st, "bold", false); float sd = getResources().getDisplayMetrics().scaledDensity;
-        List<KtScreenA11y.Block> list = new ArrayList<>();
-        for (KtScreenA11y.Block k : memory) {
-            if (k.tr == null || k.tr.isEmpty()) continue;
-            TextView t = new TextView(this); t.setText(k.tr);
-            int fgc = smart && k.bg != 0 ? k.fg : fg; int bgc = smart && k.bg != 0 ? k.bg : bg;
-            // (Lettered in the font set for its kind — a balloon's words, a thought, a box, a sound effect —, balloons centred.)
-            Typeface face = KtLetterFace.face(cfg, k.kind); t.setTextColor(fgc); if (face != null) t.setTypeface(face, bold ? Typeface.BOLD : Typeface.NORMAL); else if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
-            if (outline) t.setShadowLayer(px(2), 0, 0, (fgc & 0xFFFFFF) > 0x888888 ? Color.BLACK : Color.WHITE);
-            GradientDrawable g = new GradientDrawable(); g.setColor((alpha << 24) | (bgc & 0xFFFFFF)); g.setCornerRadius(radius);
-            // (The picture behind with the words taken off, when there is one: the translation lettered on it.)
-            if (!"none".equals(s(st, "bgMode", "erase"))) { if (smart && k.patch != null && "erase".equals(s(st, "bgMode", "erase"))) { try { Bitmap pb = Bitmap.createBitmap(k.patch, k.pw, k.ph, Bitmap.Config.ARGB_8888); Bitmap in = Bitmap.createBitmap(pb, k.pad, k.pad, Math.max(1, Math.min(k.pw - 2 * k.pad, k.r.width())), Math.max(1, Math.min(k.ph - 2 * k.pad, k.r.height()))); t.setBackground(new android.graphics.drawable.BitmapDrawable(getResources(), in)); } catch (Throwable e) { t.setBackground(g); } } else t.setBackground(g); }
-            t.setGravity((center || (k.kind != null && !"box".equals(k.kind) && !"sign".equals(k.kind) && b(sub("letter"), "kinds", true)) ? Gravity.CENTER_HORIZONTAL : Gravity.START) | Gravity.CENTER_VERTICAL); t.setPadding(px(2), 0, px(2), 0); t.setIncludeFontPadding(false);
-            boolean er = k.patch != null && smart && "erase".equals(s(st, "bgMode", "erase")); int w = er ? k.r.width() : Math.max(k.r.width(), px(36)), h = er ? k.r.height() : Math.max(k.r.height(), px(14));
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
-            // (As big as the words' box allows — up to twice the size set —, never under 8.)
-            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(t, 8, (int) Math.max(9, Math.min(size * 2, h / sd)), 1, TypedValue.COMPLEX_UNIT_SP);
-            results.addView(t, new FrameLayout.LayoutParams(w, h)); t.setTag(k); list.add(k);
-        }
-        shown = list; placeAll();
+        java.util.Collections.sort(list, (p, q) -> p.r.top != q.r.top ? Integer.compare(p.r.top, q.r.top) : Integer.compare(p.r.left, q.r.left));
+        shown = list; placeAll(glide == null ? null : new java.util.HashSet<>(glide));
         double hideAfter = n(cfg, "hideAfter", 0); ui.removeCallbacks(hideRun); if (hideAfter > 0 && !autoOn) ui.postDelayed(hideRun, (long) (hideAfter * 1000));
     }
-    /** Every translation put where its words are now: its place on the page less how far the page has moved. */
-    private void placeAll() {
+    /** One translation's box, on its own colours (or the picture behind its words with the words taken off). */
+    private TextView makeView(KtScreenTrack.Item i, KtScreenA11y.Block k, String tr, Map<String, Object> st) {
+        float size = (float) n(st, "size", 15); boolean smart = b(st, "smart", true); int bg = color(s(st, "bg", "#1E1E1E"), 0xFF1E1E1E), fg = color(s(st, "fg", "#FFFFFF"), Color.WHITE); int alpha = (int) Math.round(255 * n(st, "bgAlpha", 0.88));
+        float radius = px(n(st, "radius", 6)); boolean center = b(st, "center", false), outline = b(st, "outline", false), bold = b(st, "bold", false); float sd = getResources().getDisplayMetrics().scaledDensity;
+        TextView t = new TextView(this); t.setText(tr);
+        int fgc = smart && k.bg != 0 ? k.fg : fg; int bgc = smart && k.bg != 0 ? k.bg : bg;
+        // (Lettered in the font set for its kind — a balloon's words, a thought, a box, a sound effect —, balloons centred.)
+        Typeface face = KtLetterFace.face(cfg, k.kind); t.setTextColor(fgc); if (face != null) t.setTypeface(face, bold ? Typeface.BOLD : Typeface.NORMAL); else if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+        if (outline) t.setShadowLayer(px(2), 0, 0, (fgc & 0xFFFFFF) > 0x888888 ? Color.BLACK : Color.WHITE);
+        GradientDrawable g = new GradientDrawable(); g.setColor((alpha << 24) | (bgc & 0xFFFFFF)); g.setCornerRadius(radius);
+        // (The picture behind with the words taken off, when there is one: the translation lettered on it.)
+        if (!"none".equals(s(st, "bgMode", "erase"))) { if (smart && k.patch != null && "erase".equals(s(st, "bgMode", "erase"))) { try { Bitmap pb = Bitmap.createBitmap(k.patch, k.pw, k.ph, Bitmap.Config.ARGB_8888); Bitmap in = Bitmap.createBitmap(pb, k.pad, k.pad, Math.max(1, Math.min(k.pw - 2 * k.pad, i.w)), Math.max(1, Math.min(k.ph - 2 * k.pad, i.h))); t.setBackground(new android.graphics.drawable.BitmapDrawable(getResources(), in)); } catch (Throwable e) { t.setBackground(g); } } else t.setBackground(g); }
+        t.setGravity((center || (k.kind != null && !"box".equals(k.kind) && !"sign".equals(k.kind) && b(sub("letter"), "kinds", true)) ? Gravity.CENTER_HORIZONTAL : Gravity.START) | Gravity.CENTER_VERTICAL); t.setPadding(px(2), 0, px(2), 0); t.setIncludeFontPadding(false);
+        boolean er = k.patch != null && smart && "erase".equals(s(st, "bgMode", "erase")); int w = er ? i.w : Math.max(i.w, px(36)), h = er ? i.h : Math.max(i.h, px(14));
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
+        // (As big as the words' box allows — up to twice the size set —, never under 8.)
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(t, 8, (int) Math.max(9, Math.min(size * 2, h / sd)), 1, TypedValue.COMPLEX_UNIT_SP);
+        t.setLayoutParams(new FrameLayout.LayoutParams(w, h)); t.setTag(i); return t;
+    }
+    /** Every translation put where its words are now; those off the screen or under the keyboard not shown. The boxes
+     *  (where they are now and where they were a frame ago) left out of the frames the page's movement is found from. */
+    private void placeAll(java.util.Set<KtScreenTrack.Item> glide) {
         if (results == null) return; results.setVisibility(View.VISIBLE);
-        int[] at = new int[2]; results.getLocationOnScreen(at); List<int[]> m = new ArrayList<>();
-        for (int c = 0; c < results.getChildCount(); c++) {
-            View v = results.getChildAt(c); KtScreenA11y.Block k = (KtScreenA11y.Block) v.getTag(); if (k == null) continue;
-            int y = k.y - scrollY; v.setX(k.r.left - at[0]); v.setY(y - at[1]);
-            boolean in = y + v.getLayoutParams().height > 0 && y < sh; v.setVisibility(in ? View.VISIBLE : View.GONE);
-            if (in) m.add(new int[] { k.r.left - px(2), y - px(2), k.r.left + v.getLayoutParams().width + px(2), y + v.getLayoutParams().height + px(2) });
+        int[] at = new int[2]; results.getLocationOnScreen(at); List<int[]> m = new ArrayList<>(); Rect[] cov = KtScreenA11y.covered;
+        synchronized (track) {
+            for (int c = 0; c < results.getChildCount(); c++) {
+                View v = results.getChildAt(c); Object tg = v.getTag(); if (!(tg instanceof KtScreenTrack.Item)) continue; KtScreenTrack.Item i = (KtScreenTrack.Item) tg;
+                int w = v.getLayoutParams().width, h = v.getLayoutParams().height, x = i.x, y = i.y;
+                boolean in = y + h > 0 && y < sh && x + w > 0 && x < sw; if (in) for (Rect r : cov) if (r.intersects(x, y, x + w, y + h)) { in = false; break; }
+                v.setVisibility(in ? View.VISIBLE : View.GONE);
+                float tx = x - at[0], ty = y - at[1];
+                if (in && glide != null && glide.contains(i) && Math.abs(v.getX() - tx) + Math.abs(v.getY() - ty) <= 2 * KtScreenTrack.GLIDE) v.animate().x(tx).y(ty).setDuration(140).start();
+                else { v.animate().cancel(); v.setX(tx); v.setY(ty); }
+                if (in) m.add(new int[] { x - px(2), y - px(2), x + w + px(2), y + h + px(2) });
+            }
         }
-        masks = m.toArray(new int[0][]);
+        int[][] now = m.toArray(new int[0][]), was = lastMasks; int[][] both = new int[now.length + was.length][];
+        System.arraycopy(now, 0, both, 0, now.length); System.arraycopy(was, 0, both, now.length, was.length); lastMasks = now; masks = both;
     }
     private final Runnable hideRun = this::clear;
-    private void hideResults() { if (results != null) results.setVisibility(View.INVISIBLE); masks = new int[0][]; }
-    void clear() { remove(results); results = null; remove(panel); panel = null; shown = new ArrayList<>(); memory.clear(); scrollY = 0; masks = new int[0][]; }
-
+    private void hideResults() { if (results != null) results.setVisibility(View.INVISIBLE); masks = new int[0][]; lastMasks = new int[0][]; }
+    void clear() { remove(results); results = null; remove(panel); panel = null; shown = new ArrayList<>(); synchronized (track) { track.clear(); } masks = new int[0][]; lastMasks = new int[0][]; }
     /* ---------- the translations as a list ---------- */
     private void showPanel() {
         if (shown.isEmpty()) return; List<KtScreenA11y.Block> keep = shown; remove(results); results = null; remove(panel); shown = keep;

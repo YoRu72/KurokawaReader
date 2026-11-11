@@ -33,8 +33,10 @@ final class KtScreenCapture {
      *  a scroll with it. */
     interface Watcher { void frame(short[][] sig, long at); int[][] masks(); }
     static volatile Watcher watcher; private static long sigAt;
+    /** How often a frame is looked at: oftener while the page moves (the boxes keep up with it), less when still (KtScreenTrack.Pace). */
+    static volatile long gapMs = 90;
     private static void watch(Image i) {
-        Watcher w = watcher; long now = System.currentTimeMillis(); if (w == null || now - sigAt < 90) return; sigAt = now;
+        Watcher w = watcher; long now = System.currentTimeMillis(); if (w == null || now - sigAt < gapMs) return; sigAt = now;
         try {
             Image.Plane p = i.getPlanes()[0]; final ByteBuffer b = p.getBuffer(); final int ps = p.getPixelStride(), rs = p.getRowStride();
             short[][] sig = KtScreenMotion.signature((x, y) -> { int o = y * rs + x * ps; return ((b.get(o) & 255) << 16) | ((b.get(o + 1) & 255) << 8) | (b.get(o + 2) & 255); }, i.getWidth(), i.getHeight(), w.masks());
