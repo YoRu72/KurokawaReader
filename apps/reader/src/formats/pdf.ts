@@ -73,11 +73,22 @@ export interface PdfViewerOptions {
   onPageChange(page: number, total: number): void;
   onPageRender?(page: number): void;
   invert: boolean;
-  /** Crop the margins: each page shows only its printed area (found from its picture), at a common width. */
-  crop?: { enabled(): boolean; get(): Promise<CropBox[] | null>; set(boxes: CropBox[]): Promise<void> };
+  /** Crop the margins: the pages show their printed area (found from small pictures of them), all at one width.
+   *  What was found is kept with the book (`get`/`set`: a {@link CropStore}, or anything older, which is ignored). */
+  crop?: { enabled(): boolean; get(): Promise<unknown>; set(store: CropStore): Promise<void> };
 }
-/** A page's printed area, as fractions of the page: left, top, width, height. */
+/** A page's ink, as fractions of the page: left, top, width, height. `[0, 0, 0, 0]`: a blank page; `[0, 0, 1, 1]`:
+ *  the page is shown whole (its paper could not be told from its ink, or it could not be read). */
 export type CropBox = [number, number, number, number];
+/** The printed column shared by the ordinary pages, fixed from a sample of them: left and width for odd and for even
+ *  pages (facing pages have their margins the other way round), the top and bottom edges (fractions of the page),
+ *  and its width in points (the width every ordinary page has on the screen). */
+export interface CropShared { odd: [number, number]; even: [number, number]; top: number; bottom: number; ref: number }
+/** What is kept with the book. (`v` changes whenever the way ink is found does: boxes found the old way are found again.) */
+export interface CropStore { v: number; n: number; boxes: (CropBox | null)[]; shared: CropShared | null }
+const CROP_V = 2;
+/** Room left around the ink: a fraction of the page's width (the same in points across and down). */
+const CROP_PAD = 0.015;
 
 /** Android and iOS: render page bitmaps with the platform renderer (system fonts, JBIG2/JPX, fast). */
 interface NativePdf { pdfOpen(o: { path: string }): Promise<{ pageCount: number }>; pdfRender(o: { page: number; width: number; quality?: number; tileX?: number; tileY?: number; tileW?: number; tileH?: number; toFile?: boolean }): Promise<{ data?: string; path?: string; width: number; height: number }>; pdfClose(): Promise<void> }
@@ -106,30 +117,56 @@ type Shown = {
 /** Pieces of a zoomed page, in device pixels (as Google Drive's viewer draws them). */
 const TILE = 800;
 
-/** The box holding the ink on a small picture of the page (fractions of the page), with a little room around.
- *  A blank page gives `[0, 0, 1, 0]`; a page that cannot be read gives the whole page, `[0, 0, 1, 1]`. */
-function inkBox(img: ImageData): CropBox {
+/** The box holding the ink on a picture of the page (fractions of the page), with no room added. Ink is whatever
+ *  differs from the page's own paper — the colour of most of its outer ring (white, tinted, a scan's grey, a dark
+ *  page) — by more than a faint tint, so light grey text and hairlines count. A blank page gives `[0, 0, 0, 0]`; a
+ *  page with no paper to tell (a picture to the edges) gives the whole page. */
+export function inkBox(img: ImageData): CropBox {
   const { width: W, height: H, data } = img;
+  if (W < 8 || H < 8) return [0, 0, 1, 1];
+  // The paper: the middle value of each channel over the outer ring (2% of the page), if most of the ring is near it.
+  const bw = Math.max(2, Math.round(W * 0.02)), bh = Math.max(2, Math.round(H * 0.02));
+  const hist = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)]; let ring = 0;
+  const inRing = (x: number, y: number) => x < bw || x >= W - bw || y < bh || y >= H - bh;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (!inRing(x, y)) { x = W - bw - 1; continue; } const i = (y * W + x) * 4; hist[0][data[i]]++; hist[1][data[i + 1]]++; hist[2][data[i + 2]]++; ring++; }
+  const mid = (hst: Uint32Array) => { let c = 0; for (let v = 0; v < 256; v++) { c += hst[v]; if (c * 2 >= ring) return v; } return 255; };
+  const pr = mid(hist[0]), pg = mid(hist[1]), pb = mid(hist[2]);
+  const TOL = 20;
+  const ink = (i: number) => Math.abs(data[i] - pr) > TOL || Math.abs(data[i + 1] - pg) > TOL || Math.abs(data[i + 2] - pb) > TOL;
+  let paper = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (!inRing(x, y)) { x = W - bw - 1; continue; } if (!ink((y * W + x) * 4)) paper++; }
+  if (paper < ring * 0.5) return [0, 0, 1, 1];
+  // (An ink pixel counts when another touches it: a lone speck of dust does not pull the box out; a hairline either
+  // way, a page number or a dot of two pixels does. Counting rows with two ink pixels instead lost the ends of a
+  // vertical hairline — one pixel per row.)
+  const m = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) if (ink(i * 4)) m[i] = 1;
   let x0 = W, y0 = H, x1 = -1, y1 = -1;
-  // (Rows and columns are scanned; a pixel counts as ink when it is clearly darker than paper. A few stray
-  // specks do not pull the box out: a row or column needs two such pixels.)
-  const dark = (i: number) => data[i] + data[i + 1] + data[i + 2] < 3 * 200;
-  for (let y = 0; y < H; y++) { let c = 0; for (let x = 0; x < W; x++) if (dark((y * W + x) * 4) && ++c >= 2) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); break; } }
-  for (let x = 0; x < W; x++) { let c = 0; for (let y = 0; y < H; y++) if (dark((y * W + x) * 4) && ++c >= 2) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); break; } }
-  if (x1 < 0 || y1 < 0) return [0, 0, 1, 0];
-  if (x1 - x0 < W * 0.1 || y1 - y0 < H * 0.05) return [0, 0, 1, 1];
-  const pad = 3;
-  const l = Math.max(0, x0 - pad) / W, t = Math.max(0, y0 - pad) / H, r = Math.min(W, x1 + 1 + pad) / W, b = Math.min(H, y1 + 1 + pad) / H;
-  return [+l.toFixed(4), +t.toFixed(4), +(r - l).toFixed(4), +(b - t).toFixed(4)];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!m[y * W + x]) continue;
+    let touched = false;
+    for (let dy = -1; dy <= 1 && !touched; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if ((dx || dy) && yy >= 0 && yy < H && xx >= 0 && xx < W && m[yy * W + xx]) { touched = true; break; } }
+    if (!touched) continue;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (x1 < 0 || y1 < 0) return [0, 0, 0, 0];
+  // (One pixel more each side: the faint edge of anti-aliased ink, under the threshold.)
+  const l = Math.max(0, x0 - 1) / W, t = Math.max(0, y0 - 1) / H, r = Math.min(W, x1 + 2) / W, b = Math.min(H, y1 + 2) / H;
+  const f = (v: number) => Math.round(v * 10000) / 10000;
+  return [f(l), f(t), f(r - l), f(b - t)];
 }
+const isBox = (c: unknown): c is CropBox => Array.isArray(c) && c.length === 4 && c.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1);
 
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];      // the windows: sized to what is shown of each page
   private sheets: HTMLElement[] = [];     // the sheets inside them: the whole page, with everything drawn on it
-  private crops: CropBox[] = [];          // the printed area of each page (when known)
-  private cropOn = false;
-  private cropCommon: [number, number] | null = null;   // the left and width shared by all pages once they are all known
+  /* Margin cropping (see "the printed area" below). */
+  private crops: (CropBox | null)[] = [];   // each page's ink, once measured
+  private cropShownAs: (CropBox | null)[] = [];   // the ink each page's layout was made from (a page near the screen waits)
+  private cropShared: CropShared | null = null;
+  private cropWanted = false;              // the setting
+  private cropOn = false;                  // the layout is cropped (once the shared column is known)
   private shown = new Map<number, Shown>();
   private scale = 1;
   private baseWidths: number[] = [];
@@ -186,9 +223,12 @@ export class PdfViewer {
     const w1 = vp1?.width ?? 612, h1 = vp1?.height ?? 792;
     this.baseWidths = new Array<number>(this.total).fill(w1);
     this.baseHeights = new Array<number>(this.total).fill(h1);
+    this.crops = new Array<CropBox | null>(this.total).fill(null); this.cropShownAs = this.crops.slice();
+    // (Margins cropped: what was found before is read first, so the pages are laid out cropped from the start.)
+    this.cropWanted = !!this.opts.crop?.enabled();
+    if (this.cropWanted) { await this.readCrops(); this.cropOn = !!this.cropShared; this.cropShownAs = this.crops.slice(); }
     this.scale = this.computeFitScale(); this.lastFit = this.scale;
     this.pages = []; this.sheets = [];
-    this.cropOn = !!this.opts.crop?.enabled();
     const frag = document.createDocumentFragment();
     for (let i = 1; i <= this.total; i++) {
       const sheet = h('div', { class: 'pdf-sheet' });
@@ -198,7 +238,6 @@ export class PdfViewer {
       frag.appendChild(el);
     }
     this.inner.appendChild(frag);
-    if (this.cropOn) void this.findCrops();
     // Prefer the platform renderer on Android; pdf.js stays in charge of text, search
     // and outline. Opening it is not awaited: pdf.js draws the first screens meanwhile.
     const nat = nativePdf();
@@ -276,30 +315,32 @@ export class PdfViewer {
     apply();
   }
 
-  /** The part of page `n` that is shown, in page points: the crop box when cropping, else the whole page. */
-  private shownBox(n: number): { x: number; y: number; w: number; h: number } {
+  /** The part of page `n` that is shown, in page points, and `k`: how much the page is shrunk so that it is no wider
+   *  on the screen than the ordinary pages (a picture to the edges, a wide table) — 1 for every ordinary page. */
+  private shownBox(n: number, ink: CropBox | null | undefined = this.cropShownAs[n - 1]): { x: number; y: number; w: number; h: number; k: number } {
     const W = this.baseWidths[n - 1], H = this.baseHeights[n - 1];
-    const c = this.cropOn ? this.crops[n - 1] : undefined;
-    if (!c) return { x: 0, y: 0, w: W, h: H };
-    let [l, , w] = c;
-    // A blank page is a short blank strip, not a whole page of nothing.
-    if (c[3] === 0) { const [cl, cw] = this.cropCommon ?? [0, 1]; return { x: cl * W, y: 0, w: cw * W, h: H * 0.12 }; }
-    // A page whose ink sits inside the shared box takes the shared box, so the text does not shift from page to
-    // page; one that reaches further out (a decorated title page, a picture to the edge) keeps its own.
-    if (this.cropCommon) { const [cl, cw] = this.cropCommon; if (l >= cl - 0.01 && l + w <= cl + cw + 0.01) { l = cl; w = cw; } }
-    return { x: l * W, y: c[1] * H, w: w * W, h: c[3] * H };
+    const sh = this.cropOn ? this.cropShared : null;
+    if (!sh) return { x: 0, y: 0, w: W, h: H, k: 1 };
+    // Every page takes the shared column; one whose ink reaches out of it is widened to take its ink in, never cut. A
+    // page not measured yet takes the shared column (what most pages turn out to have: measuring them moves nothing).
+    const col = n % 2 ? sh.odd : sh.even, py = (CROP_PAD * W) / H;
+    let l = col[0], r = col[0] + col[1], t = sh.top, b = sh.bottom;
+    if (ink && ink[2] > 0 && ink[3] > 0) { l = Math.min(l, ink[0] - CROP_PAD); r = Math.max(r, ink[0] + ink[2] + CROP_PAD); t = Math.min(t, ink[1] - py); b = Math.max(b, ink[1] + ink[3] + py); }
+    l = Math.max(0, l); t = Math.max(0, t); r = Math.min(1, r); b = Math.min(1, b);
+    const w = (r - l) * W;
+    return { x: l * W, y: t * H, w, h: (b - t) * H, k: Math.min(1, sh.ref / w) };
   }
   private computeFitScale(): number {
     const avail = Math.max(280, this.scroll.clientWidth - 24);
-    const widths = this.baseWidths.slice(0, 9).map((_, i) => this.shownBox(i + 1).w);
-    // Fitting the usual page: when cropping, the odd wide page (a title page) must not shrink all the others.
-    const w = this.cropOn && this.cropCommon ? widths.sort((a, b) => a - b)[Math.floor(widths.length / 2)] : Math.max(...widths.slice(0, 5));
-    return Math.min(avail / w, 3);
+    // (Margins cropped: the ordinary page's width. The odd wide page is shrunk to it, not all the others.)
+    if (this.cropOn && this.cropShared) return Math.min(avail / this.cropShared.ref, 3);
+    const widths = this.baseWidths.slice(0, 5);
+    return Math.min(avail / Math.max(...widths), 3);
   }
 
   private sizePage(el: HTMLElement, n: number): void {
-    const box = this.shownBox(n);
-    const w = box.w * this.scale, hgt = box.h * this.scale;
+    const box = this.shownBox(n), k = box.k;
+    const w = box.w * this.scale * k, hgt = box.h * this.scale * k;
     el.style.width = `${Math.floor(w)}px`;
     el.style.height = `${Math.floor(hgt)}px`;
     el.style.setProperty('--total-scale-factor', String(this.scale));
@@ -307,73 +348,199 @@ export class PdfViewer {
     const sheet = this.sheets[n - 1];
     if (sheet) {
       sheet.style.width = `${Math.floor(this.baseWidths[n - 1] * this.scale)}px`; sheet.style.height = `${Math.floor(this.baseHeights[n - 1] * this.scale)}px`;
-      sheet.style.left = `${-Math.round(box.x * this.scale)}px`; sheet.style.top = `${-Math.round(box.y * this.scale)}px`;
+      sheet.style.left = `${-Math.round(box.x * this.scale * k)}px`; sheet.style.top = `${-Math.round(box.y * this.scale * k)}px`;
+      // (A page shrunk to the ordinary width: its sheet — picture, tiles, text, notes — is scaled as one.)
+      sheet.style.transform = k < 0.999 ? `scale(${k.toFixed(4)})` : ''; sheet.style.transformOrigin = k < 0.999 ? '0 0' : '';
     }
   }
 
-  /* ---------- the printed area of each page (margins cropped) ---------- */
+  /* ---------- the printed area of each page (margins cropped) ----------
+   * Bounded and quiet, so that a book of a thousand pages costs no more than the pages being read:
+   *  - The shared column comes from a sample — about thirty pages spread through the book and the few around the
+   *    reader — measured one at a time; then the layout changes once. It never moves again while the book is open.
+   *  - Each other page is measured only when near the screen (ahead in the scroll's direction first), one at a time,
+   *    only while nothing else is to be drawn and the page is still (not scrolling, pinching or zooming).
+   *  - Measuring a page changes nothing for an ordinary page (it already has the shared column). A page whose ink
+   *    reaches out of the column grows to take it in, when it is away from the screen — the pages above it shift the
+   *    scroll by as much, so nothing seen moves — or at once if it is on the screen with ink cut off.
+   *  - The vertical crop is shared too (one top and bottom for all ordinary pages): cropping each page to its own
+   *    height made every page measured late change height, and everything below it move.
+   *  - What is found is saved with the book as it goes (every few seconds), and read back the next time. */
 
-  /** Turn margin cropping on or off (the layout follows, the page in view staying in view). */
+  /** Read what was found before (kept with the book), if it was found the current way and is for this book. */
+  private async readCrops(): Promise<void> {
+    const st = (await this.opts.crop?.get().catch(() => null)) as Partial<CropStore> | null;
+    if (!st || typeof st !== 'object' || st.v !== CROP_V || st.n !== this.total || !Array.isArray(st.boxes)) return;
+    st.boxes.slice(0, this.total).forEach((c, i) => { if (isBox(c)) this.crops[i] = c; });
+    const sh = st.shared;
+    if (sh && [sh.top, sh.bottom, sh.ref, ...(sh.odd ?? []), ...(sh.even ?? [])].every((v) => typeof v === 'number' && Number.isFinite(v)) && sh.odd?.length === 2 && sh.even?.length === 2 && sh.bottom > sh.top && sh.ref > 0) this.cropShared = sh;
+  }
+  private cropDirty = false; private cropSaveTimer = 0;
+  private saveCrops(soon = true): void {
+    if (!this.cropDirty || !this.opts.crop) return;
+    window.clearTimeout(this.cropSaveTimer);
+    const go = () => { this.cropSaveTimer = 0; if (!this.cropDirty) return; this.cropDirty = false; void this.opts.crop!.set({ v: CROP_V, n: this.total, boxes: this.crops.slice(), shared: this.cropShared }).catch(() => { this.cropDirty = true; }); };
+    if (soon) this.cropSaveTimer = window.setTimeout(go, 4000); else go();
+  }
+
+  /** Turn margin cropping on or off: one new layout, the line being read staying where it is on the screen. (On for the
+   *  first time, the layout changes once the sample has been measured.) */
   setCrop(on: boolean): void {
-    if (on === this.cropOn) return;
-    this.cropOn = on;
-    const n = this.current, rel = this.relativeOffset(n);
-    if (on && !this.crops.length) void this.findCrops();
-    this.fitWidth = true; this.rescale(this.computeFitScale()); this.relayout(); this.goTo(n, rel); this.frame();
+    if (on === this.cropWanted) return;
+    this.cropWanted = on;
+    if (!on) this.saveCrops(false);
+    if (on && !this.cropShared) { this.pumpCrops(); return; }
+    this.cropLayout(on);
   }
-  /** Take a set of boxes into the layout, the page in view staying in view. */
-  private applyCrops(boxes: CropBox[]): void {
-    this.crops = boxes; this.cropCommon = this.commonCrop();
-    if (!this.cropOn) return;
-    const cur = this.current, rel = this.relativeOffset(cur);
-    if (this.fitWidth) this.rescale(this.computeFitScale());
-    this.relayout(); this.goTo(cur, rel); this.frame();
-  }
-  private relayout(): void {
+  /** Every page laid out again, cropped or not (the line at 40% of the screen kept there). */
+  private cropLayout(on: boolean): void {
+    const a = this.anchor();
+    this.cropOn = on; if (on) this.cropShownAs = this.crops.slice();
+    const fit = this.computeFitScale();
+    if (this.fitWidth && Math.abs(fit - this.scale) >= 0.001) { this.scale = fit; this.dropForScale(); }
+    this.lastFit = fit;
     this.pages.forEach((p, i) => this.sizePage(p, i + 1)); this.tops = null;
-    for (const s of this.shown.values()) { this.dropTiles(s); }
+    this.restore(a); this.frame();
   }
-  /** Find every page's printed area from a small picture of it (kept with the book afterwards). */
-  private async findCrops(): Promise<void> {
-    if (this.cropsPending) return; this.cropsPending = true;
-    try {
-      const cached = await this.opts.crop?.get().catch(() => null);
-      if (cached && cached.length === this.total) { this.applyCrops(cached); return; }
-      const boxes: CropBox[] = new Array(this.total);
-      const canvas = offscreen(document.createElement('canvas')); const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-      for (let n = 1; n <= this.total; n++) {
-        if (this.destroyed) return;
-        try {
-          const page = await this.doc.getPage(n);
-          const vp1 = page.getViewport({ scale: 1 }); const k = 120 / vp1.width;
-          const vp = page.getViewport({ scale: k }); canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
-          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-          await page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
-          boxes[n - 1] = inkBox(ctx.getImageData(0, 0, canvas.width, canvas.height));
-        } catch { boxes[n - 1] = [0, 0, 1, 1]; }
-        // The layout takes the boxes in batches (every page would make the pages jump about); between pages the
-        // main thread is given back, so a scroll under way stays smooth.
-        if (n % 24 === 0 && n < this.total) this.applyCrops(boxes.map((b, i) => b ?? this.crops[i] ?? [0, 0, 1, 1]));
-        await new Promise((r) => ('requestIdleCallback' in window ? (window as Window & { requestIdleCallback: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback(() => r(undefined), { timeout: 200 }) : setTimeout(r, 0)));
-      }
-      this.applyCrops(boxes);
-      void this.opts.crop?.set(boxes);
-    } finally { this.cropsPending = false; }
+
+  /** The pages to measure for the shared column: a spread through the book, the ones around the reader first. */
+  private cropSample: number[] | null = null;
+  private sample(): number[] {
+    const N = this.total, out = new Set<number>();
+    for (let d = -2; d <= 5; d++) { const n = this.current + d; if (n >= 1 && n <= N) out.add(n); }
+    if (N <= 40) { for (let n = 1; n <= N; n++) out.add(n); return [...out]; }
+    const k = 28; for (let i = 0; i < k; i++) out.add(1 + Math.round(((i + 0.5) * (N - 1)) / k));
+    return [...out];
   }
-  private cropsPending = false;
+  /** The next page to measure, or null (nothing near the screen is left: the finder rests until the reader moves). */
+  private cropNext(): number | null {
+    if (!this.cropShared) { this.cropSample ??= this.sample(); return this.cropSample.find((n) => !this.crops[n - 1]) ?? null; }
+    const first = this.first, last = this.last, down = this.speed >= 0;
+    const want: number[] = [];
+    for (let n = first; n <= last; n++) want.push(n);
+    const ahead = (from: number, step: number, count: number) => { for (let i = 0; i < count; i++) want.push(from + i * step); };
+    if (down) { ahead(last + 1, 1, 10); ahead(first - 1, -1, 4); } else { ahead(first - 1, -1, 10); ahead(last + 1, 1, 4); }
+    return want.find((n) => n >= 1 && n <= this.total && !this.crops[n - 1]) ?? null;
+  }
+  private cropBusy = false;
+  private cropCanvas: HTMLCanvasElement | null = null;
+  /** Measure the next page, when nothing else is to be done. */
+  private pumpCrops(): void {
+    if (this.cropBusy || this.destroyed || !this.cropWanted || !this.doc || !this.pages.length) return;
+    if (this.busy || this.scrolling || this.pinching || this.zoomAnim || this.thumbBusy || this.thumbQueue.length) return;
+    const n = this.cropNext();
+    if (n === null) { this.saveCrops(); return; }
+    this.cropBusy = true;
+    void (async () => {
+      let box: CropBox;
+      try { box = await this.measure(n); } catch { box = [0, 0, 1, 1]; }
+      this.cropBusy = false;
+      if (this.destroyed) return;
+      this.crops[n - 1] = box; this.cropDirty = true;
+      this.measured(n);
+      // (Given back to the browser in between: the next page waits for an idle moment.)
+      const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+      if (ric) ric(() => this.pumpCrops(), { timeout: 300 }); else window.setTimeout(() => this.pumpCrops(), 30);
+    })();
+  }
+  /** A small picture of page `n` (about 320 px across: a small page number still shows), its ink found. One canvas is
+   *  used over and over; pdf.js lets go of the page after (unless it is on the screen). */
+  private async measure(n: number): Promise<CropBox> {
+    const c = (this.cropCanvas ??= offscreen(document.createElement('canvas')));
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    const fitIn = (w: number, hh: number) => { const k = Math.min(320 / w, 480 / hh); c.width = Math.max(16, Math.round(w * k)); c.height = Math.max(16, Math.round(hh * k)); };
+    let ok = false;
+    if (this.native) { fitIn(this.baseWidths[n - 1], this.baseHeights[n - 1]); ok = await this.nativeDraw(n, c, { width: c.width }).catch(() => false); }
+    if (!ok) {
+      const page = await this.doc.getPage(n);
+      try {
+        const vp1 = page.getViewport({ scale: 1 }); fitIn(vp1.width, vp1.height);
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvas: c, canvasContext: ctx, viewport: page.getViewport({ scale: c.width / vp1.width }) }).promise;
+      } finally { if (!this.shown.has(n)) page.cleanup(); }
+    }
+    const box = inkBox(ctx.getImageData(0, 0, c.width, c.height));
+    // (Implausible — a box that is not inside the page — and the page is shown whole.)
+    return box[0] + box[2] <= 1.0001 && box[1] + box[3] <= 1.0001 ? box : [0, 0, 1, 1];
+  }
+  /** Page `n` was measured: the shared column once the sample is in; else the page's own layout, if it changes. */
+  private measured(n: number): void {
+    if (!this.cropShared) {
+      if (this.cropSample?.some((m) => !this.crops[m - 1])) return;
+      this.cropShared = this.sharedColumn(); this.cropSample = null; this.saveCrops(false);
+      if (this.cropWanted) this.cropLayout(true);
+      return;
+    }
+    if (!this.cropOn) return;
+    const was = this.shownBox(n), now = this.shownBox(n, this.crops[n - 1]);
+    if (Math.abs(was.x - now.x) + Math.abs(was.y - now.y) + Math.abs(was.w - now.w) + Math.abs(was.h - now.h) < 0.5) { this.cropShownAs[n - 1] = this.crops[n - 1]; return; }
+    this.cropWaiting.add(n); this.applyWaiting();
+  }
+  /** Page `n` as laid out now cuts off some of its measured ink. */
+  private cuts(n: number): boolean {
+    const ink = this.crops[n - 1], b = this.shownBox(n), W = this.baseWidths[n - 1], H = this.baseHeights[n - 1];
+    return !!ink && ink[2] > 0 && (ink[0] * W < b.x - 0.5 || ink[1] * H < b.y - 0.5 || (ink[0] + ink[2]) * W > b.x + b.w + 0.5 || (ink[1] + ink[3]) * H > b.y + b.h + 0.5);
+  }
+  /** Pages whose new layout waits until they are away from the screen (and, above it, until the scroll is still). */
+  private cropWaiting = new Set<number>();
+  private applyWaiting(): void {
+    if (!this.cropWaiting.size || !this.cropOn) return;
+    let shift = 0;
+    for (const n of [...this.cropWaiting]) {
+      // Near the screen it waits — unless ink is cut off (a page gone to before it was measured): nothing may be cut,
+      // so it is laid out as soon as the page is still, the line being read kept where it is.
+      if (n >= this.first - 2 && n <= this.last + 2) { if (!this.scrolling && this.cuts(n)) { this.cropWaiting.delete(n); const a = this.anchor(); this.reshape(n); this.restore(a); shift = 0; } continue; }
+      if (n < this.first && this.scrolling) continue;   // (moving the scroll would stop a fling)
+      this.cropWaiting.delete(n);
+      const before = this.pageHeight(n); this.reshape(n);
+      if (n < this.first) shift += this.pageHeight(n) - before;
+    }
+    if (shift) this.scroll.scrollTop += shift;
+  }
+  /** Page `n` laid out from its measured ink (its tiles and text stay: they are drawn on the sheet, which keeps its size). */
+  private reshape(n: number): void { this.cropShownAs[n - 1] = this.crops[n - 1]; this.sizePage(this.pages[n - 1], n); this.tops = null; }
   /**
-   * One left edge and width for the ordinary pages, so the text does not shift from page to page: the typical
-   * edges, pushed out to take in every page whose edges sit near them. Nothing is ever cut: a page reaching
-   * much further out (a decorated title page, a picture to the edge) is an exception that keeps its own box.
+   * The shared column from the pages measured: the typical edges (the median), pushed out to take in every page
+   * whose edges sit near them, with room around. Odd and even pages get columns of their own when their margins
+   * differ (facing pages), of one width. Pages reaching much further out (a decorated title page, a picture to
+   * the edge) are not counted: each of them grows to take its own ink in. With too few ordinary pages to tell, the
+   * whole page.
    */
-  private commonCrop(): [number, number] | null {
-    const known = this.crops.filter((c) => c && c[3] > 0 && !(c[0] === 0 && c[2] === 1));
-    if (known.length < 2) return null;
-    const median = (a: number[]) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
-    const mL = median(known.map((c) => c[0])), mR = median(known.map((c) => c[0] + c[2]));
-    let l = mL, r = mR;
-    for (const c of known) { if (c[0] >= mL - 0.08) l = Math.min(l, c[0]); if (c[0] + c[2] <= mR + 0.08) r = Math.max(r, c[0] + c[2]); }
-    return r - l > 0.2 ? [l, r - l] : null;
+  private sharedColumn(): CropShared {
+    const known: [number, CropBox][] = [];
+    this.crops.forEach((c, i) => { if (c && c[2] >= 0.2 && c[3] >= 0.1 && !(c[2] >= 0.999 && c[3] >= 0.999)) known.push([i + 1, c]); });
+    const ws = this.baseWidths.slice().sort((a, b) => a - b), Wm = ws[ws.length >> 1] || 612;
+    if (known.length < 3) return { odd: [0, 1], even: [0, 1], top: 0, bottom: 1, ref: Wm };
+    const median = (a: number[]) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+    const TOL = 0.06;
+    const edges = (list: CropBox[], lo: (c: CropBox) => number, hi: (c: CropBox) => number): [number, number] => {
+      const m0 = median(list.map(lo)), m1 = median(list.map(hi)); let a = m0, b = m1;
+      for (const c of list) { if (lo(c) >= m0 - TOL) a = Math.min(a, lo(c)); if (hi(c) <= m1 + TOL) b = Math.max(b, hi(c)); }
+      return [a, b];
+    };
+    const across = (list: CropBox[]) => edges(list, (c) => c[0], (c) => c[0] + c[2]);
+    const all = known.map(([, c]) => c), odd = known.filter(([n]) => n % 2).map(([, c]) => c), even = known.filter(([n]) => !(n % 2)).map(([, c]) => c);
+    let co = across(all), ce = co;
+    if (odd.length >= 3 && even.length >= 3) { const a = across(odd), b = across(even); if (Math.abs(a[0] - b[0]) > 0.015 || Math.abs(a[1] - b[1]) > 0.015) { co = a; ce = b; } }
+    const [top, bottom] = edges(all, (c) => c[1], (c) => c[1] + c[3]);
+    // One width for both, with room around; widened about its middle, kept on the page.
+    const width = Math.min(1, Math.max(co[1] - co[0], ce[1] - ce[0]) + 2 * CROP_PAD);
+    const place = (c: [number, number]): [number, number] => { const l = Math.min(1 - width, Math.max(0, (c[0] + c[1]) / 2 - width / 2)); return [+l.toFixed(4), +width.toFixed(4)]; };
+    const hm = this.baseHeights.slice().sort((a, b) => a - b)[this.baseHeights.length >> 1] || 792, py = (CROP_PAD * Wm) / hm;
+    return { odd: place(co), even: place(ce), top: +Math.max(0, top - py).toFixed(4), bottom: +Math.min(1, bottom + py).toFixed(4), ref: width * Wm };
+  }
+
+  /** Where the reader is: the page at 40% of the screen and the point of its sheet there (whole-page fractions, the
+   *  same whether cropped or not). */
+  private anchor(): { n: number; f: number; vy: number } {
+    const vy = this.scroll.clientHeight * 0.4, y = this.scroll.scrollTop + vy;
+    const n = this.pageAt(y), b = this.shownBox(n), top = this.layoutTops()[n - 1];
+    return { n, vy, f: ((y - top) / (this.scale * b.k) + b.y) / this.baseHeights[n - 1] };
+  }
+  private restore(a: { n: number; f: number; vy: number }): void {
+    const b = this.shownBox(a.n);
+    this.scroll.scrollTop = this.layoutTops()[a.n - 1] + (a.f * this.baseHeights[a.n - 1] - b.y) * this.scale * b.k - a.vy;
+    this.updateCurrent();
   }
 
   /* ---------- what is in view ---------- */
@@ -386,7 +553,7 @@ export class PdfViewer {
     }
     return this.tops;
   }
-  private pageHeight(n: number): number { return Math.floor(this.shownBox(n).h * this.scale); }
+  private pageHeight(n: number): number { const b = this.shownBox(n); return Math.floor(b.h * this.scale * b.k); }
 
   /** The first page whose bottom is below `y`. */
   private pageAt(y: number): number {
@@ -425,6 +592,7 @@ export class PdfViewer {
     if (this.destroyed) return;
     this.frame();
     for (const n of [...this.shown.keys()]) if (n < this.first - 3 || n > this.last + 3) this.releasePage(n);
+    this.applyWaiting();
     this.pump();
   }
 
@@ -485,7 +653,7 @@ export class PdfViewer {
           // (A frame between two drawings, so the page keeps moving under the finger.)
           await new Promise((r) => requestAnimationFrame(() => r(null)));
         }
-      } finally { this.busy = false; this.pumpThumbs(); }
+      } finally { this.busy = false; this.pumpThumbs(); this.pumpCrops(); }
     })();
   }
 
@@ -568,13 +736,15 @@ export class PdfViewer {
     const el = this.pages[n - 1]; const d = this.device();
     const top = this.layoutTops()[n - 1], left = el.offsetLeft + (el.offsetParent === this.inner ? this.inner.offsetLeft : 0);
     const g = this.tileGrid(n);
-    const box = this.shownBox(n); const ox = box.x * this.scale * d, oy = box.y * this.scale * d;
-    const x0 = (this.scroll.scrollLeft - left) * d - TILE / 2 + ox, x1 = (this.scroll.scrollLeft + this.scroll.clientWidth - left) * d + TILE / 2 + ox;
-    const y0 = (this.scroll.scrollTop - top) * d - TILE / 2 + oy, y1 = (this.scroll.scrollTop + this.scroll.clientHeight - top) * d + TILE / 2 + oy;
+    // (Screen positions to the sheet's device pixels: the window's offset into the sheet, and the shrink of a page
+    // narrowed to the ordinary width.)
+    const box = this.shownBox(n), k = box.k; const ox = box.x * this.scale * d, oy = box.y * this.scale * d;
+    const x0 = ((this.scroll.scrollLeft - left) / k) * d - TILE / 2 + ox, x1 = ((this.scroll.scrollLeft + this.scroll.clientWidth - left) / k) * d + TILE / 2 + ox;
+    const y0 = ((this.scroll.scrollTop - top) / k) * d - TILE / 2 + oy, y1 = ((this.scroll.scrollTop + this.scroll.clientHeight - top) / k) * d + TILE / 2 + oy;
     const c0 = Math.max(0, Math.floor(x0 / TILE)), c1 = Math.min(g.cols - 1, Math.floor(x1 / TILE));
     const r0 = Math.max(0, Math.floor(y0 / TILE)), r1 = Math.min(g.rows - 1, Math.floor(y1 / TILE));
     // (Middle of the screen first.)
-    const cy = ((this.scroll.scrollTop + this.scroll.clientHeight / 2 - top) * d + oy) / TILE, cx = ((this.scroll.scrollLeft + this.scroll.clientWidth / 2 - left) * d + ox) / TILE;
+    const cy = (((this.scroll.scrollTop + this.scroll.clientHeight / 2 - top) / k) * d + oy) / TILE, cx = (((this.scroll.scrollLeft + this.scroll.clientWidth / 2 - left) / k) * d + ox) / TILE;
     let best: { c: number; r: number } | null = null, bd = Infinity;
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
       if (s.tiles?.has(`${this.scale}:${c}:${r}`)) continue;
@@ -654,14 +824,18 @@ export class PdfViewer {
     this.scale = scale;
     this.pages.forEach((p, i) => this.sizePage(p, i + 1));
     this.tops = null;
-    // Pictures stay (stretched) until redrawn; tiles and text layers belong to the old size.
+    this.dropForScale();
+    this.goTo(anchorPage, rel);
+    this.frame();
+  }
+
+  /** The zoom changed: pictures stay (stretched) until redrawn; tiles and text layers belong to the old size. */
+  private dropForScale(): void {
     for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
     this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
     // (Spare canvases are the old size: of no use again.)
     this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
     this.running?.cancel();
-    this.goTo(anchorPage, rel);
-    this.frame();
   }
 
   private relativeOffset(n: number): number {
@@ -679,49 +853,78 @@ export class PdfViewer {
     let active = false, startDist = 0, startScale = 1, f = 1, dx = 0, dy = 0;
     let fx = 0, fy = 0;        // the focal point, in content coordinates (what stays under the fingers)
     let mx0 = 0, my0 = 0;      // the midpoint between the fingers at the start, in the viewport
+    // (The viewport's place and the fit width are read once when the pinch starts: reading them on every move made
+    // the browser recompute styles and layout each time, with the transform just written.)
+    let rect = { left: 0, top: 0 }, lo = 1;
     const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const mid = (t: TouchList) => { const r = el.getBoundingClientRect(); return [(t[0].clientX + t[1].clientX) / 2 - r.left, (t[0].clientY + t[1].clientY) / 2 - r.top]; };
+    const mid = (t: TouchList) => [(t[0].clientX + t[1].clientX) / 2 - rect.left, (t[0].clientY + t[1].clientY) / 2 - rect.top];
     const minScale = () => this.computeFitScale();
-    const render = () => { this.inner.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${f.toFixed(4)})`; };
+    // (Shrunk below its size, the picture shrinks the scrolled area too, and the browser pulls the scroll back inside
+    // it — the picture slid 40 px off the fingers. The scroll's own moves are added back, so the picture holds.)
+    let sl0 = 0, st0 = 0;
+    const render = () => { this.inner.style.transform = `translate(${(dx + el.scrollLeft - sl0).toFixed(1)}px, ${(dy + el.scrollTop - st0).toFixed(1)}px) scale(${f.toFixed(4)})`; };
+    const onScrollWhile = () => { if (active) render(); };
+    // A touch's events go to the element it began on, and bubble from there: when that element leaves the page
+    // mid-pinch — a text layer dropped by the zoom animation the pinch ended, or rebuilt — they no longer reach the
+    // scroll, and the pinch hung there, stretched, its zoom lost. So while two fingers are down the fingers' own
+    // elements are listened to as well (each event handled once).
+    let targets: EventTarget[] = []; const seen = new WeakSet<Event>();
+    const once = (e: Event) => { if (seen.has(e)) return false; seen.add(e); return true; };
+    const onEnd = (e: TouchEvent) => { if (once(e) && active && e.touches.length < 2) finish(); };
+    const onCancel = (e: Event) => { if (once(e)) finish(); };
+    const listen = (on: boolean) => { for (const t of targets) { const f = on ? t.addEventListener.bind(t) : t.removeEventListener.bind(t); f('touchmove', move as EventListener, { passive: false } as AddEventListenerOptions); f('touchend', onEnd as EventListener); f('touchcancel', onCancel); } };
     const move = (e: TouchEvent) => {
-      if (!active || e.touches.length !== 2) return;
+      if (!once(e) || !active || e.touches.length !== 2) return;
       if (e.cancelable) e.preventDefault();
       const [mx, my] = mid(e.touches);
       let want = (dist(e.touches) / startDist) * startScale;
       // Past the limits the zoom gives way, like a spring: a third of the way, so it is felt but not followed.
-      const lo = minScale(), hi = 4;
+      const hi = 4;
       if (want < lo) want = lo - (lo - want) * 0.35; if (want > hi) want = hi + (want - hi) * 0.35;
       f = want / startScale; dx = mx - mx0; dy = my - my0;
       render();
     };
     const begin = (e: TouchEvent) => {
-      this.settleZoom(); active = true; startDist = dist(e.touches); startScale = this.scale; f = 1; dx = dy = 0;
+      this.settleZoom(); active = true; this.pinching = true; startDist = dist(e.touches); startScale = this.scale; f = 1; dx = dy = 0;
+      rect = el.getBoundingClientRect(); lo = minScale();
+      // (A page still gliding from a fling is stopped where it is: the point under the fingers is taken from here.)
+      el.scrollTo({ left: el.scrollLeft, top: el.scrollTop, behavior: 'instant' as ScrollBehavior });
       [mx0, my0] = mid(e.touches);
-      fx = el.scrollLeft + mx0; fy = el.scrollTop + my0;
-      this.inner.style.transformOrigin = `${fx}px ${fy}px`;
+      fx = el.scrollLeft + mx0; fy = el.scrollTop + my0; sl0 = el.scrollLeft; st0 = el.scrollTop;
+      el.addEventListener('scroll', onScrollWhile, { passive: true });
+      // (The origin is in the inner box's own coordinates: it starts below the scroll's top padding. Taken as the
+      // scrolled coordinates, the picture slid off the fingers by the padding times the zoom — 18 px at 2.5 times —
+      // and jumped back when laid out.)
+      this.inner.style.transformOrigin = `${fx - this.inner.offsetLeft}px ${fy - this.inner.offsetTop}px`;
       this.inner.style.willChange = 'transform';
-      el.addEventListener('touchmove', move, { passive: false });
+      targets = [el, ...new Set(Array.from(e.touches, (t) => t.target).filter((t) => t !== el))]; listen(true);
     };
     const finish = () => {
       if (!active) return;
-      active = false;
-      el.removeEventListener('touchmove', move);
-      const target = Math.min(4, Math.max(minScale(), startScale * f));
+      active = false; this.pinching = false;
+      listen(false); targets = []; el.removeEventListener('scroll', onScrollWhile);
+      const shown = startScale * f, target = Math.min(4, Math.max(lo, shown));
       this.inner.style.transform = ''; this.inner.style.transformOrigin = ''; this.inner.style.willChange = '';
-      this.fitWidth = Math.abs(target - minScale()) < 0.002;
-      this.zoomAbout(target, fx, fy, mx0 + dx, my0 + dy);
+      this.fitWidth = Math.abs(target - lo) < 0.002;
+      const vx = mx0 + dx, vy = my0 + dy;
+      const at = this.zoomAbout(target, fx, fy, vx, vy);
+      // Where the layout could not put the point under the fingers — the zoom sprang back to the width or to the most,
+      // a page narrower than the screen is centred, the scroll stops at an end — the picture glides there from where
+      // the fingers left it, instead of jumping (40 px across and a size snap, letting go below the width).
+      this.glideFrom(at, vx, vy, shown / target);
     };
     el.addEventListener('touchstart', (e) => {
       if (!this.pinchZoom) return;
       if (e.touches.length === 2) begin(e); else if (active) finish();
     }, { passive: true });
-    el.addEventListener('touchend', (e) => { if (active && e.touches.length < 2) finish(); }, { passive: true });
-    el.addEventListener('touchcancel', () => finish(), { passive: true });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('touchcancel', onCancel, { passive: true });
     // Double tap: zoom in on the spot (two and a half times the width), or back to the width when zoomed.
     // (Only taps count: a finger that barely moved, briefly, on a page that was not moving — two quick flicks of a fast
     // scroll end at much the same spot, and were taken for a double tap: the page zoomed in mid-scroll.)
     let lastTap = 0, lastX = 0, lastY = 0; let downX = 0, downY = 0, downAt = 0, downTop = 0, downLeft = 0; let scrolledAt = 0;
-    let seenTop = 0, seenLeft = 0; el.addEventListener('scroll', () => { if (Math.abs(el.scrollTop - seenTop) > 2 || Math.abs(el.scrollLeft - seenLeft) > 2) scrolledAt = performance.now(); seenTop = el.scrollTop; seenLeft = el.scrollLeft; }, { passive: true });
+    // (The zoom's own move of the scroll is not the page moving: a double tap just after a pinch lost its first tap.)
+    let seenTop = 0, seenLeft = 0; el.addEventListener('scroll', () => { if ((Math.abs(el.scrollTop - seenTop) > 2 || Math.abs(el.scrollLeft - seenLeft) > 2) && performance.now() - this.laidOutAt > 100) scrolledAt = performance.now(); seenTop = el.scrollTop; seenLeft = el.scrollLeft; }, { passive: true });
     el.addEventListener('touchstart', (e) => { if (e.touches.length !== 1) { downAt = 0; return; } const t = e.touches[0]; downX = t.clientX; downY = t.clientY; downAt = performance.now(); downTop = el.scrollTop; downLeft = el.scrollLeft; if (downAt - lastTap > 320 && downAt - scrolledAt < 120) downAt = 0; /* (a touch that stops a moving page is not a tap; the second of a pair is judged by itself — the first tap may show the bars and nudge the page) */ }, { passive: true });
     el.addEventListener('touchend', (e) => {
       if (!this.pinchZoom || e.touches.length || e.changedTouches.length !== 1 || active) return;
@@ -743,26 +946,52 @@ export class PdfViewer {
 
   /** Lay the pages out at `scale` so that the content point (cx, cy) — in the current layout's scrolled
    *  coordinates — ends up at (vx, vy) in the viewport. */
-  private zoomAbout(scale: number, cx: number, cy: number, vx: number, vy: number): void {
+  private zoomAbout(scale: number, cx: number, cy: number, vx: number, vy: number): [number, number] {
     const ratio = scale / this.scale;
-    if (Math.abs(ratio - 1) < 0.001) { this.frame(); return; }
+    // (The same size — two fingers that only panned: the page is moved there all the same. It sprang back by the
+    // whole pan before: 94 px for a 50 × 80 px pan.)
+    if (Math.abs(ratio - 1) < 0.001) { this.laidOutAt = performance.now(); this.scroll.scrollTop = cy - vy; this.scroll.scrollLeft = cx - vx; this.updateCurrent(); this.frame(); return [cx, cy]; }
     // (Pages scale with the zoom but the gaps between them do not: the point is carried through its page.)
     const n = this.pageAt(cy); const top = this.layoutTops()[n - 1];
     const pageEl = this.pages[n - 1];
     const leftOf = () => pageEl.offsetLeft + (pageEl.offsetParent === this.inner ? this.inner.offsetLeft : 0);
-    const within = cy - top, withinX = cx - leftOf();
+    // (Measured from the page's sheet, which scales exactly with the zoom; the window's offset into it — margins cropped
+    // — is rounded to a pixel at each size, and carrying the point by the window put it 2 px off.)
+    const sheet = this.sheets[n - 1]; const sx = () => parseFloat(sheet.style.left) || 0, sy = () => parseFloat(sheet.style.top) || 0;
+    const within = cy - top - sy(), withinX = cx - leftOf() - sx();
     this.scale = scale;
     this.pages.forEach((p, i) => this.sizePage(p, i + 1));
     this.tops = null;
-    for (const [k, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[k - 1].dataset.res = 'low'; }
-    this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
-    this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
-    this.running?.cancel();
-    const newTop = this.layoutTops()[n - 1] + within * ratio;
+    this.dropForScale();
+    const newTop = this.layoutTops()[n - 1] + sy() + within * ratio, newLeft = leftOf() + sx() + withinX * ratio; this.laidOutAt = performance.now();
     this.scroll.scrollTop = newTop - vy;
-    this.scroll.scrollLeft = leftOf() + withinX * ratio - vx;
+    this.scroll.scrollLeft = newLeft - vx;
     this.updateCurrent();
     this.frame();
+    return [newLeft, newTop];
+  }
+
+  /** The point (x, y) of the new layout (scrolled coordinates) was shown at (vx, vy) in the viewport, `k` times its
+   *  new size: the inner box is drawn that way and eases to its place, so nothing jumps where the layout differs
+   *  from the picture. A new touch or zoom ends it at once (settleZoom). */
+  private glideFrom(at: [number, number], vx: number, vy: number, k: number): void {
+    const sx = vx - (at[0] - this.scroll.scrollLeft), sy = vy - (at[1] - this.scroll.scrollTop);
+    if (Math.abs(sx) < 0.5 && Math.abs(sy) < 0.5 && Math.abs(k - 1) < 0.002) return;
+    const inner = this.inner;
+    inner.style.transition = 'none'; inner.style.transformOrigin = `${at[0] - inner.offsetLeft}px ${at[1] - inner.offsetTop}px`;
+    inner.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) scale(${k.toFixed(4)})`; inner.style.willChange = 'transform';
+    let raf = 0, timer = 0;
+    const anim = { finish: () => done() };
+    const onEnd = (e: TransitionEvent) => { if (e.target === inner && e.propertyName === 'transform') done(); };
+    const done = () => {
+      if (this.zoomAnim !== anim) return; this.zoomAnim = null; cancelAnimationFrame(raf); window.clearTimeout(timer); inner.removeEventListener('transitionend', onEnd);
+      inner.style.transition = ''; inner.style.transform = ''; inner.style.transformOrigin = ''; inner.style.willChange = '';
+      this.pump();
+    };
+    this.zoomAnim = anim; inner.addEventListener('transitionend', onEnd);
+    // (Two frames: the starting picture must be drawn once before the transition to none begins.)
+    raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { inner.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1)'; inner.style.transform = ''; }); });
+    timer = window.setTimeout(done, 320);
   }
 
   /** The animated zoom under way, if any (finish() lays it out at once). */
@@ -772,6 +1001,10 @@ export class PdfViewer {
    *  taps were lost, the page jumped elsewhere, or the picture stayed stretched — the old timer ending the new
    *  animation.) */
   private settleZoom(): void { this.zoomAnim?.finish(); }
+  /** Two fingers are on the page (the crop finder waits). */
+  private pinching = false;
+  /** When a zoom last moved the scroll itself. */
+  private laidOutAt = 0;
   /** A short animated zoom (double tap, the zoom buttons): the picture scales with a transition, then the
    *  pages are laid out at the new size with the point at (vx, vy) in the viewport in the same place. */
   private animateZoom(scale: number, vx: number, vy: number): void {
@@ -781,7 +1014,7 @@ export class PdfViewer {
     const f = target / this.scale;
     if (Math.abs(f - 1) < 0.001) return;
     const inner = this.inner;
-    inner.style.transformOrigin = `${cx}px ${cy}px`;
+    inner.style.transformOrigin = `${cx - inner.offsetLeft}px ${cy - inner.offsetTop}px`;
     inner.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
     inner.style.willChange = 'transform';
     let raf = 0, timer = 0;
@@ -990,6 +1223,7 @@ export class PdfViewer {
       this.thumbBusy++;
       void this.drawThumb(job.n, job.width).then(job.ok, job.fail).finally(() => { this.thumbBusy--; this.pumpThumbs(); });
     }
+    if (!this.thumbBusy && !this.thumbQueue.length) this.pumpCrops();
   }
   private async drawThumb(n: number, width: number): Promise<string> {
     if (this.destroyed) throw new Error('closed');
@@ -1009,8 +1243,10 @@ export class PdfViewer {
   }
 
   destroy(): void {
+    this.saveCrops(false);
     this.destroyed = true;
     window.clearTimeout(this.settleTimer);
+    if (this.cropCanvas) { this.cropCanvas.width = this.cropCanvas.height = 0; this.cropCanvas = null; }
     this.resizeObs?.disconnect();
     for (const n of [...this.shown.keys()]) this.releasePage(n);
     this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
