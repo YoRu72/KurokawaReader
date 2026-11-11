@@ -120,7 +120,7 @@ const borderXml = (name: string, b: Border) => `<w:${name} w:val="${b.style}" w:
 export function table(p: TableProps, rows: string): string {
   const b = p.borders;
   const borders = `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((n) => borderXml(n, b)).join('')}</w:tblBorders>`;
-  return `<w:tbl><w:tblPr>${p.rtl ? '<w:bidiVisual/>' : ''}<w:tblW w:type="dxa" w:w="${Math.round(p.width)}"/>${p.indent !== undefined ? `<w:tblInd w:type="dxa" w:w="${Math.round(p.indent)}"/>` : ''}${borders}${p.layoutFixed !== false ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${p.columns.map((w) => `<w:gridCol w:w="${Math.round(w)}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
+  return `<w:tbl><w:tblPr>${p.rtl ? '<w:bidiVisual/>' : '<w:bidiVisual w:val="0"/>'}<w:tblW w:type="dxa" w:w="${Math.round(p.width)}"/>${p.indent !== undefined ? `<w:tblInd w:type="dxa" w:w="${Math.round(p.indent)}"/>` : ''}${borders}${p.layoutFixed !== false ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${p.columns.map((w) => `<w:gridCol w:w="${Math.round(w)}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
 }
 export const tableRow = (p: RowProps, cells: string): string => `<w:tr>${p.height ? `<w:trPr><w:trHeight w:val="${Math.round(p.height.value)}" w:hRule="${p.height.rule}"/></w:trPr>` : ''}${cells}</w:tr>`;
 export function tableCell(p: CellProps, content: string): string {

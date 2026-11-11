@@ -28,7 +28,9 @@ export type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; see
   /** Every glyph run kept (a lane: the cap on uses is applied where the lanes' pages come together). */
   keepAll?: boolean };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
-type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number } };
+type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
+  /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
+  tints?: { base: string; mark: string; color: string }[] };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
 type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
@@ -701,6 +703,21 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
   return res;
 }
 
+/** A piece's text cut where its marks change colour: each mark the page colours apart (its letter and the mark
+ *  are known, see keepMark) becomes a part of its own colour; the rest keeps the piece's. */
+function tintParts(text: string, tints: NonNullable<Piece['tints']>, color: string): { text: string; color: string }[] {
+  const left = [...tints]; const out: { text: string; color: string }[] = [];
+  let base = '';
+  for (const ch of text) {
+    let c = color;
+    if (COMBINING.test(ch)) { const k = left.findIndex((t) => t.mark === ch && (t.base === base || !t.base)); if (k >= 0) { c = left[k].color; left.splice(k, 1); } }
+    else base = ch;
+    const last = out[out.length - 1];
+    if (last && last.color === c) last.text += ch; else out.push({ text: ch, color: c });
+  }
+  return out.length ? out : [{ text, color }];
+}
+
 function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean): Run[] {
   // Order and space the pieces like the copy text does, then merge neighbours with the same look.
   const ordered: { p: Piece; space: boolean; tab?: number; blank?: number; trim?: number }[] = [];
@@ -816,8 +833,13 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
       if (cut > 0) text = text.slice(cut);
     }
     const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
+    // (Marks the page colours apart from their letters: the text cut there, each part a run in its colour.)
+    const parts = p.tints ? tintParts(text, p.tints, look.color) : null;
+    if (parts) text = parts[0].text;
+    const rest = () => { for (const q of parts?.slice(1) ?? []) { const lr = runs[runs.length - 1]; if (lr && !lr.art && !lr.tab && lr.color === q.color && lr.font === look.font && lr.size === look.size && lr.sup === look.sup && lr.rtl === look.rtl) lr.text += q.text; else runs.push({ ...look, color: q.color, text: q.text }); } };
+    if (parts) look.color = parts[0].color;
     const last = runs[runs.length - 1];
-    if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push(seg = { ...look, text, tab, tabEnd: rtlLine ? p.l : p.r }); continue; }
+    if (tab !== undefined) { if (last) last.text = last.text.replace(/\s+$/, ''); runs.push(seg = { ...look, text, tab, tabEnd: rtlLine ? p.l : p.r }); rest(); continue; }
     reach(p);
     if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank * 0.92 - p.h * 0.3) }); }
     if (space && last?.art) text = ` ${text}`;
@@ -825,9 +847,39 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     if (last && (!last.spacing || (tracked && last.spacing === look.spacing && last.text !== ' ')) && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs) last.text += text;
     else if (space && last && last.text.endsWith(' ')) runs.push({ ...look, text });
     else runs.push({ ...look, text });
+    rest();
   }
   for (const r of runs) r.text = r.text.replace(/\s+(?=[\u064B-\u065F\u0670])/g, '').replace(/([\u060C\u061B\u061F.,:;!)(»«\]\[]+)([\u064B-\u065F\u0670]+)/g, '$2$1').replace(/\s{2,}/g, ' ');
-  return runs.filter((r) => r.text.length || r.art);
+  return fitSpaces(runs.filter((r) => r.text.length || r.art), pieces, fonts);
+}
+
+/** A line whose words, set with the font's own space between them, are wider than the page sets the line (Word
+ *  squeezes the spaces of a justified line a little; a word processor that does not wraps its last word, and
+ *  every line after it moves down — a page runs onto the next): its spaces are narrowed by as much, as character
+ *  spacing on the spaces, so the line fits as the page has it. Only lines whose glyph widths are known (the
+ *  PDF's own fonts, which the document carries) are measured. */
+function fitSpaces(runs: Run[], pieces: Piece[], fonts: Map<string, FontInfo>): Run[] {
+  if (runs.some((r) => r.tab !== undefined || r.spacing || r.art || r.sup || r.cs)) return runs;
+  const words = pieces.filter((p) => p.text.trim() && p.text !== '\u2009' && !p.conn);
+  if (words.length < 2 || words.some((p) => !p.codes?.length)) { if ((globalThis as { krDebugLine?: string }).krDebugLine === 'fit') console.warn('P2D fit-skip', words.length, words.filter((p) => !p.codes?.length).map((p) => p.text).join('|')); return runs; }
+  let adv = 0, lo = Infinity, hi = -Infinity;
+  for (const p of words) { for (const c of p.codes!) if (c[5] > 0) adv += c[5] * c[4]; lo = Math.min(lo, p.l); hi = Math.max(hi, p.r); }
+  const spaces = runs.reduce((n, r) => n + (r.text.match(/ /g)?.length ?? 0), 0);
+  if (!spaces) return runs;
+  const sw = median(words.map((p) => (fonts.get(p.font)?.spaceW ?? 0.25) * p.h));
+  const over = adv + spaces * sw - (hi - lo);
+  if ((globalThis as { krDebugLine?: string }).krDebugLine === 'fit') console.warn('P2D fit', (hi - lo).toFixed(1), adv.toFixed(1), spaces, sw.toFixed(2), over.toFixed(1));
+  if (over <= 0.3) return runs;
+  // (Never below half a space: a line that far over is not one whose spaces were squeezed.)
+  const cut = Math.min(over / spaces + 0.1, sw * 0.5);
+  const out: Run[] = [];
+  for (const r of runs) {
+    if (!r.text.includes(' ')) { out.push(r); continue; }
+    // (A smaller size for the space, not negative character spacing: LibreOffice gives no letter spacing to
+    // Arabic text, the space between two Arabic words included.)
+    r.text.split(/( )/).forEach((t, i) => { if (!t) return; out.push({ ...r, text: t, ...(t === ' ' ? { size: Math.max(1, Math.floor(r.size * (1 - cut / sw) * 2) / 2) } : {}), br: i === 0 ? r.br : undefined }); });
+  }
+  return out;
 }
 
 function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: number, pitchOf: (size: number) => number, prevBaseStart: number | null): Block[] {
@@ -965,7 +1017,7 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
             else pitch = Math.min(pitch, g.ys[g.rows.indexOf(row)] - g.ys[g.rows.indexOf(row) + 1] - 0.3);
           }
           rr.push(c.cont ? [] : runs);
-          cc.push({ span: c.span, vmerge: c.cont ? 'continue' : g.rows.some((r2, j2) => j2 > g.rows.indexOf(row) && r2.some((x) => x.cont && x.c0 === c.c0 && x.span === c.span)) ? 'restart' : undefined, align, vcenter: false, pitch });
+          cc.push({ span: c.span, vmerge: c.cont ? 'continue' : g.rows[g.rows.indexOf(row) + 1]?.some((x) => x.cont && x.c0 === c.c0 && x.span === c.span) ? 'restart' : undefined, align, vcenter: false, pitch });
         }
         rowsRuns.push(rr); cells.push(cc);
       });
@@ -1356,6 +1408,28 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
 /** A short hash of a font file (its first and last kilobytes and its length), to know it again. */
 function fnv(b: Uint8Array): number { let h = 0x811c9dc5; const step = (i: number) => { h ^= b[i]; h = Math.imul(h, 0x01000193); }; for (let i = 0; i < Math.min(1024, b.length); i++) step(i); for (let i = Math.max(1024, b.length - 1024); i < b.length; i++) step(i); return h >>> 0; }
 
+/** A haraka drawn on its own (another colour than its letter, so the page draws it apart) goes into its letter's
+ *  text (see attachMarks). What it was is kept: its glyph goes with the letter's, so the rebuilt font learns the
+ *  mark's glyph and where it sits on that letter (lost, the font had an empty mark and the haraka vanished); and
+ *  its colour, when not the letter's, so the run can be cut there — Word colours a mark of its own run. */
+function keepMark(m: Piece, host: Piece, base: string): void {
+  const mark = m.text.trim();
+  if (m.color !== host.color && !m.hidden) (host.tints ??= []).push({ base, mark, color: m.color });
+  if (!m.codes?.length || !host.codes?.length || m.font !== host.font) return;
+  const cx = (m.l + m.r) / 2;
+  for (const u of m.codes) {
+    if (!u[0]) continue;
+    // (The letter's glyph the mark stands over — or the nearest — takes the mark into its text.)
+    let k = -1, bd = Infinity;
+    host.codes.forEach((h, i) => { if (!h[1] || !h[5]) return; const x0 = h[2], x1 = h[2] + h[5] * h[4]; const d = cx < x0 ? x0 - cx : cx > x1 ? cx - x1 : 0; if (d < bd) { bd = d; k = i; } });
+    if (k < 0) return;
+    const h = host.codes[k];
+    const ch = u[1] && [...u[1]].every((c) => COMBINING.test(c)) ? u[1] : mark;
+    host.codes[k] = [h[0], h[1] + ch, h[2], h[3], h[4], h[5], h[6]];
+    host.codes.splice(k + 1, 0, [u[0], '', u[2], u[3], u[4], 0, h[6]]);
+  }
+}
+
 /** Text already asked of the worker for a page (the next page's, fetched while this one is being laid out). */
 /** A page's drawing and text asked of pdf.js now, to be ready when the page is read. */
 export function askAhead(pg: import('pdfjs-dist').PDFPageProxy): void { void pg.getOperatorList(); prefetched.set(pg, pg.getTextContent()); }
@@ -1373,7 +1447,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const pieces: Piece[] = [];
   const turnedItems: { text: string; angle: number; e: number; f: number; w: number; h: number; font: string; color: string; bold: boolean }[] = [];
   let spanSeq = 0;
-  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; hidden?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean }[]) {
+  for (const it of tc.items as { str: string; transform: number[]; width: number; height: number; fontName: string; color?: string; fakeBold?: boolean; hidden?: boolean; strokeEm?: number; krCodes?: (number | string)[]; krSpan?: number; krLead?: boolean; krTints?: Piece['tints'] }[]) {
     if (typeof it.str !== 'string') continue;
     let text = cleanPdfText(it.str);
     if (/^\u2009+$/.test(text)) text = '\u2009'; else if (!text.trim()) continue;
@@ -1391,7 +1465,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     if (store.same?.has(it.fontName)) it.fontName = store.same.get(it.fontName)!;
     // Fill+stroke "bold": Word's own synthetic bold strokes about 1/35 em; a much thinner stroke is
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
-    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.hidden ? { hidden: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}) });
+    pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.hidden ? { hidden: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}), ...(it.krTints?.length ? { tints: it.krTints } : {}) });
     if (it.fontName && !fonts.has(it.fontName)) {
       let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
@@ -1427,6 +1501,12 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     }
     // (The glyphs of one /ActualText span are one cluster: its letter and that letter's marks.)
     if (it.krCodes) { const k = it.krCodes; const g = it.krSpan ? ++spanSeq : 0; const seq: GlyphUse[] = []; for (let i = 0; i + 5 < k.length; i += 6) seq.push([k[i] as number, k[i + 1] as string, k[i + 2] as number, k[i + 3] as number, k[i + 4] as number, k[i + 5] as number, g]); pieces[pieces.length - 1].codes = seq;
+      // A glyph the page draws and then steps back over (Word's "هي" ligature at a word's end: its ink lies before
+      // its origin, the next letter starts at that origin) comes as a piece of no width. It is read after the
+      // letters that start at its origin — it stands a hair before it, to the left in right-to-left text — so the
+      // word's letters keep their order and no gap opens in the word.
+      { const pc = pieces[pieces.length - 1]; const adv = seq.reduce((t, u) => t + (u[5] > 0 ? u[5] * u[4] : 0), 0);
+        if (pc.r - pc.l < h * 0.02 && adv > h * 0.3 && isRtlText(pc.text)) pc.l = pc.r - h * 0.05; }
       // A Quran word font (QCF): each glyph is a whole word, filed under an Arabic presentation-form code. Read as
       // letters, those codes are gibberish that sets nothing like the word; kept as they are, the font (carried
       // in the document) draws each word exactly as the page does.
@@ -1550,7 +1630,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     }
   }
   const arts = pieces.filter((p) => p.art);
-  const lines = buildLines(attachMarks(pieces).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
+  const lines = buildLines(attachMarks(pieces, keepMark).filter((p) => !/^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/.test(p.text) || p.text === "\u2009"));
   // How embedded fonts are used: their glyphs along each line, in drawing order, cut where a word ends (a gap,
   // a space) so each glyph's joining form can be told.
   for (const l of lines) {
@@ -1620,7 +1700,9 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   // A designed page (a worksheet, a slide, an infographic): text in boxes scattered over the page, not a column
   // of text. Each box keeps its place on the page as a frame, over the page's drawing.
   // (Every line of the page is a candidate: a designed page has no running head to set apart.)
-  const placedBoxes = gutter ? null : findPlacedBoxes([...header, ...body, ...footer].sort((a, b) => b.base - a.base), W, H);
+  // (A ruled table's cells are not boxes of a design: its lines are left out, or a page with a table of a few
+  // columns reads as a designed page and the table comes apart into frames.)
+  const placedBoxes = gutter ? null : findPlacedBoxes([...header, ...body, ...footer].filter((l) => !inRuled(l)).sort((a, b) => b.base - a.base), W, H);
   if (placedBoxes) {
     const pitchP = pitchTable(placedBoxes.map((b) => b.lines));
     const placed: PlacedBox[] = placedBoxes.map((b) => {
