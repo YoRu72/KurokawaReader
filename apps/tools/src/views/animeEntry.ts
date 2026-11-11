@@ -79,7 +79,10 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       eps.push(rowEl);
     }
     const rule = ruleOf(a.id);
-    const epsSec = h('section', { class: 'card anime-episodes' }, h('div', { class: 'card-head' }, h('h3', null, t('episodes')), h('div', { class: 'grow' }), h('button', { type: 'button', class: 'btn tonal small', onclick: () => torrentSheet(a!, 0) }, icon('magnet'), a.format === 'MOVIE' ? t('animeFindTorrents') : t('animeBatch'))),
+    const epsSec = h('section', { class: 'card anime-episodes' }, h('div', { class: 'card-head' }, h('h3', null, t('episodes')), h('div', { class: 'grow' }),
+      // (The show's subtitles: its pack — a folder or an archive, each episode's file loaded when it plays — and the search.)
+      h('button', { type: 'button', class: 'btn text small subs-btn', onclick: () => void import('./subPackSheet').then((m) => m.packSheet({ key: `al:${a!.id}`, title: titleOf(a!), anilistId: a!.id, lengths: list ? { '': list } : undefined })) }, icon('subtitles'), t('navSubs')),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => torrentSheet(a!, 0) }, icon('magnet'), a.format === 'MOVIE' ? t('animeFindTorrents') : t('animeBatch'))),
       a.format === 'MOVIE' || !list ? null : h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => rangeSheet(a!, Math.max(1, (e?.progress ?? 0) + 1), Math.max(1, airedCount)) }, icon('download'), t('autoRange')),
         a.status === 'RELEASING' || a.status === 'NOT_YET_RELEASED' ? h('button', { type: 'button', class: 'btn small ' + (rule?.enabled ? 'tonal on' : 'text'), onclick: () => ruleSheet(a!, Math.max(1, airedCount + 1), () => draw()) }, icon('bell'), rule?.enabled ? t('autoOn') : t('autoOff')) : null), ...(rangeChips ? [rangeChips] : []), ...eps, ...(!list ? [h('p', { class: 'hint' }, t('animeNotYet'))] : []));
     // Relations, links
