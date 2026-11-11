@@ -9,10 +9,38 @@ How it works: `src-tauri/src/main.rs` opens the window (made in Rust, `app.windo
 `tauri.conf.json`) on the same built web UI (`../dist`), and runs `bridge.js` as its initialization script, so the
 page finds the same `window.kurokawaTools` the Electron preload gives it. Each Electron channel `kt:xyz` becomes the
 Tauri command `kt_xyz` (`src-tauri/src/commands.rs`). A method that is not ported yet is **absent** from the bridge
-(the page asks for each feature by its method), except the engine's methods that `DesktopEngine` calls without
-asking: those are present and refuse with "The download engine is not in this preview build yet", and `state`
-says `available: false`, so the page shows its own no-engine state. `tests/tauribridge.cjs` keeps the bridge,
-the preload and the Rust command list in step.
+(the page asks for each feature by its method). Events the main process pushes (`kt:tasks`, `kt:engineState`) are
+Tauri events (`app.emit`), listened to in bridge.js with `window.__TAURI__.event.listen` (`core:event:default`,
+part of `core:default`). `tests/tauribridge.cjs` keeps the bridge, the preload and the Rust command list in step,
+and tests the self-test script against a fake bridge.
+
+The download engine (`src-tauri/src/engine.rs`, pure parts in `engine_core.rs`): aria2c, found as `aria2.cjs` finds
+it — `<resources>/aria2/<win|linux|mac>-<arch>/aria2c[.exe]`, then `<resources>/aria2/<plat>/`, the same under the
+executable's folder, then the PATH (on macOS also Homebrew's `/opt/homebrew/bin` and `/usr/local/bin`) —, started
+with `aria2.cjs`'s arguments (free loopback port, random secret, session file, the same option list) plus
+`--stop-with-process=<the app's pid>`, so it ends with the app however the app ends; on a normal exit the session
+is saved and the child killed (`RunEvent::Exit`). No console window on Windows (`CREATE_NO_WINDOW`). Restarted
+after 2/4/6 s when it dies while in use, three times at most, as `aria2.cjs` does. JSON-RPC goes over aria2's
+**HTTP** endpoint (`POST /jsonrpc`, a small std-only client in `rpc.rs`), not the WebSocket: no new crate, and
+everything runs on plain threads. Notifications are replaced by polling — `tellActive` / `tellWaiting` /
+`tellStopped` every 0.7 s while something moves, 4 s otherwise, at once after a change made from the page (the
+cadence of `aria2.cjs`'s loop) —, and `kt:tasks` is emitted only when the list's JSON changed. Downloads the app
+kept nothing of get a first-seen `addedAt`/`doneAt` (Electron gave them `Date.now()` on every pass), so an idle list
+stays still.
+
+aria2c in the bundle: CI runs `desktop/fetch-aria2.mjs` (as the Electron build does: Windows x64, Linux x64/arm64,
+none for macOS — Homebrew's at run time) and copies `desktop/aria2/*` into `desktop-tauri/aria2/`, which
+`tauri.conf.json`'s `bundle.resources` maps to `aria2/` in the resource folder. The folder is committed with only a
+README so local builds work without it; to bundle aria2c locally, run `node fetch-aria2.mjs` in `../desktop` and copy
+`../desktop/aria2/<plat>-<arch>/` here.
+
+Self-test: with `KT_SELFTEST=<file>` set, `selftest.rs` starts a loopback test server and adds `selftest.js` to the
+initialization script; the page checks the bridge, files, hashes, `kt:http` (headers, redirect, gzip, binary, POST),
+the clipboard (not required), that the UI rendered, and — where aria2c is found — a 2 MiB download from the test
+server through the engine (paused mid-way, resumed, its hash checked, renamed, removed), then hands the results to
+`kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (100) s.
+`tauri-check.yml` runs it on Linux under Xvfb (required) and on Windows and macOS (reported only).
+`selftest-report.cjs` prints the results as a table.
 
 Version: `tauri.conf.json` has `"version": "../../package.json"`, so the app's version is always
 `apps/tools/package.json`'s (Cargo.toml's own version is unused and stays `0.0.0`).
@@ -22,26 +50,26 @@ Do the same once before a local `tauri build` / `tauri dev`.
 
 ## The 98 channels
 
-Status: **done** (stage 1) · **refuses** (present, rejects until its stage) · **stage N** · **hard** (see below).
+Status: **done** (stage 1, or the stage named) · **stage N** · **hard** (see below).
 
 | Area | Channel | Status | Notes |
 |---|---|---|---|
-| State | `kt:state` | done | `available: false`, reason, `os`/`arch` in Node's words |
-| Engine | `kt:engineRetry` | stage 2 | bridge's `retryEngine` re-reads `kt_state` meanwhile |
-| Engine | `kt:list` | done | `[]` until the engine |
-| Engine | `kt:add` | refuses → stage 2 | aria2 sidecar |
-| Engine | `kt:pause` | refuses → stage 2 | |
-| Engine | `kt:resume` | refuses → stage 2 | |
-| Engine | `kt:remove` | refuses → stage 2 | |
-| Engine | `kt:setFiles` | refuses → stage 2 | |
-| Engine | `kt:setUrl` | stage 2 | |
-| Engine | `kt:move` | stage 2 | |
-| Engine | `kt:setLimits` | refuses → stage 2 | |
-| Engine | `kt:configure` | stage 2 | |
-| Engine | `kt:torrentInfo` | refuses → stage 2 | |
-| Engine | `kt:rename` | refuses → stage 2 | |
-| Engine | `kt:open` | refuses → stage 2 | needs a task's path; then opener `open_path` / `reveal_item_in_dir` |
-| Engine | `kt:megaDecrypt` | stage 2 | AES-128-CTR (`aes` + `ctr` crates), streamed |
+| State | `kt:state` | done | the engine's `available`/`reason`, `os`/`arch` in Node's words |
+| Engine | `kt:engineRetry` | done (stage 2) | starts aria2c if it is not running, then the state |
+| Engine | `kt:list` | done (stage 2) | the last list while aria2c is down |
+| Engine | `kt:add` | done (stage 2) | `o.video` (yt-dlp) refuses until stage 3 |
+| Engine | `kt:pause` | done (stage 2) |  |
+| Engine | `kt:resume` | done (stage 2) |  |
+| Engine | `kt:remove` | done (stage 2) | waits up to 3 s for `forceRemove` to finish before removing the result and the files |
+| Engine | `kt:setFiles` | done (stage 2) |  |
+| Engine | `kt:setUrl` | done (stage 2) |  |
+| Engine | `kt:move` | done (stage 2) |  |
+| Engine | `kt:setLimits` | done (stage 2) |  |
+| Engine | `kt:configure` | done (stage 2) |  |
+| Engine | `kt:torrentInfo` | done (stage 2) |  |
+| Engine | `kt:rename` | done (stage 2) | the content-sniffed renaming of finished files (`sniff.cjs` `fixName`) is not ported yet |
+| Engine | `kt:open` | done (stage 2) | the file with its program; «show in folder» opens the parent folder (no item selection: `reveal_item_in_dir` not used yet) |
+| Engine | `kt:megaDecrypt` | stage 3 | AES-128-CTR (`aes` + `ctr` crates), streamed |
 | Files | `kt:defaultDir` | done | `<Downloads>/Kurokawa` |
 | Files | `kt:roots` | done | |
 | Files | `kt:listDir` | done | |
@@ -54,9 +82,9 @@ Status: **done** (stage 1) · **refuses** (present, rejects until its stage) · 
 | Files | `kt:writeTempBytes` | done | |
 | Files | `kt:removeFile` | done | |
 | Files | `kt:hashFile` | done | md5/sha1/sha256 in one streamed pass |
-| Files | `kt:deletePath` | stage 2 | to the trash: `trash` crate, then `remove_dir_all` as Electron does |
-| Files | `kt:fontDirs` | stage 2 | plain path list |
-| Files | `kt:fontIndex` | stage 2 | the `name`-table reader ported as is (or `ttf-parser`) |
+| Files | `kt:deletePath` | stage 3 | to the trash: `trash` crate, then `remove_dir_all` as Electron does |
+| Files | `kt:fontDirs` | stage 3 | plain path list |
+| Files | `kt:fontIndex` | stage 3 | the `name`-table reader ported as is (or `ttf-parser`) |
 | Opening | `kt:openPath` | done | `tauri-plugin-opener` |
 | Opening | `kt:openExternal` | done | file:// → `open_path`, else `open_url` |
 | Opening | `kt:fileUrl` | stage 3 | the local stream server (below) serves files |
@@ -125,23 +153,18 @@ Status: **done** (stage 1) · **refuses** (present, rejects until its stage) · 
 | Desktop | `kt:registerMagnet` | stage 4 | `tauri-plugin-deep-link` (magnet:, kurokawatools:) + `tauri-plugin-single-instance` for the second-instance hand-over |
 | Desktop | `kt:localApi` | stage 4 | the local API server in Rust (same routes, token) |
 
-Events the preload listens for (`kt:tasks`, `kt:engineState`, `kt:packProgress`, `kt:archiveProgress`,
+Events the preload listens for (`kt:tasks` and `kt:engineState` — done —, `kt:packProgress`, `kt:archiveProgress`,
 `kt:ffmpegProgress`, `kt:update-progress`, `kt:hotkeyAdd`, `kt:openTask`, `kt:browser`, `kt:screenCaption`,
 `app:titleBarState`, `kt:open`) become Tauri events (`app.emit(...)`, listened to in bridge.js with
 `window.__TAURI__.event.listen`, which needs `core:event:default` — already in `core:default`).
 
 ## The hard parts
 
-### aria2 (stage 2)
-aria2c is already a separate binary spoken to over JSON-RPC (`aria2.cjs`, `aria2rpc.cjs`); only the Node glue moves.
-Ship it as a Tauri sidecar: `bundle.externalBin: ["binaries/aria2c"]`, with `binaries/aria2c-<target-triple>[.exe]`
-fetched in CI by a port of `fetch-aria2.mjs` (one per triple; macOS universal needs both arch binaries or a `lipo`ed
-one named `-universal-apple-darwin`). Start it with `tauri-plugin-shell`'s `sidecar("aria2c")` (or plain
-`std::process::Command` on the path next to the executable), same arguments, a random port and secret; keep the
-JSON-RPC client in Rust (`tokio-tungstenite` for the WebSocket notifications, reqwest for calls) so the secret
-never reaches the page, and push `kt:tasks` as events on a timer as `aria2.cjs`
-does. The task model (`aria2.cjs`'s mapping of tellActive/tellWaiting/tellStopped to `Task`) is the bulk of the work
-and is pure data mapping.
+### aria2 (done in stage 2)
+See «The download engine» above. Left for later: a Windows Job Object (needs the `windows` crate) as a second guard
+besides `--stop-with-process`; the WebSocket notifications (`tokio-tungstenite`) if polling ever proves too slow;
+`sniff.cjs`'s renaming of finished files whose name says nothing; the WebTorrent hand-over (`watching`,
+`handedOver`), which comes with torrent streaming.
 
 ### Torrent streaming (WebTorrent today)
 WebTorrent runs in Electron's Node, which Tauri does not have. Options:
@@ -186,9 +209,10 @@ it. Requests the page makes itself (images, `fetch`) keep the system's DNS, exce
 
 ## Stages
 
-1. **Done here**: window, bridge, files, dialogs, clipboard, `kt:http`, `kt:checkUpdate`; CI builds and sizes.
-2. aria2 sidecar + tasks + events (`kt:tasks`, `kt:engineState`), `kt:open`, `deletePath`, fonts, `megaDecrypt`.
-3. The binaries and servers: yt-dlp, gallery-dl, ffmpeg packs, archives (+7-Zip sidecar), the local stream/proxy
+1. **Done**: window, bridge, files, dialogs, clipboard, `kt:http`, `kt:checkUpdate`; CI builds and sizes.
+2. **Done**: the aria2 engine (bundled aria2c, tasks, `kt:tasks` / `kt:engineState` events), `kt:open`, the window's
+   size and place kept (`winstate.rs`, `window-state.json` in the app's config folder), the runtime self-test in CI.
+3. `deletePath`, fonts, `megaDecrypt`; the binaries and servers: yt-dlp, gallery-dl, ffmpeg packs, archives (+7-Zip sidecar), the local stream/proxy
    server (`fileUrl`, `audioUrl`, `videoUrl`, `proxyUrl`), Wi-Fi share, antivirus, screen fonts, updates install.
 4. Desktop integration: single instance, deep links (magnet:, .torrent), tray, notifications, keep-awake, global
    hotkeys, mini window, title bar, app icon, captureUrl / siteWindow windows, local API.

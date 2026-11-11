@@ -2,7 +2,7 @@
 name = "kurokawa-tools"
 # (Not the app's version: Tauri takes that from tauri.conf.json, which reads apps/tools/package.json.)
 version = "0.0.0"
-description = "Kurokawa Tools — the Tauri shell (stage 1)"
+description = "Kurokawa Tools — the Tauri shell (stage 2)"
 edition = "2021"
 publish = false
 

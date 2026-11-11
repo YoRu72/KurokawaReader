@@ -1,7 +1,9 @@
-// The stage-1 slice of desktop/main.cjs's `ipcMain.handle('kt:*')` channels as Tauri commands: kt:xyz → kt_xyz.
-// Every command is async so it runs on the async runtime, never on the main thread (the blocking dialogs need
-// that). Arguments come from bridge.js under the keys named here (p, ps, o, id, index).
-use std::path::PathBuf;
+// desktop/main.cjs's `ipcMain.handle('kt:*')` channels as Tauri commands: kt:xyz → kt_xyz (stage 1: files, dialogs,
+// clipboard, http, update check; stage 2: the download engine, engine.rs). Every command is async so it runs on the
+// async runtime, never on the main thread (the blocking dialogs need that); the engine's work, which is synchronous,
+// goes through spawn_blocking. Arguments come from bridge.js under the keys named here (p, ps, o, id, index, …).
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
@@ -9,9 +11,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
+use crate::engine::{self, Engine};
 use crate::{files, hash, net, util};
-
-pub const NO_ENGINE: &str = "The download engine is not in this preview build yet";
 
 fn text_of(o: &Value, key: &str) -> String {
     match o.get(key) {
@@ -40,22 +41,156 @@ fn home_dir(app: &AppHandle) -> PathBuf {
 }
 
 /// Where downloads go when nothing else was chosen: <Downloads>/Kurokawa, as desktop/main.cjs gives aria2.
-fn default_dir(app: &AppHandle) -> PathBuf {
+pub fn default_dir(app: &AppHandle) -> PathBuf {
     downloads_dir(app).join("Kurokawa")
 }
 
-/* ---------- state ---------- */
+/* ---------- the engine (engine.rs) ---------- */
 
+/// The engine's work run off the async runtime: f(engine) → its result.
+async fn with_engine<T, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce(Arc<Engine>) -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let e = match engine::get() {
+        Some(e) => e,
+        None => return Err("engine".to_string()),
+    };
+    let joined = tauri::async_runtime::spawn_blocking(move || f(e)).await;
+    match joined {
+        Ok(r) => r,
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn id_text(id: &Value) -> String {
+    match id {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn state_now() -> Value {
+    match engine::get() {
+        Some(e) => e.state(),
+        None => {
+            json!({ "available": false, "reason": "", "os": util::node_platform(), "arch": util::node_arch() })
+        }
+    }
+}
+
+/// kt:state: { available, reason, os, arch }.
 #[tauri::command]
 pub async fn kt_state() -> Result<Value, String> {
-    Ok(
-        json!({ "available": false, "reason": NO_ENGINE, "os": util::node_platform(), "arch": util::node_arch() }),
-    )
+    Ok(state_now())
+}
+
+/// kt:engineRetry: aria2c started if it is not running («Try again»), then the state.
+#[tauri::command]
+pub async fn kt_engine_retry() -> Result<Value, String> {
+    let _ = with_engine(|e| Ok(e.ensure())).await;
+    Ok(state_now())
+}
+
+/// kt:list: the downloads (the last list while aria2c is down).
+#[tauri::command]
+pub async fn kt_list() -> Result<Value, String> {
+    with_engine(|e| Ok(e.list().unwrap_or_else(|_| e.last()))).await
+}
+
+/// kt:add(o): a download (o.video — yt-dlp — is not in this build); aria2c started first if it is not running.
+#[tauri::command]
+pub async fn kt_add(o: Value) -> Result<Value, String> {
+    if o.get("video").map(|v| !v.is_null()).unwrap_or(false) {
+        return Err("Video downloads are not in this preview build yet".to_string());
+    }
+    with_engine(move |e| {
+        e.ensure();
+        e.add(&o)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn kt_list() -> Result<Value, String> {
-    Ok(json!([]))
+pub async fn kt_pause(id: Value) -> Result<(), String> {
+    let id = id_text(&id);
+    with_engine(move |e| e.pause(&id)).await
+}
+
+#[tauri::command]
+pub async fn kt_resume(id: Value) -> Result<(), String> {
+    let id = id_text(&id);
+    with_engine(move |e| e.resume(&id)).await
+}
+
+#[tauri::command]
+pub async fn kt_remove(id: Value, del: bool) -> Result<(), String> {
+    let id = id_text(&id);
+    with_engine(move |e| e.remove(&id, del)).await
+}
+
+/// kt:setFiles(id, priorities): which files of a torrent are fetched.
+#[tauri::command]
+pub async fn kt_set_files(id: Value, p: Value) -> Result<(), String> {
+    let id = id_text(&id);
+    let mut pr: Vec<i64> = Vec::new();
+    if let Value::Array(xs) = &p {
+        for x in xs.iter() {
+            pr.push(x.as_i64().unwrap_or(0));
+        }
+    }
+    with_engine(move |e| e.set_files(&id, &pr)).await
+}
+
+/// kt:setUrl(id, url) → the download's id (a new one when it had to be added again).
+#[tauri::command]
+pub async fn kt_set_url(id: Value, url: Value) -> Result<String, String> {
+    let id = id_text(&id);
+    let url = id_text(&url);
+    with_engine(move |e| e.set_url(&id, &url)).await
+}
+
+/// kt:move(id, how): −2 first, −1 up, 1 down, 2 last in the queue.
+#[tauri::command]
+pub async fn kt_move(id: Value, how: Value) -> Result<(), String> {
+    let id = id_text(&id);
+    let how = how
+        .as_i64()
+        .or_else(|| how.as_f64().map(|f| f as i64))
+        .unwrap_or(0);
+    with_engine(move |e| e.move_task(&id, how)).await
+}
+
+/// kt:setLimits({ down, up }): bytes per second, 0 none.
+#[tauri::command]
+pub async fn kt_set_limits(l: Value) -> Result<(), String> {
+    with_engine(move |e| e.set_limits(&l)).await
+}
+
+/// kt:configure(o): the engine's settings (aria2-config.json), applied to the running aria2c where it can.
+#[tauri::command]
+pub async fn kt_configure(o: Value) -> Result<(), String> {
+    with_engine(move |e| e.configure(&o)).await
+}
+
+/// kt:torrentInfo(source): { name, infoHash, total, files }.
+#[tauri::command]
+pub async fn kt_torrent_info(s: Value) -> Result<Value, String> {
+    with_engine(move |e| {
+        e.ensure();
+        e.torrent_info(&s)
+    })
+    .await
+}
+
+/// kt:rename({ id, name }) → the name given.
+#[tauri::command]
+pub async fn kt_rename(o: Value) -> Result<String, String> {
+    let id = text_of(&o, "id");
+    let name = text_of(&o, "name");
+    with_engine(move |e| e.rename(&id, &name)).await
 }
 
 /* ---------- files ---------- */
@@ -192,12 +327,32 @@ pub async fn kt_open_external(app: AppHandle, u: String) -> Result<(), String> {
     }
 }
 
-/// kt:open(id, fileIndex): a task's file opened, or shown in its folder (fileIndex -1). Tasks come with the engine
-/// (stage 2, with the opener's reveal_item_in_dir); until then there is no task to open.
+/// The folder holding `p`, opened (Electron's showItemInFolder, without selecting the item).
+fn show_in_folder(app: &AppHandle, p: &str) -> Result<(), String> {
+    let path = Path::new(p);
+    let dir: PathBuf = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => path.to_path_buf(),
+    };
+    app.opener()
+        .open_path(lossy(&dir), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// kt:open(id, fileIndex): a task's file opened with its program, or its folder shown (fileIndex −1, or a file
+/// that cannot be opened).
 #[tauri::command]
-pub async fn kt_open(id: Value, index: Option<i64>) -> Result<(), String> {
-    let _ = (&id, index);
-    Err(NO_ENGINE.to_string())
+pub async fn kt_open(app: AppHandle, id: Value, index: Option<i64>) -> Result<(), String> {
+    let idt = id_text(&id);
+    let i = index.unwrap_or(0);
+    let p = with_engine(move |e| e.file_of(&idt, i)).await?;
+    if index == Some(-1) || (index.is_none() && p.is_empty()) {
+        return show_in_folder(&app, &p);
+    }
+    match app.opener().open_path(p.clone(), None::<&str>) {
+        Ok(()) => Ok(()),
+        Err(_) => show_in_folder(&app, &p),
+    }
 }
 
 /* ---------- dialogs ---------- */

@@ -2,15 +2,14 @@
 // Electron shell's bridge; the typed shape is src/engine/desktop.ts), each channel kt:xyz a Tauri command kt_xyz.
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.
-// Only the stage-1 slice is here (../PORTING.md): the page asks for each feature by its method (d?.dohProbe, …),
-// so whatever is not ported yet is absent, not a stub — except what the page uses without asking (the engine's
-// methods, which DesktopEngine calls as they are): those answer «not in this preview build».
+// Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine):
+// the page asks for each feature by its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub.
+// Events (kt:tasks, kt:engineState) come as Tauri events, listened to with window.__TAURI__.event.listen.
 (function () {
   'use strict';
   if (window.kurokawaTools) return;
-  var REASON = 'The download engine is not in this preview build yet';
   var boot = window.__KT_BOOT__ || {};
-  var state = { available: false, reason: REASON, os: boot.os || '', arch: boot.arch || '' };
+  var state = { available: false, reason: '', os: boot.os || '', arch: boot.arch || '' };
 
   // (Looked up at each call: Tauri's own scripts may run after this one.)
   function invoker() {
@@ -36,8 +35,38 @@
   }
   var str = function (x) { return String(x); };
   var obj = function (o) { return o && typeof o === 'object' ? o : {}; };
-  var noEngine = function () { return Promise.reject(new Error(REASON)); };
-  // (Asked on the first ready(), when the page boots — by then Tauri's IPC is surely in place.)
+  var orNull = function (x) { return x === undefined ? null : x; };
+
+  // (aria2c up later, or stopped: the page told, to pick its engine again — as the preload's news() does.)
+  function news(s) {
+    if (s && typeof s === 'object') Object.assign(state, s);
+    try { if (typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('kt:engine-state')); } catch (e) { /* no DOM */ }
+    return state;
+  }
+  // (Tauri's event listener, looked up at each try like the invoker; the plugin's own command when the global API
+  // is not there.)
+  function listener() {
+    var t = window.__TAURI__;
+    if (t && t.event && typeof t.event.listen === 'function') return function (n, f) { return t.event.listen(n, f); };
+    var i = window.__TAURI_INTERNALS__;
+    if (i && typeof i.invoke === 'function' && typeof i.transformCallback === 'function') return function (n, f) { return i.invoke('plugin:event|listen', { event: n, target: { kind: 'Any' }, handler: i.transformCallback(f) }); };
+    return null;
+  }
+  var taskSubs = [];
+  var listening = false;
+  // (Once: kt:tasks to every onTasks callback, kt:engineState to the state; then the state asked again, since an
+  // event sent while the page was loading is lost — what Electron's did-finish-load resend does.)
+  function listen() {
+    if (listening) return;
+    var on = listener();
+    if (!on) return;
+    listening = true;
+    try {
+      Promise.resolve(on('kt:tasks', function (ev) { var list = ev && ev.payload; taskSubs.slice().forEach(function (f) { try { f(list); } catch (e) { /* the page's */ } }); })).catch(function () { listening = false; });
+      Promise.resolve(on('kt:engineState', function (ev) { news(ev && ev.payload); })).then(function () { return call('kt_state').then(function (s) { if (s && (s.available !== state.available || s.reason !== state.reason)) news(s); else if (s) Object.assign(state, s); }); }).catch(function () {});
+    } catch (e) { listening = false; }
+  }
+  try { if (typeof window.addEventListener === 'function') window.addEventListener('DOMContentLoaded', listen); } catch (e) { /* no DOM */ }
   var ready = null;
 
   var api = {
@@ -45,14 +74,29 @@
     get available() { return state.available; },
     get reason() { return state.reason; },
     get os() { return state.os; },
-    ready: function () { if (!ready) ready = call('kt_state').then(function (s) { Object.assign(state, s); return state; }).catch(function () { return state; }); return ready; },
-    retryEngine: function () { return call('kt_state').then(function (s) { Object.assign(state, s); return state; }); },
+    ready: function () { listen(); if (!ready) ready = call('kt_state').then(function (s) { Object.assign(state, s); return state; }).catch(function () { return state; }); return ready; },
+    retryEngine: function () { return call('kt_engine_retry').then(news); },
 
-    /* the engine (stage 2): asked for without feature checks by DesktopEngine, so present, and refusing */
-    add: noEngine, pause: noEngine, resume: noEngine, remove: noEngine, setFiles: noEngine, setLimits: noEngine, torrentInfo: noEngine, rename: noEngine,
+    /* the engine (aria2c beside the app: src-tauri/src/engine.rs) */
+    add: function (o) { return call('kt_add', { o: obj(o) }); },
     list: function () { return call('kt_list'); },
-    onTasks: function (cb) { call('kt_list').then(cb).catch(function () {}); return function () {}; },
-    open: function (id, i) { return call('kt_open', { id: id === undefined ? null : id, index: typeof i === 'number' ? i : null }); },
+    pause: function (id) { return call('kt_pause', { id: orNull(id) }); },
+    resume: function (id) { return call('kt_resume', { id: orNull(id) }); },
+    remove: function (id, del) { return call('kt_remove', { id: orNull(id), del: !!del }); },
+    setFiles: function (id, p) { return call('kt_set_files', { id: orNull(id), p: Array.isArray(p) ? p : [] }); },
+    setUrl: function (id, url) { return call('kt_set_url', { id: orNull(id), url: str(url) }); },
+    move: function (id, how) { return call('kt_move', { id: orNull(id), how: orNull(how) }); },
+    setLimits: function (l) { return call('kt_set_limits', { l: obj(l) }); },
+    configure: function (o) { return call('kt_configure', { o: obj(o) }); },
+    torrentInfo: function (s) { return call('kt_torrent_info', { s: obj(s) }); },
+    rename: function (o) { return call('kt_rename', { o: obj(o) }); },
+    open: function (id, i) { return call('kt_open', { id: orNull(id), index: typeof i === 'number' ? i : null }); },
+    onTasks: function (cb) {
+      listen();
+      taskSubs.push(cb);
+      call('kt_list').then(cb).catch(function () {});
+      return function () { var k = taskSubs.indexOf(cb); if (k >= 0) taskSubs.splice(k, 1); };
+    },
 
     /* files */
     defaultDir: function () { return call('kt_default_dir'); },
