@@ -35,10 +35,12 @@ async function longBook(b, port, errors) {
   await p.waitForFunction(() => document.querySelectorAll('.panel.open .hit').length >= 6, null, { timeout: 60000 });
   const [s1, k1] = await p.evaluate(() => [document.querySelector('.panel.open .plain-list').previousElementSibling.textContent, document.querySelectorAll('.panel.open .hit').length]); console.log('while searching:', s1, '·', k1, 'listed');
   ok('long book: the search is still running, counting what is listed', /^Searching \d+ of 600/.test(s1) && s1.endsWith(` · ${k1} result(s)`));
-  await p.tap('.panel.open .hit >> nth=3'); await p.waitForTimeout(600);
-  const at = await p.evaluate(() => { const r = document.querySelectorAll('.pdf-page')[27].getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), count: document.querySelector('.pcount')?.textContent ?? '' }; });
+  await p.tap('.panel.open .hit >> nth=3');
+  // (Its page drawn, the word found is marked and brought to the middle of the screen.)
+  await p.waitForFunction(() => document.querySelectorAll('.pdf-page')[27].querySelector('.textLayer .highlight'), null, { timeout: 15000 }).catch(() => undefined); await p.waitForTimeout(300);
+  const at = await p.evaluate(() => { const r = document.querySelectorAll('.pdf-page')[27].getBoundingClientRect(); const m = document.querySelectorAll('.pdf-page')[27].querySelector('.textLayer .highlight')?.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), mark: m ? Math.round(m.top) : null, count: document.querySelector('.pcount')?.textContent ?? '' }; });
   const nav1 = (await p.$('.search-nav')) ? await p.$eval('.search-nav-text', (e) => e.textContent) : ''; console.log('tapped:', JSON.stringify(at), 'nav:', nav1);
-  ok('a hit tapped while searching: the viewer goes to its page (28)', at.top >= 0 && at.top < 200 && at.bottom > 400 && /Page 28 of/.test(at.count));
+  ok('a hit tapped while searching: the viewer goes to its page (28), the word marked in view', at.mark !== null && at.mark > 80 && at.mark < p.viewportSize().height - 40 && at.top < at.mark && /Page 28 of/.test(at.count));
   ok('… and the hit bar shows it', /^4 \/ \d+ · Page 28/.test(nav1));
   const before = await p.$$eval('.search-nav-text', (e) => e[0].textContent); const n0 = Number(/\/ (\d+)/.exec(before)[1]);
   await p.click('.search-nav button[aria-label="Search in book"]'); await p.waitForSelector('.panel.open .hit');
