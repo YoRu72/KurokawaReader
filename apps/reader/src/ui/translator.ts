@@ -229,7 +229,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     void runJob(t('glossScanJob', { book: title }), async (rep) => {
       for (let g = 0; g < groups.length && !stop; g++) {
         rep((g / groups.length) * 100, t('glossScanProgress', { n: localDigits(g), total: localDigits(groups.length), found: localDigits(added) }));
-        try { added += await namesFrom(groups[g].texts.join('\n').slice(0, 24000).split('\n'), bookId, folder); await db.setMeta(k, [...((await db.getMeta<number[]>(k)) ?? []), ...groups[g].idx]); }
+        try { added += await namesFrom(groups[g].texts.join('\n').slice(0, 24000).split('\n'), bookId, folder); await db.updateMeta<number[]>(k, (cur) => [...(cur ?? []), ...groups[g].idx]); }
         catch (e) { if ((e as Error).name === 'QuotaError') throw e; console.warn('[kurokawa] scan', e); }
       }
       return stop ? null : { blob: new Blob([]), name: title };
@@ -244,7 +244,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     try {
       const n = await namesFrom(texts, bookId);
       if (n && !quiet) toast(t('glossAutoAdded', { n: localDigits(n) }));
-      await db.setMeta(k, [...((await db.getMeta<number[]>(k)) ?? []), chapterIdx]);
+      await db.updateMeta<number[]>(k, (cur) => [...(cur ?? []), chapterIdx]);
     } catch (e) { console.warn('[kurokawa] auto glossary', e); }
   }
   /** Translate the shown chapter: cached paragraphs appear at once, the rest in view order. */

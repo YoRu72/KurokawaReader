@@ -290,7 +290,8 @@ export function libraryView(): HTMLElement {
       ['folder', t('moveToFolder'), () => moveSheet([...selected])],
       ['external', t('shareFile'), () => void shareBooks([...selected])],
       ['trash', t('delete'), async () => {
-        if (!confirm(t('deleteConfirm', { n }))) return;
+        // (Many at once: said that it cannot be undone.)
+        if (!confirm(t(n > 3 ? 'deleteConfirmMany' : 'deleteConfirm', { n }))) return;
         await removeBooks([...selected]);
         selected.forEach(forgetCover);
         setSelecting(false);
@@ -309,6 +310,7 @@ export function libraryView(): HTMLElement {
     sh.body.append(h('div', { class: 'dest-list' }, ...rows));
     for (const [ic, label, fn] of acts.filter(([, , , cls]) => cls === 'danger')) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), label));
   }
+  const allShown = (shown: Book[]) => shown.length > 0 && shown.every((b) => selected.has(b.id));
   function renderSelBar() {
     clear(selBar);
     selBar.hidden = !selecting;
@@ -318,7 +320,8 @@ export function libraryView(): HTMLElement {
     selBar.append(
       h('div', { class: 'sel-head' },
         h('span', { class: 'sel-count' }, t('selectedCount', { n })),
-        h('button', { class: 'btn small', type: 'button', onclick: () => { if (selected.size === books.length) selected.clear(); else books.forEach((b) => selected.add(b.id)); renderGrid(); } }, selected.size === books.length && n ? t('selectNone') : t('selectAll')),
+        // (All of what is listed now — a folder's, a tag's, a search's books — never the books the view hides.)
+        h('button', { class: 'btn small', type: 'button', onclick: () => { const shown = sorted(); if (allShown(shown)) selected.clear(); else shown.forEach((b) => selected.add(b.id)); renderGrid(); } }, allShown(sorted()) && n ? t('selectNone') : t('selectAll')),
         h('span', { class: 'spacer' }),
         iconButton('close', t('close'), () => setSelecting(false))),
       h('div', { class: 'sel-actions' }, ...actions()),
@@ -954,6 +957,9 @@ export function libraryView(): HTMLElement {
   }
 
   function renderGrid() {
+    // (What is chosen is what is listed: a book the folder, tag, search or filter now hides is let go, so no action
+    // reaches a book the reader cannot see.)
+    if (selecting && selected.size) { const shown = new Set(sorted().map((b) => b.id)); for (const id of [...selected]) if (!shown.has(id)) selected.delete(id); }
     clear(grid);
     renderResume();
     renderGoal();

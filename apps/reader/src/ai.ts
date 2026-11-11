@@ -1,6 +1,6 @@
 // AI providers for chapter translation and read-aloud: Gemini, OpenAI and
 // OpenAI-compatible endpoints (OpenRouter, local servers), Anthropic.
-// Keys live in the visual settings (localStorage) and are excluded from backups.
+// Keys live in the visual settings (localStorage) and are left out of backups (backup.ts scrubSettings).
 import { REPO } from './repo';
 import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp, glossaryStampOf } from './glossary';
 import { getSettings } from './settings';
