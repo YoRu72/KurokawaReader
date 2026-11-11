@@ -17,7 +17,7 @@ import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch, searchFormOf } from '../formats/types';
 import { BLOCK_SELECTOR, setLazyRoot } from '../formats/shared';
-import { PdfViewer, type CropBox, type PdfSearchHit } from '../formats/pdf';
+import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
@@ -1685,7 +1685,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer = new PdfViewer({
     container: reader,
     invert: getSettings().pdfInvert,
-    crop: { enabled: () => getSettings().pdfAutoCrop, get: () => db.getMeta<CropBox[]>(`crop:${book.id}`).then((v) => v ?? null), set: (boxes) => db.setMeta(`crop:${book.id}`, boxes) },
+    crop: { enabled: () => getSettings().pdfAutoCrop, get: () => db.getMeta<unknown>(`crop:${book.id}`).then((v) => v ?? null), set: (store) => db.setMeta(`crop:${book.id}`, store) },
     onPageRender: (n) => { renderHighlights(n); ink?.render(n); strip?.sync(); },
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
