@@ -1006,4 +1006,9 @@ export const zh: Partial<Strings> = {
   phaseEmbed: "正在嵌入封面和标签",
   downloadNow: "立即下载",
   batchSomeFailed: "有 {n} 个链接未能添加，已留在输入框中（{error}）",
+  filesIntoItself: "不能把文件夹粘贴到它自身或其内部的文件夹中。",
+  filesLeftInPlace: "完成 — 有 {n} 项留在原处（已跳过或失败）。",
+  filesClipClear: "清空剪贴板",
+  filesTrashFailedAsk: "有 {n} 项无法移入回收站（{why}）。要永久删除吗？",
+  filesNamesClash: "部分新名称重复，请修改模式或编号。",
 };

@@ -62,7 +62,7 @@ final class KtFiles {
         r.put("exists", true); r.put("entries", out); r.put("path", dir.getAbsolutePath()); r.put("truncated", n >= 20000);
         return r;
     }
-    static String extOf(String name) { int i = name.lastIndexOf('.'); return i > 0 && i < name.length() - 1 && name.length() - i <= 8 ? name.substring(i + 1).toLowerCase(Locale.ROOT) : ""; }
+    static String extOf(String name) { return KtFileJobs.extOf(name); }
     static String mimeOf(String name) { String e = extOf(name); String m = e.isEmpty() ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(e); if (m == null) m = KtStream.mimeOf(name); return m == null || m.isEmpty() ? "application/octet-stream" : m; }
 
     /** One file or folder up close: its size (a folder's counted whole, with how many files and folders), times, kind. */
@@ -72,10 +72,6 @@ final class KtFiles {
         if (f.isDirectory()) { long[] t = { 0, 0, 0 }; walkSize(f, t, cancel); o.put("size", t[0]); o.put("files", t[1]); o.put("folders", t[2]); }
         else { o.put("size", f.length()); o.put("ext", extOf(f.getName())); o.put("mime", mimeOf(f.getName())); }
         return o;
-    }
-    private static void walkSize(File d, long[] t, AtomicBoolean cancel) {
-        File[] k = d.listFiles(); if (k == null) return;
-        for (File c : k) { if (cancel != null && cancel.get()) return; if (c.isDirectory()) { t[2]++; walkSize(c, t, cancel); } else { t[1]++; t[0] += c.length(); } }
     }
 
     /* ---------- the storages ---------- */
@@ -156,78 +152,14 @@ final class KtFiles {
         if (thumbs.size() > 600) thumbs.clear(); thumbs.put(key, url); return url;
     }
 
-    /* ---------- the jobs: copy, move, delete ---------- */
-    interface Events { void on(JSONObject ev); }
-    static final class Job { final String id; final AtomicBoolean cancel = new AtomicBoolean(); volatile String conflict = "ask"; final Object lock = new Object(); volatile String answer; Job(String id) { this.id = id; } }
-    static final Map<String, Job> jobs = new ConcurrentHashMap<>();
-    static void cancel(String id) { Job j = jobs.get(id); if (j != null) { j.cancel.set(true); synchronized (j.lock) { j.answer = "skip"; j.lock.notifyAll(); } } }
-    /** The page's answer to a name already taken: skip, replace, keep (both), or the same for all that follow (…All). */
-    static void answer(String id, String what) { Job j = jobs.get(id); if (j == null) return; synchronized (j.lock) { if (what.endsWith("All")) j.conflict = what.substring(0, what.length() - 3); j.answer = what.replace("All", ""); j.lock.notifyAll(); } }
-
-    /** `op` (copy | move | delete) on `paths`, into `dest` (a folder) for copy and move. */
-    static void run(String id, String op, List<File> paths, File dest, String conflict, Events ev) {
-        Job j = new Job(id); j.conflict = conflict == null ? "ask" : conflict; jobs.put(id, j);
-        long[] total = { 0, 0 }; // bytes, files
-        try {
-            if (!op.equals("delete")) for (File f : paths) count(f, total, j.cancel);
-            else for (File f : paths) { long[] t = { 0, 0, 0 }; walkSize(f, t, j.cancel); total[0] += t[0]; total[1] += t[1] + t[2] + 1; }
-            long[] done = { 0, 0 }; JSONArray failed = new JSONArray(); long[] lastTold = { 0 };
-            for (File f : paths) {
-                if (j.cancel.get()) break;
-                try {
-                    if (op.equals("delete")) deleteTree(f, j, done, total, ev, lastTold);
-                    else {
-                        File to = new File(dest, f.getName());
-                        if (op.equals("move") && sameStorage(f, dest) && !to.exists() && f.renameTo(to)) { done[0] += sizeOfQuick(f, total); done[1]++; progress(ev, j, done, total, f.getName(), lastTold, true); continue; }
-                        copyTree(f, to, j, done, total, ev, lastTold);
-                        if (op.equals("move") && !j.cancel.get()) deleteTree(f, j, new long[2], new long[2], null, lastTold);
-                    }
-                } catch (Exception e) { if (j.cancel.get()) break; failed.put(f.getName() + ": " + e.getMessage()); }
-            }
-            JSONObject end = new JSONObject(); end.put("id", id); end.put("status", j.cancel.get() ? "cancelled" : "done"); end.put("done", done[0]); end.put("total", total[0]); end.put("files", done[1]); end.put("failed", failed); ev.on(end);
-        } catch (Exception e) {
-            try { JSONObject end = new JSONObject(); end.put("id", id); end.put("status", "failed"); end.put("message", String.valueOf(e.getMessage())); ev.on(end); } catch (Exception ignored) {}
-        } finally { jobs.remove(id); }
-    }
-    private static long sizeOfQuick(File f, long[] total) { return f.isDirectory() ? 0 : f.length(); }
-    private static void count(File f, long[] t, AtomicBoolean cancel) { if (cancel.get()) return; if (f.isDirectory()) { File[] k = f.listFiles(); if (k != null) for (File c : k) count(c, t, cancel); } else { t[0] += f.length(); t[1]++; } }
-    private static boolean sameStorage(File a, File b) { try { return Files.getFileStore(a.toPath()).equals(Files.getFileStore(b.toPath())); } catch (Exception e) { return false; } }
-    private static void progress(Events ev, Job j, long[] done, long[] total, String name, long[] lastTold, boolean force) {
-        long now = System.currentTimeMillis(); if (!force && now - lastTold[0] < 200) return; lastTold[0] = now;
-        try { JSONObject o = new JSONObject(); o.put("id", j.id); o.put("status", "progress"); o.put("done", done[0]); o.put("total", total[0]); o.put("files", done[1]); o.put("ofFiles", total[1]); o.put("name", name); ev.on(o); } catch (Exception ignored) {}
-    }
-    /** What to do about `to` already there: the job's standing answer, else the page asked and waited for. */
-    private static String resolve(Job j, File from, File to, Events ev) throws Exception {
-        if (!j.conflict.equals("ask")) return j.conflict;
-        JSONObject o = new JSONObject(); o.put("id", j.id); o.put("status", "conflict"); o.put("from", from.getAbsolutePath()); o.put("to", to.getAbsolutePath()); o.put("size", from.isFile() ? from.length() : 0); o.put("existingSize", to.isFile() ? to.length() : 0); o.put("mtime", from.lastModified()); o.put("existingMtime", to.lastModified()); o.put("dir", from.isDirectory());
-        synchronized (j.lock) { j.answer = null; ev.on(o); while (j.answer == null && !j.cancel.get()) j.lock.wait(60000); String a = j.answer == null ? "skip" : j.answer; return a; }
-    }
-    static File keepBoth(File to) { String n = to.getName(); String ext = extOf(n); String stem = ext.isEmpty() ? n : n.substring(0, n.length() - ext.length() - 1); for (int i = 1; i < 10000; i++) { File c = new File(to.getParentFile(), stem + " (" + i + ")" + (ext.isEmpty() ? "" : "." + ext)); if (!c.exists()) return c; } return to; }
-    private static void copyTree(File from, File to, Job j, long[] done, long[] total, Events ev, long[] lastTold) throws Exception {
-        if (j.cancel.get()) return;
-        if (from.isDirectory()) {
-            if (to.isFile()) { String a = resolve(j, from, to, ev); if (a.equals("skip")) return; if (a.equals("keep")) to = keepBoth(to); else if (!to.delete()) throw new IOException("cannot replace " + to.getName()); }
-            if (!to.isDirectory() && !to.mkdirs()) throw new IOException("cannot make " + to.getName());
-            File[] k = from.listFiles(); if (k != null) for (File c : k) copyTree(c, new File(to, c.getName()), j, done, total, ev, lastTold);
-            return;
-        }
-        if (to.exists()) { String a = resolve(j, from, to, ev); if (a.equals("skip")) { done[0] += from.length(); done[1]++; return; } if (a.equals("keep")) to = keepBoth(to); }
-        File part = new File(to.getParentFile(), to.getName() + ".ktpart");
-        try (InputStream in = new FileInputStream(from); OutputStream out = new FileOutputStream(part)) {
-            byte[] b = new byte[1 << 18]; int n;
-            while ((n = in.read(b)) > 0) { if (j.cancel.get()) { part.delete(); return; } out.write(b, 0, n); done[0] += n; progress(ev, j, done, total, from.getName(), lastTold, false); }
-        }
-        if (to.exists() && !to.delete()) { part.delete(); throw new IOException("cannot replace " + to.getName()); }
-        if (!part.renameTo(to)) { part.delete(); throw new IOException("cannot write " + to.getName()); }
-        to.setLastModified(from.lastModified()); done[1]++; progress(ev, j, done, total, from.getName(), lastTold, true);
-    }
-    private static void deleteTree(File f, Job j, long[] done, long[] total, Events ev, long[] lastTold) throws Exception {
-        if (j.cancel.get()) return;
-        if (f.isDirectory()) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c, j, done, total, ev, lastTold); }
-        long sz = f.isFile() ? f.length() : 0;
-        if (!f.delete() && f.exists()) throw new IOException("cannot delete " + f.getName());
-        done[0] += sz; done[1]++; if (ev != null) progress(ev, j, done, total, f.getName(), lastTold, false);
-    }
+    /* ---------- the jobs: copy, move, delete (in KtFileJobs, plain Java the native tests run) ---------- */
+    interface Events extends KtFileJobs.Events {}
+    static void cancel(String id) { KtFileJobs.cancel(id); }
+    static void answer(String id, String what) { KtFileJobs.answer(id, what); }
+    static void run(String id, String op, List<File> paths, File dest, String conflict, Events ev) { KtFileJobs.run(id, op, paths, dest, conflict, ev); }
+    static File keepBoth(File to) { return KtFileJobs.keepBoth(to); }
+    private static void walkSize(File d, long[] t, AtomicBoolean cancel) { KtFileJobs.walkSize(d, t, cancel); }
+    private static void deleteTree(File f) throws Exception { KtFileJobs.deleteTree(f, new KtFileJobs.Job("x"), new long[2], new long[2], null, new long[1]); }
 
     /* ---------- the collections: the phone's media index by kind, and what changed last ---------- */
     /** `kind`: recent | image | audio | video | doc | apk | archive — the files of that kind from Android's media index, newest first. */
@@ -265,7 +197,7 @@ final class KtFiles {
     }
     /** `paths` moved into their storages' bins (a rename; copied and deleted across storages), each with a note of where it was. */
     static JSONObject trash(Context ctx, List<File> paths, AtomicBoolean cancel) throws Exception {
-        JSONArray moved = new JSONArray(), failed = new JSONArray();
+        JSONArray moved = new JSONArray(), failed = new JSONArray(), failedPaths = new JSONArray();
         for (File f : paths) {
             if (cancel != null && cancel.get()) break;
             try {
@@ -273,13 +205,14 @@ final class KtFiles {
                 try { new File(bin, ".nomedia").createNewFile(); } catch (IOException ignored) {}
                 String id = System.currentTimeMillis() + "-" + Integer.toHexString(f.getAbsolutePath().hashCode()); File slot = new File(bin, id); if (!slot.mkdirs()) throw new IOException("cannot make the slot");
                 File to = new File(slot, f.getName()); long size = f.isFile() ? f.length() : 0;
-                if (!f.renameTo(to)) { Job j = new Job("trash"); long[] done = { 0, 0 }, total = { 0, 0 }; copyTree(f, to, j, done, total, (ev) -> {}, new long[1]); deleteTree(f, j, new long[2], new long[2], null, new long[1]); }
-                JSONObject meta = new JSONObject(); meta.put("from", f.getAbsolutePath()); meta.put("name", f.getName()); meta.put("at", System.currentTimeMillis()); meta.put("dir", to.isDirectory()); meta.put("size", size);
+                // (The note first: a move across storages that stops half way leaves what did arrive restorable from the bin.)
+                JSONObject meta = new JSONObject(); meta.put("from", f.getAbsolutePath()); meta.put("name", f.getName()); meta.put("at", System.currentTimeMillis()); meta.put("dir", f.isDirectory()); meta.put("size", size);
                 try (OutputStream o = new FileOutputStream(new File(slot, ".meta.json"))) { o.write(meta.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                if (!f.renameTo(to)) { try { KtFileJobs.moveWhole(f, to); } catch (Exception e) { if (!to.exists()) deleteTree(slot); throw e; } }
                 moved.put(f.getAbsolutePath());
-            } catch (Exception e) { failed.put(f.getName() + ": " + e.getMessage()); }
+            } catch (Exception e) { failed.put(f.getName() + ": " + e.getMessage()); failedPaths.put(f.getAbsolutePath()); }
         }
-        JSONObject r = new JSONObject(); r.put("moved", moved); r.put("failed", failed); return r;
+        JSONObject r = new JSONObject(); r.put("moved", moved); r.put("failed", failed); r.put("failedPaths", failedPaths); return r;
     }
     /** What the bins hold, newest first: the slot, the name, where it was, when, the size. */
     static JSONArray trashList(Context ctx) throws Exception {
@@ -296,16 +229,16 @@ final class KtFiles {
         JSONObject m = new JSONObject(head(new File(slot, ".meta.json"), 65536)); File item = new File(slot, m.optString("name")); File to = new File(m.optString("from"));
         if (to.getParentFile() != null && !to.getParentFile().isDirectory()) to.getParentFile().mkdirs();
         if (to.exists()) to = keepBoth(to);
-        if (!item.renameTo(to)) { Job j = new Job("restore"); long[] d = { 0, 0 }; copyTree(item, to, j, d, d, (ev) -> {}, new long[1]); deleteTree(item, j, new long[2], new long[2], null, new long[1]); }
-        deleteTree(slot, new Job("x"), new long[2], new long[2], null, new long[1]);
+        if (!item.renameTo(to)) KtFileJobs.moveWhole(item, to);
+        deleteTree(slot);
         JSONObject r = new JSONObject(); r.put("path", to.getAbsolutePath()); return r;
     }
     /** Slots deleted for good: the ones named, or all, or those older than `olderThanMs`. */
     static int trashEmpty(Context ctx, List<File> slots, long olderThanMs) throws Exception {
         int n = 0;
-        if (slots != null) { for (File s : slots) { deleteTree(s, new Job("x"), new long[2], new long[2], null, new long[1]); n++; } return n; }
+        if (slots != null) { for (File s : slots) { deleteTree(s); n++; } return n; }
         JSONArray all = trashList(ctx); long now = System.currentTimeMillis();
-        for (int i = 0; i < all.length(); i++) { JSONObject m = all.getJSONObject(i); if (olderThanMs <= 0 || now - m.optLong("at") > olderThanMs) { deleteTree(new File(m.optString("slot")), new Job("x"), new long[2], new long[2], null, new long[1]); n++; } }
+        for (int i = 0; i < all.length(); i++) { JSONObject m = all.getJSONObject(i); if (olderThanMs <= 0 || now - m.optLong("at") > olderThanMs) { deleteTree(new File(m.optString("slot"))); n++; } }
         return n;
     }
 
@@ -389,11 +322,7 @@ final class KtFiles {
 
     /* ---------- small things ---------- */
     static JSONObject mkdir(File d) throws Exception { JSONObject o = new JSONObject(); o.put("ok", d.isDirectory() || d.mkdirs()); o.put("path", d.getAbsolutePath()); return o; }
-    static JSONObject rename(File f, String name) throws Exception {
-        if (name.isEmpty() || name.contains("/") || name.equals(".") || name.equals("..")) throw new IOException("bad name");
-        File to = new File(f.getParentFile(), name); if (to.exists() && !to.getAbsolutePath().equalsIgnoreCase(f.getAbsolutePath())) throw new IOException("exists");
-        JSONObject o = new JSONObject(); o.put("ok", f.renameTo(to)); o.put("path", to.getAbsolutePath()); return o;
-    }
+    static JSONObject rename(File f, String name) throws Exception { return KtFileJobs.rename(f, name); }
     /** A folder's files that match `q` (their names, the folders below walked), up to a few hundred. */
     static JSONArray search(File dir, String q, boolean hidden, AtomicBoolean cancel) throws Exception {
         JSONArray out = new JSONArray(); String needle = q.toLowerCase(Locale.ROOT); walkSearch(dir, needle, hidden, out, cancel, 0); return out;

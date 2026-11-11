@@ -7,6 +7,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Entry } from './files';
+import { patternName as patternNameOf, clashes } from './filesNames';
 import { isVideo } from '../engine';
 
 type Plug = {
@@ -121,15 +122,8 @@ export function trashSheet(refresh: () => void): void {
 
 /* ---------- renaming many at once ---------- */
 const pad = (n: number, w: number) => String(n).padStart(w, '0');
-/** The new name of `e` by the pattern: {name} {ext} {name.ext} {size} {date} {time} {now} {n} (with {n:3} for zeros), then find → replace. */
-export function patternName(e: Entry, pattern: string, i: number, start: number, find: string, replace: string): string {
-  const dot = e.name.lastIndexOf('.'); const stem = e.dir || dot <= 0 ? e.name : e.name.slice(0, dot); const ext = e.dir || dot <= 0 ? '' : e.name.slice(dot + 1);
-  const d = new Date(e.mtime); const now = new Date(); const ymd = (x: Date) => `${x.getFullYear()}-${pad(x.getMonth() + 1, 2)}-${pad(x.getDate(), 2)}`; const hm = (x: Date) => `${pad(x.getHours(), 2)}${pad(x.getMinutes(), 2)}`;
-  let out = pattern.replace(/\{n(?::(\d))?\}/g, (_, w) => pad(start + i, Number(w ?? 1))).replace(/\{name\.ext\}/g, e.name).replace(/\{name\}/g, stem).replace(/\{ext\}/g, ext).replace(/\{size\}/g, formatBytes(e.size).replace(/\s/g, '')).replace(/\{date\}/g, ymd(d)).replace(/\{time\}/g, hm(d)).replace(/\{now\}/g, ymd(now));
-  if (find) out = out.split(find).join(replace);
-  if (!e.dir && ext && !/\.[^.]+$/.test(out) && !pattern.includes('{ext}') && !pattern.includes('{name.ext}')) out += `.${ext}`;
-  return out.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim();
-}
+/** The new name of `e` by the pattern (filesNames.ts; the sizes as the page writes them). */
+export const patternName = (e: Entry, pattern: string, i: number, start: number, find: string, replace: string): string => patternNameOf(e, pattern, i, start, find, replace, formatBytes);
 export function batchRenameSheet(items: Entry[], refresh: () => void): void {
   const sh = openSheet(t('filesBatchRename'), t('cancel'));
   const pattern = h('input', { type: 'text', value: '{name}', dir: 'ltr' }) as HTMLInputElement; const start = h('input', { type: 'number', value: '1', min: '0', style: { width: '80px' } }) as HTMLInputElement;
@@ -137,10 +131,12 @@ export function batchRenameSheet(items: Entry[], refresh: () => void): void {
   const preview = h('div', { class: 'files-preview' });
   const vars = h('div', { class: 'chip-row' }, ...['{name}', '{ext}', '{name.ext}', '{n}', '{n:3}', '{size}', '{date}', '{time}', '{now}'].map((v) => h('button', { type: 'button', class: 'chip small', onclick: () => { pattern.value += v; draw(); } }, v)));
   const names = (): string[] => items.map((e, i) => patternName(e, pattern.value, i, Number(start.value) || 0, find.value, repl.value));
-  const draw = () => { const ns = names(); const dup = new Set(ns.filter((n, i) => ns.indexOf(n) !== i)); preview.replaceChildren(...items.slice(0, 40).map((e, i) => h('div', { class: 'files-preview-row' + (dup.has(ns[i]) ? ' bad' : ''), dir: 'auto' }, h('small', { class: 'src' }, e.name), h('span', null, ns[i])))); go.disabled = dup.size > 0 || ns.some((n) => !n); };
-  const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { const ns = names(); sh.close(); let ok = 0; for (let i = 0; i < items.length; i++) { if (ns[i] === items[i].name) continue; try { await plug().filesRename({ path: items[i].path, name: ns[i] }); ok++; } catch { /* next */ } } toast(t('filesRenamedN', { n: localDigits(ok) })); refresh(); } }, icon('pen'), t('rename')) as HTMLButtonElement;
+  // (Two new names the same — letter case aside — would have the second refused or, worse, one over the other: shown, and Rename held back.)
+  const clash = h('p', { class: 'hint error', hidden: true }, t('filesNamesClash'));
+  const draw = () => { const ns = names(); const bad = clashes(ns); preview.replaceChildren(...items.slice(0, 40).map((e, i) => h('div', { class: 'files-preview-row' + (bad.has(i) ? ' bad' : ''), dir: 'auto' }, h('small', { class: 'src' }, e.name), h('span', null, ns[i])))); clash.hidden = !bad.size; go.disabled = bad.size > 0 || ns.some((n) => !n); };
+  const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { const ns = names(); sh.close(); let ok = 0; const failed: string[] = []; for (let i = 0; i < items.length; i++) { if (ns[i] === items[i].name) continue; try { await plug().filesRename({ path: items[i].path, name: ns[i] }); ok++; } catch (err) { failed.push(`${items[i].name}: ${String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err)}`); } } toast(failed.length ? t('filesSomeFailed', { n: localDigits(failed.length), why: failed[0] }) : t('filesRenamedN', { n: localDigits(ok) }), failed.length ? 'error' : 'info', failed.length ? 5000 : 2200); refresh(); } }, icon('pen'), t('rename')) as HTMLButtonElement;
   for (const el of [pattern, start, find, repl]) el.addEventListener('input', draw);
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('filesPattern')), pattern), vars, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, h('span', { class: 'label' }, t('filesStartAt')), start), h('div', { class: 'row', style: { gap: '8px' } }, find, repl), h('p', { class: 'hint' }, countItems(items.length)), preview);
+  sh.body.append(h('label', { class: 'field' }, h('span', null, t('filesPattern')), pattern), vars, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, h('span', { class: 'label' }, t('filesStartAt')), start), h('div', { class: 'row', style: { gap: '8px' } }, find, repl), h('p', { class: 'hint' }, countItems(items.length)), clash, preview);
   sh.actions.append(go); draw();
 }
 

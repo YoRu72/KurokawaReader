@@ -1006,4 +1006,9 @@ export const ja: Partial<Strings> = {
   phaseEmbed: "カバーとタグを埋め込み中",
   downloadNow: "今すぐダウンロード",
   batchSomeFailed: "{n} 件のリンクを追加できませんでした。入力欄に残しています（{error}）",
+  filesIntoItself: "フォルダをそれ自身やその中のフォルダに貼り付けることはできません。",
+  filesLeftInPlace: "完了 — {n} 件は元の場所に残っています（スキップまたは失敗）。",
+  filesClipClear: "クリップボードを空にする",
+  filesTrashFailedAsk: "{n} 件をごみ箱に移せませんでした（{why}）。完全に削除しますか？",
+  filesNamesClash: "新しい名前が重複しています。パターンか番号を変更してください。",
 };
