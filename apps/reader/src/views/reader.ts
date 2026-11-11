@@ -2086,10 +2086,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   // The last search, kept (unless asked not to): opened again, the panel shows it as it was, without reading the
   // pages again; and a bar over the page steps through its hits (↑ ↓) without opening the panel each time.
   let lastQ = ''; let lastHits: PdfSearchHit[] = []; let hitAt = -1; let navBar: HTMLElement | null = null;
+  let job: { q: string; hits: PdfSearchHit[]; done: number; total: number; running: boolean; token: { cancelled: boolean }; onHits?: (from: number) => void; onState?: () => void } | null = null;
+  onDispose(() => { if (job) job.token.cancelled = true; });
   function closeNav() { navBar?.remove(); navBar = null; }
-  function showHit(i: number) {
+  function showHit(i: number, go = true) {
     if (!lastHits.length) return; hitAt = (i + lastHits.length) % lastHits.length; const hit = lastHits[hitAt];
-    void viewer.highlightOnPage(hit.page, lastQ);
+    if (go) void viewer.highlightOnPage(hit.page, lastQ);
     if (!navBar) {
       navBar = h('div', { class: 'search-nav', role: 'toolbar', 'aria-label': t('searchInBook') });
       root.appendChild(navBar);
@@ -2109,27 +2111,33 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       const input = h('input', { type: 'search', placeholder: t('searchPlaceholder'), value: initial, style: { width: '100%' }, 'aria-label': t('searchInBook') }) as HTMLInputElement;
       const status = h('div', { style: { color: 'var(--text-dim)', fontSize: '13px', margin: '10px 0' } });
       const list = h('ul', { class: 'plain-list' });
-      body.append(input, keepToggle(() => { lastQ = ''; lastHits = []; }), status, list);
+      body.append(input, keepToggle(() => { lastQ = ''; lastHits = []; if (job) { job.token.cancelled = true; job = null; } }), status, list);
       let timer: number | undefined;
       const rowOf = (hit: PdfSearchHit, i: number, q: string) => h('li', { class: 'hit' + (i === hitAt && q === lastQ ? ' current' : '') }, h('button', { type: 'button', style: { flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { lastQ = q; showHit(i); if (window.innerWidth < 900) panel.dismiss(); } },
         h('span', { class: 'meta' }, t('pageOf', { n: hit.page, total: viewer.total })), h('span', { class: 'ctx', dir: 'auto' }, hit.before, h('mark', null, hit.term), hit.after)));
+      // (A search goes on after the panel is closed — a hit tapped while pages are still being read is gone to at
+      // once, and the panel opened again shows the same search where it is, not from the first page.)
+      const attach = (j: NonNullable<typeof job>, q: string) => {
+        clear(list); j.hits.forEach((hit, i) => list.append(rowOf(hit, i, q)));
+        const state = () => { if (job !== j || !status.isConnected) return; status.textContent = j.running ? `${t('pdfSearching', { n: j.done, total: j.total })}${j.hits.length ? ` · ${t('resultsCount', { n: j.hits.length })}` : ''}` : j.hits.length ? t('resultsCount', { n: j.hits.length }) : t('noResults'); };
+        j.onHits = (from) => { if (!list.isConnected) return; for (let i = from; i < j.hits.length; i++) list.append(rowOf(j.hits[i], i, q)); state(); /* (the count with the list, not a page later — a far page may take a while) */ };
+        j.onState = state; state(); list.querySelector('.current')?.scrollIntoView({ block: 'center' });
+      };
       const run = async () => {
+        const q = input.value.trim();
+        if (q.length < 2) { clear(list); status.textContent = ''; return; }
+        // The same search as last time (done, or still reading pages): its hits as they are.
+        if (job && job.q === q && !job.token.cancelled) { attach(job, q); return; }
         searchToken.cancelled = true; searchToken = { cancelled: false };
         const token = searchToken;
-        clear(list);
-        const q = input.value.trim();
-        if (q.length < 2) { status.textContent = ''; return; }
-        // The same search as last time: its hits as they were.
-        if (q === lastQ && lastHits.length) { lastHits.forEach((hit, i) => list.append(rowOf(hit, i, q))); status.textContent = t('resultsCount', { n: lastHits.length }); list.querySelector('.current')?.scrollIntoView({ block: 'center' }); return; }
+        const j: NonNullable<typeof job> = { q, hits: [], done: 0, total: viewer.total, running: true, token };
+        job = j; lastQ = q; lastHits = j.hits; hitAt = -1; closeNav(); attach(j, q);
         // Pages read before (here, or by the search across books) are not read again.
         if (!viewer.allTexts()) { const stored = await storedPages(book); if (stored) viewer.seedTexts(stored); }
         if (token.cancelled) return;
-        let k = 0; const got: PdfSearchHit[] = [];
-        const show = (found: PdfSearchHit[]) => { if (token.cancelled) return; for (const hit of found) { got.push(hit); list.append(rowOf(hit, k++, q)); } };
-        const hits = await viewer.search(q, (done, total) => { if (!token.cancelled) status.textContent = t('pdfSearching', { n: done, total }); }, token, show);
+        await viewer.search(q, (done, total) => { j.done = done; j.total = total; j.onState?.(); }, token, (found) => { if (token.cancelled) return; const from = j.hits.length; j.hits.push(...found); j.onHits?.(from); if (navBar && lastHits === j.hits && hitAt >= 0) showHit(hitAt, false); });
         if (token.cancelled) return;
-        lastQ = q; lastHits = hits.length ? hits : got; hitAt = -1; closeNav();
-        status.textContent = hits.length ? t('resultsCount', { n: hits.length }) : t('noResults');
+        j.running = false; j.onState?.();
         const all = viewer.allTexts(); if (all) void storePages(book, all);
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 350); });

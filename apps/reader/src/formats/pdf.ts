@@ -695,7 +695,7 @@ export class PdfViewer {
       render();
     };
     const begin = (e: TouchEvent) => {
-      active = true; startDist = dist(e.touches); startScale = this.scale; f = 1; dx = dy = 0;
+      this.settleZoom(); active = true; startDist = dist(e.touches); startScale = this.scale; f = 1; dx = dy = 0;
       [mx0, my0] = mid(e.touches);
       fx = el.scrollLeft + mx0; fy = el.scrollTop + my0;
       this.inner.style.transformOrigin = `${fx}px ${fy}px`;
@@ -734,10 +734,10 @@ export class PdfViewer {
       lastTap = 0;
       if ((e.target as HTMLElement).closest('a, button, .textLayer span, .pdf-pin')) return;
       const r = el.getBoundingClientRect(); const vx = t.clientX - r.left, vy = t.clientY - r.top;
-      const fit = minScale();
+      this.settleZoom(); const fit = minScale();
       const to = this.scale > fit * 1.3 ? fit : Math.min(4, fit * 2.5);
       this.fitWidth = to === fit;
-      this.animateZoom(to, el.scrollLeft + vx, el.scrollTop + vy, vx, vy);
+      this.animateZoom(to, vx, vy);
     }, { passive: true });
   }
 
@@ -765,9 +765,18 @@ export class PdfViewer {
     this.frame();
   }
 
+  /** The animated zoom under way, if any (finish() lays it out at once). */
+  private zoomAnim: { finish(): void } | null = null;
+  /** A zoom still animating is laid out now, so the next one starts from its size and its layout. (Tapped again
+   *  within the animation, a zoom was worked out from the old size and placed by the old layout's coordinates:
+   *  taps were lost, the page jumped elsewhere, or the picture stayed stretched — the old timer ending the new
+   *  animation.) */
+  private settleZoom(): void { this.zoomAnim?.finish(); }
   /** A short animated zoom (double tap, the zoom buttons): the picture scales with a transition, then the
-   *  pages are laid out at the new size with the same point in the same place. */
-  private animateZoom(scale: number, cx: number, cy: number, vx: number, vy: number): void {
+   *  pages are laid out at the new size with the point at (vx, vy) in the viewport in the same place. */
+  private animateZoom(scale: number, vx: number, vy: number): void {
+    this.settleZoom();
+    const cx = this.scroll.scrollLeft + vx, cy = this.scroll.scrollTop + vy;
     const target = Math.min(4, Math.max(0.4, scale));
     const f = target / this.scale;
     if (Math.abs(f - 1) < 0.001) return;
@@ -775,14 +784,18 @@ export class PdfViewer {
     inner.style.transformOrigin = `${cx}px ${cy}px`;
     inner.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
     inner.style.willChange = 'transform';
-    requestAnimationFrame(() => { inner.style.transform = `scale(${f.toFixed(4)})`; });
+    let raf = 0, timer = 0;
+    const anim = { finish: () => done() };
+    // (Only the inner's own transition ends it: a page's transition inside bubbles up here too.)
+    const onEnd = (e: TransitionEvent) => { if (e.target === inner && e.propertyName === 'transform') done(); };
     const done = () => {
-      inner.removeEventListener('transitionend', done);
+      if (this.zoomAnim !== anim) return; this.zoomAnim = null; cancelAnimationFrame(raf); window.clearTimeout(timer); inner.removeEventListener('transitionend', onEnd);
       inner.style.transition = ''; inner.style.transform = ''; inner.style.transformOrigin = ''; inner.style.willChange = '';
       this.zoomAbout(target, cx, cy, vx, vy);
     };
-    inner.addEventListener('transitionend', done);
-    window.setTimeout(() => { if (inner.style.transition) done(); }, 320);
+    this.zoomAnim = anim; inner.addEventListener('transitionend', onEnd);
+    raf = requestAnimationFrame(() => { inner.style.transform = `scale(${f.toFixed(4)})`; });
+    timer = window.setTimeout(done, 320);
   }
 
   /** The page's sheet: the whole page, to draw on (highlights, notes, ink) with fractions of the page. */
@@ -791,14 +804,12 @@ export class PdfViewer {
   static sheetOf(el: Element | null): HTMLElement | null { const w = el?.closest<HTMLElement>('.pdf-page'); return w ? (w.querySelector<HTMLElement>(':scope > .pdf-sheet') ?? w) : null; }
 
   zoom(delta: number): void {
-    this.fitWidth = false;
-    const vx = this.scroll.clientWidth / 2, vy = this.scroll.clientHeight / 2;
-    this.animateZoom(this.scale * (1 + delta), this.scroll.scrollLeft + vx, this.scroll.scrollTop + vy, vx, vy);
+    this.settleZoom(); this.fitWidth = false;
+    this.animateZoom(this.scale * (1 + delta), this.scroll.clientWidth / 2, this.scroll.clientHeight / 2);
   }
   fitToWidth(): void {
-    this.fitWidth = true;
-    const vx = this.scroll.clientWidth / 2, vy = this.scroll.clientHeight / 2;
-    this.animateZoom(this.computeFitScale(), this.scroll.scrollLeft + vx, this.scroll.scrollTop + vy, vx, vy);
+    this.settleZoom(); this.fitWidth = true;
+    this.animateZoom(this.computeFitScale(), this.scroll.clientWidth / 2, this.scroll.clientHeight / 2);
   }
   setInvert(v: boolean): void { this.root.dataset.invert = String(v); }
 
@@ -924,7 +935,9 @@ export class PdfViewer {
     const q = normalizeForSearch(query).text;
     const tryMark = (attempt: number) => {
       const layer = this.pages[n - 1]?.querySelector('.textLayer');
-      if (!layer || !layer.childElementCount) { if (attempt < 20) setTimeout(() => tryMark(attempt + 1), 150); return; }
+      // (A far page of a long book takes a while to draw its text: waited for up to ten seconds, and given up
+      // at once if the reader has gone to another page meanwhile.)
+      if (!layer || !layer.childElementCount) { if (attempt < 50 && !this.destroyed && Math.abs(this.current - n) <= 1) setTimeout(() => tryMark(attempt + 1), 200); return; }
       layer.querySelectorAll('.highlight').forEach((e) => e.classList.remove('highlight'));
       let first: Element | null = null;
       // The words of the layer in reading order, joined: a match may run over several word boxes.
