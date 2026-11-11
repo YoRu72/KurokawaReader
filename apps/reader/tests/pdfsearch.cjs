@@ -77,6 +77,7 @@ async function longBook(b, port, errors) {
   ok('back past the first: the last', new RegExp(`^${n} /`).test(await p.$eval('.search-nav-text', (e) => e.textContent)));
   await p.click('.search-nav button[aria-label="Search in book"]'); await p.waitForSelector('.panel.open .hit');
   ok('opened again: the last search as it was', (await p.inputValue('.panel.open input[type=search]')) === 'line 3:' && (await p.$$('.panel.open .hit')).length === n && !!(await p.$('.panel.open .hit.current')));
+  await p.waitForTimeout(150); await p.keyboard.type('Z'); const typed = await p.inputValue('.panel.open input[type=search]'); ok('opened again: what is typed next goes after the words, not before them', typed === 'line 3:Z', typed); await p.keyboard.press('Backspace'); await p.waitForTimeout(500);
   await p.click('.panel.open .search-keep input'); await p.click('.panel.open .panel-head button'); await p.keyboard.press('/'); await p.waitForSelector('.panel.open input[type=search]');
   ok('the switch off: a new search each time', (await p.inputValue('.panel.open input[type=search]')) === '');
   await longBook(b, port, errors);
