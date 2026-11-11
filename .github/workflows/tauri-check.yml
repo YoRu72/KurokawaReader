@@ -3,7 +3,7 @@ name: Tauri check
 # The Tauri shell of Kurokawa Tools (apps/tools/desktop-tauri, stage 2) built on Windows, Linux and macOS beside the
 # Electron one, to see that it builds, how big its bundles are, and that it runs: the built app is started with
 # KT_SELFTEST set and checks its own bridge, files, http and download engine against a loopback test server
-# (desktop-tauri/selftest.js). Linux must pass; Windows and macOS are reported without failing the job for now.
+# (desktop-tauri/selftest.js). Linux and Windows must pass; macOS is reported without failing the job for now.
 # Nothing is signed or released.
 on:
   push:
@@ -136,7 +136,6 @@ jobs:
 
       - name: Self-test (Windows)
         if: runner.os == 'Windows'
-        continue-on-error: true
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
@@ -161,8 +160,9 @@ jobs:
           KT_SELFTEST_TIMEOUT: '100'
         run: |
           out="$RUNNER_TEMP/kt-selftest.json"
-          app=$(find target -maxdepth 5 -type d -name '*.app' -path '*/bundle/macos/*' | head -1)
-          bin=$(find "$app/Contents/MacOS" -type f -perm -u+x | head -1)
+          # (The bare executable, as on Linux: the web UI is built into it; macOS bundles no aria2c.)
+          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/kurokawa-tools"; else bin="target/release/kurokawa-tools"; fi
+          [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           echo "running $bin"
           set +e
           # (No `timeout` on macOS: perl's alarm ends it after 150 s.)

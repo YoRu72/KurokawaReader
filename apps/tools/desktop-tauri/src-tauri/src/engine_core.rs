@@ -179,6 +179,12 @@ pub struct StartPaths<'a> {
     pub default_dir: &'a Path,
     pub session_file: &'a Path,
     pub data_dir: &'a Path,
+    /// Windows: the paths given in native form (no «\\?\» prefix, backslashes).
+    pub windows: bool,
+}
+
+fn arg_path(p: &Path, windows: bool) -> String {
+    native_path(&p.to_string_lossy(), windows)
 }
 
 pub fn start_args(
@@ -204,9 +210,9 @@ pub fn start_args(
         "--bt-load-saved-metadata=true".to_string(),
         "--seed-time=0".to_string(),
         "--seed-ratio=0".to_string(),
-        format!("--dir={}", p.default_dir.display()),
-        format!("--save-session={}", p.session_file.display()),
-        format!("--input-file={}", p.session_file.display()),
+        format!("--dir={}", arg_path(p.default_dir, p.windows)),
+        format!("--save-session={}", arg_path(p.session_file, p.windows)),
+        format!("--input-file={}", arg_path(p.session_file, p.windows)),
         "--save-session-interval=30".to_string(),
         "--enable-dht=true".to_string(),
         "--enable-dht6=true".to_string(),
@@ -223,8 +229,14 @@ pub fn start_args(
         "--allow-overwrite=false".to_string(),
         "--max-tries=5".to_string(),
         "--retry-wait=3".to_string(),
-        format!("--dht-file-path={}", p.data_dir.join("dht.dat").display()),
-        format!("--dht-file-path6={}", p.data_dir.join("dht6.dat").display()),
+        format!(
+            "--dht-file-path={}",
+            arg_path(&p.data_dir.join("dht.dat"), p.windows)
+        ),
+        format!(
+            "--dht-file-path6={}",
+            arg_path(&p.data_dir.join("dht6.dat"), p.windows)
+        ),
     ];
     if c.listen_port > 0.0 {
         let lp = js_num(c.listen_port);
@@ -586,21 +598,65 @@ pub fn pieces_to_segments(st: &Status) -> Option<Vec<Segment>> {
     Some(out)
 }
 
-/// A file's path as the page shows it: under the task's folder, without it.
-pub fn rel_path(fp: &str, dir: &str) -> String {
-    if fp.starts_with(dir) {
-        fp[dir.len()..].trim_start_matches(['/', '\\']).to_string()
-    } else {
-        fp.to_string()
+/// A path in Windows' own form, as Node's path functions give it there: the «\\?\» prefix dropped
+/// («\\?\UNC\s\x» → «\\s\x»), «/» made «\». The drive letter's case is kept. Elsewhere: unchanged.
+pub fn native_path(p: &str, windows: bool) -> String {
+    if !windows {
+        return p.to_string();
     }
+    let s = p.replace('/', "\\");
+    if let Some(rest) = s.strip_prefix("\\\\?\\UNC\\") {
+        return format!("\\\\{}", rest);
+    }
+    if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        return rest.to_string();
+    }
+    s
+}
+
+/// A file's path as the page shows it: under the task's folder, without it (with «/» between its parts, as aria2
+/// and the page's own code — split('/') — have them); a file elsewhere keeps its whole path.
+pub fn rel_path(fp: &str, dir: &str) -> String {
+    rel_path_on(fp, dir, cfg!(windows))
+}
+
+/// rel_path for one OS. On Windows aria2 gives a file's path with «/» and its folder as it was given (with «\»):
+/// both are compared in native form, letter case aside; a file elsewhere gets its whole path in native form.
+pub fn rel_path_on(fp: &str, dir: &str, windows: bool) -> String {
+    if !windows {
+        return if fp.starts_with(dir) {
+            fp[dir.len()..].trim_start_matches(['/', '\\']).to_string()
+        } else {
+            fp.to_string()
+        };
+    }
+    let f = native_path(fp, true);
+    let d = native_path(dir, true);
+    let d = d.trim_end_matches('\\');
+    let fl = f.to_ascii_lowercase();
+    let dl = d.to_ascii_lowercase();
+    if !d.is_empty() && fl.starts_with(&dl) {
+        let rest = &f[d.len()..];
+        if rest.is_empty() || rest.starts_with('\\') {
+            return rest.trim_start_matches('\\').replace('\\', "/");
+        }
+    }
+    f
 }
 
 /// aria2.cjs's task(st) — every part but the kept source and meta, which engine.rs adds as they were kept.
 pub fn task_core(st: &Status, ex: &Extra, now: i64) -> TaskCore {
+    task_core_on(st, ex, now, cfg!(windows))
+}
+
+/// task_core for one OS: on Windows `dir` in native form and the files' paths relative (see rel_path_on).
+pub fn task_core_on(st: &Status, ex: &Extra, now: i64, windows: bool) -> TaskCore {
     let total = num(&st.total_length);
     let done = num(&st.completed_length);
     let speed = num(&st.download_speed);
-    let dir = st.dir.trim_end_matches(['/', '\\']).to_string();
+    let dir = native_path(&st.dir, windows)
+        .trim_end_matches(['/', '\\'])
+        .to_string();
     let name = match non_empty(&ex.name) {
         Some(n) => n.to_string(),
         None => name_of(st),
@@ -629,7 +685,7 @@ pub fn task_core(st: &Status, ex: &Extra, now: i64) -> TaskCore {
             };
             TaskFile {
                 index: f.index.trim().parse::<i64>().unwrap_or(0) - 1,
-                path: rel_path(&fp, &dir),
+                path: rel_path_on(&fp, &dir, windows),
                 size: num(&f.length),
                 done: num(&f.completed_length),
                 priority: if f.selected == "true" { 1 } else { 0 },
@@ -809,6 +865,7 @@ mod tests {
             default_dir: Path::new("/dl"),
             session_file: Path::new("/data/aria2.session"),
             data_dir: Path::new("/data"),
+            windows: false,
         };
         let a = start_args(&c, 6800, "s3", &p, 42);
         assert_eq!(a[0], "--enable-rpc");
@@ -990,6 +1047,96 @@ mod tests {
         nf.files[0].first_uri = None;
         assert_eq!(name_of(&nf), "g1");
         assert_eq!(base_name("C:\\dl\\x.bin"), "x.bin");
+    }
+
+    #[test]
+    fn windows_paths() {
+        // forward slashes, mixed, UNC, the verbatim prefix (plain and UNC), drive letter case kept
+        assert_eq!(native_path("C:/Users/a/x.bin", true), "C:\\Users\\a\\x.bin");
+        assert_eq!(
+            native_path("C:/Users/a\\x.bin", true),
+            "C:\\Users\\a\\x.bin"
+        );
+        assert_eq!(
+            native_path("\\\\server\\share\\d", true),
+            "\\\\server\\share\\d"
+        );
+        assert_eq!(
+            native_path("//server/share/d", true),
+            "\\\\server\\share\\d"
+        );
+        assert_eq!(native_path("\\\\?\\D:\\a\\b", true), "D:\\a\\b");
+        assert_eq!(
+            native_path("\\\\?\\UNC\\server\\share\\d", true),
+            "\\\\server\\share\\d"
+        );
+        assert_eq!(native_path("d:/a", true), "d:\\a");
+        // Unix: nothing changes
+        assert_eq!(native_path("/tmp/a\\b", false), "/tmp/a\\b");
+        assert_eq!(native_path("\\\\?\\D:\\a", false), "\\\\?\\D:\\a");
+        // what CI saw: aria2's file path with «/», the folder with «\»
+        let dir = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\kt-selftest-dl";
+        assert_eq!(
+            rel_path_on(
+                "C:/Users/RUNNER~1/AppData/Local/Temp/kt-selftest-dl/kt-1.bin",
+                dir,
+                true
+            ),
+            "kt-1.bin"
+        );
+        // after a rename: mixed
+        assert_eq!(
+            rel_path_on(
+                "C:/Users/RUNNER~1/AppData/Local/Temp/kt-selftest-dl\\kt-1-renamed.bin",
+                dir,
+                true
+            ),
+            "kt-1-renamed.bin"
+        );
+        // a torrent's files keep «/» between their parts; letter case aside; a trailing separator on the folder
+        assert_eq!(
+            rel_path_on("c:/dl/Show/S1/e1.mkv", "C:\\dl\\", true),
+            "Show/S1/e1.mkv"
+        );
+        assert_eq!(
+            rel_path_on("\\\\srv\\sh\\dl/a.bin", "//srv/sh/dl", true),
+            "a.bin"
+        );
+        assert_eq!(rel_path_on("\\\\?\\D:\\dl\\a.bin", "D:\\dl", true), "a.bin");
+        // not under the folder (nor a sibling sharing its prefix): the whole path, native
+        assert_eq!(
+            rel_path_on("C:/dl2/a.bin", "C:\\dl", true),
+            "C:\\dl2\\a.bin"
+        );
+        assert_eq!(rel_path_on("E:/x/a.bin", "C:\\dl", true), "E:\\x\\a.bin");
+        // Unix as before
+        assert_eq!(rel_path_on("/dl/a/b.mkv", "/dl", false), "a/b.mkv");
+        assert_eq!(rel_path_on("/x/b.mkv", "/dl", false), "/x/b.mkv");
+        // the Task on Windows
+        let mut s = st("complete");
+        s.dir = "C:\\Users\\R\\dl".into();
+        s.files[0].path = "C:/Users/R/dl/a.mkv".into();
+        let t = task_core_on(&s, &Extra::default(), 1, true);
+        assert_eq!(t.dir, "C:\\Users\\R\\dl");
+        assert_eq!(t.files[0].path, "a.mkv");
+        let ex = Extra {
+            renamed: Some("C:/Users/R/dl\\b.mkv".into()),
+            ..Default::default()
+        };
+        assert_eq!(task_core_on(&s, &ex, 1, true).files[0].path, "b.mkv");
+        // start arguments: no verbatim prefix, backslashes
+        let c = EngineConfig::default();
+        let p = StartPaths {
+            default_dir: Path::new("\\\\?\\C:\\Users\\R\\Downloads\\Kurokawa"),
+            session_file: Path::new("C:/data/aria2.session"),
+            data_dir: Path::new("\\\\?\\C:\\data"),
+            windows: true,
+        };
+        let a = start_args(&c, 1, "s", &p, 1);
+        assert!(a.contains(&"--dir=C:\\Users\\R\\Downloads\\Kurokawa".to_string()));
+        assert!(a.contains(&"--input-file=C:\\data\\aria2.session".to_string()));
+        assert!(a.iter().any(|x| x.starts_with("--dht-file-path=C:\\data")));
+        assert!(!a.iter().any(|x| x.contains("\\\\?\\")));
     }
 
     #[test]

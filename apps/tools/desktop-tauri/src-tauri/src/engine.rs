@@ -23,6 +23,13 @@ use crate::{rpc, util};
 static ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Paths handed to the page and to aria2c in the OS's own form (engine_core::native_path; Windows only).
+const WIN: bool = cfg!(windows);
+
+fn native(p: &str) -> String {
+    ec::native_path(p, WIN)
+}
+
 pub fn get() -> Option<Arc<Engine>> {
     ENGINE.get().cloned()
 }
@@ -594,6 +601,7 @@ impl Engine {
             default_dir: &self.default_dir,
             session_file: &session,
             data_dir: &self.data_dir,
+            windows: WIN,
         };
         let args = ec::start_args(&config, port, &secret, &paths, std::process::id());
         let mut cmd = Command::new(&bin);
@@ -878,7 +886,7 @@ impl Engine {
         }
         let a = ec::AddIn {
             dir: if truthy(o.get("dir")) {
-                text(o.get("dir"))
+                native(&text(o.get("dir")))
             } else {
                 String::new()
             },
@@ -1020,7 +1028,7 @@ impl Engine {
             _ => Map::new(),
         };
         let mut opts = Map::new();
-        opts.insert("dir".into(), json!(st.dir));
+        opts.insert("dir".into(), json!(native(&st.dir)));
         opts.insert("continue".into(), json!("true"));
         if !f.is_empty() {
             opts.insert("out".into(), json!(ec::base_name(&f)));
@@ -1248,13 +1256,13 @@ impl Engine {
         if i == 0 {
             if let Some(r) = renamed {
                 if Path::new(&r).exists() {
-                    return Ok(r);
+                    return Ok(native(&r));
                 }
             }
         }
         match st.files.get(i) {
-            Some(f) => Ok(f.path.clone()),
-            None => Ok(st.dir),
+            Some(f) => Ok(native(&f.path)),
+            None => Ok(native(&st.dir)),
         }
     }
 
@@ -1298,7 +1306,7 @@ impl Engine {
                 .next()
                 .unwrap_or("")
                 .to_string();
-            let top = Path::new(&st.dir).join(top_name);
+            let top = Path::new(&native(&st.dir)).join(top_name);
             let parent = top.parent().map(|p| p.to_path_buf()).unwrap_or_default();
             let to = parent.join(&nm);
             if to.exists() {
@@ -1309,7 +1317,7 @@ impl Engine {
             self.put_keep(id, k);
             return Ok(nm);
         }
-        let cur_p = PathBuf::from(&cur);
+        let cur_p = PathBuf::from(native(&cur));
         let parent = cur_p.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let to = parent.join(&nm);
         if to.exists() && to != cur_p {

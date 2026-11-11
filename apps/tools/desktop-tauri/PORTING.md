@@ -39,7 +39,14 @@ initialization script; the page checks the bridge, files, hashes, `kt:http` (hea
 the clipboard (not required), that the UI rendered, and — where aria2c is found — a 2 MiB download from the test
 server through the engine (paused mid-way, resumed, its hash checked, renamed, removed), then hands the results to
 `kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (100) s.
-`tauri-check.yml` runs it on Linux under Xvfb (required) and on Windows and macOS (reported only).
+`tauri-check.yml` runs it on Linux under Xvfb and on Windows (both required), and on macOS (the bare executable,
+reported only).
+
+Paths on Windows: aria2 reports a file's path with «/» and its folder as given (with «\\»). The shell hands the page
+`dir` (and the paths of `kt:open`, a renamed file) in native form — backslashes, no `\\?\` prefix, as Node's path
+functions give —, and `files[].path` relative to `dir` with «/» between its parts, which is what the page's code
+splits on (`engine_core.rs`'s `native_path` / `rel_path_on`). Electron compared the two forms as they came, so on
+Windows it handed the page the whole «C:/…» path as `files[].path`; the Tauri shell fixes that.
 `selftest-report.cjs` prints the results as a table.
 
 Version: `tauri.conf.json` has `"version": "../../package.json"`, so the app's version is always
