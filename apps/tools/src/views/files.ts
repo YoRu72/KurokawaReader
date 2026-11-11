@@ -15,11 +15,12 @@ import { navigate } from '../router';
 import { kindOfFile } from './taskFiles';
 import { isArc, arcPath, parseArc, arcName, looksArchive } from './filesArc';
 import { isApps, appsPath, parseApps, appsAvailable } from './filesApps';
+import { splitExt } from './filesNames';
 type AppEntry = Entry & { pkg?: string; sub?: string; special?: 'data' | 'obb' | 'media' };
 
 export interface Entry { name: string; path: string; dir: boolean; size: number; mtime: number; ext?: string; hidden?: boolean; count?: number }
 interface Root { kind: string; path: string; name: string; readable: boolean; free?: number; total?: number; appFolder?: string }
-type JobEvent = { id: string; status: 'progress' | 'conflict' | 'done' | 'cancelled' | 'failed'; done?: number; total?: number; files?: number; ofFiles?: number; name?: string; from?: string; to?: string; size?: number; existingSize?: number; mtime?: number; existingMtime?: number; dir?: boolean; failed?: string[]; message?: string };
+type JobEvent = { id: string; status: 'progress' | 'conflict' | 'done' | 'cancelled' | 'failed'; done?: number; total?: number; files?: number; ofFiles?: number; name?: string; from?: string; to?: string; size?: number; existingSize?: number; mtime?: number; existingMtime?: number; dir?: boolean; failed?: string[]; message?: string; /** A move's: the files left where they were (skipped, failed, cancelled), and the chosen paths still there. */ left?: number; remaining?: string[]; skipped?: number };
 type Plug = {
   filesList(o: { path: string; counts?: boolean; hidden?: boolean }): Promise<{ exists: boolean; entries: Entry[]; truncated?: boolean }>;
   filesRoots(): Promise<{ allFiles: boolean; roots: Root[] }>;
@@ -47,7 +48,18 @@ export type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 't
 const PREFS = 'kt.files.prefs';
 export const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
 export const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
-let clipboard: { op: 'copy' | 'move'; paths: string[] } | null = null;
+// (One clipboard for the page — both panes —: a copy stays on it until replaced or cleared; a cut until its move has gone
+// through — what was left behind stays cut. `busy`: the move under way, while it runs nothing more is pasted from it.)
+let clipboard: { op: 'copy' | 'move'; paths: string[]; busy?: string } | null = null;
+const clipWatch = new Set<() => void>();
+const setClip = (c: typeof clipboard) => { clipboard = c; for (const f of clipWatch) f(); };
+/** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
+ *  the phone's storage ignores it; /a/b and /a/bc are strangers). */
+export const intoItself = (paths: string[], dest: string): boolean => { const d = dest.replace(/\/+$/, '').toLowerCase() + '/'; return paths.some((p) => d.startsWith(p.replace(/\/+$/, '').toLowerCase() + '/')); };
+// (The jobs under way and the pane that asked for each: only that pane answers a job's questions and shows its row; a
+// pane gone — the page moved on — leaves its jobs to the next pane that hears of them.)
+type JobRec = { owner: object | null; label: string; cancel: () => void; ended?: boolean };
+const liveJobs = new Map<string, JobRec>();
 
 import { isRemote, isVirtual, parseRemote, connections, connectionSheet, connectionMenu, scanSheet, rplug, vplug, vfs, vfsRoots, kindIcon, describe, canShareFolder, folderShareSheet, type Conn, type VRoots } from './filesRemote';
 const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|heif|hif|avif|svg|tiff?|ico|wbmp|jfif|apng)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
@@ -111,7 +123,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
   const search = h('input', { type: 'search', class: 'files-search', placeholder: t('filesSearchHere'), hidden: true, oninput: () => { query = search.value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
   const selBar = h('div', { class: 'files-selbar', hidden: true });
-  const pasteBtn = iconButton('copy', t('filesPaste'), () => void paste()); pasteBtn.hidden = !clipboard;
+  const pasteBtn = iconButton('copy', t('filesPaste'), () => void paste());
   const titleEl = h('span', { class: 'files-title', dir: 'auto' }, t('navFiles')); const subEl = h('small', { class: 'files-sub' });
   const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
   const root = h('div', { class: 'view files-view' },
@@ -165,14 +177,21 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // ---- the folder
   const go = (path: string) => { if (gone) return; collection = null; path = mendScheme(path); at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?p=${encodeURIComponent(at)}`, true); void load(); };
   const openCollection = (kind: string) => { if (gone) return; collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!po.embedded) navigate(`/files?c=${kind}`, true); void load(); };
+  // (Only the latest listing asked for draws: a slow folder answering after the reader went on is dropped. Another place
+  // asked: the rows of the last one let go at once — nothing chosen, selected all or deleted, from a folder no longer shown.)
+  let loadSeq = 0; let shownAt: string | null = null;
   const load = async () => {
-    drawCrumbs(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection;
+    const my = ++loadSeq; const want = collection ? `c:${collection}` : at; const stale = () => gone || my !== loadSeq;
+    if (want !== shownAt) { entries = []; picked.clear(); selecting = false; shownAt = want; }
+    drawCrumbs(); drawPaste(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection;
+    let got: Entry[] = []; let note = '';
     try {
-      if (collection) { const pl = plug(); const r = pl ? await pl.filesCollection({ kind: collection, limit: 600 }) : { entries: [] }; if (gone) return; entries = r.entries; }
-      else { const r = await listDir(at); if (gone) return; const hid = (await import('./filesMore')).hiddenPaths(); entries = hid.length ? r.entries.filter((e) => !hid.includes(e.path)) : r.entries; if (!r.exists) { status.textContent = t('folderNotFound'); } if (r.truncated) toast(t('filesTruncated'), 'info'); }
+      if (collection) { const pl = plug(); const r = pl ? await pl.filesCollection({ kind: collection, limit: 600 }) : { entries: [] }; if (stale()) return; got = r.entries; }
+      else { const r = await listDir(at); if (stale()) return; const hid = (await import('./filesMore')).hiddenPaths(); if (stale()) return; got = hid.length ? r.entries.filter((e) => !hid.includes(e.path)) : r.entries; if (!r.exists) note = t('folderNotFound'); if (r.truncated) toast(t('filesTruncated'), 'info'); }
     }
-    catch (e) { entries = []; status.textContent = String((e as Error).message ?? e); }
-    draw(); drawSel();
+    catch (e) { if (stale()) return; got = []; note = String((e as Error).message ?? e); }
+    entries = got; for (const x of [...picked]) if (!got.some((e) => e.path === x)) picked.delete(x); if (!picked.size) selecting = false;
+    draw(); drawSel(); status.textContent = note;
   };
   const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
   let moreIo: IntersectionObserver | null = null;
@@ -217,8 +236,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     selBar.replaceChildren(
       h('span', { class: 'files-selcount' }, countItems(n)),
       iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); draw(); drawSel(); }),
-      iconButton('copy', t('filesCopy'), () => { clipboard = { op: 'copy', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCopied', { n: localDigits(n) })); leaveSel(); }),
-      iconButton('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [...picked] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: localDigits(n) })); leaveSel(); }),
+      iconButton('copy', t('filesCopy'), () => { setClip({ op: 'copy', paths: [...picked] }); toast(t('filesCopied', { n: localDigits(n) })); leaveSel(); }),
+      iconButton('scissors', t('filesCut'), () => { setClip({ op: 'move', paths: [...picked] }); toast(t('filesCutDone', { n: localDigits(n) })); leaveSel(); }),
       ...(plug() && !isVirtual(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
       ...(po.peer?.() ? [iconButton('swap', t('filesToOtherPane'), () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); })] : []),
       iconButton('trash', t('delete'), () => void confirmDelete([...picked])),
@@ -326,7 +345,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const fabSheet = () => {
     const sh = openSheet(t('create'), t('close'));
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    sh.body.append(h('div', { class: 'dest-list' }, act('folderPlus', t('newFolder'), () => newFolderSheet()), ...(clipboard ? [act('copy', t('filesPaste'), () => void paste())] : []), act('bookmarkAdd', t('filesBookmarkHere'), () => { const b = bookmarks(); if (!b.some((x) => x.path === at)) { b.push({ name: baseOf(at) || at, path: at }); saveBookmarks(b); } toast(t('filesBookmarked')); }), ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : [])));
+    sh.body.append(h('div', { class: 'dest-list' }, act('folderPlus', t('newFolder'), () => newFolderSheet()), ...(canPaste() ? [act('copy', t('filesPaste'), () => void paste())] : []), ...(clipboard && !clipboard.busy ? [act('close', t('filesClipClear'), () => setClip(null))] : []), act('bookmarkAdd', t('filesBookmarkHere'), () => { const b = bookmarks(); if (!b.some((x) => x.path === at)) { b.push({ name: baseOf(at) || at, path: at }); saveBookmarks(b); } toast(t('filesBookmarked')); }), ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : [])));
   };
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
@@ -338,8 +357,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       act('external', t('open'), () => void open(e)),
       ...(pl && !e.dir ? [act('apps', t('openWith'), () => void pl.openWith({ path: e.path, mime: mimeOf(e.name), title: e.name })), act('type', t('filesOpenAs'), () => openAs(e))] : []),
       ...(pl ? [act('share', t('share'), () => void pl.shareFile({ path: e.path, title: e.name }))] : []),
-      act('copy', t('filesCopy'), () => { clipboard = { op: 'copy', paths: [e.path] }; pasteBtn.hidden = false; toast(t('filesCopied', { n: '1' })); }),
-      act('scissors', t('filesCut'), () => { clipboard = { op: 'move', paths: [e.path] }; pasteBtn.hidden = false; toast(t('filesCutDone', { n: '1' })); }),
+      act('copy', t('filesCopy'), () => { setClip({ op: 'copy', paths: [e.path] }); toast(t('filesCopied', { n: '1' })); }),
+      act('scissors', t('filesCut'), () => { setClip({ op: 'move', paths: [e.path] }); toast(t('filesCutDone', { n: '1' })); }),
       act('pen', t('rename'), () => renameSheet(e)),
       ...(pl ? [act('lock', /\.kurokawa$/i.test(e.name) ? t('vaultUnlock') : t('vaultLock'), () => void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!/\.kurokawa$/i.test(e.name), [e.path], jobRow, () => void load()); }))] : []),
       ...(e.path.startsWith('root://') ? [act('terminal', t('filesPermissions'), () => rootOpsSheet(e))] : []),
@@ -383,8 +402,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const renameSheet = (e: Entry) => {
     const pl = plug(); if (!pl) return; const sh = openSheet(t('rename'), t('cancel')); const inp = h('input', { type: 'text', value: e.name, dir: 'auto' }) as HTMLInputElement;
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name || name === e.name) { sh.close(); return; } try { if (isVirtual(e.path)) { await vfs.rename(e.path, name); } else await pl.filesRename({ path: e.path, name }); sh.close(); leaveSel(); void load(); } catch (err) { toast(String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('rename')));
-    setTimeout(() => { inp.focus(); const dot = e.dir ? -1 : e.name.lastIndexOf('.'); inp.setSelectionRange(0, dot > 0 ? dot : e.name.length); }, 50);
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name || name === e.name) { sh.close(); return; } try { if (isVirtual(e.path)) { await vfs.rename(e.path, name); } else { const r = await pl.filesRename({ path: e.path, name }); if (r && r.ok === false) throw new Error(t('filesFailed')); } sh.close(); leaveSel(); void load(); } catch (err) { toast(String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('rename')));
+    setTimeout(() => { inp.focus(); inp.setSelectionRange(0, splitExt(e.name, e.dir)[0].length); }, 50);
   };
   const newFolderSheet = () => {
     const pl = plug(); if (!pl) return; const sh = openSheet(t('newFolder'), t('cancel')); const inp = h('input', { type: 'text', dir: 'auto', placeholder: t('folderNamePlaceholder') }) as HTMLInputElement;
@@ -409,14 +428,22 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const confirmDelete = async (paths: string[]) => {
     const pl = plug(); if (!pl) return;
-    if (prefs.confirmDelete === false) { const m0 = await import('./filesMore'); if (m0.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p))) { leaveSel(); try { const r = await m0.toTrash(paths); toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } return; } }
+    if (prefs.confirmDelete === false) { const m0 = await import('./filesMore'); if (m0.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p))) { leaveSel(); try { trashed(await m0.toTrash(paths)); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } return; } }
     const sh = openSheet(t('delete'), t('cancel'));
     sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
     const m = await import('./filesMore'); const toBin = m.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p));
     sh.body.append(h('p', { class: 'hint' }, toBin ? t('filesDeleteToTrash') : t('filesDeleteForeverHint')));
     // (With the recycle bin on, a second way: gone from the phone at once, the bin passed by.)
     if (toBin) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); leaveSel(); void startJob('delete', paths); } }, icon('trash'), t('filesDeleteForever')));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { sh.close(); leaveSel(); if (!toBin) { void startJob('delete', paths); return; } try { const r = await m.toTrash(paths); if (r.failed.length) toast(t('filesSomeFailed', { n: localDigits(r.failed.length), why: r.failed[0] }), 'error'); else toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('delete')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { sh.close(); leaveSel(); if (!toBin) { void startJob('delete', paths); return; } try { trashed(await m.toTrash(paths)); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('delete')));
+  };
+  // (What the recycle bin could not take — a storage where the bin cannot be made — is not left as if deleted: the
+  // reader is asked whether to delete it for good.)
+  const trashed = (r: { moved: string[]; failed: string[]; failedPaths?: string[] }) => {
+    void load(); const left = r.failedPaths ?? [];
+    if (!left.length) { if (r.failed.length) toast(t('filesSomeFailed', { n: localDigits(r.failed.length), why: r.failed[0] }), 'error'); else toast(t('filesMovedToTrash', { n: localDigits(r.moved.length) })); return; }
+    const sh = openSheet(t('delete'), t('cancel')); sh.body.append(h('p', null, t('filesTrashFailedAsk', { n: localDigits(left.length), why: r.failed[0] ?? '' })), h('p', { class: 'hint', dir: 'auto' }, left.slice(0, 5).map(baseOf).join(' · ') + (left.length > 5 ? ' …' : '')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: () => { sh.close(); void startJob('delete', left); } }, icon('trash'), t('filesDeleteForever')));
   };
   const shareMany = async (paths: string[]) => { const pl = plug(); if (!pl) return; if (paths.length === 1) { await pl.shareFile({ path: paths[0], title: baseOf(paths[0]) }).catch(() => undefined); return; } const { shareFiles } = await import('../ui/shareMany'); await shareFiles(paths); };
   const extractHere = async (e: Entry) => { const { extractArchiveJob } = await import('../archives'); const job = extractArchiveJob({ path: e.path, dest: parentOf(e.path), replace: 'ask' as never }); watchArchiveJob(job.id, job.done, e.name); };
@@ -431,44 +458,67 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
 
   // ---- the jobs: copy / move / delete, with their progress, cancel and the question when a name is taken
+  const me = {};
   const jobRow = (id: string, label: string, cancel: () => void): HTMLElement => {
     const el = h('div', { class: 'files-job', 'data-id': id }, h('div', { class: 'grow' }, h('span', { class: 'files-job-label', dir: 'auto' }, label), h('div', { class: 'files-job-bar' }, h('i')), h('small', { class: 'src files-job-meta' })), iconButton('close', t('cancel'), cancel));
     jobsEl.append(el); return el;
   };
-  const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string) => {
-    const pl = plug(); if (!pl) return; const id = `fj-${Date.now()}`;
+  /** A job of this pane's: its row here, and it known as this pane's (the other pane only reads its folder again at the end). */
+  const ownRow = (id: string, label: string, cancel: () => void) => { liveJobs.set(id, { owner: me, label, cancel }); return jobRow(id, label, cancel); };
+  /** True when the job was started (its events will come). */
+  const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = `fj-${Date.now()}`): Promise<boolean> => {
+    const pl = plug(); if (!pl) return false;
     const srcV = paths.some(isVirtual), dstV = !!dest && isVirtual(dest);
-    if (op === 'delete' && srcV) { const dirs = paths.filter((p) => entries.find((e) => e.path === p)?.dir); try { await vfs.delete(paths, dirs); toast(t('filesDeleted', { n: localDigits(paths.length) })); void load(); } catch (err) { toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); } return; }
+    if (op === 'delete' && srcV) { const dirs = paths.filter((p) => entries.find((e) => e.path === p)?.dir); try { await vfs.delete(paths, dirs); toast(t('filesDeleted', { n: localDigits(paths.length) })); void load(); } catch (err) { toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); } return false; }
     if ((srcV || dstV) && op !== 'delete') {
-      if (srcV && dstV) { toast(t('remoteNoBetween'), 'error'); return; }
+      if (srcV && dstV) { toast(t('remoteNoBetween'), 'error'); return false; }
       const label = srcV ? t('remoteDownloading', { n: localDigits(paths.length) }) : t('remoteUploading', { n: localDigits(paths.length) });
-      jobRow(id, label, () => void vfs.cancel(id));
-      try { await vfs.job(id, srcV ? 'down' : 'up', paths, dest!, op === 'move'); } catch (err) { jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); }
-      return;
+      ownRow(id, label, () => void vfs.cancel(id));
+      try { await vfs.job(id, srcV ? 'down' : 'up', paths, dest!, op === 'move'); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); return false; }
     }
     const label = op === 'delete' ? t('filesDeleting', { n: localDigits(paths.length) }) : op === 'move' ? t('filesMoving', { n: localDigits(paths.length) }) : t('filesCopying', { n: localDigits(paths.length) });
-    jobRow(id, label, () => void pl.filesCancel({ id }));
-    try { await pl.filesJob({ id, op, paths, dest, conflict: 'ask' }); } catch (err) { jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); }
+    ownRow(id, label, () => void pl.filesCancel({ id }));
+    try { await pl.filesJob({ id, op, paths, dest, conflict: 'ask' }); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); return false; }
   };
-  const paste = async () => { if (!clipboard) return; const c = clipboard; clipboard = null; pasteBtn.hidden = true; await startJob(c.op, c.paths, at); };
+  const canPaste = (): boolean => !!clipboard && !clipboard.busy && !!at && !collection && !intoItself(clipboard.paths, at);
+  const drawPaste = () => { pasteBtn.hidden = !canPaste(); };
+  clipWatch.add(drawPaste);
+  // (A copy stays on the clipboard; a cut is marked busy while its move runs, and what the move left behind stays cut.)
+  const paste = async () => {
+    const c = clipboard; if (!c || c.busy || !at || collection) return;
+    if (intoItself(c.paths, at)) { toast(t('filesIntoItself'), 'error'); return; }
+    if (c.op === 'copy') { await startJob('copy', c.paths, at); return; }
+    const id = `fj-${Date.now()}`; setClip({ ...c, busy: id });
+    if (!(await startJob('move', c.paths, at, id)) && clipboard?.busy === id) setClip({ op: 'move', paths: c.paths });
+  };
+  const ends = (ev: JobEvent) => ev.status === 'done' || ev.status === 'cancelled' || ev.status === 'failed';
   const onJob = (ev: JobEvent) => {
+    const rec = liveJobs.get(ev.id);
+    if (rec && rec.owner !== me) {
+      if (rec.owner || rec.ended) { if (ends(ev)) void load(); return; }
+      rec.owner = me; if (!jobsEl.querySelector(`[data-id="${ev.id}"]`)) jobRow(ev.id, rec.label, rec.cancel);
+    }
     const el = jobsEl.querySelector(`[data-id="${ev.id}"]`) as HTMLElement | null;
+    // (Another part's job — none of this pane's —: its end only reads the folder again.)
+    if (!el && !rec) { if (ends(ev)) void load(); return; }
     if (ev.status === 'progress') { if (!el) return; const b = el.querySelector('.files-job-bar i') as HTMLElement; const pct = ev.total ? Math.round(((ev.done ?? 0) / ev.total) * 100) : 0; b.style.width = `${pct}%`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = `${ev.name ?? ''} · ${formatBytes(ev.done ?? 0)}${ev.total ? ` / ${formatBytes(ev.total)}` : ''} · ${localDigits(ev.files ?? 0)}/${localDigits(ev.ofFiles ?? 0)}`; return; }
     if (ev.status === 'conflict') { conflictSheet(ev); return; }
     el?.remove(); void load();
-    if (ev.status === 'done') { if (ev.failed?.length) toast(t('filesSomeFailed', { n: localDigits(ev.failed.length), why: ev.failed[0] }), 'error', 5000); else toast(t('filesDone')); }
+    if (rec) { rec.ended = true; setTimeout(() => liveJobs.delete(ev.id), 2000); }
+    const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
+    if (ev.status === 'done') { if (ev.failed?.length) toast(t('filesSomeFailed', { n: localDigits(ev.failed.length), why: ev.failed[0] }), 'error', 5000); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else toast(t('filesDone')); }
     else if (ev.status === 'failed') toast(ev.message ?? t('filesFailed'), 'error');
   };
   const conflictSheet = (ev: JobEvent) => {
-    const pl = plug()!; const sh = openSheet(t('filesNameTakenTitle'), t('cancel'));
+    const pl = plug()!; let answered = false;
+    // (Closed unanswered — the button, Escape, the scrim, or another sheet over it —: the job is cancelled, not left waiting.)
+    const sh = openSheet(t('filesNameTakenTitle'), t('cancel'), { onClose: () => { if (!answered) void pl.filesCancel({ id: ev.id }); } });
     const name = baseOf(ev.to ?? ''); const all = h('input', { type: 'checkbox' }) as HTMLInputElement;
     sh.body.append(h('p', { dir: 'auto' }, t('filesNameTakenAsk', { name })),
       h('div', { class: 'files-compare' }, h('div', null, h('small', { class: 'src' }, t('filesIncoming')), h('span', null, ev.dir ? t('filesAFolder') : `${formatBytes(ev.size ?? 0)} · ${formatDate(ev.mtime)}`)), h('div', null, h('small', { class: 'src' }, t('filesExisting')), h('span', null, `${formatBytes(ev.existingSize ?? 0)} · ${formatDate(ev.existingMtime)}`))),
       h('label', { class: 'check-row' }, all, h('span', null, t('filesSameForRest'))));
-    let answered = false;
     const answer = (a: string) => { answered = true; sh.close(); void pl.filesAnswer({ id: ev.id, answer: a + (all.checked ? 'All' : '') }); };
     sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => answer('skip') }, t('skip')), h('button', { type: 'button', class: 'btn tonal', onclick: () => answer('keep') }, t('keepBoth')), h('button', { type: 'button', class: 'btn primary', onclick: () => answer('replace') }, t('replace')));
-    sh.el.addEventListener('transitionend', () => { if (!sh.el.isConnected && !answered) void pl.filesCancel({ id: ev.id }); }, { once: true });
   };
 
   // ---- what other apps shared to «Save to device»
@@ -499,8 +549,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const mod = ev.ctrlKey || ev.metaKey; const k = ev.key.toLowerCase();
     const one = picked.size === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
     if (mod && k === 'a') { ev.preventDefault(); selecting = true; for (const e of shown()) picked.add(e.path); draw(); drawSel(); }
-    else if (mod && (k === 'c' || k === 'x') && picked.size) { ev.preventDefault(); const n = picked.size; clipboard = { op: k === 'c' ? 'copy' : 'move', paths: [...picked] }; pasteBtn.hidden = false; toast(t(k === 'c' ? 'filesCopied' : 'filesCutDone', { n: localDigits(n) })); leaveSel(); }
-    else if (mod && k === 'v' && clipboard) { ev.preventDefault(); void paste(); }
+    else if (mod && (k === 'c' || k === 'x') && picked.size) { ev.preventDefault(); const n = picked.size; setClip({ op: k === 'c' ? 'copy' : 'move', paths: [...picked] }); toast(t(k === 'c' ? 'filesCopied' : 'filesCutDone', { n: localDigits(n) })); leaveSel(); }
+    else if (mod && k === 'v' && canPaste()) { ev.preventDefault(); void paste(); }
     else if (mod && k === 'f') { ev.preventDefault(); search.hidden = false; search.focus(); }
     else if (ev.key === 'Delete' && picked.size) { ev.preventDefault(); void confirmDelete([...picked]); }
     else if (ev.key === 'F2' && one) { ev.preventDefault(); renameSheet(one); }
@@ -511,10 +561,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { gone = true; unSwipe(); unPull(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { gone = true; clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); window.removeEventListener('keydown', onBack, true); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
-  pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };
+  pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(op, paths.filter((p) => parentOf(p) !== at), at); };
   if (po.embedded) {
     root.classList.add('files-pane'); if (po.side) root.dataset.side = po.side;
     body.addEventListener('dragover', (ev) => { if (ev.dataTransfer?.types.includes('text/kt-paths')) { ev.preventDefault(); ev.dataTransfer.dropEffect = ev.shiftKey ? 'move' : 'copy'; body.classList.add('drop-over'); } });

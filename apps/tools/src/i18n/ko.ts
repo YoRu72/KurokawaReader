@@ -1006,4 +1006,9 @@ export const ko: Partial<Strings> = {
   phaseEmbed: "커버와 태그 삽입 중",
   downloadNow: "지금 다운로드",
   batchSomeFailed: "링크 {n}개를 추가하지 못해 입력란에 남겨 두었습니다({error})",
+  filesIntoItself: "폴더를 자기 자신이나 그 안의 폴더에 붙여 넣을 수 없습니다.",
+  filesLeftInPlace: "완료 — {n}개는 원래 위치에 남았습니다(건너뜀 또는 실패).",
+  filesClipClear: "클립보드 비우기",
+  filesTrashFailedAsk: "{n}개를 휴지통으로 옮기지 못했습니다({why}). 완전히 삭제할까요?",
+  filesNamesClash: "새 이름 중 일부가 같습니다. 패턴이나 번호를 바꾸세요.",
 };
