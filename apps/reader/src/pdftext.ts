@@ -258,7 +258,7 @@ export function joinLine<T extends LinePiece>(line: T[], base?: boolean): { text
 const MARK_ONLY = /^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/;
 /** Harakat reported on their own (drawn apart from their run, or high above the line) go back into the word
  *  they sit on, after the letter beneath them. Returns the pieces without the attached marks. */
-export function attachMarks<T extends { text: string; l: number; r: number; y: number; h: number }>(pieces: T[]): T[] {
+export function attachMarks<T extends { text: string; l: number; r: number; y: number; h: number }>(pieces: T[], onAttach?: (mark: T, host: T, base: string) => void): T[] {
   const marks = pieces.filter((p) => MARK_ONLY.test(p.text) && p.text.trim());
   if (!marks.length) return pieces;
   const hosts = pieces.filter((p) => !MARK_ONLY.test(p.text) && /[\u0600-\u06FF]/.test(p.text));
@@ -282,6 +282,8 @@ export function attachMarks<T extends { text: string; l: number; r: number; y: n
     chars.splice(at + 1, 0, m.text.trim());
     host.text = chars.join('');
     placed.add(m);
+    // (The caller may keep what the mark was: its glyph, its own colour — "base" is the letter it went on.)
+    onAttach?.(m, host, chars[bases.filter((k) => k <= at).pop() ?? at] ?? '');
   }
   return pieces.filter((p) => !placed.has(p));
 }

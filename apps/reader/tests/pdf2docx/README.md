@@ -19,7 +19,13 @@ positions). LibreOffice is a development aid: Word is the reference renderer for
 to compare with the glyph codes the PDF used.
 
 `corpus/` has the sources of the varied test PDFs: `mkdocx.py` (Word-style documents: report, two columns,
-mixed Arabic/English table, CJK, landscape — saved as .docx, then `soffice --convert-to pdf`), LaTeX
+mixed Arabic/English table, CJK, landscape, tables with merged cells (gridSpan and vMerge, both directions) with coloured words and red harakat, pages filled to their last line — saved as .docx, then `soffice --convert-to pdf`), LaTeX
 (`paper.tex` two-column with a formula, table and footnote; `t3.tex` Type 3 fonts; `xe.tex` XeLaTeX), and `mkdesign.py` (what Canva and Figma export: every glyph placed on its own, wide tracking, rotated text, overlapping layers, a background picture, a title drawn as outlines — `design.pdf`). LibreOffice does not turn rotated text boxes; Word does. Add
 encrypted copies with `qpdf --encrypt`.
 Target on the reference Arabic books: same page count, mean baseline error under 2 pt.
+
+`node tests/pdf2docxrules.cjs` (CI-safe) converts `tests/pdf2docx/fixtures/merged.pdf`, `fullpage.pdf` (LibreOffice output of
+the corpus's merged.docx and fullpage.docx) and a ruled table made with pdf-lib, and checks word/document.xml: spans and
+vertical merges, each word's cell, run colours (coloured marks as runs of their own), a section per PDF page; with
+`soffice` on the PATH it also checks the rendered page counts. `LINE=fit` with convert.cjs logs each line's width check
+(PDF width, glyph advances, spaces) — lines wider than the page get narrower spaces.
