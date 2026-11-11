@@ -50,7 +50,7 @@ export class DesktopEngine implements Engine {
     if (b.streamUrl) this.streamUrl = async (id, fileIndex) => (await b.streamUrl!({ id, fileIndex })).url;
   }
   list() { return this.b.list(); }
-  add(o: AddOptions) { return this.b.add(o).catch((e: Error) => { if (/\bexists$/.test(String(e?.message ?? ''))) throw new Error(t('existsSkipped', { name: o.name ?? '' })); throw e; }); }
+  async add(o: AddOptions) { const { withVideoArgs } = await import('../video/choice'); return this.b.add(await withVideoArgs(o)).catch((e: Error) => { if (/\bexists$/.test(String(e?.message ?? ''))) throw new Error(t('existsSkipped', { name: o.name ?? '' })); throw e; }); }
   pause(id: string) { return this.b.pause(id); }
   resume(id: string) { return this.b.resume(id); }
   remove(id: string, del: boolean) { return this.b.remove(id, del); }

@@ -139,6 +139,8 @@ export interface Settings {
   sidecarNfo?: boolean; sidecarKeepJson?: boolean; sidecarCover?: boolean;
   /** More beside a video: its comments and chapters as text, a live stream's chat; lyrics (.lrc from LRCLIB) beside music. */
   videoRyd?: boolean; sidecarComments?: boolean; sidecarChapters?: boolean; sidecarLiveChat?: boolean; sidecarLyrics?: boolean;
+  /** What to get from a video page (src/downloads/videoArgs.ts): the last choice, kept as the default; the reader's named presets (just saved options); whether the sheet asks each time (default) or one tap uses the default; the pieces of a stream fetched at once (0: Auto). */
+  videoOpts?: Partial<import('./downloads/videoArgs').VideoOptions>; videoPresets?: { name: string; opts: Partial<import('./downloads/videoArgs').VideoOptions> }[]; videoAsk?: boolean; videoFragments?: number;
   videoChapters?: boolean; videoTemplate?: string; videoNumber?: boolean; videoCookies?: string;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
 }

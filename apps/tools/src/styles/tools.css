@@ -168,6 +168,25 @@ input, textarea, pre, code, .release-notes, .kv dd { -webkit-user-select: text; 
 .video-choices .chip svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
 .video-choices .chip.on { background: var(--md-primary); color: var(--md-on-primary); }
 .video-panel .check-row { font-size: 14px; }
+/* The chooser: presets, what to get, the folds (Advanced, Extras) */
+.video-chooser { display: flex; flex-direction: column; gap: 10px; }
+.video-chooser .label { font-size: 12px; font-weight: 600; color: var(--md-on-surface-variant); }
+.video-chooser .chip.on { background: var(--md-primary); color: var(--md-on-primary); }
+.video-chooser .chip small { opacity: .75; font-weight: 400; margin-inline-start: 4px; }
+.video-chooser .chip.auto:not(.on) { border-style: dashed; }
+.video-chooser .chip svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+.video-chooser .preset-own { display: inline-flex; align-items: center; gap: 2px; padding-inline: 4px; }
+.video-chooser .preset-own .plain { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 999px; }
+.video-chooser .video-hint { font-size: 12px; }
+.video-fold { border-radius: var(--sh-md, 12px); background: var(--md-surface-container-low); padding: 6px 10px; }
+.video-fold > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.video-fold[open] { display: flex; flex-direction: column; gap: 8px; }
+.video-preset-name { display: flex; gap: 8px; align-items: center; }
+.video-preset-name[hidden] { display: none; }
+.video-preset-name input, .video-range { flex: 1; min-width: 0; }
+.video-using { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.video-ffmpeg svg { width: 14px; height: 14px; vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 2; }
+.video-ask small { display: block; }
 .settings-body .card.collapsed { padding-block: 16px; }
 
 /* Torrent search: releases under the works they belong to */

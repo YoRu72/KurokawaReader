@@ -24,18 +24,21 @@ interface Bridge { videoInfo?(o: { url: string; playlist?: boolean }): Promise<u
 const desk = (): Bridge | null => (window.kurokawaTools as unknown as Bridge | undefined) ?? null;
 const plug = () => ktPlugin() as unknown as { videoInfo(o: { url: string; playlist?: boolean; cookieJar?: string }): Promise<{ json: string }>; videoVersion(): Promise<{ version: string | null; ready: boolean }>; videoUpdate(): Promise<{ version: string | null }> } | null;
 
-const cache = new Map<string, Promise<PageInfo>>();
+// (Kept ten minutes: the sheet, the add that follows and a second look at the same link cost one yt-dlp run, not three.)
+const INFO_TTL = 10 * 60 * 1000;
+const cache = new Map<string, { at: number; p: Promise<PageInfo> }>();
 /** What a page offers (asked once per link per session). Throws yt-dlp's own last error line. */
 export function pageInfo(url: string, playlist = false, opts: { cookieJar?: string } = {}): Promise<PageInfo> {
-  const key = `${playlist ? 'p' : 'v'}|${opts.cookieJar ?? ''}|${url}`; const hit = cache.get(key); if (hit) return hit;
+  const key = `${playlist ? 'p' : 'v'}|${opts.cookieJar ?? ''}|${url}`; const hit = cache.get(key); if (hit && Date.now() - hit.at < INFO_TTL) return hit.p;
   const p = (async () => {
-    const { ensurePacks, withPacks } = await import('../packs'); const { t } = await import('../i18n');
-    // (yt-dlp needs Python and ffmpeg on a phone; on a computer ffmpeg only merges, so declining it is no stop.)
-    const d = desk(); if (d?.videoInfo) { await ensurePacks(['ffmpeg'], t('packWhyVideo')); await d.videoReady?.(); return normalise(await d.videoInfo({ url, playlist })); }
+    const { withPacks } = await import('../packs'); const { t } = await import('../i18n');
+    // (yt-dlp needs Python and ffmpeg on a phone. On a computer reading a page needs neither: ffmpeg is asked for when a choice that needs it is added — an audio file taken as it is never does.)
+    const d = desk(); if (d?.videoInfo) { await d.videoReady?.(); return normalise(await d.videoInfo({ url, playlist })); }
     const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist, cookieJar: opts.cookieJar }))).json));
     throw new Error('yt-dlp');
   })();
-  cache.set(key, p); p.catch(() => cache.delete(key));
+  cache.set(key, { at: Date.now(), p }); p.catch(() => cache.delete(key));
+  if (cache.size > 40) for (const [k, v] of cache) if (Date.now() - v.at > INFO_TTL) cache.delete(k);
   return p;
 }
 export async function videoVersion(): Promise<string | null> { try { const d = desk(); if (d?.videoVersion) return (await d.videoVersion()).version; const k = plug(); return k ? (await k.videoVersion()).version : null; } catch { return null; } }
