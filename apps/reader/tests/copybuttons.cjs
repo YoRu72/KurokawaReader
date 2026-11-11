@@ -4,7 +4,8 @@ const { chromium, devices } = require('playwright'); const http = require('http'
 const DIST = path.resolve(__dirname, '../dist'); const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
-const BOOK = path.resolve(__dirname, 'fixtures/alice-in-wonderland.epub');
+// (A small book made here: the sample books are not in the repository, so the release machine has none.)
+const BOOK = path.join(require('os').tmpdir(), 'kr-copybuttons-book.txt'); fs.writeFileSync(BOOK, 'Chapter one\n\n' + 'A quiet line of the book to hold the notes. '.repeat(40) + '\n\nChapter two\n\n' + 'Another paragraph of plain words. '.repeat(40) + '\n');
 const LONG = 'Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do: once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it. ' + 'x'.repeat(100);
 (async () => {
   await new Promise((r) => server.listen(0, r)); const port = server.address().port;
