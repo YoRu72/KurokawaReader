@@ -225,6 +225,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     const videoDir = dirChosen ? (getSettings().downloadDir || undefined) : (categoryDir(categoryOf('x.mp4')) ?? (getSettings().downloadDir || undefined));
     try {
       await video.busy();
+      // (A choice that needs ffmpeg and it is not here: the same card as everywhere offers it; declined, nothing is added — an «as is» audio choice needs none.)
+      if (!(await video.gate())) { toast(t('vcNeedsFfmpeg'), 'error', 6000); go.disabled = false; return; }
       const picks = video.picks();
       // (A video site's page is never what was wanted: unread, it is said so and nothing is added.)
       if (!picks && (video.unread() || srcs.some((x) => x.url && isVideoHost(x.url) && !videoEnabled() && videoSupported()))) { toast(t('videoCantRead'), 'error', 6000); go.disabled = false; return; }
@@ -235,7 +237,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         const how2 = await askPage(srcs[0].url ?? ''); if (!how2) { go.disabled = false; return; }
         if (how2 === 'grab') { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(srcs[0].url ?? '')); return; }
       }
-      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(cookieJar ? { cookieJar } : {}), ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
+      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(cookieJar ? { cookieJar } : {}), ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}), ...(rule?.then.audioOnly || rule?.then.subs ? { args: undefined } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
     // (A batch goes on past a link that fails — the others added, the failed ones said at the end and left alone in
     // the box —; a link that comes twice in it is added once.)

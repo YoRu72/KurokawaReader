@@ -105,6 +105,8 @@ export interface AddOptions {
     bilingual?: string;
     /** Sidecars: yt-dlp's info.json written (for the .nfo), the thumbnail kept beside the file as a .jpg. */
     infoJson?: boolean; cover?: boolean; comments?: boolean; liveChat?: boolean;
+    /** What to get, as yt-dlp's finished argument list (src/downloads/videoArgs.ts builds it; the engine only vets it and adds the folder), the size the page said (for one bar over video and audio), and the audio format (for the phase's words). */
+    args?: string[]; expect?: number; audioFmt?: string; /** The playlist's title, for a name of «Playlist / NN - Title». */ playlistTitle?: string;
     /** The cookie jar (a saved signed-in state) this download uses. */
     cookieJar?: string;
     /** The finished file's SHA-256 (when deduplication is on), and whether it became a link to an identical file. */
