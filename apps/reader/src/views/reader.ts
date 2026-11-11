@@ -1315,7 +1315,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 200); });
       if (initial) void run();
-      setTimeout(() => input.focus(), 50);
+      // (Opened again with the last search in it: the caret after the words, so what is typed next follows them —
+      // it stood before them, and new letters went in front.)
+      setTimeout(() => { input.focus(); try { const n = input.value.length; input.setSelectionRange(n, n); } catch { /* a field that has no selection */ } }, 50);
     } }], undefined, { dock: true });
     void searchHighlight;
   }
@@ -2143,7 +2145,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       };
       input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 350); });
       if (initial) void run();
-      setTimeout(() => input.focus(), 50);
+      // (Opened again with the last search in it: the caret after the words, so what is typed next follows them —
+      // it stood before them, and new letters went in front.)
+      setTimeout(() => { input.focus(); try { const n = input.value.length; input.setSelectionRange(n, n); } catch { /* a field that has no selection */ } }, 50);
     } }], undefined, { dock: true });
   }
 

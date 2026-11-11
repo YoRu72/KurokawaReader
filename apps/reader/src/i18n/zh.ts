@@ -161,4 +161,8 @@ export const zh: Partial<Strings> = {
   sortByTitle: "标题",
   sortByRecent: "最近",
   volumesN: "{n} 卷",
+  copyPrompt: "复制指令",
+  glossCopyAll: "复制整个术语表",
+  glossPasted: "已添加术语：{n}",
+  copyAllNotes: "复制全部笔记",
 };

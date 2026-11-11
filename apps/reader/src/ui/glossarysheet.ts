@@ -1,9 +1,10 @@
 // The glossary's sheets (src/glossary.ts): a term added from the words picked in a book, and the list of every
 // term — for one book or every book — to change or remove.
 import { h, iconButton, openSheet, toast, icon, pickButton } from './dom';
-import { t } from '../i18n';
-import { terms, saveTerms, scriptOf, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, type Term, type TermKind } from '../glossary';
+import { t, localDigits } from '../i18n';
+import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, scriptOf, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, type Term, type TermKind } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
+import { copyText } from './share';
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -86,6 +87,7 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
     const el = h('div', { class: 'gloss-row' + (fresh ? ' fresh' : '') },
       h('div', { class: 'gloss-pair' }, from, h('span', { class: 'gloss-arrow' }, '→'), to),
       h('div', { class: 'gloss-meta' }, kind, lang, x.auto ? h('span', { class: 'gloss-badge' }, t('glossAutoBadge')) : null, moveTo,
+        iconButton('copy', t('copy'), () => void copyText(termLine({ from: from.value, to: to.value }, false))),
         iconButton('trash', t('delete'), () => { saveTerms(terms().filter((y) => y.id !== x.id)); el.remove(); drawTabs(); })));
     void placeOf;
     return el;
@@ -117,10 +119,18 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
     list.replaceChildren(...(shown.length ? shown.map((x) => row(x)) : [h('p', { class: 'src' }, t('glossaryNone'))]));
   }
   draw();
+  // (The whole list shown's place — every kind and language — as text, one term to a line; and such text pasted back in.)
+  const scopeNow = () => (where === 'book' && book ? { book: book.id } : where === 'all' ? {} : { folder: where });
+  sh.actions.append(
+    iconButton('import', t('paste'), async () => {
+      let txt = ''; try { txt = await navigator.clipboard.readText(); } catch { txt = prompt(t('paste')) ?? ''; }
+      const n = addTerms(parseTerms(txt).map((x) => ({ ...x, lang: x.lang ?? getSettings().aiTarget.split('-')[0], ...scopeNow() }))); draw(); toast(t('glossPasted', { n: localDigits(n) }));
+    }),
+    iconButton('copy', t('glossCopyAll'), () => void copyText(termsText(terms().filter(inWhere).sort((a, b) => a.from.localeCompare(b.from))))));
   // (+: a new line at the top to fill in — of the kind shown, where it is shown.)
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
     list.querySelector('.src')?.remove();
-    const scope = where === 'book' && book ? { book: book.id } : where === 'all' ? {} : { folder: where };
+    const scope = scopeNow();
     const x: Term = { id: newId(), from: '', to: '', kind: tab === 'all' ? 'person' : tab, lang: getSettings().aiTarget.split('-')[0], ...scope };
     const r = row(x, true); list.prepend(r); (r.querySelector('.gloss-from') as HTMLInputElement).focus();
   } }, icon('plus'), t('glossaryAdd')));
