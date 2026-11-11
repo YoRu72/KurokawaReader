@@ -66,4 +66,4 @@ export function mainFilePath(x: Task): string {
 }
 export const displayName = (t: Task): string => t.name || (t.source.url ?? t.source.magnet ?? '').split('/').pop() || t.id;
 /** The display name of a magnet before its metadata comes (its dn= part). */
-export function magnetName(m: string): string | undefined { try { const dn = new URL(m).searchParams.get('dn'); return dn ? decodeURIComponent(dn.replace(/\+/g, ' ')) : undefined; } catch { return undefined; } }
+export function magnetName(m: string): string | undefined { try { const dn = new URL(m).searchParams.get('dn'); return dn || undefined; } catch { return undefined; } }

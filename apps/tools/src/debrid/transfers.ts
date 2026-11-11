@@ -2,6 +2,7 @@
 // then every file fetched as a plain HTTP download (eight connections, at the service's speed). What is
 // pending is kept in settings so a restart picks it up; the watcher polls while anything is pending.
 import { getEngine } from '../engine';
+import { safeDecode } from '../downloads/probe';
 import type { TaskSource, Task } from '../engine/types';
 import { getSettings, updateSettings } from '../settings';
 import { debridServices, type Debrid, type DebridTorrent } from './index';
@@ -29,7 +30,7 @@ export async function sendToDebrid(source: TaskSource, o: { name?: string; dir?:
   else if (source.torrent) { if (!s.addTorrent) throw new Error(t('debridNoTorrentFile', { service: s.name })); id = await s.addTorrent(source.torrent); }
   else throw new Error('source');
   const hash = source.magnet ? /btih:([a-z0-9]{32,40})/i.exec(source.magnet)?.[1]?.toLowerCase() : undefined;
-  const name = o.name ?? ((source.magnet ? decodeURIComponent(/dn=([^&]+)/.exec(source.magnet)?.[1] ?? '').replace(/\+/g, ' ') : '') || hash || 'torrent');
+  const name = o.name ?? ((source.magnet ? safeDecode(/dn=([^&]+)/.exec(source.magnet)?.[1] ?? '').replace(/\+/g, ' ') : '') || hash || 'torrent');
   keep([...pending(), { service: s.id, id, name, dir: o.dir, meta: o.meta, added: Date.now(), hash }]); changed(); start();
   // Cached already? One look now saves the first wait.
   void poll();

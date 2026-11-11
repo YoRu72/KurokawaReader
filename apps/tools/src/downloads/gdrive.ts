@@ -187,11 +187,12 @@ export async function addDriveFiles(eng: Engine, info: CloudInfo<DriveFile>, fil
 }
 
 /** A Drive download whose address stopped working (Drive's addresses can run out): a fresh one asked for and the
- *  download taken up again — once per download while the app runs. */
-const renewed = new Set<string>();
+ *  download taken up again — each time, at the waits MEGA's renewal keeps (mega.ts renewDue). */
+const renewed = new Map<string, { at: number; n: number; done: number }>();
 export async function renewFailed(eng: Engine, tasks: Task[]): Promise<void> {
+  const { renewDue } = await import('./mega');
   for (const x of tasks) {
-    if (x.state !== 'failed' || !x.meta?.gdrive || renewed.has(x.id) || !eng.setUrl) continue; renewed.add(x.id);
+    if (x.state !== 'failed' || !x.meta?.gdrive || !eng.setUrl || !renewDue(renewed, x)) continue;
     try { const r = await resolveFile({ id: x.meta.gdrive, rk: x.meta.gdriveRk, doc: x.meta.gdriveDoc as DocKind | undefined }, true); await eng.setUrl(x.id, r.url); await eng.resume(x.id); } catch { /* left failed: its error stays */ }
   }
 }

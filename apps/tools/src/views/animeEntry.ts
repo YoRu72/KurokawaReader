@@ -69,7 +69,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
         onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(a!, n, epTitle, st?.thumbnail, () => draw()); } },
         episodePic(spoil ? undefined : st?.thumbnail, localDigits(n, 'prose')),
         h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, epTitle, onDisk ? h('span', { class: 'ep-badge have' }, t('onDisk')) : null, filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet')),
-          got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' + (got.state === 'paused' || got.state === 'failed' ? ' paused' : '') }, h('i', { style: { width: `${got.total ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
+          got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' + (got.state === 'paused' || got.state === 'failed' ? ' paused' : '') }, h('i', { style: { width: `${got.total > 0 ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
         onDisk ? iconButton('play', t('play'), () => void import('./anime').then((m) => m.playLocal(a!, n, onDisk.path, onDisk.name))) :
         got && got.state === 'done' ? iconButton('play', t('play'), () => void import('./player').then((m) => m.playTaskFile(got, got.files.length > 1 ? Math.max(0, got.files.findIndex((f) => /\.(mkv|mp4|webm|avi|mov|m4v)$/i.test(f.path))) : 0))) : aired ? iconButton('download', t('animeFindTorrents'), () => torrentSheet(a!, n)) : null,
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
@@ -112,7 +112,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       const had = have.get(m.episode); if (!had || had.state !== x.state) redraw = redraw || !had || x.state === 'done' || x.state === 'failed' || had.state === 'done';
       have.set(m.episode, x);
       const row = body.querySelector<HTMLElement>(`.ep-row[data-ep="${m.episode}"]`); if (!row) continue;
-      const pct = x.total ? Math.round((x.done / x.total) * 100) : 0;
+      const pct = x.total > 0 ? Math.round((x.done / x.total) * 100) : 0;
       const bar = row.querySelector<HTMLElement>('.ep-prog i'); if (bar) bar.style.width = `${Math.max(2, pct)}%`;
       const badge = row.querySelector<HTMLElement>('.ep-badge.have'); if (badge && x.state !== 'done') badge.textContent = t('downloading', { p: localDigits(pct) });
     }
@@ -283,7 +283,7 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
   void (async () => {
     const got = await import('../anime/watch').then((m) => m.taskFor(a.id, n));
     if (got) {
-      const pct = got.total ? Math.round((got.done / got.total) * 100) : 0;
+      const pct = got.total > 0 ? Math.round((got.done / got.total) * 100) : 0;
       sh.body.append(h('div', { class: 'ep-sheet-prog' }, h('div', { class: 'task-bar' }, h('i', { style: { width: `${got.state === 'done' ? 100 : pct}%` } })), h('small', { class: 'src' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(pct) }))));
       row('play', got.state === 'done' ? t('play') : t('stream'), got.state === 'done' ? (got.meta as { episode?: number } | undefined)?.episode === n ? '' : t('epWatchContinue', { name: got.name }) : t('epStreamHint'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${show} · ${t('episodeN', { n })}`)), true);
       row('magnet', t('epChooseToWatch'), t('epChooseToWatchHint'), () => void torrentSheet(a, n, 'stream'));

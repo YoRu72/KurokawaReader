@@ -22,7 +22,7 @@ export interface KtPlugin {
   add(o: Record<string, unknown>): Promise<{ task: unknown }>;
   list(): Promise<{ tasks: unknown[] }>;
   pause(o: { id: string }): Promise<void>;
-  resume(o: { id: string }): Promise<void>;
+  resume(o: { id: string; anyway?: boolean }): Promise<void>;
   remove(o: { id: string; deleteFiles: boolean }): Promise<void>;
   setFiles(o: { id: string; priorities: number[] }): Promise<void>;
   setSequential(o: { id: string; on: boolean }): Promise<void>;

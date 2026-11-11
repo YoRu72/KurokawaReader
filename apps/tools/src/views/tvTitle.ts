@@ -73,7 +73,7 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
             episodePic(v.thumbnail, localDigits(v.episode)),
             h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, `${localDigits(v.episode)}. ${v.name || t('episodeN', { n: v.episode })}`, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null),
               h('small', { class: 'src' }, v.released ? (aired ? df.format(new Date(v.released)) : `${t('animeNotYet')} · ${df.format(new Date(v.released))}`) : ''),
-              got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' }, h('i', { style: { width: `${got.total ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
+              got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' }, h('i', { style: { width: `${got.total > 0 ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
             aired ? iconButton('play', t('epWatchNow'), () => void watch(mm, v)) : null,
             aired ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => { lib.setSeen(epKey(mm, v), !seen); draw(); }) : null);
           // (Held: the episode's options, its download deleted among them.)
@@ -102,7 +102,7 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
   return root;
 }
 function progressLine(x: Task): HTMLElement {
-  const pct = x.state === 'done' ? 100 : x.total ? Math.round((x.done / x.total) * 100) : 0;
+  const pct = x.state === 'done' ? 100 : x.total > 0 ? Math.round((x.done / x.total) * 100) : 0;
   return h('div', { class: 'ep-sheet-prog' }, h('div', { class: 'task-bar' }, h('i', { style: { width: `${pct}%` } })), h('small', { class: 'src' }, x.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(pct) })));
 }
 const idOf = (m: TvMeta, v?: TvEpisode) => (v ? `${m.id}:${v.season}:${v.episode}` : m.id);

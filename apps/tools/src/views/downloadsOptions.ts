@@ -40,7 +40,7 @@ export function applyFilters(tasks: Task[], q: string): Task[] {
 const ORDER: Record<TaskState, number> = { downloading: 0, metadata: 1, checking: 2, queued: 3, seeding: 4, paused: 5, failed: 6, done: 7 };
 export function sortTasks(list: Task[]): Task[] {
   const k = getSettings().sort as DlSort; const p = dlPrefs(); const dir = p.desc ? -1 : 1;
-  const prog = (x: Task) => (x.total ? x.done / x.total : x.state === 'done' ? 1 : 0);
+  const prog = (x: Task) => (x.total > 0 ? x.done / x.total : x.state === 'done' ? 1 : 0);
   const eta = (x: Task) => (x.eta && x.eta > 0 ? x.eta : x.state === 'done' ? 0 : Infinity);
   const pos = new Map(list.map((x, i) => [x.id, i]));
   const by: Record<DlSort, (a: Task, b: Task) => number> = {

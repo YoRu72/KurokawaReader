@@ -1521,6 +1521,8 @@ export const ar: Partial<Strings> = {
   exportedList: "صُدِّرت القائمة: {n}",
   heldBattery: "متوقّف: البطارية منخفضة",
   heldMetered: "ينتظر شبكة Wi-Fi",
+  downloadNow: "نزّل الآن",
+  batchSomeFailed: "الروابط التي تعذّرت إضافتها: {n}، وقد بقيت في الحقل ({error})",
   importFinishedToo: "والمنتهية أيضًا",
   importFromFile: "من ملف",
   importList: "استورد قائمة",

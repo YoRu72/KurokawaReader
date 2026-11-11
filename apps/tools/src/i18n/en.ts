@@ -1526,6 +1526,8 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   exportedList: "List exported: {n}",
   heldBattery: "Paused: low battery",
   heldMetered: "Waiting for Wi-Fi",
+  downloadNow: "Download now",
+  batchSomeFailed: "{n} links could not be added — left in the box ({error})",
   importFinishedToo: "Finished ones too",
   importFromFile: "From a file",
   importList: "Import a list",

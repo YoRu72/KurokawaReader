@@ -273,7 +273,8 @@ public class KtPlugin extends Plugin {
     }
     @PluginMethod public void add(PluginCall call) { askNotify(); run(call, () -> { JSObject r = new JSObject(); r.put("task", obj(engine().add(new JSONObject(call.getData().toString())))); call.resolve(r); }); }
     @PluginMethod public void pause(PluginCall call) { run(call, () -> { engine().pause(call.getString("id", "")); call.resolve(); }); }
-    @PluginMethod public void resume(PluginCall call) { run(call, () -> { engine().resume(call.getString("id", "")); call.resolve(); }); }
+    /** `anyway`: «Download now» on one held (Wi-Fi only on mobile data, a low battery) — started in spite of the hold. */
+    @PluginMethod public void resume(PluginCall call) { run(call, () -> { engine().resume(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("anyway", false))); call.resolve(); }); }
     @PluginMethod public void moveFinished(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("moved", engine().moveFinished(call.getString("dir", ""))); r.put("dir", engine().defaultDir().getAbsolutePath()); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void remove(PluginCall call) { run(call, () -> { engine().remove(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("deleteFiles", false))); call.resolve(); }); }
     @PluginMethod public void setFiles(PluginCall call) { run(call, () -> { JSArray a = call.getArray("priorities"); int[] p = new int[a.length()]; for (int i = 0; i < a.length(); i++) p[i] = a.getInt(i); engine().setFiles(call.getString("id", ""), p); call.resolve(); }); }

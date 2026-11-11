@@ -40,7 +40,8 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const limitRow = x.kind === 'http' && eng.setTaskLimits && x.state !== 'done' ? h('label', { class: 'field row task-limit' }, h('span', { class: 'label' }, t('taskSpeedLimit')), h('input', { type: 'number', inputmode: 'numeric', min: '0', value: String(Math.round(((x as Task & { limitDown?: number }).limitDown ?? 0) / 1024)), placeholder: '0', onchange: (e: Event) => void eng.setTaskLimits!(x.id, Math.max(0, Number((e.target as HTMLInputElement).value) || 0) * 1024, 0).then(() => toast(t('done'))).catch(() => undefined) })) : null;
     const hlsLine = (x.meta?.hls || x.kind === 'video') && (x.state === 'downloading' || x.state === 'metadata') ? h('p', { class: 'src' }, icon('film'), ' ', liveLine(x)) : null;
     const acts = h('div', { class: 'task-detail-actions' });
-    if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id) }, icon('play'), t('resume')));
+    // (One held by the app — Wi‑Fi only on mobile data, a low battery —: «Download now», started in spite of the hold.)
+    if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id, !!x.heldBy) }, icon('play'), t(x.heldBy ? 'downloadNow' : 'resume')));
     if (x.state !== 'done') acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/rules').then((m) => m.clockSheet(x)) }, icon('clock'), t('clockTitle')));
     else if (x.state !== 'done' && eng.can.pause) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void eng.pause(x.id) }, icon('pause'), t('pause')));
     // What the main file is decides the first button: a video or a sound plays in the app, an app installs, an
