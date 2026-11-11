@@ -1,0 +1,101 @@
+name: Tauri check
+
+# The Tauri shell of Kurokawa Tools (apps/tools/desktop-tauri, stage 1) built on Windows, Linux and macOS beside the
+# Electron one, to see that it builds and how big its bundles are. Nothing is signed or released.
+on:
+  push:
+    branches: ['work-tauri*']
+    paths:
+      - 'apps/tools/desktop-tauri/**'
+      - 'apps/tools/src/**'
+      - '.github/workflows/tauri-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-22.04, bundles: 'appimage,deb', target: '' }
+          - { name: Windows, os: windows-latest, bundles: 'nsis', target: '' }
+          - { name: macOS, os: macos-latest, bundles: 'dmg', target: '' }
+          - { name: macOS universal, os: macos-latest, bundles: 'dmg', target: 'universal-apple-darwin' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Web UI
+        working-directory: apps/tools
+        run: |
+          for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
+          node scripts/build.mjs
+          node tests/tauribridge.cjs
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'apps/tools/desktop-tauri/src-tauri -> target'
+          key: ${{ matrix.target }}
+
+      - name: Icons (from desktop/icon.png)
+        working-directory: apps/tools/desktop-tauri
+        run: |
+          npx --yes @tauri-apps/cli@^2 icon ../desktop/icon.png
+          ls -la src-tauri/icons
+
+      - name: Build
+        working-directory: apps/tools/desktop-tauri
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
+          else
+            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}
+          fi
+
+      - name: Sizes
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          {
+            echo "### ${{ matrix.name }} — Tauri bundles"
+            echo ""
+            echo "| File | Size (MB) |"
+            echo "|---|---:|"
+            find target -path '*/release/bundle/*' -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \) | sort | while read -r f; do
+              b=$(wc -c < "$f" | tr -d ' ')
+              echo "| \`$f\` | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
+            done
+            find target -maxdepth 3 -path '*/release/*' -type f \( -name 'kurokawa-tools' -o -name 'kurokawa-tools.exe' \) | sort | while read -r f; do
+              b=$(wc -c < "$f" | tr -d ' ')
+              echo "| \`$f\` (bare executable) | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.os }}${{ matrix.target && format('-{0}', matrix.target) || '' }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            apps/tools/desktop-tauri/src-tauri/target/**/release/bundle/nsis/*.exe
+            apps/tools/desktop-tauri/src-tauri/target/**/release/bundle/appimage/*.AppImage
+            apps/tools/desktop-tauri/src-tauri/target/**/release/bundle/deb/*.deb
+            apps/tools/desktop-tauri/src-tauri/target/**/release/bundle/dmg/*.dmg
