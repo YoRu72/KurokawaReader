@@ -7,6 +7,8 @@ if (process.platform === 'win32') app.setAppUserModelId('app.kurokawa.tools');
 const path = require('node:path');
 const fs = require('node:fs');
 const { Aria2Engine } = require('./aria2.cjs');
+const { nativePath } = require('./paths.cjs');
+const NP = (p) => nativePath(p, process.platform); // (a path from the page may be mixed, "C:\dl/Show/e1.mkv": the shell wants it native)
 const Archive = require('./archive.cjs');
 const Ffmpeg = require('./ffmpeg.cjs');
 const Ytdlp = require('./ytdlp.cjs');
@@ -177,7 +179,7 @@ ipcMain.handle('kt:pause', (_e, id) => (isVideoId(id) ? videos.pause(id) : E().p
 ipcMain.handle('kt:resume', (_e, id) => (isVideoId(id) ? videos.resume(id) : E().resume(id)));
 ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, !!del) : E().remove(id, !!del)));
 ipcMain.handle('kt:setFiles', (_e, id, p) => E().setFiles(id, p));
-ipcMain.handle('kt:exists', (_e, ps) => (Array.isArray(ps) ? ps : []).map((p) => { try { return require('node:fs').existsSync(String(p)); } catch { return false; } }));
+ipcMain.handle('kt:exists', (_e, ps) => (Array.isArray(ps) ? ps : []).map((p) => { try { return require('node:fs').existsSync(NP(String(p))); } catch { return false; } }));
 ipcMain.handle('kt:mini', (_e, o) => { const a = o && o.action; if (a === 'open') openMini(); else if (a === 'close') closeMini(); else if (a === 'main') { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } } else if (a === 'auto') { try { const s = loadState(); s.miniOnMinimize = !!o.on; fs.writeFileSync(statePath(), JSON.stringify(s)); } catch { /* ignore */ } } return { open: !!mini }; });
 // A site opened in a window of the app's own session (the one its requests use), for the user to pass the
 // site's browser check by hand; resolves when the window is closed.
@@ -232,12 +234,12 @@ ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => E().configure(o));
 ipcMain.handle('kt:torrentInfo', (_e, s) => E().ensure().then(() => E().torrentInfo(s)));
 ipcMain.handle('kt:rename', (_e, o) => E().rename(String(o.id), String(o.name)));
-ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
+ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = NP(isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex)); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
 ipcMain.handle('kt:defaultDir', () => engine?.defaultDir || app.getPath('downloads'));
 ipcMain.handle('kt:pickDir', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 // (A file of this computer — «file://» and its path, as the page writes it — opened with its own app: by its path, which
 // works on Windows too, where «file://C:\…» is no address.)
-ipcMain.handle('kt:openExternal', (_e, u) => { const s = String(u); if (/^file:\/\//i.test(s)) { const raw = s.replace(/^file:\/\/\/?/i, process.platform === 'win32' ? '' : '/'); let p = raw; try { p = decodeURIComponent(raw); } catch { /* a path with a % of its own */ } return shell.openPath(p); } return shell.openExternal(s); });
+ipcMain.handle('kt:openExternal', (_e, u) => { const s = String(u); if (/^file:\/\//i.test(s)) { const raw = s.replace(/^file:\/\/\/?/i, process.platform === 'win32' ? '' : '/'); let p = raw; try { p = decodeURIComponent(raw); } catch { /* a path with a % of its own */ } return shell.openPath(NP(p)); } return shell.openExternal(s); });
 ipcMain.handle('kt:registerMagnet', () => { if (process.defaultApp) { if (process.argv.length >= 2) app.setAsDefaultProtocolClient('magnet', process.execPath, [path.resolve(process.argv[1])]); } else app.setAsDefaultProtocolClient('magnet'); return true; });
 ipcMain.handle('kt:http', async (_e, o) => {
   const r = await net.fetch(String(o.url), { method: o.method || 'GET', headers: o.headers || {}, body: o.body ? (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body) : undefined, redirect: 'follow' });
@@ -255,9 +257,9 @@ ipcMain.handle('kt:captureUrl', (_e, o) => new Promise((resolve) => {
   w.on('closed', () => finish(null));
   w.loadURL(String(o.url));
 }));
-ipcMain.handle('kt:writeText', async (_e, o) => { await fs.promises.mkdir(path.dirname(String(o.path)), { recursive: true }); /* (a subtitles folder made for a show) */ await fs.promises.writeFile(String(o.path), String(o.text), 'utf8'); return { ok: true }; });
-ipcMain.handle('kt:removeFile', async (_e, p) => { await fs.promises.unlink(String(p)).catch(() => undefined); return { ok: true }; });
-ipcMain.handle('kt:readFile', async (_e, p) => { const b = await fs.promises.readFile(String(p)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
+ipcMain.handle('kt:writeText', async (_e, o) => { await fs.promises.mkdir(path.dirname(NP(String(o.path))), { recursive: true }); /* (a subtitles folder made for a show) */ await fs.promises.writeFile(NP(String(o.path)), String(o.text), 'utf8'); return { ok: true }; });
+ipcMain.handle('kt:removeFile', async (_e, p) => { await fs.promises.unlink(NP(String(p))).catch(() => undefined); return { ok: true }; });
+ipcMain.handle('kt:readFile', async (_e, p) => { const b = await fs.promises.readFile(NP(String(p))); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
 
 /* ---------- archives ---------- */
 const archiveJobs = new Map();
@@ -366,7 +368,7 @@ ipcMain.handle('kt:dohProbe', async () => {
 });
 let _dohProvider = 'off';
 ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: p === 'auto' ? Object.values(DOH) : [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
-ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(String(p)); if (err) throw new Error(err); });
+ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(NP(String(p))); if (err) throw new Error(err); });
 ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
 ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir || '') || engine?.defaultDir || app.getPath('downloads'); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
 ipcMain.handle('kt:archiveExisting', async (_e, o) => ({ existing: await Archive.existing(String(o.dest), (o.names || []).map(String)) }));
@@ -381,7 +383,7 @@ ipcMain.handle('kt:pathInfo', async (_e, p) => { try { const st = await fs.promi
 
 /* ---------- the Files add-on ---------- */
 ipcMain.handle('kt:listDir', async (_e, p) => { try { const ents = await fs.promises.readdir(String(p), { withFileTypes: true }); const out = []; for (const en of ents) { try { const st = await fs.promises.stat(path.join(String(p), en.name)); out.push({ name: en.name, path: path.join(String(p), en.name), dir: st.isDirectory(), size: st.isFile() ? st.size : 0, mtime: st.mtimeMs }); } catch { /* vanished */ } } return { entries: out, exists: true }; } catch { return { entries: [], exists: false }; } });
-ipcMain.handle('kt:deletePath', async (_e, p) => { try { await shell.trashItem(String(p)); return { ok: true }; } catch { try { await fs.promises.rm(String(p), { recursive: true, force: true }); return { ok: true }; } catch { return { ok: false }; } } });
+ipcMain.handle('kt:deletePath', async (_e, p) => { try { await shell.trashItem(NP(String(p))); return { ok: true }; } catch { try { await fs.promises.rm(NP(String(p)), { recursive: true, force: true }); return { ok: true }; } catch { return { ok: false }; } } });
 ipcMain.handle('kt:roots', () => ({ roots: [engine?.defaultDir || app.getPath('downloads'), app.getPath('downloads'), app.getPath('videos'), app.getPath('home')].filter((x, i, a) => x && a.indexOf(x) === i) }));
 
 /* ---------- yt-dlp: what a page offers, the binary ---------- */
@@ -412,7 +414,7 @@ ipcMain.handle('kt:ffmpeg', (e, o) => { let last = 0; return Ffmpeg.run(String(o
 ipcMain.handle('kt:ffmpegCancel', (_e, id) => Ffmpeg.cancel(String(id)));
 ipcMain.handle('kt:ffprobe', (_e, p) => Ffmpeg.probe(String(p)));
 const WifiShare = require('./wifishare.cjs');
-ipcMain.handle('kt:shareWifi', (_e, o) => WifiShare.start((o.paths || []).map(String), (o.names || []).map(String)));
+ipcMain.handle('kt:shareWifi', (_e, o) => WifiShare.start((o.paths || []).map((p) => NP(String(p))), (o.names || []).map(String)));
 ipcMain.handle('kt:shareWifiStop', () => { WifiShare.stop(); });
 ipcMain.handle('kt:shareWifiStatus', () => WifiShare.status());
 ipcMain.handle('kt:saveText', async (_e, o) => { const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), String(o && o.name || 'kurokawa.txt')) }); if (r.canceled || !r.filePath) return { path: null }; await fs.promises.writeFile(r.filePath, String(o && o.text || ''), 'utf8'); return { path: r.filePath }; });
@@ -420,7 +422,7 @@ ipcMain.handle('kt:writeTempBytes', async (_e, o) => { const dir = path.join(app
 ipcMain.handle('kt:writeTemp', async (_e, o) => { const dir = path.join(app.getPath('temp'), 'kurokawa-clip'); fs.mkdirSync(path.join(dir, 'fonts'), { recursive: true }); const f = path.join(dir, String(o.name).replace(/[\\/]/g, '_')); await fs.promises.writeFile(f, String(o.text), 'utf8'); return f; });
 ipcMain.handle('kt:siblings', async (_e, p) => { try { const dir = path.dirname(String(p)); const base = path.basename(String(p)).replace(/\.[^.]+$/, '').toLowerCase(); return (await fs.promises.readdir(dir)).filter((n) => n.toLowerCase().startsWith(base) && n !== path.basename(String(p))).map((n) => path.join(dir, n)); } catch { return []; } });
 // (Through the app's own local server: a page on app:// may not read file:// media, and a Windows path is no URL.)
-ipcMain.handle('kt:fileUrl', (_e, p) => StreamProxy.fileUrl(String(p)));
+ipcMain.handle('kt:fileUrl', (_e, p) => StreamProxy.fileUrl(NP(String(p))));
 // A MEGA file aria2 fetched as MEGA keeps it (encrypted): decrypted in place once it is whole (AES-128-CTR; the key
 // the node key's halves XORed, the counter's first half its third quarter). Written beside, then put in its place.
 ipcMain.handle('kt:megaDecrypt', async (_e, o) => {
