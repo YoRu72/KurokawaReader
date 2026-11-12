@@ -137,9 +137,15 @@ export function formatBytes(n: number): string {
 
 /** Heuristic: does this text read right-to-left? */
 export function isRtlText(text: string): boolean {
-  const sample = text.slice(0, 400);
-  const rtl = (sample.match(/[֐-ࣿיִ-﷿ﹰ-﻿]/g) ?? []).length;
-  const ltr = (sample.match(/[A-Za-zÀ-ɏ]/g) ?? []).length;
+  // (The letters of the first 400 counted in one pass, not gathered into two arrays by two expressions: asked of every
+  // paragraph of a book as it opens. The same ranges: Hebrew, Arabic and their presentation forms; Latin.)
+  const n = Math.min(400, text.length); let rtl = 0, ltr = 0;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x41) continue;
+    if (c <= 0x5a || (c >= 0x61 && c <= 0x7a) || (c >= 0xc0 && c <= 0x24f)) ltr++;
+    else if ((c >= 0x590 && c <= 0x8ff) || (c >= 0xfb1d && c <= 0xfdff) || (c >= 0xfe70 && c <= 0xfeff)) rtl++;
+  }
   return rtl > ltr;
 }
 

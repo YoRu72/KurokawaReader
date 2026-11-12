@@ -157,6 +157,19 @@ export function inkBox(img: ImageData): CropBox {
 }
 const isBox = (c: unknown): c is CropBox => Array.isArray(c) && c.length === 4 && c.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1);
 
+/** The device's memory in GB as the browser tells it (rounded down; none told: taken as plenty). With 4 or less, less
+ *  is kept of pages gone by; with 2 or less, the pages' text is not read ahead. */
+const deviceMemory = (): number => (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
+
+/** What is taken off pages, taken off with them drawn for the moment (content-visibility visible), then laid out once:
+ *  elements taken out of a page the browser is skipping — off the screen — were kept by it until the page next came
+ *  into view, which a page far back never does: a long book's every word element (its text layers) was kept, about
+ *  20 MB of the page's memory for each stretch scrolled through, never given back. */
+function takeOff(pages: HTMLElement[], fn: () => void): void {
+  for (const el of pages) el.style.contentVisibility = 'visible';
+  try { fn(); } finally { if (pages.length) void pages[0].offsetHeight; for (const el of pages) el.style.contentVisibility = ''; }
+}
+
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];      // the windows: sized to what is shown of each page
@@ -691,7 +704,7 @@ export class PdfViewer {
           // (A frame between two drawings, so the page keeps moving under the finger.)
           await new Promise((r) => requestAnimationFrame(() => r(null)));
         }
-      } finally { this.busy = false; this.pumpThumbs(); this.pumpCrops(); }
+      } finally { this.busy = false; this.pumpThumbs(); this.pumpCrops(); this.cleanDoc(); }
     })();
   }
 
@@ -703,7 +716,7 @@ export class PdfViewer {
   }
   private give(c?: HTMLCanvasElement): void {
     if (!c) return; c.remove();
-    if (this.pool.length < 6) this.pool.push(c); else { c.width = c.height = 0; }
+    if (this.pool.length < (deviceMemory() <= 4 ? 3 : 6)) this.pool.push(c); else { c.width = c.height = 0; }
   }
 
   /** A whole page's picture at `level`; the old one stays until the new one is ready. */
@@ -849,12 +862,25 @@ export class PdfViewer {
     if (this.running?.n === n) this.running.cancel();
     s.textCancel?.();
     const el = this.pages[n - 1];
-    this.give(s.pic); this.dropTiles(s); s.tileLayer?.remove();
-    el.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    // (A page far off the screen is skipped by the browser: what is taken off it is taken off as takeOff says.)
+    const off = () => { this.give(s.pic); this.dropTiles(s); s.tileLayer?.remove(); el.querySelectorAll('.textLayer').forEach((c) => c.remove()); };
+    if (this.destroyed) off(); else takeOff([el], off);
     el.classList.remove('loading'); delete el.dataset.res;
-    this.shown.delete(n);
+    this.shown.delete(n); this.released++;
     // (pdf.js lets go of what it kept to draw the page.)
     void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined);
+  }
+
+  /** Pages let go of since pdf.js was last asked to clean up. */
+  private released = 0;
+  /** After a good many pages let go of (a long scroll, far jumps), pdf.js lets go of what it keeps for the whole book —
+   *  its worker's fonts, shared pictures and page dictionaries — when nothing is being drawn or read: a long reading
+   *  keeps a ceiling, lower on a device with little memory. The pictures on the screen stay as they are. */
+  private cleanDoc(): void {
+    if (this.released < (deviceMemory() <= 4 ? 24 : 64)) return;
+    if (this.destroyed || this.busy || this.running || this.thumbBusy || this.cropBusy || this.textPending.size || !this.doc) return;
+    this.released = 0;
+    void this.doc.cleanup().catch(() => undefined);
   }
 
   private rescale(scale: number): void {
@@ -871,8 +897,10 @@ export class PdfViewer {
 
   /** The zoom changed: pictures stay (stretched) until redrawn; tiles and text layers belong to the old size. */
   private dropForScale(): void {
-    for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
-    this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    takeOff([...this.shown.keys()].map((n) => this.pages[n - 1]), () => {
+      for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
+      this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    });
     // (Spare canvases are the old size: of no use again.)
     this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
     this.running?.cancel();
@@ -1153,14 +1181,35 @@ export class PdfViewer {
   }
 
   /** Read every page's text a little at a time while the reader is idle, so a search later starts with all of
-   *  it at hand; `done` gets the texts once all are read. Stops when the book is closed. */
-  async readAllWhenIdle(done: (texts: string[]) => void): Promise<void> {
+   *  it at hand; `done` gets the texts once all are read. Stops when the book is closed. `keep`: the pages read on an
+   *  earlier opening (`from`, page n at n − 1) — gone on from, not read again — and where what is read is kept as it
+   *  goes (`save`, every few pages, when the app is hidden and when the book is closed). It waits while the pages are
+   *  scrolled, drawn or zoomed and while the app is hidden; each page read is let go of by pdf.js unless it is shown;
+   *  on a device with little memory (2 GB or less) nothing is read ahead — a search reads the pages then. */
+  async readAllWhenIdle(done: (texts: string[]) => void, keep?: { from?: (string | null)[] | null; save(texts: (string | null)[]): void }): Promise<void> {
+    if (deviceMemory() <= 2) return;
+    keep?.from?.forEach((x, i) => { if (typeof x === 'string' && i < this.total && !this.textCache.has(i + 1)) this.textCache.set(i + 1, x); });
     const idle = () => new Promise<void>((r) => { const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (ric) ric(() => r(), { timeout: 1500 }); else setTimeout(r, 60); });
+    let fresh = 0;
+    const save = () => { if (!fresh || !keep) return; fresh = 0; keep.save(Array.from({ length: this.total }, (_, i) => this.textCache.get(i + 1) ?? null)); };
+    const calm = async () => {
+      while (!this.destroyed && (document.hidden || this.scrolling || this.busy || this.pinching || this.zoomAnim)) {
+        if (document.hidden) save();
+        await new Promise((r) => setTimeout(r, document.hidden ? 1000 : 250));
+      }
+    };
     for (let n = 1; n <= this.total; n++) {
-      if (this.destroyed) return;
-      if (!this.textCache.has(n)) { await idle(); if (this.destroyed) return; await this.pageText(n); }
+      if (this.destroyed) break;
+      if (this.textCache.has(n)) continue;
+      await idle(); await calm(); if (this.destroyed) break;
+      if (this.textCache.has(n)) continue;
+      await this.pageText(n);
+      if (this.textCache.has(n)) fresh++;
+      if (!this.shown.has(n)) void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined);
+      if (fresh >= 20) save();
     }
-    const all = this.allTexts(); if (all && !this.destroyed) done(all);
+    if (this.destroyed) { save(); return; }
+    const all = this.allTexts(); if (all) done(all); else save();
   }
 
   /** Search every page; reports progress; returns hits with excerpts. */
@@ -1265,9 +1314,11 @@ export class PdfViewer {
   private thumbBusy = 0;
   thumbnail(n: number, width = 180): Promise<string> {
     const key = `${n}:${width}`;
-    const had = this.thumbs.get(key); if (had) return had;
+    const had = this.thumbs.get(key); if (had) { this.thumbs.delete(key); this.thumbs.set(key, had); return had; }
     const p = new Promise<string>((ok, fail) => { this.thumbQueue.push({ key, n, width, ok, fail }); this.pumpThumbs(); });
     this.thumbs.set(key, p);
+    // (The ones seen longest ago let go of: a grid scrolled through a long book kept every page's picture.)
+    for (const k of this.thumbs.keys()) { if (this.thumbs.size <= (deviceMemory() <= 4 ? 150 : 400)) break; this.thumbs.delete(k); }
     p.catch(() => this.thumbs.delete(key));
     return p;
   }
@@ -1298,8 +1349,10 @@ export class PdfViewer {
     const viewport = page.getViewport({ scale: px / base.width });
     canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
     const ctx = canvas.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-    return canvas.toDataURL('image/jpeg', 0.7);
+    try { await page.render({ canvas, canvasContext: ctx, viewport }).promise; }
+    finally { if (!this.shown.has(n)) page.cleanup(); }
+    const url = canvas.toDataURL('image/jpeg', 0.7); canvas.width = canvas.height = 0;
+    return url;
   }
 
   destroy(): void {

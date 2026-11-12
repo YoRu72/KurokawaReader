@@ -8,7 +8,15 @@
 //  4. an EPUB of 320 chapters: opening it does not test every block against every chapter (the translator's chapter
 //     list, views/reader.ts blocksOfUnit) — counted as calls of Node.contains;
 //  5. a plain text of several megabytes: only the paragraphs near the screen are laid out at open (runs of paragraphs
-//     with content-visibility, formats/shared.ts textToParagraphs).
+//     with content-visibility, formats/shared.ts textToParagraphs);
+//  6. the 320-chapter EPUB shows its text with only its first chapters read (formats/epub.ts render's `first`,
+//     views/reader.ts firstChapter) — chapters parsed when the text is put at its place —, and no string of the whole
+//     book's text is made at open (the longest text read from the book's element: views/reader.ts headText);
+//  7. the 1,000-page PDF scrolled through: the elements of pages gone by are let go of (the page's elements counted
+//     after a garbage collection — formats/pdf.ts releasePage: a text layer taken off a page the browser was skipping
+//     was kept by it for good);
+//  8. the 1,000-page PDF's text read in idle moments goes on, at the next opening, from where it got to — the pages
+//     read before are not asked of pdf.js again (formats/pdf.ts readAllWhenIdle, booksearch.ts partialPages).
 // The books are made here (no fixtures).
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
@@ -17,7 +25,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-perfbudget-'));
 
-const BUDGET = { startJsKB: 340, diagKB: 8, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800 };
+const BUDGET = { startJsKB: 340, diagKB: 8, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800, epubParsedFirst: 3, epubTextRead: 100000, pdfNodesKept: 1500, pdfTextReread: 2 };
 
 // Counters the app does not know of: pdf.js's page requests to its worker, and Node.contains calls.
 const INIT = () => {
@@ -28,6 +36,16 @@ const INIT = () => {
   if (sessionStorage.getItem('kr.test.noIdle')) window.requestIdleCallback = () => 0;
   const pm = Worker.prototype.postMessage; Worker.prototype.postMessage = function (m, ...r) { try { if (m && m.action === 'GetPage') window.__gp++; } catch { /* none */ } return pm.call(this, m, ...r); };
   const c = Node.prototype.contains; Node.prototype.contains = function (o) { window.__contains++; return c.call(this, o); };
+  // (A book's chapters parsed — XHTML with a body, the contents aside —, as many as when the reader puts the text at its
+  // place (its kr:restore measure); the longest text read from a book's element; pdf.js asked for pages' text.)
+  window.__parsed = 0; window.__parsedAtPlace = -1; window.__textMax = 0; window.__textPages = [];
+  const pf = DOMParser.prototype.parseFromString;
+  DOMParser.prototype.parseFromString = function (str, type) { if (type === 'application/xhtml+xml' && /<body/i.test(str) && !/epub:type="toc"/.test(str)) window.__parsed++; return pf.call(this, str, type); };
+  const ms = performance.measure.bind(performance);
+  performance.measure = (name, ...r) => { if (name === 'kr:restore' && window.__parsedAtPlace < 0) window.__parsedAtPlace = window.__parsed; return ms(name, ...r); };
+  const tc = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+  Object.defineProperty(Node.prototype, 'textContent', { configurable: true, set: tc.set, get() { const v = tc.get.call(this); if (v && v.length > window.__textMax && this.nodeType === 1 && (this.classList.contains('kr-doc') || this.classList.contains('kr-content'))) window.__textMax = v.length; return v; } });
+  const pm2 = Worker.prototype.postMessage; Worker.prototype.postMessage = function (m, ...r) { try { if (m && m.action === 'GetTextContent') window.__textPages.push(m.data?.pageIndex); } catch { /* none */ } return pm2.call(this, m, ...r); };
 };
 // (A flowing book's text is looked for at points on the screen: asking each of its paragraphs for its place would lay
 // the whole book out — the very thing counted.)
@@ -140,6 +158,14 @@ function makeText(file) {
     // Still laid out right: a page far on is where its number says.
     const far = await p.evaluate(() => { const sc = document.querySelector('.pdf-scroll'); const el = document.querySelector('.pdf-page[data-page="700"]'); sc.scrollTop = el.offsetTop; return new Promise((r) => setTimeout(() => r(Math.abs(el.getBoundingClientRect().top - sc.getBoundingClientRect().top) < 40), 300)); });
     ok('1,000-page PDF: page 700 is reached by its place', far);
+    // Scrolled through: the elements of the pages gone by let go of (counted after a garbage collection).
+    const cdp = await p.context().newCDPSession(p);
+    const nodes = async () => { await cdp.send('HeapProfiler.collectGarbage'); return (await cdp.send('Memory.getDOMCounters')).nodes; };
+    await p.evaluate(() => { const sc = document.querySelector('.pdf-scroll'); sc.scrollTop = 0; }); await p.waitForTimeout(1500);
+    const n0 = await nodes();
+    for (const f of [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]) { await p.evaluate((f) => { const sc = document.querySelector('.pdf-scroll'); sc.scrollTop = sc.scrollHeight * f; }, f); await p.waitForTimeout(1200); await p.evaluate(() => { const sc = document.querySelector('.pdf-scroll'); sc.scrollTop += 300; }); await p.waitForTimeout(900); }
+    const n1 = await nodes();
+    ok(`1,000-page PDF: scrolled through, no more than ${BUDGET.pdfNodesKept} more elements kept than at the start`, n1 - n0 <= BUDGET.pdfNodesKept, { start: n0, after: n1 });
     await p.context().close();
   }
 
@@ -150,6 +176,9 @@ function makeText(file) {
     await openBook(p, id, 'text'); await p.waitForTimeout(4000);
     const n = await p.evaluate(() => window.__contains);
     ok(`320-chapter EPUB: no more than ${BUDGET.epubContains} Node.contains calls at open`, n <= BUDGET.epubContains, n);
+    const st = await p.evaluate(() => ({ parsed: window.__parsedAtPlace, all: window.__parsed, textMax: window.__textMax }));
+    ok(`320-chapter EPUB: the text is put at its place with no more than ${BUDGET.epubParsedFirst} chapters read (the rest after)`, st.parsed >= 1 && st.parsed <= BUDGET.epubParsedFirst && st.all >= 320, st);
+    ok(`320-chapter EPUB: no string of the whole book's text made at open (the longest read from the book's element under ${BUDGET.epubTextRead} letters)`, st.textMax <= BUDGET.epubTextRead, st);
     await p.context().close();
   }
 
@@ -163,6 +192,22 @@ function makeText(file) {
     // The book's end is still there and reachable.
     const end = await p.evaluate(() => new Promise((r) => { const sc = document.querySelector('.reader-scroll'); const last = [...document.querySelectorAll('.reader-flow .kr-content p')].pop(); last.scrollIntoView(); setTimeout(() => r(/\[C300-P30\]/.test(last.textContent) && last.getBoundingClientRect().top < sc.getBoundingClientRect().bottom), 500); }));
     ok('multi-megabyte text: its last paragraph is reached', end);
+    await p.context().close();
+  }
+
+  // 8. A long PDF's text read in idle moments: on from where it got to.
+  {
+    // (Long enough not to be read through before it is left: the reading starts 3 s after the opening.)
+    const file = path.join(TMP, 'long-b.pdf'); await makePdf(file, 2500);
+    const p = await fresh(); const id = await importBook(p, file);
+    await openBook(p, id, '.pdf-page canvas.pdf-pic'); await p.waitForTimeout(4500);
+    const first = await p.evaluate(() => [...new Set(window.__textPages)]);
+    await p.evaluate(() => { location.hash = '#/'; }); await p.waitForTimeout(2000);
+    await openBook(p, id, '.pdf-page canvas.pdf-pic'); await p.waitForTimeout(6000);
+    const again = await p.evaluate(() => [...new Set(window.__textPages)]);
+    // (Pages near the top — the first screens' text layers — are asked again as they are shown: left out.)
+    const read = new Set(first.filter((i) => i >= 8)); const twice = again.filter((i) => read.has(i));
+    ok(`2,500-page PDF: the text read in idle moments goes on at the next opening — no more than ${BUDGET.pdfTextReread} of the ${read.size} pages read before asked again`, read.size >= 10 && read.size < 2400 && twice.length <= BUDGET.pdfTextReread, { readBefore: read.size, askedAgain: twice.length, firstAgain: again.filter((i) => i >= 8).slice(0, 5) });
     await p.context().close();
   }
 

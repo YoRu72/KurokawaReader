@@ -34,12 +34,12 @@ export function showBookInfo(i: BookInfoInput): void {
   sheet.body.style.lineHeight = '1.75';
   const cover = coverUrl(book);
   const row = (k: string, v: string | number | undefined) => v === undefined || v === '' ? null : h('div', null, h('b', null, k + ': '), h('span', { dir: 'auto' }, String(v)));
-  const days = Object.entries(stats.days).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 14);
+  const days = Object.entries(stats.days ?? {}).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 14);
   const speed = i.speed;
   const leftChapter = speed && i.wordsLeftInChapter != null ? Math.ceil(i.wordsLeftInChapter / speed) : undefined;
   const leftBook = speed && i.wordsLeftInBook != null ? Math.ceil(i.wordsLeftInBook / speed) : undefined;
   const goal = getSettings().readingGoalMinutes;
-  const todayMs = stats.days[todayKey()]?.ms ?? 0;
+  const todayMs = stats.days?.[todayKey()]?.ms ?? 0;
 
   append(sheet.body, [
     cover ? h('img', { src: cover, alt: '', style: { width: '100%', maxHeight: '220px', objectFit: 'contain', borderRadius: '14px', marginBottom: '14px', background: 'var(--md-surface-container)' } }) : null,

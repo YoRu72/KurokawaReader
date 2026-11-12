@@ -98,6 +98,10 @@ export class ReadingTracker {
 
   constructor(private book: Book, private isActive: () => boolean, bookWords?: number, bookChars?: number) {
     this.stats = book.stats ?? { ms: 0, words: 0, days: {} };
+    // (Statistics kept in an older or other shape — no days, no counters: as many as there are, and none missing.)
+    if (!this.stats.days || typeof this.stats.days !== 'object') this.stats.days = {};
+    if (!Number.isFinite(this.stats.ms)) this.stats.ms = 0;
+    if (!Number.isFinite(this.stats.words)) this.stats.words = 0;
     this.saved = partOf(this.stats);
     if (bookWords != null) this.stats.bookWords = bookWords;
     if (bookChars != null) this.stats.bookChars = bookChars;

@@ -917,7 +917,7 @@ export function libraryView(): HTMLElement {
 
   function renderGoal() {
     const goal = getSettings().readingGoalMinutes;
-    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days[todayKey()]?.ms ?? 0), 0);
+    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days?.[todayKey()]?.ms ?? 0), 0);
     clear(heroGoal);
     heroGoal.hidden = !goal;
     if (!goal) return;

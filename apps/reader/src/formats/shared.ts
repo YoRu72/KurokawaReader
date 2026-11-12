@@ -153,19 +153,56 @@ export function numberLists(root: Element): void {
 }
 
 export function markDirections(root: Element): boolean {
-  numberLists(root);
+  const [rtlBlocks, total] = markBlockDirections(root);
+  const rtl = total > 0 && rtlBlocks / total > 0.5;
+  if (!root.getAttribute('dir')) root.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+  return rtl;
+}
+/** markDirections' work on the blocks inside `el` (and its lists numbered), `el` itself left as it is: how many of its
+ *  blocks with text read right to left, and how many have text — so a book made a chapter at a time is weighed whole. */
+export function markBlockDirections(el: Element): [number, number] {
+  numberLists(el);
   let rtlBlocks = 0, total = 0;
-  root.querySelectorAll<HTMLElement>(BLOCK_SELECTOR).forEach((el) => {
-    const text = el.textContent ?? '';
+  el.querySelectorAll<HTMLElement>(BLOCK_SELECTOR).forEach((b) => {
+    const text = b.textContent ?? '';
     if (!text.trim()) return;
     total++;
     const rtl = isRtlText(text);
     if (rtl) rtlBlocks++;
-    if (!el.getAttribute('dir')) el.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    if (!b.getAttribute('dir')) b.setAttribute('dir', rtl ? 'rtl' : 'ltr');
   });
-  const rtl = total > 0 && rtlBlocks / total > 0.5;
-  if (!root.getAttribute('dir')) root.setAttribute('dir', rtl ? 'rtl' : 'ltr');
-  return rtl;
+  return [rtlBlocks, total];
+}
+
+/** A text file of a zip, read at once: its bytes inflated in one call and decoded natively — JSZip's own way passes
+ *  them through its stream of small chunks and its own UTF-8 decoder, a breath between each, which was a third of the
+ *  time a book of hundreds of chapters took to open on a phone. The same text (a byte-order mark kept, as JSZip keeps
+ *  it); anything unusual — another compression, a size that does not match — is read JSZip's way. */
+type Inflate = (d: Uint8Array) => Uint8Array;
+let inflateP: Promise<Inflate | null> | null = null;
+const utf8 = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { ignoreBOM: true }) : null;
+export async function zipText(f: JSZip.JSZipObject): Promise<string> {
+  const d = (f as unknown as { _data?: { compressedContent?: unknown; uncompressedSize?: number; compression?: { magic?: string } } })._data;
+  const raw = d?.compressedContent, magic = d?.compression?.magic;
+  if (utf8 && raw instanceof Uint8Array && (magic === '\x00\x00' || magic === '\x08\x00')) {
+    try {
+      let bytes: Uint8Array | null = raw;
+      if (magic === '\x08\x00') { const inflate = await (inflateP ??= import('pako').then((m) => ((m.default ?? m) as { inflateRaw?: Inflate }).inflateRaw ?? null).catch(() => null)); bytes = inflate ? inflate(raw) : null; }
+      if (bytes && bytes.length === d!.uncompressedSize) return utf8.decode(bytes);
+    } catch { /* read JSZip's way */ }
+  }
+  return f.async('text');
+}
+
+/** A breath between two slices of work: the page draws a frame if one is due and answers a touch (a message to
+ *  itself — a timer of 0 is held back 4 ms or more once timers nest). */
+export function breath(): Promise<void> {
+  return new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => { ch.port1.close(); r(); }; ch.port2.postMessage(0); });
+}
+/** Until the next frame has been drawn (work done then has the rest of the frame); a page hidden — no frames — goes on
+ *  after a second. */
+export function afterFrame(): Promise<void> {
+  return new Promise((r) => { let done = false; const go = () => { if (done) return; done = true; window.clearTimeout(t); void breath().then(r); }; const t = window.setTimeout(go, 1000); requestAnimationFrame(go); });
 }
 
 /** Detect dark line-art on a transparent background (so dark themes can invert it). */
