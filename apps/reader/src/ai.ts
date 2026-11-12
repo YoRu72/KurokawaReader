@@ -2,7 +2,7 @@
 // OpenAI-compatible endpoints (OpenRouter, local servers), Anthropic.
 // Keys live in the visual settings (localStorage) and are left out of backups (backup.ts scrubSettings).
 import { REPO } from './repo';
-import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp, glossaryStampOf } from './glossary';
+import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp, glossaryStampOf, scriptOfLang, scriptVerdict } from './glossary';
 import { getSettings } from './settings';
 import { t } from './i18n';
 
@@ -100,7 +100,18 @@ export function effectivePrompt(): string {
 export function defaultPrompt(target: string): string { return DEFAULT_PROMPTS[target] ?? DEFAULT_PROMPT_EN.replace('{lang}', langName(target)); }
 export function langName(code: string): string {
   const names: Record<string, string> = { ar: 'Arabic', en: 'English', fr: 'French', tr: 'Turkish', ur: 'Urdu', fa: 'Persian', de: 'German', es: 'Spanish', id: 'Indonesian', ja: 'Japanese', 'zh-CN': 'Chinese', ru: 'Russian' };
-  return names[code] ?? code;
+  if (names[code]) return names[code];
+  // (Any other language named in English too — never its bare code: «ko» told to the model says little.)
+  try { const n = new Intl.DisplayNames(['en'], { type: 'language' }).of(code); if (n && n !== code) return n; } catch { /* no names */ }
+  return code;
+}
+/** What the model is told about names, for every language: written in the target language — in its own script,
+ *  transliterated, where the original's differs —, unless the glossary gives their rendering. */
+const SCRIPT_NAMES: Record<string, string> = { arabic: 'Arabic', cyrillic: 'Cyrillic', greek: 'Greek', hebrew: 'Hebrew', thai: 'Thai', devanagari: 'Devanagari', armenian: 'Armenian', georgian: 'Georgian', hangul: 'Hangul (Korean)', japanese: 'Japanese (katakana for foreign names)', chinese: 'Chinese characters', latin: 'Latin' };
+export function namesRule(target: string): string {
+  const lang = langName(target); const sc = scriptOfLang(target);
+  const how = !sc ? '' : sc === 'latin' ? ` in Latin letters, spelt as ${lang} spells it (romanized when the original is written in another script)` : ` in the ${SCRIPT_NAMES[sc]} script — transliterated when the original is written in another script; never left in Latin letters or in the original's script`;
+  return `Names: write every personal name, place name and other proper noun as it is written in ${lang}${how}, unless its rendering is given above. Keep each name's rendering the same throughout.`;
 }
 
 /** A stable key for caching: text + everything that changes the output. */
@@ -249,7 +260,7 @@ export async function translateBatch(texts: string[], bookId?: string, ctx?: TrC
   // (The reader's glossary: the terms these paragraphs hold, given with them, and put right after.)
   const gl = s.aiTask === 'furigana' ? [] : termsIn(texts, bookId, s.aiTarget);
   const styled = s.aiTask !== 'furigana' && texts.some((x) => /<(i|b|em|strong|u|sup|sub)>/.test(x));
-  const prompt = [effectivePrompt(), glossaryPrompt(gl), styled ? STYLE : '', s.aiContext !== false && s.aiTask !== 'furigana' ? contextLines(ctx) : ''].filter(Boolean).join('\n\n');
+  const prompt = [effectivePrompt(), glossaryPrompt(gl, langName(s.aiTarget)), s.aiTask !== 'furigana' ? namesRule(s.aiTarget) : '', styled ? STYLE : '', s.aiContext !== false && s.aiTask !== 'furigana' ? contextLines(ctx) : ''].filter(Boolean).join('\n\n');
   const fix = (out: string[]) => (gl.length ? out.map((x) => applyGlossary(x, gl)) : out);
   // A small model on the device does better with one paragraph at a time and plain text back.
   if (s.aiProvider === 'local' && s.localEngine === 'device') {
@@ -270,16 +281,43 @@ export async function translateBatch(texts: string[], bookId?: string, ctx?: TrC
   return fix(await ask(texts));
 }
 
-/** Names and terms a passage holds (people, places, sects, techniques, titles), each with a rendering in the
- *  target language — offered to the reader for the book's glossary. */
-export async function suggestTerms(texts: string[], known: string[]): Promise<{ from: string; to: string; kind?: string }[]> {
-  const s = getSettings(); const lang = langName(s.aiTarget);
-  const system = `You build a translation glossary. From the text, list the proper names and recurring special terms (people, places, organisations, sects, techniques, titles, invented words) — at most 40, the most frequent first — each with its rendering in ${lang} as a careful translator would fix it for the whole book (transliterate names; translate meaningful titles). Skip these, already in the glossary: ${JSON.stringify(known.slice(0, 200))}. Return ONLY a JSON array of objects {"from": original, "to": rendering, "kind": "person|place|group|term"}. No prose.`;
-  const raw = await chat(system, texts.join('\n\n').slice(0, 24000));
+/** A JSON array of objects read from a model's reply (code fences and prose around it left out). */
+function parseObjects(raw: string): { from?: unknown; to?: unknown; kind?: unknown }[] {
   let txt = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''); const a = txt.indexOf('['), b = txt.lastIndexOf(']'); if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
-  const arr = JSON.parse(txt) as { from?: string; to?: string; kind?: string }[];
+  const arr = JSON.parse(txt) as unknown; return Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object') as { from?: unknown; to?: unknown; kind?: unknown }[] : [];
+}
+const scriptAsk = (target: string): string => { const sc = scriptOfLang(target); return !sc ? '' : sc === 'latin' ? ` Every rendering must be in Latin letters, spelt as ${langName(target)} spells it.` : ` Every rendering must be written in the ${SCRIPT_NAMES[sc]} script, as ${langName(target)} writes it — never in Latin letters or in the original's script.`; };
+export type Found = { from: string; to: string; kind?: string };
+/** Names and terms a passage holds (people, places, sects, techniques, titles), each with a rendering in the
+ *  target language (the one chosen when asked — `target`) — offered to the reader for the book's glossary. A
+ *  rendering plainly not in that language's script («Keyaru» for Arabic) is asked for again once, and left out if
+ *  it comes back so again: `refused` says how many. */
+export async function suggestTerms(texts: string[], known: string[], target = getSettings().aiTarget): Promise<Found[] & { refused: number }> {
+  const lang = langName(target);
+  const system = `You build a translation glossary for a translation into ${lang} (language code ${target}). From the text, list the proper names and recurring special terms (people, places, organisations, sects, techniques, titles, invented words) — at most 40, the most frequent first — each with its rendering in ${lang} as a careful translator would fix it for the whole book (transliterate names; translate meaningful titles).${scriptAsk(target)} Skip these, already in the glossary: ${JSON.stringify(known.slice(0, 200))}. Return ONLY a JSON array of objects {"from": original, "to": rendering in ${lang}, "kind": "person|place|group|term"}. No prose.`;
+  const raw = await chat(system, texts.join('\n\n').slice(0, 24000));
   const seen = new Set(known.map((x) => x.toLowerCase()));
-  return arr.filter((x) => x && typeof x.from === 'string' && typeof x.to === 'string' && x.from.trim() && x.to.trim() && !seen.has(x.from.trim().toLowerCase())).map((x) => ({ from: x.from!.trim(), to: x.to!.trim(), kind: x.kind }));
+  const clean = (arr: { from?: unknown; to?: unknown; kind?: unknown }[]): Found[] => arr.filter((x) => typeof x.from === 'string' && typeof x.to === 'string' && x.from.trim() && x.to.trim() && !seen.has(x.from.trim().toLowerCase())).map((x) => ({ from: (x.from as string).trim(), to: (x.to as string).trim(), kind: typeof x.kind === 'string' ? x.kind : undefined }));
+  const all = clean(parseObjects(raw));
+  const good = all.filter((x) => scriptVerdict(x.to, target) !== 'bad'); let bad = all.filter((x) => scriptVerdict(x.to, target) === 'bad');
+  if (bad.length) {
+    // (Asked again for those alone, the language and its script said once more.)
+    try {
+      const again = clean(parseObjects(await chat(`These glossary renderings were not written in ${lang}.${scriptAsk(target)} Give each name or term its ${lang} rendering. Return ONLY a JSON array of objects {"from": original, "to": rendering in ${lang}, "kind": "person|place|group|term"}. No prose.`, JSON.stringify(bad.map((x) => ({ from: x.from, kind: x.kind }))))));
+      const fixed = again.filter((x) => bad.some((y) => y.from.toLowerCase() === x.from.toLowerCase()) && scriptVerdict(x.to, target) !== 'bad');
+      good.push(...fixed); bad = bad.filter((y) => !fixed.some((x) => x.from.toLowerCase() === y.from.toLowerCase()));
+    } catch (e) { if ((e as Error).name === 'QuotaError') throw e; /* the first answer's good ones kept */ }
+  }
+  return Object.assign(good, { refused: bad.length });
+}
+
+/** The default instructions for renderings asked again (the glossary's Retranslate); `{lang}` is the language. */
+export const RETRANSLATE_FORMAT = (target: string): string => `Target language: ${langName(target)} (language code ${target}).${scriptAsk(target)} You will receive a JSON array of objects {"from": original name or term, "now": its current rendering (may be in the wrong language), "kind"}. Return ONLY a JSON array of objects {"from": the same original, "to": its rendering in ${langName(target)}} — one for each, in the same order. No prose, no code fences.`;
+/** New renderings for glossary terms, in `target`, with the reader's own instructions: [from, to] for each one the
+ *  model gave back (not checked here). */
+export async function retranslateTerms(instructions: string, items: { from: string; now: string; kind?: string }[], target: string): Promise<{ from: string; to: string }[]> {
+  const raw = await chat(`${instructions.trim()}\n\n${RETRANSLATE_FORMAT(target)}`, JSON.stringify(items));
+  return parseObjects(raw).filter((x) => typeof x.from === 'string' && typeof x.to === 'string').map((x) => ({ from: (x.from as string).trim(), to: (x.to as string).trim() }));
 }
 
 export async function translateOne(text: string): Promise<string> { return (await translateBatch([text]))[0]; }

@@ -16,7 +16,10 @@ const s1 = G.glossaryStamp(); G.saveTerms(G.terms().slice(1)); ok('a changed glo
 G.saveTerms([{ id: 'a', from: 'Keyaru', to: 'كيارو', lang: 'ar' }, { id: 'b', from: 'Keyaru', to: 'Keyaru', lang: 'en' }, { id: 'c', from: 'Jioral', to: 'Jioral Kingdom' }, { id: 'd', from: 'Flare', to: 'فلير' }]);
 const ar = G.termsIn(['Keyaru met Flare in Jioral.'], 'b1', 'ar').map((x) => x.to); const en = G.termsIn(['Keyaru met Flare in Jioral.'], 'b1', 'en').map((x) => x.to);
 ok('into Arabic: the Arabic renderings only (one in English letters left out)', ar.join() === 'كيارو,فلير', ar);
-ok('into English: the English ones', en.join() === 'Keyaru,Jioral Kingdom', en);
+// («Jioral Kingdom» has no language and Latin letters: made before languages were kept, while Arabic was chosen —
+// the language it was made for cannot be known, so it is used for none and shown as «language not set».)
+ok('into English: the English ones (an old Latin term without a language is not taken as English)', en.join() === 'Keyaru', en);
+ok('… that old term kept, its language not set', G.terms().some((x) => x.id === 'c' && !x.lang) && G.termLang(G.terms().find((x) => x.id === 'c')) === '');
 ok('the same name kept for both languages, not taken for a double', G.terms().filter((x) => x.from === 'Keyaru').length === 2);
 // Doubles merged: the same name twice in one place — the one written by hand kept.
 G.saveTerms([{ id: 'x', from: 'Lin Feng', to: 'لين فينغ', book: 'b1', auto: true, lang: 'ar' }, { id: 'y', from: 'lin feng', to: 'لين فنغ', book: 'b1', lang: 'ar' }]);
@@ -46,4 +49,48 @@ ok('Arabic: the longer name first («لين فنغ» over «لين»)', G.applyG
 ok('Japanese: a name in a sentence without spaces put right', G.applyGlossary('ケヤルは笑った', [T('ケヤル', 'Keyaru')]) === 'Keyaruは笑った', G.applyGlossary('ケヤルは笑った', [T('ケヤル', 'Keyaru')]));
 ok('Japanese: the longer name first (ケヤルガ over ケヤル)', G.applyGlossary('ケヤルガは笑った', [T('ケヤル', 'Keyaru'), T('ケヤルガ', 'Keyaruga')]) === 'Keyarugaは笑った', G.applyGlossary('ケヤルガは笑った', [T('ケヤル', 'Keyaru'), T('ケヤルガ', 'Keyaruga')]));
 ok('an English name left in Japanese text still put right (the kana beside it is not part of it)', G.applyGlossary('Keyaruは笑った', [T('Keyaru', 'ケヤル')]) === 'ケヤルは笑った', G.applyGlossary('Keyaruは笑った', [T('Keyaru', 'ケヤル')]));
+// ---- Every term for the language it renders into (R3b): for every language, not Arabic alone. ----
+const reset = (target) => { for (const k of Object.keys(store)) delete store[k]; store['kr.visual'] = JSON.stringify({ aiTarget: target }); G._forgetLegacy(); G.saveTerms([]); };
+const V = G.scriptVerdict;
+ok('a rendering in Latin letters is plainly not Arabic, Persian, Japanese, Chinese, Korean, Russian, Greek, Hebrew, Thai, Hindi', ['ar', 'fa', 'ur', 'ja', 'zh-CN', 'ko', 'ru', 'el', 'he', 'th', 'hi'].every((l) => V('Keyaru', l) === 'bad'), ['ar', 'fa', 'ja', 'zh-CN', 'ko', 'ru', 'el', 'he', 'th', 'hi'].map((l) => V('Keyaru', l)));
+ok('… and each in its own script is', V('كيارو', 'ar') === 'ok' && V('کیارو', 'fa') === 'ok' && V('ケヤル', 'ja') === 'ok' && V('剣崎', 'ja') === 'ok' && V('凯亚鲁', 'zh-CN') === 'ok' && V('케야루', 'ko') === 'ok' && V('Кеяру', 'ru') === 'ok' && V('Κεγιαρού', 'el') === 'ok' && V('קיארו', 'he') === 'ok' && V('เคยารุ', 'th') === 'ok' && V('केयारू', 'hi') === 'ok');
+ok('kana is not Chinese; an Arabic or kana rendering is not English or French', V('ケヤル', 'zh-CN') === 'bad' && V('كيارو', 'en') === 'bad' && V('ケヤル', 'fr') === 'bad');
+ok('English and French share a script: no test possible (the language kept with the term decides)', V('Keyaru', 'fr') === 'ok' && V('Keyaru', 'en') === 'ok');
+ok('a language whose script is not known: unknown, not refused', V('Keyaru', 'xx') === 'unknown');
+// A term tagged for a language but written in another script (the name finder's «Keyaru» kept as Arabic): not used.
+reset('ar');
+G.saveTerms([{ id: 'k1', from: 'ケヤル', to: 'Keyaru', lang: 'ar', auto: true }, { id: 'k2', from: 'フレア', to: 'فلير', lang: 'ar', auto: true }]);
+const arK = G.termsIn(['ケヤルとフレア'], 'b', 'ar').map((x) => x.to);
+ok('into Arabic: a term kept as Arabic but in Latin letters is not used (nor sent to the model)', arK.join() === 'فلير', arK);
+ok('… and is still kept (not deleted), marked as in the wrong script', G.terms().some((x) => x.id === 'k1') && G.misScripted(G.terms().find((x) => x.id === 'k1')));
+ok('… the name finder\'s Arabic rendering then takes its place (it was the translator\'s)', G.addTerms([{ from: 'ケヤル', to: 'كيارو', lang: 'ar', auto: true }]) === 1 && G.terms().find((x) => x.id === 'k1').to === 'كيارو');
+G.saveTerms([{ id: 'h1', from: 'ケヤル', to: 'Keyaru', lang: 'ar' }]); G.addTerms([{ from: 'ケヤル', to: 'كيارو', lang: 'ar', auto: true }]);
+ok('… one written by hand is never rewritten by it', G.terms().find((x) => x.id === 'h1').to === 'Keyaru');
+// The same name for several languages in one place: each kept (an English one no longer replaced by a French one,
+// an Arabic one by a Persian one).
+reset('ar');
+G.saveTerms([{ id: 'e', from: 'Keyaru', to: 'Keyaru', lang: 'en' }, { id: 'f', from: 'Keyaru', to: 'Kéyaru', lang: 'fr' }, { id: 'a', from: 'Keyaru', to: 'كيارو', lang: 'ar' }, { id: 'p', from: 'Keyaru', to: 'کیارو', lang: 'fa' }, { id: 'j', from: 'Keyaru', to: 'ケヤル', lang: 'ja' }]);
+ok('the same name kept for English, French, Arabic, Persian and Japanese side by side', G.terms().length === 5, G.terms().map((x) => x.id));
+const pick = (l) => G.termsIn(['Keyaru smiled.'], 'b', l).map((x) => x.to).join();
+ok('switching ar → ja → fr → fa → en: each language\'s own term', pick('ar') === 'كيارو' && pick('ja') === 'ケヤル' && pick('fr') === 'Kéyaru' && pick('fa') === 'کیارو' && pick('en') === 'Keyaru', ['ar', 'ja', 'fr', 'fa', 'en'].map(pick));
+ok('a language with no term of its own: the name has no rendering yet', pick('ko') === '' && pick('de') === '');
+ok('… and the glossary handed to the model names the language', /renderings in Arabic/.test(G.glossaryPrompt(G.termsIn(['Keyaru'], 'b', 'ar'), 'Arabic')));
+// Terms made before languages were kept: never rewritten; used only for the language they can be known to be for.
+reset('ar');
+const old = [{ id: 'o1', from: 'Lin Feng', to: 'لين فنغ' }, { id: 'o2', from: 'Azure Sect', to: 'Azure Sect' }, { id: 'o3', from: 'Min', to: '민' }, { id: 'o4', from: 'Ren', to: 'レン' }];
+store['kr.glossary'] = JSON.stringify(old); G._forgetLegacy();
+// (A fresh read, as at the app's start.)
+const G2 = (() => { const m2 = { exports: {} }; new Function('module', 'exports', code)(m2, m2.exports); return m2.exports; })();
+const l2 = G2.terms();
+ok('old terms without a language all kept, none given one in storage', l2.length === 4 && JSON.parse(store['kr.glossary']).every((x) => !x.lang), l2);
+ok('… the language they were made for taken from the one chosen when first met (Arabic), kept once', store['kr.glossaryLegacyLang'] === 'ar' && G2.termLang(l2[0]) === 'ar');
+ok('… an old Arabic-script term used for Arabic only, not for Persian or Urdu', G2.termsIn(['Lin Feng'], 'b', 'ar').length === 1 && !G2.termsIn(['Lin Feng'], 'b', 'fa').length && !G2.termsIn(['Lin Feng'], 'b', 'ur').length);
+ok('… an old Latin one used for no language (not English, French, Spanish…), its language not set', ['ar', 'en', 'fr', 'es'].every((l) => !G2.termsIn(['Azure Sect'], 'b', l).length) && G2.termLang(l2[1]) === '');
+ok('… a script one language alone uses tells its language (Korean, Japanese kana)', G2.termLang(l2[2]) === 'ko' && G2.termLang(l2[3]) === 'ja' && G2.termsIn(['Min'], 'b', 'ko').length === 1 && !G2.termsIn(['Min'], 'b', 'zh-CN').length);
+ok('… and the language set by the reader is then the one used', (G2.saveTerms(G2.terms().map((x) => (x.id === 'o2' ? { ...x, lang: 'en' } : x))), G2.termsIn(['Azure Sect'], 'b', 'en').length === 1 && !G2.termsIn(['Azure Sect'], 'b', 'fr').length));
+// Pasted or imported lines without a language: the one translated into when the rendering can be in it.
+ok('pasted: an Arabic rendering kept as Arabic; an English one not taken for Arabic; a Korean one as Korean', G.langForNew('كيارو', 'ar') === 'ar' && G.langForNew('Keyaru', 'ar') === '' && G.langForNew('케야루', 'ar') === 'ko' && G.langForNew('Keyaru', 'fr') === 'fr');
+// The stored format: read by the version before (the same fields; `lang` was already optional).
+reset('ar'); G.saveTerms([{ id: 's', from: 'Keyaru', to: 'كيارو', lang: 'ar', kind: 'person', book: 'b1' }]);
+ok('stored as before: an array of {id, from, to, lang, kind, book}', JSON.stringify(JSON.parse(store['kr.glossary'])[0]) === JSON.stringify({ id: 's', from: 'Keyaru', to: 'كيارو', lang: 'ar', kind: 'person', book: 'b1' }));
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
