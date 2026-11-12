@@ -122,6 +122,9 @@ if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
 }
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
+// The text size or the display size changed in the system's settings (Samsung's font and screen zoom): handled by
+// the WebView as it is — not the activity made again, which loaded the app afresh, in the library, a book closed.
+manifest = manifest.replace(/android:configChanges="([^"]*)"/, (_m, v) => `android:configChanges="${[...new Set([...v.split('|'), 'fontScale', 'density'])].join('|')}"`);
 // Launcher name the reader can choose: the MAIN/LAUNCHER filter moves off MainActivity onto
 // activity-aliases — one that follows the system language, and one per supported language —
 // and the plugin enables exactly one of them (setAppName).

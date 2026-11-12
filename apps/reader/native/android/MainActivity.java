@@ -5,7 +5,10 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.ActionMode;
 import android.view.KeyEvent;
+import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.WebViewListener;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -13,6 +16,16 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(KurokawaPlugin.class);
         asView(getIntent());
         super.onCreate(savedInstanceState);
+        // The page's renderer ended under the app (the system took its memory back, or it crashed): unhandled, Android
+        // ends the whole app with it. The activity is made again instead — the app starts afresh and opens again the
+        // book that was open, at its saved place (src/resume.ts).
+        if (getBridge() != null) getBridge().addWebViewListener(new WebViewListener() {
+            @Override
+            public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {
+                runOnUiThread(() -> { if (!isFinishing()) recreate(); });
+                return true;
+            }
+        });
     }
 
     @Override
